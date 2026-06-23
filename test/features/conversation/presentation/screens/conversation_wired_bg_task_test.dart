@@ -43,6 +43,7 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../../shared/fakes/fake_audio_recorder_service.dart';
+import '../../../../shared/fakes/fake_mic_permission_gateway.dart';
 import '../../../../shared/fakes/fake_upload_wake_lock_driver.dart';
 
 // ---------------------------------------------------------------------------
@@ -528,6 +529,7 @@ Future<void> _pumpConversationWired(
         mediaAttachmentRepo: _FakeMediaAttachmentRepository(),
         initialAttachments: initialAttachments,
         audioRecorderService: audioRecorderService,
+        micPermissionGateway: FakeMicPermissionGateway(),
       ),
     ),
   );

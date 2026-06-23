@@ -105,6 +105,15 @@ class LetterCard extends StatelessWidget {
   /// when [showAvatar], or no avatar at all).
   final bool avatarOutsideBubble;
 
+  /// 155 (1:1 only): render the inline status glyph as the TRANSPORT the
+  /// message travelled (relay→cell_tower, direct→device_hub, wifi→wifi,
+  /// inbox→inbox) for the user's OWN outgoing messages, AND render a transport
+  /// glyph for INCOMING messages (the channel they arrived on). Defaults false
+  /// → the GROUP/legacy v1 status glyph (`_statusIcon`) is used and incoming
+  /// shows no glyph. Set only by the 1:1 conversation screen; the delivered
+  /// ✓✓ stays retired in both paths.
+  final bool transportStatusGlyph;
+
   const LetterCard({
     super.key,
     required this.senderPeerId,
@@ -141,6 +150,7 @@ class LetterCard extends StatelessWidget {
     this.showAvatar = true,
     this.showSenderName = true,
     this.avatarOutsideBubble = false,
+    this.transportStatusGlyph = false,
   });
 
   List<MediaAttachment> get _imageVideoMedia => media
@@ -158,6 +168,19 @@ class LetterCard extends StatelessWidget {
             attachment.mediaType == 'video' ||
             attachment.mediaType == 'audio',
       );
+
+  /// 155 (1:1 only): whether to draw the INCOMING transport glyph (the channel
+  /// a received message arrived on). Gated on [transportStatusGlyph] so group/
+  /// legacy never shows it; `system`/`unknown`/null transports and deleted rows
+  /// draw nothing. Outgoing is handled by the status-glyph block, so this never
+  /// fires for own messages (no double-render).
+  bool get _showsIncomingTransportGlyph =>
+      transportStatusGlyph &&
+      isIncoming &&
+      transport != null &&
+      !isDeleted &&
+      transport != 'system' &&
+      transport != 'unknown';
 
   @override
   Widget build(BuildContext context) {
@@ -583,13 +606,22 @@ class LetterCard extends StatelessWidget {
               if (!isIncoming && status != null) ...[
                 const SizedBox(width: 4),
                 Semantics(
-                  label: l10n.message_status_semantics(
-                    _statusSemantic(context, status!),
-                  ),
+                  label: _resolvedStatusSemantic(context, status!),
                   child: Icon(
-                    _statusIcon(status!),
+                    _resolvedStatusIcon(status!),
                     size: 14,
                     color: _statusColor(status!, readableColors),
+                  ),
+                ),
+              ],
+              if (_showsIncomingTransportGlyph) ...[
+                const SizedBox(width: 4),
+                Semantics(
+                  label: _resolvedIncomingSemantic(context, transport!),
+                  child: Icon(
+                    _transportIcon(transport!),
+                    size: 14,
+                    color: readableColors.textMuted,
                   ),
                 ),
               ],
@@ -635,13 +667,22 @@ class LetterCard extends StatelessWidget {
           if (!isIncoming && status != null) ...[
             const SizedBox(width: 4),
             Semantics(
-              label: l10n.message_status_semantics(
-                _statusSemantic(context, status!),
-              ),
+              label: _resolvedStatusSemantic(context, status!),
               child: Icon(
-                _statusIcon(status!),
+                _resolvedStatusIcon(status!),
                 size: 14,
                 color: _statusColor(status!, readableColors),
+              ),
+            ),
+          ],
+          if (_showsIncomingTransportGlyph) ...[
+            const SizedBox(width: 4),
+            Semantics(
+              label: _resolvedIncomingSemantic(context, transport!),
+              child: Icon(
+                _transportIcon(transport!),
+                size: 14,
+                color: readableColors.textMuted,
               ),
             ),
           ],
@@ -1012,18 +1053,22 @@ class LetterCard extends StatelessWidget {
   }
 
   static IconData _statusIcon(String status) {
-    // Legacy compatibility: old rows may still have queued status.
-    if (status == 'delivered' || status == 'queued') {
-      return Icons.done_all_rounded;
+    // 155: a message that reached the relay inbox reads as a good "in the
+    // inbox" state — 'inboxed' (doc-115 relay custody), 'delivered' (receiver
+    // confirmed), and legacy 'queued' all render the inbox glyph. The two-tick
+    // done_all is RETIRED from the UI (kept in the model for future
+    // debug/read-receipt reuse), so delivery no longer visibly "pops".
+    if (status == 'delivered' || status == 'queued' || status == 'inboxed') {
+      return Icons.inbox_rounded;
     }
     // 'send_failed' = terminal group send (retry budget exhausted, finding 05
     // Phase 4): renders with the same error indicator as 'failed'.
     if (status == 'failed' || status == 'send_failed') {
       return Icons.error_outline_rounded;
     }
-    // 'inboxed' = relay custody awaiting receiver confirmation (doc 115):
-    // non-terminal pending family, never done_all.
-    if (status == 'pending' || status == 'inboxed') {
+    // 155: 'pending' is genuinely in-flight — NOT yet in the relay inbox — so
+    // it keeps the amber clock (the pending/inboxed split).
+    if (status == 'pending') {
       return Icons.schedule_rounded;
     }
     return Icons.done_rounded; // 'sent', 'sending'
@@ -1033,21 +1078,21 @@ class LetterCard extends StatelessWidget {
     String status,
     BackgroundReadableColors readableColors,
   ) {
-    if (status == 'delivered') {
-      return readableColors.isLightSurface
-          ? readableColors.iconMuted
-          : const Color.fromRGBO(255, 255, 255, 0.45);
-    }
     if (status == 'failed' || status == 'send_failed') {
       return readableColors.isLightSurface
           ? const Color(0xFFB42318)
           : const Color.fromRGBO(255, 100, 100, 0.60);
     }
-    if (status == 'pending' || status == 'inboxed') {
+    // 155: 'pending' alone keeps the amber "still waiting" hue; once a message
+    // reaches the inbox ('inboxed'/'delivered'/'queued') it reads as a good
+    // state in the neutral muted color (the default branch below, same as
+    // 'sent'), not amber.
+    if (status == 'pending') {
       return readableColors.isLightSurface
           ? const Color(0xFF8A4A00)
           : const Color.fromRGBO(255, 200, 100, 0.50);
     }
+    // 'sent', 'sending', 'inboxed', 'delivered', 'queued' → neutral muted.
     return readableColors.isLightSurface
         ? readableColors.iconMuted
         : const Color.fromRGBO(255, 255, 255, 0.25);
@@ -1055,18 +1100,100 @@ class LetterCard extends StatelessWidget {
 
   static String _statusSemantic(BuildContext context, String status) {
     final l10n = AppLocalizations.of(context)!;
-    if (status == 'delivered' || status == 'queued') {
-      return l10n.message_status_delivered;
+    // 155: the reached-the-inbox state shares one "delivered to inbox" a11y
+    // label (inboxed/delivered/queued); the underlying 'delivered' status is
+    // preserved in the model — only its label and glyph changed.
+    if (status == 'delivered' ||
+        status == 'queued' ||
+        status == 'inboxed') {
+      return l10n.message_status_inbox;
     }
     if (status == 'failed' || status == 'send_failed') {
       return l10n.message_status_failed;
     }
     if (status == 'sending') return l10n.message_status_sending;
     if (status == 'sent') return l10n.message_status_sent;
-    if (status == 'pending' || status == 'inboxed') {
+    if (status == 'pending') {
       return l10n.message_status_pending_inbox;
     }
     return status;
+  }
+
+  /// 155: the inline status glyph for OUTGOING messages. When
+  /// [transportStatusGlyph] is set (1:1 only) a reached message shows the
+  /// TRANSPORT it travelled (`_transportIcon`) instead of the v1 inbox glyph;
+  /// in-flight shows the clock, failed shows the error glyph, and a reached
+  /// message with no known transport falls back to the single check. The
+  /// two-tick done_all is never drawn. Group/legacy (flag false) keeps the v1
+  /// [_statusIcon].
+  IconData _resolvedStatusIcon(String status) {
+    if (!transportStatusGlyph) return _statusIcon(status);
+    if (status == 'failed' || status == 'send_failed') {
+      return Icons.error_outline_rounded;
+    }
+    if (status == 'pending' || status == 'sending') {
+      return Icons.schedule_rounded;
+    }
+    // Reached (sent/delivered/inboxed/queued): show how it travelled.
+    final t = transport;
+    if (t != null) return _transportIcon(t);
+    return Icons.done_rounded;
+  }
+
+  /// 155: the a11y label for the OUTGOING status glyph. In the transport path a
+  /// reached message reads "sent via `transport`"; everything else (and the
+  /// group/legacy path) keeps the v1 "Message status: `state`" label.
+  String _resolvedStatusSemantic(BuildContext context, String status) {
+    final l10n = AppLocalizations.of(context)!;
+    if (transportStatusGlyph &&
+        status != 'failed' &&
+        status != 'send_failed' &&
+        status != 'pending' &&
+        status != 'sending') {
+      final t = transport;
+      final via = t == null ? null : _sentViaSemantic(l10n, t);
+      if (via != null) return via;
+    }
+    return l10n.message_status_semantics(_statusSemantic(context, status));
+  }
+
+  /// 155: the a11y label for the INCOMING transport glyph ("received via …").
+  String _resolvedIncomingSemantic(BuildContext context, String transport) {
+    final l10n = AppLocalizations.of(context)!;
+    return _receivedViaSemantic(l10n, transport) ??
+        l10n.message_status_semantics(transport);
+  }
+
+  static String? _sentViaSemantic(AppLocalizations l10n, String transport) {
+    switch (transport) {
+      case 'relay':
+        return l10n.message_sent_via_relay;
+      case 'direct':
+      case 'reuse':
+        return l10n.message_sent_via_direct;
+      case 'wifi':
+      case 'local':
+        return l10n.message_sent_via_wifi;
+      case 'inbox':
+        return l10n.message_sent_via_inbox;
+    }
+    return null;
+  }
+
+  static String? _receivedViaSemantic(AppLocalizations l10n, String transport) {
+    switch (transport) {
+      case 'relay':
+        return l10n.message_received_via_relay;
+      case 'direct':
+      case 'reuse':
+        return l10n.message_received_via_direct;
+      case 'wifi':
+      case 'local':
+        return l10n.message_received_via_wifi;
+      case 'inbox':
+        return l10n.message_received_via_inbox;
+    }
+    return null;
   }
 }
 

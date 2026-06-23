@@ -250,6 +250,16 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   List<PendingGroupInvite> _pendingGroupInvites = [];
   final Set<String> _processingIntroductionIds = <String>{};
   final Set<String> _processingPendingInviteIds = <String>{};
+  // 153: parity with group_list — invites optimistically hidden while their
+  // deferred decline commit is pending. Filtered inside
+  // [_loadPendingGroupInvites] so every reactive reload respects the hide; the
+  // per-invite [Timer] commits on timeout (Undo / dispose cancel it first).
+  final Set<String> _optimisticallyDeclinedInviteIds = <String>{};
+  final Map<String, Timer> _declineCommitTimers = <String, Timer>{};
+
+  /// 153: captured when a decline SnackBar is shown so [dispose] can dismiss
+  /// the still-visible Undo affordance even after this State is torn down.
+  ScaffoldMessengerState? _declineScaffoldMessenger;
   final Set<String> _openingFriendPeerIds = <String>{};
   Set<String> _blockedPeerIds = {};
   final Set<String> _changedContactPeerIds = <String>{};
@@ -258,6 +268,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   int _introLoadRequestId = 0;
 
   static const _animCurve = Cubic(0.22, 0.61, 0.36, 1);
+
+  /// 153: how long the "Invite declined" SnackBar offers an Undo before the
+  /// decline commits irrevocably.
+  static const kDeclineUndoWindow = Duration(seconds: 4);
 
   OrbitHeaderProjection _buildHeaderProjection() {
     return OrbitHeaderProjection(
@@ -614,7 +628,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           .map((group) => group.groupId)
           .toSet();
       _pendingGroupInvites = invites
-          .where((invite) => !joinedGroupIds.contains(invite.groupId))
+          .where(
+            (invite) =>
+                !joinedGroupIds.contains(invite.groupId) &&
+                // 153: keep optimistically-declined rows hidden across every
+                // reactive reload until their deferred commit/undo resolves.
+                !_optimisticallyDeclinedInviteIds.contains(invite.groupId),
+          )
           .toList();
       _publishListProjection();
     } catch (e) {
@@ -1311,42 +1331,114 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> _onDeclinePendingInvite(PendingGroupInvite invite) async {
+  /// 153: optimistically hide the row and offer a localized Undo (parity with
+  /// group_list). The real decline — and its irreversible decline-ack — is
+  /// deferred behind [kDeclineUndoWindow] and commits exactly once on timeout
+  /// (not at all on Undo / dispose). Runs synchronously so the hide is instant;
+  /// the held `_processingPendingInviteIds` guard makes the commit once-only
+  /// under double-tap.
+  void _onDeclinePendingInvite(PendingGroupInvite invite) {
     final inviteListener = widget.groupInviteListener;
     if (inviteListener == null ||
         _processingPendingInviteIds.contains(invite.groupId)) {
       return;
     }
 
-    setState(() => _processingPendingInviteIds.add(invite.groupId));
-    try {
-      // Best-effort decline-ack deps (the local decline never blocks on them).
-      final identity = await widget.identityRepo.loadIdentity();
-      final result = await declinePendingGroupInvite(
-        pendingInviteRepo: inviteListener.pendingInviteRepo,
-        groupId: invite.groupId,
-        p2pService: widget.p2pService,
-        bridge: widget.bridge,
-        contactRepo: widget.contactRepo,
-        declinerPeerId: identity?.peerId,
-        declinerPrivateKey: identity?.privateKey,
-      );
-      _refreshPendingIntroductionsOnPop = true;
-      await _loadPendingGroupInvites();
-      if (!mounted) return;
+    _processingPendingInviteIds.add(invite.groupId);
+    _optimisticallyDeclinedInviteIds.add(invite.groupId);
+    _pendingGroupInvites = _pendingGroupInvites
+        .where((i) => !_optimisticallyDeclinedInviteIds.contains(i.groupId))
+        .toList();
+    _refreshPendingIntroductionsOnPop = true;
+    _publishListProjection();
 
-      switch (result) {
-        case DeclinePendingGroupInviteResult.success:
-          _showSnackBar('Invite declined');
-          break;
-        case DeclinePendingGroupInviteResult.notFound:
-          _showSnackBar('Invite no longer available');
-          break;
-        case DeclinePendingGroupInviteResult.expired:
-          _showSnackBar('Invite expired');
-          break;
+    final l10n = AppLocalizations.of(context)!;
+    _declineScaffoldMessenger = ScaffoldMessenger.of(context);
+    _showSnackBar(
+      l10n.group_invite_declined,
+      duration: kDeclineUndoWindow + const Duration(seconds: 1),
+      action: SnackBarAction(
+        label: l10n.feed_undo,
+        onPressed: () => _undoDecline(invite),
+      ),
+    );
+
+    _declineCommitTimers[invite.groupId] = Timer(
+      kDeclineUndoWindow,
+      () => unawaited(_commitDecline(invite)),
+    );
+  }
+
+  /// Cancel a pending decline before its window elapses: re-surface the invite,
+  /// emit UNDONE, never send the decline-ack. No-op if the commit already fired
+  /// (late-tap race — the Timer is already gone).
+  void _undoDecline(PendingGroupInvite invite) {
+    // The SnackBar (and its Undo action) can outlive this State on the
+    // app-level messenger; a stale tap after dispose must be a safe no-op.
+    if (!mounted) return;
+    final timer = _declineCommitTimers.remove(invite.groupId);
+    if (timer == null) return;
+    timer.cancel();
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_DECLINE_UNDONE',
+      details: {
+        'surface': 'orbit',
+        'groupId': invite.groupId.length > 8
+            ? invite.groupId.substring(0, 8)
+            : invite.groupId,
+      },
+    );
+    _optimisticallyDeclinedInviteIds.remove(invite.groupId);
+    _processingPendingInviteIds.remove(invite.groupId);
+    if (mounted) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    }
+    unawaited(_loadPendingGroupInvites());
+  }
+
+  /// Fire the deferred decline once the undo window elapses. Runs the real
+  /// (already-idempotent) use-case, then in `finally` releases the optimistic
+  /// hide + processing guard and reloads — so a throwing commit re-surfaces the
+  /// still-present invite, while a successful commit keeps it gone.
+  Future<void> _commitDecline(PendingGroupInvite invite) async {
+    // Already undone/cancelled (or this is a duplicate fire) — commit once.
+    if (_declineCommitTimers.remove(invite.groupId) == null) return;
+    // 153 (review P2): the undo window has closed — drop the Undo affordance the
+    // moment the commit fires, not after the (possibly slow) use-case + reload.
+    if (mounted) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_DECLINE_COMMITTED',
+      details: {
+        'surface': 'orbit',
+        'groupId': invite.groupId.length > 8
+            ? invite.groupId.substring(0, 8)
+            : invite.groupId,
+      },
+    );
+
+    final inviteListener = widget.groupInviteListener;
+    DeclinePendingGroupInviteResult? result;
+    Object? error;
+    try {
+      if (inviteListener != null) {
+        // Best-effort decline-ack deps (the local decline never blocks on them).
+        final identity = await widget.identityRepo.loadIdentity();
+        result = await declinePendingGroupInvite(
+          pendingInviteRepo: inviteListener.pendingInviteRepo,
+          groupId: invite.groupId,
+          p2pService: widget.p2pService,
+          bridge: widget.bridge,
+          contactRepo: widget.contactRepo,
+          declinerPeerId: identity?.peerId,
+          declinerPrivateKey: identity?.privateKey,
+        );
       }
     } catch (e) {
+      error = e;
       emitFlowEvent(
         layer: 'FL',
         event: 'ORBIT_FL_DECLINE_PENDING_GROUP_INVITE_ERROR',
@@ -1357,21 +1449,44 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           'error': e.toString(),
         },
       );
+    } finally {
+      _optimisticallyDeclinedInviteIds.remove(invite.groupId);
+      _processingPendingInviteIds.remove(invite.groupId);
       await _loadPendingGroupInvites();
       if (mounted) {
-        _showSnackBar('Failed to decline invite');
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _processingPendingInviteIds.remove(invite.groupId));
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        final l10n = AppLocalizations.of(context)!;
+        if (error != null) {
+          _showSnackBar(l10n.group_invite_decline_failed);
+        } else if (result != null) {
+          switch (result) {
+            case DeclinePendingGroupInviteResult.success:
+              _showSnackBar(l10n.group_invite_declined);
+              break;
+            case DeclinePendingGroupInviteResult.notFound:
+              _showSnackBar(l10n.group_invite_no_longer_available);
+              break;
+            case DeclinePendingGroupInviteResult.expired:
+              _showSnackBar(l10n.group_invite_expired);
+              break;
+          }
+        }
       }
     }
   }
 
-  void _showSnackBar(String message) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+  void _showSnackBar(
+    String message, {
+    Duration? duration,
+    SnackBarAction? action,
+  }) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: duration ?? const Duration(seconds: 4),
+        action: action,
+      ),
+    );
   }
 
   void _onIntroSendMessage(String peerId) {
@@ -1939,6 +2054,19 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _pendingGroupInviteSubscription?.cancel();
     _introReceivedSubscription?.cancel();
     _introStatusSubscription?.cancel();
+    // 153: never commit a deferred decline after unmount (safe-failure = the
+    // invite is kept; a re-mount re-surfaces it = implicit undo).
+    for (final timer in _declineCommitTimers.values) {
+      timer.cancel();
+    }
+    // 153 (review P1): dismiss the still-visible decline SnackBar so its Undo
+    // action cannot be tapped after this State is gone (defensive: in
+    // embeddings where the snackbar outlives the orbit Scaffold), and clear the
+    // map so a stale tap finds no timer (the no-op guard holds).
+    if (_declineCommitTimers.isNotEmpty) {
+      _declineScaffoldMessenger?.hideCurrentSnackBar();
+    }
+    _declineCommitTimers.clear();
     _detachExternalRouteChangesListenable(
       widget.externalRouteChangesListenable,
     );

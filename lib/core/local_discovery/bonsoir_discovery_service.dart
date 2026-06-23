@@ -52,7 +52,7 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
 
   // B1.2: peers with a resolve currently in flight, so we never issue a second
   // overlapping `service.resolve(...)` for the same peer — each extra native
-  // resolve is another use-after-free window (Test-Flight-Improv plan 130).
+  // resolve is another use-after-free window.
   // Cleared on the resolved or lost event for that peer.
   final _resolvingPeerIds = <String>{};
   // B1.3/B1.4: set once teardown begins so no new resolves are issued while or

@@ -61,6 +61,8 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/presentation/widgets/letter_card_test.dart"
   "test/features/conversation/presentation/screens/conversation_screen_test.dart"
   "test/features/conversation/presentation/screens/conversation_wired_test.dart"
+  "test/features/conversation/presentation/widgets/attachment_preview_strip_test.dart"
+  "test/features/conversation/domain/models/media_rejection_test.dart"
   "test/features/push/application/prepare_notification_open_use_case_test.dart"
 )
 
@@ -129,6 +131,10 @@ readonly GROUP_TESTS=(
   "test/features/conversation/presentation/widgets/letter_card_test.dart"
   "test/features/groups/presentation/group_conversation_screen_test.dart"
   "test/features/groups/presentation/group_conversation_wired_test.dart"
+  "test/features/groups/presentation/group_list_wired_test.dart"
+  "test/features/groups/presentation/group_info_wired_test.dart"
+  "test/features/orbit/presentation/screens/orbit_wired_test.dart"
+  "test/features/groups/presentation/widgets/pending_group_invite_card_test.dart"
 )
 
 readonly POSTS_TESTS=(
@@ -526,7 +532,7 @@ classify_path() {
     return 0
   fi
 
-  if [[ "$path" =~ ^test/core/(bridge|constants|database|device|inbox|local_discovery|media|secure_storage|theme|utils)/.*_test\.dart$ ]]; then
+  if [[ "$path" =~ ^test/core/(bridge|constants|database|device|inbox|local_discovery|media|permissions|secure_storage|theme|utils)/.*_test\.dart$ ]]; then
     printf 'core component direct suite'
     return 0
   fi

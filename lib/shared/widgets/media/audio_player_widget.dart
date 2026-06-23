@@ -27,6 +27,9 @@ class AudioPlayerWidget extends StatefulWidget {
 
 class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
   late final AudioPlayer _player;
+  late final StreamSubscription<PlayerState> _playerStateSubscription;
+  late final StreamSubscription<Duration?> _durationSubscription;
+  Timer? _positionTimer;
   bool _isPlaying = false;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
@@ -57,12 +60,13 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
     super.initState();
     _player = AudioPlayer();
 
-    _player.positionStream.listen((pos) {
-      if (mounted) setState(() => _position = pos);
-    });
-
-    _player.playerStateStream.listen((state) {
+    _playerStateSubscription = _player.playerStateStream.listen((state) {
       if (!mounted) return;
+      if (state.playing && state.processingState != ProcessingState.completed) {
+        _startPositionTimer();
+      } else {
+        _stopPositionTimer();
+      }
       setState(() {
         _isPlaying = state.playing;
         if (state.processingState == ProcessingState.completed) {
@@ -74,7 +78,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
       });
     });
 
-    _player.durationStream.listen((dur) {
+    _durationSubscription = _player.durationStream.listen((dur) {
       if (dur != null && mounted) {
         setState(() => _duration = dur);
       }
@@ -133,6 +137,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
 
   Future<void> _reloadAudioForNewAttachment() async {
     _loadVersion++;
+    _stopPositionTimer();
 
     try {
       await _player.stop();
@@ -155,8 +160,24 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
 
   @override
   void dispose() {
-    _player.dispose();
+    _stopPositionTimer();
+    unawaited(_playerStateSubscription.cancel());
+    unawaited(_durationSubscription.cancel());
+    unawaited(_player.dispose());
     super.dispose();
+  }
+
+  void _startPositionTimer() {
+    if (_positionTimer != null) return;
+    _positionTimer = Timer.periodic(const Duration(milliseconds: 200), (_) {
+      if (!mounted) return;
+      setState(() => _position = _player.position);
+    });
+  }
+
+  void _stopPositionTimer() {
+    _positionTimer?.cancel();
+    _positionTimer = null;
   }
 
   void _togglePlayPause() {
@@ -170,9 +191,11 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
 
   void _onSeek(double value) {
     if (!_isLoaded || _duration.inMilliseconds == 0) return;
-    _player.seek(
-      Duration(milliseconds: (value * _duration.inMilliseconds).round()),
+    final position = Duration(
+      milliseconds: (value * _duration.inMilliseconds).round(),
     );
+    setState(() => _position = position);
+    unawaited(_player.seek(position));
   }
 
   @override

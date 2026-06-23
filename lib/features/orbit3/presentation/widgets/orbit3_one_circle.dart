@@ -45,6 +45,16 @@ class Orbit3OneCircle extends StatelessWidget {
   final ValueChanged<OrbitFriend>? onFriendTap;
   final ValueChanged<Orbit2Group>? onGroupTap;
 
+  /// When set, hard-caps the rings (Inner-Orbit prototype passes 3). The circle
+  /// never grows past this; the overflow becomes a permanent "+N" node whose tap
+  /// ([onToggleExpand]) launches the long tail elsewhere (e.g. the Sky/Map view)
+  /// instead of growing the box. Null = the shipped expand/collapse behaviour.
+  final int? cappedRings;
+
+  /// Long-press a seated member — used by the prototype to "release" (demote) a
+  /// member out of the capped Inner Orbit back into the drawer.
+  final ValueChanged<Orbit2InnerItem>? onMemberLongPress;
+
   const Orbit3OneCircle({
     super.key,
     required this.userPeerId,
@@ -58,6 +68,8 @@ class Orbit3OneCircle extends StatelessWidget {
     this.onToggleExpand,
     this.onFriendTap,
     this.onGroupTap,
+    this.cappedRings,
+    this.onMemberLongPress,
   });
 
   Offset _pos(int index, int count, double radius, int ring) {
@@ -73,8 +85,11 @@ class Orbit3OneCircle extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     final names = namesVisible;
 
-    final layout =
-        computeOrbit3RingLayout(count: items.length, expanded: expanded);
+    final layout = computeOrbit3RingLayout(
+      count: items.length,
+      expanded: expanded,
+      maxVisibleRings: cappedRings,
+    );
     final counts = layout.counts;
     final radii = layout.radii;
     final avatarSizes = layout.avatarSizes;
@@ -82,10 +97,14 @@ class Orbit3OneCircle extends StatelessWidget {
     final c = box / 2;
 
     // The expand/collapse node rides the outermost VISIBLE ring (Orbit2 style),
-    // occupying one reserved slot so it never lands on a member.
+    // occupying one reserved slot so it never lands on a member. When capped, the
+    // node is a permanent "+N → launch" affordance (never a collapse).
+    final capped = cappedRings != null;
     final outerRing = counts.isEmpty ? 0 : counts.length - 1;
-    final showExpand = !expanded && layout.hasHidden;
-    final showCollapse = expanded && layout.totalRings > kOrbit3CollapsedRings;
+    final showExpand = capped ? layout.hasHidden : (!expanded && layout.hasHidden);
+    final showCollapse = capped
+        ? false
+        : (expanded && layout.totalRings > kOrbit3CollapsedRings);
     final hasNode = showExpand || showCollapse;
 
     final q = searchQuery.trim().toLowerCase();
@@ -142,6 +161,9 @@ class Orbit3OneCircle extends StatelessWidget {
             onTap: it.isGroup
                 ? (onGroupTap == null ? null : () => onGroupTap!(it.group!))
                 : (onFriendTap == null ? null : () => onFriendTap!(it.friend!)),
+            onLongPress: onMemberLongPress == null
+                ? null
+                : () => onMemberLongPress!(it),
             child: SizedBox(
               width: t,
               height: t,

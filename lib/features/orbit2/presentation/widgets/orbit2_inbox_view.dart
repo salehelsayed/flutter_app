@@ -41,8 +41,12 @@ class Orbit2InboxView extends StatelessWidget {
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(10, 6, 10, 92),
       itemCount: entries.length,
-      itemBuilder: (context, i) =>
-          _InboxRow(entry: entries[i], readable: readable, onOpenFriend: onOpenFriend, onOpenGroup: onOpenGroup),
+      itemBuilder: (context, i) => _InboxRow(
+        entry: entries[i],
+        readable: readable,
+        onOpenFriend: onOpenFriend,
+        onOpenGroup: onOpenGroup,
+      ),
     );
   }
 }
@@ -62,12 +66,13 @@ class _InboxRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final line = entry.lastLine;
-    final preview = line.isMe ? 'You: ${line.text}' : line.text;
+    final preview = line.isMe ? '${l10n.orbit2_you}: ${line.text}' : line.text;
 
     return Semantics(
       button: true,
-      label: 'Open chat with ${entry.title}',
+      label: l10n.orbit2_open_chat_with(entry.title),
       child: GestureDetector(
         key: ValueKey('inbox-row-${entry.id}'),
         behavior: HitTestBehavior.opaque,

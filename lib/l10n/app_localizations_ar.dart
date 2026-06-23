@@ -875,6 +875,16 @@ class AppLocalizationsAr extends AppLocalizations {
   String get media_gif_too_large => 'لا يمكن إضافة ملفات GIF أكبر من 25 م.ب.';
 
   @override
+  String get media_too_large_chip => 'كبير جدًا';
+
+  @override
+  String get media_gif_too_large_chip => '‏GIF كبير جدًا';
+
+  @override
+  String get media_attachments_too_large_note =>
+      'المرفقات كبيرة جدًا — أزل بعضها للإرسال.';
+
+  @override
   String get media_unavailable => 'الوسائط غير متاحة';
 
   @override
@@ -928,6 +938,33 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get message_status_pending_inbox => 'تسليم معلّق عبر صندوق الوارد';
+
+  @override
+  String get message_status_inbox => 'تم التسليم إلى صندوق الوارد';
+
+  @override
+  String get message_sent_via_relay => 'أُرسلت عبر مُرحِّل خلوي';
+
+  @override
+  String get message_sent_via_direct => 'أُرسلت عبر اتصال مباشر';
+
+  @override
+  String get message_sent_via_wifi => 'أُرسلت عبر واي فاي';
+
+  @override
+  String get message_sent_via_inbox => 'أُرسلت إلى صندوق الوارد';
+
+  @override
+  String get message_received_via_relay => 'وَردت عبر مُرحِّل خلوي';
+
+  @override
+  String get message_received_via_direct => 'وَردت عبر اتصال مباشر';
+
+  @override
+  String get message_received_via_wifi => 'وَردت عبر واي فاي';
+
+  @override
+  String get message_received_via_inbox => 'وَردت عبر صندوق الوارد';
 
   @override
   String get share_send_failed => 'تعذرت المشاركة مع الأهداف المحددة.';
@@ -1113,6 +1150,18 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get group_info_remove_action => 'إزالة';
+
+  @override
+  String group_info_revoke_invite_title(String username) {
+    return 'إلغاء دعوة $username؟';
+  }
+
+  @override
+  String get group_info_revoke_invite_body =>
+      'لن يتمكنوا من الانضمام إلى المجموعة بهذه الدعوة بعد الآن.';
+
+  @override
+  String get group_info_revoke_invite_action => 'إلغاء';
 
   @override
   String get group_info_member_fallback => 'عضو';
@@ -1670,6 +1719,16 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get perm_microphone_record =>
       'يلزم إذن الميكروفون لتسجيل الرسائل الصوتية.';
+
+  @override
+  String get mic_perm_dialog_title => 'إذن الميكروفون مطلوب';
+
+  @override
+  String get mic_perm_dialog_body =>
+      'للسماح بتسجيل الرسائل الصوتية، فعّل إذن الميكروفون من الإعدادات.';
+
+  @override
+  String get mic_perm_not_now => 'ليس الآن';
 
   @override
   String get group_read_only_not_active =>
@@ -2277,6 +2336,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get group_invite_needs_key => 'تحتاج الدعوة إلى مادة مفاتيح جديدة';
 
   @override
+  String get group_invite_waiting_for_key => 'في انتظار المفتاح';
+
+  @override
   String get group_invite_invalid => 'لم تعد الدعوة صالحة';
 
   @override
@@ -2644,4 +2706,49 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get orbit2_inbox_empty => 'لا محادثات بعد';
+
+  @override
+  String orbit2_open_chat_with(String name) {
+    return 'افتح محادثة مع $name';
+  }
+
+  @override
+  String get orbit3_constellation_zodiac => 'الأبراج';
+
+  @override
+  String get orbit3_constellation_galaxy => 'المجرة';
+
+  @override
+  String get orbit3_listens => 'يستمع';
+
+  @override
+  String get orbit3_talks => 'يتحدث';
+
+  @override
+  String orbit3_released_to_drawer(String name) {
+    return 'تم نقل $name إلى الدرج';
+  }
+
+  @override
+  String get orbit3_inner_short => 'داخلي';
+
+  @override
+  String get orbit3_all_friends => 'كل الأصدقاء';
+
+  @override
+  String get orbit3_drag_up_to_search => 'اسحب للأعلى للبحث';
+
+  @override
+  String get orbit3_find_anyone => 'ابحث عن أي شخص';
+
+  @override
+  String get orbit3_pin => 'تثبيت';
+
+  @override
+  String orbit3_pulled_into_inner_tier(String name) {
+    return 'تم سحب $name إلى الطبقة الداخلية';
+  }
+
+  @override
+  String get orbit3_tap_to_open => 'اضغط للفتح';
 }

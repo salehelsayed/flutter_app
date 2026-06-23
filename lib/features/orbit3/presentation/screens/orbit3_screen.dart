@@ -20,11 +20,18 @@ import '../../application/orbit3_mock_data.dart';
 import '../../domain/orbit3_connection_profile.dart';
 import '../../domain/orbit3_constellation_geometry.dart';
 import '../widgets/orbit3_constellation.dart';
+import '../widgets/orbit3_fisheye_prototype.dart';
+import '../widgets/orbit3_inner_sky_prototype.dart';
 import '../widgets/orbit3_one_circle.dart';
 
 /// Which Orbit3 view is on screen: the packed One Circle, or the new
 /// deterministic relationship constellation ("horoscope") fingerprint.
 enum Orbit3ViewMode { oneCircle, constellation }
+
+/// Which scalability prototype is mounted. [classic] is the shipped One
+/// Circle/Map pairing (default, unchanged). [innerSky] and [fisheye] are the two
+/// throwaway directions being compared for "what to do above ~25 friends".
+enum Orbit3Lab { classic, innerSky, fisheye }
 
 /// Orbit3 — a minimal, self-contained "One Circle" prototype (visuals only).
 ///
@@ -63,6 +70,9 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
   bool _expanded = false;
   String _searchQuery = '';
 
+  // Which scalability prototype is mounted (classic = shipped behaviour).
+  Orbit3Lab _lab = Orbit3Lab.classic;
+
   // Constellation ("horoscope") sub-view state.
   Orbit3ViewMode _viewMode = Orbit3ViewMode.oneCircle;
   Orbit3ConstellationMode _constMode = Orbit3ConstellationMode.zodiac;
@@ -90,13 +100,14 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
       vsync: this,
       duration: const Duration(seconds: 8),
     )..repeat();
-    _zoomAnim = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 450),
-    )..addListener(() {
-        final tw = _zoomTween;
-        if (tw != null) _constZoom.value = tw.value;
-      });
+    _zoomAnim =
+        AnimationController(
+          vsync: this,
+          duration: const Duration(milliseconds: 450),
+        )..addListener(() {
+          final tw = _zoomTween;
+          if (tw != null) _constZoom.value = tw.value;
+        });
   }
 
   @override
@@ -123,9 +134,10 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
       ..setEntry(1, 1, scale)
       ..setEntry(0, 3, center.dx * (1 - scale))
       ..setEntry(1, 3, center.dy * (1 - scale));
-    _zoomTween = Matrix4Tween(begin: _constZoom.value, end: target).animate(
-      CurvedAnimation(parent: _zoomAnim, curve: Curves.easeInOut),
-    );
+    _zoomTween = Matrix4Tween(
+      begin: _constZoom.value,
+      end: target,
+    ).animate(CurvedAnimation(parent: _zoomAnim, curve: Curves.easeInOut));
     _zoomAnim.forward(from: 0);
   }
 
@@ -160,6 +172,24 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
           : Orbit3ViewMode.oneCircle;
     });
   }
+
+  void _cycleLab() {
+    HapticFeedback.selectionClick();
+    _resetZoom();
+    final values = Orbit3Lab.values;
+    setState(() {
+      _lab = values[(_lab.index + 1) % values.length];
+      // Returning to a fresh lab always starts from the One Circle base state.
+      _viewMode = Orbit3ViewMode.oneCircle;
+      _expanded = false;
+    });
+  }
+
+  String get _labLabel => switch (_lab) {
+    Orbit3Lab.classic => 'Classic',
+    Orbit3Lab.innerSky => 'Inner+Sky',
+    Orbit3Lab.fisheye => 'Fisheye',
+  };
 
   void _cycleConstMode() {
     HapticFeedback.selectionClick();
@@ -238,108 +268,145 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                 onCyclePopulation: _cyclePopulation,
                 namesVisible: _namesVisible,
                 onToggleNames: _toggleNames,
+                isClassic: _lab == Orbit3Lab.classic,
+                labLabel: _labLabel,
+                onCycleLab: _cycleLab,
               ),
               if (_viewMode == Orbit3ViewMode.constellation)
                 _ConstellationLegend(
                   readable: readable,
+                  l10n: l10n,
                   mode: _constMode,
                   onCycleMode: _cycleConstMode,
                   archetype: _archetype,
                   onCycleArchetype: _cycleArchetype,
                 ),
               Expanded(
-                child: Stack(
-                  children: [
-                    Positioned.fill(
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        // The circle renders at its intrinsic Orbit-parity size
-                        // (320 collapsed, larger as rings are revealed) and
-                        // scales DOWN only when the grown box exceeds the screen.
-                        child: Center(
-                          child: _viewMode == Orbit3ViewMode.constellation
-                              ? LayoutBuilder(
-                                  builder: (context, constraints) {
-                                    if (constraints.maxWidth.isFinite &&
-                                        constraints.maxHeight.isFinite) {
-                                      _viewport = Size(constraints.maxWidth,
-                                          constraints.maxHeight);
-                                    }
-                                    return AnimatedBuilder(
-                                      animation: Listenable.merge(
-                                          [_twinkle, _constZoom]),
-                                      builder: (context, _) {
-                                        final zoom = _constZoom.value
-                                            .getMaxScaleOnAxis();
-                                        return InteractiveViewer(
-                                      transformationController: _constZoom,
-                                      minScale: 1.0,
-                                      maxScale: 4.5,
-                                      boundaryMargin:
-                                          const EdgeInsets.all(120),
-                                      child: FittedBox(
-                                        fit: BoxFit.contain,
-                                        child: Orbit3Constellation(
+                child: _lab == Orbit3Lab.innerSky
+                    ? Orbit3InnerSkyPrototype(
+                        userPeerId: widget.userPeerId,
+                        userAvatarBytes: widget.userAvatarBytes,
+                        items: _items,
+                        namesVisible: _namesVisible,
+                        motionEnabled: motionEnabled,
+                        t: motionEnabled ? _twinkle.value : 0.0,
+                        onToggleNames: _toggleNames,
+                        onFriendTap: _openFriendChat,
+                        onGroupTap: _openGroupChat,
+                      )
+                    : _lab == Orbit3Lab.fisheye
+                    ? Orbit3FisheyePrototype(
+                        userPeerId: widget.userPeerId,
+                        userAvatarBytes: widget.userAvatarBytes,
+                        items: _items,
+                        namesVisible: _namesVisible,
+                        motionEnabled: motionEnabled,
+                        onToggleNames: _toggleNames,
+                        onFriendTap: _openFriendChat,
+                        onGroupTap: _openGroupChat,
+                      )
+                    : Stack(
+                        children: [
+                          Positioned.fill(
+                            child: Padding(
+                              padding: const EdgeInsets.all(12),
+                              // The circle renders at its intrinsic Orbit-parity size
+                              // (320 collapsed, larger as rings are revealed) and
+                              // scales DOWN only when the grown box exceeds the screen.
+                              child: Center(
+                                child: _viewMode == Orbit3ViewMode.constellation
+                                    ? LayoutBuilder(
+                                        builder: (context, constraints) {
+                                          if (constraints.maxWidth.isFinite &&
+                                              constraints.maxHeight.isFinite) {
+                                            _viewport = Size(
+                                              constraints.maxWidth,
+                                              constraints.maxHeight,
+                                            );
+                                          }
+                                          return AnimatedBuilder(
+                                            animation: Listenable.merge([
+                                              _twinkle,
+                                              _constZoom,
+                                            ]),
+                                            builder: (context, _) {
+                                              final zoom = _constZoom.value
+                                                  .getMaxScaleOnAxis();
+                                              return InteractiveViewer(
+                                                transformationController:
+                                                    _constZoom,
+                                                minScale: 1.0,
+                                                maxScale: 4.5,
+                                                boundaryMargin:
+                                                    const EdgeInsets.all(120),
+                                                child: FittedBox(
+                                                  fit: BoxFit.contain,
+                                                  child: Orbit3Constellation(
+                                                    userPeerId:
+                                                        widget.userPeerId,
+                                                    userAvatarBytes:
+                                                        widget.userAvatarBytes,
+                                                    profiles: _profiles,
+                                                    mode: _constMode,
+                                                    namesVisible: _namesVisible,
+                                                    motionEnabled:
+                                                        motionEnabled,
+                                                    searchQuery: _searchQuery,
+                                                    t: motionEnabled
+                                                        ? _twinkle.value
+                                                        : 0.0,
+                                                    zoom: zoom,
+                                                    onToggleNames: _toggleNames,
+                                                    onFriendTap:
+                                                        _openFriendChat,
+                                                    onGroupTap: _openGroupChat,
+                                                  ),
+                                                ),
+                                              );
+                                            },
+                                          );
+                                        },
+                                      )
+                                    : FittedBox(
+                                        fit: BoxFit.scaleDown,
+                                        child: Orbit3OneCircle(
                                           userPeerId: widget.userPeerId,
                                           userAvatarBytes:
                                               widget.userAvatarBytes,
-                                          profiles: _profiles,
-                                          mode: _constMode,
+                                          items: _items,
+                                          expanded: _expanded,
                                           namesVisible: _namesVisible,
                                           motionEnabled: motionEnabled,
                                           searchQuery: _searchQuery,
-                                          t: motionEnabled
-                                              ? _twinkle.value
-                                              : 0.0,
-                                          zoom: zoom,
                                           onToggleNames: _toggleNames,
+                                          onToggleExpand: _toggleExpand,
                                           onFriendTap: _openFriendChat,
                                           onGroupTap: _openGroupChat,
                                         ),
                                       ),
-                                    );
-                                  },
-                                    );
-                                  },
-                                )
-                              : FittedBox(
-                                  fit: BoxFit.scaleDown,
-                                  child: Orbit3OneCircle(
-                                    userPeerId: widget.userPeerId,
-                                    userAvatarBytes: widget.userAvatarBytes,
-                                    items: _items,
-                                    expanded: _expanded,
-                                    namesVisible: _namesVisible,
-                                    motionEnabled: motionEnabled,
-                                    searchQuery: _searchQuery,
-                                    onToggleNames: _toggleNames,
-                                    onToggleExpand: _toggleExpand,
-                                    onFriendTap: _openFriendChat,
-                                    onGroupTap: _openGroupChat,
-                                  ),
-                                ),
-                        ),
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            right: 12,
+                            bottom: 12,
+                            child: _Orbit3SearchPill(
+                              onChanged: (q) =>
+                                  setState(() => _searchQuery = q),
+                            ),
+                          ),
+                          if (_viewMode == Orbit3ViewMode.constellation)
+                            Positioned(
+                              left: 12,
+                              bottom: 12,
+                              child: _ZoomControls(
+                                readable: readable,
+                                onZoomIn: _zoomIn,
+                                onZoomOut: _zoomOut,
+                              ),
+                            ),
+                        ],
                       ),
-                    ),
-                    Positioned(
-                      right: 12,
-                      bottom: 12,
-                      child: _Orbit3SearchPill(
-                        onChanged: (q) => setState(() => _searchQuery = q),
-                      ),
-                    ),
-                    if (_viewMode == Orbit3ViewMode.constellation)
-                      Positioned(
-                        left: 12,
-                        bottom: 12,
-                        child: _ZoomControls(
-                          readable: readable,
-                          onZoomIn: _zoomIn,
-                          onZoomOut: _zoomOut,
-                        ),
-                      ),
-                  ],
-                ),
               ),
               if (widget.activeTab != null && widget.onSwitchView != null)
                 Padding(
@@ -366,6 +433,9 @@ class _TopBar extends StatelessWidget {
   final VoidCallback onCyclePopulation;
   final bool namesVisible;
   final VoidCallback onToggleNames;
+  final bool isClassic;
+  final String labLabel;
+  final VoidCallback onCycleLab;
 
   const _TopBar({
     required this.readable,
@@ -376,6 +446,9 @@ class _TopBar extends StatelessWidget {
     required this.onCyclePopulation,
     required this.namesVisible,
     required this.onToggleNames,
+    required this.isClassic,
+    required this.labLabel,
+    required this.onCycleLab,
   });
 
   @override
@@ -387,7 +460,7 @@ class _TopBar extends StatelessWidget {
       child: Row(
         children: [
           Text(
-            'Orbit3',
+            l10n.nav_orbit3,
             style: TextStyle(
               fontSize: 22,
               fontWeight: FontWeight.w700,
@@ -396,61 +469,87 @@ class _TopBar extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 10),
-          _Chip(
-            chipKey: const ValueKey('orbit3-view-toggle'),
-            readable: readable,
-            icon: isConstellation
-                ? Icons.bubble_chart_rounded
-                : Icons.blur_circular_rounded,
-            text: isConstellation ? 'Map' : 'Circle',
-            active: isConstellation,
-            onTap: onToggleView,
-            semanticLabel:
-                isConstellation ? 'Show one circle' : 'Show constellation',
-          ),
-          const SizedBox(width: 8),
-          if (!isConstellation) ...[
-            _Chip(
-              chipKey: const ValueKey('orbit3-population-cycler'),
-              readable: readable,
-              icon: Icons.people_alt_rounded,
-              text: '$population',
-              onTap: onCyclePopulation,
-              semanticLabel: 'Population: $population',
-            ),
-            const SizedBox(width: 8),
-          ],
-          _Chip(
-            chipKey: const ValueKey('orbit3-names-toggle'),
-            readable: readable,
-            icon:
-                namesVisible ? Icons.label_rounded : Icons.label_off_rounded,
-            active: namesVisible,
-            onTap: onToggleNames,
-            semanticLabel:
-                namesVisible ? l10n.orbit2_names_hide : l10n.orbit2_names_show,
-          ),
-          const Spacer(),
-          Flexible(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: AppColors.primaryAccent.withValues(alpha: 0.14),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: AppColors.primaryAccent.withValues(alpha: 0.4),
+          // The chips WRAP rather than overflow — adding the lab cycler can never
+          // clip the bar on a narrow phone.
+          Expanded(
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                _Chip(
+                  chipKey: const ValueKey('orbit3-lab-cycler'),
+                  readable: readable,
+                  icon: Icons.science_rounded,
+                  text: labLabel,
+                  active: !isClassic,
+                  onTap: onCycleLab,
+                  semanticLabel: 'Prototype: $labLabel (tap to switch)',
                 ),
-              ),
-              child: Text(
-                l10n.orbit2_prototype_chip,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF1ED760),
+                if (isClassic)
+                  _Chip(
+                    chipKey: const ValueKey('orbit3-view-toggle'),
+                    readable: readable,
+                    icon: isConstellation
+                        ? Icons.bubble_chart_rounded
+                        : Icons.blur_circular_rounded,
+                    text: isConstellation ? 'Map' : 'Circle',
+                    active: isConstellation,
+                    onTap: onToggleView,
+                    semanticLabel: isConstellation
+                        ? 'Show one circle'
+                        : 'Show constellation',
+                  ),
+                if (!isConstellation)
+                  _Chip(
+                    chipKey: const ValueKey('orbit3-population-cycler'),
+                    readable: readable,
+                    icon: Icons.people_alt_rounded,
+                    text: '$population',
+                    onTap: onCyclePopulation,
+                    semanticLabel: 'Population: $population',
+                  ),
+                _Chip(
+                  chipKey: const ValueKey('orbit3-names-toggle'),
+                  readable: readable,
+                  icon: namesVisible
+                      ? Icons.label_rounded
+                      : Icons.label_off_rounded,
+                  active: namesVisible,
+                  onTap: onToggleNames,
+                  semanticLabel: namesVisible
+                      ? l10n.orbit2_names_hide
+                      : l10n.orbit2_names_show,
                 ),
-              ),
+                // The "prototype" badge wraps with the chips (one flex child) so
+                // it never competes with them for width on a narrow phone.
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 168),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryAccent.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: AppColors.primaryAccent.withValues(alpha: 0.4),
+                      ),
+                    ),
+                    child: Text(
+                      l10n.orbit2_prototype_chip,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF1ED760),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -505,11 +604,19 @@ class _ZoomControls extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _btn(Icons.add_rounded, onZoomIn, 'Zoom in',
-                  const ValueKey('orbit3-zoom-in')),
+              _btn(
+                Icons.add_rounded,
+                onZoomIn,
+                'Zoom in',
+                const ValueKey('orbit3-zoom-in'),
+              ),
               Container(height: 1, width: 26, color: readable.glassBorder),
-              _btn(Icons.remove_rounded, onZoomOut, 'Zoom out',
-                  const ValueKey('orbit3-zoom-out')),
+              _btn(
+                Icons.remove_rounded,
+                onZoomOut,
+                'Zoom out',
+                const ValueKey('orbit3-zoom-out'),
+              ),
             ],
           ),
         ),
@@ -590,6 +697,7 @@ class _Chip extends StatelessWidget {
 /// note explaining HOW the current map is ordered.
 class _ConstellationLegend extends StatelessWidget {
   final BackgroundReadableColors readable;
+  final AppLocalizations l10n;
   final Orbit3ConstellationMode mode;
   final VoidCallback onCycleMode;
   final Orbit3Archetype archetype;
@@ -597,6 +705,7 @@ class _ConstellationLegend extends StatelessWidget {
 
   const _ConstellationLegend({
     required this.readable,
+    required this.l10n,
     required this.mode,
     required this.onCycleMode,
     required this.archetype,
@@ -604,22 +713,28 @@ class _ConstellationLegend extends StatelessWidget {
   });
 
   ({IconData icon, String label}) get _modeMeta => switch (mode) {
-        Orbit3ConstellationMode.zodiac =>
-          (icon: Icons.auto_awesome, label: 'Zodiac'),
-        Orbit3ConstellationMode.galaxy =>
-          (icon: Icons.blur_on, label: 'Galaxy'),
-        Orbit3ConstellationMode.gravity =>
-          (icon: Icons.public, label: 'Gravity'),
-      };
+    Orbit3ConstellationMode.zodiac => (
+      icon: Icons.auto_awesome,
+      label: l10n.orbit3_constellation_zodiac,
+    ),
+    Orbit3ConstellationMode.galaxy => (
+      icon: Icons.blur_on,
+      label: l10n.orbit3_constellation_galaxy,
+    ),
+    Orbit3ConstellationMode.gravity => (
+      icon: Icons.public,
+      label: l10n.orbit2_template_gravity,
+    ),
+  };
 
   String get _howOrdered => switch (mode) {
-        Orbit3ConstellationMode.zodiac =>
-          'Angle = when you met (oldest at the top ↑, going clockwise). Closer to the centre = closer to you now. The gold thread traces your timeline.',
-        Orbit3ConstellationMode.galaxy =>
-          'The spiral is your timeline — centre = oldest, edge = newest. Talkers lean to one side of the arm, listeners the other. Pinch to zoom into the milky way.',
-        Orbit3ConstellationMode.gravity =>
-          'Distance from you = how close you are. Bigger star = you chat more. People you were introduced to orbit the friend who introduced them.',
-      };
+    Orbit3ConstellationMode.zodiac =>
+      'Angle = when you met (oldest at the top ↑, going clockwise). Closer to the centre = closer to you now. The gold thread traces your timeline.',
+    Orbit3ConstellationMode.galaxy =>
+      'The spiral is your timeline — centre = oldest, edge = newest. Talkers lean to one side of the arm, listeners the other. Pinch to zoom into the milky way.',
+    Orbit3ConstellationMode.gravity =>
+      'Distance from you = how close you are. Bigger star = you chat more. People you were introduced to orbit the friend who introduced them.',
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -660,8 +775,11 @@ class _ConstellationLegend extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.info_outline_rounded,
-                  size: 12, color: readable.iconMuted),
+              Icon(
+                Icons.info_outline_rounded,
+                size: 12,
+                color: readable.iconMuted,
+              ),
               const SizedBox(width: 5),
               Expanded(
                 child: Text(
@@ -690,6 +808,7 @@ class _ReciprocityLegend extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final cap = TextStyle(
       fontSize: 8.5,
       color: readable.textMuted,
@@ -703,11 +822,9 @@ class _ReciprocityLegend extends StatelessWidget {
           height: 7,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(4),
-            gradient: const LinearGradient(colors: [
-              Color(0xFF4ECDC4),
-              Color(0xFFFFF1C0),
-              Color(0xFFFF6B6B),
-            ]),
+            gradient: const LinearGradient(
+              colors: [Color(0xFF4ECDC4), Color(0xFFFFF1C0), Color(0xFFFF6B6B)],
+            ),
           ),
         ),
         const SizedBox(height: 2),
@@ -717,14 +834,22 @@ class _ReciprocityLegend extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Flexible(
-                  child: Text('listens',
-                      maxLines: 1, overflow: TextOverflow.clip, style: cap)),
+                child: Text(
+                  l10n.orbit3_listens,
+                  maxLines: 1,
+                  overflow: TextOverflow.clip,
+                  style: cap,
+                ),
+              ),
               Flexible(
-                  child: Text('talks',
-                      maxLines: 1,
-                      overflow: TextOverflow.clip,
-                      textAlign: TextAlign.right,
-                      style: cap)),
+                child: Text(
+                  l10n.orbit3_talks,
+                  maxLines: 1,
+                  overflow: TextOverflow.clip,
+                  textAlign: TextAlign.right,
+                  style: cap,
+                ),
+              ),
             ],
           ),
         ),
@@ -812,7 +937,9 @@ class _Orbit3SearchPillState extends State<_Orbit3SearchPill> {
                             autofocus: true,
                             onChanged: widget.onChanged,
                             style: TextStyle(
-                                fontSize: 13.5, color: readable.textPrimary),
+                              fontSize: 13.5,
+                              color: readable.textPrimary,
+                            ),
                             cursorColor: AppColors.primaryAccent,
                             decoration: InputDecoration(
                               isDense: true,

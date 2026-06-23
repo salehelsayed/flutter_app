@@ -28,6 +28,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/services/fake_p2p_service.dart';
 import '../../../../shared/fakes/fake_audio_recorder_service.dart';
+import '../../../../shared/fakes/fake_mic_permission_gateway.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../../shared/fakes/fake_upload_wake_lock_driver.dart';
 import '../../../../shared/fakes/in_memory_contact_repository.dart';
@@ -363,6 +364,7 @@ Future<void> _pumpGroupConversationWired(
         mediaAttachmentRepo: effectiveMediaRepo,
         mediaFileManager: mediaFileManager,
         audioRecorderService: audioRecorderService,
+        micPermissionGateway: FakeMicPermissionGateway(),
         uploadMediaFn: uploadMediaFn ?? uploadMedia,
         initialAttachments: initialAttachments,
       ),

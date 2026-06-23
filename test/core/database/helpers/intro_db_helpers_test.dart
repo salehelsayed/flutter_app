@@ -733,12 +733,17 @@ void main() {
     test(
       'commits the local response and accept fan-out rows together',
       () async {
+        final now = DateTime.now().toUtc();
+        final createdAt = now
+            .subtract(const Duration(days: 1))
+            .toIso8601String();
+        final respondedAt = now.toIso8601String();
         await dbInsertIntroduction(
           db,
           makeIntroductionRow(
             id: 'intro-accept',
             status: 'pending',
-            createdAt: '2026-05-22T11:00:00.000Z',
+            createdAt: createdAt,
           ),
         );
         final introducerDelivery = makeOutboxRow(
@@ -746,16 +751,16 @@ void main() {
           introductionId: 'intro-accept',
           deliveryStatus: 'sending',
           deliveryPath: 'pending',
-          createdAt: '2026-04-03T11:01:00.000Z',
-          updatedAt: '2026-04-03T11:01:00.000Z',
+          createdAt: respondedAt,
+          updatedAt: respondedAt,
         );
         final otherPartyDelivery = makeOutboxRow(
           deliveryId: 'delivery-other-party',
           introductionId: 'intro-accept',
           deliveryStatus: 'sending',
           deliveryPath: 'pending',
-          createdAt: '2026-04-03T11:01:00.000Z',
-          updatedAt: '2026-04-03T11:01:00.000Z',
+          createdAt: respondedAt,
+          updatedAt: respondedAt,
         );
 
         await dbSaveIntroductionResponseWithOutboxDeliveries(
@@ -763,7 +768,7 @@ void main() {
           introductionId: 'intro-accept',
           isRecipient: true,
           responseStatus: 'accepted',
-          respondedAt: '2026-04-03T11:01:00.000Z',
+          respondedAt: respondedAt,
           overallStatus: 'pending',
           deliveryRows: [introducerDelivery, otherPartyDelivery],
         );
@@ -780,10 +785,7 @@ void main() {
             );
 
         expect(introRows.single['recipient_status'], 'accepted');
-        expect(
-          introRows.single['recipient_responded_at'],
-          '2026-04-03T11:01:00.000Z',
-        );
+        expect(introRows.single['recipient_responded_at'], respondedAt);
         expect(introRows.single['introduced_status'], 'pending');
         expect(introRows.single['status'], 'pending');
         expect(outboxRows.map((row) => row['delivery_id']).toSet(), {

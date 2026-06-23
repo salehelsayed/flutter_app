@@ -12,7 +12,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 ///
 /// Grep marker on device: `idevicesyslog -m MKNOON_MIG`.
 ///
-/// Beta diagnostic. Flip to `false` for GA (see Test-Flight-Improv plan 130, OQ-3).
+/// Beta diagnostic. Flip to `false` for GA after migration diagnostics close.
 const bool kAccountMigrationTelemetry = true;
 
 /// Test seam: when set, breadcrumb lines are routed here instead of
@@ -40,10 +40,14 @@ void migrationBreadcrumb(
 }) {
   final String line;
   try {
-    final sanitized = sanitizeFlowEventDetails(Map<String, dynamic>.from(fields));
+    final sanitized = sanitizeFlowEventDetails(
+      Map<String, dynamic>.from(fields),
+    );
     final buffer = StringBuffer('MKNOON_MIG ')..write(event);
     sanitized.forEach((key, value) {
-      final text = sanitizeDiagnosticText(value).replaceAll(RegExp(r'\s+'), ' ').trim();
+      final text = sanitizeDiagnosticText(
+        value,
+      ).replaceAll(RegExp(r'\s+'), ' ').trim();
       buffer.write(' $key=$text');
     });
     line = buffer.toString();

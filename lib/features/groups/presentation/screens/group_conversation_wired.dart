@@ -17,6 +17,8 @@ import 'package:flutter_app/core/media/downsample_waveform.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
+import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
+import 'package:flutter_app/core/permissions/mic_permission_prompt.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -29,6 +31,7 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_rejection.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
@@ -135,6 +138,13 @@ class GroupConversationWired extends StatefulWidget {
   final ImageQualityPreference qualityPreference;
   final ImageQualityPreference videoQualityPreference;
   final AudioRecorderService? audioRecorderService;
+
+  /// Permission authority for the voice-record mic (152) — shared seam with the
+  /// 1:1 screen. On denial the screen routes through this gateway so a
+  /// `permanentlyDenied` user sees the shared rationale dialog + "Open Settings"
+  /// deep-link instead of a dead-end toast. Production gets the real plugin via
+  /// the default; tests inject a fake.
+  final MicPermissionGateway micPermissionGateway;
   final ActiveConversationTracker? groupConversationTracker;
   final String? initialHighlightedMessageId;
   final List<File>? initialAttachments;
@@ -167,6 +177,7 @@ class GroupConversationWired extends StatefulWidget {
     this.qualityPreference = ImageQualityPreference.compressed,
     this.videoQualityPreference = ImageQualityPreference.compressed,
     this.audioRecorderService,
+    this.micPermissionGateway = const PermissionHandlerMicGateway(),
     this.groupConversationTracker,
     this.initialHighlightedMessageId,
     this.initialAttachments,
@@ -1154,15 +1165,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     }
   }
 
-  void _showGifTooLargeMessage() {
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    messenger?.showSnackBar(
-      SnackBar(
-        content: Text(AppLocalizations.of(context)!.media_gif_too_large),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
 
   Future<void> _loadIdentity() async {
     try {
@@ -1508,19 +1510,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (!mounted) return;
 
     widget.groupConversationTracker?.clearIfActive(_activeGroupConversationKey);
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    messenger?.hideCurrentSnackBar();
-    messenger?.showSnackBar(
-      SnackBar(
-        content: Text(AppLocalizations.of(context)!.group_removed_snackbar),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-    // B5: B3 now RETAINS a removed member's group read-only instead of
+    // 151: B5/B3 RETAINS a removed member's group read-only instead of
     // hard-deleting it. If the group row still exists, keep the viewer on the
     // conversation in-place as read-only (refresh row + messages + security
-    // gates) rather than ejecting them. Only pop when the group was truly
-    // hard-deleted (e.g. a legacy quiet-group cleanup path).
+    // gates) — the persistent read-only banner is the durable feedback, so the
+    // retained path shows NO transient "you were removed" snackbar. Resolve the
+    // retain-vs-pop decision BEFORE any snackbar so the toast is scoped to the
+    // hard-delete/pop branch (where there is no surface left to host a banner).
     final retainedGroup = await widget.groupRepo.getGroup(widget.group.id);
     if (!mounted) return;
     if (retainedGroup != null) {
@@ -1530,6 +1526,16 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       return;
     }
     if (!mounted) return;
+    // Hard-deleted (e.g. a legacy quiet-group cleanup path): no banner surface
+    // survives the pop, so the snackbar is the only feedback here.
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger?.hideCurrentSnackBar();
+    messenger?.showSnackBar(
+      SnackBar(
+        content: Text(AppLocalizations.of(context)!.group_removed_snackbar),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
     Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
@@ -2266,19 +2272,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (!mounted) return;
 
     setState(() => _updateMediaForMessage(messageId, resolved));
-
-    final refreshedTarget = resolved
-        .where((attachment) => attachment.id == attachmentId)
-        .firstOrNull;
-    if (refreshedTarget == null ||
-        !GroupMediaIntegrityPolicy.canDisplayVerifiedGroupMedia(
-          refreshedTarget,
-        )) {
-      _showFloatingSnackBar(
-        AppLocalizations.of(context)!.media_still_unavailable,
-        backgroundColor: Colors.red[700],
-      );
-    }
+    // 149: the refreshed media's availability is now conveyed inline by the
+    // MediaGridCell unavailable/retry placeholder — the redundant transient
+    // "still unavailable" snackbar is dropped.
   }
 
   List<MediaAttachment> _replaceAttachment(
@@ -2340,9 +2336,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         if (!_tryBeginSendFlow()) return;
         _clearRestoredVoiceContinuationTracking(messageId: messageId);
         final bgTaskId = await _beginBackgroundTaskGuarded();
-        var retried = 0;
         try {
-          retried = await retryIncompleteGroupUploads(
+          await retryIncompleteGroupUploads(
             groupRepo: widget.groupRepo,
             groupMsgRepo: widget.msgRepo,
             mediaAttachmentRepo: mediaAttachmentRepo,
@@ -2371,26 +2366,22 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             _endSendFlow();
           }
         }
-        if (retried == 0) {
-          _showFloatingSnackBar(
-            AppLocalizations.of(context)!.failed_media_retry_failed,
-            backgroundColor: Colors.red[700],
-          );
-        }
+        // 149: the upload-pending / failed state is conveyed inline by the
+        // MediaGridCell placeholder — the redundant retry-failed snackbar is
+        // dropped.
         return;
       }
       await _refreshMessageWithHydratedMedia(
         messageId,
         fallbackMedia: fallbackMedia,
       );
-      _showFloatingSnackBar(
-        AppLocalizations.of(context)!.failed_media_upload_pending_retry,
-      );
+      // 149: the upload-pending state is conveyed inline by the MediaGridCell
+      // upload-pending placeholder — the redundant snackbar is dropped.
       return;
     }
 
     _clearRestoredVoiceContinuationTracking(messageId: messageId);
-    final retried = await retryFailedGroupMessage(
+    await retryFailedGroupMessage(
       messageId: messageId,
       groupMsgRepo: widget.msgRepo,
       groupRepo: widget.groupRepo,
@@ -2404,13 +2395,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       messageId,
       fallbackMedia: fallbackMedia,
     );
-
-    if (retried == 0) {
-      _showFloatingSnackBar(
-        AppLocalizations.of(context)!.failed_media_retry_failed,
-        backgroundColor: Colors.red[700],
-      );
-    }
+    // 149: the failed-media retry outcome is conveyed inline by the
+    // MediaGridCell unavailable/retry placeholder — the redundant retry-failed
+    // snackbar is dropped.
   }
 
   Future<void> _onRetryFailedMessage(String messageId) async {
@@ -3360,6 +3347,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   void _updateComposerState({
     List<File>? pendingAttachments,
+    Set<int>? invalidAttachmentIndices,
+    Map<int, String>? invalidAttachmentReasons,
     bool? isUploading,
     bool? isProcessing,
     double? processingProgress,
@@ -3370,8 +3359,40 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     List<double>? amplitudeValues,
   }) {
     final current = _composerState.value;
+    // 149: re-derive the size/GIF reject set from the LIVE pending list whenever
+    // the attachment list changes (pick/remove), so the inline reject-chip +
+    // Send-disable always track the current attachments. Size/GIF only — the
+    // unsupported-MIME hard reject stays a SEND-time snackbar, not a chip.
+    var nextInvalidIndices = invalidAttachmentIndices;
+    var nextInvalidReasons = invalidAttachmentReasons;
+    bool? nextHasTotalSizeOverflow;
+    if (pendingAttachments != null && invalidAttachmentIndices == null) {
+      if (pendingAttachments.isEmpty) {
+        nextInvalidIndices = const <int>{};
+        nextInvalidReasons = const <int, String>{};
+        nextHasTotalSizeOverflow = false;
+      } else {
+        final rejections = collectPendingMediaSizeRejections(
+          _pendingAttachments,
+          _mimeFromPath,
+        );
+        nextInvalidIndices = rejections.map((r) => r.index).toSet();
+        nextInvalidReasons = {
+          for (final rejection in rejections) rejection.index: rejection.reason,
+        };
+        // 149: individually-valid attachments whose summed bytes exceed the
+        // total message budget get a strip-level note (there is no per-chip
+        // index to mark). Suppressed when any attachment is over its own cap —
+        // that per-chip reject already disables Send, so the two never double up.
+        nextHasTotalSizeOverflow = nextInvalidIndices.isEmpty &&
+            pendingMediaTotalSizeOverflow(_pendingAttachments);
+      }
+    }
     final next = current.copyWith(
       pendingAttachments: pendingAttachments,
+      invalidAttachmentIndices: nextInvalidIndices,
+      invalidAttachmentReasons: nextInvalidReasons,
+      hasTotalSizeOverflow: nextHasTotalSizeOverflow,
       isUploading: isUploading,
       isProcessing: isProcessing,
       processingProgress: processingProgress,
@@ -3397,6 +3418,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         a.recordingState == b.recordingState &&
         a.recordingDuration == b.recordingDuration &&
         listEquals(a.amplitudeValues, b.amplitudeValues) &&
+        setEquals(a.invalidAttachmentIndices, b.invalidAttachmentIndices) &&
+        mapEquals(a.invalidAttachmentReasons, b.invalidAttachmentReasons) &&
+        a.hasTotalSizeOverflow == b.hasTotalSizeOverflow &&
         _fileListsEqual(a.pendingAttachments, b.pendingAttachments);
   }
 
@@ -3510,7 +3534,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       amplitudeValues: const [],
     );
 
-    final hasPermission = await recorder.requestPermission();
+    final status = await widget.micPermissionGateway.request();
     if (!mounted || _pendingRecorderAbort) {
       _updateComposerState(
         recordingState: VoiceRecordingState.idle,
@@ -3520,20 +3544,25 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       return;
     }
 
-    if (!hasPermission) {
+    if (status != MicPermissionStatus.granted) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(AppLocalizations.of(context)!.perm_microphone_record),
-            backgroundColor: Colors.red[700],
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-        _updateComposerState(
-          recordingState: VoiceRecordingState.idle,
-          recordingDuration: Duration.zero,
-          amplitudeValues: const [],
-        );
+        // permanentlyDenied/restricted = the OS will no longer re-prompt
+        // in-app, so the only recovery is the system Settings deep-link (152).
+        // Shared helper with the 1:1 screen so neither can drift back to a
+        // dead-end toast. A first plain `denied` just resets.
+        if (status == MicPermissionStatus.permanentlyDenied) {
+          await showMicPermissionDeniedPrompt(
+            context,
+            gateway: widget.micPermissionGateway,
+          );
+        }
+        if (mounted) {
+          _updateComposerState(
+            recordingState: VoiceRecordingState.idle,
+            recordingDuration: Duration.zero,
+            amplitudeValues: const [],
+          );
+        }
       }
       return;
     }
@@ -4632,6 +4661,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   bool _validatePendingGroupMediaDescriptors(List<PendingComposerMedia> media) {
+    // Unsupported-MIME is a hard reject of a never-displayable file → it stays a
+    // snackbar (out of the per-chip size/GIF scope, 149).
     for (final pending in media) {
       final mime = _mimeFromPath(pending.file.path);
       final validation = GroupMediaMimePolicy.validateDescriptor(
@@ -4650,36 +4681,36 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       );
       return false;
     }
-    final sizeValidation = GroupMediaSizePolicy.validateAttachments(
-      media
-          .map(
-            (pending) => MediaAttachment(
-              id: pending.file.path,
-              messageId: '',
-              mime: _mimeFromPath(pending.file.path),
-              size: pending.budgetBytes,
-              mediaType: MediaAttachment.mediaTypeFromMime(
-                _mimeFromPath(pending.file.path),
-              ),
-              downloadStatus: 'upload_pending',
-              createdAt: DateTime.now().toUtc().toIso8601String(),
-            ),
-          )
-          .toList(growable: false),
+    // Per-type SEND size gate: iterate `media` ourselves (capturing each index)
+    // instead of delegating to GroupMediaSizePolicy.validateAttachments, which
+    // discards the index. The inline composer reject-chip already carries the
+    // reason (149), so this path is snackbar-free.
+    final sizeRejections = collectPendingMediaSizeRejections(
+      media,
+      _mimeFromPath,
     );
-    if (!sizeValidation.isValid) {
+    if (sizeRejections.isNotEmpty) {
+      for (final rejection in sizeRejections) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_CONV_FL_MEDIA_REJECTED_INVALID_SIZE',
+          details: {'index': rejection.index, 'reason': rejection.reason},
+        );
+      }
+      return false;
+    }
+    // Whole-message budget (owns no single index) — preserve the prior
+    // total-size hard block.
+    final totalBytes = media.fold<int>(
+      0,
+      (sum, pending) => sum + pending.budgetBytes,
+    );
+    if (totalBytes > kGroupMediaTotalMessageLimitBytes) {
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_CONV_FL_MEDIA_REJECTED_INVALID_SIZE',
-        details: {'reason': sizeValidation.reason},
+        details: {'reason': 'total_media_size_exceeded'},
       );
-      // Route the type-aware reason to the right copy: the GIF-specific message
-      // for the GIF cap, otherwise the generic too-large message.
-      if (sizeValidation.reason == 'gif_size_exceeded') {
-        _showGifTooLargeMessage();
-      } else {
-        _showAttachmentTooLargeMessage();
-      }
       return false;
     }
     return true;

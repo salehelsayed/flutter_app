@@ -64,7 +64,7 @@ class _AckGatedRelay {
     _entries[entryId] = {
       'from': 'remote-sender',
       'message': message,
-      'timestamp': '2026-06-13T00:00:00.000Z',
+      'timestamp': DateTime.now().toUtc().toIso8601String(),
     };
     _entryIdByMessage[message] = entryId;
     return const InboxStoreOutcome(
@@ -137,8 +137,7 @@ class _RelayBackedBridge extends Bridge {
           'hasMore': false,
         });
       case 'inbox:ack':
-        final ids =
-            (payload?['entryIds'] as List?)?.cast<String>() ?? const [];
+        final ids = (payload?['entryIds'] as List?)?.cast<String>() ?? const [];
         return jsonEncode({'ok': true, 'acked': relay.ack(ids)});
       default:
         return jsonEncode({
@@ -154,7 +153,7 @@ ConversationMessage _inboxedSenderRow({
   required String id,
   required String wireEnvelope,
 }) {
-  final base = DateTime.utc(2026, 6, 13, 10);
+  final base = DateTime.now().toUtc().subtract(const Duration(days: 1));
   return ConversationMessage(
     id: id,
     contactPeerId: 'self-peer',
@@ -174,6 +173,10 @@ ConversationMessage _inboxedSenderRow({
 void main() {
   group('inbox custody verify + ack-gated relay delete (end-to-end)', () {
     // A real chat envelope the relay holds for the offline receiver.
+    final envelopeTimestamp = DateTime.now()
+        .toUtc()
+        .subtract(const Duration(hours: 1))
+        .toIso8601String();
     final envelope = jsonEncode({
       'type': 'chat_message',
       'version': '1',
@@ -182,7 +185,7 @@ void main() {
         'text': 'hello while offline',
         'senderPeerId': 'remote-sender',
         'senderUsername': 'Alice',
-        'timestamp': '2026-06-13T00:00:00.000Z',
+        'timestamp': envelopeTimestamp,
       },
     });
 
@@ -195,17 +198,24 @@ void main() {
       relay = _AckGatedRelay();
       messageRepo = FakeMessageRepository();
       custodyMarks = [];
-      senderRow = _inboxedSenderRow(id: 'msg-custody-e2e', wireEnvelope: envelope);
+      senderRow = _inboxedSenderRow(
+        id: 'msg-custody-e2e',
+        wireEnvelope: envelope,
+      );
       messageRepo.seed([senderRow]);
       // The sender originally stored the envelope at relay; it is now held.
-      expect(relay.store('self-peer', envelope).status, InboxStoreStatus.stored);
+      expect(
+        relay.store('self-peer', envelope).status,
+        InboxStoreStatus.stored,
+      );
       expect(relay.heldCount, 1);
     });
 
     Future<int> runCustodyVerify() {
       return verifyInboxCustody(
-        loadInboxCustody: ({required Duration recheckOlderThan}) async =>
-            [senderRow],
+        loadInboxCustody: ({required Duration recheckOlderThan}) async => [
+          senderRow,
+        ],
         storeInInboxDetailed: (toPeerId, message, {int? timeoutMs}) async =>
             relay.store(toPeerId, message),
         markCustodyChecked: (messageId, {int? relayExpiresAtMs}) async {
@@ -225,7 +235,10 @@ void main() {
         // Re-store hit a still-held entry -> duplicate -> custody confirmed.
         expect(custodyMarks.single.id, 'msg-custody-e2e');
         // Row stays inboxed (still awaiting the receiver receipt).
-        expect((await messageRepo.getMessage('msg-custody-e2e'))!.status, 'inboxed');
+        expect(
+          (await messageRepo.getMessage('msg-custody-e2e'))!.status,
+          'inboxed',
+        );
         // The custody re-store must NEVER delete the relay copy.
         expect(
           relay.heldCount,
@@ -235,62 +248,62 @@ void main() {
       },
     );
 
-    test(
-      'the relay deletes the entry ONLY after the receiver stages + acks; '
-      'a bare retrieve_pending does not delete',
-      () async {
-        // Receiver custody verify still passes BEFORE the receiver acks: the
-        // relay holds the copy, so the sender keeps the row inboxed.
-        await runCustodyVerify();
-        expect(relay.heldCount, 1);
+    test('the relay deletes the entry ONLY after the receiver stages + acks; '
+        'a bare retrieve_pending does not delete', () async {
+      // Receiver custody verify still passes BEFORE the receiver acks: the
+      // relay holds the copy, so the sender keeps the row inboxed.
+      await runCustodyVerify();
+      expect(relay.heldCount, 1);
 
-        // --- Receiver drains: real P2PServiceImpl stage -> ack pipeline ---
-        final bridge = _RelayBackedBridge(relay);
-        final stagingRepo = InMemoryInboxStagingRepository();
-        final replayed = <String>[];
-        final receiver = P2PServiceImpl(
-          bridge: bridge,
-          inboxStagingRepository: stagingRepo,
-          replayRecoveredInboxChatMessage:
-              (message, {String? stagedEntryId}) async {
-                final payload =
-                    (jsonDecode(message.content) as Map<String, dynamic>)['payload']
-                        as Map<String, dynamic>;
-                replayed.add(payload['id'] as String);
-                return (
-                  disposition: RecoveredInboxChatDisposition.committed,
-                  reasonCode: 'stored',
-                  reasonDetail: null,
-                );
-              },
-        );
-        addTearDown(receiver.dispose);
+      // --- Receiver drains: real P2PServiceImpl stage -> ack pipeline ---
+      final bridge = _RelayBackedBridge(relay);
+      final stagingRepo = InMemoryInboxStagingRepository();
+      final replayed = <String>[];
+      final receiver = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: stagingRepo,
+        replayRecoveredInboxChatMessage:
+            (message, {String? stagedEntryId}) async {
+              final payload =
+                  (jsonDecode(message.content)
+                          as Map<String, dynamic>)['payload']
+                      as Map<String, dynamic>;
+              replayed.add(payload['id'] as String);
+              return (
+                disposition: RecoveredInboxChatDisposition.committed,
+                reasonCode: 'stored',
+                reasonDetail: null,
+              );
+            },
+      );
+      addTearDown(receiver.dispose);
 
-        await receiver.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
-        await receiver.drainOfflineInbox();
+      await receiver.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+      await receiver.drainOfflineInbox();
 
-        // The receiver retrieved (pending), staged durably, then ACKed.
-        expect(bridge.calledCommands, contains('inbox:retrieve_pending'));
-        expect(bridge.calledCommands, contains('inbox:ack'));
-        expect(replayed, ['msg-custody-e2e']);
+      // The receiver retrieved (pending), staged durably, then ACKed.
+      expect(bridge.calledCommands, contains('inbox:retrieve_pending'));
+      expect(bridge.calledCommands, contains('inbox:ack'));
+      expect(replayed, ['msg-custody-e2e']);
 
-        // The ack MUST come AFTER the retrieve — delete is strictly post-receive.
-        final retrieveIdx = bridge.calledCommands.indexOf('inbox:retrieve_pending');
-        final ackIdx = bridge.calledCommands.indexOf('inbox:ack');
-        expect(
-          ackIdx,
-          greaterThan(retrieveIdx),
-          reason: 'delete (ack) only after the receiver has the message',
-        );
+      // The ack MUST come AFTER the retrieve — delete is strictly post-receive.
+      final retrieveIdx = bridge.calledCommands.indexOf(
+        'inbox:retrieve_pending',
+      );
+      final ackIdx = bridge.calledCommands.indexOf('inbox:ack');
+      expect(
+        ackIdx,
+        greaterThan(retrieveIdx),
+        reason: 'delete (ack) only after the receiver has the message',
+      );
 
-        // The relay copy is gone ONLY now — deleted by the ack, not the retrieve.
-        expect(
-          relay.heldCount,
-          0,
-          reason: 'ack is the only delete path; it ran post-stage',
-        );
-      },
-    );
+      // The relay copy is gone ONLY now — deleted by the ack, not the retrieve.
+      expect(
+        relay.heldCount,
+        0,
+        reason: 'ack is the only delete path; it ran post-stage',
+      );
+    });
 
     test(
       'gate denial at the ACK boundary keeps the relay copy alive '
@@ -317,50 +330,52 @@ void main() {
         expect(
           relay.heldCount,
           1,
-          reason: 'no ack means no delete — the copy survives for the new phone',
+          reason:
+              'no ack means no delete — the copy survives for the new phone',
         );
 
         // Because the relay still holds it, the sender custody verify continues
         // to confirm custody (duplicate) and keeps the row inboxed.
         final checked = await runCustodyVerify();
         expect(checked, 1);
-        expect((await messageRepo.getMessage('msg-custody-e2e'))!.status, 'inboxed');
-      },
-    );
-
-    test(
-      'when the relay has lost the copy (no entry held), custody verify '
-      'SURFACES the loss by downgrading the row to sent',
-      () async {
-        // Simulate a relay that dropped the entry (TTL prune / full) and now
-        // reports the re-store as failed/rejected rather than duplicate.
-        final lossRelay = _AckGatedRelay(); // empty -> no held copy
-        final restored = await verifyInboxCustody(
-          loadInboxCustody: ({required Duration recheckOlderThan}) async =>
-              [senderRow],
-          storeInInboxDetailed: (toPeerId, message, {int? timeoutMs}) async {
-            // Relay full: cannot re-accept, custody is genuinely lost.
-            return const InboxStoreOutcome(
-              status: InboxStoreStatus.rejectedFull,
-              errorCode: 'INBOX_FULL',
-            );
-          },
-          markCustodyChecked: (messageId, {int? relayExpiresAtMs}) async {
-            custodyMarks.add((id: messageId, expiresAtMs: relayExpiresAtMs));
-          },
-          messageRepo: messageRepo,
-        );
-
-        expect(restored, 1);
-        expect(lossRelay.heldCount, 0);
-        final after = await messageRepo.getMessage('msg-custody-e2e');
         expect(
-          after!.status,
-          'sent',
-          reason: 'lost custody must be surfaced as non-delivered, not inboxed',
+          (await messageRepo.getMessage('msg-custody-e2e'))!.status,
+          'inboxed',
         );
-        expect(after.wireEnvelope, isNotNull);
       },
     );
+
+    test('when the relay has lost the copy (no entry held), custody verify '
+        'SURFACES the loss by downgrading the row to sent', () async {
+      // Simulate a relay that dropped the entry (TTL prune / full) and now
+      // reports the re-store as failed/rejected rather than duplicate.
+      final lossRelay = _AckGatedRelay(); // empty -> no held copy
+      final restored = await verifyInboxCustody(
+        loadInboxCustody: ({required Duration recheckOlderThan}) async => [
+          senderRow,
+        ],
+        storeInInboxDetailed: (toPeerId, message, {int? timeoutMs}) async {
+          // Relay full: cannot re-accept, custody is genuinely lost.
+          return const InboxStoreOutcome(
+            status: InboxStoreStatus.rejectedFull,
+            errorCode: 'INBOX_FULL',
+          );
+        },
+        markCustodyChecked: (messageId, {int? relayExpiresAtMs}) async {
+          custodyMarks.add((id: messageId, expiresAtMs: relayExpiresAtMs));
+        },
+        messageRepo: messageRepo,
+      );
+
+      expect(restored, 1);
+      expect(lossRelay.heldCount, 0);
+      final after = await messageRepo.getMessage('msg-custody-e2e');
+      expect(
+        after!.status,
+        'sent',
+        reason: 'lost custody must be surfaced as non-delivered, not inboxed',
+      );
+      expect(after.wireEnvelope, isNotNull);
+    });
   });
 }

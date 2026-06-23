@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -496,17 +497,10 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         _group = updatedGroup;
         _didMutateGroup = true;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            isMuted
-                ? AppLocalizations.of(context)!.group_info_notifications_muted
-                : AppLocalizations.of(
-                    context,
-                  )!.group_info_notifications_restored,
-          ),
-        ),
-      );
+      // 154: the switch + bell icon + description already flip above, so the
+      // success snackbar was redundant. Confirm with a tactile selectionClick
+      // and reserve the snackbar channel for the failure path below.
+      HapticFeedback.selectionClick();
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -1938,13 +1932,11 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       _didMutateGroup = true;
       await _loadGroupInfo();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            AppLocalizations.of(context)!.group_info_details_updated,
-          ),
-        ),
-      );
+      // 154: _loadGroupInfo() already re-renders the name/description fields,
+      // so the success snackbar was redundant. Confirm with a tactile
+      // selectionClick; the snackbar channel stays reserved for the error /
+      // rollback path below.
+      HapticFeedback.selectionClick();
     } catch (e) {
       // If the metadata was persisted locally but the broadcast did not
       // succeed (hard throw OR soft publish failure), either durably enqueue
@@ -2148,6 +2140,41 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     }
   }
 
+  /// Pre-confirm the irreversible invite revocation (mirrors
+  /// [_confirmRoleChange]). The signed revocation envelope is put on the wire
+  /// only after the admin confirms — there is NO Undo (153 INV-1/INV-2).
+  Future<void> _confirmRevokeInvite(GroupMember member) async {
+    if (!mounted) return;
+
+    final shouldRevoke = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        final l10n = AppLocalizations.of(context)!;
+        final name = _displayName(member);
+        return AlertDialog(
+          title: Text(l10n.group_info_revoke_invite_title(name)),
+          content: Text(l10n.group_info_revoke_invite_body),
+          actions: [
+            TextButton(
+              key: const ValueKey('group-revoke-cancel'),
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(l10n.btn_cancel),
+            ),
+            FilledButton(
+              key: const ValueKey('group-revoke-confirm'),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(l10n.group_info_revoke_invite_action),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldRevoke == true) {
+      await _onRevokeInvite(member);
+    }
+  }
+
   Future<void> _onRevokeInvite(GroupMember member) async {
     final repo = widget.inviteDeliveryAttemptRepo;
     if (repo == null || _revokingInvitePeerIds.contains(member.peerId)) {
@@ -2278,7 +2305,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           ? _onResendInvite
           : null,
       onRevokeInvite: canManageGroup && widget.inviteDeliveryAttemptRepo != null
-          ? _onRevokeInvite
+          ? _confirmRevokeInvite
           : null,
       backgroundPreference: widget.backgroundPreference,
     );

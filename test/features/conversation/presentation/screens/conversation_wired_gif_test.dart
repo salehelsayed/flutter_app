@@ -136,7 +136,11 @@ class _NoOpP2PService implements P2PService {
   Future<bool> stopNode() async => true;
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => false;
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async => false;
 
   @override
   Future<void> drainOfflineInbox() async {}
@@ -160,8 +164,7 @@ class _NoOpP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
@@ -304,23 +307,24 @@ void main() {
         await _openGalleryPicker(tester);
         await _pumpUntil(tester, () => _pendingPaths(tester).isNotEmpty);
 
-        // No pick-time GIF guard anymore: the GIF stages like any other media,
-        // validated on final bytes only at send time (INV-SZ-2).
+        // No pick-time GIF guard anymore: the GIF stages like any other media.
+        // The current composer contract marks it inline and disables Send,
+        // preserving the draft without routing through upload/persistence.
         expect(_pendingPaths(tester), [oversizedGif.path]);
         expect(
           find.text('GIF files larger than 25 MB cannot be added.'),
           findsNothing,
         );
+        expect(find.text('GIF too big'), findsOneWidget);
 
-        // Tapping send routes through the single per-type size gate.
+        // Tapping the disabled Send affordance is inert.
         await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
         await tester.pump(const Duration(milliseconds: 300));
 
         expect(
           find.text('GIF files larger than 25 MB cannot be added.'),
-          findsOneWidget,
+          findsNothing,
         );
-        // Send aborted before any persistence/upload; composer keeps the media.
         expect(messageRepo.saveMessageCallCount, 0);
         expect(_pendingPaths(tester), [oversizedGif.path]);
       },
@@ -382,17 +386,18 @@ void main() {
         await _openGalleryPicker(tester);
         await _pumpUntil(tester, () => _pendingPaths(tester).length == 2);
 
-        // Both stage at pick — the GIF is no longer skipped there.
+        // Both stage at pick; the GIF is marked inline and the send affordance
+        // stays disabled so the whole batch remains untouched.
         expect(_pendingPaths(tester), containsAll(<String>[oversizedGif.path]));
         expect(_pendingPaths(tester).length, 2);
+        expect(find.text('GIF too big'), findsOneWidget);
 
         await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
         await tester.pump(const Duration(milliseconds: 300));
 
-        // The send-time gate rejects the whole batch on the oversized GIF.
         expect(
           find.text('GIF files larger than 25 MB cannot be added.'),
-          findsOneWidget,
+          findsNothing,
         );
         expect(messageRepo.saveMessageCallCount, 0);
         expect(_pendingPaths(tester).length, 2);

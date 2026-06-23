@@ -26,6 +26,11 @@ class ComposeArea extends StatefulWidget {
   final ValueChanged<String> onSend;
   final VoidCallback? onAttach;
   final bool hasAttachments;
+
+  /// True when at least one picked attachment failed a size/GIF SEND policy
+  /// (149). Disables the Send tap (the composer keeps the Send affordance
+  /// visible-but-inert) while an invalid attachment is present.
+  final bool hasInvalidAttachment;
   final bool isProcessing;
   final bool isSending;
   final bool isRecording;
@@ -49,6 +54,7 @@ class ComposeArea extends StatefulWidget {
     required this.onSend,
     this.onAttach,
     this.hasAttachments = false,
+    this.hasInvalidAttachment = false,
     this.isProcessing = false,
     this.isSending = false,
     this.isRecording = false,
@@ -478,6 +484,7 @@ class _ComposeAreaState extends State<ComposeArea>
                               onTap:
                                   !widget.isProcessing &&
                                       !widget.isSending &&
+                                      !widget.hasInvalidAttachment &&
                                       (_hasText || widget.hasAttachments)
                                   ? _onSendPressed
                                   : null,

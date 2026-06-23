@@ -14,8 +14,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 /// converges such rows to 'delivered'. Safe because every mint site fires only
 /// AFTER a durable persist (never for a quarantined/rejected replay) and is
 /// idempotent on the sender (handleDeliveryReceipt early-returns on 'delivered').
-/// Set false to fall back to the relay-inbox-only contract. See
-/// Test-Flight-Improv/132-delivered-message-stuck-pending-clock-tdd-plan.md.
+/// Set false to fall back to the relay-inbox-only contract.
 const bool kConfirmatoryDirectLanReceiptEnabled = true;
 
 /// Why a mint was skipped — surfaced as `DELIVERY_RECEIPT_MINT_SKIPPED` so a
@@ -25,7 +24,9 @@ enum DeliveryReceiptMintSkipReason { direct, lan, nonInbox }
 class DeliveryReceiptMintDecision {
   final bool shouldMint;
   final DeliveryReceiptMintSkipReason? skipReason;
-  const DeliveryReceiptMintDecision.mint() : shouldMint = true, skipReason = null;
+  const DeliveryReceiptMintDecision.mint()
+    : shouldMint = true,
+      skipReason = null;
   const DeliveryReceiptMintDecision.skip(DeliveryReceiptMintSkipReason reason)
     : shouldMint = false,
       skipReason = reason;

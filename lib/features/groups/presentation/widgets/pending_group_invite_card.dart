@@ -6,11 +6,49 @@ import 'package:flutter_app/features/groups/domain/models/pending_group_invite.d
 import 'package:flutter_app/features/groups/presentation/widgets/group_type_badge.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
+/// Per-row inline state for a pending group invite (plan 150).
+///
+/// Drives the KEPT-invite states rendered directly on the live
+/// [PendingGroupInviteCard]:
+///   - [idle]: the default accept / decline buttons.
+///   - [processing]: in-button accept spinner (driven by `isProcessing`).
+///   - [waitingForKey]: trailing spinner + "Waiting for key" (repairPending).
+///   - [retryable]: an inline Retry control (keep-pending bridgeError).
+///
+/// Terminal outcomes (the invite is DELETED by the use-case) render on a
+/// separate ghost row owned by the list screen, NOT on this card.
+enum PendingInviteRowState { idle, processing, waitingForKey, retryable }
+
+/// A resolved accept outcome carried by the list screen so it can render either
+/// an inline state on the live card or a ghost row after the invite is deleted.
+///
+/// [groupName] is a snapshot taken BEFORE the invite was removed, so the ghost
+/// row can still name the group it belonged to.
+class PendingInviteRowOutcome {
+  final PendingInviteRowState state;
+  final String? reason;
+  final String groupName;
+
+  const PendingInviteRowOutcome({
+    required this.state,
+    required this.groupName,
+    this.reason,
+  });
+}
+
 class PendingGroupInviteCard extends StatelessWidget {
   final PendingGroupInvite invite;
   final bool isProcessing;
   final VoidCallback? onAccept;
   final VoidCallback? onDecline;
+
+  /// Per-row inline state (plan 150). Defaults to [PendingInviteRowState.idle]
+  /// so existing callsites (e.g. orbit_screen.dart) keep the legacy render.
+  final PendingInviteRowState rowState;
+
+  /// Invoked when the inline Retry control (retryable state) is tapped.
+  /// Defaulted null so non-group-list callsites stay unchanged.
+  final VoidCallback? onRetry;
 
   const PendingGroupInviteCard({
     super.key,
@@ -18,6 +56,8 @@ class PendingGroupInviteCard extends StatelessWidget {
     required this.isProcessing,
     required this.onAccept,
     required this.onDecline,
+    this.rowState = PendingInviteRowState.idle,
+    this.onRetry,
   });
 
   @override
@@ -163,6 +203,42 @@ class PendingGroupInviteCard extends StatelessWidget {
               ),
             ],
           ),
+          if (rowState == PendingInviteRowState.waitingForKey) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: readableColors.textSecondary,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  l10n.group_invite_waiting_for_key,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: readableColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ],
+          if (rowState == PendingInviteRowState.retryable) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: TextButton.icon(
+                key: ValueKey('pending-group-invite-retry-${invite.groupId}'),
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh, size: 18),
+                label: Text(l10n.btn_retry),
+              ),
+            ),
+          ],
         ],
       ),
     );

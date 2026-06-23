@@ -29,6 +29,7 @@ import 'package:just_audio_platform_interface/just_audio_platform_interface.dart
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_audio_recorder_service.dart';
+import '../../../shared/fakes/fake_mic_permission_gateway.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_upload_wake_lock_driver.dart';
@@ -615,6 +616,7 @@ void main() {
             sendChatMessageFn: sendChatMessageFn,
             sendVoiceMessageFn: sendVoiceMessageFn,
             audioRecorderService: audioRecorderService,
+            micPermissionGateway: FakeMicPermissionGateway(),
           ),
         ),
       );

@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -119,6 +120,7 @@ void main() {
   late StreamController<GroupModel> joinedGroupInviteController;
   late StreamController<PendingGroupInvite> pendingInviteController;
   late InMemoryPostsPrivacySettingsRepository postsPrivacySettingsRepository;
+  late List<Map<String, dynamic>> flowEvents;
 
   final testIdentity = IdentityModel(
     peerId: 'test-peer-id-12345',
@@ -163,6 +165,9 @@ void main() {
     joinedGroupInviteController = StreamController<GroupModel>.broadcast();
     pendingInviteController = StreamController<PendingGroupInvite>.broadcast();
     postsPrivacySettingsRepository = InMemoryPostsPrivacySettingsRepository();
+    // 153: capture flow events so decline COMMITTED/UNDONE are observable.
+    flowEvents = <Map<String, dynamic>>[];
+    debugSetFlowEventSink(flowEvents.add);
     imageProcessor = ImageProcessor(
       compressFile:
           ({
@@ -190,6 +195,7 @@ void main() {
   });
 
   tearDown(() {
+    debugSetFlowEventSink(null);
     groupMessageStreamController.close();
     joinedGroupInviteController.close();
     pendingInviteController.close();
@@ -264,6 +270,7 @@ void main() {
     Future<void> Function()? waitForGroupMembershipUpdateIdle,
     List<NavigatorObserver>? navigatorObservers,
     InMemoryFeedClearedRepository? feedClearedRepository,
+    Locale locale = const Locale('en'),
   }) {
     final effectiveContactRepo = contactRepository ?? contactRepo;
     final effectiveMessageRepo = messageRepository ?? messageRepo;
@@ -327,7 +334,7 @@ void main() {
 
     if (wrapInNavigator) {
       return MaterialApp(
-        locale: const Locale('en'),
+        locale: locale,
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         navigatorObservers: navigatorObservers ?? const <NavigatorObserver>[],
@@ -349,7 +356,7 @@ void main() {
     }
 
     return MaterialApp(
-      locale: const Locale('en'),
+      locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       navigatorObservers: navigatorObservers ?? const <NavigatorObserver>[],
@@ -361,6 +368,29 @@ void main() {
     for (var i = 0; i < count; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
+  }
+
+  Future<void> tapPendingGroupInviteAccept(
+    WidgetTester tester,
+    String groupId,
+  ) async {
+    final acceptButton = find.byKey(
+      ValueKey('pending-group-invite-accept-$groupId'),
+    );
+    expect(acceptButton, findsOneWidget);
+    final scrollable = find.byType(Scrollable).first;
+    await tester.scrollUntilVisible(acceptButton, 200, scrollable: scrollable);
+    await tester.pump();
+
+    for (var i = 0; i < 6; i++) {
+      if (tester.getCenter(acceptButton).dy < 760) {
+        break;
+      }
+      await tester.drag(scrollable, const Offset(0, -120));
+      await tester.pump();
+    }
+
+    await tester.tap(acceptButton);
   }
 
   testWidgets(
@@ -732,7 +762,10 @@ void main() {
         );
         final future = DateTime.now().toUtc().add(const Duration(days: 1));
         for (var i = 0; i < 11; i++) {
-          await groupRepo.recordGroupRejoinFailure('g-1', nextEligibleAt: future);
+          await groupRepo.recordGroupRejoinFailure(
+            'g-1',
+            nextEligibleAt: future,
+          );
         }
 
         await tester.pumpWidget(buildOrbitWired());
@@ -769,46 +802,47 @@ void main() {
       },
     );
 
-    testWidgets('All badge equals merged active items for a groups-only roster', (
-      tester,
-    ) async {
-      setLargeTestSurface(tester);
-      suppressOverflowErrors();
-      identityRepo.seed(testIdentity);
-      await groupRepo.saveGroup(
-        GroupModel(
-          id: 'g-1',
-          name: 'Alpha Group',
-          type: GroupType.chat,
-          topicName: 'topic-g-1',
-          createdAt: DateTime.utc(2026, 3, 1),
-          createdBy: 'peer-admin',
-          myRole: GroupRole.admin,
-        ),
-      );
-      await groupRepo.saveGroup(
-        GroupModel(
-          id: 'g-2',
-          name: 'Beta Group',
-          type: GroupType.chat,
-          topicName: 'topic-g-2',
-          createdAt: DateTime.utc(2026, 3, 2),
-          createdBy: 'peer-admin',
-          myRole: GroupRole.admin,
-        ),
-      );
+    testWidgets(
+      'All badge equals merged active items for a groups-only roster',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'g-1',
+            name: 'Alpha Group',
+            type: GroupType.chat,
+            topicName: 'topic-g-1',
+            createdAt: DateTime.utc(2026, 3, 1),
+            createdBy: 'peer-admin',
+            myRole: GroupRole.admin,
+          ),
+        );
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'g-2',
+            name: 'Beta Group',
+            type: GroupType.chat,
+            topicName: 'topic-g-2',
+            createdAt: DateTime.utc(2026, 3, 2),
+            createdBy: 'peer-admin',
+            myRole: GroupRole.admin,
+          ),
+        );
 
-      await tester.pumpWidget(buildOrbitWired());
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
+        await tester.pumpWidget(buildOrbitWired());
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
 
-      // 0 friends + 2 active groups → badge must read 2.
-      final toggle = tester.widget<FriendsFilterToggle>(
-        find.byType(FriendsFilterToggle),
-      );
-      expect(toggle.activeCount, 2);
-    });
+        // 0 friends + 2 active groups → badge must read 2.
+        final toggle = tester.widget<FriendsFilterToggle>(
+          find.byType(FriendsFilterToggle),
+        );
+        expect(toggle.activeCount, 2);
+      },
+    );
 
     testWidgets('friends list header shows QR buttons', (tester) async {
       setLargeTestSurface(tester);
@@ -3106,9 +3140,7 @@ void main() {
         );
         await pumpOrbitFrames(tester, count: 6);
 
-        await tester.tap(
-          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
-        );
+        await tapPendingGroupInviteAccept(tester, invite.groupId);
         await pumpOrbitFrames(tester, count: 30);
 
         expect(
@@ -3125,6 +3157,319 @@ void main() {
         // B1: a successful accept auto-opens the joined group's conversation.
         expect(find.byType(GroupConversationWired), findsOneWidget);
         expect(find.text('Writers Room'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'declining optimistically hides the row but keeps the invite until the '
+      'window elapses',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final invite = makePendingInvite(
+          groupId: 'grp-decline',
+          groupName: 'Decline Me',
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+
+        final groupInviteListener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+        final feedUnreadCountListenable = ValueNotifier<int>(0);
+        addTearDown(feedUnreadCountListenable.dispose);
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: groupInviteListener,
+            initialFilterTab: 'intros',
+            appShellController: AppShellController(
+              initialTab: AppShellTab.orbit,
+            ),
+            feedUnreadCountListenable: feedUnreadCountListenable,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        await tester.tap(
+          find.byKey(
+            ValueKey('pending-group-invite-decline-${invite.groupId}'),
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6); // 600ms, inside the 4s window
+
+        // Optimistic hide, deferred commit: row gone + Undo shown, but the
+        // local invite survives until the window elapses.
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+          findsNothing,
+        );
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNotNull,
+        );
+        expect(find.widgetWithText(SnackBarAction, 'Undo'), findsOneWidget);
+
+        await tester.pump(const Duration(seconds: 5));
+        await pumpOrbitFrames(tester, count: 10);
+
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNull,
+        );
+        expect(
+          flowEvents
+              .where((e) => e['event'] == 'GROUP_INVITE_DECLINE_COMMITTED')
+              .length,
+          1,
+        );
+      },
+    );
+
+    testWidgets(
+      'undo cancels the decline — invite re-surfaces, ack never sent, never '
+      'committed',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final invite = makePendingInvite(
+          groupId: 'grp-undo',
+          groupName: 'Undo Me',
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+
+        final groupInviteListener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+        final feedUnreadCountListenable = ValueNotifier<int>(0);
+        addTearDown(feedUnreadCountListenable.dispose);
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: groupInviteListener,
+            initialFilterTab: 'intros',
+            appShellController: AppShellController(
+              initialTab: AppShellTab.orbit,
+            ),
+            feedUnreadCountListenable: feedUnreadCountListenable,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        await tester.tap(
+          find.byKey(
+            ValueKey('pending-group-invite-decline-${invite.groupId}'),
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 4);
+
+        await tester.tap(find.widgetWithText(SnackBarAction, 'Undo'));
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNotNull,
+        );
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+          findsOneWidget,
+        );
+
+        await tester.pump(const Duration(seconds: 5));
+        await pumpOrbitFrames(tester, count: 10);
+
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNotNull,
+        );
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(
+          flowEvents.any(
+            (e) =>
+                e['event'] == 'GROUP_INVITE_DECLINE_UNDONE' &&
+                (e['details'] as Map)['surface'] == 'orbit',
+          ),
+          isTrue,
+        );
+        expect(
+          flowEvents.any((e) => e['event'] == 'GROUP_INVITE_DECLINE_COMMITTED'),
+          isFalse,
+        );
+      },
+    );
+
+    testWidgets(
+      're-entrant load does not re-surface; dispose cancels the pending commit',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final invite = makePendingInvite(
+          groupId: 'grp-reentrant',
+          groupName: 'Reentrant',
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+
+        final groupInviteListener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+        final feedUnreadCountListenable = ValueNotifier<int>(0);
+        addTearDown(feedUnreadCountListenable.dispose);
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: groupInviteListener,
+            initialFilterTab: 'intros',
+            appShellController: AppShellController(
+              initialTab: AppShellTab.orbit,
+            ),
+            feedUnreadCountListenable: feedUnreadCountListenable,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        await tester.tap(
+          find.byKey(
+            ValueKey('pending-group-invite-decline-${invite.groupId}'),
+          ),
+        );
+        // Force a re-entrant reload via the pending-invite stream.
+        pendingInviteController.add(invite);
+        await pumpOrbitFrames(tester, count: 6);
+
+        // The hidden row stays hidden through the reactive reload.
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+          findsNothing,
+        );
+
+        // Dispose before the window: the deferred commit is cancelled, the
+        // invite is kept, and nothing commits.
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump(const Duration(seconds: 5));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(tester.takeException(), isNull);
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNotNull,
+        );
+        expect(
+          flowEvents.any((e) => e['event'] == 'GROUP_INVITE_DECLINE_COMMITTED'),
+          isFalse,
+        );
+      },
+    );
+
+    testWidgets('orbit decline snackbars are localized', (tester) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+      final invite = makePendingInvite(
+        groupId: 'grp-de',
+        groupName: 'Lokalisiert',
+      );
+      await pendingInviteRepo.savePendingInvite(invite);
+
+      final groupInviteListener = _FakeGroupInviteListener(
+        joinedStream: joinedGroupInviteController.stream,
+        pendingStream: pendingInviteController.stream,
+        pendingInviteRepo: pendingInviteRepo,
+      );
+      final feedUnreadCountListenable = ValueNotifier<int>(0);
+      addTearDown(feedUnreadCountListenable.dispose);
+
+      await tester.pumpWidget(
+        buildOrbitWired(
+          groupInviteListener: groupInviteListener,
+          initialFilterTab: 'intros',
+          appShellController: AppShellController(initialTab: AppShellTab.orbit),
+          feedUnreadCountListenable: feedUnreadCountListenable,
+          locale: const Locale('de'),
+        ),
+      );
+      await pumpOrbitFrames(tester, count: 6);
+
+      // The longer German layout can push the decline control under the
+      // persistent nav bar; bring it into view before tapping.
+      final declineButton = find.byKey(
+        ValueKey('pending-group-invite-decline-${invite.groupId}'),
+      );
+      await tester.ensureVisible(declineButton);
+      await pumpOrbitFrames(tester, count: 2);
+      await tester.tap(declineButton, warnIfMissed: false);
+      await pumpOrbitFrames(tester, count: 6);
+
+      // The localized German message AND the localized Undo action label
+      // show, not the old hardcoded English.
+      expect(find.text('Einladung abgelehnt'), findsWidgets);
+      expect(find.text('Invite declined'), findsNothing);
+      expect(find.widgetWithText(SnackBarAction, 'Rückgängig'), findsOneWidget);
+    });
+
+    testWidgets(
+      'the Undo affordance disappears the moment the deferred commit starts '
+      '(no stale no-op Undo during a slow commit) [review P2]',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        // A slow identity load holds the commit in-flight after the timer fires.
+        identityRepo = _SlowIdentityRepository()..seed(testIdentity);
+        final invite = makePendingInvite(
+          groupId: 'grp-slow-commit',
+          groupName: 'Slow Commit',
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+
+        final groupInviteListener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+        final feedUnreadCountListenable = ValueNotifier<int>(0);
+        addTearDown(feedUnreadCountListenable.dispose);
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: groupInviteListener,
+            initialFilterTab: 'intros',
+            appShellController: AppShellController(
+              initialTab: AppShellTab.orbit,
+            ),
+            feedUnreadCountListenable: feedUnreadCountListenable,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        final declineButton = find.byKey(
+          ValueKey('pending-group-invite-decline-${invite.groupId}'),
+        );
+        await tester.ensureVisible(declineButton);
+        await pumpOrbitFrames(tester, count: 2);
+        await tester.tap(declineButton, warnIfMissed: false);
+        await pumpOrbitFrames(tester, count: 6);
+        expect(find.widgetWithText(SnackBarAction, 'Undo'), findsWidgets);
+
+        // Past the 4s window → commit fires; the slow (2s) use-case holds it
+        // in-flight. The Undo must already be gone.
+        await tester.pump(const Duration(seconds: 4));
+        await pumpOrbitFrames(tester, count: 10);
+        expect(find.widgetWithText(SnackBarAction, 'Undo'), findsNothing);
+
+        // Let the slow commit finish; the invite is then deleted.
+        await tester.pump(const Duration(seconds: 3));
+        await pumpOrbitFrames(tester, count: 10);
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNull,
+        );
       },
     );
 
@@ -3167,9 +3512,7 @@ void main() {
         );
         await pumpOrbitFrames(tester, count: 6);
 
-        await tester.tap(
-          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
-        );
+        await tapPendingGroupInviteAccept(tester, invite.groupId);
         await pumpOrbitFrames(tester, count: 30);
 
         expect(
@@ -3247,11 +3590,7 @@ void main() {
         expect(find.text('test 2'), findsOneWidget);
         expect(find.text('test 3'), findsNothing);
 
-        await tester.tap(
-          find.byKey(
-            ValueKey('pending-group-invite-accept-${staleInvite.groupId}'),
-          ),
-        );
+        await tapPendingGroupInviteAccept(tester, staleInvite.groupId);
         await pumpOrbitFrames(tester, count: 30);
 
         expect(p2pService.drainOfflineInboxCallCount, 1);
@@ -3335,11 +3674,7 @@ void main() {
         );
         await pumpOrbitFrames(tester, count: 6);
 
-        await tester.tap(
-          find.byKey(
-            ValueKey('pending-group-invite-accept-${staleInvite.groupId}'),
-          ),
-        );
+        await tapPendingGroupInviteAccept(tester, staleInvite.groupId);
         await tester.pump();
         await tester.pump();
 
@@ -3415,9 +3750,7 @@ void main() {
         );
         await pumpOrbitFrames(tester, count: 6);
 
-        await tester.tap(
-          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
-        );
+        await tapPendingGroupInviteAccept(tester, invite.groupId);
         await pumpOrbitFrames(tester, count: 30);
 
         expect(
@@ -3490,9 +3823,7 @@ void main() {
         );
         await pumpOrbitFrames(tester, count: 6);
 
-        await tester.tap(
-          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
-        );
+        await tapPendingGroupInviteAccept(tester, invite.groupId);
         await pumpOrbitFrames(tester, count: 30);
 
         expect(
@@ -3887,6 +4218,17 @@ void main() {
       },
     );
   });
+}
+
+/// Identity repo whose [loadIdentity] resolves slowly — holds a deferred
+/// decline commit in-flight so the Undo affordance's hide timing is observable
+/// (153 review P2).
+class _SlowIdentityRepository extends FakeIdentityRepository {
+  @override
+  Future<IdentityModel?> loadIdentity() async {
+    await Future<void>.delayed(const Duration(seconds: 2));
+    return super.loadIdentity();
+  }
 }
 
 class _FakeGroupInviteListener extends GroupInviteListener {

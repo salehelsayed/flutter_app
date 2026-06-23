@@ -420,6 +420,9 @@
   "media_compress": "ضغط",
   "media_too_large_after_compress": "ما زالت الوسائط كبيرة جدًا حتى بعد الضغط.",
   "media_gif_too_large": "لا يمكن إضافة ملفات GIF أكبر من 25 م.ب.",
+  "media_too_large_chip": "كبير جدًا",
+  "media_gif_too_large_chip": "‏GIF كبير جدًا",
+  "media_attachments_too_large_note": "المرفقات كبيرة جدًا — أزل بعضها للإرسال.",
   "media_unavailable": "الوسائط غير متاحة",
   "media_could_not_verify": "تعذّر التحقق من هذه الوسائط",
   "media_retry_unavailable": "إعادة تحميل الوسائط غير المتاحة",
@@ -444,6 +447,15 @@
   "message_status_sending": "جارٍ الإرسال",
   "message_status_sent": "تم الإرسال",
   "message_status_pending_inbox": "تسليم معلّق عبر صندوق الوارد",
+  "message_status_inbox": "تم التسليم إلى صندوق الوارد",
+  "message_sent_via_relay": "أُرسلت عبر مُرحِّل خلوي",
+  "message_sent_via_direct": "أُرسلت عبر اتصال مباشر",
+  "message_sent_via_wifi": "أُرسلت عبر واي فاي",
+  "message_sent_via_inbox": "أُرسلت إلى صندوق الوارد",
+  "message_received_via_relay": "وَردت عبر مُرحِّل خلوي",
+  "message_received_via_direct": "وَردت عبر اتصال مباشر",
+  "message_received_via_wifi": "وَردت عبر واي فاي",
+  "message_received_via_inbox": "وَردت عبر صندوق الوارد",
   "share_send_failed": "تعذرت المشاركة مع الأهداف المحددة.",
   "group_info_title": "معلومات المجموعة",
   "group_edit_details": "تعديل التفاصيل",
@@ -513,6 +525,16 @@
   },
   "group_info_remove_member_body": "سيتوقف هذا الشخص عن تلقي رسائل جديدة من هذه المجموعة.",
   "group_info_remove_action": "إزالة",
+  "group_info_revoke_invite_title": "إلغاء دعوة {username}؟",
+  "@group_info_revoke_invite_title": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_revoke_invite_body": "لن يتمكنوا من الانضمام إلى المجموعة بهذه الدعوة بعد الآن.",
+  "group_info_revoke_invite_action": "إلغاء",
   "group_info_member_fallback": "عضو",
   "group_info_make_admin_title": "جعل {username} مشرفًا؟",
   "@group_info_make_admin_title": {
@@ -860,6 +882,9 @@
   "picker_media_library": "مكتبة الوسائط",
   "picker_record_video": "تسجيل فيديو",
   "perm_microphone_record": "يلزم إذن الميكروفون لتسجيل الرسائل الصوتية.",
+  "mic_perm_dialog_title": "إذن الميكروفون مطلوب",
+  "mic_perm_dialog_body": "للسماح بتسجيل الرسائل الصوتية، فعّل إذن الميكروفون من الإعدادات.",
+  "mic_perm_not_now": "ليس الآن",
   "group_read_only_not_active": "يمكنك قراءة سجل هذه المجموعة، لكنك لست عضوًا نشطًا.",
   "group_read_only_waiting_key": "بانتظار مفتاح المجموعة الحالي قبل أن تتمكن من الإرسال.",
   "group_read_only_waiting_identity": "بانتظار هويتك قبل أن تتمكن من الإرسال.",
@@ -1243,6 +1268,7 @@
   "group_invite_already_used": "تم استخدام الدعوة بالفعل",
   "group_invite_wrong_identity": "الدعوة لهوية أخرى",
   "group_invite_needs_key": "تحتاج الدعوة إلى مادة مفاتيح جديدة",
+  "group_invite_waiting_for_key": "في انتظار المفتاح",
   "group_invite_invalid": "لم تعد الدعوة صالحة",
   "group_invite_duplicate_group": "تمت إضافة المجموعة بالفعل",
   "group_invite_joined_recovery": "انضممت إلى {name}، لكن الاسترداد ما زال يلحق بالرسائل",
@@ -1360,5 +1386,18 @@
   "orbit2_names_hide": "إخفاء الأسماء",
   "orbit2_promoted_group": "تمت إضافة مجموعة {name} إلى دائرتك الداخلية",
   "orbit2_view_messages": "الرسائل",
-  "orbit2_inbox_empty": "لا محادثات بعد"
+  "orbit2_inbox_empty": "لا محادثات بعد",
+  "orbit2_open_chat_with": "افتح محادثة مع {name}",
+  "orbit3_constellation_zodiac": "الأبراج",
+  "orbit3_constellation_galaxy": "المجرة",
+  "orbit3_listens": "يستمع",
+  "orbit3_talks": "يتحدث",
+  "orbit3_released_to_drawer": "تم نقل {name} إلى الدرج",
+  "orbit3_inner_short": "داخلي",
+  "orbit3_all_friends": "كل الأصدقاء",
+  "orbit3_drag_up_to_search": "اسحب للأعلى للبحث",
+  "orbit3_find_anyone": "ابحث عن أي شخص",
+  "orbit3_pin": "تثبيت",
+  "orbit3_pulled_into_inner_tier": "تم سحب {name} إلى الطبقة الداخلية",
+  "orbit3_tap_to_open": "اضغط للفتح"
 }

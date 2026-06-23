@@ -420,6 +420,9 @@
   "media_compress": "Compress",
   "media_too_large_after_compress": "The media is too large even after compression.",
   "media_gif_too_large": "GIF files larger than 25 MB cannot be added.",
+  "media_too_large_chip": "Too large",
+  "media_gif_too_large_chip": "GIF too big",
+  "media_attachments_too_large_note": "Attachments too large — remove some to send.",
   "media_unavailable": "Media unavailable",
   "media_could_not_verify": "Couldn't verify this media",
   "media_retry_unavailable": "Retry unavailable media",
@@ -444,6 +447,15 @@
   "message_status_sending": "sending",
   "message_status_sent": "sent",
   "message_status_pending_inbox": "pending delivery via inbox",
+  "message_status_inbox": "delivered to inbox",
+  "message_sent_via_relay": "Sent via cellular relay",
+  "message_sent_via_direct": "Sent via direct connection",
+  "message_sent_via_wifi": "Sent via Wi-Fi",
+  "message_sent_via_inbox": "Sent to inbox",
+  "message_received_via_relay": "Received via cellular relay",
+  "message_received_via_direct": "Received via direct connection",
+  "message_received_via_wifi": "Received via Wi-Fi",
+  "message_received_via_inbox": "Received via inbox",
   "share_send_failed": "Could not share to the selected targets.",
   "group_info_title": "Group Info",
   "group_edit_details": "Edit Details",
@@ -513,6 +525,16 @@
   },
   "group_info_remove_member_body": "They will stop receiving new messages from this group.",
   "group_info_remove_action": "Remove",
+  "group_info_revoke_invite_title": "Revoke invite for {username}?",
+  "@group_info_revoke_invite_title": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_revoke_invite_body": "They will no longer be able to join the group with this invite.",
+  "group_info_revoke_invite_action": "Revoke",
   "group_info_member_fallback": "member",
   "group_info_make_admin_title": "Make {username} an admin?",
   "@group_info_make_admin_title": {
@@ -867,6 +889,9 @@
   "picker_media_library": "Media Library",
   "picker_record_video": "Record Video",
   "perm_microphone_record": "Microphone permission is required to record voice messages.",
+  "mic_perm_dialog_title": "Microphone access needed",
+  "mic_perm_dialog_body": "To record voice messages, allow microphone access in Settings.",
+  "mic_perm_not_now": "Not now",
   "group_read_only_not_active": "You can read this group's history, but you are not an active member.",
   "group_read_only_waiting_key": "Waiting for the current group key before you can send.",
   "group_read_only_waiting_identity": "Waiting for your identity before you can send.",
@@ -1295,6 +1320,7 @@
   "group_invite_already_used": "Invite already used",
   "group_invite_wrong_identity": "Invite is for another identity",
   "group_invite_needs_key": "Invite needs fresh key material",
+  "group_invite_waiting_for_key": "Waiting for key",
   "group_invite_invalid": "Invite is no longer valid",
   "group_invite_duplicate_group": "Group already added",
   "group_invite_joined_recovery": "Joined {name}, but recovery is still catching up",
@@ -1448,5 +1474,27 @@
     "placeholders": { "name": { "type": "String" } }
   },
   "orbit2_view_messages": "Messages",
-  "orbit2_inbox_empty": "No conversations yet"
+  "orbit2_inbox_empty": "No conversations yet",
+  "orbit2_open_chat_with": "Open chat with {name}",
+  "@orbit2_open_chat_with": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "orbit3_constellation_zodiac": "Zodiac",
+  "orbit3_constellation_galaxy": "Galaxy",
+  "orbit3_listens": "listens",
+  "orbit3_talks": "talks",
+  "orbit3_released_to_drawer": "{name} released to the drawer",
+  "@orbit3_released_to_drawer": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "orbit3_inner_short": "Inner",
+  "orbit3_all_friends": "All friends",
+  "orbit3_drag_up_to_search": "drag up to search",
+  "orbit3_find_anyone": "Find anyone",
+  "orbit3_pin": "Pin",
+  "orbit3_pulled_into_inner_tier": "{name} pulled into your inner tier",
+  "@orbit3_pulled_into_inner_tier": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "orbit3_tap_to_open": "tap to open"
 }

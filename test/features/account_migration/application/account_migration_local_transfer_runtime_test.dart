@@ -695,6 +695,9 @@ void main() {
     Map<String, dynamic> detailsOf(Map<String, dynamic> event) =>
         Map<String, dynamic>.from(event['details'] as Map);
 
+    const downstreamCommandTimeout = Duration(seconds: 1);
+    const downstreamCommandDelay = Duration(milliseconds: 1500);
+
     Future<(MigrationQrBuildOutput, AccountMigrationLocalTransferRuntime)>
     startNewPhone(
       AccountMigrationLocalBundleReceiver receiver, {
@@ -737,8 +740,7 @@ void main() {
       'classifies slow segment response as local transfer timeout',
       () async {
         final receiver = _DelayingBundleReceiver(
-          segmentDelay: (index) =>
-              index == 1 ? const Duration(milliseconds: 600) : null,
+          segmentDelay: (index) => index == 1 ? downstreamCommandDelay : null,
         );
         final (output, _) = await startNewPhone(receiver);
         final bundle = _preparedBundle(
@@ -750,7 +752,7 @@ void main() {
           wsServer: oldPhoneServer,
           pairingSessionRepository: pairingRepo,
           bundleSource: (_) async => bundle,
-          httpTimeout: const Duration(milliseconds: 150),
+          httpTimeout: downstreamCommandTimeout,
         );
 
         final result = await runTransfer(oldRuntime, output);
@@ -775,8 +777,7 @@ void main() {
       'segment timeout telemetry pinpoints command, index, and phase',
       () async {
         final receiver = _DelayingBundleReceiver(
-          segmentDelay: (index) =>
-              index == 1 ? const Duration(milliseconds: 600) : null,
+          segmentDelay: (index) => index == 1 ? downstreamCommandDelay : null,
         );
         final (output, _) = await startNewPhone(receiver);
         final bundle = _preparedBundle(
@@ -788,7 +789,7 @@ void main() {
           wsServer: oldPhoneServer,
           pairingSessionRepository: pairingRepo,
           bundleSource: (_) async => bundle,
-          httpTimeout: const Duration(milliseconds: 150),
+          httpTimeout: downstreamCommandTimeout,
         );
 
         await runTransfer(oldRuntime, output);
@@ -801,7 +802,10 @@ void main() {
         expect(starts, isNotEmpty);
         expect(starts.first['payloadBytes'], isA<int>());
         expect(starts.first['timeoutMs'], isA<int>());
-        expect(starts.first['httpTimeoutMs'], 150);
+        expect(
+          starts.first['httpTimeoutMs'],
+          downstreamCommandTimeout.inMilliseconds,
+        );
 
         final failures = eventsNamed(
           'ACCOUNT_MIGRATION_LOCAL_TRANSFER_POST_FAILED',
@@ -1266,7 +1270,7 @@ void main() {
 
     test('manifest timeout is typed by command', () async {
       final receiver = _DelayingBundleReceiver(
-        manifestDelay: const Duration(milliseconds: 600),
+        manifestDelay: downstreamCommandDelay,
       );
       final (output, _) = await startNewPhone(receiver);
       final bundle = _preparedBundle(
@@ -1278,7 +1282,7 @@ void main() {
         wsServer: oldPhoneServer,
         pairingSessionRepository: pairingRepo,
         bundleSource: (_) async => bundle,
-        httpTimeout: const Duration(milliseconds: 150),
+        httpTimeout: downstreamCommandTimeout,
       );
 
       final result = await runTransfer(oldRuntime, output);
@@ -1296,7 +1300,7 @@ void main() {
 
     test('plaintext segment sender path timeout is typed', () async {
       final receiver = _DelayingBundleReceiver(
-        segmentDelay: (_) => const Duration(milliseconds: 600),
+        segmentDelay: (_) => downstreamCommandDelay,
       );
       final (output, _) = await startNewPhone(receiver);
       final plaintextSegments = {
@@ -1319,7 +1323,7 @@ void main() {
           crypto: _DeterministicSegmentCrypto(),
           checkpointStore: InMemoryMigrationTransferCheckpointStore(),
         ),
-        httpTimeout: const Duration(milliseconds: 150),
+        httpTimeout: downstreamCommandTimeout,
       );
 
       final result = await runTransfer(oldRuntime, output);
@@ -1340,7 +1344,7 @@ void main() {
 
     test('complete timeout is typed by command stage', () async {
       final receiver = _DelayingBundleReceiver(
-        completeDelay: const Duration(milliseconds: 600),
+        completeDelay: downstreamCommandDelay,
       );
       final (output, _) = await startNewPhone(receiver);
       final bundle = _preparedBundle(
@@ -1352,7 +1356,7 @@ void main() {
         wsServer: oldPhoneServer,
         pairingSessionRepository: pairingRepo,
         bundleSource: (_) async => bundle,
-        httpTimeout: const Duration(milliseconds: 150),
+        httpTimeout: downstreamCommandTimeout,
       );
 
       final result = await runTransfer(oldRuntime, output);
@@ -1372,7 +1376,7 @@ void main() {
       'old block proof timeout is typed with explicit authority risk',
       () async {
         final receiver = _DelayingCutoverReceiver(
-          oldBlockProofDelay: const Duration(milliseconds: 600),
+          oldBlockProofDelay: downstreamCommandDelay,
         );
         final (output, _) = await startNewPhone(receiver);
         final bundle = _preparedBundle(
@@ -1390,7 +1394,7 @@ void main() {
             now: _fixedNow,
           ),
           oldPhoneLeaseCleanup: _noopLeaseCleanup(),
-          httpTimeout: const Duration(milliseconds: 150),
+          httpTimeout: downstreamCommandTimeout,
         );
 
         final result = await runTransfer(oldRuntime, output);
@@ -1479,6 +1483,9 @@ void main() {
     List<Map<String, dynamic>> eventsNamed(String name) => flowEvents
         .where((event) => event['event'] == name)
         .toList(growable: false);
+
+    const downstreamCommandTimeout = Duration(seconds: 1);
+    const downstreamCommandDelay = Duration(milliseconds: 1500);
 
     MigrationCutoverCoordinator coordinator() => MigrationCutoverCoordinator(
       authorityRepository: oldAuthority,
@@ -1595,8 +1602,7 @@ void main() {
       'restores active authority when a segment times out mid-transfer',
       () async {
         final receiver = _DelayingBundleReceiver(
-          segmentDelay: (index) =>
-              index == 1 ? const Duration(milliseconds: 600) : null,
+          segmentDelay: (index) => index == 1 ? downstreamCommandDelay : null,
         );
         final (output, _) = await startNewPhone(receiver);
         final bundle = _preparedBundle(
@@ -1610,7 +1616,7 @@ void main() {
           bundleSource: (_) async => bundle,
           oldPhoneCutoverCoordinator: coordinator(),
           oldPhoneLeaseCleanup: _noopLeaseCleanup(),
-          httpTimeout: const Duration(milliseconds: 150),
+          httpTimeout: downstreamCommandTimeout,
         );
 
         final result = await oldRuntime.runOldPhoneTransfer(
@@ -2220,7 +2226,8 @@ void main() {
       expect(
         result.safeMessage,
         accountMigrationReceiverStorageInsufficientMessage(
-          requiredBytes: bundle.manifest.totalBytes *
+          requiredBytes:
+              bundle.manifest.totalBytes *
               MigrationStoragePreflight.v1ProtocolImportAmplificationFactor,
           availableBytes: 10,
         ),

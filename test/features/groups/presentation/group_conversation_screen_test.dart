@@ -543,9 +543,13 @@ void main() {
     const copiedMessage = 'Hello\nEmoji 😄';
     String? copiedText;
     var clipboardCalls = 0;
+    // 154: one handler per channel — record every platform call so we can
+    // assert the haptic, while still capturing the clipboard payload.
+    final platformCalls = <MethodCall>[];
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      platformCalls.add(call);
       if (call.method == 'Clipboard.setData') {
         clipboardCalls++;
         copiedText =
@@ -573,8 +577,20 @@ void main() {
     expect(clipboardCalls, 1);
     expect(copiedText, copiedMessage);
     expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
-    expect(find.byType(SnackBar), findsOneWidget);
+    // 154: copy has no persistent control (the overlay was popped first), so
+    // it keeps a visible cue — but a DISTINCT, keyed quiet-confirm, not the
+    // reserved error-style snackbar channel.
+    expect(find.byKey(const ValueKey('quiet-confirm')), findsOneWidget);
     expect(find.text('Message copied to clipboard'), findsOneWidget);
+    expect(
+      platformCalls.any(
+        (c) =>
+            c.method == 'HapticFeedback.vibrate' &&
+            c.arguments == 'HapticFeedbackType.selectionClick',
+      ),
+      isTrue,
+      reason: 'copy should fire HapticFeedback.selectionClick()',
+    );
   });
 
   testWidgets(

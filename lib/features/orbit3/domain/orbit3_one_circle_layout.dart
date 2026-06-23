@@ -68,9 +68,15 @@ double orbit3RingAvatar(int k) =>
 /// false only the inner [kOrbit3CollapsedRings] rings are shown and the rest
 /// become [hiddenCount] (the expand-arrow overflow). When true, every member is
 /// seated and the box grows to fit the outermost ring.
+///
+/// [maxVisibleRings] HARD-CAPS the visible rings regardless of [expanded] — the
+/// Inner-Orbit prototype passes 3 so the circle NEVER grows past a phone-legible
+/// size and the rest become a permanent [hiddenCount] (the long tail). Null
+/// keeps the original expand/collapse behaviour (shipped One Circle).
 Orbit3RingLayout computeOrbit3RingLayout({
   required int count,
   required bool expanded,
+  int? maxVisibleRings,
 }) {
   final n = count < 0 ? 0 : count;
 
@@ -87,8 +93,9 @@ Orbit3RingLayout computeOrbit3RingLayout({
   if (fills.isEmpty) fills.add(0); // always one (possibly empty) inner ring
 
   final totalRings = fills.length;
-  final visibleRings =
-      expanded ? totalRings : min(totalRings, kOrbit3CollapsedRings);
+  final visibleRings = maxVisibleRings != null
+      ? min(totalRings, maxVisibleRings)
+      : (expanded ? totalRings : min(totalRings, kOrbit3CollapsedRings));
 
   final counts = fills.take(visibleRings).toList();
   final radii = [for (var i = 0; i < visibleRings; i++) orbit3RingRadius(i)];

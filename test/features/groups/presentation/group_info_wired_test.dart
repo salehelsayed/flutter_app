@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
@@ -2173,7 +2173,7 @@ void main() {
     }
 
     testWidgets(
-      'C: revoking a pending invite sends a revocation carrying the persisted invite_id (HOLE-4) and marks the row revoked',
+      'revoke shows a pre-confirm dialog and sends only after confirm',
       (tester) async {
         final groupRepo = InMemoryGroupRepository();
         final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
@@ -2235,12 +2235,39 @@ void main() {
         expect(button, findsOneWidget);
         await tester.ensureVisible(button);
         await pumpFrames(tester, count: 5);
+
+        // Tapping revoke opens a pre-confirm dialog and puts NOTHING on the
+        // wire yet — a mis-tap must not fire the irreversible revocation.
         await tester.tap(button, warnIfMissed: false);
+        await pumpFrames(tester, count: 10);
+        expect(
+          find.byKey(const ValueKey('group-revoke-confirm')),
+          findsOneWidget,
+        );
+        expect(p2pService.sendMessageCallCount, 0);
+        // REVOKE never offers an Undo (the signed envelope is irreversible).
+        expect(find.widgetWithText(SnackBarAction, 'Undo'), findsNothing);
+
+        // Cancelling the dialog leaves the invite untouched.
+        await tester.tap(find.byKey(const ValueKey('group-revoke-cancel')));
+        await pumpFrames(tester, count: 10);
+        expect(p2pService.sendMessageCallCount, 0);
+        final stillSent = await inviteStatusRepo.getAttempt(
+          groupId: 'group-1',
+          peerId: 'peer-alice',
+        );
+        expect(stillSent!.status, GroupInviteDeliveryStatus.sent);
+
+        // Re-open and confirm: NOW the revocation envelope goes on the wire,
+        // carrying the EXACT invite id the receiver matches on (HOLE-4), and
+        // the local delivery-attempt row flips to revoked.
+        await tester.ensureVisible(button);
+        await pumpFrames(tester, count: 5);
+        await tester.tap(button, warnIfMissed: false);
+        await pumpFrames(tester, count: 10);
+        await tester.tap(find.byKey(const ValueKey('group-revoke-confirm')));
         await pumpFrames(tester, count: 40);
 
-        // A revocation envelope was sent, carrying the EXACT invite id the
-        // receiver matches on (HOLE-4 — without it the live invite is never
-        // deleted).
         expect(p2pService.sendMessageCallCount, 1);
         final envelope =
             jsonDecode(p2pService.lastSendMessageContent!)
@@ -2249,12 +2276,81 @@ void main() {
         expect(envelope['id'], 'invite-alice-1');
         expect(envelope['id'] as String, isNotEmpty);
 
-        // The local delivery-attempt row flips to revoked.
         final attempt = await inviteStatusRepo.getAttempt(
           groupId: 'group-1',
           peerId: 'peer-alice',
         );
         expect(attempt!.status, GroupInviteDeliveryStatus.revoked);
+      },
+    );
+
+    testWidgets(
+      'remove member stays a pre-confirm dialog with no Undo (lock)',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-alice', username: 'Alice'),
+        );
+
+        final bridge = FakeBridge();
+
+        await tester.pumpWidget(
+          _localizedMaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: bridge,
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        final aliceRow = find.ancestor(
+          of: find.text('Alice'),
+          matching: find.byType(Row),
+        );
+        final aliceRemoveButton = find.descendant(
+          of: aliceRow,
+          matching: find.byIcon(Icons.remove_circle_outline),
+        );
+        await tester.ensureVisible(aliceRemoveButton);
+        await pumpFrames(tester, count: 5);
+        await tester.tap(aliceRemoveButton, warnIfMissed: false);
+        await pumpFrames(tester);
+
+        // Tapping remove opens the pre-confirm dialog — removal is NOT
+        // optimistic and offers NO Undo (irreversible per INV-R2). Nothing is
+        // broadcast until the admin confirms.
+        expect(
+          find.byKey(const ValueKey('group-remove-confirm')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('group-remove-cancel')),
+          findsOneWidget,
+        );
+        expect(find.widgetWithText(SnackBarAction, 'Undo'), findsNothing);
+        expect(bridge.commandLog, isEmpty);
+
+        // Dismissing the dialog still leaves the member and broadcasts nothing.
+        await tester.tap(find.byKey(const ValueKey('group-remove-cancel')));
+        await pumpFrames(tester, count: 10);
+        expect(find.text('Alice'), findsOneWidget);
+        expect(bridge.commandLog, isEmpty);
+        expect(find.widgetWithText(SnackBarAction, 'Undo'), findsNothing);
       },
     );
 
@@ -2859,6 +2955,21 @@ void main() {
       await groupRepo.saveGroup(group);
       await _saveGroupReplayKey(groupRepo);
 
+      // 154: capture platform-channel calls so we can assert the mute toggle
+      // fires HapticFeedback.selectionClick() instead of a success snackbar.
+      // One handler per channel — record every call into a list and return
+      // null (safe for HapticFeedback.vibrate, which awaits invokeMethod<void>).
+      final platformCalls = <MethodCall>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        platformCalls.add(call);
+        return null;
+      });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+      );
+
       await tester.pumpWidget(
         _localizedMaterialApp(
           home: GroupInfoWired(
@@ -2890,7 +3001,21 @@ void main() {
         isTrue,
       );
       expect((await groupRepo.getGroup(group.id))?.isMuted, isTrue);
-      expect(find.text('Notifications muted for this group'), findsOneWidget);
+      // 154: the control already flips (switch + repo above); the success
+      // snackbar is dropped and replaced by a tactile selectionClick. Assert
+      // BOTH the method string AND the positional arg — every HapticFeedback
+      // variant shares the 'HapticFeedback.vibrate' method, so a method-only
+      // check would not catch a wrong-haptic mutation.
+      expect(
+        platformCalls.any(
+          (c) =>
+              c.method == 'HapticFeedback.vibrate' &&
+              c.arguments == 'HapticFeedbackType.selectionClick',
+        ),
+        isTrue,
+        reason: 'mute toggle should fire HapticFeedback.selectionClick()',
+      );
+      expect(find.text('Notifications muted for this group'), findsNothing);
     });
 
     testWidgets('hides member remove controls for non-admin role', (
@@ -3667,6 +3792,22 @@ void main() {
           'signature': 'sig-metadata',
         };
 
+        // 154: capture platform-channel calls to assert the details save fires
+        // HapticFeedback.selectionClick() instead of the success snackbar.
+        final platformCalls = <MethodCall>[];
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(SystemChannels.platform, (
+          call,
+        ) async {
+          platformCalls.add(call);
+          return null;
+        });
+        addTearDown(
+          () =>
+              messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+        );
+
         await tester.pumpWidget(
           _localizedMaterialApp(
             home: GroupInfoWired(
@@ -3715,7 +3856,19 @@ void main() {
 
         expect(find.text('Renamed Group'), findsWidgets);
         expect(find.text('Fresh description'), findsOneWidget);
-        expect(find.text('Group details updated'), findsOneWidget);
+        // 154: the field re-render above is the surviving confirmation; the
+        // success snackbar is dropped in favour of a tactile selectionClick.
+        // Assert method AND arg (every variant shares the method string).
+        expect(find.text('Group details updated'), findsNothing);
+        expect(
+          platformCalls.any(
+            (c) =>
+                c.method == 'HapticFeedback.vibrate' &&
+                c.arguments == 'HapticFeedbackType.selectionClick',
+          ),
+          isTrue,
+          reason: 'details save should fire HapticFeedback.selectionClick()',
+        );
 
         expect(bridge.commandLog, contains('group:publish'));
         expect(bridge.commandLog, contains('group:inboxStore'));

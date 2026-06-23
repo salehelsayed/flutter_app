@@ -40,6 +40,7 @@ void main() {
     String? failedMessageActionKeySuffix,
     String? failedMediaActionKeySuffix,
     bool requireVerifiedContentHash = false,
+    bool transportStatusGlyph = false,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -75,6 +76,7 @@ void main() {
             failedMessageActionKeySuffix: failedMessageActionKeySuffix,
             failedMediaActionKeySuffix: failedMediaActionKeySuffix,
             requireVerifiedContentHash: requireVerifiedContentHash,
+            transportStatusGlyph: transportStatusGlyph,
           ),
         ),
       ),
@@ -260,19 +262,31 @@ void main() {
         );
       });
 
-      testWidgets('shows two ticks when status is delivered', (tester) async {
-        await tester.pumpWidget(
-          buildTestWidget(isIncoming: false, status: 'delivered'),
-        );
-        expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
-      });
+      // 155: a message that reached the inbox reads as a good "in the inbox"
+      // state — the inbox glyph, NEVER the two-tick done_all (retired from the
+      // UI; the 'delivered' status itself is preserved in the model).
+      testWidgets(
+        "status 'delivered' renders the inbox glyph and never the two-tick",
+        (tester) async {
+          await tester.pumpWidget(
+            buildTestWidget(isIncoming: false, status: 'delivered'),
+          );
+          expect(find.byIcon(Icons.inbox_rounded), findsOneWidget);
+          expect(find.byIcon(Icons.done_all_rounded), findsNothing);
+        },
+      );
 
-      testWidgets('shows two ticks when status is queued', (tester) async {
-        await tester.pumpWidget(
-          buildTestWidget(isIncoming: false, status: 'queued'),
-        );
-        expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
-      });
+      // 155: legacy 'queued' rows render the same inbox glyph, never done_all.
+      testWidgets(
+        "legacy status 'queued' renders the inbox glyph and never the two-tick",
+        (tester) async {
+          await tester.pumpWidget(
+            buildTestWidget(isIncoming: false, status: 'queued'),
+          );
+          expect(find.byIcon(Icons.inbox_rounded), findsOneWidget);
+          expect(find.byIcon(Icons.done_all_rounded), findsNothing);
+        },
+      );
 
       testWidgets('shows failed icon when status is failed', (tester) async {
         await tester.pumpWidget(
@@ -281,8 +295,26 @@ void main() {
         expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
       });
 
+      // 155 TC-06: terminal group send_failed keeps the error glyph
+      // (preservation — the inbox-glyph change must not bleed into the error
+      // family).
       testWidgets(
-        'shows pending icon, color, and semantics when status is pending',
+        "status 'send_failed' still renders the error icon, never the inbox glyph",
+        (tester) async {
+          await tester.pumpWidget(
+            buildTestWidget(isIncoming: false, status: 'send_failed'),
+          );
+          expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
+          expect(find.byIcon(Icons.inbox_rounded), findsNothing);
+        },
+      );
+
+      // 155 TC-05: 'pending' is genuinely in-flight — NOT yet in the relay
+      // inbox — so it keeps the amber clock and must NOT collapse into the
+      // inbox glyph (the pending/inboxed split is the point).
+      testWidgets(
+        'shows pending icon, color, and semantics when status is pending '
+        '(never the inbox glyph or two-tick)',
         (tester) async {
           await tester.pumpWidget(
             buildTestWidget(isIncoming: false, status: 'pending'),
@@ -290,6 +322,8 @@ void main() {
 
           final iconFinder = find.byIcon(Icons.schedule_rounded);
           expect(iconFinder, findsOneWidget);
+          expect(find.byIcon(Icons.inbox_rounded), findsNothing);
+          expect(find.byIcon(Icons.done_all_rounded), findsNothing);
 
           final icon = tester.widget<Icon>(iconFinder);
           expect(icon.color, const Color.fromRGBO(255, 200, 100, 0.50));
@@ -300,27 +334,114 @@ void main() {
         },
       );
 
-      // 115 Phase 1.4 — 'inboxed' is relay CUSTODY, not delivery: render the
-      // pending visual family (schedule glyph, amber, pending-inbox
-      // semantics), never done_all (doc 115 G-B / D-1).
+      // 115 Phase 1.4 + 155 — 'inboxed' is relay CUSTODY: the message reached
+      // the relay inbox, so it now reads as a good "in the inbox" state — the
+      // inbox glyph (TC-01), never done_all (the doc-115 invariant is preserved
+      // AND strengthened) and no longer the amber schedule clock (155 split:
+      // the clock is reserved for 'pending', which is not yet inboxed).
       testWidgets(
-        "status 'inboxed' renders schedule icon with pending-inbox semantics, never done_all",
+        "status 'inboxed' renders the inbox glyph, never schedule, never done_all",
         (tester) async {
           await tester.pumpWidget(
             buildTestWidget(isIncoming: false, status: 'inboxed'),
           );
 
-          final iconFinder = find.byIcon(Icons.schedule_rounded);
+          final iconFinder = find.byIcon(Icons.inbox_rounded);
           expect(iconFinder, findsOneWidget);
+          expect(find.byIcon(Icons.schedule_rounded), findsNothing);
           expect(find.byIcon(Icons.done_all_rounded), findsNothing);
           expect(find.byIcon(Icons.done_rounded), findsNothing);
+        },
+      );
 
-          final icon = tester.widget<Icon>(iconFinder);
-          expect(icon.color, const Color.fromRGBO(255, 200, 100, 0.50));
-          expect(
-            find.bySemanticsLabel('Message status: pending delivery via inbox'),
-            findsOneWidget,
+      // 155 TC-04 — core anti-regression sweep: the two-tick done_all is
+      // RETIRED from the UI and must never render for ANY outgoing status.
+      testWidgets(
+        'done_all (two-tick) is never rendered for ANY outgoing status',
+        (tester) async {
+          const statuses = <String>[
+            'sending',
+            'sent',
+            'pending',
+            'inboxed',
+            'delivered',
+            'queued',
+            'failed',
+            'send_failed',
+          ];
+          for (final status in statuses) {
+            await tester.pumpWidget(
+              buildTestWidget(isIncoming: false, status: status),
+            );
+            expect(
+              find.byIcon(Icons.done_all_rounded),
+              findsNothing,
+              reason: "done_all must never render for status '$status'",
+            );
+          }
+        },
+      );
+
+      // 155 TC-07 — the reached state ('inboxed'/'delivered') carries the new
+      // "delivered to inbox" a11y label, not the old pending/delivered labels.
+      testWidgets(
+        "inboxed/delivered carry the 'delivered to inbox' a11y label",
+        (tester) async {
+          for (final status in const ['inboxed', 'delivered']) {
+            await tester.pumpWidget(
+              buildTestWidget(isIncoming: false, status: status),
+            );
+            expect(
+              find.bySemanticsLabel('Message status: delivered to inbox'),
+              findsOneWidget,
+              reason: "status '$status' must use the new inbox a11y label",
+            );
+            expect(
+              find.bySemanticsLabel(
+                'Message status: pending delivery via inbox',
+              ),
+              findsNothing,
+              reason: "status '$status' must NOT use the old pending label",
+            );
+            expect(
+              find.bySemanticsLabel('Message status: delivered'),
+              findsNothing,
+              reason: "status '$status' must NOT use the old delivered label",
+            );
+          }
+        },
+      );
+
+      // 155 TC-08 — the reached state uses the neutral (non-amber) muted color,
+      // the same value 'sent' returns; 'pending' alone keeps the amber clock.
+      testWidgets(
+        'inboxed/delivered use the neutral status color; pending stays amber',
+        (tester) async {
+          const neutral = Color.fromRGBO(255, 255, 255, 0.25);
+          const amber = Color.fromRGBO(255, 200, 100, 0.50);
+
+          for (final status in const ['inboxed', 'delivered']) {
+            await tester.pumpWidget(
+              buildTestWidget(isIncoming: false, status: status),
+            );
+            final icon = tester.widget<Icon>(
+              find.byIcon(Icons.inbox_rounded),
+            );
+            expect(
+              icon.color,
+              neutral,
+              reason: "status '$status' must use the neutral muted color",
+            );
+            expect(icon.color, isNot(amber));
+          }
+
+          await tester.pumpWidget(
+            buildTestWidget(isIncoming: false, status: 'pending'),
           );
+          final pendingIcon = tester.widget<Icon>(
+            find.byIcon(Icons.schedule_rounded),
+          );
+          expect(pendingIcon.color, amber);
         },
       );
 
@@ -742,7 +863,10 @@ void main() {
 
           expect(find.text('👍'), findsOneWidget);
           expect(find.text('4:00 PM'), findsOneWidget);
-          expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
+          // 155: delivered (with reactions) renders the inbox glyph, never the
+          // retired two-tick done_all.
+          expect(find.byIcon(Icons.inbox_rounded), findsOneWidget);
+          expect(find.byIcon(Icons.done_all_rounded), findsNothing);
 
           // Verify emoji and time share the same Row
           final emojiElement = find.text('👍').evaluate().first;
@@ -2100,6 +2224,358 @@ void main() {
           findsNothing,
         );
         expect(retried, isFalse);
+      },
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // 155 — 1:1 transport status glyph (OUTGOING + INCOMING), behind the
+  // `transportStatusGlyph` opt-in (set only by the 1:1 conversation screen).
+  //
+  // The 1:1 screen renders the bubble layout with the header hidden
+  // (showAvatar/showSenderName false), so these tests mirror that config
+  // EXACTLY — using the legacy full-width card would also paint the header
+  // transport icon (`:318-326`) and double-render the glyph. Group keeps v1
+  // (flag default false) and is locked by TC-18.
+  // ---------------------------------------------------------------------------
+  group('155 transport status glyph (1:1)', () {
+    Widget buildTransportGlyph({
+      bool isIncoming = false,
+      String? status,
+      String? transport,
+      bool transportStatusGlyph = true,
+      bool isDeleted = false,
+      String text = 'Hello, this is a test message.',
+      List<MediaAttachment> media = const [],
+    }) {
+      return MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        theme: ThemeData(
+          extensions: <ThemeExtension<dynamic>>[
+            BackgroundReadableColors.dark,
+          ],
+        ),
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 400,
+              child: SingleChildScrollView(
+                child: LetterCard(
+                  senderPeerId: '12D3KooWTestPeerId1234567890',
+                  senderName: isIncoming ? 'Alice' : 'You',
+                  text: text,
+                  time: '3:30 PM',
+                  isIncoming: isIncoming,
+                  status: status,
+                  transport: transport,
+                  isDeleted: isDeleted,
+                  media: media,
+                  bubbleLayout: true,
+                  showAvatar: false,
+                  showSenderName: false,
+                  transportStatusGlyph: transportStatusGlyph,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    // ---- OUTGOING (transportStatusGlyph: true) ----------------------------
+
+    // TC-01
+    testWidgets(
+      'TC-01 outgoing reached via relay → cell_tower (not inbox_rounded, '
+      'not done_all)',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTransportGlyph(status: 'delivered', transport: 'relay'),
+        );
+        expect(find.byIcon(Icons.cell_tower), findsOneWidget);
+        expect(find.byIcon(Icons.inbox_rounded), findsNothing);
+        expect(find.byIcon(Icons.done_all_rounded), findsNothing);
+      },
+    );
+
+    // TC-02
+    testWidgets('TC-02 outgoing direct → device_hub', (tester) async {
+      await tester.pumpWidget(
+        buildTransportGlyph(status: 'sent', transport: 'direct'),
+      );
+      expect(find.byIcon(Icons.device_hub), findsOneWidget);
+    });
+
+    // TC-03
+    testWidgets('TC-03 outgoing wifi → wifi', (tester) async {
+      await tester.pumpWidget(
+        buildTransportGlyph(status: 'delivered', transport: 'wifi'),
+      );
+      expect(find.byIcon(Icons.wifi), findsOneWidget);
+    });
+
+    // TC-04
+    testWidgets(
+      'TC-04 outgoing inbox transport → inbox glyph (not schedule, not '
+      'inbox_rounded)',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTransportGlyph(status: 'inboxed', transport: 'inbox'),
+        );
+        expect(find.byIcon(Icons.inbox), findsOneWidget);
+        expect(find.byIcon(Icons.schedule_rounded), findsNothing);
+        expect(find.byIcon(Icons.inbox_rounded), findsNothing);
+      },
+    );
+
+    // TC-05
+    testWidgets(
+      'TC-05 outgoing reached + null transport → single-check fallback',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTransportGlyph(status: 'delivered', transport: null),
+        );
+        expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.help_outline), findsNothing);
+        expect(find.byIcon(Icons.done_all_rounded), findsNothing);
+      },
+    );
+
+    // TC-06
+    testWidgets(
+      'TC-06 outgoing in-flight (pending/sending) → clock, never transport '
+      'glyph',
+      (tester) async {
+        for (final status in const ['pending', 'sending']) {
+          await tester.pumpWidget(
+            buildTransportGlyph(status: status, transport: 'relay'),
+          );
+          expect(
+            find.byIcon(Icons.schedule_rounded),
+            findsOneWidget,
+            reason: "status '$status' must show the clock",
+          );
+          expect(
+            find.byIcon(Icons.cell_tower),
+            findsNothing,
+            reason: "status '$status' must NOT show the transport glyph",
+          );
+        }
+      },
+    );
+
+    // TC-07
+    testWidgets(
+      'TC-07 outgoing failed/send_failed → error, never transport glyph',
+      (tester) async {
+        for (final status in const ['failed', 'send_failed']) {
+          await tester.pumpWidget(
+            buildTransportGlyph(status: status, transport: 'relay'),
+          );
+          expect(
+            find.byIcon(Icons.error_outline_rounded),
+            findsOneWidget,
+            reason: "status '$status' must show the error glyph",
+          );
+          expect(find.byIcon(Icons.cell_tower), findsNothing);
+        }
+      },
+    );
+
+    // ---- INCOMING (transportStatusGlyph: true, status null) ---------------
+
+    // TC-08
+    testWidgets(
+      'TC-08 incoming via inbox → inbox glyph (arrived-while-away)',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTransportGlyph(isIncoming: true, transport: 'inbox'),
+        );
+        expect(find.byIcon(Icons.inbox), findsOneWidget);
+      },
+    );
+
+    // TC-09
+    testWidgets('TC-09 incoming direct → device_hub', (tester) async {
+      await tester.pumpWidget(
+        buildTransportGlyph(isIncoming: true, transport: 'direct'),
+      );
+      expect(find.byIcon(Icons.device_hub), findsOneWidget);
+    });
+
+    // TC-10
+    testWidgets('TC-10 incoming relay → cell_tower', (tester) async {
+      await tester.pumpWidget(
+        buildTransportGlyph(isIncoming: true, transport: 'relay'),
+      );
+      expect(find.byIcon(Icons.cell_tower), findsOneWidget);
+    });
+
+    // TC-11
+    testWidgets('TC-11 incoming wifi → wifi', (tester) async {
+      await tester.pumpWidget(
+        buildTransportGlyph(isIncoming: true, transport: 'wifi'),
+      );
+      expect(find.byIcon(Icons.wifi), findsOneWidget);
+    });
+
+    // TC-12
+    testWidgets('TC-12 incoming null transport → no transport glyph', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTransportGlyph(isIncoming: true, transport: null),
+      );
+      expect(find.byIcon(Icons.inbox), findsNothing);
+      expect(find.byIcon(Icons.cell_tower), findsNothing);
+      expect(find.byIcon(Icons.device_hub), findsNothing);
+      expect(find.byIcon(Icons.wifi), findsNothing);
+    });
+
+    // TC-13
+    testWidgets(
+      'TC-13 incoming unknown transport → no glyph (not help_outline)',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTransportGlyph(isIncoming: true, transport: 'unknown'),
+        );
+        expect(find.byIcon(Icons.help_outline), findsNothing);
+      },
+    );
+
+    // TC-14
+    testWidgets('TC-14 incoming system transport → no glyph', (tester) async {
+      await tester.pumpWidget(
+        buildTransportGlyph(isIncoming: true, transport: 'system'),
+      );
+      expect(find.byIcon(Icons.help_outline), findsNothing);
+      expect(find.byIcon(Icons.cell_tower), findsNothing);
+    });
+
+    // TC-15
+    testWidgets('TC-15 incoming deleted row → no transport glyph', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTransportGlyph(
+          isIncoming: true,
+          isDeleted: true,
+          transport: 'relay',
+          text: 'This message was deleted',
+        ),
+      );
+      expect(find.byIcon(Icons.cell_tower), findsNothing);
+    });
+
+    // TC-16
+    testWidgets(
+      'TC-16 incoming transport glyph renders in BOTH inline and footer '
+      'variants',
+      (tester) async {
+        // Inline variant: real body text → the meta folds inline (gate 2).
+        await tester.pumpWidget(
+          buildTransportGlyph(
+            isIncoming: true,
+            transport: 'relay',
+            text: 'normal body text',
+          ),
+        );
+        expect(
+          find.byIcon(Icons.cell_tower),
+          findsOneWidget,
+          reason: 'inline variant must render the incoming transport glyph',
+        );
+
+        // Footer variant: empty text → the standalone footer meta Row renders
+        // (gate 1).
+        await tester.pumpWidget(
+          buildTransportGlyph(
+            isIncoming: true,
+            transport: 'relay',
+            text: '',
+          ),
+        );
+        expect(
+          find.byIcon(Icons.cell_tower),
+          findsOneWidget,
+          reason: 'footer variant must render the incoming transport glyph',
+        );
+      },
+    );
+
+    // ---- a11y / scoping ---------------------------------------------------
+
+    // TC-17
+    testWidgets(
+      'TC-17 incoming uses "received via" a11y label; outgoing uses "sent '
+      'via" — distinct, never the v1 status-inbox label',
+      (tester) async {
+        // The bubble attributes sender/time/status into one merged Semantics
+        // node, so match the substring (RegExp), mirroring the bubble-layout
+        // Semantics test above.
+        await tester.pumpWidget(
+          buildTransportGlyph(isIncoming: true, transport: 'relay'),
+        );
+        expect(
+          find.bySemanticsLabel(RegExp('Received via cellular relay')),
+          findsWidgets,
+        );
+        expect(
+          find.bySemanticsLabel(RegExp('Sent via cellular relay')),
+          findsNothing,
+        );
+
+        await tester.pumpWidget(
+          buildTransportGlyph(
+            isIncoming: false,
+            status: 'delivered',
+            transport: 'relay',
+          ),
+        );
+        expect(
+          find.bySemanticsLabel(RegExp('Sent via cellular relay')),
+          findsWidgets,
+        );
+        expect(
+          find.bySemanticsLabel(RegExp('Received via cellular relay')),
+          findsNothing,
+        );
+        expect(
+          find.bySemanticsLabel(RegExp('delivered to inbox')),
+          findsNothing,
+        );
+      },
+    );
+
+    // TC-18 — scoping lock: GROUP/legacy (flag false) keeps v1.
+    testWidgets(
+      'TC-18 flag false keeps v1 — outgoing reached→inbox_rounded (not '
+      'transport glyph); incoming→nothing',
+      (tester) async {
+        // Outgoing delivered, flag FALSE → v1 inbox_rounded, NOT cell_tower
+        // (even though a transport is supplied).
+        await tester.pumpWidget(
+          buildTransportGlyph(
+            isIncoming: false,
+            status: 'delivered',
+            transport: 'relay',
+            transportStatusGlyph: false,
+          ),
+        );
+        expect(find.byIcon(Icons.inbox_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.cell_tower), findsNothing);
+
+        // Incoming with transport, flag FALSE → no transport glyph at all.
+        await tester.pumpWidget(
+          buildTransportGlyph(
+            isIncoming: true,
+            transport: 'relay',
+            transportStatusGlyph: false,
+          ),
+        );
+        expect(find.byIcon(Icons.cell_tower), findsNothing);
       },
     );
   });

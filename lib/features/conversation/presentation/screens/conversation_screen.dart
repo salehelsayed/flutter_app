@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' as intl;
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/utils/format_day_separator_label.dart';
+import 'package:flutter_app/core/widgets/quiet_confirm.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/utils/message_run_grouping.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/blocked_banner.dart';
@@ -38,6 +39,18 @@ typedef ConversationMediaViewerBuilder =
 @immutable
 class ConversationComposerViewState {
   final List<File> pendingAttachments;
+
+  /// Indices of pending attachments that failed a size/GIF SEND policy (149).
+  /// Drives the inline composer reject-chip and the Send-disable.
+  final Set<int> invalidAttachmentIndices;
+
+  /// Per-index normalized rejection reason (`too_large` | `gif_too_large`).
+  final Map<int, String> invalidAttachmentReasons;
+
+  /// True when the picked attachments are EACH individually valid but their
+  /// combined size exceeds the whole-message cap (149 — group only; owns no
+  /// single index). Surfaces as a strip-level note + Send-disabled.
+  final bool hasTotalSizeOverflow;
   final bool isUploading;
   final bool isProcessing;
   final double processingProgress;
@@ -49,6 +62,9 @@ class ConversationComposerViewState {
 
   const ConversationComposerViewState({
     this.pendingAttachments = const [],
+    this.invalidAttachmentIndices = const {},
+    this.invalidAttachmentReasons = const {},
+    this.hasTotalSizeOverflow = false,
     this.isUploading = false,
     this.isProcessing = false,
     this.processingProgress = 0.0,
@@ -61,6 +77,9 @@ class ConversationComposerViewState {
 
   ConversationComposerViewState copyWith({
     List<File>? pendingAttachments,
+    Set<int>? invalidAttachmentIndices,
+    Map<int, String>? invalidAttachmentReasons,
+    bool? hasTotalSizeOverflow,
     bool? isUploading,
     bool? isProcessing,
     double? processingProgress,
@@ -72,6 +91,11 @@ class ConversationComposerViewState {
   }) {
     return ConversationComposerViewState(
       pendingAttachments: pendingAttachments ?? this.pendingAttachments,
+      invalidAttachmentIndices:
+          invalidAttachmentIndices ?? this.invalidAttachmentIndices,
+      invalidAttachmentReasons:
+          invalidAttachmentReasons ?? this.invalidAttachmentReasons,
+      hasTotalSizeOverflow: hasTotalSizeOverflow ?? this.hasTotalSizeOverflow,
       isUploading: isUploading ?? this.isUploading,
       isProcessing: isProcessing ?? this.isProcessing,
       processingProgress: processingProgress ?? this.processingProgress,
@@ -84,6 +108,12 @@ class ConversationComposerViewState {
   }
 
   bool get isRecording => recordingState.isActive;
+
+  /// True when any pending attachment is rejected (per-attachment too-large/GIF)
+  /// OR the whole-message total overflows — used to disable Send while an
+  /// un-sendable attachment set sits in the strip.
+  bool get hasInvalidAttachment =>
+      invalidAttachmentIndices.isNotEmpty || hasTotalSizeOverflow;
 }
 
 /// Pure UI conversation screen.
@@ -344,6 +374,9 @@ class _ConversationScreenState extends State<ConversationScreen> {
             processingProgress: composerState.processingProgress,
             processingCurrent: composerState.processingCurrent,
             processingTotal: composerState.processingTotal,
+            invalidIndices: composerState.invalidAttachmentIndices,
+            invalidReasons: composerState.invalidAttachmentReasons,
+            hasTotalSizeOverflow: composerState.hasTotalSizeOverflow,
             onRemove: widget.onRemoveAttachment,
           ),
         if (widget.isEditingMessage && widget.onCancelEdit != null)
@@ -355,6 +388,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
           onSend: widget.onSend,
           onAttach: widget.onAttach,
           hasAttachments: composerState.pendingAttachments.isNotEmpty,
+          hasInvalidAttachment: composerState.hasInvalidAttachment,
           isProcessing: composerState.isProcessing,
           isSending: widget.isSending,
           recordingState: composerState.recordingState,
@@ -553,6 +587,9 @@ class _ConversationScreenState extends State<ConversationScreen> {
                 isLastInGroup: item.isLastInGroup,
                 showAvatar: false,
                 showSenderName: false,
+                // 155: on 1:1 the inline glyph reflects the TRANSPORT the
+                // message travelled (own outgoing AND received). Group keeps v1.
+                transportStatusGlyph: true,
                 status: message.isIncoming ? null : message.status,
                 transport: message.transport,
                 quotedText: quotedText,
@@ -878,18 +915,14 @@ class _ConversationScreenState extends State<ConversationScreen> {
 
   Future<void> _copyMessageText(String text) async {
     await Clipboard.setData(ClipboardData(text: text));
+    // 154: keep the post-await !mounted guard (this State.context) — copy has
+    // no persistent control, so confirm with a distinct, keyed quiet-confirm +
+    // haptic instead of the reserved error-style snackbar.
     if (!mounted) return;
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    messenger
-      ?..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            AppLocalizations.of(context)!.conversation_context_copied,
-          ),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+    showQuietConfirm(
+      context,
+      AppLocalizations.of(context)!.conversation_context_copied,
+    );
   }
 
   void _showFullPicker(String messageId) async {

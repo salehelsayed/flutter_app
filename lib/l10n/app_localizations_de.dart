@@ -887,6 +887,16 @@ class AppLocalizationsDe extends AppLocalizations {
       'GIF-Dateien größer als 25 MB können nicht hinzugefügt werden.';
 
   @override
+  String get media_too_large_chip => 'Zu groß';
+
+  @override
+  String get media_gif_too_large_chip => 'GIF zu groß';
+
+  @override
+  String get media_attachments_too_large_note =>
+      'Anhänge zu groß – entfernen Sie einige zum Senden.';
+
+  @override
   String get media_unavailable => 'Medien nicht verfügbar';
 
   @override
@@ -943,6 +953,33 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get message_status_pending_inbox =>
       'ausstehende Zustellung über Posteingang';
+
+  @override
+  String get message_status_inbox => 'im Posteingang zugestellt';
+
+  @override
+  String get message_sent_via_relay => 'Über Mobilfunk-Relay gesendet';
+
+  @override
+  String get message_sent_via_direct => 'Über Direktverbindung gesendet';
+
+  @override
+  String get message_sent_via_wifi => 'Über WLAN gesendet';
+
+  @override
+  String get message_sent_via_inbox => 'An Posteingang gesendet';
+
+  @override
+  String get message_received_via_relay => 'Über Mobilfunk-Relay empfangen';
+
+  @override
+  String get message_received_via_direct => 'Über Direktverbindung empfangen';
+
+  @override
+  String get message_received_via_wifi => 'Über WLAN empfangen';
+
+  @override
+  String get message_received_via_inbox => 'Über Posteingang empfangen';
 
   @override
   String get share_send_failed =>
@@ -1128,6 +1165,18 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get group_info_remove_action => 'Entfernen';
+
+  @override
+  String group_info_revoke_invite_title(String username) {
+    return 'Einladung für $username zurückziehen?';
+  }
+
+  @override
+  String get group_info_revoke_invite_body =>
+      'Sie können der Gruppe mit dieser Einladung nicht mehr beitreten.';
+
+  @override
+  String get group_info_revoke_invite_action => 'Zurückziehen';
 
   @override
   String get group_info_member_fallback => 'Mitglied';
@@ -1697,6 +1746,16 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get perm_microphone_record =>
       'Die Mikrofonberechtigung ist erforderlich, um Sprachnachrichten aufzunehmen.';
+
+  @override
+  String get mic_perm_dialog_title => 'Mikrofonzugriff erforderlich';
+
+  @override
+  String get mic_perm_dialog_body =>
+      'Um Sprachnachrichten aufzunehmen, erlaube den Mikrofonzugriff in den Einstellungen.';
+
+  @override
+  String get mic_perm_not_now => 'Nicht jetzt';
 
   @override
   String get group_read_only_not_active =>
@@ -2285,6 +2344,9 @@ class AppLocalizationsDe extends AppLocalizations {
       'Einladung benötigt frisches Schlüsselmaterial';
 
   @override
+  String get group_invite_waiting_for_key => 'Warte auf Schlüssel';
+
+  @override
   String get group_invite_invalid => 'Einladung ist nicht mehr gültig';
 
   @override
@@ -2669,4 +2731,49 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get orbit2_inbox_empty => 'Noch keine Unterhaltungen';
+
+  @override
+  String orbit2_open_chat_with(String name) {
+    return 'Chat mit $name öffnen';
+  }
+
+  @override
+  String get orbit3_constellation_zodiac => 'Tierkreis';
+
+  @override
+  String get orbit3_constellation_galaxy => 'Galaxie';
+
+  @override
+  String get orbit3_listens => 'hört zu';
+
+  @override
+  String get orbit3_talks => 'spricht';
+
+  @override
+  String orbit3_released_to_drawer(String name) {
+    return '$name in die Ablage verschoben';
+  }
+
+  @override
+  String get orbit3_inner_short => 'Innen';
+
+  @override
+  String get orbit3_all_friends => 'Alle Freunde';
+
+  @override
+  String get orbit3_drag_up_to_search => 'Zum Suchen nach oben ziehen';
+
+  @override
+  String get orbit3_find_anyone => 'Beliebige Person finden';
+
+  @override
+  String get orbit3_pin => 'Anheften';
+
+  @override
+  String orbit3_pulled_into_inner_tier(String name) {
+    return '$name in deine innere Ebene gezogen';
+  }
+
+  @override
+  String get orbit3_tap_to_open => 'Tippen zum Öffnen';
 }

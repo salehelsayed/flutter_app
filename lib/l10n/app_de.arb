@@ -420,6 +420,9 @@
   "media_compress": "Komprimieren",
   "media_too_large_after_compress": "Die Medien sind auch nach der Komprimierung zu groß.",
   "media_gif_too_large": "GIF-Dateien größer als 25 MB können nicht hinzugefügt werden.",
+  "media_too_large_chip": "Zu groß",
+  "media_gif_too_large_chip": "GIF zu groß",
+  "media_attachments_too_large_note": "Anhänge zu groß – entfernen Sie einige zum Senden.",
   "media_unavailable": "Medien nicht verfügbar",
   "media_could_not_verify": "Diese Medien konnten nicht verifiziert werden",
   "media_retry_unavailable": "Nicht verfügbare Medien erneut laden",
@@ -444,6 +447,15 @@
   "message_status_sending": "wird gesendet",
   "message_status_sent": "gesendet",
   "message_status_pending_inbox": "ausstehende Zustellung über Posteingang",
+  "message_status_inbox": "im Posteingang zugestellt",
+  "message_sent_via_relay": "Über Mobilfunk-Relay gesendet",
+  "message_sent_via_direct": "Über Direktverbindung gesendet",
+  "message_sent_via_wifi": "Über WLAN gesendet",
+  "message_sent_via_inbox": "An Posteingang gesendet",
+  "message_received_via_relay": "Über Mobilfunk-Relay empfangen",
+  "message_received_via_direct": "Über Direktverbindung empfangen",
+  "message_received_via_wifi": "Über WLAN empfangen",
+  "message_received_via_inbox": "Über Posteingang empfangen",
   "share_send_failed": "Konnte nicht an die ausgewählten Ziele teilen.",
   "group_info_title": "Gruppeninfo",
   "group_edit_details": "Details bearbeiten",
@@ -513,6 +525,16 @@
   },
   "group_info_remove_member_body": "Diese Person erhält keine neuen Nachrichten aus dieser Gruppe mehr.",
   "group_info_remove_action": "Entfernen",
+  "group_info_revoke_invite_title": "Einladung für {username} zurückziehen?",
+  "@group_info_revoke_invite_title": {
+    "placeholders": {
+      "username": {
+        "type": "String"
+      }
+    }
+  },
+  "group_info_revoke_invite_body": "Sie können der Gruppe mit dieser Einladung nicht mehr beitreten.",
+  "group_info_revoke_invite_action": "Zurückziehen",
   "group_info_member_fallback": "Mitglied",
   "group_info_make_admin_title": "{username} zum Admin machen?",
   "@group_info_make_admin_title": {
@@ -860,6 +882,9 @@
   "picker_media_library": "Medienbibliothek",
   "picker_record_video": "Video aufnehmen",
   "perm_microphone_record": "Die Mikrofonberechtigung ist erforderlich, um Sprachnachrichten aufzunehmen.",
+  "mic_perm_dialog_title": "Mikrofonzugriff erforderlich",
+  "mic_perm_dialog_body": "Um Sprachnachrichten aufzunehmen, erlaube den Mikrofonzugriff in den Einstellungen.",
+  "mic_perm_not_now": "Nicht jetzt",
   "group_read_only_not_active": "Du kannst den Verlauf dieser Gruppe lesen, bist aber kein aktives Mitglied.",
   "group_read_only_waiting_key": "Warte auf den aktuellen Gruppenschlüssel, bevor du senden kannst.",
   "group_read_only_waiting_identity": "Warte auf deine Identität, bevor du senden kannst.",
@@ -1243,6 +1268,7 @@
   "group_invite_already_used": "Einladung bereits verwendet",
   "group_invite_wrong_identity": "Einladung gehört zu einer anderen Identität",
   "group_invite_needs_key": "Einladung benötigt frisches Schlüsselmaterial",
+  "group_invite_waiting_for_key": "Warte auf Schlüssel",
   "group_invite_invalid": "Einladung ist nicht mehr gültig",
   "group_invite_duplicate_group": "Gruppe bereits hinzugefügt",
   "group_invite_joined_recovery": "{name} beigetreten, aber die Wiederherstellung holt noch auf",
@@ -1360,5 +1386,18 @@
   "orbit2_names_hide": "Namen ausblenden",
   "orbit2_promoted_group": "Gruppe {name} zu deinem inneren Kreis hinzugefügt",
   "orbit2_view_messages": "Nachrichten",
-  "orbit2_inbox_empty": "Noch keine Unterhaltungen"
+  "orbit2_inbox_empty": "Noch keine Unterhaltungen",
+  "orbit2_open_chat_with": "Chat mit {name} öffnen",
+  "orbit3_constellation_zodiac": "Tierkreis",
+  "orbit3_constellation_galaxy": "Galaxie",
+  "orbit3_listens": "hört zu",
+  "orbit3_talks": "spricht",
+  "orbit3_released_to_drawer": "{name} in die Ablage verschoben",
+  "orbit3_inner_short": "Innen",
+  "orbit3_all_friends": "Alle Freunde",
+  "orbit3_drag_up_to_search": "Zum Suchen nach oben ziehen",
+  "orbit3_find_anyone": "Beliebige Person finden",
+  "orbit3_pin": "Anheften",
+  "orbit3_pulled_into_inner_tier": "{name} in deine innere Ebene gezogen",
+  "orbit3_tap_to_open": "Tippen zum Öffnen"
 }

@@ -56,6 +56,7 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../../shared/fakes/fake_audio_recorder_service.dart';
+import '../../../shared/fakes/fake_mic_permission_gateway.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/fake_group_pubsub_network.dart';
 import '../../../shared/fakes/fake_upload_wake_lock_driver.dart';
@@ -1132,6 +1133,7 @@ Future<void> _pumpSection10SenderWidget(
         mediaAttachmentRepo: sender.mediaAttachmentRepo,
         mediaFileManager: mediaFileManager,
         audioRecorderService: audioRecorderService,
+        micPermissionGateway: FakeMicPermissionGateway(),
         uploadMediaFn: uploadMediaFn ?? uploadMedia,
         initialAttachments: initialAttachments,
       ),

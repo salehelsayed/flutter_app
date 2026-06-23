@@ -10,6 +10,7 @@ import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
+import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
@@ -39,6 +40,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/recording_overlay.dart';
@@ -54,6 +56,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../shared/fakes/fake_audio_recorder_service.dart';
+import '../../../../shared/fakes/fake_mic_permission_gateway.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../../shared/fakes/fake_media_picker.dart';
 import '../../../../shared/fakes/fake_upload_wake_lock_driver.dart';
@@ -892,6 +895,7 @@ void main() {
     ReactionListener? reactionListener,
     MediaFileManager? mediaFileManager,
     FakeAudioRecorderService? audioRecorderService,
+    MicPermissionGateway? micPermissionGateway,
     ImageProcessor? imageProcessor,
     MediaPicker? mediaPicker,
     DownloadMediaFn? downloadMediaFn,
@@ -933,6 +937,8 @@ void main() {
           mediaAttachmentRepo: mediaAttachmentRepo,
           mediaFileManager: mediaFileManager,
           audioRecorderService: audioRecorderService,
+          micPermissionGateway:
+              micPermissionGateway ?? FakeMicPermissionGateway(),
           imageProcessor: imageProcessor,
           mediaPicker: mediaPicker,
           downloadMediaFn: downloadMediaFn ?? downloadMedia,
@@ -1257,7 +1263,9 @@ void main() {
       await tester.pump();
 
       expect(find.text('Hello optimistic'), findsOneWidget);
-      expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+      // 155: on 1:1 the inline glyph is transport-aware. In-flight ('sending')
+      // shows the clock; the two-tick done_all is retired.
+      expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
       expect(find.byIcon(Icons.done_all_rounded), findsNothing);
 
       gate.complete();
@@ -1265,7 +1273,9 @@ void main() {
 
       expect(sentMessageId, isNotNull);
       expect(sentTimestamp, isNotNull);
-      expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
+      // 155: reached with no resolved transport → single-check fallback.
+      expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.done_all_rounded), findsNothing);
       expect(messageRepo.store[sentMessageId!]!.status, 'delivered');
     });
 
@@ -1318,7 +1328,8 @@ void main() {
       await tester.pump();
 
       expect(find.text('Fail me'), findsOneWidget);
-      expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+      // 155: in-flight ('sending') shows the clock on 1:1.
+      expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
 
       gate.complete();
       await tester.pump(const Duration(milliseconds: 50));
@@ -1594,12 +1605,15 @@ void main() {
       await tester.pump();
 
       expect(find.text('Inbox delivered'), findsOneWidget);
-      expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+      // 155: in-flight ('sending') → clock on 1:1.
+      expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
 
       gate.complete();
       await tester.pump(const Duration(milliseconds: 50));
 
-      expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
+      // 155: reached with no resolved transport → single-check fallback.
+      expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.done_all_rounded), findsNothing);
       expect(messageRepo.store[sentMessageId!]!.status, 'delivered');
     });
 
@@ -2727,7 +2741,7 @@ void main() {
       },
     );
 
-    testWidgets('shows two ticks when inbox delivered message is returned', (
+    testWidgets('shows the inbox transport glyph when inbox delivered message is returned', (
       tester,
     ) async {
       final identityRepo = FakeIdentityRepository(makeIdentity());
@@ -2788,12 +2802,16 @@ void main() {
       await tester.pump();
 
       expect(find.text('Inbox delivered'), findsOneWidget);
-      expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+      // 155: in-flight ('sending') → clock on 1:1.
+      expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
 
       gate.complete();
       await tester.pump(const Duration(milliseconds: 50));
 
-      expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
+      // 155: reached with transport 'inbox' → the inbox transport glyph
+      // (Icons.inbox via _transportIcon), never the retired two-tick.
+      expect(find.byIcon(Icons.inbox), findsOneWidget);
+      expect(find.byIcon(Icons.done_all_rounded), findsNothing);
       expect(messageRepo.store[sentMessageId!]!.status, 'delivered');
       expect(messageRepo.store[sentMessageId!]!.transport, 'inbox');
     });
@@ -3846,6 +3864,325 @@ void main() {
 
       expect(find.byType(AttachmentPreviewStrip), findsNothing);
     });
+
+    // 149 TC-05: an oversized pick marks the chip invalid AT PICK TIME (no send
+    // press) and shows NO snackbar — the chip carries the reason.
+    testWidgets(
+      'oversized 1:1 pick marks the chip invalid at pick time and shows no '
+      'snackbar',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final tempDir = Directory.systemTemp.createTempSync('conv_oversized_');
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final bigImage = File('${tempDir.path}/big.jpg')
+          ..writeAsBytesSync(_tinyPngBytes);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          initialPendingMedia: [
+            PendingComposerMedia(
+              file: bigImage,
+              budgetBytes: 30 * 1024 * 1024, // > 25 MB image cap
+            ),
+          ],
+        );
+
+        expect(
+          find.byKey(const ValueKey('attachment-invalid-0')),
+          findsOneWidget,
+        );
+        expect(
+          find.widgetWithText(
+            SnackBar,
+            'The media is too large even after compression.',
+          ),
+          findsNothing,
+        );
+        // The attachment is retained, not silently discarded.
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+      },
+    );
+
+    // 149 TC-05b: an oversized GIF pick marks the chip with the GIF caption
+    // (distinct from the generic too-large copy), not a snackbar.
+    testWidgets(
+      'oversized 1:1 GIF pick marks the chip with the GIF caption (not a '
+      'snackbar)',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final tempDir = Directory.systemTemp.createTempSync('conv_gif_over_');
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final bigGif = File('${tempDir.path}/big.gif')
+          ..writeAsBytesSync(_tinyGifBytes);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          initialPendingMedia: [
+            PendingComposerMedia(
+              file: bigGif,
+              budgetBytes: 30 * 1024 * 1024, // > 25 MB GIF cap
+            ),
+          ],
+        );
+
+        expect(find.text('GIF too big'), findsOneWidget);
+        expect(find.text('Too large'), findsNothing);
+        expect(
+          find.widgetWithText(
+            SnackBar,
+            'GIF files larger than 25 MB cannot be added.',
+          ),
+          findsNothing,
+        );
+      },
+    );
+
+    // 149 TC-09: tapping Send is a no-op while an invalid attachment is present
+    // (Send icon still shown, draft NOT cleared), and re-enables once removed.
+    testWidgets(
+      'Send tap is a no-op while an invalid attachment is present, and '
+      're-enables once all are removed (1:1)',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final tempDir = Directory.systemTemp.createTempSync('conv_send_gate_');
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final bigImage = File('${tempDir.path}/big.jpg')
+          ..writeAsBytesSync(_tinyPngBytes);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          initialText: 'hello',
+          initialPendingMedia: [
+            PendingComposerMedia(
+              file: bigImage,
+              budgetBytes: 30 * 1024 * 1024,
+            ),
+          ],
+        );
+
+        expect(
+          find.byKey(const ValueKey('attachment-invalid-0')),
+          findsOneWidget,
+        );
+        // ComposeArea Send is gated off while invalid present.
+        expect(
+          tester
+              .widget<ComposeArea>(find.byType(ComposeArea))
+              .hasInvalidAttachment,
+          isTrue,
+        );
+
+        // Send affordance is the up-arrow (NOT the mic) and tapping it is inert:
+        // _onSendPressed never runs, so the draft is NOT cleared. (Dropping the
+        // `&& !hasInvalidAttachment` onTap term would clear it — the mutation.)
+        expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'hello',
+        );
+
+        // Remove the offending attachment → chip clears, Send re-enables.
+        await tester.tap(find.byIcon(Icons.close));
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(
+          find.byKey(const ValueKey('attachment-invalid-0')),
+          findsNothing,
+        );
+        expect(find.byIcon(Icons.error_outline), findsNothing);
+        expect(
+          tester
+              .widget<ComposeArea>(find.byType(ComposeArea))
+              .hasInvalidAttachment,
+          isFalse,
+        );
+      },
+    );
+
+    // 149 TC-11: two oversized picks mark BOTH chips and keep Send disabled
+    // until both are removed (mark-all, not first-failure).
+    testWidgets(
+      'two oversized picks mark BOTH chips invalid and keep Send disabled '
+      'until both are removed (1:1 multi-invalid)',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final tempDir = Directory.systemTemp.createTempSync('conv_multi_');
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final big1 = File('${tempDir.path}/big1.jpg')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final big2 = File('${tempDir.path}/big2.jpg')
+          ..writeAsBytesSync(_tinyPngBytes);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          initialText: 'hi',
+          initialPendingMedia: [
+            PendingComposerMedia(file: big1, budgetBytes: 30 * 1024 * 1024),
+            PendingComposerMedia(file: big2, budgetBytes: 30 * 1024 * 1024),
+          ],
+        );
+
+        expect(
+          find.byKey(const ValueKey('attachment-invalid-0')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('attachment-invalid-1')),
+          findsOneWidget,
+        );
+        expect(
+          tester
+              .widget<ComposeArea>(find.byType(ComposeArea))
+              .hasInvalidAttachment,
+          isTrue,
+        );
+
+        // Send is inert while ANY invalid present: tapping it preserves the
+        // draft (mutation: dropping the onTap term clears it).
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'hi',
+        );
+
+        // Remove one → the OTHER stays invalid (index recomputed); Send still
+        // disabled.
+        await tester.tap(find.byIcon(Icons.close).first);
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(
+          find.byKey(const ValueKey('attachment-invalid-0')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('attachment-invalid-1')),
+          findsNothing,
+        );
+        expect(
+          tester
+              .widget<ComposeArea>(find.byType(ComposeArea))
+              .hasInvalidAttachment,
+          isTrue,
+        );
+
+        // Remove the last → no red chips + Send re-enabled.
+        await tester.tap(find.byIcon(Icons.close));
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(find.byIcon(Icons.error_outline), findsNothing);
+        expect(
+          tester
+              .widget<ComposeArea>(find.byType(ComposeArea))
+              .hasInvalidAttachment,
+          isFalse,
+        );
+      },
+    );
+
+    // 149 TC-12: removing a valid sibling shifts the invalid chip to the
+    // correct remaining index (the set is recomputed, never a stale snapshot).
+    testWidgets(
+      'removing a valid attachment shifts the invalid chip to the correct '
+      'remaining index (1:1)',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final tempDir = Directory.systemTemp.createTempSync('conv_shift_');
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final small = File('${tempDir.path}/small.jpg')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final big = File('${tempDir.path}/big.jpg')
+          ..writeAsBytesSync(_tinyPngBytes);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          initialPendingMedia: [
+            PendingComposerMedia(file: small, budgetBytes: 1024), // valid @ 0
+            PendingComposerMedia(
+              file: big,
+              budgetBytes: 30 * 1024 * 1024,
+            ), // invalid @ 1
+          ],
+        );
+
+        expect(find.byKey(const ValueKey('attachment-invalid-0')), findsNothing);
+        expect(
+          find.byKey(const ValueKey('attachment-invalid-1')),
+          findsOneWidget,
+        );
+
+        // Remove the valid index 0 → the oversized item shifts to index 0.
+        await tester.tap(find.byIcon(Icons.close).first);
+        await tester.pump(const Duration(milliseconds: 200));
+
+        expect(
+          find.byKey(const ValueKey('attachment-invalid-0')),
+          findsOneWidget,
+        );
+        expect(find.byKey(const ValueKey('attachment-invalid-1')), findsNothing);
+        // Only one chip remains, and it carries the warning.
+        expect(find.byIcon(Icons.error_outline), findsOneWidget);
+      },
+    );
 
     testWidgets(
       'gallery multi-video batches keep one processing tile with honest batch context',
@@ -6616,7 +6953,10 @@ void main() {
         await tester.pump(const Duration(milliseconds: 500));
 
         expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
-        expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
+        // 155: reached with no resolved transport → single-check fallback
+        // (never the retired two-tick).
+        expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.done_all_rounded), findsNothing);
       },
     );
 
@@ -7178,8 +7518,11 @@ void main() {
       );
 
       expect(messageRepo.store['failed-media-msg']?.status, 'inboxed');
-      // 'inboxed' renders the pending-family schedule icon, not done_all.
-      expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+      // 155: on 1:1 a reached row shows its TRANSPORT glyph. The relay-inbox
+      // re-store stamps transport 'inbox', so the inbox glyph renders (not the
+      // pending clock, not the retired two-tick).
+      expect(messageRepo.store['failed-media-msg']?.transport, 'inbox');
+      expect(find.byIcon(Icons.inbox), findsOneWidget);
       expect(find.text('Could not retry media message.'), findsNothing);
     });
 
@@ -7524,6 +7867,149 @@ void main() {
           .toList();
       expect(separators, hasLength(1));
       expect(separators.single.label, 'Today');
+    });
+  });
+
+  group('mic permission denied prompt (152)', () {
+    Future<ConversationScreen> driveRecordStartSetup(
+      WidgetTester tester, {
+      required FakeAudioRecorderService recorder,
+      required FakeMicPermissionGateway gateway,
+    }) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+        bridge: FakeBridge(),
+        p2pService: FakeP2PService(localPeer: true, localMediaResult: true),
+        audioRecorderService: recorder,
+        micPermissionGateway: gateway,
+      );
+      return tester.widget<ConversationScreen>(
+        find.byType(ConversationScreen),
+      );
+    }
+
+    testWidgets(
+      '1:1 mic denial shows the rationale dialog instead of the snackbar (permanentlyDenied)',
+      (tester) async {
+        final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+        final recorder = FakeAudioRecorderService()..permissionGranted = false;
+        final gateway = FakeMicPermissionGateway()
+          ..statusToReturn = MicPermissionStatus.permanentlyDenied;
+        final screen = await driveRecordStartSetup(
+          tester,
+          recorder: recorder,
+          gateway: gateway,
+        );
+
+        final pending = (screen.onRecordStart! as Future<void> Function())();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+
+        expect(find.byType(AlertDialog), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('mic-perm-open-settings')),
+          findsOneWidget,
+        );
+        expect(find.byKey(const ValueKey('mic-perm-not-now')), findsOneWidget);
+        expect(find.text(l10n.perm_microphone_record), findsNothing);
+        expect(recorder.startCallCount, 0);
+
+        // Dismiss; the composer must reset to idle. Assert the LIVE rendered
+        // composer (the internal ValueListenableBuilder on _composerState), not
+        // the stale `recordingState` widget prop (only refreshed on a parent
+        // rebuild) nor the never-populated `isRecording` field.
+        await tester.tap(find.byKey(const ValueKey('mic-perm-not-now')));
+        for (var i = 0;
+            i < 12 && find.byIcon(Icons.mic_rounded).evaluate().isEmpty;
+            i++) {
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+        await pending;
+        expect(find.byIcon(Icons.stop_rounded), findsNothing);
+        expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
+      },
+    );
+
+    testWidgets('1:1 Open Settings tap deep-links via the injected gateway', (
+      tester,
+    ) async {
+      final recorder = FakeAudioRecorderService()..permissionGranted = false;
+      final gateway = FakeMicPermissionGateway()
+        ..statusToReturn = MicPermissionStatus.permanentlyDenied;
+      final screen = await driveRecordStartSetup(
+        tester,
+        recorder: recorder,
+        gateway: gateway,
+      );
+
+      final pending = (screen.onRecordStart! as Future<void> Function())();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.byType(AlertDialog), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('mic-perm-open-settings')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await pending;
+
+      expect(gateway.openAppSettingsCallCount, 1);
+      expect(find.byType(AlertDialog), findsNothing);
+    });
+
+    testWidgets('granted mic permission still starts recording', (tester) async {
+      final recorder = FakeAudioRecorderService();
+      final gateway = FakeMicPermissionGateway()
+        ..statusToReturn = MicPermissionStatus.granted;
+      final screen = await driveRecordStartSetup(
+        tester,
+        recorder: recorder,
+        gateway: gateway,
+      );
+
+      await (screen.onRecordStart! as Future<void> Function())();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(recorder.startCallCount, 1);
+    });
+
+    // Option A (owner-locked): a first plain `denied` (still re-promptable in
+    // app — request() already showed the OS prompt) resets to idle WITHOUT
+    // forcing the Settings dialog. Locks the denied-vs-permanentlyDenied axis.
+    testWidgets('1:1 first plain denied resets to idle with no dialog/snackbar', (
+      tester,
+    ) async {
+      final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+      final recorder = FakeAudioRecorderService();
+      final gateway = FakeMicPermissionGateway()
+        ..statusToReturn = MicPermissionStatus.denied;
+      final screen = await driveRecordStartSetup(
+        tester,
+        recorder: recorder,
+        gateway: gateway,
+      );
+
+      await (screen.onRecordStart! as Future<void> Function())();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.text(l10n.perm_microphone_record), findsNothing);
+      expect(recorder.startCallCount, 0);
+      // Live rendered composer is back to idle (mic shown, not recording).
+      expect(find.byIcon(Icons.stop_rounded), findsNothing);
+      expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
     });
   });
 }

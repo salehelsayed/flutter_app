@@ -7,6 +7,7 @@ import 'package:intl/intl.dart' as intl;
 
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/format_day_separator_label.dart';
+import 'package:flutter_app/core/widgets/quiet_confirm.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/utils/message_run_grouping.dart';
@@ -245,6 +246,9 @@ class GroupConversationScreen extends StatelessWidget {
             processingProgress: composerState.processingProgress,
             processingCurrent: composerState.processingCurrent,
             processingTotal: composerState.processingTotal,
+            invalidIndices: composerState.invalidAttachmentIndices,
+            invalidReasons: composerState.invalidAttachmentReasons,
+            hasTotalSizeOverflow: composerState.hasTotalSizeOverflow,
             onRemove: onRemoveAttachment,
           ),
         if (!canWrite)
@@ -254,6 +258,7 @@ class GroupConversationScreen extends StatelessWidget {
             onSend: onSend,
             onAttach: onAttach,
             hasAttachments: composerState.pendingAttachments.isNotEmpty,
+            hasInvalidAttachment: composerState.hasInvalidAttachment,
             isProcessing: composerState.isProcessing,
             isSending: isSending,
             recordingState: composerState.recordingState,
@@ -1050,17 +1055,15 @@ class GroupConversationScreen extends StatelessWidget {
 
   Future<void> _copyMessageText(BuildContext context, String text) async {
     await Clipboard.setData(ClipboardData(text: text));
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    messenger
-      ?..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            AppLocalizations.of(context)!.conversation_context_copied,
-          ),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+    // 154: copy has no persistent control (the overlay was popped before this
+    // runs), so it keeps a visible cue — but a distinct, keyed quiet-confirm +
+    // haptic, not the reserved error-style snackbar. Keep the live [context]
+    // (the call site passes cardContext, never the popped dialogContext).
+    if (!context.mounted) return;
+    showQuietConfirm(
+      context,
+      AppLocalizations.of(context)!.conversation_context_copied,
+    );
   }
 }
 

@@ -1582,6 +1582,24 @@ abstract class AppLocalizations {
   /// **'GIF files larger than 25 MB cannot be added.'**
   String get media_gif_too_large;
 
+  /// No description provided for @media_too_large_chip.
+  ///
+  /// In en, this message translates to:
+  /// **'Too large'**
+  String get media_too_large_chip;
+
+  /// No description provided for @media_gif_too_large_chip.
+  ///
+  /// In en, this message translates to:
+  /// **'GIF too big'**
+  String get media_gif_too_large_chip;
+
+  /// No description provided for @media_attachments_too_large_note.
+  ///
+  /// In en, this message translates to:
+  /// **'Attachments too large — remove some to send.'**
+  String get media_attachments_too_large_note;
+
   /// No description provided for @media_unavailable.
   ///
   /// In en, this message translates to:
@@ -1683,6 +1701,60 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'pending delivery via inbox'**
   String get message_status_pending_inbox;
+
+  /// No description provided for @message_status_inbox.
+  ///
+  /// In en, this message translates to:
+  /// **'delivered to inbox'**
+  String get message_status_inbox;
+
+  /// No description provided for @message_sent_via_relay.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent via cellular relay'**
+  String get message_sent_via_relay;
+
+  /// No description provided for @message_sent_via_direct.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent via direct connection'**
+  String get message_sent_via_direct;
+
+  /// No description provided for @message_sent_via_wifi.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent via Wi-Fi'**
+  String get message_sent_via_wifi;
+
+  /// No description provided for @message_sent_via_inbox.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent to inbox'**
+  String get message_sent_via_inbox;
+
+  /// No description provided for @message_received_via_relay.
+  ///
+  /// In en, this message translates to:
+  /// **'Received via cellular relay'**
+  String get message_received_via_relay;
+
+  /// No description provided for @message_received_via_direct.
+  ///
+  /// In en, this message translates to:
+  /// **'Received via direct connection'**
+  String get message_received_via_direct;
+
+  /// No description provided for @message_received_via_wifi.
+  ///
+  /// In en, this message translates to:
+  /// **'Received via Wi-Fi'**
+  String get message_received_via_wifi;
+
+  /// No description provided for @message_received_via_inbox.
+  ///
+  /// In en, this message translates to:
+  /// **'Received via inbox'**
+  String get message_received_via_inbox;
 
   /// No description provided for @share_send_failed.
   ///
@@ -1971,6 +2043,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Remove'**
   String get group_info_remove_action;
+
+  /// No description provided for @group_info_revoke_invite_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Revoke invite for {username}?'**
+  String group_info_revoke_invite_title(String username);
+
+  /// No description provided for @group_info_revoke_invite_body.
+  ///
+  /// In en, this message translates to:
+  /// **'They will no longer be able to join the group with this invite.'**
+  String get group_info_revoke_invite_body;
+
+  /// No description provided for @group_info_revoke_invite_action.
+  ///
+  /// In en, this message translates to:
+  /// **'Revoke'**
+  String get group_info_revoke_invite_action;
 
   /// No description provided for @group_info_member_fallback.
   ///
@@ -2852,6 +2942,24 @@ abstract class AppLocalizations {
   /// **'Microphone permission is required to record voice messages.'**
   String get perm_microphone_record;
 
+  /// No description provided for @mic_perm_dialog_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone access needed'**
+  String get mic_perm_dialog_title;
+
+  /// No description provided for @mic_perm_dialog_body.
+  ///
+  /// In en, this message translates to:
+  /// **'To record voice messages, allow microphone access in Settings.'**
+  String get mic_perm_dialog_body;
+
+  /// No description provided for @mic_perm_not_now.
+  ///
+  /// In en, this message translates to:
+  /// **'Not now'**
+  String get mic_perm_not_now;
+
   /// No description provided for @group_read_only_not_active.
   ///
   /// In en, this message translates to:
@@ -3692,6 +3800,12 @@ abstract class AppLocalizations {
   /// **'Invite needs fresh key material'**
   String get group_invite_needs_key;
 
+  /// No description provided for @group_invite_waiting_for_key.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for key'**
+  String get group_invite_waiting_for_key;
+
   /// No description provided for @group_invite_invalid.
   ///
   /// In en, this message translates to:
@@ -4357,6 +4471,84 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No conversations yet'**
   String get orbit2_inbox_empty;
+
+  /// No description provided for @orbit2_open_chat_with.
+  ///
+  /// In en, this message translates to:
+  /// **'Open chat with {name}'**
+  String orbit2_open_chat_with(String name);
+
+  /// No description provided for @orbit3_constellation_zodiac.
+  ///
+  /// In en, this message translates to:
+  /// **'Zodiac'**
+  String get orbit3_constellation_zodiac;
+
+  /// No description provided for @orbit3_constellation_galaxy.
+  ///
+  /// In en, this message translates to:
+  /// **'Galaxy'**
+  String get orbit3_constellation_galaxy;
+
+  /// No description provided for @orbit3_listens.
+  ///
+  /// In en, this message translates to:
+  /// **'listens'**
+  String get orbit3_listens;
+
+  /// No description provided for @orbit3_talks.
+  ///
+  /// In en, this message translates to:
+  /// **'talks'**
+  String get orbit3_talks;
+
+  /// No description provided for @orbit3_released_to_drawer.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} released to the drawer'**
+  String orbit3_released_to_drawer(String name);
+
+  /// No description provided for @orbit3_inner_short.
+  ///
+  /// In en, this message translates to:
+  /// **'Inner'**
+  String get orbit3_inner_short;
+
+  /// No description provided for @orbit3_all_friends.
+  ///
+  /// In en, this message translates to:
+  /// **'All friends'**
+  String get orbit3_all_friends;
+
+  /// No description provided for @orbit3_drag_up_to_search.
+  ///
+  /// In en, this message translates to:
+  /// **'drag up to search'**
+  String get orbit3_drag_up_to_search;
+
+  /// No description provided for @orbit3_find_anyone.
+  ///
+  /// In en, this message translates to:
+  /// **'Find anyone'**
+  String get orbit3_find_anyone;
+
+  /// No description provided for @orbit3_pin.
+  ///
+  /// In en, this message translates to:
+  /// **'Pin'**
+  String get orbit3_pin;
+
+  /// No description provided for @orbit3_pulled_into_inner_tier.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} pulled into your inner tier'**
+  String orbit3_pulled_into_inner_tier(String name);
+
+  /// No description provided for @orbit3_tap_to_open.
+  ///
+  /// In en, this message translates to:
+  /// **'tap to open'**
+  String get orbit3_tap_to_open;
 }
 
 class _AppLocalizationsDelegate

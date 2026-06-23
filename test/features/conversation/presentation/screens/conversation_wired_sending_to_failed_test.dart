@@ -338,12 +338,13 @@ void main() {
         await tester.pump(const Duration(seconds: 1)); // ensure fully visible
 
         // ASSERT — the message is currently displayed with status 'sending'.
-        // 'sending' renders Icons.done_rounded (checkmark)
+        // In the 1:1 transport glyph contract, in-flight sends render the
+        // schedule icon until they reach a terminal transport/status.
         expect(
-          find.byIcon(Icons.done_rounded),
+          find.byIcon(Icons.schedule_rounded),
           findsOneWidget,
           reason:
-              'Before the status change, the card must show sending checkmark',
+              'Before the status change, the card must show the sending clock',
         );
         expect(
           find.byIcon(Icons.error_outline_rounded),
@@ -361,17 +362,17 @@ void main() {
         await tester.pump(const Duration(seconds: 1));
 
         // ASSERT — the UI must now show the failed indicator, not the
-        // sending checkmark.
+        // in-flight clock.
         expect(
           find.byIcon(Icons.error_outline_rounded),
           findsOneWidget,
           reason: 'The failed status must render error_outline_rounded',
         );
         expect(
-          find.byIcon(Icons.done_rounded),
+          find.byIcon(Icons.schedule_rounded),
           findsNothing,
           reason:
-              'The sending/sent checkmark must no longer be visible after transition to failed',
+              'The sending clock must no longer be visible after transition to failed',
         );
       },
     );
@@ -441,14 +442,15 @@ void main() {
         await tester.pump(const Duration(seconds: 1));
 
         // Before: sending status
-        expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
 
         // ACT — normal send completion path
         messageRepo.emitStatusChange('msg-sending-001', 'sent');
         await tester.pump();
         await tester.pump(const Duration(seconds: 1));
 
-        // ASSERT — sent still shows done_rounded (same icon for sent/sending)
+        // ASSERT — sent refreshes to the reached fallback icon when no
+        // transport-specific glyph is available.
         expect(
           find.byIcon(Icons.done_rounded),
           findsOneWidget,
@@ -477,16 +479,17 @@ void main() {
         await tester.pump(const Duration(seconds: 1));
 
         // Before: sending status
-        expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
 
         // ACT — ACK received, message delivered
         messageRepo.emitStatusChange('msg-sending-001', 'delivered');
         await tester.pump();
         await tester.pump(const Duration(seconds: 1));
 
-        // ASSERT — delivered status rendered correctly with double-check
+        // ASSERT — delivered refreshes to the reached fallback icon when no
+        // transport-specific glyph is available.
         expect(
-          find.byIcon(Icons.done_all_rounded),
+          find.byIcon(Icons.done_rounded),
           findsOneWidget,
           reason: 'delivered status transition must still refresh the UI',
         );

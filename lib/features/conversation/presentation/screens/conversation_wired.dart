@@ -14,11 +14,12 @@ import 'package:flutter_app/core/media/amplitude_buffer.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/downsample_waveform.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
-import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
+import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
+import 'package:flutter_app/core/permissions/mic_permission_prompt.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
@@ -45,6 +46,7 @@ import 'package:flutter_app/features/conversation/application/send_voice_message
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_rejection.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
@@ -208,6 +210,12 @@ class ConversationWired extends StatefulWidget {
   final int maxAttachmentBudgetBytes;
   final ActiveConversationTracker? conversationTracker;
   final AudioRecorderService? audioRecorderService;
+
+  /// Permission authority for the voice-record mic (152). On denial the screen
+  /// routes through this gateway so a `permanentlyDenied` user sees the shared
+  /// rationale dialog + "Open Settings" deep-link instead of a dead-end toast.
+  /// Production gets the real plugin via the default; tests inject a fake.
+  final MicPermissionGateway micPermissionGateway;
   final ReactionRepository? reactionRepo;
   final ReactionListener? reactionListener;
   final IntroductionRepository? introductionRepository;
@@ -250,6 +258,7 @@ class ConversationWired extends StatefulWidget {
     this.maxAttachmentBudgetBytes = kGeneralMediaAttachmentBudgetBytes,
     this.conversationTracker,
     this.audioRecorderService,
+    this.micPermissionGateway = const PermissionHandlerMicGateway(),
     this.reactionRepo,
     this.reactionListener,
     this.introductionRepository,
@@ -954,43 +963,17 @@ class _ConversationWiredState extends State<ConversationWired>
     }
   }
 
-  void _showGifTooLargeMessage() {
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    messenger?.showSnackBar(
-      SnackBar(
-        content: Text(AppLocalizations.of(context)!.media_gif_too_large),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-
   /// Per-type SEND size gate for 1:1 media (OQ-2 — the per-type cap table now
-  /// applies to 1:1 + share, not just groups). Validates each pending
+  /// applies to 1:1 + share, not just groups). Validates EACH pending
   /// attachment's final (post-compression) budget bytes against its per-type cap
-  /// and surfaces the type-aware copy. Returns false (and shows a message) on the
-  /// first rejection; true when every attachment is within its cap.
-  bool _validatePendingMediaSizes(List<PendingComposerMedia> media) {
-    for (final pending in media) {
-      final mime = _mimeFromPath(pending.file.path);
-      final validation = GroupMediaSizePolicy.validateSize(
-        sizeBytes: pending.budgetBytes,
-        mime: mime,
-      );
-      if (validation.isValid) continue;
-
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CONV_FL_MEDIA_REJECTED_INVALID_SIZE',
-        details: {'mime': mime, 'reason': validation.reason},
-      );
-      if (validation.reason == 'gif_size_exceeded') {
-        _showGifTooLargeMessage();
-      } else {
-        _showAttachmentTooLargeMessage();
-      }
-      return false;
-    }
-    return true;
+  /// and returns the FULL set of failures ({index, normalized reason}) — empty
+  /// when every attachment is within its cap. Snackbar-free: the inline composer
+  /// reject-chip (149) carries the reason. Used both at pick time (to mark the
+  /// chip) and as a defensive re-check in [_onSend].
+  List<MediaRejection> _validatePendingMediaSizes(
+    List<PendingComposerMedia> media,
+  ) {
+    return collectPendingMediaSizeRejections(media, _mimeFromPath);
   }
 
   Future<void> _checkIntroBanner() async {
@@ -1925,8 +1908,18 @@ class _ConversationWiredState extends State<ConversationWired>
     // Per-type SEND size gate (OQ-2). Runs before any state mutation/upload so a
     // rejected attachment simply surfaces a message and leaves the composer
     // intact (no optimistic message, no upload).
-    if (hasAttachments && !_validatePendingMediaSizes(_pendingAttachments)) {
-      return;
+    if (hasAttachments) {
+      final rejections = _validatePendingMediaSizes(_pendingAttachments);
+      if (rejections.isNotEmpty) {
+        for (final rejection in rejections) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CONV_FL_MEDIA_REJECTED_INVALID_SIZE',
+            details: {'index': rejection.index, 'reason': rejection.reason},
+          );
+        }
+        return;
+      }
     }
 
     setState(() {
@@ -2808,7 +2801,7 @@ class _ConversationWiredState extends State<ConversationWired>
       amplitudeValues: const [],
     );
 
-    final hasPermission = await recorder.requestPermission();
+    final status = await widget.micPermissionGateway.request();
     if (!mounted || _pendingRecorderAbort) {
       if (_composerViewState.recordingState != VoiceRecordingState.idle) {
         _updateComposerState(
@@ -2820,20 +2813,25 @@ class _ConversationWiredState extends State<ConversationWired>
       return;
     }
 
-    if (!hasPermission) {
+    if (status != MicPermissionStatus.granted) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(AppLocalizations.of(context)!.perm_microphone_record),
-            backgroundColor: Colors.red[700],
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-        _updateComposerState(
-          recordingState: VoiceRecordingState.idle,
-          recordingDuration: Duration.zero,
-          amplitudeValues: const [],
-        );
+        // permanentlyDenied/restricted = the OS will no longer re-prompt
+        // in-app, so the only recovery is the system Settings deep-link (152).
+        // A first plain `denied` just resets — request() already showed the OS
+        // prompt and the user can re-tap to be re-prompted.
+        if (status == MicPermissionStatus.permanentlyDenied) {
+          await showMicPermissionDeniedPrompt(
+            context,
+            gateway: widget.micPermissionGateway,
+          );
+        }
+        if (mounted) {
+          _updateComposerState(
+            recordingState: VoiceRecordingState.idle,
+            recordingDuration: Duration.zero,
+            amplitudeValues: const [],
+          );
+        }
       }
       return;
     }
@@ -3498,6 +3496,8 @@ class _ConversationWiredState extends State<ConversationWired>
 
   void _updateComposerState({
     List<File>? pendingAttachments,
+    Set<int>? invalidAttachmentIndices,
+    Map<int, String>? invalidAttachmentReasons,
     bool? isUploading,
     bool? isProcessing,
     double? processingProgress,
@@ -3508,8 +3508,37 @@ class _ConversationWiredState extends State<ConversationWired>
     List<double>? amplitudeValues,
   }) {
     final current = _composerState.value;
+    // 149: whenever the pending-attachment list changes, re-derive the size/GIF
+    // reject set from the LIVE list (never a stale snapshot) so the inline chip
+    // + Send-disable always track the current attachments after pick/remove —
+    // unless the caller supplied an explicit set.
+    var nextInvalidIndices = invalidAttachmentIndices;
+    var nextInvalidReasons = invalidAttachmentReasons;
+    bool? nextHasTotalSizeOverflow;
+    if (pendingAttachments != null && invalidAttachmentIndices == null) {
+      if (pendingAttachments.isEmpty) {
+        nextInvalidIndices = const <int>{};
+        nextInvalidReasons = const <int, String>{};
+        nextHasTotalSizeOverflow = false;
+      } else {
+        final rejections = _validatePendingMediaSizes(_pendingAttachments);
+        nextInvalidIndices = rejections.map((r) => r.index).toSet();
+        nextInvalidReasons = {
+          for (final rejection in rejections) rejection.index: rejection.reason,
+        };
+        // 149: individually-valid attachments whose summed bytes exceed the
+        // total message budget get a strip-level note (no per-chip index).
+        // Suppressed when any attachment is over its own cap (that per-chip
+        // reject already disables Send) so the two signals never double up.
+        nextHasTotalSizeOverflow = nextInvalidIndices.isEmpty &&
+            pendingMediaTotalSizeOverflow(_pendingAttachments);
+      }
+    }
     final next = current.copyWith(
       pendingAttachments: pendingAttachments,
+      invalidAttachmentIndices: nextInvalidIndices,
+      invalidAttachmentReasons: nextInvalidReasons,
+      hasTotalSizeOverflow: nextHasTotalSizeOverflow,
       isUploading: isUploading,
       isProcessing: isProcessing,
       processingProgress: processingProgress,
@@ -3535,6 +3564,9 @@ class _ConversationWiredState extends State<ConversationWired>
         a.recordingState == b.recordingState &&
         a.recordingDuration == b.recordingDuration &&
         listEquals(a.amplitudeValues, b.amplitudeValues) &&
+        setEquals(a.invalidAttachmentIndices, b.invalidAttachmentIndices) &&
+        mapEquals(a.invalidAttachmentReasons, b.invalidAttachmentReasons) &&
+        a.hasTotalSizeOverflow == b.hasTotalSizeOverflow &&
         _fileListsEqual(a.pendingAttachments, b.pendingAttachments);
   }
 

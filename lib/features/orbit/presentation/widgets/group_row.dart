@@ -174,7 +174,7 @@ class GroupRow extends StatelessWidget {
                     )
                   else
                     Text(
-                      'No messages yet',
+                      l10n.group_no_messages,
                       style: TextStyle(
                         fontSize: 12,
                         color: readableColors.textMuted,

@@ -868,6 +868,16 @@ class AppLocalizationsEn extends AppLocalizations {
       'GIF files larger than 25 MB cannot be added.';
 
   @override
+  String get media_too_large_chip => 'Too large';
+
+  @override
+  String get media_gif_too_large_chip => 'GIF too big';
+
+  @override
+  String get media_attachments_too_large_note =>
+      'Attachments too large — remove some to send.';
+
+  @override
   String get media_unavailable => 'Media unavailable';
 
   @override
@@ -919,6 +929,33 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get message_status_pending_inbox => 'pending delivery via inbox';
+
+  @override
+  String get message_status_inbox => 'delivered to inbox';
+
+  @override
+  String get message_sent_via_relay => 'Sent via cellular relay';
+
+  @override
+  String get message_sent_via_direct => 'Sent via direct connection';
+
+  @override
+  String get message_sent_via_wifi => 'Sent via Wi-Fi';
+
+  @override
+  String get message_sent_via_inbox => 'Sent to inbox';
+
+  @override
+  String get message_received_via_relay => 'Received via cellular relay';
+
+  @override
+  String get message_received_via_direct => 'Received via direct connection';
+
+  @override
+  String get message_received_via_wifi => 'Received via Wi-Fi';
+
+  @override
+  String get message_received_via_inbox => 'Received via inbox';
 
   @override
   String get share_send_failed => 'Could not share to the selected targets.';
@@ -1099,6 +1136,18 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get group_info_remove_action => 'Remove';
+
+  @override
+  String group_info_revoke_invite_title(String username) {
+    return 'Revoke invite for $username?';
+  }
+
+  @override
+  String get group_info_revoke_invite_body =>
+      'They will no longer be able to join the group with this invite.';
+
+  @override
+  String get group_info_revoke_invite_action => 'Revoke';
 
   @override
   String get group_info_member_fallback => 'member';
@@ -1652,6 +1701,16 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get perm_microphone_record =>
       'Microphone permission is required to record voice messages.';
+
+  @override
+  String get mic_perm_dialog_title => 'Microphone access needed';
+
+  @override
+  String get mic_perm_dialog_body =>
+      'To record voice messages, allow microphone access in Settings.';
+
+  @override
+  String get mic_perm_not_now => 'Not now';
 
   @override
   String get group_read_only_not_active =>
@@ -2231,6 +2290,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get group_invite_needs_key => 'Invite needs fresh key material';
 
   @override
+  String get group_invite_waiting_for_key => 'Waiting for key';
+
+  @override
   String get group_invite_invalid => 'Invite is no longer valid';
 
   @override
@@ -2598,4 +2660,49 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get orbit2_inbox_empty => 'No conversations yet';
+
+  @override
+  String orbit2_open_chat_with(String name) {
+    return 'Open chat with $name';
+  }
+
+  @override
+  String get orbit3_constellation_zodiac => 'Zodiac';
+
+  @override
+  String get orbit3_constellation_galaxy => 'Galaxy';
+
+  @override
+  String get orbit3_listens => 'listens';
+
+  @override
+  String get orbit3_talks => 'talks';
+
+  @override
+  String orbit3_released_to_drawer(String name) {
+    return '$name released to the drawer';
+  }
+
+  @override
+  String get orbit3_inner_short => 'Inner';
+
+  @override
+  String get orbit3_all_friends => 'All friends';
+
+  @override
+  String get orbit3_drag_up_to_search => 'drag up to search';
+
+  @override
+  String get orbit3_find_anyone => 'Find anyone';
+
+  @override
+  String get orbit3_pin => 'Pin';
+
+  @override
+  String orbit3_pulled_into_inner_tier(String name) {
+    return '$name pulled into your inner tier';
+  }
+
+  @override
+  String get orbit3_tap_to_open => 'tap to open';
 }

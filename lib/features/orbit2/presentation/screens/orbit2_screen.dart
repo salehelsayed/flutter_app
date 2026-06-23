@@ -65,7 +65,9 @@ class _Orbit2ScreenState extends State<Orbit2Screen> {
   }
 
   void _rebuildMock() {
-    final mock = Orbit2MockData.build(canvasCount: _populations[_populationIndex]);
+    final mock = Orbit2MockData.build(
+      canvasCount: _populations[_populationIndex],
+    );
     _innerItems
       ..clear()
       ..addAll(mock.innerCircle.map(Orbit2InnerItem.friend));
@@ -248,7 +250,8 @@ class _Orbit2ScreenState extends State<Orbit2Screen> {
     final readable = context.backgroundReadableColors;
     final l10n = AppLocalizations.of(context)!;
     final media = MediaQuery.of(context);
-    final motionEnabled = !(media.disableAnimations || media.accessibleNavigation);
+    final motionEnabled =
+        !(media.disableAnimations || media.accessibleNavigation);
 
     return Orbit2Backdrop(
       child: Scaffold(
@@ -296,29 +299,29 @@ class _Orbit2ScreenState extends State<Orbit2Screen> {
                       )
                     else
                       Orbit2Canvas(
-                      innerItems: _innerItems,
-                      userPeerId: widget.userPeerId,
-                      userAvatarBytes: widget.userAvatarBytes,
-                      innerExpanded: _innerExpanded,
-                      onToggleInnerExpand: _toggleInnerExpand,
-                      floatingFriends: _canvasFriends,
-                      floatingGroups: _groups,
-                      template: _template,
-                      layoutVersion: _layoutVersion,
-                      innerResetToken: _innerResetToken,
-                      searchQuery: _searchQuery,
-                      motionEnabled: motionEnabled,
-                      namesVisible: _namesVisible,
-                      manageMode: _manageMode,
-                      onOpenChat: _openChat,
-                      onOpenInnerChat: _openInnerChat,
-                      onOpenGroup: _openGroup,
-                      onPromote: _promote,
-                      onPromoteGroup: _promoteGroup,
-                      onDemote: _demote,
-                      onDemoteGroup: _demoteGroup,
-                      onToggleNames: _toggleNames,
-                    ),
+                        innerItems: _innerItems,
+                        userPeerId: widget.userPeerId,
+                        userAvatarBytes: widget.userAvatarBytes,
+                        innerExpanded: _innerExpanded,
+                        onToggleInnerExpand: _toggleInnerExpand,
+                        floatingFriends: _canvasFriends,
+                        floatingGroups: _groups,
+                        template: _template,
+                        layoutVersion: _layoutVersion,
+                        innerResetToken: _innerResetToken,
+                        searchQuery: _searchQuery,
+                        motionEnabled: motionEnabled,
+                        namesVisible: _namesVisible,
+                        manageMode: _manageMode,
+                        onOpenChat: _openChat,
+                        onOpenInnerChat: _openInnerChat,
+                        onOpenGroup: _openGroup,
+                        onPromote: _promote,
+                        onPromoteGroup: _promoteGroup,
+                        onDemote: _demote,
+                        onDemoteGroup: _demoteGroup,
+                        onToggleNames: _toggleNames,
+                      ),
                     Positioned(
                       left: 12,
                       right: 12,
@@ -380,7 +383,7 @@ class _TopBar extends StatelessWidget {
       child: Row(
         children: [
           Text(
-            'Orbit2',
+            l10n.nav_orbit2,
             style: TextStyle(
               fontSize: 22,
               fontWeight: FontWeight.w700,
@@ -397,12 +400,18 @@ class _TopBar extends StatelessWidget {
               decoration: BoxDecoration(
                 color: readable.surfaceSubtle,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: readable.border.withValues(alpha: 0.4)),
+                border: Border.all(
+                  color: readable.border.withValues(alpha: 0.4),
+                ),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.people_alt_rounded, size: 14, color: readable.iconMuted),
+                  Icon(
+                    Icons.people_alt_rounded,
+                    size: 14,
+                    color: readable.iconMuted,
+                  ),
                   const SizedBox(width: 5),
                   Text(
                     '$population',
@@ -427,9 +436,14 @@ class _TopBar extends StatelessWidget {
               behavior: HitTestBehavior.opaque,
               child: Semantics(
                 button: true,
-                label: namesVisible ? l10n.orbit2_names_hide : l10n.orbit2_names_show,
+                label: namesVisible
+                    ? l10n.orbit2_names_hide
+                    : l10n.orbit2_names_show,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 9,
+                    vertical: 5,
+                  ),
                   decoration: BoxDecoration(
                     color: namesVisible
                         ? AppColors.primaryAccent.withValues(alpha: 0.14)

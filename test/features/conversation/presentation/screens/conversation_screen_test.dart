@@ -870,6 +870,8 @@ void main() {
         expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
         expect(quotedId, isNull);
         expect(find.text('Message copied to clipboard'), findsNothing);
+        // 154: no copy fired, so the quiet-confirm cue must not appear either.
+        expect(find.byKey(const ValueKey('quiet-confirm')), findsNothing);
       },
     );
 
@@ -1334,11 +1336,15 @@ void main() {
         const copiedMessage = 'Line one\nEmoji 😄\nمرحبا بالعالم';
         String? copiedText;
         var clipboardCalls = 0;
+        // 154: one handler per channel — record every platform call so we can
+        // assert the haptic alongside the clipboard payload.
+        final platformCalls = <MethodCall>[];
         final messenger =
             TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
         messenger.setMockMethodCallHandler(SystemChannels.platform, (
           call,
         ) async {
+          platformCalls.add(call);
           if (call.method == 'Clipboard.setData') {
             clipboardCalls++;
             copiedText =
@@ -1373,7 +1379,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 250));
 
         expect(copiedText, 'First copy');
-        expect(find.byType(SnackBar), findsOneWidget);
+        expect(find.byKey(const ValueKey('quiet-confirm')), findsOneWidget);
         expect(find.text('Message copied to clipboard'), findsOneWidget);
 
         await tester.longPress(find.textContaining('Emoji 😄'));
@@ -1385,21 +1391,38 @@ void main() {
         expect(clipboardCalls, 2);
         expect(copiedText, copiedMessage);
         expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
-        expect(find.byType(SnackBar), findsOneWidget);
+        // 154: the 2nd copy's hideCurrentSnackBar() inside showQuietConfirm
+        // replaces the 1st cue, preserving the "replaces the prior" contract —
+        // exactly one keyed quiet-confirm survives.
+        expect(find.byKey(const ValueKey('quiet-confirm')), findsOneWidget);
         expect(find.text('Message copied to clipboard'), findsOneWidget);
+        // One selectionClick per copy (two copies => two haptics). Assert the
+        // arg, not just the shared method string.
+        expect(
+          platformCalls
+              .where(
+                (c) =>
+                    c.method == 'HapticFeedback.vibrate' &&
+                    c.arguments == 'HapticFeedbackType.selectionClick',
+              )
+              .length,
+          2,
+        );
       },
     );
 
     testWidgets(
-      'copy action localizes the snackbar in Arabic while preserving mixed-script clipboard text',
+      'copy action localizes the quiet confirm in Arabic while preserving mixed-script clipboard text',
       (tester) async {
         const copiedMessage = 'مرحبا Hello\nEmoji 😄';
         String? copiedText;
+        final platformCalls = <MethodCall>[];
         final messenger =
             TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
         messenger.setMockMethodCallHandler(SystemChannels.platform, (
           call,
         ) async {
+          platformCalls.add(call);
           if (call.method == 'Clipboard.setData') {
             copiedText =
                 (call.arguments as Map<Object?, Object?>)['text'] as String?;
@@ -1427,8 +1450,18 @@ void main() {
         await tester.pump(const Duration(milliseconds: 250));
 
         expect(copiedText, copiedMessage);
-        expect(find.byType(SnackBar), findsOneWidget);
+        // 154: the localized cue rides the distinct keyed quiet-confirm.
+        expect(find.byKey(const ValueKey('quiet-confirm')), findsOneWidget);
         expect(find.text('تم نسخ الرسالة إلى الحافظة'), findsOneWidget);
+        expect(
+          platformCalls.any(
+            (c) =>
+                c.method == 'HapticFeedback.vibrate' &&
+                c.arguments == 'HapticFeedbackType.selectionClick',
+          ),
+          isTrue,
+          reason: 'copy should fire HapticFeedback.selectionClick()',
+        );
       },
     );
 
@@ -1506,6 +1539,11 @@ void main() {
         await tester.pump(const Duration(milliseconds: 250));
 
         expect(find.text('Message copied to clipboard'), findsNothing);
+        // 154: the screen was disposed during the await, so the 1:1
+        // _copyMessageText !mounted guard returns before showQuietConfirm —
+        // no cue, and no throw from a localization/messenger lookup on a dead
+        // context.
+        expect(find.byKey(const ValueKey('quiet-confirm')), findsNothing);
         expect(tester.takeException(), isNull);
       },
     );
@@ -2317,6 +2355,37 @@ void main() {
         ),
       );
     }
+
+    // 155 TC-19 — the 1:1 screen opts into the transport status glyph, so an
+    // outgoing message that reached over the relay renders the cell_tower glyph
+    // (not the v1 inbox_rounded). Locks the `transportStatusGlyph: true` wiring.
+    testWidgets(
+      '155 1:1 conversation passes transportStatusGlyph: true (outgoing relay '
+      'renders cell_tower, not the v1 inbox glyph)',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: 'wire-1',
+                isIncoming: false,
+                text: 'Sent over relay',
+                status: 'delivered',
+                transport: 'relay',
+              ),
+            ],
+            initialLoadDone: true,
+          ),
+        );
+        await pumpFrames(tester);
+
+        // Source-wiring lock: the live LetterCard carries the opt-in flag.
+        expect(liveLetterCard(tester, 'wire-1').transportStatusGlyph, isTrue);
+        // End-to-end: the flag drives the transport glyph through the screen.
+        expect(find.byIcon(Icons.cell_tower), findsOneWidget);
+        expect(find.byIcon(Icons.inbox_rounded), findsNothing);
+      },
+    );
 
     testWidgets(
       'TC-17 1:1 consecutive same-sender incoming messages render no avatar on '

@@ -27,12 +27,22 @@ class GroupListScreen extends StatelessWidget {
   /// topic-join has not yet succeeded (derived from the 088 group_rejoin_state
   /// table). Drives the "Joining…" / "Couldn't join" badge.
   final Map<String, int> rejoinAttempts;
+  /// Per-row accept outcome state keyed by invite id (plan 150). KEPT-invite
+  /// outcomes (waitingForKey / retryable) render inline on the live card;
+  /// terminal outcomes (whose invite was DELETED, so the id is no longer in
+  /// [pendingInvites]) render on a ghost row keyed
+  /// `pending-group-invite-outcome-<id>`.
+  final Map<String, PendingInviteRowOutcome> inviteRowOutcomes;
   final bool isLoading;
   final String? loadErrorMessage;
   final VoidCallback? onRetryLoad;
   final ValueChanged<GroupModel> onGroupTap;
   final ValueChanged<PendingGroupInvite>? onAcceptPendingInvite;
   final ValueChanged<PendingGroupInvite>? onDeclinePendingInvite;
+
+  /// Invoked when the inline Retry control on a keep-pending (retryable) invite
+  /// row is tapped (plan 150). Routes back through the accept handler.
+  final ValueChanged<PendingGroupInvite>? onRetryPendingInvite;
 
   /// Invoked when the user taps "Retry now" on a group whose rejoin has given
   /// up (attempt ≥ [_joinGiveUpThreshold]). Forces the rejoin row eligible and
@@ -52,6 +62,7 @@ class GroupListScreen extends StatelessWidget {
     this.unreadCounts = const {},
     this.pendingInvites = const [],
     this.processingInviteIds = const <String>{},
+    this.inviteRowOutcomes = const <String, PendingInviteRowOutcome>{},
     this.rejoinAttempts = const <String, int>{},
     this.isLoading = false,
     this.loadErrorMessage,
@@ -59,6 +70,7 @@ class GroupListScreen extends StatelessWidget {
     required this.onGroupTap,
     this.onAcceptPendingInvite,
     this.onDeclinePendingInvite,
+    this.onRetryPendingInvite,
     this.onRetryStuckRejoin,
     this.onLeaveStuckGroup,
     required this.onBack,
@@ -78,7 +90,10 @@ class GroupListScreen extends StatelessWidget {
                 children: [
                   _buildHeader(context),
                   Expanded(
-                    child: groups.isNotEmpty || pendingInvites.isNotEmpty
+                    child:
+                        groups.isNotEmpty ||
+                            pendingInvites.isNotEmpty ||
+                            _hasGhostOutcomes
                         ? _buildContent(context)
                         : isLoading
                         ? _buildLoadingState(context)
@@ -197,28 +212,115 @@ class GroupListScreen extends StatelessWidget {
     );
   }
 
+  /// True when a terminal outcome (its invite already deleted) needs a ghost
+  /// row even though no live invite / group remains to render.
+  bool get _hasGhostOutcomes {
+    if (inviteRowOutcomes.isEmpty) return false;
+    final pendingInviteIds =
+        pendingInvites.map((invite) => invite.groupId).toSet();
+    return inviteRowOutcomes.keys.any((id) => !pendingInviteIds.contains(id));
+  }
+
+  /// A compact one-line ghost row that survives the deletion of a terminal
+  /// invite (plan 150 C1). Keyed `pending-group-invite-outcome-<id>`.
+  Widget _buildInviteOutcomeRow(
+    BuildContext context,
+    String inviteId,
+    PendingInviteRowOutcome outcome,
+  ) {
+    final readableColors = context.backgroundReadableColors;
+    return Container(
+      key: ValueKey('pending-group-invite-outcome-$inviteId'),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: readableColors.surfaceRaised,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: readableColors.divider),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            Icons.info_outline,
+            size: 18,
+            color: readableColors.textMuted,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  outcome.groupName,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: readableColors.textPrimary,
+                  ),
+                ),
+                if (outcome.reason != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    outcome.reason!,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: readableColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildContent(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    // Ghost rows: terminal outcomes whose invite was deleted by the use-case
+    // (so the id is no longer a live pending invite). They keep the "which
+    // invite failed & why" feedback after the live card is gone (plan 150 C1).
+    final pendingInviteIds =
+        pendingInvites.map((invite) => invite.groupId).toSet();
+    final ghostOutcomes = inviteRowOutcomes.entries
+        .where((entry) => !pendingInviteIds.contains(entry.key))
+        .toList();
+    final hasPendingSection =
+        pendingInvites.isNotEmpty || ghostOutcomes.isNotEmpty;
     return ListView(
       physics: const BouncingScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
-        if (pendingInvites.isNotEmpty) ...[
+        if (hasPendingSection) ...[
           _buildSectionLabel(context, l10n.groups_pending_invites),
           const SizedBox(height: 12),
           ...pendingInvites.map(
-            (invite) => Padding(
+            (invite) {
+              final outcome = inviteRowOutcomes[invite.groupId];
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: PendingGroupInviteCard(
+                  invite: invite,
+                  isProcessing: processingInviteIds.contains(invite.groupId),
+                  rowState: outcome?.state ?? PendingInviteRowState.idle,
+                  onAccept: onAcceptPendingInvite != null
+                      ? () => onAcceptPendingInvite!(invite)
+                      : null,
+                  onDecline: onDeclinePendingInvite != null
+                      ? () => onDeclinePendingInvite!(invite)
+                      : null,
+                  onRetry: onRetryPendingInvite != null
+                      ? () => onRetryPendingInvite!(invite)
+                      : null,
+                ),
+              );
+            },
+          ),
+          ...ghostOutcomes.map(
+            (entry) => Padding(
               padding: const EdgeInsets.only(bottom: 12),
-              child: PendingGroupInviteCard(
-                invite: invite,
-                isProcessing: processingInviteIds.contains(invite.groupId),
-                onAccept: onAcceptPendingInvite != null
-                    ? () => onAcceptPendingInvite!(invite)
-                    : null,
-                onDecline: onDeclinePendingInvite != null
-                    ? () => onDeclinePendingInvite!(invite)
-                    : null,
-              ),
+              child: _buildInviteOutcomeRow(context, entry.key, entry.value),
             ),
           ),
           const SizedBox(height: 8),

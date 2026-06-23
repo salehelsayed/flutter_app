@@ -79,23 +79,18 @@ Set<String> _messageKeys(Map<String, Object?> bundle) {
 }
 
 Set<String> _placeholdersFor(Map<String, Object?> bundle, String key) {
-  final placeholders = <String>{};
-  final message = bundle[key] as String? ?? '';
-  placeholders.addAll(
-    RegExp(
-      r'\{([A-Za-z_][A-Za-z0-9_]*)(?=[},])',
-    ).allMatches(message).map((match) => match.group(1)!),
-  );
-
   final metadata = bundle['@$key'];
   if (metadata is Map<String, Object?>) {
     final declared = metadata['placeholders'];
     if (declared is Map<String, Object?>) {
-      placeholders.addAll(declared.keys);
+      return declared.keys.toSet();
     }
   }
 
-  return placeholders;
+  final message = bundle[key] as String? ?? '';
+  return RegExp(
+    r'\{([A-Za-z_][A-Za-z0-9_]*)\}',
+  ).allMatches(message).map((match) => match.group(1)!).toSet();
 }
 
 Iterable<File> _dartFiles(Directory root) sync* {

@@ -13,15 +13,15 @@ void main() {
 
       // Startup: fire-and-forget, reusing the top-level repo handle, with a
       // dedicated catchError so a sweep failure never blocks startup.
+      final startupInviteSweep = RegExp(
+        r'unawaited\(\s*sweepExpiredGroupInvites\(\s*repo:\s*pendingGroupInviteRepository,?\s*\)\.catchError\(',
+      ).hasMatch(mainSource);
       expect(
-        mainSource,
-        contains('sweepExpiredGroupInvites(\n      repo: pendingGroupInviteRepository,\n    ).catchError('),
+        startupInviteSweep,
+        isTrue,
         reason: 'startup must schedule an unawaited group-invite sweep',
       );
-      expect(
-        mainSource,
-        contains("event: 'GROUP_INVITE_SWEEP_STARTUP_ERROR'"),
-      );
+      expect(mainSource, contains("event: 'GROUP_INVITE_SWEEP_STARTUP_ERROR'"));
       expect(mainSource, contains('return GroupInviteSweepResult.empty;'));
     },
   );

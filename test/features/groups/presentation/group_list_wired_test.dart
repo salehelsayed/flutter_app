@@ -5,12 +5,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_consumption.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_revocation.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -38,12 +41,44 @@ class FakeIdentityRepository implements IdentityRepository {
   IdentityModel? identity;
   FakeIdentityRepository({this.identity});
 
+  /// Counts every `loadIdentity` call. `_onAcceptPendingInvite` loads the
+  /// identity EXACTLY ONCE per entry (before the recovery-retry wrapper, which
+  /// re-attempts without reloading), so this is a clean per-accept-pass counter
+  /// — used by TC-02 to prove the `_processingInviteIds` guard collapses a
+  /// rapid double-tap into a single fresh accept pass.
+  int loadIdentityCallCount = 0;
+
   @override
-  Future<IdentityModel?> loadIdentity() async => identity;
+  Future<IdentityModel?> loadIdentity() async {
+    loadIdentityCallCount++;
+    return identity;
+  }
 
   @override
   Future<void> saveIdentity(IdentityModel identity) async {
     this.identity = identity;
+  }
+}
+
+/// Identity repo whose [loadIdentity] always throws — used to drive a throwing
+/// deferred decline commit (153 TC-7).
+class _ThrowingIdentityRepository extends FakeIdentityRepository {
+  @override
+  Future<IdentityModel?> loadIdentity() async {
+    throw StateError('identity load failed (test injection)');
+  }
+}
+
+/// Identity repo whose [loadIdentity] resolves slowly — used to hold the
+/// deferred decline commit in-flight so the Undo affordance's hide timing is
+/// observable (153 review P2).
+class _SlowIdentityRepository extends FakeIdentityRepository {
+  _SlowIdentityRepository({super.identity});
+
+  @override
+  Future<IdentityModel?> loadIdentity() async {
+    await Future<void>.delayed(const Duration(seconds: 2));
+    return identity;
   }
 }
 
@@ -443,6 +478,22 @@ Future<void> pumpFrames(WidgetTester tester, {int count = 10}) async {
   }
 }
 
+/// Pump in small steps until [condition] holds (bounded — never a busy
+/// pumpAndSettle that would hang on AmbientBackground's infinite animation).
+/// Used by the shape-b recovery tests to settle the navigation WHILE the
+/// default-duration snackbar is still visible, instead of pumping past a
+/// hard-coded long snackbar window.
+Future<void> pumpUntil(
+  WidgetTester tester,
+  bool Function() condition, {
+  int maxFrames = 120,
+}) async {
+  for (var i = 0; i < maxFrames; i++) {
+    if (condition()) return;
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+}
+
 void main() {
   group('GroupListWired', () {
     late InMemoryGroupRepository groupRepo;
@@ -456,6 +507,7 @@ void main() {
     late StreamController<GroupMessage> messageStreamController;
     late StreamController<GroupModel> inviteStreamController;
     late StreamController<PendingGroupInvite> pendingInviteStreamController;
+    late List<Map<String, dynamic>> flowEvents;
 
     setUp(() {
       groupRepo = InMemoryGroupRepository();
@@ -475,9 +527,13 @@ void main() {
         pendingStream: pendingInviteStreamController.stream,
         pendingInviteRepo: pendingInviteRepo,
       );
+      // 153: capture flow events so decline COMMITTED/UNDONE are observable.
+      flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
     });
 
     tearDown(() {
+      debugSetFlowEventSink(null);
       messageStreamController.close();
       inviteStreamController.close();
       pendingInviteStreamController.close();
@@ -1152,16 +1208,21 @@ void main() {
       },
     );
 
+    // TC-03 (plan 150) — strengthened from the prior shape-b sentinel (was
+    // ":1155 bridgeError accept … materializes the group for background
+    // recovery"). This IS the shape-b path `(bridgeError, group != null)` at
+    // use-case :562-566. TC-03 makes it NAVIGATE and surface the resurrected
+    // `group_invite_joined_recovery` copy as a navigate-time snackbar — NOT the
+    // generic "Failed to accept invite". Sibling reconciliation (C3): the old
+    // no-navigate behavior is replaced here so the sentinel and TC-03 agree.
     testWidgets(
-      'bridgeError accept of an inline invite consumes it and materializes '
-      'the group for background recovery',
+      'TC-03 bridgeError with materialized group navigates and reports '
+      'join-with-recovery (not failure)',
       (tester) async {
-        // 106 contract (mirrors GCA-004 at the use-case level): an INLINE
-        // invite carries the full group config + key, so a relay-side
-        // join/drain failure still materializes the group locally and
-        // CONSUMES the invite — background recovery finishes the drain
-        // later. Only key-package-bound invites roll back to retryable
-        // (EK011 companion coverage).
+        // 106 contract: an INLINE invite carries the full group config + key,
+        // so a relay-side join/drain failure still materializes the group
+        // locally and CONSUMES the invite — background recovery finishes the
+        // drain later. The success-like `(bridgeError, group)` shape.
         final invite = makePendingInvite();
         await pendingInviteRepo.savePendingInvite(invite);
         bridge.responses['group:join'] = {
@@ -1184,8 +1245,18 @@ void main() {
         await tester.tap(
           find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
         );
-        await pumpFrames(tester, count: 220);
+        // Shape-b (group != null) does NOT enter the 5×500ms recovery loop
+        // (the loop guard requires group == null), so the switch fires early —
+        // right after the use-case's own ≤4×250ms inbox drains. Pump only
+        // enough to settle that attempt + the navigation, so the assertions
+        // below run WHILE the default-duration recovery snackbar is still
+        // visible (NOT relying on a hard-coded long snackbar window).
+        await pumpUntil(
+          tester,
+          () => find.byType(GroupConversationScreen).evaluate().isNotEmpty,
+        );
 
+        // Invite consumed + group materialized (parity with the old sentinel).
         expect(
           await pendingInviteRepo.getPendingInvite(invite.groupId),
           isNull,
@@ -1196,14 +1267,203 @@ void main() {
           find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
           findsNothing,
         );
-        // The materialized group is listed with its join-timeline row
-        // (the timeline write is local-first; the relay publish stub fails
-        // and stays best-effort). The transient failure snackbar is not
-        // asserted — it auto-dismisses within the pumped recovery window.
-        expect(find.text('Book Club'), findsOneWidget);
-        expect(bridge.commandLog, contains('group:publish'));
-        // Best-effort join-timeline publish runs for the materialized group.
-        expect(bridge.commandLog, contains('group:publish'));
+
+        // NEW (TC-03 / INV-3): shape-b NAVIGATES into the conversation — the
+        // cleanest discriminator that `_onGroupTap` fired.
+        expect(find.byType(GroupConversationScreen), findsOneWidget);
+
+        // The join-with-recovery copy is surfaced as a navigate-time snackbar
+        // (the card is consumed/gone, so it cannot render inline). For a group
+        // named "Book Club" the rendered en string is — asserted at SHOW-TIME,
+        // while the default 4s snackbar is still fresh:
+        expect(
+          find.text('Joined Book Club, but recovery is still catching up'),
+          findsOneWidget,
+        );
+        // Never the generic failure copy on this success-like path.
+        expect(find.text('Failed to accept invite'), findsNothing);
+
+        // Drain any remaining in-flight timers (snackbar auto-dismiss, the
+        // backgrounded GroupConversationWired's own startup work) so there is
+        // no "A Timer is still pending after the widget tree was disposed"
+        // teardown error.
+        await pumpFrames(tester, count: 220);
+      },
+    );
+
+    // TC-03a (plan 150) — source-wiring lock: the previously-dead l10n key
+    // `group_invite_joined_recovery` is now reachable from the accept handler.
+    // The shape-b path (same setup as TC-03) is the ONLY surface that renders
+    // it; if the wiring is removed, the key goes dead again and this reds.
+    //
+    // Distinct angle from TC-03 (so this is NOT a strict subset): the shape-b
+    // flow runs under the GERMAN locale and asserts the LOCALIZED recovery
+    // copy. This locks the resurrected key's wiring across locales (en + de),
+    // not just the en render TC-03 already covers. Asserted at SHOW-TIME under
+    // the default-duration snackbar (no hard-coded long window).
+    testWidgets(
+      'TC-03a l10n source-wiring lock: group_invite_joined_recovery is '
+      'referenced from the accept handler (de locale)',
+      (tester) async {
+        final invite = makePendingInvite();
+        await pendingInviteRepo.savePendingInvite(invite);
+        bridge.responses['group:join'] = {
+          'ok': false,
+          'errorCode': 'JOIN_FAILED',
+        };
+        bridge.responses['group:publish'] = {
+          'ok': false,
+          'errorCode': 'PUBLISH_FAILED',
+        };
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': false,
+          'errorCode': 'RELAY_UNAVAILABLE',
+          'errorMessage': 'relay unavailable',
+        };
+
+        // A German-locale MaterialApp around the same wired screen (the shared
+        // buildWidget() helper is pinned to en).
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('de'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: GroupListWired(
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              groupMessageListener: FakeGroupMessageListener(
+                messageStreamController.stream,
+              ),
+              bridge: bridge,
+              identityRepo: identityRepo,
+              contactRepo: contactRepo,
+              p2pService: p2pService,
+              groupInviteListener: groupInviteListener,
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.tap(
+          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
+        );
+        await pumpUntil(
+          tester,
+          () => find.byType(GroupConversationScreen).evaluate().isNotEmpty,
+        );
+
+        // The resurrected key is now rendered IN GERMAN (dead on HEAD → finds
+        // nothing). For a group named "Book Club" the de string is:
+        expect(
+          find.text(
+            'Book Club beigetreten, aber die Wiederherstellung holt noch auf',
+          ),
+          findsOneWidget,
+        );
+
+        // Drain remaining timers so there is no pending-timer teardown error.
+        await pumpFrames(tester, count: 220);
+      },
+    );
+
+    // TC-02 (plan 150) — a keep-pending bridgeError (shape a: group == null,
+    // invite still present) exposes an inline Retry that re-enters
+    // `_onAcceptPendingInvite` THROUGH the `_processingInviteIds` guard. A
+    // key-package-bound invite rolls back to retryable on a join failure (the
+    // EK011 companion shape), keeping the live card + invite.
+    testWidgets(
+      'TC-02 bridgeError keep-pending accept shows an inline Retry that '
+      're-runs accept through the guard',
+      (tester) async {
+        const localDeviceId = 'peer-admin-device-1';
+        p2pService.emitState(
+          const NodeState(peerId: localDeviceId, isStarted: true),
+        );
+        final invite = makePendingInvite(
+          groupId: 'grp-retryable',
+          groupName: 'Retry Room',
+          recipientDeviceId: localDeviceId,
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+        // Join fails for a key-package-bound invite → rollback → retryable
+        // shape-a (group == null, invite kept).
+        bridge.responses['group:join'] = {
+          'ok': false,
+          'errorCode': 'JOIN_FAILED',
+        };
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': false,
+          'errorCode': 'RELAY_UNAVAILABLE',
+          'errorMessage': 'relay unavailable',
+        };
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        await tester.tap(
+          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
+        );
+        // The recovery-retry wrapper runs up to 5×500ms re-attempts; pump past
+        // the FULL loop so the outcome settles on the stable keep-pending
+        // shape-a `(bridgeError, null)` (a shorter pump catches an in-flight
+        // attempt mid-materialization where the group is transiently persisted).
+        await pumpFrames(tester, count: 220);
+
+        // Invite KEPT (rollback returned without committing).
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNotNull,
+        );
+        expect(await groupRepo.getGroup(invite.groupId), isNull);
+        // Live card still present.
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+          findsOneWidget,
+        );
+        // RED on HEAD: there is no inline Retry control today (generic snackbar
+        // path), so this key finds nothing.
+        final retryFinder = find.byKey(
+          ValueKey('pending-group-invite-retry-${invite.groupId}'),
+        );
+        expect(retryFinder, findsOneWidget);
+        // No generic failure snackbar on the keep-pending path.
+        expect(find.text('Failed to accept invite'), findsNothing);
+
+        // INV-2 guard lock (strengthened from a single-tap greaterThan, which a
+        // guard bypass survived — M3). `loadIdentity` is called EXACTLY ONCE per
+        // `_onAcceptPendingInvite` entry (the recovery-retry wrapper re-attempts
+        // without reloading), so it is a clean per-accept-pass counter.
+        //
+        // A RAPID DOUBLE tap of Retry WITHOUT pumping to settle between the two
+        // taps: `_onAcceptPendingInvite` adds the id to `_processingInviteIds`
+        // SYNCHRONOUSLY (before its first await), so the second tap — dispatched
+        // in the same frame, before any await yields — hits the contains-check
+        // and returns. With the guard intact: double-tap == exactly ONE fresh
+        // accept pass (+1 loadIdentity). With a guard bypass: double-tap == TWO
+        // passes (+2). The EQUALITY (not greaterThan) is what re-reds M3.
+        final passesBeforeRetry = identityRepo.loadIdentityCallCount;
+        await tester.tap(retryFinder);
+        await tester.tap(retryFinder, warnIfMissed: false);
+        await tester.pump();
+        // Drain the re-entered accept's preserved 5×500ms recovery loop + the
+        // use-case's own 250ms inbox-drain timers (parity with the 220-frame
+        // first-accept above) so no raw timer is pending at teardown.
+        await pumpFrames(tester, count: 220);
+        final passesAfterRetry = identityRepo.loadIdentityCallCount;
+        expect(
+          passesAfterRetry - passesBeforeRetry,
+          1,
+          reason:
+              'inline Retry must re-run accept EXACTLY ONCE for a rapid '
+              'double-tap — the second concurrent tap hits the '
+              '_processingInviteIds guard and arms no fresh pass',
+        );
+        // The single re-run still armed a fresh accept (sanity: not zero) — a
+        // real join attempt went out on the re-entered pass.
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:join'),
+          isNotEmpty,
+        );
       },
     );
 
@@ -1247,8 +1507,14 @@ void main() {
       },
     );
 
+    // TC-04 (plan 150) — rewrite of the prior repairPending test (was
+    // ":1250 repair-pending accept keeps the invite row and shows key-material
+    // warning", which asserted the TRANSIENT `group_invite_needs_key`
+    // snackbar). repairPending KEEPS the invite, so the live card renders an
+    // inline "Waiting for key" state instead of a snackbar.
     testWidgets(
-      'repair-pending accept keeps the invite row and shows key-material warning',
+      'TC-04 repair-pending accept shows an inline "Waiting for key" row and '
+      'no snackbar',
       (tester) async {
         final invite = makePendingInvite(overrideGroupKey: '');
         await pendingInviteRepo.savePendingInvite(invite);
@@ -1261,17 +1527,485 @@ void main() {
         );
         await pumpFrames(tester, count: 30);
 
+        // Invite KEPT + group not joined (unchanged from the old sentinel).
         expect(
           await pendingInviteRepo.getPendingInvite(invite.groupId),
           isNotNull,
         );
         expect(await groupRepo.getGroup(invite.groupId), isNull);
+        // Live card still present (unchanged from old :1270).
         expect(
           find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
           findsOneWidget,
         );
-        expect(find.text('Invite needs fresh key material'), findsOneWidget);
+        // NEW (TC-04 / INV-4): inline "Waiting for key" rendered INSIDE the
+        // live card (RED on HEAD: no inline state, only a snackbar).
+        expect(
+          find.descendant(
+            of: find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+            matching: find.text('Waiting for key'),
+          ),
+          findsOneWidget,
+        );
+        // The transient `group_invite_needs_key` snackbar copy is GONE.
+        expect(find.text('Invite needs fresh key material'), findsNothing);
+        // And there is no snackbar at all for this non-navigating outcome.
+        expect(find.byType(SnackBar), findsNothing);
+        // repairPending must NOT navigate (preserve :1278/:1311 intent).
+        expect(find.byType(GroupConversationScreen), findsNothing);
+        // group:join still not called (preserved from old :1274).
         expect(bridge.commandLog, isNot(contains('group:join')));
+      },
+    );
+
+    // TC-09 (plan 150) — derived `_inviteRowOutcomes` is in-memory and cleared
+    // on `_loadGroups`; after a resume a repairPending invite re-renders from
+    // the repo as a plain idle accept/decline card (no stale "Waiting for
+    // key", no ghost row). The invite itself stays KEPT.
+    testWidgets(
+      'TC-09 repairPending row reverts to idle accept card after resume '
+      '(lifecycle)',
+      (tester) async {
+        final invite = makePendingInvite(overrideGroupKey: '');
+        await pendingInviteRepo.savePendingInvite(invite);
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        await tester.tap(
+          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
+        );
+        await pumpFrames(tester, count: 30);
+
+        // Precondition: TC-04 state is present.
+        expect(
+          find.descendant(
+            of: find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+            matching: find.text('Waiting for key'),
+          ),
+          findsOneWidget,
+        );
+
+        // Simulate a resume: the lifecycle observer re-runs `_loadGroups`,
+        // which clears the derived row outcomes.
+        WidgetsBinding.instance.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        // The resume `_loadGroups` is UNawaited (fire-and-forget), so a fixed
+        // pump count can race the reload. Pump-until the row has reverted to
+        // the plain idle card (bounded): the accept key is present AND the
+        // stale "Waiting for key" inline state has been cleared by the reload.
+        // (The accept key alone is not a sufficient settle signal — it stays
+        // visible on the kept repairPending card even while "Waiting for key"
+        // still shows.)
+        await pumpUntil(
+          tester,
+          () =>
+              find
+                  .byKey(
+                    ValueKey(
+                      'pending-group-invite-accept-${invite.groupId}',
+                    ),
+                  )
+                  .evaluate()
+                  .isNotEmpty &&
+              find.text('Waiting for key').evaluate().isEmpty,
+        );
+
+        // The invite is still KEPT in the repo.
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNotNull,
+        );
+        // Back to a plain idle accept/decline card.
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(
+            ValueKey('pending-group-invite-accept-${invite.groupId}'),
+          ),
+          findsOneWidget,
+        );
+        // No stale "Waiting for key" state, no terminal ghost row.
+        expect(find.text('Waiting for key'), findsNothing);
+        expect(
+          find.byKey(
+            ValueKey('pending-group-invite-outcome-${invite.groupId}'),
+          ),
+          findsNothing,
+        );
+      },
+    );
+
+    // TC-01 (plan 150) — data-driven over terminal results. Every terminal arm
+    // `deletePendingInvite`s in the use-case and `_loadGroups()` runs BEFORE
+    // the switch, so the live `pending-group-invite-<id>` card is GONE after
+    // the tap (Root Cause C1). The reason therefore renders on an
+    // outcome-driven GHOST row keyed `pending-group-invite-outcome-<id>`, never
+    // on the deleted card, and with NO snackbar.
+    //
+    // Driven over the cleanly-reachable terminal subset — terminals whose
+    // accept stays ENABLED on the card (invite is NOT card-expired and its
+    // group is NOT pre-joined, so the card is tappable) AND that the use-case
+    // resolves to the terminal arm purely from repo/device state, no brittle
+    // payload corruption. That is: revoked, alreadyUsed, wrongIdentity,
+    // expiredFreshness. All four share the SAME ghost-row code path, so the
+    // contract is fully exercised.
+    //
+    // PRUNED terminals (NOT a tappable enabled-accept path; covered by the
+    // use-case's own tests instead):
+    //   • notFound — the use-case returns notFound ONLY when the invite is
+    //     ABSENT at accept time (use-case :162 getPendingInvite == null). An
+    //     absent invite means there is no PendingGroupInviteCard to tap, so
+    //     notFound is unreachable through an enabled-accept UI tap. (Verified:
+    //     deleting the invite before the tap removes the accept key and
+    //     `tester.tap` errors on a missing widget, not the ghost-row contract.)
+    //   • duplicateGroup — requires a same-id group to already exist locally
+    //     (materialize :848 returns duplicateGroup only when getGroup != null &
+    //     self is an active member; the retry path :627-629 needs the same
+    //     pre-saved group). But `_loadGroups`' B2 filter
+    //     (visibleInvites = pendingInvites.where(!joinedGroupIds.contains(id)))
+    //     HIDES the invite card whenever a group with that id is already
+    //     joined → there is no card to tap. duplicateGroup is therefore not
+    //     reachable via an enabled accept tap and is pruned.
+    //   • expired (hard-expiry) — the card DISABLES accept when
+    //     invite.isExpiredAt(now) (pending_group_invite_card :140 gates
+    //     onPressed on isExpired), so an expired invite has no tappable accept.
+    //     The freshness-stale arm (expiredFreshness) is the reachable sibling
+    //     (card stays enabled because expiry checks expiresAt only, while the
+    //     freshness proof ages out independently) and is covered below.
+    //   • invalidPayload — every invalidPayload seam is either card-hidden
+    //     (stale-against-local needs a pre-saved same-id group → B2 filter) or
+    //     requires brittle signature/payload corruption; use-case-covered, not
+    //     reproduced at the wired tier.
+    final terminalCases = <Map<String, dynamic>>[
+      {
+        'label': 'revoked',
+        'groupId': 'grp-term-revoked',
+        'reason': 'Invite was revoked',
+        'arrange': (InMemoryPendingGroupInviteRepository repo,
+            PendingGroupInvite inv) async {
+          final now = DateTime.now().toUtc();
+          await repo.saveRevokedInvite(
+            GroupInviteRevocation(
+              inviteId: inv.inviteId,
+              groupId: inv.groupId,
+              revokedAt: now.subtract(const Duration(minutes: 1)),
+              expiresAt: now.add(const Duration(days: 7)),
+            ),
+          );
+        },
+      },
+      {
+        'label': 'alreadyUsed',
+        'groupId': 'grp-term-used',
+        'reason': 'Invite already used',
+        'arrange': (InMemoryPendingGroupInviteRepository repo,
+            PendingGroupInvite inv) async {
+          final now = DateTime.now().toUtc();
+          await repo.saveConsumedInvite(
+            GroupInviteConsumption(
+              inviteId: inv.inviteId,
+              groupId: inv.groupId,
+              consumedAt: now.subtract(const Duration(minutes: 1)),
+              expiresAt: now.add(const Duration(days: 7)),
+            ),
+          );
+        },
+      },
+      {
+        'label': 'wrongIdentity',
+        'groupId': 'grp-term-wrong',
+        'reason': 'Invite is for another identity',
+        // The invite is device-bound to `invite-device-A`, but the local node
+        // identity is a DIFFERENT device (`peer-admin-device-B`, emitted
+        // below). The handler passes ownDeviceId = currentState.peerId, so
+        // isBoundToRecipientDevice fails on the device mismatch → wrongIdentity
+        // (use-case :331). The card is NOT expired → accept stays enabled.
+        'recipientDeviceId': 'invite-device-A',
+        'localDeviceId': 'peer-admin-device-B',
+        'arrange': (InMemoryPendingGroupInviteRepository repo,
+            PendingGroupInvite inv) async {},
+      },
+      {
+        'label': 'expiredFreshness',
+        'groupId': 'grp-abc123',
+        'reason':
+            'This invite has expired. Ask the group admin to send a fresh one.',
+        // The A2 seam: receivedAt ~6d21h ago leaves the card valid (accept
+        // enabled) while the freshness proof has aged out → expiredFreshness.
+        'receivedAtDaysHours': const Duration(days: 6, hours: 21),
+        'arrange': (InMemoryPendingGroupInviteRepository repo,
+            PendingGroupInvite inv) async {},
+      },
+    ];
+
+    for (final tc in terminalCases) {
+      final label = tc['label'] as String;
+      testWidgets(
+        'TC-01 terminal accept outcome shows an inline reason GHOST row and '
+        'no snackbar ($label)',
+        (tester) async {
+          final groupId = tc['groupId'] as String;
+          final receivedAt = tc.containsKey('receivedAtDaysHours')
+              ? DateTime.now()
+                  .toUtc()
+                  .subtract(tc['receivedAtDaysHours'] as Duration)
+              : null;
+          final invite = makePendingInvite(
+            groupId: groupId,
+            groupName: 'Terminal $label',
+            receivedAt: receivedAt,
+            recipientDeviceId: tc['recipientDeviceId'] as String?,
+          );
+          await pendingInviteRepo.savePendingInvite(invite);
+          if (tc.containsKey('localDeviceId')) {
+            // Bring up a local node whose device id deliberately mismatches the
+            // invite's bound recipient device (drives wrongIdentity).
+            p2pService.emitState(
+              NodeState(
+                peerId: tc['localDeviceId'] as String,
+                isStarted: true,
+              ),
+            );
+          }
+          await (tc['arrange'] as Future<void> Function(
+            InMemoryPendingGroupInviteRepository,
+            PendingGroupInvite,
+          ))(pendingInviteRepo, invite);
+
+          await tester.pumpWidget(buildWidget());
+          await pumpFrames(tester);
+
+          await tester.tap(
+            find.byKey(
+              ValueKey('pending-group-invite-accept-$groupId'),
+            ),
+          );
+          await pumpFrames(tester, count: 30);
+
+          // C1: the live card is GONE (the use-case deleted the invite and
+          // `_loadGroups` removed it before the switch ran).
+          expect(
+            find.byKey(ValueKey('pending-group-invite-$groupId')),
+            findsNothing,
+          );
+          // The reason renders on the GHOST row (RED on HEAD: no such row).
+          final ghostKey = ValueKey('pending-group-invite-outcome-$groupId');
+          expect(find.byKey(ghostKey), findsOneWidget);
+          expect(
+            find.descendant(
+              of: find.byKey(ghostKey),
+              matching: find.text(tc['reason'] as String),
+            ),
+            findsOneWidget,
+          );
+          // Distinct-event discriminator: inline ghost row, NOT a toast.
+          expect(find.byType(SnackBar), findsNothing);
+        },
+      );
+    }
+
+    // TC-05 (plan 150) — scoped no-snackbar lock over the NON-navigating
+    // outcomes: a representative terminal (notFound) + repairPending + a
+    // keep-pending bridgeError each leave NO SnackBar. The navigating outcomes
+    // (success / joinedRecovery) keep a navigate-time snackbar and are NOT
+    // covered here (locked positively by TC-08 / TC-03).
+    testWidgets(
+      'TC-05 no accept snackbar for any non-navigating outcome (lock)',
+      (tester) async {
+        // (a) terminal: revoked — a tap-reachable terminal (the card stays
+        // enabled because the invite is not card-expired; the revocation makes
+        // the use-case return `revoked`). Using `notFound` here is NOT viable:
+        // notFound requires the invite to be ABSENT at tap time, which removes
+        // the accept key and makes `tester.tap` error instead of exercising the
+        // no-snackbar lock.
+        final terminal = makePendingInvite(
+          groupId: 'grp-lock-term',
+          groupName: 'Lock Terminal',
+        );
+        await pendingInviteRepo.savePendingInvite(terminal);
+        final revokeNow = DateTime.now().toUtc();
+        await pendingInviteRepo.saveRevokedInvite(
+          GroupInviteRevocation(
+            inviteId: terminal.inviteId,
+            groupId: terminal.groupId,
+            revokedAt: revokeNow.subtract(const Duration(minutes: 1)),
+            expiresAt: revokeNow.add(const Duration(days: 7)),
+          ),
+        );
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        await tester.tap(
+          find.byKey(
+            ValueKey('pending-group-invite-accept-${terminal.groupId}'),
+          ),
+        );
+        await pumpFrames(tester, count: 30);
+        expect(find.byType(SnackBar), findsNothing);
+        // Positive render so an all-empty tree cannot satisfy the lock: the
+        // terminal leg actually produced its ghost row.
+        expect(
+          find.byKey(
+            ValueKey('pending-group-invite-outcome-${terminal.groupId}'),
+          ),
+          findsOneWidget,
+        );
+
+        // (b) repairPending.
+        final repair = makePendingInvite(
+          groupId: 'grp-lock-repair',
+          groupName: 'Lock Repair',
+          overrideGroupKey: '',
+        );
+        await pendingInviteRepo.savePendingInvite(repair);
+        pendingInviteStreamController.add(repair);
+        await pumpFrames(tester, count: 20);
+        await tester.tap(
+          find.byKey(
+            ValueKey('pending-group-invite-accept-${repair.groupId}'),
+          ),
+        );
+        await pumpFrames(tester, count: 30);
+        expect(find.byType(SnackBar), findsNothing);
+        // Positive render: the repairPending leg actually showed its inline
+        // "Waiting for key" state on the kept card.
+        expect(
+          find.descendant(
+            of: find.byKey(ValueKey('pending-group-invite-${repair.groupId}')),
+            matching: find.text('Waiting for key'),
+          ),
+          findsOneWidget,
+        );
+
+        // (c) keep-pending bridgeError (key-package-bound rollback → retryable).
+        const localDeviceId = 'peer-admin-device-1';
+        p2pService.emitState(
+          const NodeState(peerId: localDeviceId, isStarted: true),
+        );
+        bridge.responses['group:join'] = {
+          'ok': false,
+          'errorCode': 'JOIN_FAILED',
+        };
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': false,
+          'errorCode': 'RELAY_UNAVAILABLE',
+          'errorMessage': 'relay unavailable',
+        };
+        final retryable = makePendingInvite(
+          groupId: 'grp-lock-retry',
+          groupName: 'Lock Retry',
+          recipientDeviceId: localDeviceId,
+        );
+        await pendingInviteRepo.savePendingInvite(retryable);
+        pendingInviteStreamController.add(retryable);
+        await pumpFrames(tester, count: 20);
+        await tester.tap(
+          find.byKey(
+            ValueKey('pending-group-invite-accept-${retryable.groupId}'),
+          ),
+        );
+        // Keep-pending bridgeError runs the preserved 5×500ms recovery loop
+        // (each pass re-invokes the use-case's 250ms inbox-drain retry). Pump
+        // past the full loop so no raw use-case drain timer is pending at
+        // teardown; the no-snackbar assertion is unchanged.
+        await pumpFrames(tester, count: 220);
+        expect(find.byType(SnackBar), findsNothing);
+        // Positive render: the keep-pending bridgeError leg actually exposed its
+        // inline Retry control on the kept card.
+        expect(
+          find.byKey(
+            ValueKey('pending-group-invite-retry-${retryable.groupId}'),
+          ),
+          findsOneWidget,
+        );
+      },
+    );
+
+    // TC-06 (plan 150) — stuck-rejoin Retry drops the redundant
+    // `group_joining_in_progress` ("Joining…") snackbar; the inline badge keeps
+    // updating and the rejoin pass still runs. Mirrors the stuck setup of the
+    // ":791 … attempt cap … badge" sentinel.
+    testWidgets(
+      'TC-06 stuck-rejoin Retry updates the inline badge without a snackbar',
+      (tester) async {
+        final group = makeGroup(id: 'g-1', name: 'Stuck Group');
+        await groupRepo.saveGroup(group);
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'g-1',
+            keyGeneration: 1,
+            encryptedKey: 'key-base64',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+        final future = DateTime.now().toUtc().add(const Duration(days: 1));
+        for (var i = 0; i < 11; i++) {
+          await groupRepo.recordGroupRejoinFailure(
+            'g-1',
+            nextEligibleAt: future,
+          );
+        }
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        // Inline badge present (sentinel parity with :807).
+        expect(find.text("Couldn't join — retry"), findsOneWidget);
+
+        await tester.tap(find.byKey(const ValueKey('group-stuck-retry-g-1')));
+        await pumpFrames(tester, count: 20);
+
+        // RED on HEAD: `_onRetryStuckRejoin` shows the "Joining…" snackbar.
+        expect(find.byType(SnackBar), findsNothing);
+        // The rejoin pass still ran (force-eligible + rejoin → group:join).
+        expect(bridge.commandLog, contains('group:join'));
+      },
+    );
+
+    // TC-08 (plan 150) — preservation: a success accept removes the row,
+    // navigates, AND still shows the kept `group_invite_joined` "Joined <name>"
+    // snackbar (DECISION-2). Guards the switch rewrite against dropping the
+    // navigate arm or the kept success snackbar. Mirrors EK011/cursor.
+    testWidgets(
+      'TC-08 success accept still navigates and removes the row (preservation)',
+      (tester) async {
+        const localDeviceId = 'peer-admin-device-1';
+        p2pService.emitState(
+          const NodeState(peerId: localDeviceId, isStarted: true),
+        );
+        final invite = makePendingInvite(
+          groupId: 'grp-success-preserve',
+          groupName: 'Preserve Room',
+          recipientDeviceId: localDeviceId,
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        await tester.tap(
+          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
+        );
+        await pumpFrames(tester, count: 30);
+
+        // Row removed + group joined + navigated.
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNull,
+        );
+        expect(await groupRepo.getGroup(invite.groupId), isNotNull);
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+          findsNothing,
+        );
+        expect(find.byType(GroupConversationScreen), findsOneWidget);
+        // The kept success snackbar (DECISION-2) — "Joined Preserve Room".
+        expect(find.text('Joined Preserve Room'), findsOneWidget);
       },
     );
 
@@ -1304,7 +2038,16 @@ void main() {
           find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
           findsOneWidget,
         );
-        expect(find.text('Invite needs fresh key material'), findsOneWidget);
+        // TC-04 alignment: repairPending renders the inline "Waiting for key"
+        // state inside the live card, not the transient snackbar copy.
+        expect(
+          find.descendant(
+            of: find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+            matching: find.text('Waiting for key'),
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('Invite needs fresh key material'), findsNothing);
         expect(bridge.commandLog, contains('group:join'));
         expect(bridge.commandLog, isNot(contains('group:inboxRetrieveCursor')));
         // B1 anti-regression: a non-success accept must NOT open a conversation.
@@ -1312,31 +2055,427 @@ void main() {
       },
     );
 
-    testWidgets('declining a pending invite removes the row without joining', (
-      tester,
-    ) async {
-      final invite = makePendingInvite(
-        groupId: 'grp-decline',
-        groupName: 'Decline Me',
-      );
-      await pendingInviteRepo.savePendingInvite(invite);
+    testWidgets(
+      'declining optimistically hides the row but keeps the invite until the '
+      'undo window elapses',
+      (tester) async {
+        final invite = makePendingInvite(
+          groupId: 'grp-decline',
+          groupName: 'Decline Me',
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+        // 153: node up so the irreversible decline-ack actually reaches the
+        // wire on commit. With a STOPPED node it short-circuits at
+        // GROUP_INVITE_DECLINE_ACK_SEND_NODE_NOT_RUNNING and never calls
+        // sendMessage, which would make the sendMessageCallCount assertions
+        // below (and in the undo test) vacuous.
+        p2pService.emitState(
+          const NodeState(peerId: 'peer-local-decliner', isStarted: true),
+        );
 
-      await tester.pumpWidget(buildWidget());
-      await pumpFrames(tester);
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
 
-      await tester.tap(
-        find.byKey(ValueKey('pending-group-invite-decline-${invite.groupId}')),
-      );
-      await pumpFrames(tester, count: 20);
+        await tester.tap(
+          find.byKey(
+            ValueKey('pending-group-invite-decline-${invite.groupId}'),
+          ),
+        );
+        await pumpFrames(tester, count: 20); // 1000ms, well inside the 4s window
 
-      expect(await pendingInviteRepo.getPendingInvite(invite.groupId), isNull);
-      expect(await groupRepo.getGroup(invite.groupId), isNull);
-      expect(
-        find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
-        findsNothing,
-      );
-      expect(find.text('Invite declined'), findsOneWidget);
-    });
+        // Optimistic: the row hides instantly and an Undo affordance shows,
+        // but the local invite is NOT yet deleted (the commit is deferred).
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+          findsNothing,
+        );
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNotNull,
+        );
+        expect(find.widgetWithText(SnackBarAction, 'Undo'), findsOneWidget);
+
+        // Past the 4s undo window (+1s margin) → the deferred commit fires.
+        await tester.pump(const Duration(seconds: 5));
+        await pumpFrames(tester, count: 10);
+
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNull,
+        );
+        expect(await groupRepo.getGroup(invite.groupId), isNull);
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+          findsNothing,
+        );
+        expect(find.text('Invite declined'), findsWidgets);
+        expect(
+          flowEvents
+              .where((e) => e['event'] == 'GROUP_INVITE_DECLINE_COMMITTED')
+              .length,
+          1,
+        );
+        // 153: the decline-ack — the single irreversible side-effect — went on
+        // the wire exactly once on commit (non-vacuous: the node is started, so
+        // the send is not short-circuited at NODE_NOT_RUNNING).
+        expect(
+          flowEvents.any(
+            (e) => e['event'] == 'GROUP_INVITE_DECLINE_ACK_SEND_START',
+          ),
+          isTrue,
+        );
+        expect(p2pService.sendMessageCallCount, 1);
+      },
+    );
+
+    testWidgets(
+      'undo cancels the decline — invite re-surfaces, ack never sent, never '
+      'committed',
+      (tester) async {
+        final invite = makePendingInvite(
+          groupId: 'grp-undo',
+          groupName: 'Undo Me',
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+        // 153: node up so a REAL commit WOULD put the decline-ack on the wire —
+        // this is what makes the "ack never sent" assertions below meaningful
+        // (with a stopped node they would pass even if the commit had fired).
+        p2pService.emitState(
+          const NodeState(peerId: 'peer-local-decliner', isStarted: true),
+        );
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        await tester.tap(
+          find.byKey(
+            ValueKey('pending-group-invite-decline-${invite.groupId}'),
+          ),
+        );
+        await pumpFrames(tester, count: 10); // inside the window
+
+        // Tap Undo before the window elapses.
+        await tester.tap(find.widgetWithText(SnackBarAction, 'Undo'));
+        await pumpFrames(tester, count: 10);
+
+        // The invite re-surfaces immediately.
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNotNull,
+        );
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+          findsOneWidget,
+        );
+
+        // Past the window: the commit must NOT fire — the invite stays.
+        await tester.pump(const Duration(seconds: 5));
+        await pumpFrames(tester, count: 10);
+
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNotNull,
+        );
+        // The irreversible decline-ack was never put on the wire AND the ack
+        // path never even started — proving the deferred commit was averted,
+        // not merely short-circuited (node is running, so a real commit would
+        // have emitted ACK_SEND_START and incremented sendMessageCallCount).
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(
+          flowEvents.any(
+            (e) => e['event'] == 'GROUP_INVITE_DECLINE_ACK_SEND_START',
+          ),
+          isFalse,
+        );
+        expect(
+          flowEvents.any(
+            (e) =>
+                e['event'] == 'GROUP_INVITE_DECLINE_UNDONE' &&
+                (e['details'] as Map)['surface'] == 'group_list',
+          ),
+          isTrue,
+        );
+        expect(
+          flowEvents.any(
+            (e) => e['event'] == 'GROUP_INVITE_DECLINE_COMMITTED',
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    testWidgets(
+      're-entrant load does not re-surface a hidden row; double-tap commits '
+      'exactly once',
+      (tester) async {
+        final inviteA = makePendingInvite(
+          groupId: 'grp-A',
+          groupName: 'Group A',
+        );
+        final inviteB = makePendingInvite(
+          groupId: 'grp-B',
+          groupName: 'Group B',
+        );
+        await pendingInviteRepo.savePendingInvite(inviteA);
+        await pendingInviteRepo.savePendingInvite(inviteB);
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        // Decline A twice in the same frame (double-tap), then force a
+        // re-entrant reload via the pending-invite stream.
+        final declineA = find.byKey(
+          ValueKey('pending-group-invite-decline-${inviteA.groupId}'),
+        );
+        await tester.tap(declineA);
+        await tester.tap(declineA, warnIfMissed: false);
+        pendingInviteStreamController.add(inviteA);
+        await pumpFrames(tester, count: 20); // inside the window
+
+        // A is hidden and stays hidden through the reactive reload; B untouched.
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${inviteA.groupId}')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${inviteB.groupId}')),
+          findsOneWidget,
+        );
+
+        await tester.pump(const Duration(seconds: 5));
+        await pumpFrames(tester, count: 10);
+
+        // Exactly one commit despite the double-tap + re-entrant reload.
+        expect(
+          flowEvents
+              .where((e) => e['event'] == 'GROUP_INVITE_DECLINE_COMMITTED')
+              .length,
+          1,
+        );
+        expect(
+          await pendingInviteRepo.getPendingInvite(inviteA.groupId),
+          isNull,
+        );
+        // B was never declined.
+        expect(
+          await pendingInviteRepo.getPendingInvite(inviteB.groupId),
+          isNotNull,
+        );
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${inviteB.groupId}')),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'disposing during the undo window cancels the pending commit (invite '
+      'kept, no stray commit)',
+      (tester) async {
+        final invite = makePendingInvite(
+          groupId: 'grp-dispose',
+          groupName: 'Dispose Me',
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        await tester.tap(
+          find.byKey(
+            ValueKey('pending-group-invite-decline-${invite.groupId}'),
+          ),
+        );
+        await pumpFrames(tester, count: 10); // inside the window
+
+        // Dispose the screen before the window elapses.
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump(const Duration(seconds: 5));
+        await pumpFrames(tester, count: 5);
+
+        // No setState-after-dispose crash, no commit, invite preserved.
+        expect(tester.takeException(), isNull);
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNotNull,
+        );
+        expect(
+          flowEvents.any(
+            (e) => e['event'] == 'GROUP_INVITE_DECLINE_COMMITTED',
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    testWidgets(
+      'a throwing commit releases the processing-id and re-surfaces the invite '
+      '(finally cleanup)',
+      (tester) async {
+        // The deferred commit loads identity for the decline-ack; make that
+        // throw so the commit fails AFTER the optimistic hide.
+        identityRepo = _ThrowingIdentityRepository();
+        final invite = makePendingInvite(
+          groupId: 'grp-throw',
+          groupName: 'Throw Me',
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        await tester.tap(
+          find.byKey(
+            ValueKey('pending-group-invite-decline-${invite.groupId}'),
+          ),
+        );
+        await pumpFrames(tester, count: 10);
+
+        // Fire the deferred commit, which throws.
+        await tester.pump(const Duration(seconds: 5));
+        await pumpFrames(tester, count: 10);
+
+        // The invite re-surfaces, a failure snackbar shows, and the row is NOT
+        // permanently stuck — declining it again is accepted.
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNotNull,
+        );
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+          findsOneWidget,
+        );
+        expect(find.text('Failed to decline invite'), findsWidgets);
+
+        // Second decline of the same row is honoured (processing-id released).
+        await tester.tap(
+          find.byKey(
+            ValueKey('pending-group-invite-decline-${invite.groupId}'),
+          ),
+        );
+        await pumpFrames(tester, count: 10);
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+          findsNothing,
+        );
+      },
+    );
+
+    testWidgets(
+      'a stale Undo tapped after the screen is gone is a safe no-op '
+      '(no setState-after-dispose crash, no commit) [review P1]',
+      (tester) async {
+        final invite = makePendingInvite(groupId: 'grp-stale-undo');
+        await pendingInviteRepo.savePendingInvite(invite);
+
+        // Host GroupListWired under a toggle so it can be removed SYNCHRONOUSLY
+        // (no route transition) while the app-level ScaffoldMessenger — and the
+        // decline snackbar's Undo action — survives.
+        final showScreen = ValueNotifier<bool>(true);
+        addTearDown(showScreen.dispose);
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: ValueListenableBuilder<bool>(
+              valueListenable: showScreen,
+              builder: (_, show, _) => show
+                  ? GroupListWired(
+                      groupRepo: groupRepo,
+                      msgRepo: msgRepo,
+                      groupMessageListener: FakeGroupMessageListener(
+                        messageStreamController.stream,
+                      ),
+                      bridge: bridge,
+                      identityRepo: identityRepo,
+                      contactRepo: contactRepo,
+                      p2pService: p2pService,
+                      groupInviteListener: groupInviteListener,
+                    )
+                  : const Scaffold(body: SizedBox()),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.tap(
+          find.byKey(
+            ValueKey('pending-group-invite-decline-${invite.groupId}'),
+          ),
+        );
+        await pumpFrames(tester, count: 10);
+        expect(find.widgetWithText(SnackBarAction, 'Undo'), findsWidgets);
+
+        // Tear GroupListWired down mid-window (synchronous dispose → its commit
+        // timer is cancelled) while the snackbar's Undo lingers.
+        showScreen.value = false;
+        await pumpFrames(tester, count: 3);
+
+        // Tapping the now-stale Undo must NOT crash (no setState after dispose)
+        // and must NOT commit/undo.
+        final undo = find.widgetWithText(SnackBarAction, 'Undo');
+        if (undo.evaluate().isNotEmpty) {
+          await tester.tap(undo.first, warnIfMissed: false);
+          await pumpFrames(tester, count: 5);
+        }
+        await tester.pump(const Duration(seconds: 5));
+        await pumpFrames(tester, count: 5);
+
+        expect(tester.takeException(), isNull);
+        // The deferred commit was cancelled by dispose → invite kept; nothing
+        // committed.
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNotNull,
+        );
+        expect(
+          flowEvents.any(
+            (e) => e['event'] == 'GROUP_INVITE_DECLINE_COMMITTED',
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    testWidgets(
+      'the Undo affordance disappears the moment the deferred commit starts '
+      '(no stale no-op Undo during a slow commit) [review P2]',
+      (tester) async {
+        // A slow identity load holds the commit in-flight after the timer fires.
+        identityRepo = _SlowIdentityRepository(identity: testIdentity);
+        final invite = makePendingInvite(groupId: 'grp-slow-commit');
+        await pendingInviteRepo.savePendingInvite(invite);
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        await tester.tap(
+          find.byKey(
+            ValueKey('pending-group-invite-decline-${invite.groupId}'),
+          ),
+        );
+        await pumpFrames(tester, count: 10);
+        expect(find.widgetWithText(SnackBarAction, 'Undo'), findsOneWidget);
+
+        // Advance past the 4s window so the commit fires; the use-case is slow
+        // (2s) so the commit is still in-flight here. The Undo must already be
+        // gone (the snackbar is dismissed the moment the commit fires) — a stale
+        // no-op Undo must not linger during the commit. pumpFrames(10)=500ms is
+        // enough for the dismiss animation but well short of the 2s commit.
+        await tester.pump(const Duration(seconds: 4));
+        await pumpFrames(tester, count: 10);
+        expect(find.widgetWithText(SnackBarAction, 'Undo'), findsNothing);
+
+        // Let the slow commit finish; the invite is then deleted.
+        await tester.pump(const Duration(seconds: 3));
+        await pumpFrames(tester, count: 5);
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNull,
+        );
+      },
+    );
 
     testWidgets('tapping group navigates to conversation', (tester) async {
       final g1 = makeGroup(id: 'g-1', name: 'Alpha Group');

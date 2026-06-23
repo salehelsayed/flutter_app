@@ -14,6 +14,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
@@ -53,6 +54,8 @@ import 'package:image_picker/image_picker.dart';
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../../shared/fakes/fake_audio_recorder_service.dart';
+import '../../../shared/fakes/fake_just_audio.dart';
+import '../../../shared/fakes/fake_mic_permission_gateway.dart';
 import '../../../shared/fakes/fake_group_reaction_replay_outbox_repository.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/fake_media_picker.dart';
@@ -943,6 +946,10 @@ void main() {
     late FakeUploadWakeLockDriver wakeLockDriver;
 
     setUp(() async {
+      // Voice bubbles construct an AudioPlayer() in initState; route just_audio
+      // to a no-op platform so the host test doesn't hit MissingPluginException
+      // on the com.ryanheise.just_audio.methods channel (GMAR-004 reopen).
+      installFakeJustAudioPlatform();
       groupRepo = InMemoryGroupRepository();
       msgRepo = CountingGroupMessageRepository();
       mediaAttachmentRepo = CountingMediaAttachmentRepository();
@@ -979,6 +986,7 @@ void main() {
       CountingMediaAttachmentRepository? mediaRepo,
       ImageProcessor? imageProcessor,
       FakeAudioRecorderService? audioRecorderService,
+      MicPermissionGateway? micPermissionGateway,
       MediaPicker? mediaPicker,
       MediaFileManager? mediaFileManager,
       UploadMediaFn? uploadMediaFn,
@@ -1022,6 +1030,8 @@ void main() {
           mediaFileManager: mediaFileManager,
           imageProcessor: imageProcessor,
           audioRecorderService: audioRecorderService,
+          micPermissionGateway:
+              micPermissionGateway ?? FakeMicPermissionGateway(),
           mediaPicker: mediaPicker,
           qualityPreference: qualityPreference,
           videoQualityPreference: videoQualityPreference,
@@ -1232,6 +1242,240 @@ void main() {
       },
     );
 
+    // 149 TC-04: an oversized group pick marks the chip invalid AT PICK TIME,
+    // shows NO snackbar, and disables Send (inert tap, draft preserved).
+    testWidgets(
+      'oversized group pick marks the chip invalid at pick time, shows no '
+      'snackbar, and disables Send',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final tempDir = Directory.systemTemp.createTempSync('group_oversized_');
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final bigImage = File('${tempDir.path}/big.jpg')
+          ..writeAsBytesSync(_tinyPngBytes);
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            initialText: 'hello',
+            initialPendingMedia: [
+              PendingComposerMedia(
+                file: bigImage,
+                budgetBytes: 30 * 1024 * 1024, // > 25 MB image cap
+              ),
+            ],
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        expect(
+          find.byKey(const ValueKey('attachment-invalid-0')),
+          findsOneWidget,
+        );
+        expect(
+          find.widgetWithText(
+            SnackBar,
+            'The media is too large even after compression.',
+          ),
+          findsNothing,
+        );
+        // Send is inert while invalid present: tapping it does not clear draft.
+        expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'hello',
+        );
+        // Retained, not silently discarded.
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+      },
+    );
+
+    // 149 TC-07: an oversized GIF group pick marks the chip with the GIF caption
+    // (not a snackbar).
+    testWidgets(
+      'GIF-too-large group pick marks the chip with the GIF caption (not a '
+      'snackbar)',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final tempDir = Directory.systemTemp.createTempSync('group_gif_over_');
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final bigGif = File('${tempDir.path}/big.gif')
+          ..writeAsBytesSync(_tinyPngBytes);
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            initialPendingMedia: [
+              PendingComposerMedia(
+                file: bigGif,
+                budgetBytes: 30 * 1024 * 1024, // > 25 MB GIF cap
+              ),
+            ],
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        expect(find.text('GIF too big'), findsOneWidget);
+        expect(
+          find.widgetWithText(
+            SnackBar,
+            'GIF files larger than 25 MB cannot be added.',
+          ),
+          findsNothing,
+        );
+      },
+    );
+
+    // 149 TC-11 (group): two oversized picks mark BOTH chips (mark-all — the
+    // group gate iterates `media` itself, no validateAttachments index loss).
+    testWidgets(
+      'two oversized group picks mark BOTH chips invalid (multi-invalid)',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final tempDir = Directory.systemTemp.createTempSync('group_multi_');
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final big1 = File('${tempDir.path}/big1.jpg')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final big2 = File('${tempDir.path}/big2.jpg')
+          ..writeAsBytesSync(_tinyPngBytes);
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            initialPendingMedia: [
+              PendingComposerMedia(file: big1, budgetBytes: 30 * 1024 * 1024),
+              PendingComposerMedia(file: big2, budgetBytes: 30 * 1024 * 1024),
+            ],
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        expect(
+          find.byKey(const ValueKey('attachment-invalid-0')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('attachment-invalid-1')),
+          findsOneWidget,
+        );
+      },
+    );
+
+    // 149 follow-up: a whole-message TOTAL overflow owns no single index (each
+    // attachment is individually valid) → it surfaces as a STRIP-LEVEL note +
+    // Send-disabled, not a per-chip border. Without this the user picks several
+    // individually-valid videos over the 500 MB group cap, sees no chip, taps an
+    // enabled Send, and gets NO feedback (the gate blocks silently).
+    testWidgets(
+      'group total-size overflow (individually-valid attachments) shows a '
+      'strip-level note and disables Send (no per-chip)',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final tempDir = Directory.systemTemp.createTempSync('group_total_over_');
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        File vid(String n) =>
+            File('${tempDir.path}/$n.mp4')..writeAsBytesSync(_tinyMp4Bytes);
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            initialText: 'hello',
+            initialPendingMedia: [
+              // Each 200 MB < the 250 MB video cap (individually valid), but the
+              // 600 MB total exceeds the 500 MB group message cap.
+              PendingComposerMedia(file: vid('v1'), budgetBytes: 200 * 1024 * 1024),
+              PendingComposerMedia(file: vid('v2'), budgetBytes: 200 * 1024 * 1024),
+              PendingComposerMedia(file: vid('v3'), budgetBytes: 200 * 1024 * 1024),
+            ],
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        // No per-attachment chip — each item is individually within its cap.
+        expect(find.byKey(const ValueKey('attachment-invalid-0')), findsNothing);
+        expect(find.byKey(const ValueKey('attachment-invalid-1')), findsNothing);
+        expect(find.byKey(const ValueKey('attachment-invalid-2')), findsNothing);
+        // The whole-message overflow surfaces as a strip-level note.
+        expect(
+          find.byKey(const ValueKey('attachment-total-overflow')),
+          findsOneWidget,
+        );
+        // Send is disabled (no transient snackbar, no silent dead-Send).
+        expect(
+          tester
+              .widget<ComposeArea>(find.byType(ComposeArea))
+              .hasInvalidAttachment,
+          isTrue,
+        );
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'hello',
+        );
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+      },
+    );
+
+    // 149 TC-08 (source-wiring half): the 3 media-tile-duplicate snackbars are
+    // removed from the wired source, while the text-retry snackbar (the SOLE
+    // feedback for a failed text-message retry, no inline tile) is KEPT.
+    // The behavioral inline-present half is locked by the GIRD-002 test.
+    test(
+      'the 3 redundant media snackbars are dropped from source; the '
+      'text-retry snackbar is kept',
+      () {
+        final src = File(
+          'lib/features/groups/presentation/screens/'
+          'group_conversation_wired.dart',
+        ).readAsStringSync();
+
+        // Dropped — the MediaGridCell upload-pending / unavailable placeholders
+        // already convey this state inline.
+        expect(
+          src.contains('.media_still_unavailable'),
+          isFalse,
+          reason: 'media_still_unavailable snackbar must be dropped (inline)',
+        );
+        expect(
+          src.contains('.failed_media_upload_pending_retry'),
+          isFalse,
+          reason: 'upload-pending snackbar must be dropped (inline placeholder)',
+        );
+        expect(
+          src.contains('.failed_media_retry_failed'),
+          isFalse,
+          reason: 'failed-media-retry snackbar must be dropped (inline)',
+        );
+
+        // KEPT — a failed TEXT retry renders no MediaGridCell, so this snackbar
+        // is the only feedback. Dropping it would lose all feedback.
+        expect(
+          src.contains('.failed_message_retry_failed'),
+          isTrue,
+          reason: 'failed_message_retry_failed must stay (text-retry path)',
+        );
+      },
+    );
+
     testWidgets(
       'oversized gallery attachment compresses under budget and stages the processed file',
       (tester) async {
@@ -1381,11 +1625,17 @@ void main() {
         await send('');
         await pumpFrames(tester, count: 10);
 
-        // Type-aware reason (video, not GIF) -> generic too-large copy. INV-SZ-1:
-        // nothing published, and the composer keeps the attachment (send aborted).
+        // 149: the rejection is now an inline composer chip (generic "Too large"
+        // for a non-GIF), NOT a transient snackbar. INV-SZ-1: nothing published,
+        // and the composer keeps the attachment (send aborted).
+        expect(
+          find.byKey(const ValueKey('attachment-invalid-0')),
+          findsOneWidget,
+        );
+        expect(find.text('Too large'), findsOneWidget);
         expect(
           find.text('The media is too large even after compression.'),
-          findsOneWidget,
+          findsNothing,
         );
         expect(bridge.commandLog, isNot(contains('group:publish')));
         expect(
@@ -1437,11 +1687,17 @@ void main() {
         await send('');
         await pumpFrames(tester, count: 10);
 
-        // GIF cap reason routes to the GIF-specific copy (INV-SZ-2: validated on
-        // final budget bytes via the single send-time gate, no raw-bytes branch).
+        // 149: the GIF cap reason now routes to the inline composer chip's
+        // GIF-specific caption ("GIF too big"), NOT a transient snackbar
+        // (INV-SZ-2: still validated on final budget bytes via the single gate).
+        expect(
+          find.byKey(const ValueKey('attachment-invalid-0')),
+          findsOneWidget,
+        );
+        expect(find.text('GIF too big'), findsOneWidget);
         expect(
           find.text('GIF files larger than 25 MB cannot be added.'),
-          findsOneWidget,
+          findsNothing,
         );
         expect(bridge.commandLog, isNot(contains('group:publish')));
       },
@@ -4358,6 +4614,9 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 100));
         });
         await tester.pump();
+        // Wait for the background download to surface as Done with the resolved
+        // local path; the tile now renders Image.file (showing the 143 decode
+        // placeholder until a frame is available).
         await pumpUntil(tester, () {
           final screen = tester.widget<GroupConversationScreen>(
             find.byType(GroupConversationScreen),
@@ -4366,8 +4625,7 @@ void main() {
           return media != null &&
               media.single.downloadStatus == kMediaDownloadStatusDone &&
               media.single.localPath == absolutePath &&
-              mediaGridBrokenImageCount() == 0 &&
-              mediaGridLoadingCount() == 0;
+              mediaGridBrokenImageCount() == 0;
         }, maxPumps: 80);
 
         final refreshedScreen = tester.widget<GroupConversationScreen>(
@@ -4384,7 +4642,19 @@ void main() {
         );
         expect(find.text('Media unavailable'), findsNothing);
         expect(mediaGridBrokenImageCount(), 0);
-        expect(mediaGridLoadingCount(), 0);
+        // The refreshed tile renders the resolved local image — the background
+        // download reached the tile without a reopen. (143: the tile may still
+        // show the sized decode placeholder until the first frame is available,
+        // which the fake-async host harness cannot drive; decode-completion is
+        // covered by the MediaThumbnailImage widget tests, so we assert the
+        // Image is wired in rather than that the spinner has cleared.)
+        expect(
+          find.descendant(
+            of: find.byType(MediaGrid),
+            matching: find.byType(Image),
+          ),
+          findsOneWidget,
+        );
 
         await tester.tap(find.byType(MediaGrid));
         await pumpFrames(tester, count: 4);
@@ -6252,6 +6522,98 @@ void main() {
           ),
           findsOneWidget,
         );
+      },
+    );
+
+    testWidgets(
+      'retained self-removal shows the read-only banner and NO removed snackbar',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        // A second member survives (saveActiveGroupMembers keeps peer-bob), so
+        // members.isEmpty is false after removing self — the active-member gate
+        // flips read-only instead of failing open.
+        await saveActiveGroupMembers(groupRepo, group);
+        final removedStreamController = StreamController<String>.broadcast();
+        addTearDown(removedStreamController.close);
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            removedStreamController: removedStreamController,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        expect(find.byType(GroupConversationScreen), findsOneWidget);
+        expect(find.byType(TextField), findsOneWidget);
+
+        // Passive self-removal with the group row RETAINED (B3 read-only shell).
+        await groupRepo.removeMember(group.id, testIdentity.peerId);
+        removedStreamController.add(group.id);
+        await pumpFrames(tester, count: 20);
+
+        // The durable composer read-only banner IS the single feedback surface…
+        expect(find.byType(GroupConversationScreen), findsOneWidget);
+        expect(find.byType(TextField), findsNothing);
+        expect(
+          find.byKey(const ValueKey('group-read-only-banner')),
+          findsOneWidget,
+        );
+        expect(
+          find.text(
+            "You can read this group's history, but you are not an active member.",
+          ),
+          findsOneWidget,
+        );
+        // …and the redundant transient toast is NOT shown (the discriminator).
+        expect(find.text('You were removed from this group.'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'dissolve-while-viewing flips the read-only banner with no snackbar',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+
+        expect(find.byType(TextField), findsOneWidget);
+
+        // Passive dissolve-while-viewing rides the message stream (no
+        // removedStream, no snackbar): the dissolved row reloads via
+        // _refreshVisibleGroup and the composer flips to the dissolved banner.
+        await groupRepo.updateGroup(
+          group.copyWith(
+            isDissolved: true,
+            dissolvedAt: DateTime.utc(2026, 6, 10, 12),
+            dissolvedBy: 'peer-admin',
+          ),
+        );
+        messageStreamController.add(
+          makeMessage(
+            id: 'sys-group_dissolved:group-1',
+            text: 'Group dissolved',
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        expect(find.byType(TextField), findsNothing);
+        expect(
+          find.byKey(const ValueKey('group-read-only-banner')),
+          findsOneWidget,
+        );
+        expect(
+          find.text(
+            'This group has been dissolved. History stays available, but new messages are disabled.',
+          ),
+          findsOneWidget,
+        );
+        // Dissolve is banner-only — never the removed toast.
+        expect(find.text('You were removed from this group.'), findsNothing);
       },
     );
 
@@ -9342,10 +9704,14 @@ void main() {
           )).single.downloadStatus,
           'upload_pending',
         );
+        // 149: the upload-pending feedback moved INLINE — the MediaGridCell
+        // upload-pending placeholder ("Uploading media") conveys it, so the
+        // redundant transient snackbar is dropped.
         expect(
           find.text('Media upload is still finishing. It will retry soon.'),
-          findsOneWidget,
+          findsNothing,
         );
+        expect(find.text('Uploading media'), findsOneWidget);
         expect(find.text('Could not retry media message.'), findsNothing);
       },
     );
@@ -12051,6 +12417,134 @@ void main() {
             visibleScreen(tester).recordingState,
             VoiceRecordingState.idle,
           );
+        },
+      );
+    });
+
+    group('mic permission denied prompt (152)', () {
+      Future<GroupConversationScreen> driveGroupRecordStart(
+        WidgetTester tester, {
+        required FakeAudioRecorderService recorder,
+        required FakeMicPermissionGateway gateway,
+      }) async {
+        // A WRITABLE group (admin) — read-only groups expose
+        // onRecordStart == null and never reach the permission path.
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            // Durable media support (mediaRepo + mediaFileManager) is what gates
+            // the record controls on; without it onRecordStart stays null.
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: FakeMediaFileManager(),
+            audioRecorderService: recorder,
+            micPermissionGateway: gateway,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+        return tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+      }
+
+      testWidgets(
+        'group mic denial shows the rationale dialog instead of the snackbar (permanentlyDenied)',
+        (tester) async {
+          final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+          final recorder = FakeAudioRecorderService()
+            ..permissionGranted = false;
+          final gateway = FakeMicPermissionGateway()
+            ..statusToReturn = MicPermissionStatus.permanentlyDenied;
+          final screen = await driveGroupRecordStart(
+            tester,
+            recorder: recorder,
+            gateway: gateway,
+          );
+          expect(screen.onRecordStart, isNotNull);
+
+          final pending = (screen.onRecordStart! as Future<void> Function())();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
+
+          expect(find.byType(AlertDialog), findsOneWidget);
+          expect(
+            find.byKey(const ValueKey('mic-perm-open-settings')),
+            findsOneWidget,
+          );
+          expect(find.text(l10n.perm_microphone_record), findsNothing);
+          expect(recorder.startCallCount, 0);
+
+          await tester.tap(find.byKey(const ValueKey('mic-perm-not-now')));
+          // Assert the LIVE rendered composer (internal ValueListenableBuilder),
+          // not the stale `recordingState` widget prop.
+          for (var i = 0;
+              i < 12 && find.byIcon(Icons.mic_rounded).evaluate().isEmpty;
+              i++) {
+            await tester.pump(const Duration(milliseconds: 50));
+          }
+          await pending;
+          expect(find.byIcon(Icons.stop_rounded), findsNothing);
+          expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
+        },
+      );
+
+      testWidgets(
+        'group Open Settings tap deep-links via the injected gateway',
+        (tester) async {
+          final recorder = FakeAudioRecorderService()
+            ..permissionGranted = false;
+          final gateway = FakeMicPermissionGateway()
+            ..statusToReturn = MicPermissionStatus.permanentlyDenied;
+          final screen = await driveGroupRecordStart(
+            tester,
+            recorder: recorder,
+            gateway: gateway,
+          );
+
+          final pending = (screen.onRecordStart! as Future<void> Function())();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
+
+          expect(find.byType(AlertDialog), findsOneWidget);
+          await tester.tap(
+            find.byKey(const ValueKey('mic-perm-open-settings')),
+          );
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
+          await pending;
+
+          expect(gateway.openAppSettingsCallCount, 1);
+          expect(find.byType(AlertDialog), findsNothing);
+        },
+      );
+
+      // Option A (owner-locked): a first plain `denied` resets to idle WITHOUT
+      // forcing the Settings dialog (the OS prompt already showed via
+      // request()). Locks the denied-vs-permanentlyDenied axis on the group side.
+      testWidgets(
+        'group first plain denied resets to idle with no dialog/snackbar',
+        (tester) async {
+          final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+          final recorder = FakeAudioRecorderService();
+          final gateway = FakeMicPermissionGateway()
+            ..statusToReturn = MicPermissionStatus.denied;
+          final screen = await driveGroupRecordStart(
+            tester,
+            recorder: recorder,
+            gateway: gateway,
+          );
+
+          await (screen.onRecordStart! as Future<void> Function())();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
+
+          expect(find.byType(AlertDialog), findsNothing);
+          expect(find.text(l10n.perm_microphone_record), findsNothing);
+          expect(recorder.startCallCount, 0);
+          // Live rendered composer is back to idle (mic shown, not recording).
+          expect(find.byIcon(Icons.stop_rounded), findsNothing);
+          expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
         },
       );
     });
