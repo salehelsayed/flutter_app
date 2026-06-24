@@ -1091,7 +1091,7 @@ class GroupMessageListener {
             isGroupMultiDeviceDeviceLocal(GroupMultiDeviceFacet.mutePreference),
           );
           if (!isMuted) {
-            maybeShowNotification(
+            await maybeShowNotification(
               notificationService: _notificationService,
               conversationTracker: _groupConversationTracker,
               getAppLifecycleState: _getAppLifecycleState,

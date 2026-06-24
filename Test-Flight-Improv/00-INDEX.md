@@ -102,6 +102,8 @@ conversation/group/intros routing contract.
 |--------|-------|
 | [04-ui-performance.md](04-ui-performance.md) | Profile-gated UI/perf candidates; stale false positives removed |
 | [05-database-storage-performance.md](05-database-storage-performance.md) | High-confidence DB/storage cleanups; broad indexing/caching recommendations narrowed |
+| [app-smoothness-performance-audit.md](app-smoothness-performance-audit.md) | Release-build (TestFlight/Play) "feels slow/buggy" audit — multi-agent, adversarially verified: per-bubble blur + always-animating ambient bg never let the raster thread rest; chats/feed redo O(N) work per interaction. Quick Wins + High/Medium roadmap |
+| [156-app-smoothness-quick-wins-tdd-plan.md](156-app-smoothness-quick-wins-tdd-plan.md) | TDD plan for the 13 Quick Wins (blur removal, RepaintBoundary + reduce-motion, avatar cacheWidth, 2 targeted indices DB v93/v94, ring memo+==, scrub sentinel, media-resolve gate, quote-map O(1), entrance-anim isNew, orbit flags). Host-only closure |
 
 **Top findings:**
 - `OrbitWired` already disposes its controllers/subscriptions — that earlier P0 is stale

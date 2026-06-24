@@ -11,14 +11,14 @@
 ## Metrics
 | Metric | Full | Architecture | Delta |
 | --- | ---: | ---: | ---: |
-| nodes | 103022 | 41399 | -59.82% |
-| edges | 175953 | 64440 | -63.38% |
-| communities | 4364 | 898 | -79.42% |
-| source files | 5420 | 2128 | -60.74% |
-| avg edges per node | 1.7079 | 1.5566 | -8.86% |
-| avg nodes per community | 23.61 | 46.1 | +95.26% |
-| app-owned ratio | 0.4429 | 0.9608 | +116.93% |
-| noise ratio | 0.212 | 0.0 | -100.00% |
+| nodes | 103110 | 41434 | -59.82% |
+| edges | 176052 | 64486 | -63.37% |
+| communities | 4398 | 918 | -79.13% |
+| source files | 5421 | 2129 | -60.73% |
+| avg edges per node | 1.7074 | 1.5564 | -8.84% |
+| avg nodes per community | 23.44 | 45.14 | +92.58% |
+| app-owned ratio | 0.4434 | 0.9608 | +116.69% |
+| noise ratio | 0.2119 | 0.0 | -100.00% |
 | unknown-source ratio | 0.019 | 0.0392 | +106.32% |
 | top-10 hub noise ratio | 0.5 | 0.0 | -100.00% |
 
@@ -30,10 +30,10 @@ Full graph top hubs:
 - `SQLITE_PRIVATE` (1036 edges, noise) `ios/Pods/SQLCipher/sqlite3.c`
 - `SQLITE_PRIVATE` (1036 edges, noise) `macos/Pods/SQLCipher/sqlite3.c`
 - `package:flutter_test/flutter_test.dart` (984 edges, signal) ``
-- `app_localizations.dart` (753 edges, signal) `lib/l10n/app_localizations.dart`
-- `app_localizations_ar.dart` (735 edges, signal) `lib/l10n/app_localizations_ar.dart`
-- `app_localizations_de.dart` (735 edges, signal) `lib/l10n/app_localizations_de.dart`
-- `app_localizations_en.dart` (735 edges, signal) `lib/l10n/app_localizations_en.dart`
+- `app_localizations.dart` (766 edges, signal) `lib/l10n/app_localizations.dart`
+- `app_localizations_ar.dart` (748 edges, signal) `lib/l10n/app_localizations_ar.dart`
+- `app_localizations_de.dart` (748 edges, signal) `lib/l10n/app_localizations_de.dart`
+- `app_localizations_en.dart` (748 edges, signal) `lib/l10n/app_localizations_en.dart`
 
 Architecture graph top hubs:
 - `group_multi_party_device_real_harness.dart` (2029 edges, signal) `integration_test/group_multi_party_device_real_harness.dart`
