@@ -54,6 +54,7 @@ import '../test/features/contact_request/domain/repositories/fake_contact_reques
 import '../test/features/contacts/domain/repositories/fake_contact_repository.dart';
 import '../test/features/identity/domain/repositories/fake_identity_repository.dart';
 import '../test/shared/fakes/fake_media_file_manager.dart';
+import '../test/shared/fakes/in_memory_feed_cleared_repository.dart';
 import '../test/shared/fakes/in_memory_group_message_repository.dart';
 import '../test/shared/fakes/in_memory_group_repository.dart';
 import '../test/shared/fakes/in_memory_media_attachment_repository.dart';
@@ -319,6 +320,7 @@ Future<void> _runOrbitSessionAndOpenThreads({
     mediaFileManager: mediaFileManager,
     secureKeyStore: secureKeyStore,
     imageProcessor: imageProcessor,
+    feedClearedRepository: InMemoryFeedClearedRepository(),
     groupRepository: groupRepo,
     groupMessageRepository: groupMsgRepo,
     groupMessageListener: gmListener,

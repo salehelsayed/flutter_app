@@ -33,6 +33,7 @@ import '../test/core/services/fake_p2p_service.dart' as core_fake_p2p;
 import '../test/features/identity/domain/repositories/fake_identity_repository.dart';
 import '../test/shared/fakes/fake_audio_recorder_service.dart';
 import '../test/shared/fakes/fake_group_pubsub_network.dart';
+import '../test/shared/fakes/fake_mic_permission_gateway.dart';
 import '../test/shared/fakes/fake_media_file_manager.dart';
 import '../test/shared/fakes/group_test_user.dart';
 import '../test/shared/fakes/in_memory_contact_repository.dart';
@@ -1010,6 +1011,7 @@ void main() {
               mediaAttachmentRepo: mediaAttachmentRepo,
               sendChatMessageFn: sendChatMessage,
               audioRecorderService: recorder,
+              micPermissionGateway: FakeMicPermissionGateway(),
             ),
           ),
         );
