@@ -692,7 +692,11 @@ preflight_transport_census_processes() {
 preflight_transport_census_processes
 
 printf '\nRunning %s reliability simulation command(s)...\n' "$command_count"
-while IFS=$'\t' read -r index kind path scenario; do
+# Read the plan on FD 3, not stdin: run_path executes real commands (e.g. smoke
+# shell scripts that read stdin), and if the loop fed them from "$active_plan_file"
+# on stdin they would consume the remaining plan lines — silently skipping the
+# last item(s), e.g. the trailing intro smoke under --start-at.
+while IFS=$'\t' read -r index kind path scenario <&3; do
   [ -n "$kind" ] || continue
   printf '\n==> #%s ' "$index"
   print_command_for_path "$kind" "$path" "$scenario"
@@ -717,7 +721,7 @@ while IFS=$'\t' read -r index kind path scenario; do
       exit "$status"
     fi
   fi
-done <"$active_plan_file"
+done 3<"$active_plan_file"
 
 failure_count="$(awk 'END { print NR + 0 }' "$failures_file")"
 if [ "$failure_count" -gt 0 ]; then
