@@ -59,6 +59,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_history_ga
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/conversation/domain/utils/message_window_cap.dart';
 import 'package:flutter_app/features/groups/domain/utils/group_message_ordering.dart';
 import 'package:flutter_app/features/groups/presentation/group_backlog_retention_notice.dart';
 import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
@@ -122,6 +123,18 @@ class _RestoredGroupVoiceContinuation {
 
 /// Wired widget connecting GroupConversationScreen to business logic.
 class GroupConversationWired extends StatefulWidget {
+  /// 159 (TC-159-05): a test-only counter incremented once per actual group
+  /// display-items recompute on the wired State (the group memo is hoisted here
+  /// because [GroupConversationScreen] is a StatelessWidget). Tests reset it.
+  @visibleForTesting
+  static int debugGroupDisplayItemsBuildCount = 0;
+
+  /// 159 (TC-159-08): a test-only counter incremented once per group
+  /// upsert/reorder. A live-stream burst of M events runs M synchronous reorders
+  /// on HEAD; the per-frame coalescer collapses the burst into ONE reorder.
+  @visibleForTesting
+  static int debugReorderInvocationCount = 0;
+
   final GroupModel group;
   final GroupRepository groupRepo;
   final GroupMessageRepository msgRepo;
@@ -214,6 +227,26 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   late GroupModel _group;
   List<GroupMessage> _messages = [];
+
+  // 159 (main-isolate-blocking-1): the group run-grouping memo, hoisted to the
+  // wired State because GroupConversationScreen is a StatelessWidget. Keyed on
+  // `_messages` reference identity (every mutation reallocates the list) PLUS the
+  // locale + today-token that drive the day-separator labels. Recomputed only
+  // when one of those changes; passed to the screen as precomputedDisplayItems.
+  List<GroupDisplayItem>? _cachedGroupDisplayItems;
+  List<GroupMessage>? _cachedGroupMessagesRef;
+  String? _cachedGroupLocale;
+  String? _cachedGroupTodayToken;
+
+  // 159 (rebuild-storms-2): per-frame coalescer for the group stream's
+  // message-apply setState. A live burst of M events enqueues M updates and
+  // applies them in ONE batched setState + ONE reorder on the next frame. The
+  // scroll-offset capture/restore + markAsRead side effects run once-per-flush
+  // (one capture before / one restore after), never per queued event.
+  bool _groupFlushScheduled = false;
+  bool _groupNeedsFlush = false;
+  bool _groupWantsMarkRead = false;
+
   Map<String, GroupMember> _membersByPeerId = const {};
   String? _ownPeerId;
   String _senderUsername = '';
@@ -1458,6 +1491,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           WidgetsBinding.instance.addPostFrameCallback((_) {
             unawaited(_handleCurrentGroupRemoved());
           });
+          // 158: the chat-surface ambient idle-glow is now suppressed, so an
+          // otherwise-idle conversation schedules no frames on its own. A
+          // removed event does not mutate the visible tree before the
+          // post-frame callback fires, and addPostFrameCallback does NOT
+          // request a frame — so explicitly schedule one to guarantee the
+          // deferred removal handler (read-only flip / route pop) runs
+          // promptly. Previously the always-on ambient loop incidentally kept
+          // frames coming.
+          WidgetsBinding.instance.scheduleFrame();
         });
   }
 
@@ -3072,30 +3114,110 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }) async {
     final latestMessage =
         await widget.msgRepo.getMessage(message.id) ?? message;
-    final media = await _loadResolvedAttachmentsForMessage(latestMessage.id);
+
+    // 157 follow-up (TC-159-11, mirror of 156 QW-9): skip the per-message
+    // attachment DB read ONLY for a PURE text/status update to an already-shown
+    // message with no media on either side (the common sent→delivered→read
+    // flip). Unlike the 1:1 screen — where media enrichment of a visible message
+    // flows through a SEPARATE _recoverVisibleMedia path — the group's media
+    // recovery (background download complete, integrity recovery) flows through
+    // THIS path, so any message that has media (carried on the event OR already
+    // shown in _mediaMap) MUST still re-resolve, or a recovered image would
+    // never refresh.
+    final alreadyShown = _messages.any((m) => m.id == latestMessage.id);
+    final shownMedia =
+        _mediaMap[latestMessage.id] ?? const <MediaAttachment>[];
+    final shouldResolveMedia =
+        !alreadyShown || message.media.isNotEmpty || shownMedia.isNotEmpty;
+    final media = shouldResolveMedia
+        ? await _loadResolvedAttachmentsForMessage(latestMessage.id)
+        : shownMedia;
     if (!mounted) return;
 
+    // 159: queue for the per-frame flush instead of a direct per-event setState.
+    _enqueueGroupMessageUpdate(
+      latestMessage,
+      media: media,
+      markAsRead: markAsRead,
+    );
+  }
+
+  /// 159: apply a resolved group message update to [_messages]/[_mediaMap]
+  /// SYNCHRONOUSLY (preserving its ordering with other synchronous mutations,
+  /// e.g. an optimistic send / cancel), but defer the expensive REORDER +
+  /// setState + the scroll-capture/restore + markAsRead to ONE per-frame flush.
+  void _enqueueGroupMessageUpdate(
+    GroupMessage message, {
+    required List<MediaAttachment> media,
+    required bool markAsRead,
+  }) {
+    _upsertIntoGroupMessagesUnsorted(message);
+    _updateMediaForMessage(message.id, media);
+    _groupNeedsFlush = true;
+    if (markAsRead) _groupWantsMarkRead = true;
+    // The per-message media recovery is an independent side effect (no batching
+    // needed) — fire it as the message lands.
+    if (media.any(_shouldRecoverVisibleAttachment)) {
+      unawaited(_downloadPendingMedia({message.id: media}));
+    }
+    if (!_groupFlushScheduled) {
+      _groupFlushScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _flushGroupMessageUpdates(),
+      );
+      // 158: the chat surface suppresses its ambient idle-glow, so an otherwise
+      // idle conversation schedules no frames, and addPostFrameCallback does NOT
+      // request one. Explicitly schedule a frame so the deferred flush runs.
+      WidgetsBinding.instance.scheduleFrame();
+    }
+  }
+
+  /// 159: id-keyed upsert into [_messages] WITHOUT reordering — the reorder is
+  /// coalesced to [_flushGroupMessageUpdates].
+  void _upsertIntoGroupMessagesUnsorted(GroupMessage message) {
+    final index = _messages.indexWhere((m) => m.id == message.id);
+    if (index >= 0) {
+      final updated = List<GroupMessage>.from(_messages);
+      updated[index] = message;
+      _messages = updated;
+    } else {
+      _messages = [..._messages, message];
+    }
+  }
+
+  /// 159: the per-frame flush — reorder + cap the coalesced upserts ONCE in ONE
+  /// setState, with the scroll-offset capture/restore + markAsRead run exactly
+  /// once against the post-batch state (one capture before, one restore after).
+  void _flushGroupMessageUpdates() {
+    _groupFlushScheduled = false;
+    final needsFlush = _groupNeedsFlush;
+    final wantMarkRead = _groupWantsMarkRead;
+    _groupNeedsFlush = false;
+    _groupWantsMarkRead = false;
+    if (!mounted || !needsFlush) return;
+
+    // Capture the scroll position ONCE before the batched reorder. No setState
+    // ran since the synchronous upserts, so this is the genuine pre-burst offset.
     final preserveScrollOffset = _shouldPreserveScrollOffset();
     final previousOffset = _scrollController.hasClients
         ? _scrollController.position.pixels
         : 0.0;
 
     setState(() {
-      _upsertMessage(latestMessage);
-      _updateMediaForMessage(latestMessage.id, media);
+      GroupConversationWired.debugReorderInvocationCount++;
+      _messages = trimToNewestInMemoryCap(
+        orderGroupMessagesForTimeline(_messages),
+      );
     });
 
+    // Restore the scroll offset ONCE after the whole batch.
     _restoreScrollAfterMessageUpdate(
       preserveScrollOffset: preserveScrollOffset,
       previousOffset: previousOffset,
     );
 
-    if (media.any(_shouldRecoverVisibleAttachment)) {
-      unawaited(_downloadPendingMedia({latestMessage.id: media}));
-    }
-
-    if (markAsRead) {
-      await _markVisibleReadIfAllowed();
+    if (wantMarkRead) {
+      unawaited(_markVisibleReadIfAllowed());
     }
   }
 
@@ -3277,6 +3399,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   void _upsertMessage(GroupMessage message) {
+    GroupConversationWired.debugReorderInvocationCount++;
     final updated = List<GroupMessage>.from(_messages);
     final index = updated.indexWhere((existing) => existing.id == message.id);
     if (index >= 0) {
@@ -3284,7 +3407,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     } else {
       updated.add(message);
     }
-    _messages = orderGroupMessagesForTimeline(updated);
+    // 159 (rebuild-storms-3): cap the live-append window newest-first. The group
+    // has no incremental older-page pagination, so the self-heal for an evicted
+    // row is a full `_loadMessages` re-fetch (no flag to set).
+    _messages = trimToNewestInMemoryCap(orderGroupMessagesForTimeline(updated));
   }
 
   void _updateMediaForMessage(
@@ -4975,6 +5101,35 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   String get _activeGroupConversationKey => 'group:${widget.group.id}';
 
+  /// 159: the memoized group run-grouped display list. Recomputes only when
+  /// `_messages` (reference identity), the locale, or the day token changes;
+  /// otherwise returns the cached list. Passed to [GroupConversationScreen] as
+  /// `precomputedDisplayItems` (the Stateless screen cannot cache).
+  List<GroupDisplayItem> _memoizedGroupDisplayItems(BuildContext context) {
+    final locale = Localizations.localeOf(context).toString();
+    final now = DateTime.now();
+    final todayToken = '${now.year}-${now.month}-${now.day}';
+    final cached = _cachedGroupDisplayItems;
+    if (cached != null &&
+        identical(_messages, _cachedGroupMessagesRef) &&
+        _cachedGroupLocale == locale &&
+        _cachedGroupTodayToken == todayToken) {
+      return cached;
+    }
+    GroupConversationWired.debugGroupDisplayItemsBuildCount++;
+    final result = buildGroupDisplayItems(
+      messages: _messages,
+      l10n: AppLocalizations.of(context)!,
+      locale: locale,
+      now: now,
+    );
+    _cachedGroupDisplayItems = result;
+    _cachedGroupMessagesRef = _messages;
+    _cachedGroupLocale = locale;
+    _cachedGroupTodayToken = todayToken;
+    return result;
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!_canWrite && _activeQuoteMessageId != null) {
@@ -5002,6 +5157,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           child: GroupConversationScreen(
             group: _group,
             messages: _messages,
+            precomputedDisplayItems: _memoizedGroupDisplayItems(context),
             membersByPeerId: _membersByPeerId,
             ownPeerId: _ownPeerId,
             onSend: _onSend,

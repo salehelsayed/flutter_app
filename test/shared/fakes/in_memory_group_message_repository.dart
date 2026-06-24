@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message_receipt.dart';
+import 'package:flutter_app/features/groups/domain/models/group_thread_preview.dart';
 import 'package:flutter_app/features/groups/domain/models/group_thread_summary.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_thread_preview_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_thread_summary_repository.dart';
 import 'package:flutter_app/features/groups/domain/utils/group_message_ordering.dart';
 
@@ -12,6 +14,7 @@ class InMemoryGroupMessageRepository
     implements
         GroupMessageRepository,
         GroupThreadSummaryRepository,
+        GroupThreadPreviewRepository,
         GroupMembershipRepairDeletionRepository,
         GroupOutgoingLocalMessageChangeSource {
   final Map<String, GroupMessage> _messages = {};
@@ -23,6 +26,13 @@ class InMemoryGroupMessageRepository
       StreamController<GroupOutgoingLocalMessageChange>.broadcast();
   final Set<String> failSaveMessageIds = {};
   bool failInboxPageTransaction = false;
+
+  /// 161 spies: every `getMessagesPage` call as `(groupId, limit)` and the
+  /// number of batched `getGroupThreadPreviews` calls, so the feed tests can
+  /// prove the collapsed group feed uses ONE batched preview + bounded
+  /// per-pending windows (never the unbounded `limit:200` per-group loop).
+  final List<(String, int)> getMessagesPageCallLog = <(String, int)>[];
+  int getGroupThreadPreviewsCallCount = 0;
 
   Iterable<GroupMessage> get _visibleMessages => _messages.values.where(
     (message) => !isGroupRemovalCutoffMessageId(message.id),
@@ -73,6 +83,7 @@ class InMemoryGroupMessageRepository
     int limit = 50,
     int offset = 0,
   }) async {
+    getMessagesPageCallLog.add((groupId, limit));
     var messages = _visibleMessages.where((m) => m.groupId == groupId).toList();
     messages.sort(compareGroupMessagesDescending);
     // Apply offset and limit, then reverse to ASC order
@@ -384,6 +395,44 @@ class InMemoryGroupMessageRepository
       );
     }
     return summaries;
+  }
+
+  GroupThreadPreview _previewFor(String groupId) {
+    final messages = _visibleMessages
+        .where((message) => message.groupId == groupId)
+        .toList();
+    if (messages.isEmpty) return GroupThreadPreview(groupId: groupId);
+    messages.sort(compareGroupMessagesDescending);
+    DateTime? lastOutgoingAt;
+    for (final message in messages) {
+      if (!message.isIncoming) {
+        final ts = message.timestamp;
+        if (lastOutgoingAt == null || ts.isAfter(lastOutgoingAt)) {
+          lastOutgoingAt = ts;
+        }
+      }
+    }
+    return GroupThreadPreview(
+      groupId: groupId,
+      messageCount: messages.length,
+      unreadCount: messages
+          .where((message) => message.isIncoming && message.readAt == null)
+          .length,
+      lastOutgoingAt: lastOutgoingAt,
+      latestMessage: messages.first,
+    );
+  }
+
+  @override
+  Future<GroupThreadPreview> getGroupThreadPreview(String groupId) async =>
+      _previewFor(groupId);
+
+  @override
+  Future<Map<String, GroupThreadPreview>> getGroupThreadPreviews(
+    Iterable<String> groupIds,
+  ) async {
+    getGroupThreadPreviewsCallCount++;
+    return {for (final groupId in groupIds.toSet()) groupId: _previewFor(groupId)};
   }
 
   @override

@@ -9,10 +9,21 @@ import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart'
 /// direction across ALL messages for that contact.
 ///
 /// Sorting: unread/active first (newest-first), then read/replied (newest-first).
+/// When [unreadCounts] / [lastOutgoingAtByContact] / [totalMessageCounts]
+/// carry an entry for a contact (160 A3/A4), the thread is treated as a
+/// SUMMARY-BACKED windowed preview: its `unreadCount`, `conversationState`,
+/// `hasReply`/`lastRepliedAt` and `totalMessageCount` are sourced from the
+/// batched `ConversationThreadSummary` instead of re-scanning the (possibly
+/// partial) [allMessages] window. Absent entries fall back to the legacy
+/// full-list derivation, so the snapshot path and existing callers are
+/// unchanged.
 List<ThreadFeedItem> groupMessagesIntoThreads({
   required List<ConversationMessage> allMessages,
   required Map<String, String> contactUsernames,
   Map<String, bool> contactBlocked = const {},
+  Map<String, int> totalMessageCounts = const {},
+  Map<String, int> unreadCounts = const {},
+  Map<String, DateTime?> lastOutgoingAtByContact = const {},
 }) {
   // Filter out system messages (e.g. "Connected through X") from feed threads
   final filteredMessages = allMessages
@@ -35,14 +46,37 @@ List<ThreadFeedItem> groupMessagesIntoThreads({
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
     final username = contactUsernames[peerId] ?? 'Unknown';
 
-    // Derive conversation state from ALL messages for this contact
-    final hasUnreadIncoming = msgs.any(
-      (m) => !m.isDeleted && m.isIncoming && m.readAt == null,
-    );
-    final hasSentMessages = msgs.any((m) => !m.isIncoming && !m.isDeleted);
-    final unreadIncomingCount = msgs
-        .where((m) => !m.isDeleted && m.isIncoming && m.readAt == null)
-        .length;
+    // 160 A3/A4: a summary-backed contact derives counts + has-outgoing from the
+    // batched ConversationThreadSummary so a windowed slice cannot undercount
+    // unread or false-negative hasReply when the answering outgoing is off the
+    // window. Absent → legacy full-list derivation.
+    final bool summaryBacked = unreadCounts.containsKey(peerId);
+
+    final bool hasUnreadIncoming;
+    final bool hasSentMessages;
+    final int unreadIncomingCount;
+    DateTime? lastRepliedAt;
+    if (summaryBacked) {
+      unreadIncomingCount = unreadCounts[peerId] ?? 0;
+      hasUnreadIncoming = unreadIncomingCount > 0;
+      lastRepliedAt = lastOutgoingAtByContact[peerId];
+      hasSentMessages = lastRepliedAt != null;
+    } else {
+      hasUnreadIncoming = msgs.any(
+        (m) => !m.isDeleted && m.isIncoming && m.readAt == null,
+      );
+      hasSentMessages = msgs.any((m) => !m.isIncoming && !m.isDeleted);
+      unreadIncomingCount = msgs
+          .where((m) => !m.isDeleted && m.isIncoming && m.readAt == null)
+          .length;
+      if (hasSentMessages) {
+        final sentMessages = msgs
+            .where((m) => !m.isIncoming && !m.isDeleted)
+            .toList();
+        sentMessages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+        lastRepliedAt = DateTime.tryParse(sentMessages.last.timestamp);
+      }
+    }
 
     final ConversationState state;
     if (hasUnreadIncoming && hasSentMessages) {
@@ -53,16 +87,6 @@ List<ThreadFeedItem> groupMessagesIntoThreads({
       state = ConversationState.replied;
     } else {
       state = ConversationState.read;
-    }
-
-    // Find last replied timestamp
-    DateTime? lastRepliedAt;
-    if (hasSentMessages) {
-      final sentMessages = msgs
-          .where((m) => !m.isIncoming && !m.isDeleted)
-          .toList();
-      sentMessages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
-      lastRepliedAt = DateTime.tryParse(sentMessages.last.timestamp);
     }
 
     final latestTs = DateTime.tryParse(msgs.last.timestamp) ?? DateTime.now();
@@ -98,6 +122,7 @@ List<ThreadFeedItem> groupMessagesIntoThreads({
       lastRepliedAt: lastRepliedAt,
       messages: threadMessages,
       isBlocked: contactBlocked[peerId] ?? false,
+      totalMessageCount: totalMessageCounts[peerId],
     );
 
     if (state == ConversationState.unread ||

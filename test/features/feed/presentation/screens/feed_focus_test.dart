@@ -762,4 +762,146 @@ void main() {
       );
     },
   );
+
+  // ── 160: feed N+1 → batched-summary preview + lazy-on-focus ──────────────
+
+  Future<void> seedMixedThread(
+    String peerId, {
+    required int readCount,
+    required int unreadCount,
+  }) async {
+    final base = DateTime.utc(2026, 3, 1, 8);
+    var i = 0;
+    for (var r = 0; r < readCount; r++, i++) {
+      final ts = base.add(Duration(minutes: i)).toIso8601String();
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: '$peerId-r$r',
+          contactPeerId: peerId,
+          text: 'read $r',
+          senderPeerId: peerId,
+          timestamp: ts,
+          isIncoming: true,
+          status: 'delivered',
+          createdAt: ts,
+          readAt: ts,
+        ),
+      );
+    }
+    for (var u = 0; u < unreadCount; u++, i++) {
+      final ts = base.add(Duration(minutes: i)).toIso8601String();
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: '$peerId-u$u',
+          contactPeerId: peerId,
+          text: 'unread $u',
+          senderPeerId: peerId,
+          timestamp: ts,
+          isIncoming: true,
+          status: 'delivered',
+          createdAt: ts,
+        ),
+      );
+    }
+  }
+
+  testWidgets(
+    'TC-160-06/19: mount loads only the bounded preview window; focus hydrates '
+    'the full thread with a larger page and does NOT mark read',
+    (tester) async {
+      setWideViewport(tester);
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([contact('p1', 'Ann')]);
+      // 10 read (older) + 3 unread (newest): mount window = unread + context.
+      await seedMixedThread('p1', readCount: 10, unreadCount: 3);
+
+      messageRepo.resetSpyCounters();
+      await tester.pumpWidget(buildWired());
+      await pumpFrames(tester);
+
+      // Mount: a bounded window only — never the unbounded full load.
+      expect(messageRepo.getMessagesForContactCallCount, 0);
+      final mountPages = messageRepo.getMessagesPageCalls
+          .where((c) => c.$1 == 'p1')
+          .toList();
+      expect(mountPages, isNotEmpty);
+      expect(mountPages.every((c) => c.$2 < 50), isTrue);
+
+      // Focus hydrates the focused thread with a LARGER page.
+      messageRepo.getMessagesPageCalls.clear();
+      await tester.tap(find.text('unread 2'));
+      await pumpFrames(tester);
+      final focusPages = messageRepo.getMessagesPageCalls
+          .where((c) => c.$1 == 'p1')
+          .toList();
+      expect(focusPages.any((c) => c.$2 >= 50), isTrue);
+
+      // REG-INV3: focus never marks the conversation read.
+      expect(await messageRepo.getUnreadCountForContact('p1'), 3);
+    },
+  );
+
+  testWidgets(
+    'TC-160-15: a thread with more unread than the rejected fixed cap renders '
+    'EVERY unread line (the window covers the full unread run)',
+    (tester) async {
+      setWideViewport(tester);
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([contact('p1', 'Ann')]);
+      // 12 unread > 8 (the rejected fixed tail-cap) and > maxPreview(3).
+      await seedMixedThread('p1', readCount: 0, unreadCount: 12);
+
+      await tester.pumpWidget(buildWired());
+      await pumpFrames(tester);
+
+      for (var u = 0; u < 12; u++) {
+        expect(find.text('unread $u'), findsOneWidget);
+      }
+    },
+  );
+
+  testWidgets(
+    'TC-160-07: send from the feed composer merges in memory — no unbounded DB '
+    're-read',
+    (tester) async {
+      setWideViewport(tester);
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([contact('p1', 'Ann')]);
+      await seedPendingThread('p1', 'Ann', 'hi from ann');
+
+      await tester.pumpWidget(buildWired());
+      await pumpFrames(tester);
+      await tester.tap(find.text('hi from ann'));
+      await pumpFrames(tester);
+
+      // Reset AFTER focus hydration so we measure only the send.
+      messageRepo.resetSpyCounters();
+      await tester.enterText(
+        find.byKey(const ValueKey('feed-composer-field')),
+        'optimistic reply',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('feed-composer-send')));
+      await pumpFrames(tester);
+
+      // A feed-composer send appends the optimistic bubble WITHOUT any
+      // per-contact DB read — neither the unbounded full load nor a bounded
+      // snapshot page. (The send-success branch's in-memory merge cannot be
+      // driven here — the feed harness has no live peer so the send does not
+      // reach success — but the optimistic/session path must never reload, and
+      // the merge's count-carry mechanics are locked at the model tier and by
+      // the shared incoming-merge path.)
+      expect(messageRepo.getMessagesForContactCallCount, 0);
+      expect(
+        messageRepo.getMessagesPageCalls.where((c) => c.$1 == 'p1'),
+        isEmpty,
+      );
+      // The optimistic outgoing bubble is rendered.
+      final outgoing = tester
+          .widgetList<LetterBubble>(find.byType(LetterBubble))
+          .where((b) => b.role == LetterBubbleRole.outgoing)
+          .toList();
+      expect(outgoing.any((b) => b.text == 'optimistic reply'), isTrue);
+    },
+  );
 }

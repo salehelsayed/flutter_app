@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
@@ -193,108 +192,107 @@ class LetterCard extends StatelessWidget {
 
     return GestureDetector(
       onLongPress: onLongPress,
+      // 156 QW-1: no BackdropFilter — the fill is already semi-opaque so the
+      // blur was pure raster cost. ClipRRect still clips the corners.
       child: ClipRRect(
         borderRadius: BorderRadius.circular(24),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(24),
-              color: isIncoming
-                  ? readableColors.surfaceRaised
-                  : readableColors.surfaceSubtle,
-              border: Border.all(color: readableColors.border),
-            ),
-            child: Stack(
-              children: [
-                // Accent edge glow
-                if (isIncoming)
-                  Positioned(
-                    left: 0,
-                    top: 0,
-                    bottom: 0,
-                    width: 60,
-                    child: IgnorePointer(
-                      child: DecoratedBox(
-                        decoration: const BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.centerLeft,
-                            end: Alignment.centerRight,
-                            colors: [
-                              Color.fromRGBO(78, 205, 196, 0.08),
-                              Colors.transparent,
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  )
-                else
-                  Positioned(
-                    right: 0,
-                    top: 0,
-                    bottom: 0,
-                    width: 60,
-                    child: IgnorePointer(
-                      child: DecoratedBox(
-                        decoration: const BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.centerRight,
-                            end: Alignment.centerLeft,
-                            colors: [
-                              Color.fromRGBO(255, 255, 255, 0.04),
-                              Colors.transparent,
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                // Accent border edge
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            color: isIncoming
+                ? readableColors.surfaceRaised
+                : readableColors.surfaceSubtle,
+            border: Border.all(color: readableColors.border),
+          ),
+          child: Stack(
+            children: [
+              // Accent edge glow
+              if (isIncoming)
                 Positioned(
-                  left: isIncoming ? 0 : null,
-                  right: isIncoming ? null : 0,
+                  left: 0,
                   top: 0,
                   bottom: 0,
-                  child: Container(
-                    width: 3,
-                    decoration: BoxDecoration(
-                      color: isIncoming
-                          ? const Color(0xFF4ecdc4)
-                          : readableColors.border,
-                      borderRadius: BorderRadius.only(
-                        topLeft: isIncoming
-                            ? const Radius.circular(24)
-                            : Radius.zero,
-                        bottomLeft: isIncoming
-                            ? const Radius.circular(24)
-                            : Radius.zero,
-                        topRight: isIncoming
-                            ? Radius.zero
-                            : const Radius.circular(24),
-                        bottomRight: isIncoming
-                            ? Radius.zero
-                            : const Radius.circular(24),
+                  width: 60,
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.centerLeft,
+                          end: Alignment.centerRight,
+                          colors: [
+                            Color.fromRGBO(78, 205, 196, 0.08),
+                            Colors.transparent,
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+              else
+                Positioned(
+                  right: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: 60,
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.centerRight,
+                          end: Alignment.centerLeft,
+                          colors: [
+                            Color.fromRGBO(255, 255, 255, 0.04),
+                            Colors.transparent,
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
-                // Card content
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Header: avatar, name, transport
-                    _buildHeader(readableColors),
-                    ..._buildBodyChildren(
-                      context,
-                      readableColors,
-                      l10n,
-                      bodyTopPad: 4,
+              // Accent border edge
+              Positioned(
+                left: isIncoming ? 0 : null,
+                right: isIncoming ? null : 0,
+                top: 0,
+                bottom: 0,
+                child: Container(
+                  width: 3,
+                  decoration: BoxDecoration(
+                    color: isIncoming
+                        ? const Color(0xFF4ecdc4)
+                        : readableColors.border,
+                    borderRadius: BorderRadius.only(
+                      topLeft: isIncoming
+                          ? const Radius.circular(24)
+                          : Radius.zero,
+                      bottomLeft: isIncoming
+                          ? const Radius.circular(24)
+                          : Radius.zero,
+                      topRight: isIncoming
+                          ? Radius.zero
+                          : const Radius.circular(24),
+                      bottomRight: isIncoming
+                          ? Radius.zero
+                          : const Radius.circular(24),
                     ),
-                  ],
+                  ),
                 ),
-              ],
-            ),
+              ),
+              // Card content
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header: avatar, name, transport
+                  _buildHeader(readableColors),
+                  ..._buildBodyChildren(
+                    context,
+                    readableColors,
+                    l10n,
+                    bodyTopPad: 4,
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
       ),
@@ -709,35 +707,37 @@ class LetterCard extends StatelessWidget {
         : (!showAvatar && !showSenderName);
     final radius = _bubbleBorderRadius();
 
+    // 156 QW-1: no BackdropFilter — the fill below is already semi-opaque, so
+    // the per-bubble Gaussian blur was pure raster cost (and forced the raster
+    // thread to work every frame). The ClipRRect still clips the corners.
     final bubble = ClipRRect(
       borderRadius: radius,
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: radius,
-            color: isIncoming
-                ? readableColors.surfaceRaised
-                : readableColors.surfaceSubtle,
-            border: Border.all(color: readableColors.border),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (!headerHidden) _buildHeader(readableColors, hug: true),
-              ..._buildBodyChildren(
-                context,
-                readableColors,
-                l10n,
-                // No in-bubble header → a little top inset; the group
-                // avatar-outside bubble is more compact than the 1:1 bubble.
-                bodyTopPad: headerHidden ? (avatarOutsideBubble ? 8.0 : 12.0) : 4.0,
-                // Fold the timestamp/status inline and let the bubble hug.
-                inlineFooterMeta: true,
-                compact: avatarOutsideBubble,
-              ),
-            ],
-          ),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: radius,
+          color: isIncoming
+              ? readableColors.surfaceRaised
+              : readableColors.surfaceSubtle,
+          border: Border.all(color: readableColors.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (!headerHidden) _buildHeader(readableColors, hug: true),
+            ..._buildBodyChildren(
+              context,
+              readableColors,
+              l10n,
+              // No in-bubble header → a little top inset; the group
+              // avatar-outside bubble is more compact than the 1:1 bubble.
+              bodyTopPad: headerHidden
+                  ? (avatarOutsideBubble ? 8.0 : 12.0)
+                  : 4.0,
+              // Fold the timestamp/status inline and let the bubble hug.
+              inlineFooterMeta: true,
+              compact: avatarOutsideBubble,
+            ),
+          ],
         ),
       ),
     );
@@ -1103,9 +1103,7 @@ class LetterCard extends StatelessWidget {
     // 155: the reached-the-inbox state shares one "delivered to inbox" a11y
     // label (inboxed/delivered/queued); the underlying 'delivered' status is
     // preserved in the model — only its label and glyph changed.
-    if (status == 'delivered' ||
-        status == 'queued' ||
-        status == 'inboxed') {
+    if (status == 'delivered' || status == 'queued' || status == 'inboxed') {
       return l10n.message_status_inbox;
     }
     if (status == 'failed' || status == 'send_failed') {

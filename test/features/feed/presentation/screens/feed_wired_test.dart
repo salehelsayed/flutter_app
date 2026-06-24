@@ -17,6 +17,7 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_mes
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_screen.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
@@ -24,6 +25,7 @@ import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_button.da
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
@@ -1235,6 +1237,321 @@ void main() {
       },
     );
 
+    // ── 160: feed N+1 → batched-summary preview + bounded per-event refresh ──
+
+    testWidgets(
+      'TC-160-08: delete refreshes via the bounded paged read, never the '
+      'unbounded getMessagesForContact',
+      (tester) async {
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final ts = DateTime.now().toUtc().toIso8601String();
+        final outgoing = ConversationMessage(
+          id: 'out-1',
+          contactPeerId: 'contact-peer-id',
+          text: 'my message',
+          senderPeerId: 'me-peer',
+          timestamp: ts,
+          isIncoming: false,
+          status: 'sent',
+          createdAt: ts,
+        );
+        await messageRepo.saveMessage(outgoing);
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester);
+
+        messageRepo.resetSpyCounters();
+        // Soft-delete the outgoing → fires a repo-change → bounded refresh.
+        await messageRepo.saveMessage(
+          outgoing.copyWith(
+            deletedAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        expect(messageRepo.getMessagesForContactCallCount, 0);
+        final pages = messageRepo.getMessagesPageCalls
+            .where((c) => c.$1 == 'contact-peer-id')
+            .toList();
+        expect(pages, isNotEmpty);
+        expect(pages.every((c) => c.$2 > 1), isTrue); // bounded, never limit-1
+      },
+    );
+
+    testWidgets(
+      'TC-160-21: an all-read contact WITH history loads 0 messages and its '
+      '"new connection" letter stays suppressed; a brand-new contact still '
+      'shows its letter',
+      (tester) async {
+        identityRepo.seed(testIdentity);
+        ContactModel mk(String peerId, String name) => ContactModel(
+          peerId: peerId,
+          publicKey: 'pk-$peerId',
+          rendezvous: '/dns4/relay/tcp/443',
+          username: name,
+          signature: 'sig',
+          scannedAt: DateTime.now().toUtc().toIso8601String(),
+        );
+        contactRepo.seed([mk('peer-history', 'Historic'), mk('peer-new', 'Newbie')]);
+        // History contact: a single READ incoming (all-read prior history).
+        final ts = DateTime.now().toUtc().toIso8601String();
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'h1',
+            contactPeerId: 'peer-history',
+            text: 'old hi',
+            senderPeerId: 'peer-history',
+            timestamp: ts,
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: ts,
+            readAt: ts,
+          ),
+        );
+
+        messageRepo.resetSpyCounters();
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester);
+
+        // All-read contact loaded ZERO messages.
+        expect(
+          messageRepo.getMessagesPageCalls.where((c) => c.$1 == 'peer-history'),
+          isEmpty,
+        );
+        expect(messageRepo.getMessagesForContactCallCount, 0);
+        // Exactly ONE "tap to say hi" letter renders. Two active contacts, but
+        // only the brand-new (no-history) contact shows its connection letter;
+        // the all-read-with-history contact is suppressed. (If suppression
+        // regressed, BOTH would render → findsNWidgets(2).)
+        expect(find.text('tap to say hi'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'TC-160-05: feed reaction fan-out on mount is bounded to the preview '
+      'window, not the full decrypted history',
+      (tester) async {
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final reactionRepo = FakeReactionRepository();
+        // Deep thread: 20 read (older) + 5 unread (newest). Window ≈ 8.
+        final base = DateTime.utc(2026, 3, 1, 8);
+        for (var i = 0; i < 25; i++) {
+          final ts = base.add(Duration(minutes: i)).toIso8601String();
+          await messageRepo.saveMessage(
+            ConversationMessage(
+              id: 'm$i',
+              contactPeerId: 'contact-peer-id',
+              text: 'm$i',
+              senderPeerId: 'contact-peer-id',
+              timestamp: ts,
+              isIncoming: true,
+              status: 'delivered',
+              createdAt: ts,
+              readAt: i < 20 ? ts : null,
+            ),
+          );
+        }
+
+        await tester.pumpWidget(
+          buildFeedWired(reactionRepository: reactionRepo),
+        );
+        await pumpFeedFrames(tester);
+
+        final loadedIds = reactionRepo.getReactionsForMessagesCalls
+            .expand((c) => c)
+            .toSet();
+        // The mount reaction load carries only the windowed ids, not all 25.
+        expect(loadedIds.length, lessThan(25));
+        expect(loadedIds.contains('m24'), isTrue); // newest is in the window
+        expect(loadedIds.contains('m0'), isFalse); // oldest read is off-window
+      },
+    );
+
+    group('161 group feed batched windowing', () {
+      GroupModel grp(String id, String name) => GroupModel(
+            id: id,
+            name: name,
+            type: GroupType.chat,
+            topicName: '/mknoon/group/$id',
+            createdAt: DateTime(2026, 2, 1),
+            createdBy: 'admin',
+            myRole: GroupRole.member,
+          );
+
+      Future<void> seedDeepGroup(
+        InMemoryGroupMessageRepository repo,
+        String groupId, {
+        required int read,
+        required int unread,
+      }) async {
+        final base = DateTime.utc(2026, 3, 1, 8);
+        var minute = 0;
+        for (var i = 0; i < read; i++) {
+          final ts = base.add(Duration(minutes: minute++));
+          await repo.saveMessage(GroupMessage(
+            id: '$groupId-r$i',
+            groupId: groupId,
+            senderPeerId: 'p1',
+            text: 'read $i',
+            timestamp: ts,
+            createdAt: ts,
+            isIncoming: true,
+            readAt: ts,
+          ));
+        }
+        for (var i = 0; i < unread; i++) {
+          final ts = base.add(Duration(minutes: minute++));
+          await repo.saveMessage(GroupMessage(
+            id: '$groupId-u$i',
+            groupId: groupId,
+            senderPeerId: 'p1',
+            text: 'unread $i',
+            timestamp: ts,
+            createdAt: ts,
+            isIncoming: true,
+          ));
+        }
+      }
+
+      GroupThreadFeedItem groupItemFor(WidgetTester tester, String groupId) {
+        // Read the LIVE projected list (FeedScreen renders from the listenable;
+        // the `feedItems` prop is a stale snapshot from the last FeedWired build).
+        final feedScreen = tester.widget<FeedScreen>(find.byType(FeedScreen));
+        final items = feedScreen.feedItemsListenable!.value;
+        return items
+            .whereType<GroupThreadFeedItem>()
+            .singleWhere((i) => i.groupId == groupId);
+      }
+
+      testWidgets(
+        'TC-161-07: collapsed group card is built from the windowed preview on '
+        'mount (batched summary, no limit:200 full-page load)',
+        (tester) async {
+          identityRepo.seed(testIdentity);
+          final groupRepo = InMemoryGroupRepository()..saveGroup(grp('g1', 'Deep Group'));
+          final groupMsgRepo = InMemoryGroupMessageRepository();
+          await seedDeepGroup(groupMsgRepo, 'g1', read: 30, unread: 5);
+
+          await tester.pumpWidget(
+            buildFeedWired(
+              groupRepository: groupRepo,
+              groupMessageRepository: groupMsgRepo,
+            ),
+          );
+          await pumpFeedFrames(tester);
+
+          // Batched preview used; never the unbounded 200-row per-group load.
+          expect(groupMsgRepo.getGroupThreadPreviewsCallCount,
+              greaterThanOrEqualTo(1));
+          expect(
+            groupMsgRepo.getMessagesPageCallLog.where((c) => c.$2 >= 200),
+            isEmpty,
+          );
+
+          final item = groupItemFor(tester, 'g1');
+          expect(item.unreadCount, 5);
+          expect(item.totalMessageCount, 35); // from the summary
+          expect(item.messages.length, lessThan(35)); // windowed slice
+          expect(item.hasEarlierHistory, isTrue);
+        },
+      );
+
+      testWidgets(
+        'TC-161-08: group windowing does NOT leak group message ids into the '
+        'contact reaction fan-out',
+        (tester) async {
+          identityRepo.seed(testIdentity);
+          contactRepo.seed([testContact]);
+          final base = DateTime.utc(2026, 3, 1, 9);
+          for (var i = 0; i < 3; i++) {
+            final ts = base.add(Duration(minutes: i)).toIso8601String();
+            await messageRepo.saveMessage(ConversationMessage(
+              id: 'cm$i',
+              contactPeerId: 'contact-peer-id',
+              text: 'cm$i',
+              senderPeerId: 'contact-peer-id',
+              timestamp: ts,
+              isIncoming: true,
+              status: 'delivered',
+              createdAt: ts,
+            ));
+          }
+          final reactionRepo = FakeReactionRepository();
+          final groupRepo = InMemoryGroupRepository()..saveGroup(grp('g1', 'Grp'));
+          final groupMsgRepo = InMemoryGroupMessageRepository();
+          await seedDeepGroup(groupMsgRepo, 'g1', read: 0, unread: 4);
+
+          await tester.pumpWidget(
+            buildFeedWired(
+              reactionRepository: reactionRepo,
+              groupRepository: groupRepo,
+              groupMessageRepository: groupMsgRepo,
+            ),
+          );
+          await pumpFeedFrames(tester);
+
+          final loadedIds = reactionRepo.getReactionsForMessagesCalls
+              .expand((c) => c)
+              .toSet();
+          // Contact ids loaded; group ids never enter the contact fan-out.
+          expect(loadedIds.contains('cm0'), isTrue);
+          expect(loadedIds.any((id) => id.startsWith('g1-')), isFalse);
+        },
+      );
+
+      testWidgets(
+        'TC-161-13: a live group message keeps the summary-sourced totalMessageCount '
+        '(+1 on a new id), no drift to the windowed slice length',
+        (tester) async {
+          identityRepo.seed(testIdentity);
+          final groupRepo = InMemoryGroupRepository()..saveGroup(grp('g1', 'Live Group'));
+          final groupMsgRepo = InMemoryGroupMessageRepository();
+          await seedDeepGroup(groupMsgRepo, 'g1', read: 30, unread: 5);
+          final listener = _FakeGroupMessageListener(
+            groupRepo: groupRepo,
+            msgRepo: groupMsgRepo,
+          );
+
+          await tester.pumpWidget(
+            buildFeedWired(
+              groupRepository: groupRepo,
+              groupMessageRepository: groupMsgRepo,
+              groupMessageListener: listener,
+            ),
+          );
+          await pumpFeedFrames(tester);
+
+          final before = groupItemFor(tester, 'g1');
+          expect(before.totalMessageCount, 35);
+          expect(before.hasEarlierHistory, isTrue);
+
+          // Deliver a brand-new live incoming group message.
+          final liveTs = DateTime.utc(2026, 3, 1, 12);
+          final live = GroupMessage(
+            id: 'g1-live',
+            groupId: 'g1',
+            senderPeerId: 'p1',
+            text: 'live!',
+            timestamp: liveTs,
+            createdAt: liveTs,
+            isIncoming: true,
+          );
+          await groupMsgRepo.saveMessage(live);
+          listener.emit(live);
+          await pumpFeedFrames(tester);
+
+          final after = groupItemFor(tester, 'g1');
+          // Carried summary total + 1 on the new id — NOT re-derived from the
+          // windowed list length (which would collapse "View earlier").
+          expect(after.totalMessageCount, 36);
+          expect(after.unreadCount, 6);
+          expect(after.hasEarlierHistory, isTrue);
+        },
+      );
+    });
+
   });
 }
 
@@ -1350,4 +1667,20 @@ class _FakeIntroductionListener extends IntroductionListener {
   @override
   void emitIntroStatusChanged(IntroductionModel intro) =>
       _introStatusController.add(intro);
+}
+
+/// Fake [GroupMessageListener] exposing a controllable [groupMessageStream] so
+/// tests can drive the incremental live-message merge (161 TC-161-13).
+class _FakeGroupMessageListener extends GroupMessageListener {
+  _FakeGroupMessageListener({
+    required super.groupRepo,
+    required super.msgRepo,
+  });
+
+  final _messageController = StreamController<GroupMessage>.broadcast();
+
+  @override
+  Stream<GroupMessage> get groupMessageStream => _messageController.stream;
+
+  void emit(GroupMessage message) => _messageController.add(message);
 }

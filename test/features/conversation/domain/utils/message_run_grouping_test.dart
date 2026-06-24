@@ -1,4 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/conversation/domain/utils/message_run_grouping.dart';
 
 void main() {
@@ -177,6 +179,136 @@ void main() {
     // TC-07 — the named threshold constant is exactly 5 minutes.
     test('equals 5 minutes', () {
       expect(kMessageRunGapThreshold, const Duration(minutes: 5));
+    });
+  });
+
+  // TC-159-02 — the run-grouping pass consumes the model-cached DateTime
+  // (1:1 `ConversationMessage.parsedTimestamp`, group `GroupMessage.timestamp`),
+  // never a fresh inline parse, and the 1:1 malformed-timestamp case routes to
+  // the documented fail-safe run-break.
+  group('TC-159-02 run-grouping consumes the model DateTime', () {
+    ConversationMessage convMsg({
+      required String id,
+      required String senderPeerId,
+      required String timestamp,
+    }) => ConversationMessage(
+      id: id,
+      contactPeerId: 'c1',
+      senderPeerId: senderPeerId,
+      text: 'hi',
+      timestamp: timestamp,
+      status: 'sent',
+      isIncoming: true,
+      createdAt: timestamp,
+    );
+
+    GroupMessage groupMsg({
+      required String id,
+      required String senderPeerId,
+      required DateTime timestamp,
+    }) => GroupMessage(
+      id: id,
+      groupId: 'g1',
+      senderPeerId: senderPeerId,
+      text: 'hi',
+      timestamp: timestamp,
+      createdAt: timestamp,
+    );
+
+    test('1:1 grouping reads parsedTimestamp — same-sender 4:59 gap continues', () {
+      final prev = convMsg(
+        id: 'a',
+        senderPeerId: 'A',
+        timestamp: '2026-06-21T12:00:00.000Z',
+      );
+      final next = convMsg(
+        id: 'b',
+        senderPeerId: 'A',
+        timestamp: '2026-06-21T12:04:59.000Z',
+      );
+      final startsNewRun = messageRunStartsNewRun(
+        senderPeerId: next.senderPeerId,
+        timestamp:
+            next.parsedTimestamp ?? DateTime.fromMillisecondsSinceEpoch(0),
+        isSystemRow: false,
+        prevSenderPeerId: prev.senderPeerId,
+        prevTimestamp: prev.parsedTimestamp,
+        prevBreaks: false,
+      );
+      expect(startsNewRun, isFalse);
+    });
+
+    test('1:1 grouping reads parsedTimestamp — same-sender 5:00 gap breaks', () {
+      final prev = convMsg(
+        id: 'a',
+        senderPeerId: 'A',
+        timestamp: '2026-06-21T12:00:00.000Z',
+      );
+      final next = convMsg(
+        id: 'b',
+        senderPeerId: 'A',
+        timestamp: '2026-06-21T12:05:00.000Z',
+      );
+      final startsNewRun = messageRunStartsNewRun(
+        senderPeerId: next.senderPeerId,
+        timestamp:
+            next.parsedTimestamp ?? DateTime.fromMillisecondsSinceEpoch(0),
+        isSystemRow: false,
+        prevSenderPeerId: prev.senderPeerId,
+        prevTimestamp: prev.parsedTimestamp,
+        prevBreaks: false,
+      );
+      expect(startsNewRun, isTrue);
+    });
+
+    test(
+      '1:1 malformed timestamp → parsedTimestamp null → epoch-0 fail-safe break',
+      () {
+        final prev = convMsg(
+          id: 'a',
+          senderPeerId: 'A',
+          timestamp: '2026-06-21T12:00:00.000Z',
+        );
+        final next = convMsg(
+          id: 'b',
+          senderPeerId: 'A',
+          timestamp: 'not-a-date',
+        );
+        // The screen substitutes epoch-0 when parsedTimestamp is null, which is
+        // > 5 min from any real prev timestamp → forces a run break.
+        expect(next.parsedTimestamp, isNull);
+        final startsNewRun = messageRunStartsNewRun(
+          senderPeerId: next.senderPeerId,
+          timestamp:
+              next.parsedTimestamp ?? DateTime.fromMillisecondsSinceEpoch(0),
+          isSystemRow: false,
+          prevSenderPeerId: prev.senderPeerId,
+          prevTimestamp: prev.parsedTimestamp,
+          prevBreaks: false,
+        );
+        expect(startsNewRun, isTrue);
+      },
+    );
+
+    test('group grouping reads the model DateTime directly (no re-parse)', () {
+      final base = DateTime.utc(2026, 6, 21, 12, 0, 0);
+      final prev = groupMsg(id: 'a', senderPeerId: 'A', timestamp: base);
+      final next = groupMsg(
+        id: 'b',
+        senderPeerId: 'A',
+        timestamp: base.add(const Duration(minutes: 5)),
+      );
+      // GroupMessage.timestamp is already a DateTime — fed straight in.
+      expect(next.timestamp, isA<DateTime>());
+      final startsNewRun = messageRunStartsNewRun(
+        senderPeerId: next.senderPeerId,
+        timestamp: next.timestamp,
+        isSystemRow: false,
+        prevSenderPeerId: prev.senderPeerId,
+        prevTimestamp: prev.timestamp,
+        prevBreaks: false,
+      );
+      expect(startsNewRun, isTrue);
     });
   });
 

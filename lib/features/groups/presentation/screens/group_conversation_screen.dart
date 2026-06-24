@@ -109,6 +109,12 @@ class GroupConversationScreen extends StatelessWidget {
   final String? messageLoadErrorText;
   final VoidCallback? onRetryMessageLoad;
 
+  /// 159: the wired layer's memoized run-grouped display list. When non-null the
+  /// screen renders it directly (the StatelessWidget cannot cache across
+  /// rebuilds); when null the screen computes a fallback locally (direct-
+  /// construction widget tests).
+  final List<GroupDisplayItem>? precomputedDisplayItems;
+
   const GroupConversationScreen({
     super.key,
     required this.group,
@@ -168,6 +174,7 @@ class GroupConversationScreen extends StatelessWidget {
     this.readOnlyBannerText,
     this.messageLoadErrorText,
     this.onRetryMessageLoad,
+    this.precomputedDisplayItems,
   });
 
   ConversationComposerViewState get _legacyComposerState =>
@@ -193,6 +200,7 @@ class GroupConversationScreen extends StatelessWidget {
       backgroundColor: Colors.transparent,
       body: AmbientBackground(
         preference: backgroundPreference,
+        isChatSurface: true,
         child: Builder(
           builder: (context) {
             return Column(
@@ -557,7 +565,21 @@ class GroupConversationScreen extends StatelessWidget {
   }
 
   Widget _buildMessageList(BuildContext context) {
-    final displayItems = _buildGroupDisplayItems(context);
+    // 159: prefer the wired layer's memoized list (the screen is a
+    // StatelessWidget and cannot cache across rebuilds); fall back to a local
+    // compute only for direct-construction widget tests.
+    final displayItems =
+        precomputedDisplayItems ?? _buildGroupDisplayItems(context);
+    // 156 QW-10 (lists-scrolling-1): build the quoted-parent lookup ONCE per
+    // frame instead of an O(N) `messages.firstWhere(...)` scan per visible row.
+    final messagesById = <String, GroupMessage>{
+      for (final m in messages) m.id: m,
+    };
+    // 156 QW-12 (lists-scrolling-3): construct the localized time formatter ONCE
+    // per frame instead of `intl.DateFormat.jm(locale)` per visible row.
+    final timeFormat = intl.DateFormat.jm(
+      Localizations.localeOf(context).toString(),
+    );
     return ListView.builder(
       key: const ValueKey('group-messages'),
       controller: scrollController,
@@ -568,12 +590,13 @@ class GroupConversationScreen extends StatelessWidget {
       itemBuilder: (context, index) {
         // Reversed display list: index 0 = newest.
         final item = displayItems[index];
-        if (item.type == _GroupItemType.dateSeparator) {
+        if (item.type == GroupDisplayItemType.dateSeparator) {
           return DateSeparator(label: item.dateLabel!);
         }
         final message = item.message!;
         final isSent = message.senderPeerId == ownPeerId;
-        final (quotedText, isQuoteUnavailable) = _resolveQuotedText(message);
+        final (quotedText, isQuoteUnavailable) =
+            _resolveQuotedText(message, messagesById);
         final messageMedia = mediaMap[message.id] ?? message.media;
         // Finding 05 Phase 4: a terminal send_failed row offers the same manual
         // retry affordance as a failed row — the retry re-arms it with a fresh
@@ -660,7 +683,7 @@ class GroupConversationScreen extends StatelessWidget {
                   preferMemberName: true,
                 ),
           text: message.text,
-          time: _formatTime(context, message.timestamp),
+          time: timeFormat.format(message.timestamp.toLocal()),
           isIncoming: !isSent,
           bubbleLayout: true,
           isFirstInGroup: item.isFirstInGroup,
@@ -779,92 +802,17 @@ class GroupConversationScreen extends StatelessWidget {
   /// (replies are pulled after their quoted parent), so the day sequence is not
   /// guaranteed monotonic. A set guarantees each calendar day gets exactly one
   /// separator even when a reordered reply revisits an earlier day.
-  List<_GroupDisplayItem> _buildGroupDisplayItems(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final locale = Localizations.localeOf(context).toString();
-    final now = DateTime.now();
-
-    final items = <_GroupDisplayItem>[];
-    final emittedLabels = <String>{};
-
-    // 136 Phase 4: compute run-grouping flags on the RENDERED adjacency of
-    // [messages] (already ordered upstream by orderGroupMessagesForTimeline —
-    // never re-sort here; replies are pulled under their parent, so the order
-    // is intentionally non-monotonic). `prevBreaks` is set whenever a date
-    // separator OR a system/membership row was emitted since the previous
-    // message row, so the next message starts a fresh run regardless of
-    // sender/gap.
-    String? prevSenderPeerId;
-    DateTime? prevTimestamp;
-    var prevBreaks = true; // first message always starts a run
-    for (final message in messages) {
-      final label = formatDaySeparatorLabel(
-        message.timestamp,
-        now: now,
-        todayLabel: l10n.date_today,
-        yesterdayLabel: l10n.date_yesterday,
-        locale: locale,
-      );
-      if (emittedLabels.add(label)) {
-        items.add(_GroupDisplayItem.dateSeparator(label));
-        // A date separator splits any in-progress run.
-        prevBreaks = true;
-      }
-
-      // System/membership rows are ordinary GroupMessages with a `sys-` id
-      // prefix; they share senderPeerId with the actor but must never be
-      // absorbed into a run.
-      final isSystemRow = message.id.startsWith('sys-');
-      final isFirstInGroup = messageRunStartsNewRun(
-        senderPeerId: message.senderPeerId,
-        timestamp: message.timestamp,
-        isSystemRow: isSystemRow,
-        prevSenderPeerId: prevSenderPeerId,
-        prevTimestamp: prevTimestamp,
-        prevBreaks: prevBreaks,
-      );
-
-      items.add(
-        _GroupDisplayItem.message(
-          message,
-          isFirstInGroup: isFirstInGroup,
-          // Finalized by the second pass below.
-          isLastInGroup: true,
-        ),
-      );
-
-      // A system row carries no run chrome and forces the NEXT message to
-      // start a fresh run.
-      if (isSystemRow) {
-        prevBreaks = true;
-        prevSenderPeerId = null;
-        prevTimestamp = null;
-      } else {
-        prevBreaks = false;
-        prevSenderPeerId = message.senderPeerId;
-        prevTimestamp = message.timestamp;
-      }
-    }
-
-    // Second pass (forward): a message is last-in-run when the NEXT message row
-    // starts a new run, or when there is no following message row.
-    int? lastMessageIndex;
-    for (var i = 0; i < items.length; i++) {
-      if (items[i].type != _GroupItemType.message) continue;
-      if (lastMessageIndex != null) {
-        items[lastMessageIndex] = items[lastMessageIndex].copyWithLastInGroup(
-          items[i].isFirstInGroup,
-        );
-      }
-      lastMessageIndex = i;
-    }
-    if (lastMessageIndex != null) {
-      items[lastMessageIndex] = items[lastMessageIndex].copyWithLastInGroup(
-        true,
-      );
-    }
-
-    return items.reversed.toList();
+  /// 159: thin fallback wrapper around the now-public [buildGroupDisplayItems].
+  /// Used only when the screen is constructed directly (widget tests) without a
+  /// [precomputedDisplayItems] — the wired layer memoizes this on its State and
+  /// passes the result down (the screen is Stateless and cannot cache).
+  List<GroupDisplayItem> _buildGroupDisplayItems(BuildContext context) {
+    return buildGroupDisplayItems(
+      messages: messages,
+      l10n: AppLocalizations.of(context)!,
+      locale: Localizations.localeOf(context).toString(),
+      now: DateTime.now(),
+    );
   }
 
   Widget _buildHighlightedMessageCue(
@@ -921,16 +869,18 @@ class GroupConversationScreen extends StatelessWidget {
     return cue;
   }
 
-  (String?, bool) _resolveQuotedText(GroupMessage message) {
+  // 156 QW-10: resolve the quoted parent via a prebuilt id→message map (O(1))
+  // instead of an O(N) linear scan per call.
+  (String?, bool) _resolveQuotedText(
+    GroupMessage message,
+    Map<String, GroupMessage> messagesById,
+  ) {
     final quotedMessageId = message.quotedMessageId;
     if (quotedMessageId == null || quotedMessageId.isEmpty) {
       return (null, false);
     }
 
-    final quoted = messages.cast<GroupMessage?>().firstWhere(
-      (candidate) => candidate?.id == quotedMessageId,
-      orElse: () => null,
-    );
+    final quoted = messagesById[quotedMessageId];
     if (quoted == null) {
       return (null, true);
     }
@@ -1048,11 +998,6 @@ class GroupConversationScreen extends StatelessWidget {
     }
   }
 
-  String _formatTime(BuildContext context, DateTime timestamp) {
-    final locale = Localizations.localeOf(context).toString();
-    return intl.DateFormat.jm(locale).format(timestamp.toLocal());
-  }
-
   Future<void> _copyMessageText(BuildContext context, String text) async {
     await Clipboard.setData(ClipboardData(text: text));
     // 154: copy has no persistent control (the overlay was popped before this
@@ -1156,11 +1101,100 @@ class _GroupConversationLoadingBar extends StatelessWidget {
   }
 }
 
-enum _GroupItemType { dateSeparator, message }
+/// 159: the pure run-grouping pass for the group timeline, extracted from the
+/// (Stateless) screen so the wired layer can memoize it on its State. Computes
+/// run-grouping flags on the RENDERED adjacency of [messages] (already ordered
+/// upstream by `orderGroupMessagesForTimeline` — never re-sorted here; replies
+/// are pulled under their parent, so the order is intentionally non-monotonic).
+/// `prevBreaks` is set whenever a date separator OR a system/membership row was
+/// emitted since the previous message row, so the next message starts a fresh
+/// run regardless of sender/gap. Returns items in reversed order (index 0 =
+/// newest) for the reversed ListView.
+List<GroupDisplayItem> buildGroupDisplayItems({
+  required List<GroupMessage> messages,
+  required AppLocalizations l10n,
+  required String locale,
+  required DateTime now,
+}) {
+  final items = <GroupDisplayItem>[];
+  final emittedLabels = <String>{};
+
+  String? prevSenderPeerId;
+  DateTime? prevTimestamp;
+  var prevBreaks = true; // first message always starts a run
+  for (final message in messages) {
+    final label = formatDaySeparatorLabel(
+      message.timestamp,
+      now: now,
+      todayLabel: l10n.date_today,
+      yesterdayLabel: l10n.date_yesterday,
+      locale: locale,
+    );
+    if (emittedLabels.add(label)) {
+      items.add(GroupDisplayItem.dateSeparator(label));
+      // A date separator splits any in-progress run.
+      prevBreaks = true;
+    }
+
+    // System/membership rows are ordinary GroupMessages with a `sys-` id
+    // prefix; they share senderPeerId with the actor but must never be
+    // absorbed into a run.
+    final isSystemRow = message.id.startsWith('sys-');
+    final isFirstInGroup = messageRunStartsNewRun(
+      senderPeerId: message.senderPeerId,
+      timestamp: message.timestamp,
+      isSystemRow: isSystemRow,
+      prevSenderPeerId: prevSenderPeerId,
+      prevTimestamp: prevTimestamp,
+      prevBreaks: prevBreaks,
+    );
+
+    items.add(
+      GroupDisplayItem.message(
+        message,
+        isFirstInGroup: isFirstInGroup,
+        // Finalized by the second pass below.
+        isLastInGroup: true,
+      ),
+    );
+
+    // A system row carries no run chrome and forces the NEXT message to
+    // start a fresh run.
+    if (isSystemRow) {
+      prevBreaks = true;
+      prevSenderPeerId = null;
+      prevTimestamp = null;
+    } else {
+      prevBreaks = false;
+      prevSenderPeerId = message.senderPeerId;
+      prevTimestamp = message.timestamp;
+    }
+  }
+
+  // Second pass (forward): a message is last-in-run when the NEXT message row
+  // starts a new run, or when there is no following message row.
+  int? lastMessageIndex;
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].type != GroupDisplayItemType.message) continue;
+    if (lastMessageIndex != null) {
+      items[lastMessageIndex] = items[lastMessageIndex].copyWithLastInGroup(
+        items[i].isFirstInGroup,
+      );
+    }
+    lastMessageIndex = i;
+  }
+  if (lastMessageIndex != null) {
+    items[lastMessageIndex] = items[lastMessageIndex].copyWithLastInGroup(true);
+  }
+
+  return items.reversed.toList();
+}
+
+enum GroupDisplayItemType { dateSeparator, message }
 
 /// A single row in the group message list: either a day separator or a message.
-class _GroupDisplayItem {
-  final _GroupItemType type;
+class GroupDisplayItem {
+  final GroupDisplayItemType type;
   final GroupMessage? message;
   final String? dateLabel;
 
@@ -1173,7 +1207,7 @@ class _GroupDisplayItem {
   /// 136 Phase 4: whether this message row is the LAST balloon of its run.
   final bool isLastInGroup;
 
-  const _GroupDisplayItem._({
+  const GroupDisplayItem._({
     required this.type,
     this.message,
     this.dateLabel,
@@ -1181,15 +1215,15 @@ class _GroupDisplayItem {
     this.isLastInGroup = true,
   });
 
-  factory _GroupDisplayItem.dateSeparator(String label) =>
-      _GroupDisplayItem._(type: _GroupItemType.dateSeparator, dateLabel: label);
+  factory GroupDisplayItem.dateSeparator(String label) =>
+      GroupDisplayItem._(type: GroupDisplayItemType.dateSeparator, dateLabel: label);
 
-  factory _GroupDisplayItem.message(
+  factory GroupDisplayItem.message(
     GroupMessage message, {
     bool isFirstInGroup = true,
     bool isLastInGroup = true,
-  }) => _GroupDisplayItem._(
-    type: _GroupItemType.message,
+  }) => GroupDisplayItem._(
+    type: GroupDisplayItemType.message,
     message: message,
     isFirstInGroup: isFirstInGroup,
     isLastInGroup: isLastInGroup,
@@ -1197,7 +1231,7 @@ class _GroupDisplayItem {
 
   /// Returns a copy of a message item with [isLastInGroup] overridden (used by
   /// the second-pass lookahead that finalizes run-end flags).
-  _GroupDisplayItem copyWithLastInGroup(bool value) => _GroupDisplayItem._(
+  GroupDisplayItem copyWithLastInGroup(bool value) => GroupDisplayItem._(
     type: type,
     message: message,
     dateLabel: dateLabel,

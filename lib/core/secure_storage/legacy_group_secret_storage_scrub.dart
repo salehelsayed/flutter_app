@@ -4,10 +4,27 @@ import '../utils/flow_event_emitter.dart';
 import 'secret_storage_references.dart';
 import 'secure_key_store.dart';
 
+// 156 QW-8 (cold-start-2): one-shot sentinel. The scrub is a one-time
+// legacy→secure-storage move; once done it has nothing to do, but it used to
+// re-`db.query`-scan media_attachments + group_keys on EVERY launch. A sentinel
+// in secure storage lets a relaunched app short-circuit before touching the
+// (encrypted) tables. Stored in the same SecureKeyStore as the migrated keys so
+// the "already scrubbed" fact survives relaunch alongside them.
+const _scrubCompletedSentinelKey = 'group_secrets_scrubbed';
+
 Future<void> scrubLegacyGroupSecretsToSecureStorage({
   required Database db,
   required SecureKeyStore secureKeyStore,
 }) async {
+  if (await secureKeyStore.containsKey(_scrubCompletedSentinelKey)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_SECRET_STORAGE_SCRUB_SKIPPED',
+      details: {},
+    );
+    return;
+  }
+
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_SECRET_STORAGE_SCRUB_START',
@@ -22,6 +39,8 @@ Future<void> scrubLegacyGroupSecretsToSecureStorage({
     db: db,
     secureKeyStore: secureKeyStore,
   );
+
+  await secureKeyStore.write(_scrubCompletedSentinelKey, '1');
 
   emitFlowEvent(
     layer: 'FL',

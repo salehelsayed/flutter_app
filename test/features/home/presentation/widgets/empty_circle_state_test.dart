@@ -46,5 +46,47 @@ void main() {
       );
       expect(customPaints.length, greaterThanOrEqualTo(2));
     });
+
+    // TC-25 (156, preservation sentinel — GREEN on HEAD and after fix): the
+    // first-open orbit rides its own ..repeat() controller and must keep
+    // animating even under reduce-motion. 156 QW-3 confines its reduce-motion
+    // gate to ambient_background.dart and must NOT freeze this orbit.
+    testWidgets(
+      'TC-25: first-open orbit keeps animating even under disableAnimations',
+      (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: MediaQuery(
+                data: const MediaQueryData(
+                  size: Size(400, 800),
+                  disableAnimations: true,
+                ),
+                child: const TickerMode(
+                  enabled: true,
+                  child: EmptyCircleState(),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 200));
+
+        final controllers = tester
+            .widgetList<AnimatedBuilder>(find.byType(AnimatedBuilder))
+            .map((ab) => ab.listenable)
+            .whereType<AnimationController>()
+            .toList();
+        expect(controllers, isNotEmpty);
+        expect(
+          controllers.any((c) => c.isAnimating),
+          isTrue,
+          reason: 'the first-open orbit must keep animating under reduce-motion',
+        );
+      },
+    );
   });
 }

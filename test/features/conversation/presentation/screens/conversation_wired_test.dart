@@ -1890,6 +1890,206 @@ void main() {
       },
     );
 
+    // -----------------------------------------------------------------------
+    // 156 QW-9 (reactive-streams-2): gate the per-event attachments read so a
+    // text/status-only repo change does not hit the DB. Uses a call-count DELTA
+    // (not absolute) around the emit, with NO bridge/mediaFileManager so
+    // _recoverVisibleMedia never fires and the only reads are the resolver's.
+    // -----------------------------------------------------------------------
+    testWidgets(
+      'TC-16: text/status-only repo change does NOT read attachments (delta 0)',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+
+        final sentAt = DateTime.now().toUtc().toIso8601String();
+        const messageId = 'msg-text-status-only';
+        messageRepo.store[messageId] = ConversationMessage(
+          id: messageId,
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeIdentity().peerId,
+          text: 'plain text',
+          timestamp: sentAt,
+          status: 'sent',
+          isIncoming: false,
+          createdAt: sentAt,
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+        );
+
+        final before = mediaAttachmentRepo.getAttachmentsForMessageCallCount;
+
+        await messageRepo.updateMessageStatus(messageId, 'delivered');
+        await pumpUntil(tester, () {
+          final screen = tester.widget<ConversationScreen>(
+            find.byType(ConversationScreen),
+          );
+          final matches = screen.messages.where((m) => m.id == messageId);
+          return matches.isNotEmpty && matches.first.status == 'delivered';
+        });
+
+        final delta =
+            mediaAttachmentRepo.getAttachmentsForMessageCallCount - before;
+        expect(delta, 0);
+        final screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        expect(screen.messages.any((m) => m.id == messageId), isTrue);
+      },
+    );
+
+    testWidgets(
+      'TC-17: media repo change DOES resolve attachments (delta >= 1)',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+
+        final sentAt = DateTime.now().toUtc().toIso8601String();
+        const messageId = 'msg-relay-drained-media';
+        // Relay-drained media: attachments live in-table; the emitted message
+        // carries EMPTY inline media but is a NEW (not-yet-shown) message.
+        mediaAttachmentRepo.seed([
+          MediaAttachment(
+            id: 'att-relay-drained-001',
+            messageId: messageId,
+            mime: 'image/png',
+            size: 10,
+            mediaType: 'image',
+            downloadStatus: 'pending',
+            createdAt: sentAt,
+          ),
+        ]);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+        );
+
+        final before = mediaAttachmentRepo.getAttachmentsForMessageCallCount;
+
+        await messageRepo.saveMessage(ConversationMessage(
+          id: messageId,
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeContact().peerId,
+          text: '',
+          timestamp: sentAt,
+          status: 'sent',
+          isIncoming: true,
+          createdAt: sentAt,
+        ));
+        await pumpUntil(tester, () {
+          final screen = tester.widget<ConversationScreen>(
+            find.byType(ConversationScreen),
+          );
+          return screen.messages.any((m) => m.id == messageId);
+        });
+
+        final delta =
+            mediaAttachmentRepo.getAttachmentsForMessageCallCount - before;
+        expect(delta, greaterThanOrEqualTo(1));
+      },
+    );
+
+    testWidgets(
+      'TC-18: already-shown media change does not double-resolve (delta 0)',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+
+        final sentAt = DateTime.now().toUtc().toIso8601String();
+        const messageId = 'msg-already-shown-media';
+        messageRepo.store[messageId] = ConversationMessage(
+          id: messageId,
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeIdentity().peerId,
+          text: '',
+          timestamp: sentAt,
+          status: 'sent',
+          isIncoming: false,
+          createdAt: sentAt,
+        );
+        mediaAttachmentRepo.seed([
+          MediaAttachment(
+            id: 'att-shown-001',
+            messageId: messageId,
+            mime: 'image/png',
+            size: 10,
+            mediaType: 'image',
+            downloadStatus: 'pending',
+            createdAt: sentAt,
+          ),
+        ]);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+        );
+
+        // Wait until the seeded media is hydrated into the already-shown row.
+        await pumpUntil(tester, () {
+          final screen = tester.widget<ConversationScreen>(
+            find.byType(ConversationScreen),
+          );
+          final matches = screen.messages.where((m) => m.id == messageId);
+          return matches.isNotEmpty && matches.first.media.isNotEmpty;
+        });
+
+        final before = mediaAttachmentRepo.getAttachmentsForMessageCallCount;
+
+        await messageRepo.updateMessageStatus(messageId, 'delivered');
+        await pumpUntil(tester, () {
+          final screen = tester.widget<ConversationScreen>(
+            find.byType(ConversationScreen),
+          );
+          final matches = screen.messages.where((m) => m.id == messageId);
+          return matches.isNotEmpty && matches.first.status == 'delivered';
+        });
+
+        final delta =
+            mediaAttachmentRepo.getAttachmentsForMessageCallCount - before;
+        expect(delta, 0);
+        final screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        final shown =
+            screen.messages.firstWhere((m) => m.id == messageId);
+        expect(shown.media, isNotEmpty);
+      },
+    );
+
     testWidgets(
       'relay media send reuses optimistic attachment id and clears upload_pending placeholder',
       (tester) async {
@@ -6951,6 +7151,9 @@ void main() {
           failedReply.copyWith(status: 'delivered'),
         );
         await tester.pump(const Duration(milliseconds: 500));
+        // 159: the messageChanges status update applies on the per-frame
+        // coalesced flush (post-frame), so pump one more frame for it to land.
+        await tester.pump();
 
         expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
         // 155: reached with no resolved transport → single-check fallback
@@ -8011,6 +8214,111 @@ void main() {
       expect(find.byIcon(Icons.stop_rounded), findsNothing);
       expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
     });
+  });
+
+  // 159 sub-change 3 — the per-frame coalescer (which batches the per-event
+  // message-apply setState) must NOT touch the 145 "catching up…" banner, the
+  // NOTIFICATION_TAP_TO_LIVE_MESSAGE_TIMING milestone, CONV_FL_NOTIF_DRAIN_REFETCH,
+  // or the already-coalesced bulk reload, and every drained message (131) must
+  // still surface. This preservation lock is authored + GREEN BEFORE the
+  // coalescer edit and must stay GREEN after it.
+  group('159 coalesce preservation lock (TC-159-07)', () {
+    ConversationMessage mkMsg(
+      String id, {
+      String ts = '2026-05-04T14:05:00.000Z',
+    }) => ConversationMessage(
+      id: id,
+      contactPeerId: makeContact().peerId,
+      senderPeerId: makeContact().peerId,
+      text: 'drained $id',
+      timestamp: ts,
+      status: 'delivered',
+      isIncoming: true,
+      createdAt: ts,
+    );
+
+    testWidgets(
+      'TC-159-07 coalescer does NOT regress 145 banner/milestone or 131 surfacing',
+      (tester) async {
+        final captured = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(captured.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final fresh = mkMsg('tc07-fresh');
+        final gate = Completer<void>();
+        final p2p = GatedDrainP2PService(repo: messageRepo, pending: [fresh])
+          ..gate = gate;
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          p2pService: p2p,
+          notificationTappedAt: DateTime.utc(2026, 5, 4, 14, 5),
+        );
+
+        // 145: the "catching up…" affordance shows while the drain is gated.
+        await tester.pump();
+        expect(
+          find.byKey(const ValueKey('conversation-syncing-banner')),
+          findsOneWidget,
+          reason: '145 banner must show while the notif-tap drain is in flight',
+        );
+
+        // Release the drain → the message surfaces and the banner clears.
+        gate.complete();
+        await pumpUntil(
+          tester,
+          () => tester
+              .widget<ConversationScreen>(find.byType(ConversationScreen))
+              .messages
+              .any((m) => m.id == 'tc07-fresh'),
+        );
+        await pumpUntil(
+          tester,
+          () => find
+              .byKey(const ValueKey('conversation-syncing-banner'))
+              .evaluate()
+              .isEmpty,
+        );
+
+        // 145: banner gone after the drain.
+        expect(
+          find.byKey(const ValueKey('conversation-syncing-banner')),
+          findsNothing,
+        );
+        // 131: the drained message surfaced.
+        expect(
+          tester
+              .widget<ConversationScreen>(find.byType(ConversationScreen))
+              .messages
+              .any((m) => m.id == 'tc07-fresh'),
+          isTrue,
+        );
+        // 145: the live-render milestone is emitted exactly once.
+        final live = captured
+            .where(
+              (e) => e['event'] == 'NOTIFICATION_TAP_TO_LIVE_MESSAGE_TIMING',
+            )
+            .toList();
+        expect(live, hasLength(1));
+        // 145: the drain-refetch flow event fired for the notif_tap trigger.
+        final refetch = captured
+            .where((e) => e['event'] == 'CONV_FL_NOTIF_DRAIN_REFETCH')
+            .toList();
+        expect(refetch, isNotEmpty);
+        expect((refetch.first['details'] as Map)['trigger'], 'notif_tap');
+      },
+    );
   });
 }
 

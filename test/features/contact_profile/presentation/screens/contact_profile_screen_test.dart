@@ -54,6 +54,46 @@ void main() {
     expect(find.textContaining('2026'), findsWidgets);
   });
 
+  // TC-24 (156, preservation sentinel — GREEN on HEAD and after fix): the
+  // friend-profile orbit rides its own ..repeat() controller and must keep
+  // rotating even under reduce-motion. 156 QW-3 confines its reduce-motion gate
+  // to ambient_background.dart and QW-13 hides only the orbit2/3 prototype tabs;
+  // neither must freeze this orbit.
+  testWidgets(
+    'TC-24: friend-profile orbit keeps rotating even under disableAnimations',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: MediaQuery(
+            data: const MediaQueryData(
+              size: Size(400, 800),
+              disableAnimations: true,
+            ),
+            child: ContactProfileScreen(contact: buildContact()),
+          ),
+        ),
+      );
+      // Let the staggered entrance finish; the orbit repeats forever.
+      await tester.pump(const Duration(milliseconds: 1200));
+
+      final controllers = tester
+          .widgetList<AnimatedBuilder>(find.byType(AnimatedBuilder))
+          .map((ab) => ab.listenable)
+          .whereType<AnimationController>()
+          .toList();
+      expect(controllers, isNotEmpty);
+      expect(
+        controllers.any((c) => c.isAnimating),
+        isTrue,
+        reason: 'the friend-profile orbit must keep animating under '
+            'reduce-motion',
+      );
+    },
+  );
+
   testWidgets('tapping the peer ID card copies it and confirms', (
     tester,
   ) async {

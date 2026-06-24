@@ -89,6 +89,8 @@ import 'package:flutter_app/core/database/migrations/089_media_attachment_downlo
 import 'package:flutter_app/core/database/migrations/090_group_invite_delivery_attempts_revoked_declined.dart';
 import 'package:flutter_app/core/database/migrations/091_pending_group_invites_inviter_mlkem.dart';
 import 'package:flutter_app/core/database/migrations/092_feed_cleared_threads.dart';
+import 'package:flutter_app/core/database/migrations/093_messages_contact_ts_index.dart';
+import 'package:flutter_app/core/database/migrations/094_group_messages_group_ts_index.dart';
 import 'package:flutter_app/core/database/helpers/pending_sibling_devices_db_helpers.dart';
 import 'package:flutter_app/features/groups/application/manage_pending_sibling_device.dart';
 import 'package:flutter_app/core/secure_storage/ml_kem_secret_ring.dart';
@@ -336,6 +338,11 @@ import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_set
 import 'package:flutter_app/features/feed/data/feed_cleared_repository.dart';
 import 'package:flutter_app/features/feed/data/feed_cleared_repository_impl.dart';
 
+/// 164 (cold-start-3): retained reference to the launch-time shared-Keychain
+/// mirror backfill so it runs off the pre-runApp critical path without the
+/// analyzer/GC silently dropping it. Assigned (not awaited) in [main].
+Future<void>? keychainMirrorBackfill;
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   StartupTiming.instance.mark('app_start');
@@ -345,7 +352,14 @@ void main() async {
   emitAppBuildInfo();
   final shareIntentService = ShareIntentService();
   StartupTiming.instance.mark('share_launch_probe_begin');
-  final initialShareIntent = await shareIntentService.captureInitialIntent();
+  // 164 (cold-start-5): the share-intent probe and the documents-directory probe
+  // are independent — start both, then join with Future.wait so they overlap
+  // instead of running serially on the pre-runApp critical path.
+  final shareIntentProbe = shareIntentService.captureInitialIntent();
+  final appDocDirProbe = getApplicationDocumentsDirectory();
+  await Future.wait<Object?>([shareIntentProbe, appDocDirProbe]);
+  final initialShareIntent = await shareIntentProbe;
+  final appDocDir = await appDocDirProbe;
   final isShareLaunch = initialShareIntent != null;
   StartupTiming.instance.mark('share_launch_probe_complete');
 
@@ -385,12 +399,11 @@ void main() async {
     StartupTiming.instance.mark('firebase_ready');
   }
 
-  if (!isShareLaunch) {
-    await ensureFirebaseReady();
-  }
-
-  // Initialize UserAvatar documents directory for file-based avatar loading
-  final appDocDir = await getApplicationDocumentsDirectory();
+  // 164 (cold-start-1): Firebase is no longer initialized eagerly here. It is
+  // initialized lazily inside the deferred startLiveServices, leaving the
+  // pre-runApp critical path on a normal launch (matching the share-launch path
+  // that already deferred Firebase). appDocDir was hoisted above to overlap with
+  // the share-intent probe (cold-start-5).
   UserAvatar.setDocumentsDir(appDocDir.path);
   // 127 (round 3): seed the sync render-boundary resolver so MediaGridCell /
   // MediaThumbnailImage can turn a RELATIVE stored localPath into an absolute
@@ -533,6 +546,9 @@ void main() async {
       await runGroupInviteDeliveryAttemptsRevokedDeclinedMigration(db);
       await runPendingGroupInvitesInviterMlKemMigration(db);
       await runFeedClearedThreadsMigration(db);
+      // 156 QW-5/QW-6: composite indices for the hot 1:1 + group page queries.
+      await runMessagesContactTsIndexMigration(db);
+      await runGroupMessagesGroupTsIndexMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -820,6 +836,16 @@ void main() async {
       // pending-reply inbox (dismiss/commit watermarks; INV-2 isolation).
       if (oldVersion < 92) {
         await runFeedClearedThreadsMigration(db);
+      }
+      // 156 QW-5: composite (contact_peer_id, timestamp) index for the hot 1:1
+      // page query — removes the temp b-tree sort. Index-only, idempotent.
+      if (oldVersion < 93) {
+        await runMessagesContactTsIndexMigration(db);
+      }
+      // 156 QW-6: 3-col (group_id, timestamp, id) index for the hot group page
+      // query (two-term ORDER BY) — removes the temp b-tree sort. Index-only.
+      if (oldVersion < 94) {
+        await runGroupMessagesGroupTsIndexMigration(db);
       }
     },
   );
@@ -1294,10 +1320,19 @@ void main() async {
     groupKeyStore: secureKeyStore,
     pushSharedKeyStore: sharedPushKeyStore,
   );
-  await groupRepository.mirrorAllKeysToSecureStore();
-  // 04-P0 SI-1 NSE: backfill the shared-Keychain mute projection so the iOS NSE
-  // honors mute for groups muted before this feature shipped.
-  await groupRepository.mirrorAllMutedGroups();
+  // 164 (cold-start-3): the shared-Keychain mirror backfill (every group key ×
+  // generation + every mute projection, re-written on every launch) is unbounded
+  // work that scales with group history. Move it OFF the pre-runApp critical path
+  // while keeping it guaranteed-to-run: a retained top-level future, started
+  // immediately but not awaited. The presence-diff in _mirrorGroupKeyForPush /
+  // _mirrorGroupMutedForPush makes a re-run on an already-populated projection a
+  // near-zero-write no-op. (04-P0 SI-1 NSE: the mute backfill self-heals groups
+  // muted before that feature shipped; iOS NSE preview decrypt depends on the key
+  // mirror eventually being complete.)
+  keychainMirrorBackfill = () async {
+    await groupRepository.mirrorAllKeysToSecureStore();
+    await groupRepository.mirrorAllMutedGroups();
+  }();
 
   final pendingGroupInviteRepository = PendingGroupInviteRepositoryImpl(
     dbUpsertPendingGroupInvite: (row) => dbUpsertPendingGroupInvite(db, row),
@@ -1426,6 +1461,8 @@ void main() async {
           dbDeleteGroupMessagesForGroup(executor, groupId),
       dbLoadGroupThreadSummaries: (groupIds) =>
           dbLoadGroupThreadSummaries(executor, groupIds),
+      dbLoadGroupThreadPreviewsFn: (groupIds) =>
+          dbLoadGroupThreadPreviews(executor, groupIds),
       dbLoadFailedOutgoingGroupMessagesFn: () =>
           dbLoadFailedOutgoingGroupMessages(executor),
       dbLoadRetryableOutgoingGroupMessagesFn: () =>
@@ -2272,7 +2309,7 @@ void main() async {
     requestApplePermissions: !kE2ETestMode,
   );
   final PushRegistrationCoordinator? pushRegistrationCoordinator =
-      !isDesktop && Firebase.apps.isNotEmpty && !kE2ETestMode
+      !isDesktop && !kE2ETestMode
       ? PushRegistrationCoordinator(
           requestPermission: requestPushPermission,
           registerPushToken: () => push_registration.registerPushToken(
@@ -2281,7 +2318,19 @@ void main() async {
             accountMigrationNetworkGate: accountMigrationRuntimeNetworkGate
                 .allowsAccountNetworkSideEffects,
           ),
-          tokenRefreshStream: FirebaseMessaging.instance.onTokenRefresh,
+          // 164 (cold-start-1 regression #2): Firebase is now initialized lazily
+          // inside the deferred startLiveServices, so Firebase.apps is empty here
+          // on a normal launch — the old `Firebase.apps.isNotEmpty` gate would
+          // build this coordinator null for the whole session (no onTokenRefresh
+          // subscription, no startup registerPushToken()). Keep it non-null and
+          // make the token-refresh stream LAZY: a Stream.multi whose body touches
+          // FirebaseMessaging.instance only at listen-time, which happens inside
+          // the coordinator's ensureStarted() — after runtime services are ready.
+          tokenRefreshStream: Stream<String>.multi(
+            (controller) => unawaited(
+              controller.addStream(FirebaseMessaging.instance.onTokenRefresh),
+            ),
+          ),
         )
       : null;
   final conversationTracker = ActiveConversationTracker();
@@ -3077,9 +3126,11 @@ void main() async {
     StartupTiming.instance.mark('runtime_services_ready');
   }
 
-  if (!isShareLaunch) {
-    await startLiveServices();
-  }
+  // 164 (cold-start-1): startLiveServices (Firebase init + bridge + ~25 listener
+  // .start() calls) is no longer awaited here on a normal launch. It is wired as
+  // the unconditional deferredRuntimeStartup below and kicked off OFF the
+  // pre-runApp critical path by MyApp.initState's _ensureRuntimeServicesReady
+  // trigger (the same deferred path the share launch already used).
 
   // ── Smoke test Phase 1: pre-populate contacts before UI renders ──
   // This ensures StartupRouter sees contacts and routes to Feed, not FTE.
@@ -3168,7 +3219,7 @@ void main() async {
         return accountMigrationCutoverCoordinator
             .restoreActiveAfterExportInterrupted();
       },
-      deferredRuntimeStartup: isShareLaunch ? startLiveServices : null,
+      deferredRuntimeStartup: startLiveServices,
       onAppDetached: () async {
         // Best-effort graceful teardown on app termination. Stopping the node
         // lets libp2p close streams and release its relay reservation / QUIC
@@ -3462,6 +3513,10 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   bool _isResuming = false;
+  // 164 (cold-start-1 regression #1): unconditional idempotence latch so the
+  // initState _setupPushListeners() call and the post-runtime-ready re-arm cannot
+  // double-register onMessage / onMessageOpenedApp.
+  bool _pushListenersArmed = false;
   DateTime? _notificationTappedAt;
   NotificationRouteTarget? _deferredNotificationRouteTarget;
   // 133: a notification route must be pushed ON TOP of the startup home, not
@@ -3536,6 +3591,16 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               ),
         );
     _setupPushListeners();
+    // 164 (cold-start-1 regression #1): Firebase is now initialized lazily inside
+    // the deferred startLiveServices, so the _setupPushListeners() call above
+    // no-ops on a normal launch (Firebase.apps is empty until runtime services
+    // start). Re-arm the foreground-push + open-app listeners once runtime
+    // services (hence Firebase) are ready. The unconditional _pushListenersArmed
+    // latch inside _setupPushListeners keeps this idempotent against the (no-op)
+    // initState call above.
+    unawaited(
+      _ensureRuntimeServicesReady().then((_) => _setupPushListeners()),
+    );
     _setupNotificationTapHandler();
     _setupIosApnsNotificationOpenBridge();
     _setupShareIntentHandling();
@@ -4415,6 +4480,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   void _setupPushListeners() {
     if (widget.isDesktop || Firebase.apps.isEmpty) return;
+    // 164: latch AFTER the empty-Firebase.apps guard so the no-op initState call
+    // on a normal launch does NOT consume the latch — the post-ready re-arm is
+    // then the first effective registration; a third call is a no-op.
+    if (_pushListenersArmed) return;
+    _pushListenersArmed = true;
 
     try {
       FirebaseMessaging.onMessage.listen((message) {

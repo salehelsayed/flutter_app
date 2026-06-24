@@ -8,6 +8,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/feed/application/feed_pending_projection.dart';
 import 'package:flutter_app/features/feed/application/feed_projection.dart';
 import 'package:flutter_app/features/feed/application/load_contact_feed_snapshot_use_case.dart';
 import 'package:flutter_app/features/feed/application/load_feed_use_case.dart';
@@ -481,7 +482,18 @@ void main() {
       );
       final fullReload = await loadFullFeed();
 
-      expect(_summaries(incrementallyUpdated), _summaries(fullReload));
+      // 160 pending-filter: a cold load of an all-read contact loads ZERO
+      // messages, so `fullReload` carries no read ThreadFeedItem while the
+      // incremental snapshot path still materializes one. Both render the SAME
+      // feed (the read thread is filtered out by projectPendingFeed; the
+      // connection letter is suppressed either by the materialized thread or by
+      // `hasConversationHistory`). Parity therefore holds at the PROJECTED
+      // (rendered) layer, which is the real contract — not the raw item list.
+      const noWatermarks = <(String, String), int>{};
+      expect(
+        _summaries(projectPendingFeed(incrementallyUpdated, noWatermarks)),
+        _summaries(projectPendingFeed(fullReload, noWatermarks)),
+      );
       expect(
         incrementallyUpdated
             .whereType<ThreadFeedItem>()

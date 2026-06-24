@@ -23,36 +23,50 @@ import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository_impl.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
 
+/// 164 (cold-start-3): a [FakeSecureKeyStore] that counts write/delete/
+/// containsKey/read calls so the presence-diff (zero redundant writes on an
+/// already-populated projection) is directly observable.
+class _CountingSecureKeyStore extends FakeSecureKeyStore {
+  int writeCount = 0;
+  int deleteCount = 0;
+  int containsKeyCount = 0;
+  int readCount = 0;
+
+  @override
+  Future<void> write(String key, String value) {
+    writeCount++;
+    return super.write(key, value);
+  }
+
+  @override
+  Future<void> delete(String key) {
+    deleteCount++;
+    return super.delete(key);
+  }
+
+  @override
+  Future<bool> containsKey(String key) {
+    containsKeyCount++;
+    return super.containsKey(key);
+  }
+
+  @override
+  Future<String?> read(String key) {
+    readCount++;
+    return super.read(key);
+  }
+}
+
 void main() {
   late Database db;
   late GroupRepositoryImpl repo;
   late FakeSecureKeyStore groupKeyStore;
   late FakeSecureKeyStore sharedPushKeyStore;
 
-  setUpAll(() {
-    sqfliteFfiInit();
-    databaseFactory = databaseFactoryFfi;
-  });
-
-  setUp(() async {
-    db = await openDatabase(inMemoryDatabasePath, version: 1);
-    await runGroupsTablesMigration(db);
-    await runGroupMessagesTablesMigration(db);
-    await runGroupQuotedMessageIdMigration(db);
-    await runGroupsLastMembershipEventAtMigration(db);
-    await runGroupsMetadataColumnsMigration(db);
-    await runGroupsMuteColumnMigration(db);
-    await runGroupsDissolveColumnsMigration(db);
-    await runGroupsBacklogRetentionColumnsMigration(db);
-    await runGroupMemberPermissionsMigration(db);
-    await runGroupMemberDeviceIdentitiesMigration(db);
-    await runRemovedGroupMemberSnapshotsMigration(db);
-    await runGroupKeyRotationDraftsMigration(db);
-    await runGroupsLastMembershipEventIdMigration(db);
-    groupKeyStore = FakeSecureKeyStore();
-    sharedPushKeyStore = FakeSecureKeyStore();
-
-    repo = GroupRepositoryImpl(
+  // 164: extracted so a test can inject a counting push store (the produced
+  // repo is byte-identical to the original setUp construction otherwise).
+  GroupRepositoryImpl makeRepo(FakeSecureKeyStore pushStore) {
+    return GroupRepositoryImpl(
       dbInsertGroup: (row) => dbInsertGroup(db, row),
       dbLoadAllGroups: () => dbLoadAllGroups(db),
       dbLoadGroup: (id) => dbLoadGroup(db, id),
@@ -96,8 +110,34 @@ void main() {
       dbDeletePendingGroupKeyRotations: (groupId) =>
           dbDeletePendingGroupKeyRotations(db, groupId),
       groupKeyStore: groupKeyStore,
-      pushSharedKeyStore: sharedPushKeyStore,
+      pushSharedKeyStore: pushStore,
     );
+  }
+
+  setUpAll(() {
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+  });
+
+  setUp(() async {
+    db = await openDatabase(inMemoryDatabasePath, version: 1);
+    await runGroupsTablesMigration(db);
+    await runGroupMessagesTablesMigration(db);
+    await runGroupQuotedMessageIdMigration(db);
+    await runGroupsLastMembershipEventAtMigration(db);
+    await runGroupsMetadataColumnsMigration(db);
+    await runGroupsMuteColumnMigration(db);
+    await runGroupsDissolveColumnsMigration(db);
+    await runGroupsBacklogRetentionColumnsMigration(db);
+    await runGroupMemberPermissionsMigration(db);
+    await runGroupMemberDeviceIdentitiesMigration(db);
+    await runRemovedGroupMemberSnapshotsMigration(db);
+    await runGroupKeyRotationDraftsMigration(db);
+    await runGroupsLastMembershipEventIdMigration(db);
+    groupKeyStore = FakeSecureKeyStore();
+    sharedPushKeyStore = FakeSecureKeyStore();
+
+    repo = makeRepo(sharedPushKeyStore);
   });
 
   tearDown(() async {
@@ -785,6 +825,114 @@ void main() {
         expect(
           await sharedPushKeyStore.read(sharedGroupMutedKeyName('group-1')),
           isNull,
+        );
+      },
+    );
+
+    test(
+      'TC-164-04 cold key mirror writes each key once; a second mirror with the '
+      'projection already populated writes ZERO keys (presence-diff)',
+      () async {
+        final counting = _CountingSecureKeyStore();
+        final countingRepo = makeRepo(counting);
+
+        await repo.saveGroup(makeGroup());
+        await dbInsertGroupKey(db, makeKey(keyGeneration: 4).toMap());
+        await dbInsertGroupKey(db, makeKey(keyGeneration: 5).toMap());
+
+        // First mirror: both generations written exactly once.
+        await countingRepo.mirrorAllKeysToSecureStore();
+        expect(counting.writeCount, 2);
+        expect(
+          await counting.read(sharedGroupPushKeyName('group-1', 4)),
+          'base64-key-4',
+        );
+        expect(
+          await counting.read(sharedGroupPushKeyName('group-1', 5)),
+          'base64-key-5',
+        );
+
+        // Second mirror on an already-populated projection: ZERO redundant
+        // writes; entries still present (completeness preserved).
+        counting.writeCount = 0;
+        await countingRepo.mirrorAllKeysToSecureStore();
+        expect(counting.writeCount, 0);
+        expect(
+          await counting.containsKey(sharedGroupPushKeyName('group-1', 4)),
+          isTrue,
+        );
+        expect(
+          await counting.containsKey(sharedGroupPushKeyName('group-1', 5)),
+          isTrue,
+        );
+
+        // A newly-added key generation still mirrors exactly once — proves it is
+        // a per-key presence-diff, NOT a global one-shot sentinel that would
+        // silently drop new keys (and break NSE preview decrypt).
+        await dbInsertGroupKey(db, makeKey(keyGeneration: 6).toMap());
+        counting.writeCount = 0;
+        await countingRepo.mirrorAllKeysToSecureStore();
+        expect(counting.writeCount, 1);
+        expect(
+          await counting.read(sharedGroupPushKeyName('group-1', 6)),
+          'base64-key-6',
+        );
+        expect(
+          await counting.containsKey(sharedGroupPushKeyName('group-1', 4)),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'TC-164-05 cold mute-mirror backfills missing/changed projections but '
+      'writes ZERO when already correct (presence/value-diff)',
+      () async {
+        final counting = _CountingSecureKeyStore();
+        final countingRepo = makeRepo(counting);
+
+        // group-1 muted (set directly in the DB so the counting store is not
+        // pre-populated by a repo.updateGroup mirror); group-2 unmuted.
+        await repo.saveGroup(makeGroup());
+        await db.update(
+          'groups',
+          {'is_muted': 1},
+          where: 'id = ?',
+          whereArgs: ['group-1'],
+        );
+        await repo.saveGroup(makeGroup(id: 'group-2', topicName: '/t/2'));
+
+        // First mirror: exactly one write (the muted group); the unmuted group's
+        // projection is already absent → no redundant delete.
+        await countingRepo.mirrorAllMutedGroups();
+        expect(counting.writeCount, 1);
+        expect(counting.deleteCount, 0);
+        expect(await counting.read(sharedGroupMutedKeyName('group-1')), '1');
+
+        // Second mirror, both projections already correct: ZERO writes/deletes.
+        counting.writeCount = 0;
+        counting.deleteCount = 0;
+        await countingRepo.mirrorAllMutedGroups();
+        expect(counting.writeCount, 0);
+        expect(counting.deleteCount, 0);
+        expect(await counting.read(sharedGroupMutedKeyName('group-1')), '1');
+
+        // Unmute group-1 in the DB (again directly, leaving the stale '1'
+        // projection in place) → the next mirror self-heals with exactly one
+        // delete (1 → absent transition) and the mute key is gone.
+        await db.update(
+          'groups',
+          {'is_muted': 0},
+          where: 'id = ?',
+          whereArgs: ['group-1'],
+        );
+        counting.writeCount = 0;
+        counting.deleteCount = 0;
+        await countingRepo.mirrorAllMutedGroups();
+        expect(counting.deleteCount, 1);
+        expect(
+          await counting.containsKey(sharedGroupMutedKeyName('group-1')),
+          isFalse,
         );
       },
     );

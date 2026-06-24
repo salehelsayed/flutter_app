@@ -252,6 +252,7 @@ Future<List<Map<String, Object?>>> dbLoadConversationThreadSummaries(
       summary.contact_peer_id,
       summary.message_count,
       summary.unread_count,
+      summary.last_outgoing_at,
       latest.id AS latest_id,
       latest.contact_peer_id AS latest_contact_peer_id,
       latest.sender_peer_id AS latest_sender_peer_id,
@@ -271,13 +272,26 @@ Future<List<Map<String, Object?>>> dbLoadConversationThreadSummaries(
     FROM (
       SELECT
         contact_peer_id,
-        COUNT(*) AS message_count,
+        -- 160 A0: tombstone reconciliation — message_count/unread_count exclude
+        -- soft-deleted (deleted_at) rows so totalMessageCount matches the feed
+        -- getters' visible-non-deleted view (additionalCount == total-1). The
+        -- WHERE stays hidden_at-only so a deleted-not-hidden row still yields a
+        -- summary row (its tombstone metadata can be the `latest`).
+        SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END) AS message_count,
         SUM(
           CASE
-            WHEN is_incoming = 1 AND read_at IS NULL THEN 1
+            WHEN is_incoming = 1 AND read_at IS NULL AND deleted_at IS NULL
+              THEN 1
             ELSE 0
           END
-        ) AS unread_count
+        ) AS unread_count,
+        -- 160 A0: newest non-deleted OUTGOING timestamp, so the feed can derive
+        -- hasReply / conversationState / lastRepliedAt from the summary instead
+        -- of scanning a windowed message slice (where an old reply may be off
+        -- the window). NULL when the thread has no outgoing reply.
+        MAX(
+          CASE WHEN is_incoming = 0 AND deleted_at IS NULL THEN timestamp END
+        ) AS last_outgoing_at
       FROM messages
       WHERE contact_peer_id IN ($placeholders)
         AND $_visibleMessageFilter

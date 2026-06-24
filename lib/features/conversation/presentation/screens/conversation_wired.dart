@@ -45,6 +45,7 @@ import 'package:flutter_app/features/conversation/application/send_chat_message_
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/utils/message_window_cap.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_rejection.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -186,6 +187,13 @@ class ConversationWired extends StatefulWidget {
   );
   static const deleteCancelKey = ValueKey('conversation-delete-cancel-action');
 
+  /// 159 (TC-159-06): a test-only counter incremented once per
+  /// [_ConversationWiredState._sortMessagesForDisplay] call. A relay-drain burst
+  /// of M messageChanges events runs M synchronous sorts on HEAD; the per-frame
+  /// coalescer collapses the burst into ONE batched sort. Tests reset it to 0.
+  @visibleForTesting
+  static int debugSortInvocationCount = 0;
+
   final ContactModel contact;
   final IdentityRepository identityRepo;
   final MessageRepository messageRepo;
@@ -285,6 +293,19 @@ class _ConversationWiredState extends State<ConversationWired>
   IdentityModel? _identity;
   late ContactModel _contact;
   List<ConversationMessage> _messages = [];
+
+  // 159 (rebuild-storms-2): per-frame coalescer for the two per-event
+  // message-apply sinks (messageChanges + incomingMessageStream). A relay-drain
+  // burst of M events enqueues M upserts and applies them in ONE batched
+  // setState + ONE sort on the next frame, instead of M setStates + M sorts. The
+  // per-event live-stream side effects (scroll-to-edge / markAsRead /
+  // intro-dismiss) run once-per-flush against the POST-batch state.
+  bool _coalesceFlushScheduled = false;
+  bool _coalesceNeedsFlush = false;
+  bool _coalesceWantsMarkRead = false;
+  bool _coalesceWantsIntroCheck = false;
+  final Set<String> _coalesceLiveEdgeCandidateIds = {};
+
   StreamSubscription<ConversationMessage>? _incomingSubscription;
   StreamSubscription<ConversationMessage>? _repoChangeSubscription;
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
@@ -1524,28 +1545,43 @@ class _ConversationWiredState extends State<ConversationWired>
           (message) async {
             if (!mounted) return;
             final alreadyShown = _messages.any((m) => m.id == message.id);
-            final hydratedMedia = message.isDeleted
+
+            // 156 QW-9 (reactive-streams-2): only read attachments when there is
+            // media to hydrate that is not already shown. The common case — a
+            // pure text/status update to an already-rendered message
+            // (sent→delivered→read) — declares no new attachment id, so the
+            // per-event getAttachments DB read is skipped (the merge below
+            // preserves any already-hydrated media). A NEW message (incl. a
+            // relay-drained media message whose inline media is empty but whose
+            // attachments live in-table) is NOT already shown → it still
+            // resolves. Media enrichment of an existing visible message flows
+            // through _recoverVisibleMedia, not this stream.
+            final shownMediaIds = <String>{
+              for (final shown in _messages)
+                if (shown.id == message.id)
+                  for (final attachment in shown.media) attachment.id,
+            };
+            final hasUnresolvedMedia = message.media.any(
+              (attachment) => !shownMediaIds.contains(attachment.id),
+            );
+            final shouldResolveMedia = !alreadyShown || hasUnresolvedMedia;
+
+            final hydratedMedia = (message.isDeleted || !shouldResolveMedia)
                 ? message.media
                 : await _resolveHydratedMediaForMessage(
                     message.id,
                     fallbackMedia: message.media,
                   );
             if (!mounted) return;
-            setState(() {
-              final current = _messages
-                  .where((existing) => existing.id == message.id)
-                  .firstOrNull;
-              final mergedMedia = current == null
-                  ? hydratedMedia
-                  : _mergeLoadedMediaWithCurrentState(
-                      loaded: hydratedMedia,
-                      current: current.media,
-                    );
-              _upsertMessageById(message.copyWith(media: mergedMedia));
-            });
-            if (message.isIncoming && !alreadyShown) {
-              _markAsRead();
-            }
+            // 159: queue the upsert for the per-frame flush instead of a direct
+            // per-event setState. Media merging against the latest state happens
+            // at flush time (mergeMedia: true). markAsRead is requested only for
+            // a genuinely new incoming row (preserves the pre-coalesce gate).
+            _enqueueCoalescedUpsert(
+              message.copyWith(media: hydratedMedia),
+              mergeMedia: true,
+              markRead: message.isIncoming && !alreadyShown,
+            );
           },
           onError: (error) {
             emitFlowEvent(
@@ -1565,18 +1601,113 @@ class _ConversationWiredState extends State<ConversationWired>
 
   void _onIncomingMessage(ConversationMessage message) {
     if (!mounted) return;
-    var shouldScrollToMessage = false;
-    setState(() {
-      _upsertMessageById(message);
-      shouldScrollToMessage =
-          _messages.isNotEmpty && _messages.last.id == message.id;
-    });
-    if (shouldScrollToMessage) {
-      _scrollToBottom();
+    // 159: queue for the per-frame flush. The live-stream side effects
+    // (scroll-to-live-edge iff this becomes the new edge, markAsRead, and the
+    // intro-banner auto-dismiss) run once-per-flush against the POST-batch state
+    // in [_flushCoalescedUpserts] — never per queued event.
+    _enqueueCoalescedUpsert(
+      message,
+      mergeMedia: false,
+      markRead: true,
+      introCheck: true,
+      liveEdgeCandidate: true,
+    );
+  }
+
+  /// 159: apply a message upsert to [_messages] SYNCHRONOUSLY (preserving its
+  /// ordering with any other synchronous `_messages` mutation, e.g. an
+  /// upload-cancel/restore), but defer the expensive SORT + setState + the
+  /// per-event live-stream side effects to ONE per-frame flush. That is the
+  /// storm collapse: a relay-drain burst of M events does M cheap synchronous
+  /// merges but only ONE sort + ONE rebuild + ONE markAsRead/scroll/intro pass.
+  void _enqueueCoalescedUpsert(
+    ConversationMessage message, {
+    required bool mergeMedia,
+    bool markRead = false,
+    bool introCheck = false,
+    bool liveEdgeCandidate = false,
+  }) {
+    _upsertIntoMessagesUnsorted(message, mergeMedia: mergeMedia);
+    _coalesceNeedsFlush = true;
+    if (markRead) _coalesceWantsMarkRead = true;
+    if (introCheck) _coalesceWantsIntroCheck = true;
+    // A hidden row is removed from _messages, so it can never be the post-batch
+    // live edge — do not register it as a scroll-to-edge candidate.
+    if (liveEdgeCandidate && !message.isHidden) {
+      _coalesceLiveEdgeCandidateIds.add(message.id);
     }
-    _markAsRead();
-    // Auto-dismiss intro banner when message count reaches threshold
-    if (_showIntroBanner && _messages.length >= 3) {
+    if (!_coalesceFlushScheduled) {
+      _coalesceFlushScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _flushCoalescedUpserts(),
+      );
+      // 158: the chat surface suppresses its ambient idle-glow, so an otherwise
+      // idle conversation schedules no frames, and addPostFrameCallback does NOT
+      // request one. Explicitly schedule a frame so the deferred flush runs
+      // promptly (otherwise a drained burst would not surface until some other
+      // frame happened to be scheduled).
+      WidgetsBinding.instance.scheduleFrame();
+    }
+  }
+
+  /// 159: id-keyed merge + upsert into [_messages] WITHOUT sorting — the sort is
+  /// coalesced to [_flushCoalescedUpserts]. Mirrors the merge semantics of
+  /// [_upsertMessageById] (media preservation) so the data state matches the
+  /// pre-coalesce per-event path exactly; only the sort is deferred.
+  void _upsertIntoMessagesUnsorted(
+    ConversationMessage message, {
+    required bool mergeMedia,
+  }) {
+    if (message.isHidden) {
+      _messages = _messages
+          .where((existing) => existing.id != message.id)
+          .toList();
+      return;
+    }
+    var resolved = message;
+    final index = _messages.indexWhere((m) => m.id == message.id);
+    if (mergeMedia && index != -1) {
+      resolved = message.copyWith(
+        media: _mergeLoadedMediaWithCurrentState(
+          loaded: message.media,
+          current: _messages[index].media,
+        ),
+      );
+    }
+    if (index == -1) {
+      _messages = [..._messages, resolved];
+    } else {
+      final updated = [..._messages];
+      updated[index] = resolved;
+      _messages = updated;
+    }
+  }
+
+  /// 159: the per-frame flush — sort the coalesced upserts ONCE + cap, in ONE
+  /// setState, then run the per-event live-stream side effects exactly once
+  /// against the post-batch state.
+  void _flushCoalescedUpserts() {
+    _coalesceFlushScheduled = false;
+    final needsFlush = _coalesceNeedsFlush;
+    final wantMarkRead = _coalesceWantsMarkRead;
+    final wantIntroCheck = _coalesceWantsIntroCheck;
+    final liveEdgeIds = Set<String>.of(_coalesceLiveEdgeCandidateIds);
+    _coalesceNeedsFlush = false;
+    _coalesceWantsMarkRead = false;
+    _coalesceWantsIntroCheck = false;
+    _coalesceLiveEdgeCandidateIds.clear();
+    if (!mounted || !needsFlush) return;
+
+    setState(() {
+      _messages = _sortMessagesForDisplay(_messages);
+      _applyInMemoryCap();
+    });
+
+    final shouldScroll =
+        _messages.isNotEmpty && liveEdgeIds.contains(_messages.last.id);
+    if (shouldScroll) _scrollToBottom();
+    if (wantMarkRead) _markAsRead();
+    if (wantIntroCheck && _showIntroBanner && _messages.length >= 3) {
       _onMaybeLater();
     }
   }
@@ -3588,11 +3719,26 @@ class _ConversationWiredState extends State<ConversationWired>
     final index = _messages.indexWhere((m) => m.id == message.id);
     if (index == -1) {
       _messages = _sortMessagesForDisplay([..._messages, message]);
-      return;
+    } else {
+      final updated = [..._messages];
+      updated[index] = message;
+      _messages = _sortMessagesForDisplay(updated);
     }
-    final updated = [..._messages];
-    updated[index] = message;
-    _messages = _sortMessagesForDisplay(updated);
+    _applyInMemoryCap();
+  }
+
+  /// 159 (rebuild-storms-3): cap the in-memory window on the LIVE-APPEND path
+  /// only. Trims newest-first (oldest evicted, live edge retained); on an
+  /// eviction, flags more older history as re-fetchable so [_loadOlderMessages]
+  /// can re-surface the dropped tail. The back-scroll prepend path
+  /// ([_loadOlderMessages]) does NOT route through here and is intentionally
+  /// exempt (a newest-first trim there would evict the just-loaded page).
+  void _applyInMemoryCap() {
+    final capped = trimToNewestInMemoryCap(_messages);
+    if (capped.length < _messages.length) {
+      _hasMoreOlderMessages = true;
+    }
+    _messages = capped;
   }
 
   ConversationMessage _mergeLoadedMessageWithCurrentState(
@@ -3680,9 +3826,16 @@ class _ConversationWiredState extends State<ConversationWired>
   List<ConversationMessage> _sortMessagesForDisplay(
     List<ConversationMessage> messages,
   ) {
+    ConversationWired.debugSortInvocationCount++;
     final sorted = [...messages];
     sorted.sort((a, b) {
-      final timestampCompare = a.timestamp.compareTo(b.timestamp);
+      // 159: compare by the model-cached parsed DateTime, falling back to the
+      // ISO-string compare identically when either side fails to parse.
+      final aTs = a.parsedTimestamp;
+      final bTs = b.parsedTimestamp;
+      final timestampCompare = (aTs != null && bTs != null)
+          ? aTs.compareTo(bTs)
+          : a.timestamp.compareTo(b.timestamp);
       if (timestampCompare != 0) return timestampCompare;
       final createdAtCompare = a.createdAt.compareTo(b.createdAt);
       if (createdAtCompare != 0) return createdAtCompare;

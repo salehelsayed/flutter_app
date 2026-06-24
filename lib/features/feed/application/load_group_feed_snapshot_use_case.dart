@@ -6,12 +6,24 @@ import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/utils/group_group_messages_into_threads.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_thread_preview_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
+/// Rebuilds a single group's collapsed feed card (used by every per-event
+/// refresh: send / live message / nav-return).
+///
+/// When [pageSize] is provided (161 db-persistence-5), the card is loaded
+/// through a bounded NEWEST-first page and its counts/state come from the
+/// batched [GroupThreadPreview] (via the cast) so a deep group is not
+/// undercounted by the page bound and a just-sent reply stays visible. The
+/// pending-filter is NOT applied here (a focused/answered group still rebuilds,
+/// so append-stay keeps the reply). [pageSize] null keeps the legacy unbounded
+/// behaviour for parity callers.
 Future<GroupThreadFeedItem?> loadGroupFeedSnapshot({
   required GroupRepository groupRepo,
   required GroupMessageRepository groupMsgRepo,
   required String groupId,
+  int? pageSize,
   MediaAttachmentRepository? mediaAttachmentRepo,
   MediaFileManager? mediaFileManager,
 }) async {
@@ -20,9 +32,20 @@ Future<GroupThreadFeedItem?> loadGroupFeedSnapshot({
 
   List<GroupMessage> messages = await groupMsgRepo.getMessagesPage(
     groupId,
-    limit: 200,
+    limit: pageSize ?? 200,
   );
   if (messages.isEmpty) return null;
+
+  final totalMessageCounts = <String, int>{};
+  final unreadCounts = <String, int>{};
+  final lastOutgoingAtByGroup = <String, DateTime?>{};
+  if (pageSize != null && groupMsgRepo is GroupThreadPreviewRepository) {
+    final preview = await (groupMsgRepo as GroupThreadPreviewRepository)
+        .getGroupThreadPreview(groupId);
+    totalMessageCounts[groupId] = preview.messageCount;
+    unreadCounts[groupId] = preview.unreadCount;
+    lastOutgoingAtByGroup[groupId] = preview.lastOutgoingAt;
+  }
 
   // Batch-attach media to group messages, resolving relative paths
   if (mediaAttachmentRepo != null && messages.isNotEmpty) {
@@ -46,5 +69,8 @@ Future<GroupThreadFeedItem?> loadGroupFeedSnapshot({
   return groupGroupMessagesIntoThreads(
     allGroupMessages: messages,
     groups: [group],
+    totalMessageCounts: totalMessageCounts,
+    unreadCounts: unreadCounts,
+    lastOutgoingAtByGroup: lastOutgoingAtByGroup,
   ).firstOrNull;
 }

@@ -235,6 +235,13 @@ class FeedWired extends StatefulWidget {
 class _FeedWiredState extends State<FeedWired>
     with SingleTickerProviderStateMixin {
   static const _hostSwipeSettleDuration = Duration(milliseconds: 240);
+  // 160 B6: per-event feed refreshes (send-fallback / delete / hide /
+  // nav-return) reload through a bounded, newest-first page of this size
+  // instead of the whole decrypted history.
+  static const _feedSnapshotPageSize = 50;
+  // 160 A9: focus hydrates the focused contact's full unread set + context via
+  // a larger page so a >window thread shows every unread line once opened.
+  static const _focusHydrationPageSize = 200;
   static const _hostSwipeDecisionThreshold = 12.0;
   static const _hostSwipeCompletionThreshold = 0.28;
   static const _hostSwipeVelocityThreshold = 900.0;
@@ -603,10 +610,6 @@ class _FeedWiredState extends State<FeedWired>
     await _loadFeedFromDatabase();
   }
 
-  Set<String> _messageIdsForContact(String contactPeerId) {
-    return _feedStore.messageIdsForContact(contactPeerId);
-  }
-
   Future<void> _refreshReactionsForMessageIds(List<String> messageIds) async {
     if (widget.reactionRepository == null || messageIds.isEmpty) {
       return;
@@ -630,14 +633,14 @@ class _FeedWiredState extends State<FeedWired>
   Future<void> _refreshContactFeedItem(
     String contactPeerId, {
     bool refreshUnreadCount = true,
+    int? pageSize = _feedSnapshotPageSize,
   }) async {
-    final previousMessageIds = _messageIdsForContact(contactPeerId);
-
     try {
       final snapshot = await loadContactFeedSnapshot(
         contactRepo: widget.contactRepository,
         messageRepo: widget.messageRepository,
         contactPeerId: contactPeerId,
+        pageSize: pageSize,
         mediaAttachmentRepo: widget.mediaAttachmentRepository,
         mediaFileManager: widget.mediaFileManager,
       );
@@ -654,9 +657,13 @@ class _FeedWiredState extends State<FeedWired>
         threadItem: snapshot.threadItem,
       );
       _markFeedLoaded();
-      final removedMessageIds = previousMessageIds.difference(nextMessageIds);
-      _reactionStore.clearMessageIds(removedMessageIds);
 
+      // 160 B7: do NOT prune reactions by page difference. Under the bounded
+      // snapshot an older still-present message is evicted from the window but
+      // has NOT left the thread, so clearing it would drop live reactions
+      // (TC-160-10). Genuine removals clear their own id at the delete/hide
+      // call site (see the repo-change listener). We still (re)load reactions
+      // for the rendered page.
       await _refreshReactionsForMessageIds(nextMessageIds.toList());
 
       if (refreshUnreadCount) {
@@ -682,6 +689,7 @@ class _FeedWiredState extends State<FeedWired>
         groupRepo: groupRepo,
         groupMsgRepo: groupMsgRepo,
         groupId: groupId,
+        pageSize: _feedSnapshotPageSize,
         mediaAttachmentRepo: widget.mediaAttachmentRepository,
         mediaFileManager: widget.mediaFileManager,
       );
@@ -733,6 +741,16 @@ class _FeedWiredState extends State<FeedWired>
 
       if (refreshUnreadCount) {
         await _loadTotalUnreadCount();
+      }
+
+      // 160 A9: a wholesale contact-section reload re-windows every thread. If a
+      // 1:1 card is focused, restore its FULL hydrated thread so the open view
+      // is not clobbered back to the mount window.
+      final focused = _focusedId;
+      if (focused != null &&
+          !focused.startsWith('group:') &&
+          !focused.startsWith('connection:')) {
+        await _hydrateFocusedContactThread(focused);
       }
     } catch (e) {
       emitFlowEvent(
@@ -849,40 +867,83 @@ class _FeedWiredState extends State<FeedWired>
     );
   }
 
-  List<ThreadMessage> _mergeThreadMessages(
-    List<ThreadMessage> current,
+  /// Merges [next] into a group thread that may be a windowed preview (161).
+  /// Mirrors [_mergeContactThreadMessages]: returns the merged list and whether
+  /// a genuinely-NEW id was added (so the caller carries+increments
+  /// `totalMessageCount`). An off-window-older status flip is dropped so the
+  /// window neither grows nor double-counts.
+  ({List<ThreadMessage> messages, bool added}) _mergeGroupThreadMessages(
+    GroupThreadFeedItem? currentThread,
     ThreadMessage next,
   ) {
-    final updated = List<ThreadMessage>.from(current);
-    final index = updated.indexWhere((message) => message.id == next.id);
+    final current = currentThread?.messages ?? const <ThreadMessage>[];
+    final index = current.indexWhere((message) => message.id == next.id);
     if (index >= 0) {
+      final updated = List<ThreadMessage>.from(current);
       updated[index] = next;
-    } else {
-      updated.add(next);
+      updated.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      return (messages: updated, added: false);
     }
+
+    final windowed =
+        currentThread != null &&
+        currentThread.totalMessageCount > current.length;
+    if (windowed && current.isNotEmpty) {
+      final windowFloor = current.first.timestamp; // sorted asc → oldest loaded
+      if (next.timestamp.isBefore(windowFloor)) {
+        // Off-window-older flip — do not add, do not count.
+        return (messages: current, added: false);
+      }
+    }
+
+    final updated = List<ThreadMessage>.from(current)..add(next);
     updated.sort((a, b) => a.timestamp.compareTo(b.timestamp));
-    return updated;
+    return (messages: updated, added: true);
   }
 
-  ConversationState _conversationStateForMessages(
-    List<ThreadMessage> messages,
+  /// Merges [next] into a 1:1 contact thread that may be a windowed preview
+  /// (160 B8). Returns the merged list and whether a genuinely-NEW id was
+  /// added (so the caller can carry+increment `totalMessageCount`).
+  ///
+  /// Off-window-flip guard: when the thread is windowed and [next] is NOT
+  /// already present and is OLDER than the window floor, it is an off-window
+  /// status flip of an old row — NOT a genuinely-new message. Dropping it keeps
+  /// the window from growing (reinserting an old row) and from double-counting
+  /// the total. A genuinely-new incoming is newest by definition → it enters
+  /// the window and counts.
+  ({List<ThreadMessage> messages, bool added}) _mergeContactThreadMessages(
+    ThreadFeedItem? currentThread,
+    ThreadMessage next,
   ) {
-    final hasUnreadIncoming = messages.any(
-      (message) => message.isIncoming && message.isUnread && !message.isDeleted,
-    );
-    final hasSentMessages = messages.any(
-      (message) => !message.isIncoming && !message.isDeleted,
-    );
-    if (hasUnreadIncoming && hasSentMessages) {
-      return ConversationState.active;
+    final current = currentThread?.messages ?? const <ThreadMessage>[];
+    final index = current.indexWhere((message) => message.id == next.id);
+    if (index >= 0) {
+      final updated = List<ThreadMessage>.from(current);
+      updated[index] = next;
+      updated.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      return (messages: updated, added: false);
     }
-    if (hasUnreadIncoming) {
-      return ConversationState.unread;
+
+    final windowed =
+        currentThread != null &&
+        currentThread.totalMessageCount > current.length;
+    if (windowed && current.isNotEmpty) {
+      final windowFloor = current.first.timestamp; // sorted asc → oldest loaded
+      if (next.timestamp.isBefore(windowFloor)) {
+        // Off-window-older flip — do not add, do not count.
+        return (messages: current, added: false);
+      }
     }
-    if (hasSentMessages) {
-      return ConversationState.replied;
-    }
-    return ConversationState.read;
+
+    final updated = List<ThreadMessage>.from(current)..add(next);
+    updated.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    return (messages: updated, added: true);
+  }
+
+  DateTime? _maxDate(DateTime? a, DateTime? b) {
+    if (a == null) return b;
+    if (b == null) return a;
+    return a.isAfter(b) ? a : b;
   }
 
   DateTime? _lastSentTimestamp(List<ThreadMessage> messages) {
@@ -895,11 +956,40 @@ class _FeedWiredState extends State<FeedWired>
     return null;
   }
 
+  /// Builds a 1:1 thread card from a (possibly windowed) message list.
+  ///
+  /// [totalMessageCount] is the carried/incremented true total (160 B8); null
+  /// means "no window" → the model defaults it to `messages.length`.
+  /// [carriedLastOutgoingAt] is the prior thread's last-outgoing signal
+  /// (`summary.lastOutgoingAt`, 160 A4) so a reply that sits OFF the loaded
+  /// window does not false-negative `hasReply` / flip the card to `unread`.
   ThreadFeedItem _buildThreadFeedItem({
     required ContactModel contact,
     required List<ThreadMessage> messages,
+    int? totalMessageCount,
+    DateTime? carriedLastOutgoingAt,
   }) {
-    final state = _conversationStateForMessages(messages);
+    // Effective last-outgoing: the newer of the carried summary signal and any
+    // outgoing inside the loaded window. The window always covers the unread
+    // run (newest), so unread derivation from the window is exact.
+    final lastOutgoingAt = _maxDate(
+      carriedLastOutgoingAt,
+      _lastSentTimestamp(messages),
+    );
+    final hasUnreadIncoming = messages.any(
+      (message) => message.isIncoming && message.isUnread && !message.isDeleted,
+    );
+    final hasSentMessages = lastOutgoingAt != null;
+    final ConversationState state;
+    if (hasUnreadIncoming && hasSentMessages) {
+      state = ConversationState.active;
+    } else if (hasUnreadIncoming) {
+      state = ConversationState.unread;
+    } else if (hasSentMessages) {
+      state = ConversationState.replied;
+    } else {
+      state = ConversationState.read;
+    }
     return ThreadFeedItem(
       id: 'thread_${contact.peerId}',
       timestamp: messages.isEmpty ? DateTime.now() : messages.last.timestamp,
@@ -913,16 +1003,40 @@ class _FeedWiredState extends State<FeedWired>
           state == ConversationState.unread ||
           state == ConversationState.active,
       conversationState: state,
-      lastRepliedAt: _lastSentTimestamp(messages),
+      lastRepliedAt: lastOutgoingAt,
       isBlocked: contact.isBlocked,
+      totalMessageCount: totalMessageCount,
     );
   }
 
   GroupThreadFeedItem _buildGroupThreadFeedItem({
     required GroupModel group,
     required List<ThreadMessage> messages,
+    int? totalMessageCount,
+    DateTime? carriedLastOutgoingAt,
   }) {
-    final state = _conversationStateForMessages(messages);
+    // 161: effective last-outgoing is the newer of the carried summary signal
+    // and any outgoing inside the window. The window always covers the unread
+    // run (newest), so unread/state derive exactly from it; the carried signal
+    // keeps `replied`/`active` correct when an old reply is off the window.
+    final lastOutgoingAt = _maxDate(
+      carriedLastOutgoingAt,
+      _lastSentTimestamp(messages),
+    );
+    final hasUnreadIncoming = messages.any(
+      (message) => message.isIncoming && message.isUnread && !message.isDeleted,
+    );
+    final hasSentMessages = lastOutgoingAt != null;
+    final ConversationState state;
+    if (hasUnreadIncoming && hasSentMessages) {
+      state = ConversationState.active;
+    } else if (hasUnreadIncoming) {
+      state = ConversationState.unread;
+    } else if (hasSentMessages) {
+      state = ConversationState.replied;
+    } else {
+      state = ConversationState.read;
+    }
     return GroupThreadFeedItem(
       id: 'group_thread_${group.id}',
       timestamp: messages.isEmpty ? group.createdAt : messages.last.timestamp,
@@ -938,6 +1052,8 @@ class _FeedWiredState extends State<FeedWired>
       messages: messages,
       unreadCount: messages.where((message) => message.isUnread).length,
       conversationState: state,
+      totalMessageCount: totalMessageCount,
+      lastRepliedAt: lastOutgoingAt,
     );
   }
 
@@ -971,17 +1087,30 @@ class _FeedWiredState extends State<FeedWired>
             : await _loadResolvedAttachmentsForMessage(message.id),
       );
       final currentThread = _threadForContact(contact.peerId);
-      final nextMessages = _mergeThreadMessages(
-        currentThread?.messages ?? const <ThreadMessage>[],
+      final merge = _mergeContactThreadMessages(
+        currentThread,
         _toThreadMessage(displayMessage),
       );
+      // 160 B8: carry the prior total forward and increment ONLY on a
+      // genuinely-new id (an off-window status flip neither grows the window
+      // nor counts). A brand-new thread leaves total null → model defaults it
+      // to messages.length.
+      final priorTotal = currentThread?.totalMessageCount;
+      final nextTotal = priorTotal == null
+          ? null
+          : priorTotal + (merge.added ? 1 : 0);
 
       _feedStore.replaceContactSnapshot(
         contactPeerId: contact.peerId,
-        connectionItem: ConnectionFeedItem.fromContact(contact),
+        connectionItem: ConnectionFeedItem.fromContact(
+          contact,
+          hasConversationHistory: true,
+        ),
         threadItem: _buildThreadFeedItem(
           contact: contact,
-          messages: nextMessages,
+          messages: merge.messages,
+          totalMessageCount: nextTotal,
+          carriedLastOutgoingAt: currentThread?.lastRepliedAt,
         ),
       );
       _markFeedLoaded();
@@ -1009,6 +1138,39 @@ class _FeedWiredState extends State<FeedWired>
     }
   }
 
+  /// 160 B5: merges a held outgoing message into the contact's in-memory thread
+  /// with no DB read (send-success path). Carries `totalMessageCount` forward
+  /// and dedupes by id, so it cooperates with the later status-flip merge.
+  void _mergeOutgoingContactMessageIntoFeed(
+    ContactModel contact,
+    ConversationMessage message,
+  ) {
+    final currentThread = _threadForContact(contact.peerId);
+    final merge = _mergeContactThreadMessages(
+      currentThread,
+      _toThreadMessage(message),
+    );
+    final priorTotal = currentThread?.totalMessageCount;
+    final nextTotal = priorTotal == null
+        ? null
+        : priorTotal + (merge.added ? 1 : 0);
+
+    _feedStore.replaceContactSnapshot(
+      contactPeerId: contact.peerId,
+      connectionItem: ConnectionFeedItem.fromContact(
+        contact,
+        hasConversationHistory: true,
+      ),
+      threadItem: _buildThreadFeedItem(
+        contact: contact,
+        messages: merge.messages,
+        totalMessageCount: nextTotal,
+        carriedLastOutgoingAt: currentThread?.lastRepliedAt,
+      ),
+    );
+    _markFeedLoaded();
+  }
+
   Future<void> _applyContactUpdateToFeed(ContactModel contact) async {
     if (contact.isArchived) {
       await _refreshContactFeedItem(contact.peerId);
@@ -1016,9 +1178,19 @@ class _FeedWiredState extends State<FeedWired>
     }
 
     final currentThread = _threadForContact(contact.peerId);
+    // Carry the connection's history flag forward (160 A5): a contact-update for
+    // an all-read contact (no materialized thread) must keep suppressing its
+    // "new connection" letter.
+    final hadHistory =
+        currentThread != null ||
+        (_feedStore.connectionForContact(contact.peerId)?.hasConversationHistory ??
+            false);
     _feedStore.replaceContactSnapshot(
       contactPeerId: contact.peerId,
-      connectionItem: ConnectionFeedItem.fromContact(contact),
+      connectionItem: ConnectionFeedItem.fromContact(
+        contact,
+        hasConversationHistory: hadHistory,
+      ),
       threadItem: currentThread == null
           ? null
           : ThreadFeedItem(
@@ -1032,6 +1204,7 @@ class _FeedWiredState extends State<FeedWired>
               conversationState: currentThread.conversationState,
               lastRepliedAt: currentThread.lastRepliedAt,
               isBlocked: contact.isBlocked,
+              totalMessageCount: currentThread.totalMessageCount,
             ),
     );
     _markFeedLoaded();
@@ -1057,16 +1230,26 @@ class _FeedWiredState extends State<FeedWired>
         ),
       );
       final currentThread = _threadForGroup(group.id);
-      final nextMessages = _mergeThreadMessages(
-        currentThread?.messages ?? const <ThreadMessage>[],
+      final merge = _mergeGroupThreadMessages(
+        currentThread,
         _toGroupThreadMessage(displayMessage),
       );
+      // 161: carry the prior summary total forward and increment ONLY on a
+      // genuinely-new id (an off-window status flip neither grows the window nor
+      // counts), so a live group message never drifts the total to the windowed
+      // slice length. A brand-new thread leaves total null → model defaults it.
+      final priorTotal = currentThread?.totalMessageCount;
+      final nextTotal = priorTotal == null
+          ? null
+          : priorTotal + (merge.added ? 1 : 0);
 
       _feedStore.replaceGroupSnapshot(
         groupId: group.id,
         threadItem: _buildGroupThreadFeedItem(
           group: group,
-          messages: nextMessages,
+          messages: merge.messages,
+          totalMessageCount: nextTotal,
+          carriedLastOutgoingAt: currentThread?.lastRepliedAt,
         ),
       );
       _markFeedLoaded();
@@ -1239,6 +1422,12 @@ class _FeedWiredState extends State<FeedWired>
           (message) {
             if (!mounted) return;
             if (message.isDeleted || message.isHidden) {
+              // 160 B7: clear the genuinely-removed message's reactions HERE
+              // (the bounded snapshot refresh no longer prunes by page diff, so
+              // off-page survivors keep their reactions — TC-160-10).
+              if (message.isDeleted) {
+                _reactionStore.clearMessageIds({message.id});
+              }
               unawaited(
                 _refreshContactFeedItem(
                   message.contactPeerId,
@@ -1642,6 +1831,26 @@ class _FeedWiredState extends State<FeedWired>
     // once answered it leaves the pending set, but the composer keeps appending
     // under it until focus clears.
     _feedStore.setPinnedThread(threadId);
+    // 160 A9: mount loads only a per-contact preview window; on focus hydrate
+    // the focused 1:1 thread's FULL unread set (+ context) so the opened card
+    // renders every unread line and its reactions. NO read-mark on focus
+    // (REG-INV3) — read-marking stays on _leaveFocusedThread.
+    if (!threadId.startsWith('group:') &&
+        !threadId.startsWith('connection:')) {
+      unawaited(_hydrateFocusedContactThread(threadId));
+    }
+  }
+
+  /// 160 A9: loads the focused 1:1 contact's full thread (larger page) and
+  /// replaces its snapshot. Skips the work if focus moved on before the load
+  /// completed (clobber-safe). Never marks the conversation read.
+  Future<void> _hydrateFocusedContactThread(String contactPeerId) async {
+    if (_focusedId != contactPeerId) return;
+    await _refreshContactFeedItem(
+      contactPeerId,
+      refreshUnreadCount: false,
+      pageSize: _focusHydrationPageSize,
+    );
   }
 
   void _onClearFocus() {
@@ -1797,7 +2006,14 @@ class _FeedWiredState extends State<FeedWired>
         // must stay visible the whole time the user is replying. Read-marking
         // (and card removal) is deferred to leave-thread (see
         // _leaveFocusedThread / _onSwipeCommit, 134 REG-INV3).
-        await _refreshContactFeedItem(contactPeerId, refreshUnreadCount: false);
+        //
+        // 160 B5: merge the held optimistic outgoing IN MEMORY (no full DB
+        // re-read) so the green bubble appears immediately; mirrors the
+        // incoming/status-flip merge and dedupes by id.
+        _mergeOutgoingContactMessageIntoFeed(
+          contact,
+          message ?? optimisticMessage,
+        );
         await _loadTotalUnreadCount();
         return true;
       }

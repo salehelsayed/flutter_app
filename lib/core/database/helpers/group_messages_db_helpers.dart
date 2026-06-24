@@ -355,6 +355,76 @@ Future<List<Map<String, Object?>>> dbLoadGroupThreadSummaries(
   return results;
 }
 
+/// Loads batched preview aggregates for the provided groups (161
+/// db-persistence-5, QUERY half).
+///
+/// One row per group that has at least one (non-cutoff) message, carrying
+/// `message_count` (total), `unread_count`, `last_outgoing_at` (newest outgoing
+/// timestamp, NULL when none), and the single latest row — so the feed builds
+/// a collapsed group card's counts + state + "View earlier" affordance from the
+/// summary instead of decrypting the group's full per-group page. The windowed
+/// message slice itself is loaded separately, and ONLY for pending groups, in
+/// `load_feed_use_case`. The `sys-member_removed_cutoff:` rows are excluded from
+/// EVERY sub-query (total, unread, last_outgoing, and the latest pick). Distinct
+/// from [dbLoadGroupThreadSummaries] so the orbit unread-badge path is untouched.
+Future<List<Map<String, Object?>>> dbLoadGroupThreadPreviews(
+  DatabaseExecutor db,
+  List<String> groupIds,
+) async {
+  if (groupIds.isEmpty) return const [];
+
+  final placeholders = List.filled(groupIds.length, '?').join(', ');
+  final results = await db.rawQuery('''
+    SELECT
+      summary.group_id,
+      summary.message_count,
+      summary.unread_count,
+      summary.last_outgoing_at,
+      latest.id AS latest_id,
+      latest.group_id AS latest_group_id,
+      latest.sender_peer_id AS latest_sender_peer_id,
+      latest.transport_peer_id AS latest_transport_peer_id,
+      latest.sender_username AS latest_sender_username,
+      latest.text AS latest_text,
+      latest.timestamp AS latest_timestamp,
+      latest.quoted_message_id AS latest_quoted_message_id,
+      latest.key_generation AS latest_key_generation,
+      latest.status AS latest_status,
+      latest.is_incoming AS latest_is_incoming,
+      latest.read_at AS latest_read_at,
+      latest.created_at AS latest_created_at
+    FROM (
+      SELECT
+        group_id,
+        COUNT(*) AS message_count,
+        SUM(
+          CASE
+            WHEN is_incoming = 1 AND read_at IS NULL THEN 1
+            ELSE 0
+          END
+        ) AS unread_count,
+        MAX(
+          CASE WHEN is_incoming = 0 THEN timestamp END
+        ) AS last_outgoing_at
+      FROM group_messages
+      WHERE group_id IN ($placeholders)
+        AND id NOT LIKE '$_groupRemovalCutoffMessageIdLike'
+      GROUP BY group_id
+    ) summary
+    LEFT JOIN group_messages latest
+      ON latest.id = (
+        SELECT inner_latest.id
+        FROM group_messages inner_latest
+        WHERE inner_latest.group_id = summary.group_id
+          AND inner_latest.id NOT LIKE '$_groupRemovalCutoffMessageIdLike'
+        ORDER BY inner_latest.timestamp DESC,
+                 inner_latest.id DESC
+        LIMIT 1
+      )
+    ''', groupIds);
+  return results;
+}
+
 /// Loads a single group message by ID.
 Future<Map<String, Object?>?> dbLoadGroupMessage(
   DatabaseExecutor db,

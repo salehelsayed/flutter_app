@@ -96,8 +96,15 @@ List<FeedItem> projectPendingFeed(
 
   final kept = <FeedItem>[];
   for (final item in items) {
+    // 160 A5 / TC-160-21: suppress the "new connection" letter when the contact
+    // already has a materialized thread OR is known to have prior history
+    // (`hasConversationHistory`). Under the 160 pending-filter an all-read
+    // contact loads ZERO messages → no ThreadFeedItem → the history flag is the
+    // only suppression signal, so it must not resurface as a brand-new
+    // connection. A genuinely-new contact (no history) still shows its letter.
     if (item is ConnectionFeedItem &&
-        threadedContactPeerIds.contains(item.contactPeerId)) {
+        (threadedContactPeerIds.contains(item.contactPeerId) ||
+            item.hasConversationHistory)) {
       continue;
     }
     if (!isPendingFeedItem(item, watermarks)) continue;

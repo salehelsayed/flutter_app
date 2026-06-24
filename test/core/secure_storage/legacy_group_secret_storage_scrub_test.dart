@@ -4,6 +4,7 @@ import 'package:flutter_app/core/database/migrations/058_media_attachment_integr
 import 'package:flutter_app/core/database/migrations/059_media_attachment_encryption_columns.dart';
 import 'package:flutter_app/core/secure_storage/legacy_group_secret_storage_scrub.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -145,4 +146,103 @@ void main() {
       );
     },
   );
+
+  // ---------------------------------------------------------------------------
+  // 156 QW-8 (cold-start-2): one-shot sentinel so the scrub does NOT re-scan the
+  // encrypted media_attachments + group_keys tables on every launch.
+  // ---------------------------------------------------------------------------
+  test(
+    'TC-14: scrub short-circuits on second launch (emits SCRUB_SKIPPED, no '
+    'START/SUCCESS)',
+    () async {
+      await insertLegacyMediaKeyRow();
+      await insertLegacyGroupKeyRow();
+
+      final events = <String>[];
+      debugSetFlowEventSink((p) => events.add(p['event'] as String));
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      // First launch: real scrub runs and sets the sentinel.
+      await scrubLegacyGroupSecretsToSecureStorage(
+        db: db,
+        secureKeyStore: secureKeyStore,
+      );
+      events.clear();
+
+      // Second launch: must short-circuit.
+      await scrubLegacyGroupSecretsToSecureStorage(
+        db: db,
+        secureKeyStore: secureKeyStore,
+      );
+
+      expect(
+        events.where((e) => e == 'GROUP_SECRET_STORAGE_SCRUB_SKIPPED'),
+        hasLength(1),
+      );
+      expect(events, isNot(contains('GROUP_SECRET_STORAGE_SCRUB_START')));
+      expect(events, isNot(contains('GROUP_SECRET_STORAGE_SCRUB_SUCCESS')));
+    },
+  );
+
+  test('TC-15: second scrub run performs ZERO table scans', () async {
+    await insertLegacyMediaKeyRow();
+    await insertLegacyGroupKeyRow();
+
+    // First launch sets the sentinel into the (persistent) FakeSecureKeyStore.
+    await scrubLegacyGroupSecretsToSecureStorage(
+      db: db,
+      secureKeyStore: secureKeyStore,
+    );
+
+    // Second launch through a counting proxy: the sentinel guard must return
+    // before any db access (no `_tableExists`, no table scans).
+    final countingDb = _CountingDb(db);
+    await scrubLegacyGroupSecretsToSecureStorage(
+      db: countingDb,
+      secureKeyStore: secureKeyStore,
+    );
+
+    expect(countingDb.queryCount, 0);
+  });
+}
+
+/// Thin [Database] proxy that counts `query(...)` calls and forwards them to the
+/// real db. Any other db method would route through [noSuchMethod] (and throw) —
+/// but a correctly-guarded second scrub touches the db zero times.
+class _CountingDb implements Database {
+  _CountingDb(this._inner);
+
+  final Database _inner;
+  int queryCount = 0;
+
+  @override
+  Future<List<Map<String, Object?>>> query(
+    String table, {
+    bool? distinct,
+    List<String>? columns,
+    String? where,
+    List<Object?>? whereArgs,
+    String? groupBy,
+    String? having,
+    String? orderBy,
+    int? limit,
+    int? offset,
+  }) {
+    queryCount++;
+    return _inner.query(
+      table,
+      distinct: distinct,
+      columns: columns,
+      where: where,
+      whereArgs: whereArgs,
+      groupBy: groupBy,
+      having: having,
+      orderBy: orderBy,
+      limit: limit,
+      offset: offset,
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

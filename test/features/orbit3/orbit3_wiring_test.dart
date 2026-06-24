@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
@@ -36,8 +37,11 @@ void main() {
   testWidgets('FeedNavigationBar shows the Orbit3 button and taps switch to it',
       (tester) async {
     suppressAssetErrors(tester);
-    expect(kOrbit3PrototypeEnabled, isTrue,
-        reason: 'the wiring test assumes the prototype tab is enabled');
+    // 156 QW-13: the flag is now gated on kDebugMode (false in release). Under
+    // `flutter test` kDebugMode is true, so the tab is still wired here; assert
+    // the documented relationship rather than a hard `isTrue`.
+    expect(kOrbit3PrototypeEnabled, equals(kDebugMode),
+        reason: 'the wiring test assumes the prototype tab is enabled in debug');
 
     String? tapped;
     await tester.pumpWidget(

@@ -102,4 +102,53 @@ void main() {
 
     expect(listenable.value, contains('$peerId.jpg'));
   });
+
+  // ---------------------------------------------------------------------------
+  // 156 QW-4 (images-media-1): decode sized to display via cacheWidth/Height.
+  // ---------------------------------------------------------------------------
+  testWidgets(
+    'TC-06: Image.memory avatar sets cacheWidth/cacheHeight to round(size*dpr)',
+    (tester) async {
+      tester.view.devicePixelRatio = 3.0;
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final bytes = Uint8List.fromList(<int>[1, 2, 3]);
+      await tester.pumpWidget(
+        _wrap(UserAvatar(peerId: 'abc', avatarBytes: bytes, size: 42)),
+      );
+
+      final image = tester.widget<Image>(find.byType(Image));
+      expect(image.image, isA<ResizeImage>());
+      final resize = image.image as ResizeImage;
+      expect(resize.width, (42 * 3.0).round()); // 126
+      expect(resize.height, (42 * 3.0).round());
+    },
+  );
+
+  testWidgets(
+    'TC-07: Image.file avatar sets cacheWidth/cacheHeight to round(size*dpr)',
+    (tester) async {
+      tester.view.devicePixelRatio = 2.0;
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      const peerId = 'peer-file-cache';
+      final avatarsDir = Directory('${tempDir.path}/media/avatars')
+        ..createSync(recursive: true);
+      File('${avatarsDir.path}/$peerId.jpg').writeAsBytesSync(<int>[0, 1, 2, 3]);
+
+      await tester.pumpWidget(
+        _wrap(const UserAvatar(peerId: peerId, size: 50)),
+      );
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      });
+      await tester.pump();
+
+      final image = tester.widget<Image>(find.byType(Image));
+      expect(image.image, isA<ResizeImage>());
+      final resize = image.image as ResizeImage;
+      expect(resize.width, (50 * 2.0).round()); // 100
+      expect(resize.height, (50 * 2.0).round());
+    },
+  );
 }

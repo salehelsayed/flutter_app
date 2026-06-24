@@ -357,9 +357,13 @@ void main() {
         // does in MessageRepositoryImpl when it transitions sending->failed.
         messageRepo.emitStatusChange('msg-sending-001', 'failed');
 
-        // Let the stream event propagate and the widget rebuild
+        // Let the stream event propagate and the widget rebuild. 159: the
+        // messageChanges upsert applies its DATA synchronously but defers the
+        // rebuild to the per-frame coalesced flush (post-frame), so pump an
+        // extra frame for the flush's setState to render.
         await tester.pump();
         await tester.pump(const Duration(seconds: 1));
+        await tester.pump();
 
         // ASSERT — the UI must now show the failed indicator, not the
         // in-flight clock.
@@ -448,6 +452,7 @@ void main() {
         messageRepo.emitStatusChange('msg-sending-001', 'sent');
         await tester.pump();
         await tester.pump(const Duration(seconds: 1));
+        await tester.pump(); // 159: per-frame coalesced flush rebuild
 
         // ASSERT — sent refreshes to the reached fallback icon when no
         // transport-specific glyph is available.
@@ -485,6 +490,7 @@ void main() {
         messageRepo.emitStatusChange('msg-sending-001', 'delivered');
         await tester.pump();
         await tester.pump(const Duration(seconds: 1));
+        await tester.pump(); // 159: per-frame coalesced flush rebuild
 
         // ASSERT — delivered refreshes to the reached fallback icon when no
         // transport-specific glyph is available.

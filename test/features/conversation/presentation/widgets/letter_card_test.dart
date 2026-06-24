@@ -1258,6 +1258,39 @@ void main() {
     double bubbleLeft(WidgetTester tester) =>
         tester.getTopLeft(find.byType(ClipRRect).first).dx;
 
+    // 156 QW-1 (TC-01): the bubble fill is already semi-opaque, so the
+    // BackdropFilter blur was pure raster cost. Removing it must keep the solid
+    // fill (no transparent/blurred bubble).
+    testWidgets('renders a solid-fill bubble with NO BackdropFilter', (
+      tester,
+    ) async {
+      await tester.pumpWidget(buildBubble(isIncoming: true));
+
+      expect(
+        find.descendant(
+          of: find.byType(LetterCard),
+          matching: find.byType(BackdropFilter),
+        ),
+        findsNothing,
+      );
+
+      // The fill survives: the bubble Container still carries the incoming
+      // surfaceRaised color.
+      final colors = BackgroundReadableColors.dark;
+      final fill = tester
+          .widgetList<Container>(
+            find.descendant(
+              of: find.byType(ClipRRect),
+              matching: find.byType(Container),
+            ),
+          )
+          .firstWhere((c) {
+        final d = c.decoration;
+        return d is BoxDecoration && d.color == colors.surfaceRaised;
+      });
+      expect((fill.decoration as BoxDecoration).color, colors.surfaceRaised);
+    });
+
     // TC-08
     testWidgets('aligns incoming left and outgoing right', (tester) async {
       await tester.pumpWidget(buildBubble(isIncoming: true));

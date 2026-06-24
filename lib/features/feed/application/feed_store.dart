@@ -124,6 +124,12 @@ class FeedStore {
   bool hasConnection(String contactPeerId) =>
       _connectionsByContactId.containsKey(contactPeerId);
 
+  /// The current connection card for [contactPeerId], or null. Lets the
+  /// incremental update paths carry `hasConversationHistory` forward when they
+  /// rebuild a connection item without a fresh summary (160 A5).
+  ConnectionFeedItem? connectionForContact(String contactPeerId) =>
+      _connectionsByContactId[contactPeerId];
+
   void replaceAll(Iterable<FeedItem> feedItems) {
     _connectionsByContactId.clear();
     _threadsByContactId.clear();

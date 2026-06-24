@@ -15,6 +15,19 @@ class InMemoryMessageRepository
   final StreamController<ConversationMessage> _messageChangeController =
       StreamController<ConversationMessage>.broadcast();
 
+  // 160 spy counters: distinguish the unbounded full-load path from the
+  // batched-summary + bounded-page paths so widget tests can assert the feed
+  // mount uses summaries + windowed pages, never per-contact full loads.
+  int getMessagesForContactCallCount = 0;
+  int getConversationThreadSummariesCallCount = 0;
+  final List<(String, int)> getMessagesPageCalls = <(String, int)>[];
+
+  void resetSpyCounters() {
+    getMessagesForContactCallCount = 0;
+    getConversationThreadSummariesCallCount = 0;
+    getMessagesPageCalls.clear();
+  }
+
   @override
   Stream<ConversationMessage> get messageChanges =>
       _messageChangeController.stream;
@@ -29,6 +42,7 @@ class InMemoryMessageRepository
   Future<List<ConversationMessage>> getMessagesForContact(
     String contactPeerId,
   ) async {
+    getMessagesForContactCallCount++;
     final list = _visibleMessagesForContact(contactPeerId).toList()
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
     return list;
@@ -160,6 +174,7 @@ class InMemoryMessageRepository
     int limit = 50,
     String? beforeTimestamp,
   }) async {
+    getMessagesPageCalls.add((contactPeerId, limit));
     var messages = _visibleMessagesForContact(contactPeerId).toList();
     if (beforeTimestamp != null) {
       messages = messages
@@ -199,36 +214,46 @@ class InMemoryMessageRepository
   Future<ConversationThreadSummary> getConversationThreadSummary(
     String contactPeerId,
   ) async {
-    final messages = _visibleMessagesForContact(contactPeerId).toList()
-      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
-    return ConversationThreadSummary(
-      contactPeerId: contactPeerId,
-      messageCount: messages.length,
-      unreadCount: messages
-          .where((message) => message.isIncoming && message.readAt == null)
-          .length,
-      latestMessage: messages.isEmpty ? null : messages.first,
-    );
+    return _summaryForContact(contactPeerId);
   }
 
   @override
   Future<Map<String, ConversationThreadSummary>> getConversationThreadSummaries(
     Iterable<String> contactPeerIds,
   ) async {
+    getConversationThreadSummariesCallCount++;
     final summaries = <String, ConversationThreadSummary>{};
     for (final contactPeerId in contactPeerIds.toSet()) {
-      final messages = _visibleMessagesForContact(contactPeerId).toList()
-        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
-      summaries[contactPeerId] = ConversationThreadSummary(
-        contactPeerId: contactPeerId,
-        messageCount: messages.length,
-        unreadCount: messages
-            .where((message) => message.isIncoming && message.readAt == null)
-            .length,
-        latestMessage: messages.isEmpty ? null : messages.first,
-      );
+      summaries[contactPeerId] = _summaryForContact(contactPeerId);
     }
     return summaries;
+  }
+
+  /// Mirrors the real `dbLoadConversationThreadSummaries` convention (160 A0):
+  /// counts exclude soft-deleted rows; `lastOutgoingAt` is the newest
+  /// non-deleted outgoing timestamp.
+  ConversationThreadSummary _summaryForContact(String contactPeerId) {
+    final messages = _visibleMessagesForContact(contactPeerId).toList()
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    final visible = messages.where((m) => !m.isDeleted).toList();
+    DateTime? lastOutgoingAt;
+    for (final m in visible) {
+      if (!m.isIncoming) {
+        final ts = DateTime.tryParse(m.timestamp);
+        if (ts != null && (lastOutgoingAt == null || ts.isAfter(lastOutgoingAt))) {
+          lastOutgoingAt = ts;
+        }
+      }
+    }
+    return ConversationThreadSummary(
+      contactPeerId: contactPeerId,
+      messageCount: visible.length,
+      unreadCount: visible
+          .where((message) => message.isIncoming && message.readAt == null)
+          .length,
+      lastOutgoingAt: lastOutgoingAt,
+      latestMessage: messages.isEmpty ? null : messages.first,
+    );
   }
 
   @override

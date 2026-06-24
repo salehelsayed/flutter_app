@@ -64,6 +64,11 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/presentation/widgets/attachment_preview_strip_test.dart"
   "test/features/conversation/domain/models/media_rejection_test.dart"
   "test/features/push/application/prepare_notification_open_use_case_test.dart"
+  # 159 conversation memoize / coalesce / window-cap / cached-DateTime.
+  "test/features/conversation/domain/models/conversation_message_parsed_timestamp_test.dart"
+  "test/features/conversation/presentation/screens/conversation_display_items_memo_test.dart"
+  "test/features/conversation/presentation/screens/conversation_wired_change_coalesce_test.dart"
+  "test/features/conversation/domain/conversation_window_cap_test.dart"
 )
 
 readonly FEED_TESTS=(
@@ -78,6 +83,7 @@ readonly FEED_TESTS=(
   "test/features/feed/application/feed_projection_test.dart"
   "test/features/feed/application/feed_store_test.dart"
   "test/features/feed/application/load_feed_use_case_test.dart"
+  "test/features/feed/application/load_contact_feed_snapshot_use_case_test.dart"
   "test/features/feed/data/feed_cleared_repository_test.dart"
   "test/core/database/migrations/092_feed_cleared_threads_test.dart"
   "test/core/theme/feed_tokens_test.dart"
@@ -97,6 +103,8 @@ readonly FEED_TESTS=(
   "test/l10n/feed_strings_parity_test.dart"
   "test/features/feed/presentation/widgets/feed_shared_widget_survival_test.dart"
   "test/features/feed/presentation/screens/feed_contract_preservation_test.dart"
+  # 156 QW-3: reduce-motion gating on the default ambient surface.
+  "test/features/identity/presentation/widgets/ambient_background_test.dart"
 )
 
 readonly INTRO_TESTS=(
@@ -135,6 +143,11 @@ readonly GROUP_TESTS=(
   "test/features/groups/presentation/group_info_wired_test.dart"
   "test/features/orbit/presentation/screens/orbit_wired_test.dart"
   "test/features/groups/presentation/widgets/pending_group_invite_card_test.dart"
+  # 156 QW-4: group avatar cacheWidth/cacheHeight.
+  "test/features/groups/presentation/widgets/group_avatar_test.dart"
+  # 159 group display-items memo (hoisted to wired State) + window cap.
+  "test/features/groups/presentation/group_display_items_memo_test.dart"
+  "test/features/groups/presentation/group_window_cap_test.dart"
 )
 
 readonly POSTS_TESTS=(

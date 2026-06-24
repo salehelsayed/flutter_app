@@ -9,6 +9,11 @@ class FakeReactionRepository implements ReactionRepository {
   MessageReaction? lastSavedReaction;
   int removeReactionCallCount = 0;
 
+  /// Records the message-id batches passed to [getReactionsForMessages] so
+  /// tests can assert the feed reaction fan-out is bounded to the preview
+  /// window on mount (160 A8).
+  final List<List<String>> getReactionsForMessagesCalls = <List<String>>[];
+
   /// All reactions currently stored.
   List<MessageReaction> get reactions => List.unmodifiable(_reactions);
 
@@ -37,6 +42,7 @@ class FakeReactionRepository implements ReactionRepository {
   @override
   Future<Map<String, List<MessageReaction>>> getReactionsForMessages(
       List<String> messageIds) async {
+    getReactionsForMessagesCalls.add(List<String>.from(messageIds));
     final ids = messageIds.toSet();
     final Map<String, List<MessageReaction>> result = {};
     for (final r in _reactions) {

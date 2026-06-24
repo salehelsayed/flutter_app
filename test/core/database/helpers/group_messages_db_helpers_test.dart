@@ -276,6 +276,178 @@ void main() {
     );
   });
 
+  // 161 db-persistence-5 (QUERY half): the batched preview aggregate that
+  // replaces the per-group `getMessagesPage(limit:200)` loop on feed mount. The
+  // windowed message slice itself is loaded separately (per pending group, in
+  // load_feed_use_case) — these locks cover the AGGREGATE against the real
+  // engine (counts + last_outgoing_at + latest row + cutoff exclusion).
+  group('dbLoadGroupThreadPreviews (161)', () {
+    test(
+      'TC-161-01: returns message_count + unread_count + last_outgoing_at + '
+      'latest row, with sys-member_removed_cutoff EXCLUDED',
+      () async {
+        const base = '2026-01-15T12:0';
+        // 6 read incoming (12:00..12:05)
+        for (var i = 0; i < 6; i++) {
+          await dbInsertGroupMessage(
+            db,
+            makeMessageRow(
+              id: 'm0$i',
+              timestamp: '$base$i:00.000Z',
+              isIncoming: 1,
+              readAt: '$base$i:30.000Z',
+            ),
+          );
+        }
+        // 2 outgoing (12:06, 12:07) — 12:07 is the latest outgoing
+        await dbInsertGroupMessage(
+          db,
+          makeMessageRow(
+            id: 'm06',
+            timestamp: '${base}6:00.000Z',
+            isIncoming: 0,
+            status: 'sent',
+          ),
+        );
+        await dbInsertGroupMessage(
+          db,
+          makeMessageRow(
+            id: 'm07',
+            timestamp: '${base}7:00.000Z',
+            isIncoming: 0,
+            status: 'sent',
+          ),
+        );
+        // 4 unread incoming (12:08..12:11) — m11 is the newest non-cutoff row
+        for (var i = 8; i <= 11; i++) {
+          await dbInsertGroupMessage(
+            db,
+            makeMessageRow(
+              id: 'm$i',
+              timestamp: i < 10 ? '$base$i:00.000Z' : '2026-01-15T12:$i:00.000Z',
+              isIncoming: 1,
+            ),
+          );
+        }
+        // Removal-cutoff sentinel (newest overall, but MUST be excluded)
+        await dbInsertGroupMessage(
+          db,
+          makeMessageRow(
+            id: 'sys-member_removed_cutoff:group-1:peerX:1',
+            timestamp: '2026-01-15T12:20:00.000Z',
+            isIncoming: 1,
+          ),
+        );
+
+        final rows = await dbLoadGroupThreadPreviews(db, ['group-1']);
+        expect(rows, hasLength(1));
+        final row = rows.single;
+        expect(row['group_id'], 'group-1');
+        expect(row['message_count'], 12, reason: 'cutoff row excluded from total');
+        expect(row['unread_count'], 4);
+        expect(row['last_outgoing_at'], '${base}7:00.000Z');
+        // latest = newest non-cutoff row (m11), NEVER the cutoff sentinel.
+        expect(row['latest_id'], 'm11');
+        expect(row['latest_is_incoming'], 1);
+      },
+    );
+
+    test(
+      'TC-161-02: ONE batched query returns a preview row per group '
+      '(no per-group round-trip)',
+      () async {
+        for (final groupId in ['group-1', 'group-2', 'group-3']) {
+          await dbInsertGroupMessage(
+            db,
+            makeMessageRow(
+              id: '$groupId-a',
+              groupId: groupId,
+              timestamp: '2026-01-15T12:00:00.000Z',
+              isIncoming: 1,
+            ),
+          );
+          await dbInsertGroupMessage(
+            db,
+            makeMessageRow(
+              id: '$groupId-b',
+              groupId: groupId,
+              timestamp: '2026-01-15T12:01:00.000Z',
+              isIncoming: 0,
+            ),
+          );
+        }
+
+        final counter = _QueryCountingExecutor(db);
+        final rows = await dbLoadGroupThreadPreviews(counter, [
+          'group-1',
+          'group-2',
+          'group-3',
+        ]);
+
+        expect(rows, hasLength(3));
+        expect(
+          rows.map((r) => r['group_id']).toSet(),
+          {'group-1', 'group-2', 'group-3'},
+        );
+        for (final r in rows) {
+          expect(r['message_count'], 2);
+          expect(r['unread_count'], 1);
+        }
+        // Batched aggregate: a single rawQuery for all 3 groups (a per-group
+        // loop would scale the count with group count).
+        expect(counter.rawQueryCount, 1);
+      },
+    );
+
+    test(
+      'TC-161-12: last_outgoing_at is the newest outgoing timestamp even when '
+      'many newer incoming rows follow it (answered-by-old-outgoing)',
+      () async {
+        // Outgoing first, then a run of newer incoming (all read).
+        await dbInsertGroupMessage(
+          db,
+          makeMessageRow(
+            id: 'out-1',
+            timestamp: '2026-01-15T12:00:00.000Z',
+            isIncoming: 0,
+            status: 'sent',
+          ),
+        );
+        for (var i = 1; i <= 5; i++) {
+          await dbInsertGroupMessage(
+            db,
+            makeMessageRow(
+              id: 'in-$i',
+              timestamp: '2026-01-15T12:0$i:00.000Z',
+              isIncoming: 1,
+              readAt: '2026-01-15T13:00:00.000Z',
+            ),
+          );
+        }
+
+        final rows = await dbLoadGroupThreadPreviews(db, ['group-1']);
+        expect(rows.single['last_outgoing_at'], '2026-01-15T12:00:00.000Z');
+        expect(rows.single['unread_count'], 0);
+      },
+    );
+
+    test('TC-161-01b: latest tie-breaker uses id DESC for equal timestamps',
+        () async {
+      const sharedTimestamp = '2026-01-02T00:00:00.000Z';
+      await dbInsertGroupMessage(
+        db,
+        makeMessageRow(id: 'tie-c', timestamp: sharedTimestamp),
+      );
+      await dbInsertGroupMessage(
+        db,
+        makeMessageRow(id: 'tie-a', timestamp: sharedTimestamp),
+      );
+
+      final rows = await dbLoadGroupThreadPreviews(db, ['group-1']);
+      expect(rows.single['latest_id'], 'tie-c');
+    });
+  });
+
   group('dbLoadGroupMessage', () {
     test('returns null for non-existent message', () async {
       final result = await dbLoadGroupMessage(db, 'non-existent');
@@ -447,4 +619,29 @@ void main() {
       expect(remaining.map((row) => row['id']), ['msg-other']);
     });
   });
+}
+
+/// Counts `rawQuery` calls and forwards everything else to a real executor, so
+/// TC-161-02 can prove the batched preview aggregate is ONE query for N groups
+/// (a per-group internal loop would scale the count).
+class _QueryCountingExecutor implements DatabaseExecutor {
+  _QueryCountingExecutor(this._inner);
+
+  final DatabaseExecutor _inner;
+  int rawQueryCount = 0;
+
+  @override
+  Future<List<Map<String, Object?>>> rawQuery(
+    String sql, [
+    List<Object?>? arguments,
+  ]) {
+    rawQueryCount++;
+    return _inner.rawQuery(sql, arguments);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError(
+        'unexpected ${invocation.memberName} on counting executor',
+      );
 }

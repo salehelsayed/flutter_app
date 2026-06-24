@@ -213,6 +213,17 @@ class ConversationMessage {
 
   bool get isHidden => hiddenAt != null;
 
+  /// The [timestamp] parsed to a [DateTime], or null when the stored string is
+  /// not valid ISO-8601 (fail-safe, matching the run-grouping/sort fallbacks at
+  /// conversation_screen.dart and conversation_wired.dart).
+  ///
+  /// 159: a const-safe, transient, derived getter — NOT a DB column, NOT part
+  /// of [==]/[hashCode] (id-only) nor [toMap]/[fromMap]. The `const` constructor
+  /// plus all-`final` fields forbid a non-final instance cache, and the grouping
+  /// memo (159 sub-change 2) already collapses re-parsing to once-per-recompute,
+  /// so a plain non-cached getter is sufficient (no `Expando` needed yet).
+  DateTime? get parsedTimestamp => DateTime.tryParse(timestamp);
+
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) return true;

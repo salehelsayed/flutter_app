@@ -880,6 +880,99 @@ void main() {
       expect(summaries.single['latest_deleted_by_peer_id'], 'peer-a');
       expect(summaries.single['latest_hidden_at'], isNull);
     });
+
+    // TC-160-17(a): the new last_outgoing_at aggregate is the MAX timestamp of
+    // a non-deleted, non-hidden OUTGOING row — even when it is far older than
+    // the newest incoming (so the feed can derive hasReply/state from the
+    // summary instead of a windowed message scan).
+    test('exposes last_outgoing_at as the newest non-deleted outgoing', () async {
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'out-old',
+          contactPeerId: 'peer-a',
+          text: 'my old reply',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          isIncoming: 0,
+        ),
+      );
+      for (var i = 0; i < 9; i++) {
+        await dbInsertMessage(
+          db,
+          makeMessageRow(
+            id: 'in-$i',
+            contactPeerId: 'peer-a',
+            text: 'incoming $i',
+            timestamp: '2026-01-02T00:0$i:00.000Z',
+            isIncoming: 1,
+          ),
+        );
+      }
+
+      final summaries = await dbLoadConversationThreadSummaries(db, ['peer-a']);
+      expect(summaries.single['last_outgoing_at'], '2026-01-01T00:00:00.000Z');
+    });
+
+    test('last_outgoing_at is null when there is no outgoing row', () async {
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'in-only',
+          contactPeerId: 'peer-a',
+          text: 'incoming',
+          timestamp: '2026-01-02T00:00:00.000Z',
+          isIncoming: 1,
+        ),
+      );
+
+      final summaries = await dbLoadConversationThreadSummaries(db, ['peer-a']);
+      expect(summaries.single['last_outgoing_at'], isNull);
+    });
+
+    // TC-160-17(c): tombstone reconciliation — message_count excludes BOTH the
+    // hidden row AND the soft-deleted (deleted_at) row, matching the feed
+    // getters' visible-non-deleted view so totalMessageCount-1 == additionalCount.
+    test('message_count excludes soft-deleted (deleted_at) rows', () async {
+      for (var i = 0; i < 3; i++) {
+        await dbInsertMessage(
+          db,
+          makeMessageRow(
+            id: 'visible-$i',
+            contactPeerId: 'peer-a',
+            text: 'visible $i',
+            timestamp: '2026-01-01T00:0$i:00.000Z',
+            isIncoming: 1,
+          ),
+        );
+      }
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'soft-deleted',
+          contactPeerId: 'peer-a',
+          text: '',
+          timestamp: '2026-01-01T00:05:00.000Z',
+          isIncoming: 1,
+          deletedAt: '2026-01-01T00:06:00.000Z',
+          deletedByPeerId: 'peer-a',
+        ),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'hidden',
+          contactPeerId: 'peer-a',
+          text: '',
+          timestamp: '2026-01-01T00:07:00.000Z',
+          isIncoming: 1,
+          hiddenAt: '2026-01-01T00:08:00.000Z',
+        ),
+      );
+
+      final summaries = await dbLoadConversationThreadSummaries(db, ['peer-a']);
+      expect(summaries.single['message_count'], 3);
+      expect(summaries.single['unread_count'], 3);
+    });
   });
 
   group('dbDeleteMessagesForContact', () {

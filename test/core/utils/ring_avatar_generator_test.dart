@@ -218,4 +218,83 @@ void main() {
       );
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // 156 QW-7: value equality + memoization (avoid needless re-raster)
+  // ---------------------------------------------------------------------------
+  group('RingAvatarData value-equality (156 QW-7)', () {
+    RingData ring() => const RingData(
+          radius: 40,
+          strokeWidth: 3,
+          color: Color(0xFF112233),
+          opacity: 0.9,
+          rotationDegrees: 120,
+          isDashed: true,
+          dashLength: 6,
+          dashGap: 3,
+        );
+    GlowData glow() => const GlowData(
+          color: Color(0xFFAABBCC),
+          outerRadius: 50,
+          middleRadius: 30,
+          innerRadius: 10,
+        );
+
+    test('field-identical RingAvatarData from independent literals are equal',
+        () {
+      final a = RingAvatarData(rings: [ring()], glow: glow());
+      final b = RingAvatarData(rings: [ring()], glow: glow());
+
+      expect(identical(a, b), isFalse);
+      expect(a, equals(b));
+      expect(a.hashCode, equals(b.hashCode));
+    });
+
+    test('changing one ring field breaks equality (listEquals, not identity)',
+        () {
+      final a = RingAvatarData(rings: [ring()], glow: glow());
+      final b = RingAvatarData(
+        rings: const [
+          RingData(
+            radius: 41, // changed
+            strokeWidth: 3,
+            color: Color(0xFF112233),
+            opacity: 0.9,
+            rotationDegrees: 120,
+            isDashed: true,
+            dashLength: 6,
+            dashGap: 3,
+          ),
+        ],
+        glow: glow(),
+      );
+
+      expect(a == b, isFalse);
+    });
+
+    test('RingData and GlowData carry value equality', () {
+      expect(ring(), equals(ring()));
+      expect(ring().hashCode, equals(ring().hashCode));
+      expect(glow(), equals(glow()));
+      expect(glow().hashCode, equals(glow().hashCode));
+    });
+  });
+
+  group('RingAvatarGenerator.generate memoization (156 QW-7)', () {
+    test('returns the identical cached instance for equal (peerId, size)', () {
+      final r1 = RingAvatarGenerator.generate('peerX_memo', 80.0);
+      final r2 = RingAvatarGenerator.generate('peerX_memo', 80.0);
+
+      expect(identical(r1, r2), isTrue);
+    });
+
+    test('cache key includes BOTH peerId and size', () {
+      final r1 = RingAvatarGenerator.generate('peerX_memo2', 80.0);
+      final differentPeer = RingAvatarGenerator.generate('peerY_memo2', 80.0);
+      final differentSize = RingAvatarGenerator.generate('peerX_memo2', 64.0);
+
+      expect(identical(r1, differentPeer), isFalse);
+      expect(identical(r1, differentSize), isFalse);
+    });
+  });
 }

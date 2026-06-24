@@ -5,8 +5,10 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import '../models/group_message.dart';
 import '../models/group_message_receipt.dart';
 import '../models/group_multi_device_policy.dart';
+import '../models/group_thread_preview.dart';
 import '../models/group_thread_summary.dart';
 import '../utils/group_message_ordering.dart';
+import 'group_thread_preview_repository.dart';
 import 'group_thread_summary_repository.dart';
 import 'group_message_repository.dart';
 
@@ -25,6 +27,7 @@ class GroupMessageRepositoryImpl
     implements
         GroupMessageRepository,
         GroupThreadSummaryRepository,
+        GroupThreadPreviewRepository,
         GroupMembershipRepairDeletionRepository,
         GroupOutgoingLocalMessageChangeSource {
   final Future<void> Function(Map<String, Object?> row) dbInsertGroupMessage;
@@ -64,6 +67,12 @@ class GroupMessageRepositoryImpl
   final Future<int> Function(String groupId) dbDeleteGroupMessagesForGroup;
   final Future<List<Map<String, Object?>>> Function(List<String> groupIds)
   dbLoadGroupThreadSummaries;
+  // 161 db-persistence-5 (QUERY half): the batched preview aggregate (counts +
+  // last_outgoing_at + latest row). NULLABLE with a per-id fallback so the
+  // non-main.dart `GroupMessageRepositoryImpl(` callsites (tests / integration
+  // harnesses) keep compiling untouched (round-3 F6).
+  final Future<List<Map<String, Object?>>> Function(List<String> groupIds)?
+  dbLoadGroupThreadPreviewsFn;
   final Future<List<Map<String, dynamic>>> Function()?
   dbLoadFailedOutgoingGroupMessagesFn;
   final Future<List<Map<String, dynamic>>> Function()?
@@ -115,6 +124,7 @@ class GroupMessageRepositoryImpl
     required this.dbExistsGroupMessageByContent,
     required this.dbDeleteGroupMessagesForGroup,
     required this.dbLoadGroupThreadSummaries,
+    this.dbLoadGroupThreadPreviewsFn,
     this.dbLoadFailedOutgoingGroupMessagesFn,
     this.dbLoadRetryableOutgoingGroupMessagesFn,
     this.dbRecoverStuckSendingGroupMessagesFn,
@@ -539,6 +549,73 @@ class GroupMessageRepositoryImpl
       );
     }
     return summaries;
+  }
+
+  @override
+  Future<GroupThreadPreview> getGroupThreadPreview(String groupId) async {
+    final previews = await getGroupThreadPreviews([groupId]);
+    return previews[groupId] ?? GroupThreadPreview(groupId: groupId);
+  }
+
+  @override
+  Future<Map<String, GroupThreadPreview>> getGroupThreadPreviews(
+    Iterable<String> groupIds,
+  ) async {
+    final ids = groupIds.toSet().toList(growable: false);
+    if (ids.isEmpty) return const <String, GroupThreadPreview>{};
+
+    final previewFn = dbLoadGroupThreadPreviewsFn;
+    final previews = <String, GroupThreadPreview>{};
+    if (previewFn != null) {
+      final rows = await previewFn(ids);
+      for (final row in rows) {
+        final id = row['group_id'] as String;
+        final lastOutgoingRaw = row['last_outgoing_at'] as String?;
+        previews[id] = GroupThreadPreview(
+          groupId: id,
+          messageCount: row['message_count'] as int? ?? 0,
+          unreadCount: row['unread_count'] as int? ?? 0,
+          lastOutgoingAt: lastOutgoingRaw == null
+              ? null
+              : DateTime.tryParse(lastOutgoingRaw),
+          latestMessage: row['latest_id'] == null
+              ? null
+              : GroupMessage.fromMap({
+                  'id': row['latest_id'],
+                  'group_id': row['latest_group_id'],
+                  'sender_peer_id': row['latest_sender_peer_id'],
+                  'transport_peer_id': row['latest_transport_peer_id'],
+                  'sender_username': row['latest_sender_username'],
+                  'text': row['latest_text'],
+                  'timestamp': row['latest_timestamp'],
+                  'quoted_message_id': row['latest_quoted_message_id'],
+                  'key_generation': row['latest_key_generation'],
+                  'status': row['latest_status'],
+                  'is_incoming': row['latest_is_incoming'],
+                  'read_at': row['latest_read_at'],
+                  'created_at': row['latest_created_at'],
+                }),
+        );
+      }
+    } else {
+      // Fallback for impls constructed without the batched helper: per-id
+      // counts + latest (no last_outgoing_at) via the always-present helpers.
+      for (final id in ids) {
+        final latestRow = await dbLoadLatestGroupMessage(id);
+        previews[id] = GroupThreadPreview(
+          groupId: id,
+          messageCount: await dbCountGroupMessages(id),
+          unreadCount: await dbCountUnreadGroupMessages(id),
+          latestMessage: latestRow == null
+              ? null
+              : GroupMessage.fromMap(latestRow),
+        );
+      }
+    }
+    for (final id in ids) {
+      previews.putIfAbsent(id, () => GroupThreadPreview(groupId: id));
+    }
+    return previews;
   }
 
   @override

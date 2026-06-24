@@ -112,6 +112,11 @@ class UserAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 156 QW-4: decode the avatar at its on-screen pixel size instead of full
+    // resolution. Avatars render into tiny circles, so a full-res decode wastes
+    // memory and main-isolate time.
+    final cacheSize = (size * MediaQuery.devicePixelRatioOf(context)).round();
+
     // Priority 1: In-memory bytes (user's own avatar, pre-loaded by wired layer)
     if (avatarBytes != null) {
       return _wrapWithGlow(
@@ -122,6 +127,9 @@ class UserAvatar extends StatelessWidget {
             fit: BoxFit.cover,
             width: size,
             height: size,
+            // Avatar bytes are jpg/png (no GIF), so resize unconditionally.
+            cacheWidth: cacheSize,
+            cacheHeight: cacheSize,
             errorBuilder: _errorBuilder,
           ),
         ),
@@ -148,6 +156,12 @@ class UserAvatar extends StatelessWidget {
                 width: size,
                 height: size,
                 gaplessPlayback: false,
+                // 156 QW-4: decode at display size; .gif is exempt because
+                // ResizeImage collapses an animated GIF to its first frame.
+                cacheWidth:
+                    realPath.toLowerCase().endsWith('.gif') ? null : cacheSize,
+                cacheHeight:
+                    realPath.toLowerCase().endsWith('.gif') ? null : cacheSize,
                 errorBuilder: _errorBuilder,
               ),
             ),

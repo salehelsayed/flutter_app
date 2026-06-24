@@ -987,4 +987,229 @@ void main() {
       expect(msg.senderPeerId, isNull);
     });
   });
+
+  group('160 windowed-preview derivations', () {
+    ThreadMessage unread_(String id, DateTime ts) => ThreadMessage(
+      id: id,
+      text: id,
+      time: '3:00 PM',
+      timestamp: ts,
+      isUnread: true,
+      isIncoming: true,
+    );
+
+    test(
+      'TC-160-03: hasEarlierHistory / hasEarlierInteractionHistory derive from '
+      'totalMessageCount, surviving the preview cap',
+      () {
+        // A windowed preview: only the newest K=8 unread are loaded, but the
+        // thread truly holds 40 messages.
+        final windowed = ThreadFeedItem(
+          id: 'thread_peer1',
+          timestamp: DateTime(2026, 2, 9, 15, 8),
+          contactPeerId: 'peer1',
+          contactUsername: 'Alice',
+          messages: [
+            for (var i = 0; i < 8; i++)
+              unread_('m$i', DateTime(2026, 2, 9, 15, i)),
+          ],
+          unreadCount: 40,
+          conversationState: ConversationState.unread,
+          totalMessageCount: 40,
+        );
+
+        expect(windowed.hasEarlierHistory, isTrue);
+        expect(windowed.hasEarlierInteractionHistory, isTrue);
+
+        // Not capped (total == messages.length): behaviour unchanged — an
+        // all-unread non-windowed thread has no earlier history.
+        final notWindowed = ThreadFeedItem(
+          id: 'thread_peer2',
+          timestamp: DateTime(2026, 2, 9, 15, 1),
+          contactPeerId: 'peer2',
+          contactUsername: 'Bob',
+          messages: [
+            unread_('n0', DateTime(2026, 2, 9, 15, 0)),
+            unread_('n1', DateTime(2026, 2, 9, 15, 1)),
+          ],
+          unreadCount: 2,
+          conversationState: ConversationState.unread,
+        );
+        expect(notWindowed.hasEarlierHistory, isFalse);
+        expect(notWindowed.hasEarlierInteractionHistory, isFalse);
+      },
+    );
+
+    test(
+      'TC-160-17b: hasReply / state / lastRepliedAt survive a window that '
+      'excludes the old outgoing reply',
+      () {
+        final oldOutgoing = DateTime(2026, 2, 8, 9, 0);
+        // The window holds only the newest 9 unread incoming; the answering
+        // outgoing is older and NOT in the slice — but summary.lastOutgoingAt
+        // (→ lastRepliedAt) is set, so hasReply/state still reflect the reply.
+        final item = ThreadFeedItem(
+          id: 'thread_peer1',
+          timestamp: DateTime(2026, 2, 9, 15, 8),
+          contactPeerId: 'peer1',
+          contactUsername: 'Alice',
+          messages: [
+            for (var i = 0; i < 9; i++)
+              unread_('m$i', DateTime(2026, 2, 9, 15, i)),
+          ],
+          unreadCount: 9,
+          conversationState: ConversationState.active,
+          lastRepliedAt: oldOutgoing,
+          totalMessageCount: 10,
+        );
+
+        expect(item.hasReply, isTrue);
+        expect(item.conversationState, ConversationState.active);
+        expect(item.lastRepliedAt, oldOutgoing);
+      },
+    );
+
+    test(
+      'TC-160-20: additionalCount == totalMessageCount - 1 (no tombstone skew)',
+      () {
+        // 4 loaded into the window, but the tombstone-excluded aggregate is 10.
+        final item = ThreadFeedItem(
+          id: 'thread_peer1',
+          timestamp: DateTime(2026, 2, 9, 15, 3),
+          contactPeerId: 'peer1',
+          contactUsername: 'Alice',
+          messages: [
+            for (var i = 0; i < 4; i++)
+              unread_('m$i', DateTime(2026, 2, 9, 15, i)),
+          ],
+          unreadCount: 10,
+          conversationState: ConversationState.unread,
+          totalMessageCount: 10,
+        );
+
+        expect(item.totalMessageCount, 10);
+        expect(item.additionalCount, item.totalMessageCount - 1);
+        expect(item.additionalCount, 9);
+      },
+    );
+  });
+
+  group('161 group windowed-preview derivations', () {
+    ThreadMessage gMsg(
+      String id, {
+      bool isUnread = false,
+      bool isIncoming = true,
+      DateTime? ts,
+    }) =>
+        ThreadMessage(
+          id: id,
+          text: id,
+          time: '3:00 PM',
+          timestamp: ts ?? DateTime(2026, 2, 9, 15, 0),
+          isUnread: isUnread,
+          isIncoming: isIncoming,
+        );
+
+    GroupThreadFeedItem groupItem({
+      required List<ThreadMessage> messages,
+      int unreadCount = 0,
+      ConversationState state = ConversationState.read,
+      int? totalMessageCount,
+      DateTime? lastRepliedAt,
+    }) =>
+        GroupThreadFeedItem(
+          id: 'group_thread_g1',
+          timestamp: messages.isEmpty
+              ? DateTime(2026, 2, 9)
+              : messages.last.timestamp,
+          groupId: 'g1',
+          groupName: 'Group',
+          groupType: GroupType.chat,
+          messages: messages,
+          unreadCount: unreadCount,
+          conversationState: state,
+          totalMessageCount: totalMessageCount,
+          lastRepliedAt: lastRepliedAt,
+        );
+
+    test(
+      'TC-161-05: group hasEarlierHistory / hasEarlierInteractionHistory derive '
+      'from totalMessageCount, surviving the windowed preview cap',
+      () {
+        final windowed = groupItem(
+          messages: [
+            for (var i = 0; i < 8; i++)
+              gMsg('m$i', isUnread: true, ts: DateTime(2026, 2, 9, 15, i)),
+          ],
+          unreadCount: 50,
+          state: ConversationState.unread,
+          totalMessageCount: 50,
+        );
+        expect(windowed.hasEarlierHistory, isTrue);
+        expect(windowed.hasEarlierInteractionHistory, isTrue);
+
+        // Small all-unread non-windowed group: no earlier history.
+        final small = groupItem(
+          messages: [
+            gMsg('n0', isUnread: true, ts: DateTime(2026, 2, 9, 15, 0)),
+            gMsg('n1', isUnread: true, ts: DateTime(2026, 2, 9, 15, 1)),
+          ],
+          unreadCount: 2,
+          state: ConversationState.unread,
+        );
+        expect(small.hasEarlierHistory, isFalse);
+        expect(small.hasEarlierInteractionHistory, isFalse);
+      },
+    );
+
+    test(
+      'TC-161-06: windowed group reproduces previewMessages (first 3 unread) + '
+      'recentInteractionMessages + exchangePreview for a > 3-unread thread',
+      () {
+        // unread run of 5 + 2 earlier read-context rows; totalMessageCount > window.
+        final messages = <ThreadMessage>[
+          gMsg('r0', ts: DateTime(2026, 2, 9, 15, 0)),
+          gMsg('r1', ts: DateTime(2026, 2, 9, 15, 1)),
+          for (var i = 0; i < 5; i++)
+            gMsg('u$i', isUnread: true, ts: DateTime(2026, 2, 9, 15, 2 + i)),
+        ];
+        final item = groupItem(
+          messages: messages,
+          unreadCount: 5,
+          state: ConversationState.unread,
+          totalMessageCount: 30,
+        );
+
+        expect(item.previewMessages.length, CardThreadFeedItem.maxPreview);
+        expect(item.previewMessages.map((m) => m.id), ['u0', 'u1', 'u2']);
+        expect(item.recentInteractionMessages.first.id, 'u0');
+        expect(item.exchangePreview.map((m) => m.id), ['u3', 'u4']);
+      },
+    );
+
+    test(
+      'TC-161-05b: group hasReply / hasSentMessage survive a window that '
+      'EXCLUDES the old outgoing reply (lastRepliedAt from the summary)',
+      () {
+        final oldReply = DateTime(2026, 2, 8, 9, 0);
+        // Window holds only the newest unread incoming; the answering outgoing
+        // is older and off the slice, but lastRepliedAt (summary.lastOutgoingAt)
+        // is set so hasReply / hasSentMessage still reflect it.
+        final item = groupItem(
+          messages: [
+            for (var i = 0; i < 6; i++)
+              gMsg('u$i', isUnread: true, ts: DateTime(2026, 2, 9, 15, i)),
+          ],
+          unreadCount: 6,
+          state: ConversationState.active,
+          lastRepliedAt: oldReply,
+          totalMessageCount: 12,
+        );
+
+        expect(item.hasReply, isTrue);
+        expect(item.hasSentMessage, isTrue);
+        expect(item.lastRepliedAt, oldReply);
+      },
+    );
+  });
 }

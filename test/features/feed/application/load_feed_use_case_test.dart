@@ -10,7 +10,9 @@ import 'package:flutter_app/features/account_migration/domain/models/migration_f
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_thread_summary.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/conversation_thread_summary_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/feed/application/load_feed_use_case.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
@@ -75,27 +77,77 @@ class FakeContactRepository implements ContactRepository {
 }
 
 // -- Fake Message Repository --
-class FakeMessageRepository implements MessageRepository {
+//
+// 160: implements ConversationThreadSummaryRepository so the production cast in
+// loadContactFeedItems resolves HERE (not the per-id fallback), and exposes spy
+// counters so TC-160-01/14 can prove the feed mount uses the batched summary +
+// bounded windowed pages and NEVER the unbounded per-contact full load.
+class FakeMessageRepository
+    implements MessageRepository, ConversationThreadSummaryRepository {
   final Map<String, List<ConversationMessage>> messagesByContact;
 
   FakeMessageRepository({this.messagesByContact = const {}});
+
+  int getMessagesForContactCallCount = 0;
+  int getConversationThreadSummariesCallCount = 0;
+  final List<(String, int)> getMessagesPageCalls = <(String, int)>[];
+
+  List<ConversationMessage> _visible(String contactPeerId) =>
+      (messagesByContact[contactPeerId] ?? const <ConversationMessage>[])
+          .where((m) => !m.isHidden)
+          .toList();
+
+  ConversationThreadSummary _summaryFor(String contactPeerId) {
+    final all = _visible(contactPeerId);
+    final notDeleted = all.where((m) => !m.isDeleted).toList();
+    DateTime? lastOutgoingAt;
+    for (final m in notDeleted) {
+      if (!m.isIncoming) {
+        final ts = DateTime.tryParse(m.timestamp);
+        if (ts != null &&
+            (lastOutgoingAt == null || ts.isAfter(lastOutgoingAt))) {
+          lastOutgoingAt = ts;
+        }
+      }
+    }
+    final sorted = all.toList()
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return ConversationThreadSummary(
+      contactPeerId: contactPeerId,
+      messageCount: notDeleted.length,
+      unreadCount: notDeleted
+          .where((m) => m.isIncoming && m.readAt == null)
+          .length,
+      lastOutgoingAt: lastOutgoingAt,
+      latestMessage: sorted.isEmpty ? null : sorted.first,
+    );
+  }
+
+  @override
+  Future<ConversationThreadSummary> getConversationThreadSummary(
+    String contactPeerId,
+  ) async => _summaryFor(contactPeerId);
+
+  @override
+  Future<Map<String, ConversationThreadSummary>> getConversationThreadSummaries(
+    Iterable<String> contactPeerIds,
+  ) async {
+    getConversationThreadSummariesCallCount++;
+    return {
+      for (final id in contactPeerIds.toSet()) id: _summaryFor(id),
+    };
+  }
 
   @override
   Future<List<ConversationMessage>> getMessagesForContact(
     String contactPeerId,
   ) async {
+    getMessagesForContactCallCount++;
     return messagesByContact[contactPeerId] ?? [];
   }
 
   @override
   Future<void> saveMessage(ConversationMessage message) async {}
-
-  @override
-  Future<ConversationMessage?> getLatestMessageForContact(
-    String contactPeerId,
-  ) async {
-    return null;
-  }
 
   @override
   Future<void> updateMessageStatus(String id, String status) async {}
@@ -122,13 +174,7 @@ class FakeMessageRepository implements MessageRepository {
   ) async => false;
 
   @override
-  Future<int> getMessageCountForContact(String contactPeerId) async => 0;
-
-  @override
   Future<int> markConversationAsRead(String contactPeerId) async => 0;
-
-  @override
-  Future<int> getUnreadCountForContact(String contactPeerId) async => 0;
 
   @override
   Future<int> getTotalUnreadCount() async => 0;
@@ -147,7 +193,30 @@ class FakeMessageRepository implements MessageRepository {
     String contactPeerId, {
     int limit = 50,
     String? beforeTimestamp,
-  }) async => [];
+  }) async {
+    getMessagesPageCalls.add((contactPeerId, limit));
+    var msgs = _visible(contactPeerId);
+    if (beforeTimestamp != null) {
+      msgs = msgs
+          .where((m) => m.timestamp.compareTo(beforeTimestamp) < 0)
+          .toList();
+    }
+    msgs.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return msgs.take(limit).toList().reversed.toList();
+  }
+
+  @override
+  Future<int> getMessageCountForContact(String contactPeerId) async =>
+      _summaryFor(contactPeerId).messageCount;
+
+  @override
+  Future<int> getUnreadCountForContact(String contactPeerId) async =>
+      _summaryFor(contactPeerId).unreadCount;
+
+  @override
+  Future<ConversationMessage?> getLatestMessageForContact(
+    String contactPeerId,
+  ) async => _summaryFor(contactPeerId).latestMessage;
 
   @override
   Future<List<ConversationMessage>> getFailedOutgoingMessages() async => [];
@@ -399,6 +468,359 @@ void main() {
       expect(alice.contactUsername, 'Alice');
       expect(alice.isBlocked, isFalse);
     });
+  });
+
+  group('160 contact-feed N+1 → batched summary + bounded window', () {
+    List<ConversationMessage> seed_(
+      String peerId,
+      int count, {
+      int unread = 0,
+      bool withReply = false,
+    }) {
+      final base = DateTime.utc(2026, 3, 1, 8);
+      final msgs = <ConversationMessage>[];
+      for (var i = 0; i < count; i++) {
+        final ts = base.add(Duration(minutes: i)).toIso8601String();
+        // Newest `unread` incoming are unread; the rest are read.
+        final isUnread = i >= count - unread;
+        msgs.add(
+          _makeMessage(
+            id: '$peerId-m$i',
+            contactPeerId: peerId,
+            senderPeerId: peerId,
+            text: 'msg $i',
+            timestamp: ts,
+            isIncoming: true,
+            readAt: isUnread ? null : ts,
+          ),
+        );
+      }
+      if (withReply) {
+        msgs.add(
+          _makeMessage(
+            id: '$peerId-reply',
+            contactPeerId: peerId,
+            senderPeerId: 'my-peer',
+            text: 'my reply',
+            timestamp: base.subtract(const Duration(minutes: 1)).toIso8601String(),
+            isIncoming: false,
+          ),
+        );
+      }
+      return msgs;
+    }
+
+    test(
+      'TC-160-01: contact feed preview uses batched summary, never the '
+      'unbounded per-contact loop',
+      () async {
+        final contacts = [
+          _makeContact('peer-A', 'Alice', '2026-02-09T10:00:00.000Z'),
+          _makeContact('peer-B', 'Bob', '2026-02-09T11:00:00.000Z'),
+          _makeContact('peer-C', 'Carol', '2026-02-09T12:00:00.000Z'),
+        ];
+        // Each thread is deep (40) and pending (has unread) so all 3 load a
+        // window.
+        final repo = FakeMessageRepository(
+          messagesByContact: {
+            'peer-A': seed_('peer-A', 40, unread: 5),
+            'peer-B': seed_('peer-B', 40, unread: 5),
+            'peer-C': seed_('peer-C', 40, unread: 5),
+          },
+        );
+
+        await loadContactFeedItems(
+          contactRepo: FakeContactRepository(contacts: contacts),
+          messageRepo: repo,
+        );
+
+        expect(repo.getMessagesForContactCallCount, 0);
+        expect(repo.getConversationThreadSummariesCallCount, 1);
+        expect(repo.getMessagesPageCalls, hasLength(3));
+        for (final call in repo.getMessagesPageCalls) {
+          expect(call.$2, greaterThan(1)); // never limit-1, never unbounded/null
+        }
+      },
+    );
+
+    test(
+      'TC-160-02: preview-row correctness preserved under the summary path',
+      () async {
+        // peer-A: deep history, some unread + a reply → active.
+        // peer-B: deep history, unread only → unread.
+        final contacts = [
+          _makeContact('peer-A', 'Alice', '2026-02-09T10:00:00.000Z'),
+          _makeContact('peer-B', 'Bob', '2026-02-09T11:00:00.000Z'),
+        ];
+        final repo = FakeMessageRepository(
+          messagesByContact: {
+            'peer-A': seed_('peer-A', 30, unread: 4, withReply: true),
+            'peer-B': seed_('peer-B', 30, unread: 6),
+          },
+        );
+
+        final items = await loadContactFeedItems(
+          contactRepo: FakeContactRepository(contacts: contacts),
+          messageRepo: repo,
+        );
+        final threads = {
+          for (final t in items.whereType<ThreadFeedItem>()) t.contactPeerId: t,
+        };
+
+        expect(threads['peer-A']!.unreadCount, 4);
+        expect(threads['peer-A']!.conversationState, ConversationState.active);
+        expect(threads['peer-A']!.hasReply, isTrue);
+        expect(threads['peer-B']!.unreadCount, 6);
+        expect(threads['peer-B']!.conversationState, ConversationState.unread);
+      },
+    );
+
+    test(
+      'TC-160-14: an all-read contact (summary unreadCount==0) loads ZERO '
+      'messages on mount',
+      () async {
+        final contacts = [
+          _makeContact('peer-pending', 'Pat', '2026-02-09T10:00:00.000Z'),
+          _makeContact('peer-allread', 'Reed', '2026-02-09T11:00:00.000Z'),
+        ];
+        final repo = FakeMessageRepository(
+          messagesByContact: {
+            'peer-pending': seed_('peer-pending', 12, unread: 3),
+            // Fully read deep history.
+            'peer-allread': seed_('peer-allread', 25, unread: 0),
+          },
+        );
+
+        await loadContactFeedItems(
+          contactRepo: FakeContactRepository(contacts: contacts),
+          messageRepo: repo,
+        );
+
+        final pendingCalls = repo.getMessagesPageCalls
+            .where((c) => c.$1 == 'peer-pending')
+            .length;
+        final allReadCalls = repo.getMessagesPageCalls
+            .where((c) => c.$1 == 'peer-allread')
+            .length;
+        expect(allReadCalls, 0); // all-read → zero message reads
+        expect(pendingCalls, 1); // pending → exactly one bounded page
+        expect(repo.getMessagesForContactCallCount, 0);
+      },
+    );
+
+    test(
+      'TC-160-16: card unreadCount comes from summary.unreadCount, not a window '
+      're-scan',
+      () async {
+        // 30 unread; the loaded window covers them, but the count must be the
+        // summary value regardless of window slicing.
+        final contacts = [
+          _makeContact('peer-A', 'Alice', '2026-02-09T10:00:00.000Z'),
+        ];
+        final repo = FakeMessageRepository(
+          messagesByContact: {'peer-A': seed_('peer-A', 30, unread: 30)},
+        );
+
+        final items = await loadContactFeedItems(
+          contactRepo: FakeContactRepository(contacts: contacts),
+          messageRepo: repo,
+        );
+        final thread = items.whereType<ThreadFeedItem>().single;
+        expect(thread.unreadCount, 30);
+        expect(thread.totalMessageCount, 30);
+      },
+    );
+  });
+
+  group('161 group-feed batched preview + bounded window', () {
+    // Seeds a group with `readIncoming` read incoming, `unreadIncoming` unread
+    // incoming (the newest run), and optionally one OUTGOING reply at the very
+    // OLDEST slot (so a newest-first unread-run window EXCLUDES it — the
+    // off-window-reply state trap).
+    Future<void> seedGroup(
+      InMemoryGroupRepository groupRepo,
+      InMemoryGroupMessageRepository groupMsgRepo,
+      String groupId, {
+      int readIncoming = 0,
+      int unreadIncoming = 0,
+      bool oldOutgoingReply = false,
+    }) async {
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: groupId,
+          name: 'Group $groupId',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/$groupId',
+          createdAt: DateTime(2026, 2, 1),
+          createdBy: 'admin',
+          myRole: GroupRole.member,
+        ),
+      );
+      final base = DateTime.utc(2026, 3, 1, 8);
+      var minute = 0;
+      if (oldOutgoingReply) {
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: '$groupId-oldreply',
+            groupId: groupId,
+            senderPeerId: 'me',
+            text: 'old reply',
+            timestamp: base.add(Duration(minutes: minute)),
+            createdAt: base.add(Duration(minutes: minute)),
+            isIncoming: false,
+            status: 'sent',
+          ),
+        );
+        minute++;
+      }
+      for (var i = 0; i < readIncoming; i++) {
+        final ts = base.add(Duration(minutes: minute++));
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: '$groupId-r$i',
+            groupId: groupId,
+            senderPeerId: 'p1',
+            text: 'read $i',
+            timestamp: ts,
+            createdAt: ts,
+            isIncoming: true,
+            readAt: ts,
+          ),
+        );
+      }
+      for (var i = 0; i < unreadIncoming; i++) {
+        final ts = base.add(Duration(minutes: minute++));
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: '$groupId-u$i',
+            groupId: groupId,
+            senderPeerId: 'p1',
+            text: 'unread $i',
+            timestamp: ts,
+            createdAt: ts,
+            isIncoming: true,
+          ),
+        );
+      }
+    }
+
+    test(
+      'TC-161-03: collapsed group feed batches via getGroupThreadPreviews + a '
+      'bounded per-pending window, never the unbounded limit:200 loop',
+      () async {
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+        // 3 deep pending groups (unread > 0, history >> window).
+        await seedGroup(groupRepo, groupMsgRepo, 'g1',
+            readIncoming: 35, unreadIncoming: 5);
+        await seedGroup(groupRepo, groupMsgRepo, 'g2',
+            readIncoming: 35, unreadIncoming: 5);
+        await seedGroup(groupRepo, groupMsgRepo, 'g3',
+            readIncoming: 35, unreadIncoming: 5);
+
+        final items = await loadGroupFeedItems(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+        );
+
+        // ONE batched summary call for all groups.
+        expect(groupMsgRepo.getGroupThreadPreviewsCallCount, 1);
+        // One BOUNDED window per pending group (mirrors 160 TC-160-01): never
+        // the unbounded limit:200 full-page load, never limit-1.
+        expect(groupMsgRepo.getMessagesPageCallLog, hasLength(3));
+        for (final call in groupMsgRepo.getMessagesPageCallLog) {
+          expect(call.$2, greaterThanOrEqualTo(5)); // covers the unread run
+          expect(call.$2, lessThan(200)); // bounded, not the full page
+        }
+        expect(items, hasLength(3));
+      },
+    );
+
+    test(
+      'TC-161-04: unreadCount + ConversationState come from the summary, not the '
+      'truncated window (off-window old reply still classifies active)',
+      () async {
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+        // g-active: deep read history + an OLD outgoing reply at the oldest slot
+        // (OUTSIDE the newest unread-run window) + a newest unread run → active
+        // ONLY if hasSent is sourced from the summary, not the window.
+        await seedGroup(groupRepo, groupMsgRepo, 'g-active',
+            readIncoming: 30, unreadIncoming: 4, oldOutgoingReply: true);
+        // g-unread: deep history, unread only, no outgoing → unread.
+        await seedGroup(groupRepo, groupMsgRepo, 'g-unread',
+            readIncoming: 30, unreadIncoming: 6);
+
+        final items = await loadGroupFeedItems(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+        );
+        final byId = {for (final i in items) i.groupId: i};
+
+        expect(byId['g-active']!.unreadCount, 4);
+        expect(
+          byId['g-active']!.conversationState,
+          ConversationState.active,
+          reason: 'old outgoing reply is off-window; state must use the summary',
+        );
+        expect(byId['g-unread']!.unreadCount, 6);
+        expect(byId['g-unread']!.conversationState, ConversationState.unread);
+      },
+    );
+
+    test(
+      'TC-161-11: an all-read group loads ZERO windowed messages (pending '
+      'filter); only the pending group loads a bounded window',
+      () async {
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+        await seedGroup(groupRepo, groupMsgRepo, 'g-pending',
+            readIncoming: 8, unreadIncoming: 3);
+        // Fully-read deep history, no unread.
+        await seedGroup(groupRepo, groupMsgRepo, 'g-allread',
+            readIncoming: 20, unreadIncoming: 0);
+
+        await loadGroupFeedItems(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+        );
+
+        final pendingCalls = groupMsgRepo.getMessagesPageCallLog
+            .where((c) => c.$1 == 'g-pending')
+            .length;
+        final allReadCalls = groupMsgRepo.getMessagesPageCallLog
+            .where((c) => c.$1 == 'g-allread')
+            .length;
+        expect(allReadCalls, 0); // all-read → zero message reads
+        expect(pendingCalls, 1); // pending → exactly one bounded page
+      },
+    );
+
+    test(
+      'TC-161-10: a group with > maxPreview unread loads its full unread run '
+      '(window sized to unread + context, not a fixed K)',
+      () async {
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+        await seedGroup(groupRepo, groupMsgRepo, 'g-many',
+            readIncoming: 0, unreadIncoming: 20);
+
+        final items = await loadGroupFeedItems(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+        );
+
+        final item = items.single;
+        expect(item.unreadCount, 20);
+        // The full unread run is loaded into the window (uncapped group letter
+        // renders every unread line; a fixed K=8 would truncate this to 8).
+        expect(
+          item.unreadMessages.length,
+          20,
+          reason: 'window must cover the whole unread run, never a fixed K',
+        );
+      },
+    );
   });
 
   group('loadFeed with group messages', () {

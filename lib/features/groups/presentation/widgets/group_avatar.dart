@@ -90,6 +90,9 @@ class _GroupAvatarState extends State<GroupAvatar> {
         widget.cacheBustKey == null || widget.cacheBustKey!.isEmpty
         ? 'group-avatar-image-${widget.groupId}-memory'
         : 'group-avatar-image-${widget.groupId}-memory-${widget.cacheBustKey}';
+    // 156 QW-4: decode at the on-screen pixel size, not full resolution.
+    final cacheSize =
+        (widget.size * MediaQuery.devicePixelRatioOf(context)).round();
 
     return Container(
       width: widget.size,
@@ -108,6 +111,9 @@ class _GroupAvatarState extends State<GroupAvatar> {
             fit: BoxFit.cover,
             width: widget.size,
             height: widget.size,
+            // Group avatar bytes are jpg/png (no GIF) — resize unconditionally.
+            cacheWidth: cacheSize,
+            cacheHeight: cacheSize,
             errorBuilder: _errorBuilder,
           ),
           (_, final String path) => Image.file(
@@ -116,6 +122,11 @@ class _GroupAvatarState extends State<GroupAvatar> {
             fit: BoxFit.cover,
             width: widget.size,
             height: widget.size,
+            // .gif is exempt: ResizeImage collapses an animated GIF to frame 1.
+            cacheWidth:
+                path.toLowerCase().endsWith('.gif') ? null : cacheSize,
+            cacheHeight:
+                path.toLowerCase().endsWith('.gif') ? null : cacheSize,
             errorBuilder: _errorBuilder,
           ),
           _ => _buildFallback(readableColors),

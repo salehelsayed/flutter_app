@@ -43,6 +43,15 @@ class ConnectionFeedItem extends FeedItem {
   final String? introducedBy;
   final String? introducedByPeerId;
 
+  /// True when this contact already has conversation history
+  /// (`summary.messageCount > 0`), even if no [ThreadFeedItem] was materialized
+  /// for them on this mount (160 A1 pending-filter loads ZERO messages for
+  /// all-read contacts). The pending projection suppresses the "new connection"
+  /// letter for any contact with history, so an all-read contact does not
+  /// resurface as a brand-new connection (160 A5 / TC-160-21). Defaults to
+  /// false so a genuinely-new contact (no history) still shows its letter.
+  final bool hasConversationHistory;
+
   const ConnectionFeedItem({
     required super.id,
     required super.timestamp,
@@ -53,10 +62,14 @@ class ConnectionFeedItem extends FeedItem {
     this.connectedVia,
     this.introducedBy,
     this.introducedByPeerId,
+    this.hasConversationHistory = false,
   }) : super(type: FeedItemType.connection);
 
   /// Creates a ConnectionFeedItem from a ContactModel.
-  factory ConnectionFeedItem.fromContact(ContactModel contact) {
+  factory ConnectionFeedItem.fromContact(
+    ContactModel contact, {
+    bool hasConversationHistory = false,
+  }) {
     return ConnectionFeedItem(
       id: 'connection_${contact.peerId}',
       timestamp: DateTime.tryParse(contact.scannedAt) ?? DateTime.now(),
@@ -66,6 +79,7 @@ class ConnectionFeedItem extends FeedItem {
       isBlocked: contact.isBlocked,
       introducedBy: contact.introducedBy,
       introducedByPeerId: contact.introducedByPeerId,
+      hasConversationHistory: hasConversationHistory,
     );
   }
 }
@@ -124,6 +138,13 @@ abstract class CardThreadFeedItem extends FeedItem {
   int get unreadCount;
   ConversationState get conversationState;
 
+  /// Total non-deleted message count for the whole thread, independent of how
+  /// many messages are loaded into [messages]. For a windowed preview this is
+  /// sourced from `summary.messageCount` (160 A3); when no window is in play it
+  /// equals `messages.length`. "View earlier" / `additionalCount` derive from
+  /// this so a capped preview never loses the older-history affordance.
+  int get totalMessageCount;
+
   // Display
   String get displayName;
   String get displayId;
@@ -137,7 +158,12 @@ abstract class CardThreadFeedItem extends FeedItem {
   // Computed getters (shared logic)
   bool get isMultiMessage => messages.length > 1;
   ThreadMessage get latestMessage => messages.last;
-  int get additionalCount => messages.length - 1;
+
+  /// Count of messages beyond the latest, sourced from [totalMessageCount] so a
+  /// windowed preview reports the true "+N earlier" rather than the loaded
+  /// slice size (160 A3/A7). Equals `messages.length - 1` when no window is in
+  /// play (`totalMessageCount` defaults to `messages.length`).
+  int get additionalCount => totalMessageCount - 1;
 
   /// Last 2 messages for exchange preview in collapsed card.
   List<ThreadMessage> get exchangePreview {
@@ -145,8 +171,12 @@ abstract class CardThreadFeedItem extends FeedItem {
     return messages.sublist(messages.length - 2);
   }
 
-  /// Whether the thread contains any sent (outgoing) message.
-  bool get hasReply => messages.any((m) => !m.isIncoming && !m.isDeleted);
+  /// Whether the thread contains any sent (outgoing) message. Honors
+  /// [lastRepliedAt] (sourced from `summary.lastOutgoingAt`, 160 A4) so a window
+  /// that excludes the answering outgoing does not false-negative `hasReply`.
+  bool get hasReply =>
+      lastRepliedAt != null ||
+      messages.any((m) => !m.isIncoming && !m.isDeleted);
 
   /// All unread incoming messages in chronological order.
   List<ThreadMessage> get unreadMessages => messages
@@ -160,8 +190,11 @@ abstract class CardThreadFeedItem extends FeedItem {
     return unread.sublist(0, maxPreview);
   }
 
-  /// True when read messages exist before the first unread.
+  /// True when read messages exist before the first unread. Derives from
+  /// [totalMessageCount] first (160 A7) so a windowed preview that dropped the
+  /// older history still surfaces the "View earlier" affordance.
   bool get hasEarlierHistory {
+    if (totalMessageCount > messages.length) return true;
     final unread = unreadMessages;
     if (unread.isEmpty) return messages.isNotEmpty;
     final firstUnreadIndex = messages.indexOf(unread.first);
@@ -198,6 +231,9 @@ abstract class CardThreadFeedItem extends FeedItem {
   /// collapsed card (used to decide "View earlier messages" link).
   bool get hasEarlierInteractionHistory {
     if (messages.isEmpty) return false;
+    // A windowed preview that dropped older history always has earlier
+    // interaction (160 A7).
+    if (totalMessageCount > messages.length) return true;
     final firstUnreadIndex = messages.indexWhere(
       (m) => m.isUnread && m.isIncoming,
     );
@@ -231,6 +267,10 @@ class ThreadFeedItem extends CardThreadFeedItem {
   @override
   final bool isBlocked;
 
+  /// Explicit total (from `summary.messageCount`) when the [messages] list is a
+  /// windowed preview; null means "no window" → falls back to `messages.length`.
+  final int? _totalMessageCount;
+
   const ThreadFeedItem({
     required super.id,
     required super.timestamp,
@@ -242,7 +282,12 @@ class ThreadFeedItem extends CardThreadFeedItem {
     this.conversationState = ConversationState.read,
     this.lastRepliedAt,
     this.isBlocked = false,
-  }) : super(type: FeedItemType.thread);
+    int? totalMessageCount,
+  }) : _totalMessageCount = totalMessageCount,
+       super(type: FeedItemType.thread);
+
+  @override
+  int get totalMessageCount => _totalMessageCount ?? messages.length;
 
   @override
   String get displayName => contactUsername;
@@ -292,6 +337,18 @@ class GroupThreadFeedItem extends CardThreadFeedItem {
   @override
   final ConversationState conversationState;
 
+  /// Explicit total (from `summary.messageCount`, 161 G3) when [messages] is a
+  /// windowed preview; null means "no window" → falls back to `messages.length`.
+  final int? _totalMessageCount;
+
+  /// Timestamp of the newest outgoing message anywhere in the group (from
+  /// `summary.lastOutgoingAt`, 161 G4), so `hasReply` / `hasSentMessage` /
+  /// `conversationState` stay correct when an old reply sits OFF the loaded
+  /// window. Null when no window is in play (legacy full-list builder) → the
+  /// list scan answers `hasSentMessage`. Unlike 1:1, group sort/divider key on
+  /// the latest-message timestamp, not this, so it is purely a state signal.
+  final DateTime? _lastRepliedAt;
+
   const GroupThreadFeedItem({
     required super.id,
     required super.timestamp,
@@ -305,7 +362,14 @@ class GroupThreadFeedItem extends CardThreadFeedItem {
     required this.messages,
     this.unreadCount = 0,
     this.conversationState = ConversationState.read,
-  }) : super(type: FeedItemType.groupThread);
+    int? totalMessageCount,
+    DateTime? lastRepliedAt,
+  }) : _totalMessageCount = totalMessageCount,
+       _lastRepliedAt = lastRepliedAt,
+       super(type: FeedItemType.groupThread);
+
+  @override
+  int get totalMessageCount => _totalMessageCount ?? messages.length;
 
   @override
   String get displayName => groupName;
@@ -316,7 +380,7 @@ class GroupThreadFeedItem extends CardThreadFeedItem {
   @override
   bool get isBlocked => false;
   @override
-  DateTime? get lastRepliedAt => null;
+  DateTime? get lastRepliedAt => _lastRepliedAt;
   @override
   bool get isUnreadCard => false;
 
@@ -330,6 +394,9 @@ class GroupThreadFeedItem extends CardThreadFeedItem {
       ? 'This group has been dissolved. History stays available, but new messages are disabled.'
       : 'Only admins can send messages in this group';
 
-  /// Whether the thread contains any sent (outgoing) message.
-  bool get hasSentMessage => messages.any((m) => !m.isIncoming);
+  /// Whether the thread contains any sent (outgoing) message. Honors
+  /// [lastRepliedAt] (from `summary.lastOutgoingAt`, 161 G4) so a window that
+  /// excludes the answering outgoing does not false-negative `hasSentMessage`.
+  bool get hasSentMessage =>
+      lastRepliedAt != null || messages.any((m) => !m.isIncoming);
 }

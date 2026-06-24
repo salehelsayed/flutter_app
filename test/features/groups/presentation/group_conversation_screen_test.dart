@@ -27,6 +27,7 @@ import 'package:flutter_app/features/groups/domain/models/group_pending_key_repa
 import 'package:flutter_app/features/groups/presentation/group_backlog_retention_notice.dart';
 import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
@@ -159,9 +160,27 @@ void main() {
     );
   }
 
+  // 158 (critic-2): the group conversation surface suppresses the idle ambient
+  // glow so the always-mounted chrome BackdropFilters become cacheable at rest.
+  testWidgets(
+    'TC-158-05: group conversation passes isChatSurface to AmbientBackground',
+    (tester) async {
+      await tester.pumpWidget(buildTestWidget());
+
+      final ambient = tester.widget<AmbientBackground>(
+        find.byType(AmbientBackground),
+      );
+      expect(ambient.isChatSurface, isTrue);
+    },
+  );
+
   Finder messageRow(String messageId) =>
       find.byKey(ValueKey('grp-msg-$messageId'));
 
+  // 156 QW-1: group bubbles share LetterCard, whose per-bubble BackdropFilter
+  // blur was removed. This finder now asserts the ABSENCE of any per-row blur
+  // (the asserts below are inverted to findsNothing — group parity with the 1:1
+  // bubble).
   Finder rowBackdropFilter(String messageId) => find.descendant(
     of: messageRow(messageId),
     matching: find.byType(BackdropFilter),
@@ -774,7 +793,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(messageRow(parent.id), findsOneWidget);
-      expect(rowBackdropFilter(parent.id), findsOneWidget);
+      expect(rowBackdropFilter(parent.id), findsNothing);
 
       await tester.pumpWidget(
         buildTestWidget(
@@ -797,7 +816,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(messageRow(quoted.id), findsOneWidget);
-      expect(rowBackdropFilter(quoted.id), findsOneWidget);
+      expect(rowBackdropFilter(quoted.id), findsNothing);
 
       await tester.pumpWidget(
         buildTestWidget(messages: [media], onQuoteReply: (_) {}),
@@ -805,7 +824,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(messageRow(media.id), findsOneWidget);
-      expect(rowBackdropFilter(media.id), findsOneWidget);
+      expect(rowBackdropFilter(media.id), findsNothing);
     },
   );
 
@@ -830,7 +849,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(messageRow(message.id), findsOneWidget);
-      expect(rowBackdropFilter(message.id), findsOneWidget);
+      expect(rowBackdropFilter(message.id), findsNothing);
 
       await tester.pumpWidget(
         buildTestWidget(
@@ -862,7 +881,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(messageRow(message.id), findsOneWidget);
-      expect(rowBackdropFilter(message.id), findsOneWidget);
+      expect(rowBackdropFilter(message.id), findsNothing);
     },
   );
 

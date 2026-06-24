@@ -124,6 +124,12 @@ class ConversationScreen extends StatefulWidget {
   static const editModeBannerKey = ValueKey('conversation-edit-mode-banner');
   static const cancelEditKey = ValueKey('conversation-cancel-edit-action');
 
+  /// 159 (TC-159-03/04/03b/03c): a test-only counter incremented once per actual
+  /// `_buildDisplayItems` recompute (NOT per build — the memo serves the cached
+  /// list on an identical-input rebuild). Tests reset it to 0.
+  @visibleForTesting
+  static int debugDisplayItemsBuildCount = 0;
+
   final String contactPeerId;
   final String contactUsername;
   final String connectionDate;
@@ -263,6 +269,22 @@ class _ConversationScreenState extends State<ConversationScreen> {
   bool _wasEmpty = true;
   bool _shouldRequestComposerFocus = false;
 
+  // 159 (main-isolate-blocking-1): memoize the O(N) two-pass run-grouping so an
+  // identical-input rebuild (a status flip elsewhere, a banner toggle, an
+  // unrelated setState) reuses the cached list instead of re-running the whole
+  // pass. The key is list-reference identity (the wired layer reallocates
+  // `widget.messages` on ANY content change — an edit/status flip/insert yields
+  // a new ref, invalidating for free) PLUS the scalars the ref does NOT capture:
+  // `_wasEmpty` (entrance flag), pagination flags, and the locale + today-token
+  // that drive the day-separator labels (`_formatDateLabel` reads both).
+  List<_DisplayItem>? _cachedDisplayItems;
+  List<ConversationMessage>? _cachedMessagesRef;
+  bool? _cachedWasEmpty;
+  bool? _cachedHasMoreOlderMessages;
+  bool? _cachedIsLoadingMore;
+  String? _cachedLocale;
+  String? _cachedTodayToken;
+
   ConversationComposerViewState get _legacyComposerState =>
       ConversationComposerViewState(
         pendingAttachments: widget.pendingAttachments,
@@ -292,6 +314,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
   Widget build(BuildContext context) {
     return AmbientBackground(
       preference: widget.backgroundPreference,
+      isChatSurface: true,
       child: Column(
         children: [
           // Header
@@ -446,6 +469,26 @@ class _ConversationScreenState extends State<ConversationScreen> {
   Widget _buildMessageList() {
     final displayItems = _buildDisplayItems();
 
+    // 156 QW-10 (lists-scrolling-1): build the quoted-parent lookup ONCE per
+    // frame instead of an O(N) `widget.messages.where(...)` scan per visible row.
+    final messagesById = <String, ConversationMessage>{
+      for (final m in widget.messages) m.id: m,
+    };
+
+    // 156 QW-12 (lists-scrolling-3): construct the localized time formatter ONCE
+    // per frame instead of `intl.DateFormat.jm(locale)` + `Localizations.localeOf`
+    // per visible row.
+    final timeFormat = intl.DateFormat.jm(
+      Localizations.localeOf(context).toString(),
+    );
+    String formatTime(String isoTimestamp) {
+      try {
+        return timeFormat.format(DateTime.parse(isoTimestamp).toLocal());
+      } catch (_) {
+        return '';
+      }
+    }
+
     return ListView.builder(
       key: const ValueKey('messages'),
       controller: widget.scrollController,
@@ -495,9 +538,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
             String? quotedText;
             bool isQuoteUnavailable = false;
             if (!message.isDeleted && message.quotedMessageId != null) {
-              final quoted = widget.messages
-                  .where((m) => m.id == message.quotedMessageId)
-                  .firstOrNull;
+              final quoted = messagesById[message.quotedMessageId];
               if (quoted != null) {
                 if (quoted.isDeleted ||
                     (quoted.text.isEmpty && quoted.media.isEmpty)) {
@@ -576,7 +617,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
                 senderPeerId: message.senderPeerId,
                 senderName: message.isIncoming ? widget.contactUsername : 'You',
                 text: displayText,
-                time: _formatTime(message.timestamp),
+                time: formatTime(message.timestamp),
                 isIncoming: message.isIncoming,
                 // 136 Phase 3: render as a side-aligned chat balloon and group
                 // consecutive same-sender messages into one run. 1:1 NEVER
@@ -643,7 +684,9 @@ class _ConversationScreenState extends State<ConversationScreen> {
               ),
             );
 
-            final shouldAnimate = !widget.initialLoadDone || isNew;
+            // 156 QW-11 (lists-scrolling-4): entrance-animate ONLY a genuinely
+            // new (appended) message, not every row on the initial paint.
+            final shouldAnimate = isNew;
             Widget bubble = shouldAnimate
                 ? _AnimatedLetterCard(
                     key: ValueKey(message.id),
@@ -681,7 +724,26 @@ class _ConversationScreenState extends State<ConversationScreen> {
 
   /// Builds display items in forward chronological order, then reverses
   /// for the reversed ListView (index 0 = bottom = newest).
+  ///
+  /// 159: memoized on [_ConversationScreenState]. Recomputes ONLY when a
+  /// run-affecting input changes (the `widget.messages` reference, `_wasEmpty`,
+  /// the pagination flags, the locale, or the day token); otherwise returns the
+  /// cached list instance unchanged.
   List<_DisplayItem> _buildDisplayItems() {
+    final locale = Localizations.localeOf(context).toString();
+    final todayToken = _todayToken();
+    final cached = _cachedDisplayItems;
+    if (cached != null &&
+        identical(widget.messages, _cachedMessagesRef) &&
+        _cachedWasEmpty == _wasEmpty &&
+        _cachedHasMoreOlderMessages == widget.hasMoreOlderMessages &&
+        _cachedIsLoadingMore == widget.isLoadingMore &&
+        _cachedLocale == locale &&
+        _cachedTodayToken == todayToken) {
+      return cached;
+    }
+    ConversationScreen.debugDisplayItemsBuildCount++;
+
     final items = <_DisplayItem>[];
 
     // Top of conversation markers (will appear at scroll-top)
@@ -714,7 +776,10 @@ class _ConversationScreenState extends State<ConversationScreen> {
       }
 
       final isSystemRow = message.transport == 'system';
-      final parsedTs = DateTime.tryParse(message.timestamp);
+      // 159: consume the model-cached parsed DateTime instead of re-parsing the
+      // ISO string on every grouping pass (parse now runs once per memo
+      // recompute, not once per rebuild).
+      final parsedTs = message.parsedTimestamp;
       final isFirstInGroup = messageRunStartsNewRun(
         senderPeerId: message.senderPeerId,
         // Parse failure → null timestamp → helper fails safe to a run break.
@@ -777,7 +842,24 @@ class _ConversationScreenState extends State<ConversationScreen> {
       });
     }
 
-    return items.reversed.toList();
+    final result = items.reversed.toList();
+    _cachedDisplayItems = result;
+    _cachedMessagesRef = widget.messages;
+    _cachedWasEmpty = _wasEmpty;
+    _cachedHasMoreOlderMessages = widget.hasMoreOlderMessages;
+    _cachedIsLoadingMore = widget.isLoadingMore;
+    _cachedLocale = locale;
+    _cachedTodayToken = todayToken;
+    return result;
+  }
+
+  /// 159: a per-day token (`YYYY-M-D`) folded into the grouping memo key so the
+  /// day-separator labels ("Today"/"Yesterday", `_formatDateLabel` reads
+  /// `DateTime.now()`) re-localize correctly on the next rebuild after a midnight
+  /// rollover instead of serving a stale cached label.
+  String _todayToken() {
+    final now = DateTime.now();
+    return '${now.year}-${now.month}-${now.day}';
   }
 
   void _showMessageContextOverlay(
@@ -949,15 +1031,6 @@ class _ConversationScreenState extends State<ConversationScreen> {
     }
   }
 
-  String _formatTime(String isoTimestamp) {
-    try {
-      final date = DateTime.parse(isoTimestamp).toLocal();
-      final locale = Localizations.localeOf(context).toString();
-      return intl.DateFormat.jm(locale).format(date);
-    } catch (_) {
-      return '';
-    }
-  }
 }
 
 class _EditModeBanner extends StatelessWidget {

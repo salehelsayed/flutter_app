@@ -20,6 +20,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/letter_ca
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background_mirrored.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/daylight_lagoon_background.dart';
@@ -114,6 +115,20 @@ void main() {
       ),
     );
   }
+
+  // 158 (critic-2): the 1:1 conversation surface suppresses the idle ambient glow
+  // so the always-mounted chrome BackdropFilters become cacheable at rest.
+  testWidgets(
+    'TC-158-04: 1:1 conversation passes isChatSurface to AmbientBackground',
+    (tester) async {
+      await tester.pumpWidget(buildTestWidget());
+
+      final ambient = tester.widget<AmbientBackground>(
+        find.byType(AmbientBackground),
+      );
+      expect(ambient.isChatSurface, isTrue);
+    },
+  );
 
   ConversationMessage makeMessage({
     String id = 'msg-1',
@@ -2641,6 +2656,99 @@ void main() {
         expect(bottomOf('r2'), greaterThan(10));
         // r3 is the final message → separation gap.
         expect(bottomOf('r3'), greaterThan(10));
+      },
+    );
+  });
+
+  // 156 QW-11 (lists-scrolling-4): entrance animation runs ONLY for a genuinely
+  // new (appended) message, not for every row on the initial paint. The
+  // _AnimatedLetterCard wrapper keys on the bare message id; a non-animated row
+  // keeps only its `msg-<id>` outer key.
+  group('156 QW-11 entrance animation', () {
+    testWidgets(
+      'TC-21: existing (non-new) rows do not entrance-animate on first paint',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(id: 'first-row', text: 'First'),
+              makeMessage(id: 'last-row', text: 'Last'),
+            ],
+            initialLoadDone: false,
+          ),
+        );
+        // Duration pump drains the zero-delay entry-animation timer(s).
+        await tester.pump(const Duration(milliseconds: 500));
+
+        // The non-last row is present...
+        expect(find.byKey(const ValueKey('msg-first-row')), findsOneWidget);
+        // ...but is NOT entrance-animated (no _AnimatedLetterCard, which keys on
+        // the bare message id).
+        expect(find.byKey(const ValueKey('first-row')), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'TC-22: a newly-appended (isNew) message entrance-animates',
+      (tester) async {
+        // Positive control: the last message on the first build (when the list
+        // was empty) is the "new" one and MUST animate.
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(id: 'older-row', text: 'Older'),
+              makeMessage(id: 'newest-row', text: 'Newest'),
+            ],
+            initialLoadDone: true,
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 500));
+
+        expect(find.byKey(const ValueKey('newest-row')), findsOneWidget);
+      },
+    );
+  });
+
+  // 159 TC-159-09b — Accepted Difference: the quoted-parent map is window-only
+  // (no DB fallback), so a reply whose quoted PARENT is beyond the in-memory
+  // window (evicted by the ~300 cap, or simply not loaded) renders
+  // "quote-unavailable". This locks that documented behavior under the cap.
+  group('159 quote into an evicted/absent parent (accepted difference)', () {
+    LetterCard liveLetterCard(WidgetTester tester, String messageId) {
+      return tester.widget<LetterCard>(
+        find.descendant(
+          of: find.byKey(ValueKey('msg-$messageId')),
+          matching: find.byType(LetterCard),
+        ),
+      );
+    }
+
+    testWidgets(
+      'TC-159-09b a reply whose quoted parent is not in the window shows '
+      'quote-unavailable',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              // The reply is present; its quoted parent ('evicted-parent') is
+              // NOT in the list (simulating eviction beyond the window cap).
+              makeMessage(
+                id: 'reply-1',
+                isIncoming: false,
+                text: 'a reply to an old message',
+                quotedMessageId: 'evicted-parent',
+              ),
+            ],
+            initialLoadDone: true,
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 400));
+
+        expect(
+          liveLetterCard(tester, 'reply-1').isQuoteUnavailable,
+          isTrue,
+          reason: 'an evicted/absent quoted parent resolves to quote-unavailable',
+        );
       },
     );
   });

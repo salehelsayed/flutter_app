@@ -462,10 +462,14 @@ class MessageRepositoryImpl
     final summaries = <String, ConversationThreadSummary>{};
     for (final row in rows) {
       final contactPeerId = row['contact_peer_id'] as String;
+      final lastOutgoingAtRaw = row['last_outgoing_at'] as String?;
       summaries[contactPeerId] = ConversationThreadSummary(
         contactPeerId: contactPeerId,
         messageCount: row['message_count'] as int? ?? 0,
         unreadCount: row['unread_count'] as int? ?? 0,
+        lastOutgoingAt: lastOutgoingAtRaw == null
+            ? null
+            : DateTime.tryParse(lastOutgoingAtRaw),
         latestMessage: row['latest_id'] == null
             ? null
             : _rememberMessage(

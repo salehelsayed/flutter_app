@@ -15,6 +15,7 @@ void main() {
   Widget wrapAmbient({
     BackgroundPreference preference = BackgroundPreference.defaultBackground,
     bool isFeedSurface = false,
+    bool chatSurface = false,
     bool disableAnimations = false,
   }) {
     return MaterialApp(
@@ -26,6 +27,7 @@ void main() {
         child: AmbientBackground(
           preference: preference,
           isFeedSurface: isFeedSurface,
+          isChatSurface: chatSurface,
           child: const Text('Content'),
         ),
       ),
@@ -70,6 +72,178 @@ void main() {
       isTrue,
     );
   });
+
+  // ---------------------------------------------------------------------------
+  // 156 QW-2/QW-3: RepaintBoundary isolation + reduce-motion on the DEFAULT
+  // (non-feed) ambient surface.
+  // ---------------------------------------------------------------------------
+  testWidgets(
+    'TC-03: default background wraps the screen child in a RepaintBoundary',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaQuery(
+            data: const MediaQueryData(size: Size(390, 844)),
+            child: AmbientBackground(
+              child: const KeyedSubtree(
+                key: ValueKey('ambient-child'),
+                child: Text('Content'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(
+        find.ancestor(
+          of: find.byKey(const ValueKey('ambient-child')),
+          matching: find.descendant(
+            of: find.byType(AmbientBackground),
+            matching: find.byType(RepaintBoundary),
+          ),
+        ),
+        findsAtLeastNWidgets(1),
+      );
+    },
+  );
+
+  // The glow AnimatedBuilders drive off the ambient AnimationController; other
+  // AnimatedBuilders in the tree (MaterialApp internals) use ValueNotifiers, so
+  // filter the listenables to AnimationController to find the ambient loop.
+  List<AnimationController> ambientControllers(WidgetTester tester) {
+    return tester
+        .widgetList<AnimatedBuilder>(find.byType(AnimatedBuilder))
+        .map((ab) => ab.listenable)
+        .whereType<AnimationController>()
+        .toList();
+  }
+
+  testWidgets('TC-04: default background honors disableAnimations', (
+    tester,
+  ) async {
+    await tester.pumpWidget(wrapAmbient(disableAnimations: true));
+    await tester.pump();
+
+    final controllers = ambientControllers(tester);
+    expect(controllers, isNotEmpty);
+    expect(controllers.first.isAnimating, isFalse);
+  });
+
+  testWidgets('TC-05: default background DOES animate when motion enabled', (
+    tester,
+  ) async {
+    await tester.pumpWidget(wrapAmbient(disableAnimations: false));
+    await tester.pump();
+
+    final controllers = ambientControllers(tester);
+    expect(controllers, isNotEmpty);
+    expect(controllers.first.isAnimating, isTrue);
+  });
+
+  // ---------------------------------------------------------------------------
+  // 158 (critic-2): steady-state idle-glow suppression on chat/group surfaces
+  // for default (motion-on) users, so the always-mounted chrome BackdropFilters
+  // sit in front of a STILL backdrop and become cacheable at rest. Distinct from
+  // the 156 OS reduce-motion gate (additive, not a replacement).
+  // ---------------------------------------------------------------------------
+
+  test('TC-158-00: only the two chat screens opt into isChatSurface', () {
+    int countOptIn(String path) {
+      final source = File(path).readAsStringSync();
+      return 'isChatSurface: true'.allMatches(source).length;
+    }
+
+    // The two chat surfaces must each opt in exactly once.
+    const chatSurfaceFiles = <String>[
+      'lib/features/conversation/presentation/screens/conversation_screen.dart',
+      'lib/features/groups/presentation/screens/group_conversation_screen.dart',
+    ];
+    for (final path in chatSurfaceFiles) {
+      expect(
+        countOptIn(path),
+        1,
+        reason:
+            '$path must opt into chat-surface ambient suppression exactly once',
+      );
+    }
+
+    // None of the other 14 AmbientBackground call sites may opt in (no leakage —
+    // their living glow must keep animating with motion enabled).
+    const nonChatAmbientSurfaceFiles = <String>[
+      'lib/features/account_migration/presentation/screens/account_migration_journey_screen.dart',
+      'lib/features/feed/presentation/screens/feed_screen.dart',
+      'lib/features/groups/presentation/screens/contact_picker_screen.dart',
+      'lib/features/groups/presentation/screens/create_group_picker_screen.dart',
+      'lib/features/groups/presentation/screens/group_info_screen.dart',
+      'lib/features/groups/presentation/screens/group_list_screen.dart',
+      'lib/features/home/presentation/screens/first_time_experience_screen.dart',
+      'lib/features/identity/presentation/screens/identity_choice_screen.dart',
+      'lib/features/introduction/presentation/screens/sent_confirmation_screen.dart',
+      'lib/features/orbit/presentation/screens/orbit_screen.dart',
+      'lib/features/posts/presentation/screens/posts_screen.dart',
+      'lib/features/qr_code/presentation/screens/qr_display_screen.dart',
+      'lib/features/settings/presentation/screens/settings_screen.dart',
+      'lib/features/share/presentation/screens/share_target_picker_screen.dart',
+    ];
+    for (final path in nonChatAmbientSurfaceFiles) {
+      expect(
+        countOptIn(path),
+        0,
+        reason:
+            '$path must NOT opt into chat-surface ambient suppression (leakage)',
+      );
+    }
+  });
+
+  testWidgets(
+    'TC-158-01: chat surface does not animate the glow with motion enabled',
+    (tester) async {
+      await tester.pumpWidget(
+        wrapAmbient(chatSurface: true, disableAnimations: false),
+      );
+      await tester.pump();
+
+      final controllers = ambientControllers(tester);
+      expect(controllers, isNotEmpty);
+      expect(controllers.first.isAnimating, isFalse);
+
+      // A no-op rebuild keeps it static (didUpdateWidget/didChangeDependencies
+      // recompute the suppression from the prop — no latched/persisted state).
+      await tester.pumpWidget(
+        wrapAmbient(chatSurface: true, disableAnimations: false),
+      );
+      await tester.pump();
+      expect(ambientControllers(tester).first.isAnimating, isFalse);
+    },
+  );
+
+  testWidgets(
+    'TC-158-02: non-chat surface still animates with motion enabled',
+    (tester) async {
+      await tester.pumpWidget(
+        wrapAmbient(chatSurface: false, disableAnimations: false),
+      );
+      await tester.pump();
+
+      final controllers = ambientControllers(tester);
+      expect(controllers, isNotEmpty);
+      expect(controllers.first.isAnimating, isTrue);
+    },
+  );
+
+  testWidgets(
+    'TC-158-03: 156 reduce-motion gate still wins on a chat surface',
+    (tester) async {
+      await tester.pumpWidget(
+        wrapAmbient(chatSurface: true, disableAnimations: true),
+      );
+      await tester.pump();
+
+      final controllers = ambientControllers(tester);
+      expect(controllers, isNotEmpty);
+      expect(controllers.first.isAnimating, isFalse);
+    },
+  );
 
   testWidgets('exposes dark readable colors for default descendants', (
     tester,

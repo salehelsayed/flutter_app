@@ -664,11 +664,20 @@ class GroupRepositoryImpl
       return;
     }
 
+    final keyName = sharedGroupPushKeyName(key.groupId, key.keyGeneration);
     try {
-      await store.write(
-        sharedGroupPushKeyName(key.groupId, key.keyGeneration),
-        key.encryptedKey,
-      );
+      // 164 (cold-start-3): presence-diff. A (groupId, keyGeneration) →
+      // encryptedKey mapping is immutable — a key rotation mints a NEW generation
+      // (hence a new name), so a present name already holds the correct
+      // ciphertext. Skipping a redundant write keeps the launch-time backfill
+      // near-zero-cost on a populated store while still mirroring any newly-added
+      // generation. Kept INSIDE the try so a transient Keychain error on
+      // containsKey falls through to the catch — this mirror stays best-effort
+      // (saveKey and the backfill loop must never fail on a push-mirror hiccup).
+      if (await store.containsKey(keyName)) {
+        return;
+      }
+      await store.write(keyName, key.encryptedKey);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -690,11 +699,21 @@ class GroupRepositoryImpl
       return;
     }
 
+    final muteName = sharedGroupMutedKeyName(groupId);
     try {
       if (isMuted) {
-        await store.write(sharedGroupMutedKeyName(groupId), '1');
+        // 164 (cold-start-3): mute is a TOGGLING boolean under one stable name,
+        // so use a VALUE-diff — skip the write when '1' is already stored.
+        if (await store.read(muteName) == '1') {
+          return;
+        }
+        await store.write(muteName, '1');
       } else {
-        await store.delete(sharedGroupMutedKeyName(groupId));
+        // Skip the delete when the projection is already absent.
+        if (!await store.containsKey(muteName)) {
+          return;
+        }
+        await store.delete(muteName);
       }
     } catch (e) {
       emitFlowEvent(

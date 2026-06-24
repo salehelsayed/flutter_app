@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'ring_avatar_spec.dart';
 
@@ -22,6 +23,33 @@ class RingData {
     required this.dashLength,
     required this.dashGap,
   });
+
+  // 156 QW-7: value equality so RingAvatarPainter.shouldRepaint
+  // (oldDelegate.data != data) is false for equal inputs → no needless raster.
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RingData &&
+          other.radius == radius &&
+          other.strokeWidth == strokeWidth &&
+          other.color == color &&
+          other.opacity == opacity &&
+          other.rotationDegrees == rotationDegrees &&
+          other.isDashed == isDashed &&
+          other.dashLength == dashLength &&
+          other.dashGap == dashGap;
+
+  @override
+  int get hashCode => Object.hash(
+        radius,
+        strokeWidth,
+        color,
+        opacity,
+        rotationDegrees,
+        isDashed,
+        dashLength,
+        dashGap,
+      );
 }
 
 /// Data for the center glow effect.
@@ -37,6 +65,20 @@ class GlowData {
     required this.middleRadius,
     required this.innerRadius,
   });
+
+  // 156 QW-7: value equality (see RingData).
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is GlowData &&
+          other.color == color &&
+          other.outerRadius == outerRadius &&
+          other.middleRadius == middleRadius &&
+          other.innerRadius == innerRadius;
+
+  @override
+  int get hashCode =>
+      Object.hash(color, outerRadius, middleRadius, innerRadius);
 }
 
 /// Complete avatar data generated from a peerId.
@@ -48,6 +90,18 @@ class RingAvatarData {
     required this.rings,
     required this.glow,
   });
+
+  // 156 QW-7: deep value equality (listEquals over rings) so the painter does
+  // not re-raster when an identical avatar is regenerated.
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RingAvatarData &&
+          listEquals(other.rings, rings) &&
+          other.glow == glow;
+
+  @override
+  int get hashCode => Object.hash(Object.hashAll(rings), glow);
 }
 
 /// Generator for deterministic ring avatars.
@@ -57,11 +111,29 @@ class RingAvatarData {
 class RingAvatarGenerator {
   RingAvatarGenerator._();
 
+  /// 156 QW-7: bounded LRU memo keyed on (peerId, size). [generate] is pure
+  /// (deterministic from its inputs), so a cached instance can never go stale;
+  /// returning the SAME instance for repeat calls means
+  /// RingAvatarPainter.shouldRepaint stays false across rebuilds. In-memory and
+  /// per-process only (no persistence) — bounded so a churn of distinct peers
+  /// can't leak memory.
+  static const int _cacheCapacity = 256;
+  static final Map<(String, double), RingAvatarData> _cache =
+      <(String, double), RingAvatarData>{};
+
   /// Generate avatar data from a peerId.
   ///
   /// [peerId] - The unique peer identifier string.
   /// [size] - The avatar size in logical pixels.
   static RingAvatarData generate(String peerId, double size) {
+    final key = (peerId, size);
+    final cached = _cache.remove(key);
+    if (cached != null) {
+      // Reinsert as most-recently-used (LinkedHashMap preserves order).
+      _cache[key] = cached;
+      return cached;
+    }
+
     final hash = djb2Hash(peerId);
 
     // Always exactly 4 rings, one for each brand color
@@ -83,7 +155,13 @@ class RingAvatarGenerator {
     // Generate center glow
     final glow = _generateGlow(hash, size);
 
-    return RingAvatarData(rings: rings, glow: glow);
+    final data = RingAvatarData(rings: rings, glow: glow);
+    _cache[key] = data;
+    if (_cache.length > _cacheCapacity) {
+      // Evict the least-recently-used (oldest insertion-order) entry.
+      _cache.remove(_cache.keys.first);
+    }
+    return data;
   }
 
   /// DJB2 hash function - deterministic across all platforms.

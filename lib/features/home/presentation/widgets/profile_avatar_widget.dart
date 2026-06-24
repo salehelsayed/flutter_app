@@ -38,7 +38,7 @@ class ProfileAvatarWidget extends StatelessWidget {
       child: Stack(
         children: [
           // Avatar content
-          _buildAvatar(),
+          _buildAvatar(context),
           // Camera button
           if (onCameraPressed != null) _buildCameraButton(),
         ],
@@ -46,10 +46,10 @@ class ProfileAvatarWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildAvatar() {
+  Widget _buildAvatar(BuildContext context) {
     // Priority 1: User's photo
     if (avatarBytes != null) {
-      return _buildImageAvatar();
+      return _buildImageAvatar(context);
     }
 
     // Priority 2: Ring avatar from peerId
@@ -61,7 +61,10 @@ class ProfileAvatarWidget extends StatelessWidget {
     return _buildPlaceholder();
   }
 
-  Widget _buildImageAvatar() {
+  Widget _buildImageAvatar(BuildContext context) {
+    // 156 QW-4 (images-media-2): decode at display size. Memory-only surface,
+    // avatar bytes are jpg/png (no GIF) — resize unconditionally.
+    final cacheSize = (size * MediaQuery.devicePixelRatioOf(context)).round();
     return Container(
       width: size,
       height: size,
@@ -78,6 +81,8 @@ class ProfileAvatarWidget extends StatelessWidget {
           width: size,
           height: size,
           fit: BoxFit.cover,
+          cacheWidth: cacheSize,
+          cacheHeight: cacheSize,
         ),
       ),
     );

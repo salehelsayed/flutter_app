@@ -13,9 +13,22 @@ import 'package:flutter_app/features/groups/domain/utils/group_message_ordering.
 /// Messages for groups not found in [groups] are silently ignored.
 ///
 /// Sorting: unread/active first (newest-first), then read/replied (newest-first).
+///
+/// When [unreadCounts] / [lastOutgoingAtByGroup] / [totalMessageCounts] carry
+/// an entry for a group (161 db-persistence-5), the thread is treated as a
+/// SUMMARY-BACKED windowed preview: its `unreadCount`, `conversationState`,
+/// `hasSentMessage` / `lastRepliedAt` and `totalMessageCount` come from the
+/// batched [GroupThreadPreview] instead of re-scanning the (windowed) message
+/// list — so a truncated window cannot undercount unread or misclassify state
+/// when an old reply is off the loaded window. Absent entries fall back to the
+/// legacy full-list derivation, so the group SCREEN and existing callers are
+/// unchanged. Mirrors `groupMessagesIntoThreads` (160) for the 1:1 feed.
 List<GroupThreadFeedItem> groupGroupMessagesIntoThreads({
   required List<GroupMessage> allGroupMessages,
   required List<GroupModel> groups,
+  Map<String, int> totalMessageCounts = const {},
+  Map<String, int> unreadCounts = const {},
+  Map<String, DateTime?> lastOutgoingAtByGroup = const {},
 }) {
   if (allGroupMessages.isEmpty || groups.isEmpty) return [];
 
@@ -37,12 +50,28 @@ List<GroupThreadFeedItem> groupGroupMessagesIntoThreads({
     final msgs = orderGroupMessagesForTimeline(entry.value);
     final group = groupMap[groupId]!;
 
-    // Derive conversation state from ALL messages for this group
-    final hasUnreadIncoming = msgs.any((m) => m.isIncoming && m.readAt == null);
-    final hasSentMessages = msgs.any((m) => !m.isIncoming);
-    final unreadIncomingCount = msgs
-        .where((m) => m.isIncoming && m.readAt == null)
-        .length;
+    // 161 G3/G4: a summary-backed group derives counts + has-outgoing from the
+    // batched GroupThreadPreview so a windowed slice cannot undercount unread or
+    // false-negative hasSentMessage when the answering outgoing is off-window.
+    // Absent → legacy full-list derivation.
+    final bool summaryBacked = unreadCounts.containsKey(groupId);
+
+    final bool hasUnreadIncoming;
+    final bool hasSentMessages;
+    final int unreadIncomingCount;
+    DateTime? lastRepliedAt;
+    if (summaryBacked) {
+      unreadIncomingCount = unreadCounts[groupId] ?? 0;
+      hasUnreadIncoming = unreadIncomingCount > 0;
+      lastRepliedAt = lastOutgoingAtByGroup[groupId];
+      hasSentMessages = lastRepliedAt != null;
+    } else {
+      hasUnreadIncoming = msgs.any((m) => m.isIncoming && m.readAt == null);
+      hasSentMessages = msgs.any((m) => !m.isIncoming);
+      unreadIncomingCount = msgs
+          .where((m) => m.isIncoming && m.readAt == null)
+          .length;
+    }
 
     final ConversationState state;
     if (hasUnreadIncoming && hasSentMessages) {
@@ -90,6 +119,8 @@ List<GroupThreadFeedItem> groupGroupMessagesIntoThreads({
       messages: threadMessages,
       unreadCount: unreadIncomingCount,
       conversationState: state,
+      totalMessageCount: totalMessageCounts[groupId],
+      lastRepliedAt: lastRepliedAt,
     );
 
     if (state == ConversationState.unread ||

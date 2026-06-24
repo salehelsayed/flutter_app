@@ -12548,5 +12548,159 @@ void main() {
         },
       );
     });
+
+    // 159 sub-change 3 + 4 + folded media gate — group coalesce, scroll/read
+    // side-effect preservation, and the media-resolve gate.
+    group('159 group coalesce + media gate', () {
+    // TC-159-08 — a burst of M group stream events applies ONE batched reorder
+    // and all M messages (including the trailing one) render.
+    testWidgets(
+      'TC-159-08 group M-event burst → ONE batched reorder, all ids incl trailing',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(makeMessage(id: 'seed', text: 'Seed'));
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester);
+        expect(find.text('Seed'), findsOneWidget);
+
+        const burst = 8;
+        GroupConversationWired.debugReorderInvocationCount = 0;
+        for (var i = 0; i < burst; i++) {
+          final msg = makeMessage(
+            id: 'burst-$i',
+            text: 'burst-$i',
+            timestamp: DateTime.utc(2026, 2, 9, 15, 40 + i),
+          );
+          await msgRepo.saveMessage(msg);
+          messageStreamController.add(msg);
+        }
+        await pumpFrames(tester, count: 20);
+
+        expect(
+          GroupConversationWired.debugReorderInvocationCount,
+          1,
+          reason: 'the burst must collapse into ONE batched reorder',
+        );
+        for (var i = 0; i < burst; i++) {
+          expect(find.text('burst-$i'), findsOneWidget);
+        }
+        // Trailing-edge flush: the last message of the burst is present.
+        expect(find.text('burst-${burst - 1}'), findsOneWidget);
+      },
+    );
+
+    // TC-159-08b — a coalesced group burst preserves a scrolled-up offset (one
+    // capture before / one restore after) and marks read once-per-flush.
+    testWidgets(
+      'TC-159-08b coalesced group burst restores scroll offset once + marks read',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        for (var i = 0; i < 30; i++) {
+          await msgRepo.saveMessage(
+            makeMessage(
+              id: 'hist-$i',
+              text: 'history message number $i',
+              timestamp: DateTime.utc(2026, 2, 9, 10, i),
+            ),
+          );
+        }
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester);
+
+        final controller = tester
+            .widget<GroupConversationScreen>(
+              find.byType(GroupConversationScreen),
+            )
+            .scrollController!;
+        // Scroll up (away from the live edge) so preserve-offset is active.
+        controller.jumpTo(120);
+        await tester.pump();
+        expect(controller.position.pixels, 120);
+
+        final readBefore = msgRepo.markAsReadCalls;
+
+        for (var i = 0; i < 6; i++) {
+          final msg = makeMessage(
+            id: 'late-$i',
+            text: 'late arrival $i',
+            timestamp: DateTime.utc(2026, 2, 9, 16, i),
+          );
+          await msgRepo.saveMessage(msg);
+          messageStreamController.add(msg);
+        }
+        await pumpFrames(tester, count: 20);
+
+        // The scrolled-up offset is preserved across the whole batch (not yanked
+        // to the live edge, not drifted by M partial restores).
+        expect(controller.position.pixels, 120);
+        // markAsRead fired exactly once for the whole batch (not N times).
+        expect(
+          msgRepo.markAsReadCalls - readBefore,
+          1,
+          reason: 'markAsRead runs once-per-flush against the post-batch state',
+        );
+      },
+    );
+
+    // TC-159-11 — the media-resolve gate skips the per-message DB attachment read
+    // for an already-shown text/status update, and opens for a new message.
+    testWidgets(
+      'TC-159-11 media-resolve gate skips DB read on an already-shown status update',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(
+          makeMessage(id: 'shown', text: 'Already shown', status: 'sent'),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(group: group, mediaRepo: mediaAttachmentRepo),
+        );
+        await pumpFrames(tester);
+        expect(find.text('Already shown'), findsOneWidget);
+
+        final resolveBefore =
+            mediaAttachmentRepo.getAttachmentsForMessageCalls;
+
+        // A pure status update to the already-shown message (no new attachment).
+        final updated = makeMessage(
+          id: 'shown',
+          text: 'Already shown',
+          status: 'delivered',
+        );
+        await msgRepo.saveMessage(updated);
+        messageStreamController.add(updated);
+        await pumpFrames(tester, count: 20);
+
+        expect(
+          mediaAttachmentRepo.getAttachmentsForMessageCalls,
+          resolveBefore,
+          reason: 'gate must skip the per-message attachment read on a status '
+              'update to an already-shown message',
+        );
+
+        // A NEW message opens the gate (resolve IS called).
+        final fresh = makeMessage(
+          id: 'fresh',
+          text: 'Fresh message',
+          timestamp: DateTime.utc(2026, 2, 9, 16, 0),
+        );
+        await msgRepo.saveMessage(fresh);
+        messageStreamController.add(fresh);
+        await pumpFrames(tester, count: 20);
+
+        expect(
+          mediaAttachmentRepo.getAttachmentsForMessageCalls,
+          resolveBefore + 1,
+          reason: 'gate must OPEN (resolve once) for a genuinely new message',
+        );
+        expect(find.text('Fresh message'), findsOneWidget);
+      },
+    );
+  });
   });
 }
