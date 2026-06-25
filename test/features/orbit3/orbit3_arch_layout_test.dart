@@ -71,6 +71,27 @@ void main() {
     });
   });
 
+  group('orbit3ArchEntranceDelayMs — bottom-up, fast', () {
+    test('rows nearest the circle start first; rows dominate columns', () {
+      expect(orbit3ArchEntranceDelayMs(rowFromBottom: 0, col: 0), 0);
+      // monotonic by row (rowFromBottom 0 = nearest = first)
+      final d0 = orbit3ArchEntranceDelayMs(rowFromBottom: 0, col: 0);
+      final d1 = orbit3ArchEntranceDelayMs(rowFromBottom: 1, col: 0);
+      final d2 = orbit3ArchEntranceDelayMs(rowFromBottom: 2, col: 0);
+      expect(d1, greaterThan(d0));
+      expect(d2, greaterThan(d1));
+      // columns add a small stagger
+      expect(orbit3ArchEntranceDelayMs(rowFromBottom: 0, col: 5),
+          greaterThan(d0));
+      // ROWS dominate: even the last column of a row starts before the next row
+      expect(orbit3ArchEntranceDelayMs(rowFromBottom: 0, col: 10),
+          lessThan(d1));
+      // fast: a dense page (11 rows) still finishes quickly
+      expect(orbit3ArchEntranceDelayMs(rowFromBottom: 11, col: 10),
+          lessThan(800));
+    });
+  });
+
   group('computeOrbit3ArchArcs', () {
     test('splits count into rows of <= 8, preserving the total', () {
       final layout = computeOrbit3ArchArcs(count: 37, width: 360);

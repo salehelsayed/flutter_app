@@ -354,6 +354,146 @@ void main() {
     await tester.pump(const Duration(milliseconds: 2400)); // drain timers
   });
 
+  // Outer-ring radius = the farthest circle avatar centre from the circle box
+  // centre. Avatar SIZE never moves a centre, so this isolates ring SPACING.
+  double ringRadius(WidgetTester tester) {
+    final cc = tester.getCenter(find.byType(Orbit3OneCircle));
+    var maxD = 0.0;
+    for (final e in circleAvatars().evaluate()) {
+      final box = e.renderObject! as RenderBox;
+      final c = box.localToGlobal(box.size.center(Offset.zero));
+      final d = (c - cc).distance;
+      if (d > maxD) maxD = d;
+    }
+    return maxD;
+  }
+
+  double maxCircleAvatarSize(WidgetTester tester) => tester
+      .widgetList<OrbitalAvatar>(circleAvatars())
+      .map((a) => a.size)
+      .reduce((a, b) => a > b ? a : b);
+
+  double archPitch(WidgetTester tester) {
+    final r0 = tester.getCenter(find.byKey(const ValueKey('orbit3-arch-arc-row-0')));
+    final r1 = tester.getCenter(find.byKey(const ValueKey('orbit3-arch-arc-row-1')));
+    return (r0.dy - r1.dy).abs();
+  }
+
+  testWidgets('spacing stepper widens the orbit rings AND the arch row pitch '
+      '(C1)', (tester) async {
+    useShortSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '50');
+    await openArch(tester);
+
+    final d0 = ringRadius(tester);
+    final p0 = archPitch(tester);
+    for (var i = 0; i < 2; i++) {
+      await tester.tap(find.byKey(const ValueKey('orbit3-spacing-inc')));
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+    await tester.pump(const Duration(milliseconds: 2400));
+    expect(ringRadius(tester), greaterThan(d0 + 1),
+        reason: 'spacing-inc widened the orbit rings');
+    expect(archPitch(tester), greaterThan(p0 + 1),
+        reason: 'spacing-inc widened the arch row pitch');
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('spacing stepper does NOT change avatar size; size stepper does '
+      'NOT change ring radius (C1 orthogonality)', (tester) async {
+    useShortSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '50');
+    await openArch(tester);
+
+    final size0 = maxCircleAvatarSize(tester);
+    final r0 = ringRadius(tester);
+    await tester.tap(find.byKey(const ValueKey('orbit3-spacing-inc')));
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.pump(const Duration(milliseconds: 2400));
+    expect(maxCircleAvatarSize(tester), size0,
+        reason: 'spacing does not touch avatar size');
+    expect(ringRadius(tester), greaterThan(r0),
+        reason: 'spacing widened the ring');
+    final r1 = ringRadius(tester);
+    await tester.tap(find.byKey(const ValueKey('orbit3-avatar-size-inc')));
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.pump(const Duration(milliseconds: 2400));
+    expect(maxCircleAvatarSize(tester), greaterThan(size0),
+        reason: 'size stepper grew the avatars');
+    expect((ringRadius(tester) - r1).abs(), lessThan(2.0),
+        reason: 'avatar size does not move ring centres');
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('expanded group members render as OrbitalAvatars and stay adjacent '
+      '(C2)', (tester) async {
+    useShortSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '50');
+    await openArch(tester);
+
+    // 35 friends + 2 groups, all OrbitalAvatars (was 35 + 2 flat glyphs).
+    expect(archAvatars(), findsNWidgets(37));
+    final groupKeys = find.byWidgetPredicate((w) =>
+        w.key is ValueKey &&
+        '${(w.key as ValueKey).value}'.startsWith('orbit3-arch-group-'));
+    expect(groupKeys, findsNWidgets(2));
+    final gc = groupKeys.evaluate().map((e) {
+      final box = e.renderObject! as RenderBox;
+      return box.localToGlobal(box.size.center(Offset.zero));
+    }).toList();
+    // Same arch row (within row height — a row apart would be ~rowHeight) and
+    // ADJACENT (one slot apart, not the same or far apart). The small y delta is
+    // the arc dome curve between neighbouring columns.
+    expect((gc[0].dy - gc[1].dy).abs(), lessThan(25.0),
+        reason: 'the two groups share one arch row');
+    final dx = (gc[0].dx - gc[1].dx).abs();
+    expect(dx, greaterThan(1.0), reason: 'distinct, neighbouring slots');
+    // One slot apart (a sparse last row spreads ~80px/slot); a 2-slot gap (~165)
+    // would mean a friend sits between the groups.
+    expect(dx, lessThan(120.0), reason: 'adjacent (consecutive slots)');
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('opening the arch does NOT re-animate the inner-circle avatars '
+      '(C4)', (tester) async {
+    useShortSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '50');
+    // Open and pump only briefly (NOT a full drain).
+    await tester.tap(archOverflow());
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 60));
+    final tf = tester.widget<Transform>(find
+        .descendant(of: circleAvatars().first, matching: find.byType(Transform))
+        .first);
+    expect(tf.transform.getMaxScaleOnAxis(), greaterThan(0.95),
+        reason: 'inner circle stays full size (no re-entrance) on expand');
+    await tester.pump(const Duration(milliseconds: 2400));
+  });
+
+  testWidgets('100-user population seats 100 and the arch opens + scrolls (C5)',
+      (tester) async {
+    useShortSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '100');
+
+    expect(find.byType(OrbitalAvatar), findsNWidgets(13)); // collapsed circle
+    expect(find.text('+87'), findsOneWidget); // 100 − 13
+
+    await openArch(tester);
+    expect(archAvatars(), findsNWidgets(87)); // all overflow, incl. groups
+    final scrollable = find
+        .descendant(of: archPanel(), matching: find.byType(Scrollable))
+        .first;
+    expect(tester.state<ScrollableState>(scrollable).position.maxScrollExtent,
+        greaterThan(0.0));
+    expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(milliseconds: 3000)); // drain ~100 timers
+  });
+
   testWidgets('open arch shows a collapse button that closes to the circle',
       (tester) async {
     useTallSurface(tester);

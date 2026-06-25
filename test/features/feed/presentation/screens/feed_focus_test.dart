@@ -9,6 +9,8 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
+import 'package:flutter_app/features/feed/presentation/screens/feed_screen.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/caught_up_empty_state.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_composer.dart';
@@ -902,6 +904,71 @@ void main() {
           .where((b) => b.role == LetterBubbleRole.outgoing)
           .toList();
       expect(outgoing.any((b) => b.text == 'optimistic reply'), isTrue);
+    },
+  );
+
+  // Reads the LIVE projected 1:1 thread from the listenable (the `feedItems`
+  // prop is a stale snapshot from the last FeedWired build).
+  ThreadFeedItem threadFor(WidgetTester tester, String peerId) {
+    final feedScreen = tester.widget<FeedScreen>(find.byType(FeedScreen));
+    return feedScreen.feedItemsListenable!.value
+        .whereType<ThreadFeedItem>()
+        .singleWhere((i) => i.contactPeerId == peerId);
+  }
+
+  testWidgets(
+    'TC-160-19: focus hydrates the FULL thread (read history off the mount '
+    'window) and marks nothing read; a contact-update while focused does NOT '
+    'clobber the hydrated thread back to the bounded window',
+    (tester) async {
+      setWideViewport(tester);
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([contact('p1', 'Ann')]);
+      // 30 older READ + 3 newest UNREAD: the mount window is unread-run-sized,
+      // so the oldest read ('p1-r0') is OFF the mount window and only the focus
+      // hydration (a larger page) pulls the full thread in.
+      await seedMixedThread('p1', readCount: 30, unreadCount: 3);
+
+      // A controllable contact-update stream — the reachable "while-focused"
+      // rebuild path (see the clobber note below).
+      final listener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+      );
+
+      await tester.pumpWidget(buildWired(chatMessageListener: listener));
+      await pumpFrames(tester);
+
+      // Mount: the bounded preview window excludes the oldest read history.
+      final mounted = threadFor(tester, 'p1');
+      expect(mounted.messages.length, lessThan(33));
+      expect(mounted.messages.any((m) => m.id == 'p1-r0'), isFalse);
+
+      // Focus hydrates the FULL thread (all 33 incl. the oldest read).
+      await tester.tap(find.text('unread 0'));
+      await pumpFrames(tester);
+      final focused = threadFor(tester, 'p1');
+      expect(focused.messages.length, 33);
+      expect(focused.messages.any((m) => m.id == 'p1-r0'), isTrue);
+      // REG-INV3: focus never marks the conversation read.
+      expect(await messageRepo.getUnreadCountForContact('p1'), 3);
+
+      // No-clobber while focused: a contact update (rename/avatar) rebuilds the
+      // focused card from the IN-MEMORY hydrated messages (feed_wired.dart:1212),
+      // NOT a fresh mount-window snapshot — the full thread survives.
+      //
+      // NOTE: the literal _refreshAllContactsSection clobber guard
+      // (feed_wired.dart:760-765) cannot be reached WHILE focused through public
+      // interaction — its only trigger is orbit-exit route changes, and
+      // switching tabs runs _clearFeedComposerFocus first (nulls _focusedId).
+      // The contact-update rebuild is the reachable embodiment of INV-14.
+      listener.emitContactUpdate(contact('p1', 'Ann Renamed'));
+      await pumpFrames(tester);
+      final afterUpdate = threadFor(tester, 'p1');
+      expect(afterUpdate.messages.length, 33);
+      expect(afterUpdate.messages.any((m) => m.id == 'p1-r0'), isTrue);
+      expect(await messageRepo.getUnreadCountForContact('p1'), 3);
     },
   );
 }

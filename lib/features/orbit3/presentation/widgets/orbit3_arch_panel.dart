@@ -6,6 +6,8 @@ import 'package:flutter_app/features/orbit/presentation/widgets/orbital_avatar.d
 import 'package:flutter_app/features/orbit2/domain/models/orbit2_group.dart';
 import 'package:flutter_app/features/orbit2/domain/models/orbit2_inner_item.dart';
 
+import '../../domain/orbit3_arch_layout.dart';
+
 /// The compact "+N" ARCH chip that rides just above the Orbit3 One Circle once
 /// the population outgrows the two inner orbits. Tapping it opens the
 /// [Orbit3ArchPanel]. Sized to match the top-bar chips (166 R5).
@@ -126,6 +128,9 @@ class Orbit3ArcRow extends StatelessWidget {
   final ValueChanged<OrbitFriend>? onFriendTap;
   final ValueChanged<Orbit2Group>? onGroupTap;
 
+  /// 0 = the row NEAREST the circle (bottom). Drives the bottom-up entrance.
+  final int rowFromBottom;
+
   const Orbit3ArcRow({
     super.key,
     required this.centres,
@@ -136,6 +141,7 @@ class Orbit3ArcRow extends StatelessWidget {
     required this.avatar,
     required this.readable,
     required this.motionEnabled,
+    this.rowFromBottom = 0,
     this.onFriendTap,
     this.onGroupTap,
   });
@@ -146,18 +152,34 @@ class Orbit3ArcRow extends StatelessWidget {
     for (var i = 0; i < rowItems.length && i < centres.length; i++) {
       final it = rowItems[i];
       final p = centres[i];
-      final globalIndex = rowOffset + i;
-      final Widget core = it.isGroup
-          ? _PanelGroupGlyph(size: avatar, readable: readable)
-          : OrbitalAvatar(
-              peerId: it.friend!.peerId,
-              size: avatar,
-              globalIndex: globalIndex,
-              motionEnabled: motionEnabled,
-              borderWidth: 1.0,
-              borderColor: readable.border.withValues(alpha: 0.2),
-              semanticLabel: 'Open chat with ${it.displayName}',
-            );
+      final delayMs =
+          orbit3ArchEntranceDelayMs(rowFromBottom: rowFromBottom, col: i);
+      // Friends AND groups render with the SAME OrbitalAvatar chrome + the
+      // rise-up bottom-up entrance (168 C2/C3); a group's content is a teal
+      // group glyph instead of a peer photo.
+      final Widget core = OrbitalAvatar(
+        key: it.isGroup ? ValueKey('orbit3-arch-group-${it.id}') : null,
+        peerId: it.isGroup ? it.id : it.friend!.peerId,
+        size: avatar,
+        globalIndex: rowOffset + i,
+        motionEnabled: motionEnabled,
+        riseUp: true,
+        entranceDelayMs: delayMs,
+        borderWidth: 1.0,
+        borderColor: it.isGroup
+            ? AppColors.tealAccent.withValues(alpha: 0.9)
+            : readable.border.withValues(alpha: 0.2),
+        semanticLabel:
+            it.isGroup ? it.displayName : 'Open chat with ${it.displayName}',
+        child: it.isGroup
+            ? Container(
+                color: AppColors.tealAccent.withValues(alpha: 0.9),
+                alignment: Alignment.center,
+                child: Icon(Icons.group_rounded,
+                    size: avatar * 0.52, color: Colors.black87),
+              )
+            : null,
+      );
 
       children.add(Positioned(
         // Centre the avatar on its arc point; y is negative at the dome's top.
@@ -181,27 +203,3 @@ class Orbit3ArcRow extends StatelessWidget {
   }
 }
 
-/// A compact teal group disc for the panel (mirrors the One Circle group glyph).
-class _PanelGroupGlyph extends StatelessWidget {
-  final double size;
-  final BackgroundReadableColors readable;
-  const _PanelGroupGlyph({required this.size, required this.readable});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: AppColors.tealAccent.withValues(alpha: 0.9),
-        border: Border.all(
-          color: readable.surfaceBase.withValues(alpha: 0.9),
-          width: 1.2,
-        ),
-      ),
-      alignment: Alignment.center,
-      child: Icon(Icons.group_rounded, size: size * 0.52, color: Colors.black87),
-    );
-  }
-}

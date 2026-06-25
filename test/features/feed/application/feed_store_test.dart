@@ -146,6 +146,53 @@ void main() {
 
   group('FeedStore', () {
     test(
+      'TC-160-04: contactMessageIds is scoped to the preview window on mount '
+      '(bounded reaction fan-out)',
+      () async {
+        // 160 A8: under the batched-summary mount the in-memory thread holds a
+        // bounded preview WINDOW (K ids), while the true history is far larger
+        // (totalMessageCount). The reaction fan-out (`_loadReactionsForFeed`)
+        // reads `FeedStore.contactMessageIds`, so that set MUST reflect the
+        // windowed `messages` (K), NOT the whole decrypted history — otherwise
+        // the bound is defeated and reactions load for every historical id.
+        const windowSize = 8;
+        const totalHistory = 40;
+        final windowed = List.generate(
+          windowSize,
+          (i) => ThreadMessage(
+            id: 'w$i',
+            text: 'w$i',
+            time: '08:0$i',
+            timestamp: DateTime.utc(2026, 3, 1, 8, i),
+            isIncoming: true,
+            isUnread: true,
+          ),
+        );
+        final item = ThreadFeedItem(
+          id: 'thread_peer-A',
+          timestamp: DateTime.utc(2026, 3, 1, 9),
+          contactPeerId: 'peer-A',
+          contactUsername: 'Alice',
+          messages: windowed,
+          unreadCount: windowSize,
+          isUnreadCard: true,
+          conversationState: ConversationState.unread,
+          totalMessageCount: totalHistory, // total >> the loaded window
+        );
+
+        final store = FeedStore()..replaceContacts([item]);
+
+        // The store exposes ONLY the windowed ids, never `totalMessageCount`.
+        expect(store.contactMessageIds.length, windowSize);
+        expect(store.contactMessageIds, containsAll(['w0', 'w7']));
+        // Membership gate intact: windowed ids resolve true, off-window ids
+        // (present in the 40-message history but not loaded) resolve false.
+        expect(store.containsMessageId('w3'), isTrue);
+        expect(store.containsMessageId('w39'), isFalse);
+      },
+    );
+
+    test(
       'replaceContactSnapshot updates one keyed contact while preserving unrelated threads',
       () async {
         contactRepo.seed([

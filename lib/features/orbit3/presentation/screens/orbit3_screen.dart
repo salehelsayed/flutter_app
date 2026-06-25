@@ -65,7 +65,7 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
     with TickerProviderStateMixin {
   // Population milestones: 1 full ring (5), 2 full rings (13), expand-needed (24),
   // many rings (50).
-  static const List<int> _populations = [5, 13, 24, 50];
+  static const List<int> _populations = [5, 13, 24, 50, 100];
 
   int _populationIndex = 2;
   final List<Orbit2InnerItem> _items = [];
@@ -76,6 +76,9 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
   bool _archOpen = false;
   // Live avatar-size multiplier driven by the +/- stepper (Orbit parity = 1.0).
   double _avatarScale = 1.0;
+  // Live SPACING multiplier (separate +/- stepper) — scales orbit-ring radii AND
+  // arch row pitch, independent of avatar size (168 C1). 1.0 = Orbit parity.
+  double _spacingScale = 1.0;
   // Drives the unified expanded scroll — arches + circle in ONE surface (167).
   final ScrollController _archScroll = ScrollController();
   String _searchQuery = '';
@@ -261,6 +264,48 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
         _avatarScale = (_avatarScale - 0.2).clamp(0.6, 1.4).toDouble());
   }
 
+  void _incSpacing() {
+    HapticFeedback.selectionClick();
+    setState(() =>
+        _spacingScale = (_spacingScale + 0.1).clamp(0.7, 1.5).toDouble());
+  }
+
+  void _decSpacing() {
+    HapticFeedback.selectionClick();
+    setState(() =>
+        _spacingScale = (_spacingScale - 0.1).clamp(0.7, 1.5).toDouble());
+  }
+
+  /// The two stacked pinned ＋/－ steppers (spacing above, avatar-size below).
+  Widget _buildSteppers(BackgroundReadableColors readable) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _SizeStepper(
+          readable: readable,
+          headerIcon: Icons.unfold_more_rounded,
+          incKey: const ValueKey('orbit3-spacing-inc'),
+          decKey: const ValueKey('orbit3-spacing-dec'),
+          incLabel: 'More spacing',
+          decLabel: 'Less spacing',
+          onIncrease: _incSpacing,
+          onDecrease: _decSpacing,
+        ),
+        const SizedBox(height: 8),
+        _SizeStepper(
+          readable: readable,
+          headerIcon: Icons.person_rounded,
+          incKey: const ValueKey('orbit3-avatar-size-inc'),
+          decKey: const ValueKey('orbit3-avatar-size-dec'),
+          incLabel: 'Bigger avatars',
+          decLabel: 'Smaller avatars',
+          onIncrease: _incAvatarSize,
+          onDecrease: _decAvatarSize,
+        ),
+      ],
+    );
+  }
+
   void _openFriendChat(OrbitFriend friend) {
     Orbit2MockChatScreen.open(
       context,
@@ -296,7 +341,8 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                   .toDouble();
               final perRow =
                   (width / (base + 6)).floor().clamp(6, 11).toInt();
-              final rowHeight = base + 14.0;
+              // Spacing stepper widens the arch row pitch (168 C1).
+              final rowHeight = base + 14.0 * _spacingScale;
               final dip = (base * 0.32).clamp(7.0, 13.0).toDouble();
               final layout = computeOrbit3ArchArcs(
                 count: overflowItems.length,
@@ -335,6 +381,7 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                               .take(layout.rows[r].length)
                               .toList(),
                           rowOffset: r * perRow,
+                          rowFromBottom: r,
                           width: width,
                           height: rowHeight,
                           avatar: base,
@@ -344,7 +391,7 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                           onGroupTap: _openGroupChat,
                         );
                       }),
-                    const SizedBox(height: 16), // arch → circle gap
+                    SizedBox(height: 16 * _spacingScale), // arch → circle gap
                     Center(
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -355,6 +402,9 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                           cappedRings: kOrbit3CollapsedRings,
                           showOverflowNode: false,
                           avatarScale: _avatarScale,
+                          ringSpacingScale: _spacingScale,
+                          // Keep the inner circle steady on expand (168 C4).
+                          animateEntrance: false,
                           namesVisible: _namesVisible,
                           motionEnabled: motionEnabled,
                           searchQuery: _searchQuery,
@@ -377,11 +427,7 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
         Positioned(
           left: 12,
           bottom: 12,
-          child: _SizeStepper(
-            readable: readable,
-            onIncrease: _incAvatarSize,
-            onDecrease: _decAvatarSize,
-          ),
+          child: _buildSteppers(readable),
         ),
         Positioned(
           right: 12,
@@ -550,6 +596,7 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                                           cappedRings: kOrbit3CollapsedRings,
                                           showOverflowNode: false,
                                           avatarScale: _avatarScale,
+                                          ringSpacingScale: _spacingScale,
                                           namesVisible: _namesVisible,
                                           motionEnabled: motionEnabled,
                                           searchQuery: _searchQuery,
@@ -585,11 +632,7 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                             Positioned(
                               left: 12,
                               bottom: 12,
-                              child: _SizeStepper(
-                                readable: readable,
-                                onIncrease: _incAvatarSize,
-                                onDecrease: _decAvatarSize,
-                              ),
+                              child: _buildSteppers(readable),
                             ),
                             // The ARCH (and, expanded, its arc rows) ride just
                             // above the circle's OUTER RING — close to the inner
@@ -876,17 +919,28 @@ class _ZoomControls extends StatelessWidget {
   }
 }
 
-/// A glassy ＋/－ stack for tuning avatar size live on the One Circle (and its
-/// arch panel) — mirrors [_ZoomControls] so the two surfaces read the same.
+/// A glassy ＋/－ stack for tuning a live parameter on the One Circle (avatar
+/// SIZE or inter-orbit SPACING) — mirrors [_ZoomControls]. A small [headerIcon]
+/// distinguishes the two stacked steppers.
 class _SizeStepper extends StatelessWidget {
   final BackgroundReadableColors readable;
   final VoidCallback onIncrease;
   final VoidCallback onDecrease;
+  final Key incKey;
+  final Key decKey;
+  final String incLabel;
+  final String decLabel;
+  final IconData headerIcon;
 
   const _SizeStepper({
     required this.readable,
     required this.onIncrease,
     required this.onDecrease,
+    required this.incKey,
+    required this.decKey,
+    required this.incLabel,
+    required this.decLabel,
+    required this.headerIcon,
   });
 
   Widget _btn(IconData icon, VoidCallback onTap, String label, Key key) {
@@ -921,19 +975,14 @@ class _SizeStepper extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _btn(
-                Icons.add_rounded,
-                onIncrease,
-                'Bigger avatars',
-                const ValueKey('orbit3-avatar-size-inc'),
+              Padding(
+                padding: const EdgeInsets.only(top: 6, bottom: 3),
+                child: Icon(headerIcon, size: 13, color: readable.iconMuted),
               ),
               Container(height: 1, width: 26, color: readable.glassBorder),
-              _btn(
-                Icons.remove_rounded,
-                onDecrease,
-                'Smaller avatars',
-                const ValueKey('orbit3-avatar-size-dec'),
-              ),
+              _btn(Icons.add_rounded, onIncrease, incLabel, incKey),
+              Container(height: 1, width: 26, color: readable.glassBorder),
+              _btn(Icons.remove_rounded, onDecrease, decLabel, decKey),
             ],
           ),
         ),

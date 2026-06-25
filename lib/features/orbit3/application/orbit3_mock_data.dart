@@ -68,7 +68,9 @@ abstract final class Orbit3MockData {
   /// be worth showing them. The total length is always [count] so the
   /// population control maps 1:1 to seated members.
   static List<Orbit2InnerItem> build({required int count}) {
-    final n = count.clamp(0, _names.length + 2);
+    // Supports up to 100 (168 C5): names beyond the pool get a deterministic
+    // 'User N' so search/glow still works and counts stay exact.
+    final n = count.clamp(0, 100);
     // Show 2 groups only once the circle overflows two rings (>13); the 1-ring
     // and 2-full-ring views stay friends-only.
     final groupCount = n >= 14 ? 2 : 0;
@@ -77,7 +79,11 @@ abstract final class Orbit3MockData {
     final items = <Orbit2InnerItem>[
       for (var i = 0; i < friendCount; i++)
         Orbit2InnerItem.friend(
-          _orbitFriend('friend-$i', _names[i], 200 - i * 3),
+          _orbitFriend(
+            'friend-$i',
+            i < _names.length ? _names[i] : 'User ${i + 1}',
+            200 - i * 3,
+          ),
         ),
       for (final g in _groups().take(groupCount)) Orbit2InnerItem.group(g),
     ];

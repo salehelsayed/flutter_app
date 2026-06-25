@@ -106,4 +106,58 @@ void main() {
     expect(find.text('+37'), findsOneWidget);
     expect(find.byIcon(Icons.people_alt_rounded), findsOneWidget);
   });
+
+  // The painted (Transform-translated) centre of the avatar's bordered Container.
+  Offset coreCentre(WidgetTester t) => t.getCenter(find
+      .descendant(
+          of: find.byType(OrbitalAvatar), matching: find.byType(Container))
+      .first);
+
+  testWidgets('OrbitalAvatar riseUp slides UP during entrance; default does not '
+      '(168 C3)', (t) async {
+    tall(t);
+    await t.pumpWidget(wrap(const OrbitalAvatar(
+      peerId: 'p',
+      size: 40,
+      globalIndex: 0,
+      riseUp: true,
+      entranceDelayMs: 0,
+      motionEnabled: true,
+    )));
+    await t.pump(); // fire the (0ms) delayed forward
+    await t.pump(const Duration(milliseconds: 50)); // mid-entrance
+    final mid = coreCentre(t);
+    await t.pump(const Duration(milliseconds: 400)); // settle
+    final end = coreCentre(t);
+    expect(mid.dy, greaterThan(end.dy + 2),
+        reason: 'riseUp starts below its settled spot and slides up');
+
+    // Control: the classic (riseUp:false) entrance does NOT translate.
+    await t.pumpWidget(wrap(const OrbitalAvatar(
+      peerId: 'p2', size: 40, globalIndex: 0, motionEnabled: true)));
+    await t.pump();
+    await t.pump(const Duration(milliseconds: 50));
+    final cMid = coreCentre(t);
+    await t.pump(const Duration(milliseconds: 600));
+    final cEnd = coreCentre(t);
+    expect((cMid.dy - cEnd.dy).abs(), lessThan(1.0),
+        reason: 'classic entrance is in-place (no vertical slide)');
+  });
+
+  testWidgets('Orbit3OneCircle animateEntrance:false shows avatars full at frame '
+      '1 (168 C4)', (t) async {
+    tall(t);
+    await t.pumpWidget(wrap(Orbit3OneCircle(
+      userPeerId: 'me',
+      items: Orbit3MockData.build(count: 13),
+      animateEntrance: false,
+    )));
+    await t.pump(); // ONE frame, no drain
+    final tf = t.widget<Transform>(find
+        .descendant(
+            of: find.byType(OrbitalAvatar).first, matching: find.byType(Transform))
+        .first);
+    expect(tf.transform.getMaxScaleOnAxis(), greaterThan(0.95),
+        reason: 'animateEntrance:false → no entrance, full size immediately');
+  });
 }

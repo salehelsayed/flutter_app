@@ -1370,6 +1370,103 @@ void main() {
       },
     );
 
+    testWidgets(
+      'TC-160-11: a just-drained (notif) incoming message stays visible as the '
+      'latest message after a bounded refresh — the snapshot caps newest-first, '
+      'not oldest-first (131/141/145 preservation)',
+      (tester) async {
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final base = DateTime.utc(2026, 3, 1, 8);
+        // A deep thread PAST the 50-message snapshot page so the cap DIRECTION
+        // decides which messages survive a bounded refresh: 54 older READ
+        // incoming (m0..m53) + 1 OUTGOING (the bounded-refresh trigger).
+        for (var i = 0; i < 54; i++) {
+          final ts = base.add(Duration(minutes: i)).toIso8601String();
+          await messageRepo.saveMessage(
+            ConversationMessage(
+              id: 'm$i',
+              contactPeerId: 'contact-peer-id',
+              text: 'm$i',
+              senderPeerId: 'contact-peer-id',
+              timestamp: ts,
+              isIncoming: true,
+              status: 'delivered',
+              createdAt: ts,
+              readAt: ts,
+            ),
+          );
+        }
+        final outTs = base.add(const Duration(minutes: 54)).toIso8601String();
+        final outgoing = ConversationMessage(
+          id: 'out-old',
+          contactPeerId: 'contact-peer-id',
+          text: 'my old reply',
+          senderPeerId: 'me-peer',
+          timestamp: outTs,
+          isIncoming: false,
+          status: 'sent',
+          createdAt: outTs,
+        );
+        await messageRepo.saveMessage(outgoing);
+        // The just-drained message: the NEWEST incoming, still UNREAD (as a
+        // relay-inbox drain persists it), so the thread is pending and renders.
+        final drainedTs =
+            base.add(const Duration(minutes: 100)).toIso8601String();
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'drained-newest',
+            contactPeerId: 'contact-peer-id',
+            text: 'drained newest',
+            senderPeerId: 'contact-peer-id',
+            timestamp: drainedTs,
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: drainedTs,
+          ),
+        );
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester);
+
+        // Trigger a BOUNDED refresh: a soft-delete of the OUTGOING message fires
+        // a destructive repo-change (the repo-change listener processes outgoing
+        // edits) → the coalescer escalates to a bounded _refreshContactFeedItem
+        // (loadContactFeedSnapshot → getMessagesPage, pageSize 50), re-deriving
+        // the window newest-first from the repo.
+        messageRepo.resetSpyCounters();
+        await messageRepo.saveMessage(
+          outgoing.copyWith(deletedAt: DateTime.utc(2026, 3, 2).toIso8601String()),
+        );
+        await pumpFeedFrames(tester);
+
+        // The bounded snapshot path ran (never the unbounded full load).
+        expect(messageRepo.getMessagesForContactCallCount, 0);
+        expect(
+          messageRepo.getMessagesPageCalls.where(
+            (c) => c.$1 == 'contact-peer-id',
+          ),
+          isNotEmpty,
+        );
+
+        // Read the LIVE projected thread (the listenable, not the stale prop).
+        final thread = tester
+            .widget<FeedScreen>(find.byType(FeedScreen))
+            .feedItemsListenable!
+            .value
+            .whereType<ThreadFeedItem>()
+            .singleWhere((i) => i.contactPeerId == 'contact-peer-id');
+
+        // Newest-first cap: the just-drained message is the latest rendered, it
+        // survives inside the loaded window, and the OLDEST message was evicted
+        // by the bound. An oldest-first (ASC + limit) cap would invert all three
+        // (drained falls off the window, m0 stays) → RED.
+        expect(thread.latestMessage.id, 'drained-newest');
+        expect(thread.messages.any((m) => m.id == 'drained-newest'), isTrue);
+        expect(thread.messages.every((m) => m.id != 'm0'), isTrue);
+      },
+    );
+
     group('161 group feed batched windowing', () {
       GroupModel grp(String id, String name) => GroupModel(
             id: id,

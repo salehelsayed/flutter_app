@@ -65,6 +65,15 @@ class Orbit3OneCircle extends StatelessWidget {
   /// 1.0 = Orbit parity.
   final double avatarScale;
 
+  /// Multiplies the ORBIT RING radii (and the box) so the live spacing stepper
+  /// can tune inter-orbit spacing independently of avatar size (168 C1). 1.0 =
+  /// Orbit parity (InnerSky/Fisheye keep the default).
+  final double ringSpacingScale;
+
+  /// When false, members appear fully with NO entrance animation — keeps the
+  /// inner circle steady when the Orbit3 arch expands (168 C4). Default true.
+  final bool animateEntrance;
+
   const Orbit3OneCircle({
     super.key,
     required this.userPeerId,
@@ -82,6 +91,8 @@ class Orbit3OneCircle extends StatelessWidget {
     this.onMemberLongPress,
     this.showOverflowNode = true,
     this.avatarScale = 1.0,
+    this.ringSpacingScale = 1.0,
+    this.animateEntrance = true,
   });
 
   Offset _pos(int index, int count, double radius, int ring) {
@@ -103,12 +114,12 @@ class Orbit3OneCircle extends StatelessWidget {
       maxVisibleRings: cappedRings,
     );
     final counts = layout.counts;
-    final radii = layout.radii;
-    // Scale avatars only (NOT the fixed radii) so the +/- stepper grows avatars
-    // on the same circle; the FittedBox above would undo a uniform scale.
+    // Avatar size scales independently of ring spacing; ring radii (and the box)
+    // scale by ringSpacingScale so the spacing stepper widens the orbits (168 C1).
+    final radii = [for (final r in layout.radii) r * ringSpacingScale];
     final avatarSizes = [for (final s in layout.avatarSizes) s * avatarScale];
     final centerSize = layout.centerSize * avatarScale;
-    final box = layout.boxSize;
+    final box = layout.boxSize * ringSpacingScale;
     final c = box / 2;
 
     // The expand/collapse node rides the outermost VISIBLE ring (Orbit2 style),
@@ -147,6 +158,7 @@ class Orbit3OneCircle extends StatelessWidget {
               borderColor: readable.border.withValues(alpha: 0.18),
               semanticLabel: 'Open chat with ${it.displayName}',
               motionEnabled: motionEnabled,
+              animateEntrance: animateEntrance,
             );
 
       Widget avatar = core;

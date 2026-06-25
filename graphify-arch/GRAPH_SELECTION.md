@@ -11,14 +11,14 @@
 ## Metrics
 | Metric | Full | Architecture | Delta |
 | --- | ---: | ---: | ---: |
-| nodes | 103848 | 41830 | -59.72% |
-| edges | 176981 | 65085 | -63.22% |
-| communities | 4380 | 888 | -79.73% |
-| source files | 5463 | 2157 | -60.52% |
-| avg edges per node | 1.7042 | 1.5559 | -8.70% |
-| avg nodes per community | 23.71 | 47.11 | +98.69% |
+| nodes | 103901 | 41853 | -59.72% |
+| edges | 177040 | 65115 | -63.22% |
+| communities | 4408 | 914 | -79.26% |
+| source files | 5465 | 2158 | -60.51% |
+| avg edges per node | 1.7039 | 1.5558 | -8.69% |
+| avg nodes per community | 23.57 | 45.79 | +94.27% |
 | app-owned ratio | 0.4441 | 0.9608 | +116.35% |
-| noise ratio | 0.2104 | 0.0 | -100.00% |
+| noise ratio | 0.2102 | 0.0 | -100.00% |
 | unknown-source ratio | 0.0191 | 0.0392 | +105.24% |
 | top-10 hub noise ratio | 0.5 | 0.0 | -100.00% |
 
@@ -29,7 +29,7 @@ Full graph top hubs:
 - `_` (2064 edges, noise) `integration_test/group_multi_party_device_real_harness.dart`
 - `SQLITE_PRIVATE` (1036 edges, noise) `ios/Pods/SQLCipher/sqlite3.c`
 - `SQLITE_PRIVATE` (1036 edges, noise) `macos/Pods/SQLCipher/sqlite3.c`
-- `package:flutter_test/flutter_test.dart` (1005 edges, signal) ``
+- `package:flutter_test/flutter_test.dart` (1006 edges, signal) ``
 - `app_localizations.dart` (766 edges, signal) `lib/l10n/app_localizations.dart`
 - `app_localizations_ar.dart` (748 edges, signal) `lib/l10n/app_localizations_ar.dart`
 - `app_localizations_de.dart` (748 edges, signal) `lib/l10n/app_localizations_de.dart`
@@ -37,7 +37,7 @@ Full graph top hubs:
 
 Architecture graph top hubs:
 - `group_multi_party_device_real_harness.dart` (2029 edges, signal) `integration_test/group_multi_party_device_real_harness.dart`
-- `package:flutter_test/flutter_test.dart` (1005 edges, signal) ``
+- `package:flutter_test/flutter_test.dart` (1006 edges, signal) ``
 - `group_multi_party_device_criteria.dart` (684 edges, signal) `integration_test/scripts/group_multi_party_device_criteria.dart`
 - `main.dart` (584 edges, signal) `lib/main.dart`
 - `package:flutter/material.dart` (421 edges, signal) ``

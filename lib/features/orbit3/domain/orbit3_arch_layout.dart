@@ -17,6 +17,17 @@ const int kOrbit3ArchPerRow = 8;
 /// multiplier (a touch under the circle's 38 so the rows read as a tighter band).
 const double kOrbit3ArchRowAvatar = 36;
 
+/// Bottom-up entrance delay (ms) for an arch avatar (168 C3): rows NEAREST the
+/// circle (smaller [rowFromBottom]) start FIRST so the expansion reads bottom→up;
+/// columns add a small stagger. Fast — a dense page still finishes quickly.
+int orbit3ArchEntranceDelayMs({
+  required int rowFromBottom,
+  required int col,
+  int rowMs = 60,
+  int colMs = 4, // kept < rowMs/maxPerRow so ROWS dominate (clean bottom-up)
+}) =>
+    rowFromBottom * rowMs + col * colMs;
+
 /// People beyond the two inner orbits — the "+N" the arch displays. Equal by
 /// construction to the hidden count of a 2-ring-capped [computeOrbit3RingLayout]
 /// (so the badge and the seating math can never drift apart).
