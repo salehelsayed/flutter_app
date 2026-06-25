@@ -6,13 +6,6 @@ import 'package:flutter_app/features/orbit/presentation/widgets/orbital_avatar.d
 import 'package:flutter_app/features/orbit2/domain/models/orbit2_group.dart';
 import 'package:flutter_app/features/orbit2/domain/models/orbit2_inner_item.dart';
 
-import '../../domain/orbit3_arch_layout.dart';
-
-/// Comfortable base avatar diameter for an arch-panel member, before the live
-/// [Orbit3ArchPanel.avatarScale] multiplier (a touch under the circle's 38 so
-/// the arc rows read as a tighter band).
-const double _kArchPanelAvatar = 36;
-
 /// The compact "+N" ARCH chip that rides just above the Orbit3 One Circle once
 /// the population outgrows the two inner orbits. Tapping it opens the
 /// [Orbit3ArchPanel]. Sized to match the top-bar chips (166 R5).
@@ -65,105 +58,13 @@ class Orbit3ArchBar extends StatelessWidget {
   }
 }
 
-/// The arch overflow panel: a scroll-up layer of continuous shallow-arc rows of
-/// the overflow members (~8 per arc), with a "MORE" header that closes it.
-///
-/// Visuals-only prototype: members are the inner-circle items beyond the first
-/// [kOrbit3InnerSeats]. Tapping a member opens its (mock) chat.
-class Orbit3ArchPanel extends StatelessWidget {
-  final List<Orbit2InnerItem> items;
-  final double avatarScale;
-  final bool motionEnabled;
-  final VoidCallback onClose;
-  final ValueChanged<OrbitFriend>? onFriendTap;
-  final ValueChanged<Orbit2Group>? onGroupTap;
-
-  const Orbit3ArchPanel({
-    super.key,
-    required this.items,
-    this.avatarScale = 1.0,
-    this.motionEnabled = true,
-    required this.onClose,
-    this.onFriendTap,
-    this.onGroupTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final readable = context.backgroundReadableColors;
-
-    // Transparent on purpose: the arcs float ABOVE the inner circle on the same
-    // starfield, with the circle still visible (and tappable) below.
-    return GestureDetector(
-      key: const ValueKey('orbit3-arch-panel'),
-      behavior: HitTestBehavior.opaque,
-      onTap: onClose, // tap empty space above the circle to dismiss
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final width =
-              constraints.maxWidth.isFinite ? constraints.maxWidth : 360.0;
-          final count = items.length;
-
-          // COMFORTABLE sizing (no compression): a fixed avatar size; perRow
-          // from the width. Only the rows that FIT show; the rest SCROLL — the
-          // band never grows into the circle (166 R1).
-          final base =
-              (_kArchPanelAvatar * avatarScale).clamp(20.0, 60.0).toDouble();
-          final int perRow =
-              (width / (base + 6)).floor().clamp(6, 11).toInt();
-          final rowHeight = base + 14.0;
-          final dip = (base * 0.32).clamp(7.0, 13.0).toDouble();
-
-          final layout = computeOrbit3ArchArcs(
-            count: count,
-            width: width,
-            avatar: base,
-            perRow: perRow,
-            dip: dip,
-          );
-          return Column(
-            children: [
-              _CollapsePill(readable: readable, onTap: onClose),
-              Expanded(
-                // Bottom-anchored, LAZY list: row 0 (nearest the circle) sits at
-                // the bottom; scroll UP for farther rows. Only visible rows build,
-                // so the arcs cap to what fits and the rest scroll into view.
-                child: ListView.builder(
-                  reverse: true,
-                  padding: const EdgeInsets.only(top: 6, bottom: 4),
-                  itemCount: layout.rows.length,
-                  itemBuilder: (context, r) => _ArcRow(
-                    key: ValueKey('orbit3-arch-arc-row-$r'),
-                    centres: layout.rows[r],
-                    rowItems: items
-                        .skip(r * perRow)
-                        .take(layout.rows[r].length)
-                        .toList(),
-                    rowOffset: r * perRow,
-                    width: width,
-                    height: rowHeight,
-                    avatar: base,
-                    readable: readable,
-                    motionEnabled: motionEnabled,
-                    onFriendTap: onFriendTap,
-                    onGroupTap: onGroupTap,
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
-
-/// A small explicit COLLAPSE button at the top of the panel — closes the arcs
-/// back to just the inner circle (166 R4).
-class _CollapsePill extends StatelessWidget {
+/// A small explicit COLLAPSE button — closes the expanded arches back to just
+/// the inner circle (166 R4); pinned as a top-centre overlay by the screen (167).
+class Orbit3ArchCollapsePill extends StatelessWidget {
   final BackgroundReadableColors readable;
   final VoidCallback onTap;
-  const _CollapsePill({required this.readable, required this.onTap});
+  const Orbit3ArchCollapsePill(
+      {super.key, required this.readable, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -213,7 +114,7 @@ class _CollapsePill extends StatelessWidget {
 }
 
 /// One shallow-arc row of overflow members.
-class _ArcRow extends StatelessWidget {
+class Orbit3ArcRow extends StatelessWidget {
   final List<Offset> centres;
   final List<Orbit2InnerItem> rowItems;
   final int rowOffset;
@@ -225,7 +126,7 @@ class _ArcRow extends StatelessWidget {
   final ValueChanged<OrbitFriend>? onFriendTap;
   final ValueChanged<Orbit2Group>? onGroupTap;
 
-  const _ArcRow({
+  const Orbit3ArcRow({
     super.key,
     required this.centres,
     required this.rowItems,

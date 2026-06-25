@@ -76,6 +76,8 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
   bool _archOpen = false;
   // Live avatar-size multiplier driven by the +/- stepper (Orbit parity = 1.0).
   double _avatarScale = 1.0;
+  // Drives the unified expanded scroll — arches + circle in ONE surface (167).
+  final ScrollController _archScroll = ScrollController();
   String _searchQuery = '';
 
   // Which scalability prototype is mounted (classic = shipped behaviour).
@@ -123,6 +125,7 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
     _twinkle.dispose();
     _zoomAnim.dispose();
     _constZoom.dispose();
+    _archScroll.dispose();
     super.dispose();
   }
 
@@ -235,6 +238,15 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
   void _toggleArch() {
     HapticFeedback.selectionClick();
     setState(() => _archOpen = !_archOpen);
+    if (_archOpen) {
+      // Open anchored on the circle (the bottom of the unified scroll); the user
+      // scrolls UP for the farther arches. jumpTo (not animateTo) → motion-safe.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!_archScroll.hasClients) return;
+        final p = _archScroll.position;
+        if (p.maxScrollExtent > 0) _archScroll.jumpTo(p.maxScrollExtent);
+      });
+    }
   }
 
   void _incAvatarSize() {
@@ -262,6 +274,135 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
       context,
       group: group,
       backgroundPreference: widget.backgroundPreference,
+    );
+  }
+
+  /// The OPEN arch state (167): the inner circle AND every arch row in ONE
+  /// continuously-scrollable surface, with pinned collapse / size / search
+  /// controls overlaid. Opened anchored on the circle (see [_toggleArch]).
+  Widget _buildUnifiedArchScroll(
+    BackgroundReadableColors readable,
+    bool motionEnabled,
+  ) {
+    final overflowItems = _items.skip(kOrbit3InnerSeats).toList();
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: LayoutBuilder(
+            builder: (context, c) {
+              final width = c.maxWidth - 24; // matches the Padding(12) inset
+              final base = (kOrbit3ArchRowAvatar * _avatarScale)
+                  .clamp(20.0, 60.0)
+                  .toDouble();
+              final perRow =
+                  (width / (base + 6)).floor().clamp(6, 11).toInt();
+              final rowHeight = base + 14.0;
+              final dip = (base * 0.32).clamp(7.0, 13.0).toDouble();
+              final layout = computeOrbit3ArchArcs(
+                count: overflowItems.length,
+                width: width,
+                avatar: base,
+                perRow: perRow,
+                dip: dip,
+              );
+              return SingleChildScrollView(
+                key: const ValueKey('orbit3-arch-panel'),
+                controller: _archScroll,
+                physics: const ClampingScrollPhysics(),
+                padding: const EdgeInsets.only(top: 48, bottom: 8),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    // Bottom-anchor the content so the circle stays at the
+                    // bottom (open anchored on it) even when it all FITS — not
+                    // just when it overflows (167 review nit).
+                    minHeight:
+                        (c.maxHeight - 56) < 0 ? 0.0 : c.maxHeight - 56,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                    // Arches ABOVE: farthest row first → row 0 is the LAST/lowest
+                    // arch, immediately above the gap + circle.
+                    for (var i = 0; i < layout.rows.length; i++)
+                      Builder(builder: (_) {
+                        final r = layout.rows.length - 1 - i;
+                        return Orbit3ArcRow(
+                          key: ValueKey('orbit3-arch-arc-row-$r'),
+                          centres: layout.rows[r],
+                          rowItems: overflowItems
+                              .skip(r * perRow)
+                              .take(layout.rows[r].length)
+                              .toList(),
+                          rowOffset: r * perRow,
+                          width: width,
+                          height: rowHeight,
+                          avatar: base,
+                          readable: readable,
+                          motionEnabled: motionEnabled,
+                          onFriendTap: _openFriendChat,
+                          onGroupTap: _openGroupChat,
+                        );
+                      }),
+                    const SizedBox(height: 16), // arch → circle gap
+                    Center(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Orbit3OneCircle(
+                          userPeerId: widget.userPeerId,
+                          userAvatarBytes: widget.userAvatarBytes,
+                          items: _items,
+                          cappedRings: kOrbit3CollapsedRings,
+                          showOverflowNode: false,
+                          avatarScale: _avatarScale,
+                          namesVisible: _namesVisible,
+                          motionEnabled: motionEnabled,
+                          searchQuery: _searchQuery,
+                          onToggleNames: _toggleNames,
+                          onFriendTap: _openFriendChat,
+                          onGroupTap: _openGroupChat,
+                        ),
+                      ),
+                    ),
+                    // Trailing room so the circle clears the pinned bottom controls.
+                    const SizedBox(height: 96),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        // Pinned controls — never scroll.
+        Positioned(
+          left: 12,
+          bottom: 12,
+          child: _SizeStepper(
+            readable: readable,
+            onIncrease: _incAvatarSize,
+            onDecrease: _decAvatarSize,
+          ),
+        ),
+        Positioned(
+          right: 12,
+          bottom: 12,
+          child: _Orbit3SearchPill(
+            onChanged: (q) => setState(() => _searchQuery = q),
+          ),
+        ),
+        // Pinned collapse pill — top-centre.
+        Positioned(
+          top: 8,
+          left: 0,
+          right: 0,
+          child: Center(
+            child: Orbit3ArchCollapsePill(
+              readable: readable,
+              onTap: _toggleArch,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -326,6 +467,10 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                         onFriendTap: _openFriendChat,
                         onGroupTap: _openGroupChat,
                       )
+                    : (_viewMode == Orbit3ViewMode.oneCircle &&
+                            _archOpen &&
+                            orbit3ArchOverflowCount(_items.length) > 0)
+                    ? _buildUnifiedArchScroll(readable, motionEnabled)
                     : Stack(
                         children: [
                           Positioned.fill(
@@ -337,14 +482,9 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                               child: AnimatedAlign(
                                 duration: const Duration(milliseconds: 260),
                                 curve: Curves.easeOutCubic,
-                                // When the arch panel is open, glide the inner
-                                // circle DOWN so the arc rows + the circle share
-                                // one screen (no annoying scroll).
-                                alignment: (_viewMode ==
-                                            Orbit3ViewMode.oneCircle &&
-                                        _archOpen)
-                                    ? const Alignment(0, 0.30)
-                                    : Alignment.center,
+                                // The OPEN arch now uses the unified-scroll path;
+                                // this collapsed/constellation path stays centred.
+                                alignment: Alignment.center,
                                 child: _viewMode == Orbit3ViewMode.constellation
                                     ? LayoutBuilder(
                                         builder: (context, constraints) {
@@ -478,7 +618,7 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                                       1.0,
                                     ].reduce((a, b) => a < b ? a : b);
                                     final childH = kOrbit3BaseBox * scale;
-                                    final alignY = _archOpen ? 0.30 : 0.0;
+                                    const alignY = 0.0; // collapsed: centred
                                     final youY = 12 +
                                         (innerH - childH) * (alignY + 1) / 2 +
                                         childH / 2;
@@ -496,29 +636,6 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                                                     _avatarScale /
                                                     2);
                                     final bandBottomY = memberTop - 16;
-                                    if (_archOpen) {
-                                      final h = bandBottomY - 8 < 80
-                                          ? 80.0
-                                          : bandBottomY - 8;
-                                      return Stack(children: [
-                                        Positioned(
-                                          top: 8,
-                                          left: 0,
-                                          right: 0,
-                                          height: h,
-                                          child: Orbit3ArchPanel(
-                                            items: _items
-                                                .skip(kOrbit3InnerSeats)
-                                                .toList(),
-                                            avatarScale: _avatarScale,
-                                            motionEnabled: motionEnabled,
-                                            onClose: _toggleArch,
-                                            onFriendTap: _openFriendChat,
-                                            onGroupTap: _openGroupChat,
-                                          ),
-                                        ),
-                                      ]);
-                                    }
                                     final top = bandBottomY - 38 < 4
                                         ? 4.0
                                         : bandBottomY - 38;

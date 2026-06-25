@@ -4,6 +4,7 @@ import 'package:flutter_app/features/orbit/presentation/widgets/orbital_avatar.d
 import 'package:flutter_app/features/orbit2/presentation/screens/orbit2_mock_chat_screen.dart';
 import 'package:flutter_app/features/orbit3/application/orbit3_mock_data.dart';
 import 'package:flutter_app/features/orbit3/presentation/screens/orbit3_screen.dart';
+import 'package:flutter_app/features/orbit3/presentation/widgets/orbit3_arch_panel.dart';
 import 'package:flutter_app/features/orbit3/presentation/widgets/orbit3_one_circle.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -70,8 +71,10 @@ void main() {
     });
   }
 
-  Finder panelAvatars() =>
-      find.descendant(of: archPanel(), matching: find.byType(OrbitalAvatar));
+  // ARCH avatars only — descendants of the arc rows, NOT the circle (which now
+  // lives inside the same scroll surface under archPanel()).
+  Finder archAvatars() => find.descendant(
+      of: find.byType(Orbit3ArcRow), matching: find.byType(OrbitalAvatar));
   Finder circleAvatars() => find.descendant(
       of: find.byType(Orbit3OneCircle), matching: find.byType(OrbitalAvatar));
 
@@ -187,10 +190,7 @@ void main() {
     expect(find.byKey(const ValueKey('orbit3-arch-arc-row-0')), findsOneWidget);
 
     // Tapping a panel member opens THAT member's chat.
-    final panelAvatar = find.descendant(
-      of: archPanel(),
-      matching: find.byType(OrbitalAvatar),
-    );
+    final panelAvatar = archAvatars();
     expect(panelAvatar, findsWidgets);
     await tester.tap(panelAvatar.first, warnIfMissed: false);
     await tester.pump(const Duration(milliseconds: 350));
@@ -221,12 +221,17 @@ void main() {
     await goTo(tester, '50');
     await openArch(tester);
 
-    expect(panelAvatars(), findsWidgets);
+    expect(archAvatars(), findsWidgets);
     expect(circleAvatars(), findsWidgets);
-    final arcsBottom = maxBottom(panelAvatars());
+    final arcsBottom = maxBottom(archAvatars());
     final circleTop = minTop(circleAvatars());
     expect(arcsBottom, lessThanOrEqualTo(circleTop + 0.5),
         reason: 'arcs bottom $arcsBottom must stay above circle top $circleTop');
+    // Measure the gap against the circle BOX top (not its inset ring avatars) so
+    // deleting the SizedBox(16) spacer is actually detectable (167 review nit).
+    final circleBoxTop = minTop(find.byType(Orbit3OneCircle));
+    expect(circleBoxTop - arcsBottom, inInclusiveRange(12.0, 30.0),
+        reason: 'the arch→circle gap is ~23px (7px row remainder + 16px spacer)');
     await tester.pump(const Duration(seconds: 1));
   });
 
@@ -242,7 +247,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 2400));
     await openArch(tester);
 
-    final arcsBottom = maxBottom(panelAvatars());
+    final arcsBottom = maxBottom(archAvatars());
     final circleTop = minTop(circleAvatars());
     expect(arcsBottom, lessThanOrEqualTo(circleTop + 0.5),
         reason: 'no overlap must hold at avatarScale 1.4');
@@ -273,6 +278,80 @@ void main() {
         tester.getCenter(find.byKey(const ValueKey('orbit3-arch-arc-row-1')));
     expect(r0.dy, greaterThan(r1.dy));
     await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('the inner circle and the arches live in ONE scrollable surface',
+      (tester) async {
+    useShortSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '50');
+    await openArch(tester);
+
+    // Exactly one Scrollable hosts the whole expanded surface.
+    expect(find.descendant(of: archPanel(), matching: find.byType(Scrollable)),
+        findsOneWidget);
+
+    // A circle avatar and an arch avatar resolve to the SAME ScrollableState.
+    final circleSc = tester
+        .element(circleAvatars().first)
+        .findAncestorStateOfType<ScrollableState>();
+    final archSc = tester
+        .element(archAvatars().first)
+        .findAncestorStateOfType<ScrollableState>();
+    expect(circleSc, isNotNull,
+        reason: 'the inner circle must live inside the scroll surface');
+    expect(identical(circleSc, archSc), isTrue,
+        reason: 'circle + arches share ONE scroll surface');
+
+    // Opened anchored at the bottom (on the circle).
+    final pos = circleSc!.position;
+    expect(pos.maxScrollExtent, greaterThan(0.0));
+    expect(pos.pixels, closeTo(pos.maxScrollExtent, 1.0));
+
+    // One drag translates BOTH the circle and the arches together.
+    final beforeCircle = tester.getCenter(circleAvatars().first);
+    final beforeArch = tester.getCenter(archAvatars().first);
+    await tester.drag(find.byKey(const ValueKey('orbit3-arch-arc-row-0')),
+        const Offset(0, 90)); // toward the top — opened anchored at the bottom
+    await tester.pump();
+    final dCircle =
+        tester.getCenter(circleAvatars().first).dy - beforeCircle.dy;
+    final dArch = tester.getCenter(archAvatars().first).dy - beforeArch.dy;
+    expect((dCircle - dArch).abs(), lessThan(1.5),
+        reason: 'circle + arches move together (one surface)');
+    expect(dCircle.abs(), greaterThan(5.0),
+        reason: 'the page actually scrolled');
+    await tester.pump(const Duration(milliseconds: 2400)); // drain entrance timers
+  });
+
+  testWidgets('the pinned controls stay fixed while the surface scrolls',
+      (tester) async {
+    useShortSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '50');
+    await openArch(tester);
+
+    Offset centreOf(String key) =>
+        tester.getCenter(find.byKey(ValueKey(key)));
+    final collapseBefore = centreOf('orbit3-arch-collapse');
+    final stepperBefore = centreOf('orbit3-avatar-size-inc');
+    final circleBefore = tester.getCenter(circleAvatars().first);
+
+    await tester.drag(find.byKey(const ValueKey('orbit3-arch-arc-row-0')),
+        const Offset(0, 90));
+    await tester.pump();
+
+    // The pinned controls do NOT move; the scroll surface (circle) does.
+    expect((centreOf('orbit3-arch-collapse') - collapseBefore).distance,
+        lessThan(1.0),
+        reason: 'collapse pill is pinned, not in the scroll');
+    expect((centreOf('orbit3-avatar-size-inc') - stepperBefore).distance,
+        lessThan(1.0),
+        reason: 'size stepper is pinned, not in the scroll');
+    expect((tester.getCenter(circleAvatars().first).dy - circleBefore.dy).abs(),
+        greaterThan(5.0),
+        reason: 'the circle (inside the scroll) moved');
+    await tester.pump(const Duration(milliseconds: 2400)); // drain timers
   });
 
   testWidgets('open arch shows a collapse button that closes to the circle',

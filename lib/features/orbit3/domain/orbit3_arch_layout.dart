@@ -13,6 +13,10 @@ final int kOrbit3InnerSeats =
 /// Default number of avatars laid on each arch arc row.
 const int kOrbit3ArchPerRow = 8;
 
+/// Comfortable base avatar diameter for an arch row, before the live avatar-size
+/// multiplier (a touch under the circle's 38 so the rows read as a tighter band).
+const double kOrbit3ArchRowAvatar = 36;
+
 /// People beyond the two inner orbits — the "+N" the arch displays. Equal by
 /// construction to the hidden count of a 2-ring-capped [computeOrbit3RingLayout]
 /// (so the badge and the seating math can never drift apart).
