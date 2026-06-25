@@ -17,8 +17,11 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../application/orbit3_archetype_data.dart';
 import '../../application/orbit3_mock_data.dart';
+import '../../domain/orbit3_arch_layout.dart';
 import '../../domain/orbit3_connection_profile.dart';
 import '../../domain/orbit3_constellation_geometry.dart';
+import '../../domain/orbit3_one_circle_layout.dart';
+import '../widgets/orbit3_arch_panel.dart';
 import '../widgets/orbit3_constellation.dart';
 import '../widgets/orbit3_fisheye_prototype.dart';
 import '../widgets/orbit3_inner_sky_prototype.dart';
@@ -67,7 +70,12 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
   int _populationIndex = 2;
   final List<Orbit2InnerItem> _items = [];
   bool _namesVisible = true;
-  bool _expanded = false;
+  // Classic One Circle overflow now lives on the ARCH: the inner circle is
+  // hard-capped at two orbits, the "+N" rides an arch above it, and tapping the
+  // arch opens [Orbit3ArchPanel]. `_archOpen` tracks that panel.
+  bool _archOpen = false;
+  // Live avatar-size multiplier driven by the +/- stepper (Orbit parity = 1.0).
+  double _avatarScale = 1.0;
   String _searchQuery = '';
 
   // Which scalability prototype is mounted (classic = shipped behaviour).
@@ -167,6 +175,7 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
     HapticFeedback.selectionClick();
     _resetZoom();
     setState(() {
+      _archOpen = false;
       _viewMode = _viewMode == Orbit3ViewMode.oneCircle
           ? Orbit3ViewMode.constellation
           : Orbit3ViewMode.oneCircle;
@@ -181,7 +190,7 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
       _lab = values[(_lab.index + 1) % values.length];
       // Returning to a fresh lab always starts from the One Circle base state.
       _viewMode = Orbit3ViewMode.oneCircle;
-      _expanded = false;
+      _archOpen = false;
     });
   }
 
@@ -213,7 +222,7 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
   void _cyclePopulation() {
     setState(() {
       _populationIndex = (_populationIndex + 1) % _populations.length;
-      _expanded = false; // a fresh population starts collapsed (two rings)
+      _archOpen = false; // a fresh population closes any open arch panel
       _rebuildMock();
     });
   }
@@ -223,9 +232,21 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
     setState(() => _namesVisible = !_namesVisible);
   }
 
-  void _toggleExpand() {
+  void _toggleArch() {
     HapticFeedback.selectionClick();
-    setState(() => _expanded = !_expanded);
+    setState(() => _archOpen = !_archOpen);
+  }
+
+  void _incAvatarSize() {
+    HapticFeedback.selectionClick();
+    setState(() =>
+        _avatarScale = (_avatarScale + 0.2).clamp(0.6, 1.4).toDouble());
+  }
+
+  void _decAvatarSize() {
+    HapticFeedback.selectionClick();
+    setState(() =>
+        _avatarScale = (_avatarScale - 0.2).clamp(0.6, 1.4).toDouble());
   }
 
   void _openFriendChat(OrbitFriend friend) {
@@ -313,7 +334,17 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                               // The circle renders at its intrinsic Orbit-parity size
                               // (320 collapsed, larger as rings are revealed) and
                               // scales DOWN only when the grown box exceeds the screen.
-                              child: Center(
+                              child: AnimatedAlign(
+                                duration: const Duration(milliseconds: 260),
+                                curve: Curves.easeOutCubic,
+                                // When the arch panel is open, glide the inner
+                                // circle DOWN so the arc rows + the circle share
+                                // one screen (no annoying scroll).
+                                alignment: (_viewMode ==
+                                            Orbit3ViewMode.oneCircle &&
+                                        _archOpen)
+                                    ? const Alignment(0, 0.30)
+                                    : Alignment.center,
                                 child: _viewMode == Orbit3ViewMode.constellation
                                     ? LayoutBuilder(
                                         builder: (context, constraints) {
@@ -374,12 +405,15 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                                           userAvatarBytes:
                                               widget.userAvatarBytes,
                                           items: _items,
-                                          expanded: _expanded,
+                                          // Cap at 2 orbits; overflow lives on
+                                          // the arch, not the in-ring node.
+                                          cappedRings: kOrbit3CollapsedRings,
+                                          showOverflowNode: false,
+                                          avatarScale: _avatarScale,
                                           namesVisible: _namesVisible,
                                           motionEnabled: motionEnabled,
                                           searchQuery: _searchQuery,
                                           onToggleNames: _toggleNames,
-                                          onToggleExpand: _toggleExpand,
                                           onFriendTap: _openFriendChat,
                                           onGroupTap: _openGroupChat,
                                         ),
@@ -405,6 +439,106 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                                 onZoomOut: _zoomOut,
                               ),
                             ),
+                          if (_viewMode == Orbit3ViewMode.oneCircle) ...[
+                            // The +/- avatar-size stepper (opposite the search
+                            // pill, like the constellation zoom stack).
+                            Positioned(
+                              left: 12,
+                              bottom: 12,
+                              child: _SizeStepper(
+                                readable: readable,
+                                onIncrease: _incAvatarSize,
+                                onDecrease: _decAvatarSize,
+                              ),
+                            ),
+                            // The ARCH (and, expanded, its arc rows) ride just
+                            // above the circle's OUTER RING — close to the inner
+                            // circle, never pinned to the screen top. The arcs
+                            // fill the space ABOVE the circle, which stays
+                            // visible (and tappable) below.
+                            if (orbit3ArchOverflowCount(_items.length) > 0)
+                              Positioned.fill(
+                                child: LayoutBuilder(
+                                  builder: (context, c) {
+                                    final overflow = orbit3ArchOverflowCount(
+                                        _items.length);
+                                    // FittedBox(scaleDown) fits the 320 box into
+                                    // the padded width; the outer ring (radius
+                                    // 108) tops out this far above the centre.
+                                    // Mirror the circle's REAL layout so the band
+                                    // can end exactly above its top member:
+                                    // FittedBox(scaleDown) inside Padding(all:12),
+                                    // positioned by AnimatedAlign (y=0.30 when
+                                    // open, centre when collapsed).
+                                    final innerW = c.maxWidth - 24;
+                                    final innerH = c.maxHeight - 24;
+                                    final scale = [
+                                      innerW / kOrbit3BaseBox,
+                                      innerH / kOrbit3BaseBox,
+                                      1.0,
+                                    ].reduce((a, b) => a < b ? a : b);
+                                    final childH = kOrbit3BaseBox * scale;
+                                    final alignY = _archOpen ? 0.30 : 0.0;
+                                    final youY = 12 +
+                                        (innerH - childH) * (alignY + 1) / 2 +
+                                        childH / 2;
+                                    // Top outer-ring member: centre at the ring
+                                    // radius; its avatar extends UP by
+                                    // ringAvatar/2·avatarScale (all ×FittedBox
+                                    // scale). The band ends above it (166 R1).
+                                    final memberTop = youY -
+                                        scale *
+                                            (orbit3RingRadius(
+                                                    kOrbit3CollapsedRings - 1) +
+                                                orbit3RingAvatar(
+                                                        kOrbit3CollapsedRings -
+                                                            1) *
+                                                    _avatarScale /
+                                                    2);
+                                    final bandBottomY = memberTop - 16;
+                                    if (_archOpen) {
+                                      final h = bandBottomY - 8 < 80
+                                          ? 80.0
+                                          : bandBottomY - 8;
+                                      return Stack(children: [
+                                        Positioned(
+                                          top: 8,
+                                          left: 0,
+                                          right: 0,
+                                          height: h,
+                                          child: Orbit3ArchPanel(
+                                            items: _items
+                                                .skip(kOrbit3InnerSeats)
+                                                .toList(),
+                                            avatarScale: _avatarScale,
+                                            motionEnabled: motionEnabled,
+                                            onClose: _toggleArch,
+                                            onFriendTap: _openFriendChat,
+                                            onGroupTap: _openGroupChat,
+                                          ),
+                                        ),
+                                      ]);
+                                    }
+                                    final top = bandBottomY - 38 < 4
+                                        ? 4.0
+                                        : bandBottomY - 38;
+                                    return Stack(children: [
+                                      Positioned(
+                                        top: top,
+                                        left: 0,
+                                        right: 0,
+                                        child: Center(
+                                          child: Orbit3ArchBar(
+                                            count: overflow,
+                                            onTap: _toggleArch,
+                                          ),
+                                        ),
+                                      ),
+                                    ]);
+                                  },
+                                ),
+                              ),
+                          ],
                         ],
                       ),
               ),
@@ -616,6 +750,72 @@ class _ZoomControls extends StatelessWidget {
                 onZoomOut,
                 'Zoom out',
                 const ValueKey('orbit3-zoom-out'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A glassy ＋/－ stack for tuning avatar size live on the One Circle (and its
+/// arch panel) — mirrors [_ZoomControls] so the two surfaces read the same.
+class _SizeStepper extends StatelessWidget {
+  final BackgroundReadableColors readable;
+  final VoidCallback onIncrease;
+  final VoidCallback onDecrease;
+
+  const _SizeStepper({
+    required this.readable,
+    required this.onIncrease,
+    required this.onDecrease,
+  });
+
+  Widget _btn(IconData icon, VoidCallback onTap, String label, Key key) {
+    return GestureDetector(
+      key: key,
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Semantics(
+        button: true,
+        label: label,
+        child: SizedBox(
+          width: 42,
+          height: 42,
+          child: Icon(icon, size: 22, color: readable.iconSecondary),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: Container(
+          decoration: BoxDecoration(
+            color: readable.glassSurface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: readable.glassBorder),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _btn(
+                Icons.add_rounded,
+                onIncrease,
+                'Bigger avatars',
+                const ValueKey('orbit3-avatar-size-inc'),
+              ),
+              Container(height: 1, width: 26, color: readable.glassBorder),
+              _btn(
+                Icons.remove_rounded,
+                onDecrease,
+                'Smaller avatars',
+                const ValueKey('orbit3-avatar-size-dec'),
               ),
             ],
           ),

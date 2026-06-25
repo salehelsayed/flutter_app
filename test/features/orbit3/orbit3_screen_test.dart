@@ -44,19 +44,55 @@ void main() {
 
   String firstFriendName(int pop) =>
       Orbit3MockData.build(count: pop).firstWhere((it) => !it.isGroup).displayName;
-  int friendCount(int pop) =>
-      Orbit3MockData.build(count: pop).where((it) => !it.isGroup).length;
 
   Finder expandToggle() => find.byKey(const ValueKey('orbit3-expand-toggle'));
+  Finder archOverflow() => find.byKey(const ValueKey('orbit3-arch-overflow'));
+  Finder archPanel() => find.byKey(const ValueKey('orbit3-arch-panel'));
 
-  // The expand node sits under the circle-wide double-tap detector, so its onTap
-  // fires one kDoubleTapTimeout (~300ms) late. Pump first to let the toggle fire
-  // and rebuild, THEN drain the revealed avatars' staggered entrance timers
-  // (globalIndex * 40ms, up to ~1.9s at the dense end) before any teardown.
-  Future<void> tapExpand(WidgetTester tester) async {
-    await tester.tap(expandToggle());
+  // Tapping the arch opens the overflow panel. The arch sits under the
+  // circle-wide double-tap detector, so its onTap fires one kDoubleTapTimeout
+  // (~300ms) late; pump that out, THEN drain the panel avatars' staggered
+  // entrance timers (globalIndex * 40ms) before any teardown.
+  Future<void> openArch(WidgetTester tester) async {
+    await tester.tap(archOverflow());
     await tester.pump(const Duration(milliseconds: 350));
     await tester.pump(const Duration(milliseconds: 2400));
+  }
+
+  // A short surface forces the arc band to fill (so the no-overlap geometry and
+  // cap+scroll are exercised, as on a real phone with a nav bar + safe areas).
+  void useShortSurface(WidgetTester tester) {
+    tester.view.physicalSize = const Size(390, 700);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+  }
+
+  Finder panelAvatars() =>
+      find.descendant(of: archPanel(), matching: find.byType(OrbitalAvatar));
+  Finder circleAvatars() => find.descendant(
+      of: find.byType(Orbit3OneCircle), matching: find.byType(OrbitalAvatar));
+
+  double maxBottom(Finder f) {
+    var m = double.negativeInfinity;
+    for (final e in f.evaluate()) {
+      final box = e.renderObject! as RenderBox;
+      final b = box.localToGlobal(Offset(0, box.size.height)).dy;
+      if (b > m) m = b;
+    }
+    return m;
+  }
+
+  double minTop(Finder f) {
+    var m = double.infinity;
+    for (final e in f.evaluate()) {
+      final box = e.renderObject! as RenderBox;
+      final t = box.localToGlobal(Offset.zero).dy;
+      if (t < m) m = t;
+    }
+    return m;
   }
 
   testWidgets('renders ONLY the One Circle surface — no template selector, '
@@ -98,6 +134,7 @@ void main() {
 
     expect(find.byType(OrbitalAvatar), findsNWidgets(5)); // all on ring 1
     expect(expandToggle(), findsNothing); // nothing hidden yet
+    expect(archOverflow(), findsNothing); // overflow 0 → no arch
     // all five are the inner-ring size → a single ring
     final sizes = tester
         .widgetList<OrbitalAvatar>(find.byType(OrbitalAvatar))
@@ -114,82 +151,208 @@ void main() {
 
     expect(find.byType(OrbitalAvatar), findsNWidgets(13)); // 5 + 8, friends-only
     expect(expandToggle(), findsNothing); // both rings full, nothing beyond
+    expect(archOverflow(), findsNothing); // overflow 0 → no arch
   });
 
-  testWidgets('past two rings (pop 24) hides the rest behind an expand arrow; '
-      'tapping it reveals the next ring(s)', (tester) async {
+  testWidgets('past two rings (pop 24) shows the ARCH (+11) above the circle, '
+      'NOT an in-ring expand node', (tester) async {
     useTallSurface(tester);
     await tester.pumpWidget(wrap());
     await goTo(tester, '24');
 
-    // Collapsed: only the two inner rings (13 members) + an expand arrow.
+    // Inner circle stays at two rings (13) and never grows a third.
     expect(find.byType(OrbitalAvatar), findsNWidgets(13));
-    expect(expandToggle(), findsOneWidget);
-    expect(find.text('+11'), findsOneWidget); // 24 − 13 hidden
-
-    // Expand → the 3rd ring (and the 2 groups) appear; everyone is now seated.
-    await tapExpand(tester);
-
-    expect(find.byType(OrbitalAvatar), findsNWidgets(friendCount(24))); // 22
-    for (final g in Orbit3MockData.build(count: 24).where((it) => it.isGroup)) {
-      expect(find.byKey(ValueKey('orbit3-inner-group-${g.id}')), findsOneWidget);
-    }
-    // The node is now a collapse (up) arrow.
-    expect(find.byIcon(Icons.keyboard_arrow_up_rounded), findsOneWidget);
-
-    // Collapse back to two rings.
-    await tapExpand(tester);
-    expect(find.byType(OrbitalAvatar), findsNWidgets(13));
-  });
-
-  testWidgets('cycling population resets to the collapsed two-ring view',
-      (tester) async {
-    useTallSurface(tester);
-    await tester.pumpWidget(wrap());
-    await goTo(tester, '24');
-    await tapExpand(tester); // expand at 24
-    expect(find.byIcon(Icons.keyboard_arrow_up_rounded), findsOneWidget);
-
-    await goTo(tester, '50'); // cycle population → collapses
-    expect(find.byType(OrbitalAvatar), findsNWidgets(13));
-    expect(find.byIcon(Icons.keyboard_arrow_up_rounded), findsNothing);
-    expect(expandToggle(), findsOneWidget); // expand arrow again
+    expect(expandToggle(), findsNothing); // overflow lives on the arch now
+    expect(archOverflow(), findsOneWidget);
+    expect(find.text('+11'), findsOneWidget); // 24 − 13 overflow
     await tester.pump(const Duration(seconds: 1));
   });
 
-  testWidgets('expanding at the dense end (pop 50) seats EVERY member, '
-      'no overlap', (tester) async {
-    useTallSurface(tester);
-    await tester.pumpWidget(wrap());
-    await goTo(tester, '50');
-    await tapExpand(tester);
-
-    expect(find.byType(OrbitalAvatar), findsNWidgets(friendCount(50))); // 48
-  });
-
-  testWidgets('no two avatars overlap when a 3rd ring is shown (pop 24 expanded)',
+  testWidgets('tapping the arch opens the arc panel; a member tap opens chat',
       (tester) async {
     useTallSurface(tester);
     await tester.pumpWidget(wrap());
     await goTo(tester, '24');
-    await tapExpand(tester);
 
-    final avatars = find.byType(OrbitalAvatar).evaluate().map((e) {
-      final box = e.renderObject! as RenderBox;
-      return (
-        size: (e.widget as OrbitalAvatar).size,
-        center: box.localToGlobal(box.size.center(Offset.zero)),
-      );
-    }).toList();
+    expect(archPanel(), findsNothing);
+    await openArch(tester);
 
-    for (var i = 0; i < avatars.length; i++) {
-      for (var j = i + 1; j < avatars.length; j++) {
-        final minGap = (avatars[i].size + avatars[j].size) / 2;
-        expect((avatars[i].center - avatars[j].center).distance,
-            greaterThanOrEqualTo(minGap - 0.5),
-            reason: 'avatars $i and $j overlap');
-      }
-    }
+    expect(archPanel(), findsOneWidget);
+    // The panel scrolls (you can scroll up for more rows).
+    expect(
+      find.descendant(of: archPanel(), matching: find.byType(Scrollable)),
+      findsWidgets,
+    );
+    // At least the first arc row is laid out.
+    expect(find.byKey(const ValueKey('orbit3-arch-arc-row-0')), findsOneWidget);
+
+    // Tapping a panel member opens THAT member's chat.
+    final panelAvatar = find.descendant(
+      of: archPanel(),
+      matching: find.byType(OrbitalAvatar),
+    );
+    expect(panelAvatar, findsWidgets);
+    await tester.tap(panelAvatar.first, warnIfMissed: false);
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.byType(Orbit2MockChatScreen), findsOneWidget);
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('pop 50 arch shows +37; tapping opens the bottom-anchored panel',
+      (tester) async {
+    useTallSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '50');
+
+    expect(find.byType(OrbitalAvatar), findsNWidgets(13)); // circle stays at 13
+    expect(find.text('+37'), findsOneWidget); // 50 − 13
+
+    await openArch(tester);
+    expect(archPanel(), findsOneWidget);
+    expect(find.byKey(const ValueKey('orbit3-arch-arc-row-0')), findsOneWidget);
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('pop 50 expanded arcs never overlap the inner circle',
+      (tester) async {
+    useShortSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '50');
+    await openArch(tester);
+
+    expect(panelAvatars(), findsWidgets);
+    expect(circleAvatars(), findsWidgets);
+    final arcsBottom = maxBottom(panelAvatars());
+    final circleTop = minTop(circleAvatars());
+    expect(arcsBottom, lessThanOrEqualTo(circleTop + 0.5),
+        reason: 'arcs bottom $arcsBottom must stay above circle top $circleTop');
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('no overlap holds when avatars are scaled up', (tester) async {
+    useShortSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '50');
+    // Scale members up — the geometry that worsens the overlap the most.
+    await tester.tap(find.byKey(const ValueKey('orbit3-avatar-size-inc')));
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.tap(find.byKey(const ValueKey('orbit3-avatar-size-inc')));
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.pump(const Duration(milliseconds: 2400));
+    await openArch(tester);
+
+    final arcsBottom = maxBottom(panelAvatars());
+    final circleTop = minTop(circleAvatars());
+    expect(arcsBottom, lessThanOrEqualTo(circleTop + 0.5),
+        reason: 'no overlap must hold at avatarScale 1.4');
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('on a short screen the arcs cap & scroll, bottom-anchored',
+      (tester) async {
+    useShortSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '50');
+    await openArch(tester);
+
+    // Nearest arc row is present and a Scrollable exists.
+    expect(find.byKey(const ValueKey('orbit3-arch-arc-row-0')), findsOneWidget);
+    final scrollable = find
+        .descendant(of: archPanel(), matching: find.byType(Scrollable))
+        .first;
+    expect(scrollable, findsOneWidget);
+    // More arcs than fit → the band actually scrolls (not compressed to fit).
+    final pos = tester.state<ScrollableState>(scrollable).position;
+    expect(pos.maxScrollExtent, greaterThan(0.0),
+        reason: 'short screen → arcs exceed the band → scrollable');
+    // Bottom-anchored: row 0 (nearest the circle) sits BELOW row 1.
+    final r0 =
+        tester.getCenter(find.byKey(const ValueKey('orbit3-arch-arc-row-0')));
+    final r1 =
+        tester.getCenter(find.byKey(const ValueKey('orbit3-arch-arc-row-1')));
+    expect(r0.dy, greaterThan(r1.dy));
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('open arch shows a collapse button that closes to the circle',
+      (tester) async {
+    useTallSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '24');
+    await openArch(tester);
+
+    expect(find.byKey(const ValueKey('orbit3-arch-collapse')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('orbit3-arch-collapse')));
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.pump(const Duration(milliseconds: 2400));
+
+    expect(archPanel(), findsNothing);
+    expect(find.byType(OrbitalAvatar), findsNWidgets(13)); // back to the circle
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('avatar-size stepper grows then shrinks the circle avatars',
+      (tester) async {
+    useTallSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '24');
+
+    double maxSize() => tester
+        .widgetList<OrbitalAvatar>(find.byType(OrbitalAvatar))
+        .map((a) => a.size)
+        .reduce((a, b) => a > b ? a : b);
+
+    expect(maxSize(), 38.0); // Orbit-parity ring 0 at scale 1.0
+
+    await tester.tap(find.byKey(const ValueKey('orbit3-avatar-size-inc')));
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.pump(const Duration(milliseconds: 2400));
+    expect(maxSize(), greaterThan(38.0)); // bigger
+
+    await tester.tap(find.byKey(const ValueKey('orbit3-avatar-size-dec')));
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.tap(find.byKey(const ValueKey('orbit3-avatar-size-dec')));
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.pump(const Duration(milliseconds: 2400));
+    expect(maxSize(), lessThan(38.0)); // smaller than the 1.0 baseline
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('the arch panel honors the avatar-size scale (sibling surface)',
+      (tester) async {
+    useTallSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '24');
+
+    // Bump the size up while the panel is closed, then open it.
+    await tester.tap(find.byKey(const ValueKey('orbit3-avatar-size-inc')));
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.pump(const Duration(milliseconds: 2400));
+    await openArch(tester);
+
+    final panelMax = tester
+        .widgetList<OrbitalAvatar>(
+          find.descendant(of: archPanel(), matching: find.byType(OrbitalAvatar)),
+        )
+        .map((a) => a.size)
+        .reduce((a, b) => a > b ? a : b);
+    expect(panelMax, greaterThan(38.0)); // panel avatars scaled like the circle
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('cycling population keeps two rings, updates the arch count, and '
+      'closes an open panel', (tester) async {
+    useTallSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '24');
+    await openArch(tester);
+    expect(archPanel(), findsOneWidget);
+
+    await goTo(tester, '50'); // cycle population
+    expect(archPanel(), findsNothing); // panel auto-closed
+    expect(find.text('+37'), findsOneWidget); // count updated
+    expect(find.byType(OrbitalAvatar), findsNWidgets(13)); // still two rings
     await tester.pump(const Duration(seconds: 1));
   });
 

@@ -55,6 +55,16 @@ class Orbit3OneCircle extends StatelessWidget {
   /// member out of the capped Inner Orbit back into the drawer.
   final ValueChanged<Orbit2InnerItem>? onMemberLongPress;
 
+  /// When false, the in-ring "+N" overflow node is never drawn — the classic One
+  /// Circle moves overflow onto the ARCH above the circle instead. Default true
+  /// preserves the InnerSky prototype's "+N → launch" node.
+  final bool showOverflowNode;
+
+  /// Multiplies every avatar diameter (members + the centre "You") so the live
+  /// +/- size stepper can tune avatars without disturbing the fixed ring radii.
+  /// 1.0 = Orbit parity.
+  final double avatarScale;
+
   const Orbit3OneCircle({
     super.key,
     required this.userPeerId,
@@ -70,6 +80,8 @@ class Orbit3OneCircle extends StatelessWidget {
     this.onGroupTap,
     this.cappedRings,
     this.onMemberLongPress,
+    this.showOverflowNode = true,
+    this.avatarScale = 1.0,
   });
 
   Offset _pos(int index, int count, double radius, int ring) {
@@ -92,7 +104,10 @@ class Orbit3OneCircle extends StatelessWidget {
     );
     final counts = layout.counts;
     final radii = layout.radii;
-    final avatarSizes = layout.avatarSizes;
+    // Scale avatars only (NOT the fixed radii) so the +/- stepper grows avatars
+    // on the same circle; the FittedBox above would undo a uniform scale.
+    final avatarSizes = [for (final s in layout.avatarSizes) s * avatarScale];
+    final centerSize = layout.centerSize * avatarScale;
     final box = layout.boxSize;
     final c = box / 2;
 
@@ -105,7 +120,7 @@ class Orbit3OneCircle extends StatelessWidget {
     final showCollapse = capped
         ? false
         : (expanded && layout.totalRings > kOrbit3CollapsedRings);
-    final hasNode = showExpand || showCollapse;
+    final hasNode = showOverflowNode && (showExpand || showCollapse);
 
     final q = searchQuery.trim().toLowerCase();
     final searching = q.isNotEmpty;
@@ -203,20 +218,20 @@ class Orbit3OneCircle extends StatelessWidget {
       ),
       if (userPeerId != null)
         Positioned(
-          left: c - layout.centerSize / 2,
-          top: c - layout.centerSize / 2,
+          left: c - centerSize / 2,
+          top: c - centerSize / 2,
           child: IgnorePointer(
             child: UserAvatar(
               peerId: userPeerId,
               avatarBytes: userAvatarBytes,
-              size: layout.centerSize,
+              size: centerSize,
             ),
           ),
         ),
       if (userPeerId != null && names)
         Positioned(
           left: c - _kLabelW / 2,
-          top: c + layout.centerSize / 2 + 3,
+          top: c + centerSize / 2 + 3,
           width: _kLabelW,
           child: IgnorePointer(
             child: _Orbit3NameLabel(name: l10n.orbit2_you, readable: readable),
