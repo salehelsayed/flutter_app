@@ -2,11 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_avatar.dart';
 import 'package:flutter_app/features/orbit2/presentation/screens/orbit2_mock_chat_screen.dart';
+import 'package:flutter_app/features/orbit3/application/orbit3_dimension_preferences_use_cases.dart';
 import 'package:flutter_app/features/orbit3/application/orbit3_mock_data.dart';
+import 'package:flutter_app/features/orbit3/domain/orbit3_arch_layout.dart';
+import 'package:flutter_app/features/orbit3/domain/orbit3_dimension_preferences.dart';
 import 'package:flutter_app/features/orbit3/presentation/screens/orbit3_screen.dart';
 import 'package:flutter_app/features/orbit3/presentation/widgets/orbit3_arch_panel.dart';
 import 'package:flutter_app/features/orbit3/presentation/widgets/orbit3_one_circle.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+
+import '../../core/secure_storage/fake_secure_key_store.dart';
 
 void main() {
   void useTallSurface(WidgetTester tester) {
@@ -645,19 +650,21 @@ void main() {
         .map((a) => a.size)
         .reduce((a, b) => a > b ? a : b);
 
-    expect(maxSize(), 38.0); // Orbit-parity ring 0 at scale 1.0
+    // Pop 24 has overflow, so the collapsed circle keeps the EXPANDED uniform
+    // arch-avatar size (36) rather than the 38px ring-0 parity (R3).
+    expect(maxSize(), 36.0);
 
     await tester.tap(find.byKey(const ValueKey('orbit3-avatar-size-inc')));
     await tester.pump(const Duration(milliseconds: 60));
     await tester.pump(const Duration(milliseconds: 2400));
-    expect(maxSize(), greaterThan(38.0)); // bigger
+    expect(maxSize(), greaterThan(36.0)); // bigger
 
     await tester.tap(find.byKey(const ValueKey('orbit3-avatar-size-dec')));
     await tester.pump(const Duration(milliseconds: 60));
     await tester.tap(find.byKey(const ValueKey('orbit3-avatar-size-dec')));
     await tester.pump(const Duration(milliseconds: 60));
     await tester.pump(const Duration(milliseconds: 2400));
-    expect(maxSize(), lessThan(38.0)); // smaller than the 1.0 baseline
+    expect(maxSize(), lessThan(36.0)); // smaller than the 1.0 baseline
     await tester.pump(const Duration(seconds: 1));
   });
 
@@ -790,6 +797,335 @@ void main() {
     await settle(tester);
   });
 
+  // ----- request #1: names on ALL avatars (arches included) -----
+
+  testWidgets('arch avatars show names; a double-tap on the arches toggles '
+      'them off and back on (R1)', (tester) async {
+    useShortSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '50');
+    await openArch(tester);
+
+    // An overflow member (past the 13 inner seats) only ever appears on the
+    // arches, so its label proves arch names render.
+    final overflowName = Orbit3MockData.build(count: 50)
+        .skip(kOrbit3InnerSeats)
+        .firstWhere((it) => !it.isGroup)
+        .displayName;
+    Finder archLabel() => find.descendant(
+        of: find.byType(Orbit3ArcRow), matching: find.text(overflowName));
+    expect(archLabel(), findsWidgets); // names default ON
+
+    final row0 =
+        tester.getCenter(find.byKey(const ValueKey('orbit3-arch-arc-row-0')));
+    await tester.tapAt(row0);
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tapAt(row0);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(archLabel(), findsNothing); // double-tap over the arch hid the names
+
+    await tester.tapAt(row0);
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tapAt(row0);
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(archLabel(), findsWidgets); // toggled back on
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  // ----- request #2: dotted connectors threading each arch -----
+
+  testWidgets('each arch row paints dotted connectors between its avatars (R2)',
+      (tester) async {
+    useShortSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '50');
+    await openArch(tester);
+
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('orbit3-arch-arc-row-0')),
+        matching: find.byKey(const ValueKey('orbit3-arch-connector')),
+      ),
+      findsOneWidget,
+    );
+
+    // Draw-proof: the painter actually emits dotted segments (not just mounted).
+    final painter = tester
+        .widget<CustomPaint>(find.descendant(
+          of: find.byKey(const ValueKey('orbit3-arch-arc-row-0')),
+          matching: find.byKey(const ValueKey('orbit3-arch-connector')),
+        ))
+        .painter!;
+    final canvas = _CountingCanvas();
+    painter.paint(canvas, const Size(360, 60));
+    expect(canvas.lines, greaterThan(0),
+        reason: 'a full arch row draws dotted connector segments');
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  // ----- request #3: collapse keeps the tuned size (no jump) -----
+
+  testWidgets('collapsing keeps the inner orbit at the tuned uniform size — no '
+      'jump back to parity (R3)', (tester) async {
+    useTallSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '24'); // overflow → collapsed mirrors the expanded sizing
+
+    double maxCircle() => tester
+        .widgetList<OrbitalAvatar>(circleAvatars())
+        .map((a) => a.size)
+        .reduce((a, b) => a > b ? a : b);
+
+    // Collapsed: the uniform arch-avatar size (36), NOT the 38px ring-0 parity.
+    final collapsed = maxCircle();
+    expect(collapsed, closeTo(36.0, 0.01));
+
+    // Expanded: the same size → opening/closing the arches causes no size jump.
+    await openArch(tester);
+    expect(maxCircle(), closeTo(collapsed, 0.01),
+        reason: 'expanded inner-circle size == collapsed size');
+
+    // Collapse again → still the tuned uniform size (it persisted).
+    await tester.tap(find.byKey(const ValueKey('orbit3-arch-collapse')));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 2400));
+    expect(maxCircle(), closeTo(collapsed, 0.01));
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('collapsed-overflow view does not RenderFlex-overflow on a short, '
+      'wide surface even at max spacing (R3 layout)', (tester) async {
+    tester.view.physicalSize = const Size(900, 380); // landscape-ish
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '50'); // overflow → the collapsed-overflow Column path
+
+    // Max spacing grows the snug box past the short pane height; Flexible must
+    // bound it so the Column never overflows.
+    for (var i = 0; i < 5; i++) {
+      await tester.tap(find.byKey(const ValueKey('orbit3-spacing-inc')));
+      await tester.pump(const Duration(milliseconds: 40));
+    }
+    await tester.pump(const Duration(milliseconds: 2400));
+    expect(tester.takeException(), isNull,
+        reason: 'no RenderFlex overflow in the collapsed-overflow column');
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  // ----- request #4: a live numeric value on every +/- stepper -----
+
+  testWidgets('every +/- stepper shows its live numeric value (R4)',
+      (tester) async {
+    useTallSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '24'); // steppers visible in the collapsed one-circle view
+
+    String val(String key) =>
+        tester.widget<Text>(find.byKey(ValueKey(key))).data!;
+
+    // Defaults: scales read as a one-decimal multiplier, per-arch as a count.
+    expect(val('orbit3-avatar-size-value'), '1.0×');
+    expect(val('orbit3-spacing-value'), '1.0×');
+    expect(val('orbit3-curve-value'), '1.0×');
+    expect(val('orbit3-perrow-value'), '7');
+
+    await tester.tap(find.byKey(const ValueKey('orbit3-avatar-size-inc')));
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.pump(const Duration(milliseconds: 2400));
+    expect(val('orbit3-avatar-size-value'), '1.2×'); // +0.2 step
+
+    await tester.tap(find.byKey(const ValueKey('orbit3-perrow-inc')));
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.pump(const Duration(milliseconds: 2400));
+    expect(val('orbit3-perrow-value'), '8'); // +1 step
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  // ----- follow-up mods: no flash on names, bottom collapse, steady circle -----
+
+  testWidgets('arch avatars + labels carry stable keys so showing names never '
+      'shuffles/reloads them (Mod 1)', (tester) async {
+    useShortSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '50');
+    await openArch(tester); // names default ON → avatars AND labels present
+
+    // Without these stable keys, toggling names interleaves the label
+    // Positioneds and reconciliation reuses an avatar's element for a label —
+    // swapping the avatar's underlying image (the "disappear then appear" flash
+    // the user saw). Keyed by member id, each avatar/label stays bound to its
+    // member, so showing names only ADDS labels and never disturbs the avatars.
+    Finder keyed(String prefix) => find.byWidgetPredicate((w) =>
+        w is Positioned &&
+        w.key is ValueKey &&
+        '${(w.key as ValueKey).value}'.startsWith(prefix));
+    expect(keyed('orbit3-arch-av-'), findsWidgets);
+    expect(keyed('orbit3-arch-lbl-'), findsWidgets);
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('arch avatars bloom with the inner-circle entrance, NOT the '
+      'rise-up slide (Mod 3)', (tester) async {
+    useShortSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '50');
+    await openArch(tester);
+    final avs = tester.widgetList<OrbitalAvatar>(archAvatars());
+    expect(avs, isNotEmpty);
+    expect(avs.every((a) => a.riseUp == false), isTrue,
+        reason: 'arches use the classic scale+fade, not the rise-up slide');
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('the collapse pill sits at the BOTTOM, below the inner circle '
+      '(Mod 2)', (tester) async {
+    useTallSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '24');
+    await openArch(tester);
+
+    final collapseY =
+        tester.getCenter(find.byKey(const ValueKey('orbit3-arch-collapse'))).dy;
+    final circleY = tester.getCenter(find.byType(Orbit3OneCircle)).dy;
+    final screenH = tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    expect(collapseY, greaterThan(circleY),
+        reason: 'collapse is below the inner circle, not pinned to the top');
+    expect(screenH - collapseY, lessThan(120.0),
+        reason: 'collapse rides the bottom band near the nav bar');
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('expanding the arches does NOT shift the inner circle vertically '
+      '(Mod 2 steady circle)', (tester) async {
+    useTallSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '24');
+    final collapsedY = tester.getCenter(find.byType(Orbit3OneCircle)).dy;
+    await openArch(tester);
+    final expandedY = tester.getCenter(find.byType(Orbit3OneCircle)).dy;
+    expect((expandedY - collapsedY).abs(), lessThan(20.0),
+        reason: 'the inner circle stays put when the arches expand');
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('with many arches, expanding prioritises them — lowest arch hugs '
+      'the Collapse pill and the inner circle drops below the fold (Mod 2 '
+      'arch-priority)', (tester) async {
+    useShortSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '100'); // 87 overflow arches → fill the screen
+    await openArch(tester);
+
+    final collapseTop =
+        tester.getRect(find.byKey(const ValueKey('orbit3-arch-collapse'))).top;
+    final row0Bottom = maxBottom(find.descendant(
+        of: find.byKey(const ValueKey('orbit3-arch-arc-row-0')),
+        matching: find.byType(OrbitalAvatar)));
+
+    // The lowest arch sits JUST above the Collapse pill (not buried, not off).
+    expect(row0Bottom, lessThan(collapseTop + 1),
+        reason: 'lowest arch clears the Collapse pill');
+    expect(collapseTop - row0Bottom, lessThan(90.0),
+        reason: 'lowest arch is near the Collapse pill');
+
+    // The inner circle has slid below the fold (its avatars are below the pill).
+    expect(minTop(circleAvatars()), greaterThan(collapseTop),
+        reason: 'inner circle dropped below the fold to prioritise arches');
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  // ----- dimension persistence + reset (plan 169) -----
+
+  Widget wrapWithStore(FakeSecureKeyStore store) => MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Orbit3Screen(userPeerId: 'me-peer', secureKeyStore: store),
+      );
+
+  String stepperVal(WidgetTester tester, String key) =>
+      tester.widget<Text>(find.byKey(ValueKey(key))).data!;
+
+  testWidgets('mounts with a seeded store → all four steppers show the '
+      'persisted values (169 load)', (tester) async {
+    useTallSurface(tester);
+    final store = FakeSecureKeyStore();
+    await saveOrbit3DimensionPreferences(
+      secureKeyStore: store,
+      prefs: const Orbit3DimensionPreferences(
+          avatarScale: 1.2, spacingScale: 1.2, curveScale: 1.5, perRow: 5),
+    );
+    await tester.pumpWidget(wrapWithStore(store));
+    await settle(tester); // flush the fire-and-forget load + entrance timers
+
+    // Default population (24) shows the steppers in the collapsed one-circle view.
+    expect(stepperVal(tester, 'orbit3-avatar-size-value'), '1.2×');
+    expect(stepperVal(tester, 'orbit3-spacing-value'), '1.2×');
+    expect(stepperVal(tester, 'orbit3-curve-value'), '1.5×');
+    expect(stepperVal(tester, 'orbit3-perrow-value'), '5');
+  });
+
+  testWidgets('a changed knob persists across a fresh re-mount with the same '
+      'store (169 durability)', (tester) async {
+    useTallSurface(tester);
+    final store = FakeSecureKeyStore();
+
+    await tester.pumpWidget(wrapWithStore(store));
+    await settle(tester);
+    expect(stepperVal(tester, 'orbit3-avatar-size-value'), '1.0×'); // fresh
+
+    await tester.tap(find.byKey(const ValueKey('orbit3-avatar-size-inc')));
+    await tester.pump(const Duration(milliseconds: 60));
+    await settle(tester);
+    expect(stepperVal(tester, 'orbit3-avatar-size-value'), '1.2×'); // bumped+saved
+
+    // Relaunch: tear the tree down, then mount a fresh screen on the SAME store.
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+    await tester.pumpWidget(wrapWithStore(store));
+    await settle(tester);
+    expect(stepperVal(tester, 'orbit3-avatar-size-value'), '1.2×',
+        reason: 'the persisted value reconstructs on a fresh mount');
+  });
+
+  testWidgets('Reset restores all four defaults AND clears storage (169 reset)',
+      (tester) async {
+    useTallSurface(tester);
+    final store = FakeSecureKeyStore();
+    await tester.pumpWidget(wrapWithStore(store));
+    await settle(tester);
+
+    // Move every knob off its default.
+    for (final k in const [
+      'orbit3-avatar-size-inc',
+      'orbit3-spacing-inc',
+      'orbit3-curve-inc',
+      'orbit3-perrow-inc',
+    ]) {
+      await tester.tap(find.byKey(ValueKey(k)));
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+    await settle(tester);
+    expect(stepperVal(tester, 'orbit3-avatar-size-value'), isNot('1.0×'));
+
+    // Reset.
+    await tester.tap(find.byKey(const ValueKey('orbit3-reset-dimensions')));
+    await tester.pump(const Duration(milliseconds: 60));
+    await settle(tester);
+    expect(stepperVal(tester, 'orbit3-avatar-size-value'), '1.0×');
+    expect(stepperVal(tester, 'orbit3-spacing-value'), '1.0×');
+    expect(stepperVal(tester, 'orbit3-curve-value'), '1.0×');
+    expect(stepperVal(tester, 'orbit3-perrow-value'), '7');
+
+    final stored = await tester.runAsync(
+        () => store.read(Orbit3DimensionPreferences.storageKey));
+    expect(stored, isNull, reason: 'reset clears the saved value');
+  });
+
   // ----- constellation map: on-screen zoom controls -----
 
   testWidgets('constellation view shows ＋/－ zoom buttons that drive the zoom '
@@ -821,4 +1157,16 @@ void main() {
 
     expect(tester.takeException(), isNull);
   });
+}
+
+/// A no-op [Canvas] that just counts drawLine calls, so a test can assert the
+/// arch connector painter actually emits dotted segments (R2 draw-proof).
+class _CountingCanvas implements Canvas {
+  int lines = 0;
+
+  @override
+  void drawLine(Offset p1, Offset p2, Paint paint) => lines++;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => null;
 }

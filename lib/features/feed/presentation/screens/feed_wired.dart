@@ -2648,6 +2648,8 @@ class _FeedWiredState extends State<FeedWired>
           backgroundPreference: widget.appShellController.backgroundPreference,
           activeTab: activeTab,
           onSwitchView: _onSwitchView,
+          // Persist the dimension steppers across launches (plan 169).
+          secureKeyStore: widget.secureKeyStore,
         ),
       );
     }

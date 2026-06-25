@@ -1,7 +1,9 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter/services.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
@@ -16,10 +18,12 @@ import 'package:flutter_app/features/settings/domain/models/background_preferenc
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../application/orbit3_archetype_data.dart';
+import '../../application/orbit3_dimension_preferences_use_cases.dart';
 import '../../application/orbit3_mock_data.dart';
 import '../../domain/orbit3_arch_layout.dart';
 import '../../domain/orbit3_connection_profile.dart';
 import '../../domain/orbit3_constellation_geometry.dart';
+import '../../domain/orbit3_dimension_preferences.dart';
 import '../../domain/orbit3_one_circle_layout.dart';
 import '../widgets/orbit3_arch_panel.dart';
 import '../widgets/orbit3_constellation.dart';
@@ -48,6 +52,11 @@ class Orbit3Screen extends StatefulWidget {
   final String? activeTab;
   final void Function(String)? onSwitchView;
 
+  /// Persists the dimension steppers (avatar/spacing/curve/per-arch) across
+  /// launches. Optional + null-default: when null (the const test mounts) the
+  /// knobs stay purely in-memory — load/save no-op (plan 169).
+  final SecureKeyStore? secureKeyStore;
+
   const Orbit3Screen({
     super.key,
     this.userPeerId,
@@ -55,6 +64,7 @@ class Orbit3Screen extends StatefulWidget {
     this.backgroundPreference = BackgroundPreference.defaultBackground,
     this.activeTab,
     this.onSwitchView,
+    this.secureKeyStore,
   });
 
   @override
@@ -85,6 +95,9 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
   int _perRow = 7;
   // Drives the unified expanded scroll — arches + circle in ONE surface (167).
   final ScrollController _archScroll = ScrollController();
+  // Tags the LOWEST arch row so opening can anchor it just above the Collapse
+  // pill (arch-priority expand) rather than pinning the inner circle.
+  final GlobalKey _lowestArchKey = GlobalKey();
   String _searchQuery = '';
 
   // Which scalability prototype is mounted (classic = shipped behaviour).
@@ -125,6 +138,54 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
           final tw = _zoomTween;
           if (tw != null) _constZoom.value = tw.value;
         });
+    // Fire-and-forget: initState is sync, SecureKeyStore.read is async. Render
+    // defaults now, then apply any saved dimensions once the read resolves.
+    _restoreDimensions();
+  }
+
+  /// Loads persisted dimension knobs (plan 169). No-op when no store is wired
+  /// (the const test mounts) — the knobs then stay purely in-memory.
+  Future<void> _restoreDimensions() async {
+    final store = widget.secureKeyStore;
+    if (store == null) return;
+    final p = await loadOrbit3DimensionPreferences(secureKeyStore: store);
+    if (!mounted) return; // screen can unmount during the async read
+    setState(() {
+      _avatarScale = p.avatarScale;
+      _spacingScale = p.spacingScale;
+      _curveScale = p.curveScale;
+      _perRow = p.perRow;
+    });
+  }
+
+  /// Persists the current knob values (fire-and-forget; no-op without a store).
+  void _persistDimensions() {
+    final store = widget.secureKeyStore;
+    if (store == null) return;
+    saveOrbit3DimensionPreferences(
+      secureKeyStore: store,
+      prefs: Orbit3DimensionPreferences(
+        avatarScale: _avatarScale,
+        spacingScale: _spacingScale,
+        curveScale: _curveScale,
+        perRow: _perRow,
+      ),
+    );
+  }
+
+  /// Restores all four knobs to their defaults AND clears the saved value.
+  void _resetDimensions() {
+    HapticFeedback.selectionClick();
+    setState(() {
+      _avatarScale = Orbit3DimensionPreferences.defaults.avatarScale;
+      _spacingScale = Orbit3DimensionPreferences.defaults.spacingScale;
+      _curveScale = Orbit3DimensionPreferences.defaults.curveScale;
+      _perRow = Orbit3DimensionPreferences.defaults.perRow;
+    });
+    final store = widget.secureKeyStore;
+    if (store != null) {
+      clearOrbit3DimensionPreferences(secureKeyStore: store);
+    }
   }
 
   @override
@@ -246,64 +307,103 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
     HapticFeedback.selectionClick();
     setState(() => _archOpen = !_archOpen);
     if (_archOpen) {
-      // Open anchored on the circle (the bottom of the unified scroll); the user
-      // scrolls UP for the farther arches. jumpTo (not animateTo) → motion-safe.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!_archScroll.hasClients) return;
-        final p = _archScroll.position;
-        if (p.maxScrollExtent > 0) _archScroll.jumpTo(p.maxScrollExtent);
-      });
+      WidgetsBinding.instance.addPostFrameCallback((_) => _anchorExpandedScroll());
     }
+  }
+
+  // The Collapse pill's height; the lowest arch is parked this far above the
+  // bottom so it clears the pill.
+  static const double _kArchCollapseClearance = 56.0;
+
+  /// Position the freshly-opened arches (jumpTo → motion-safe).
+  ///
+  ///  - If everything fits, leave the scroll at rest (circle stays put).
+  ///  - If the arches ALONE can fill the viewport, prioritise them: park the
+  ///    lowest arch just above the Collapse pill and let the inner circle slide
+  ///    below the fold (the user opened the arches to browse them).
+  ///  - Otherwise the circle is still needed to fill the space, so bottom-anchor
+  ///    it (it stays visible above the pill).
+  void _anchorExpandedScroll() {
+    if (!_archScroll.hasClients) return;
+    final p = _archScroll.position;
+    if (p.maxScrollExtent <= 0) return; // all fits → circle stays at rest
+    final box = _lowestArchKey.currentContext?.findRenderObject();
+    if (box is RenderBox) {
+      // Offset that lands the lowest arch's bottom at the viewport's trailing
+      // edge. It is positive only when the arches above it overflow the viewport
+      // — exactly when we want to drop the circle off-screen and fill with
+      // arches. Scroll a touch FURTHER so the lowest arch clears the pill.
+      final reveal =
+          RenderAbstractViewport.of(box).getOffsetToReveal(box, 1.0).offset;
+      if (reveal > 0) {
+        p.jumpTo((reveal + _kArchCollapseClearance).clamp(0.0, p.maxScrollExtent));
+        return;
+      }
+    }
+    p.jumpTo(p.maxScrollExtent); // bottom-anchor; the circle stays visible
   }
 
   void _incAvatarSize() {
     HapticFeedback.selectionClick();
     setState(() =>
         _avatarScale = (_avatarScale + 0.2).clamp(0.6, 1.4).toDouble());
+    _persistDimensions();
   }
 
   void _decAvatarSize() {
     HapticFeedback.selectionClick();
     setState(() =>
         _avatarScale = (_avatarScale - 0.2).clamp(0.6, 1.4).toDouble());
+    _persistDimensions();
   }
 
   void _incSpacing() {
     HapticFeedback.selectionClick();
     setState(() =>
         _spacingScale = (_spacingScale + 0.1).clamp(0.7, 1.5).toDouble());
+    _persistDimensions();
   }
 
   void _decSpacing() {
     HapticFeedback.selectionClick();
     setState(() =>
         _spacingScale = (_spacingScale - 0.1).clamp(0.7, 1.5).toDouble());
+    _persistDimensions();
   }
 
   void _incCurve() {
     HapticFeedback.selectionClick();
     setState(() => _curveScale = (_curveScale + 0.5).clamp(0.5, 2.5).toDouble());
+    _persistDimensions();
   }
 
   void _decCurve() {
     HapticFeedback.selectionClick();
     setState(() => _curveScale = (_curveScale - 0.5).clamp(0.5, 2.5).toDouble());
+    _persistDimensions();
   }
 
   void _incPerRow() {
     HapticFeedback.selectionClick();
     setState(() => _perRow = (_perRow + 1).clamp(4, 9).toInt());
+    _persistDimensions();
   }
 
   void _decPerRow() {
     HapticFeedback.selectionClick();
     setState(() => _perRow = (_perRow - 1).clamp(4, 9).toInt());
+    _persistDimensions();
   }
 
+  /// A live stepper value: scales read as a one-decimal multiplier (1.0×) and
+  /// per-arch reads as a plain count, so each ＋/－ combination is legible (R4).
+  static String _fmtScale(double v) => '${v.toStringAsFixed(1)}×';
+
   /// The pinned ＋/－ steppers in a 2×2 grid: size / spacing | curve / per-arch.
+  /// Each shows its CURRENT numeric value so the combinations are comparable.
   Widget _buildSteppers(BackgroundReadableColors readable) {
     _SizeStepper s(IconData icon, String inc, String dec, String incL,
-            String decL, VoidCallback onInc, VoidCallback onDec) =>
+            String decL, String value, VoidCallback onInc, VoidCallback onDec) =>
         _SizeStepper(
           readable: readable,
           headerIcon: icon,
@@ -311,30 +411,43 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
           decKey: ValueKey(dec),
           incLabel: incL,
           decLabel: decL,
+          valueLabel: value,
+          valueKey: ValueKey(inc.replaceAll('-inc', '-value')),
           onIncrease: onInc,
           onDecrease: onDec,
         );
-    return Row(
+    return Column(
       mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.end,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // Reset-to-default (plan 169) above the size/spacing/curve/per-arch grid.
+        _Orbit3ResetPill(readable: readable, onTap: _resetDimensions),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
         Column(mainAxisSize: MainAxisSize.min, children: [
           s(Icons.person_rounded, 'orbit3-avatar-size-inc',
               'orbit3-avatar-size-dec', 'Bigger avatars', 'Smaller avatars',
-              _incAvatarSize, _decAvatarSize),
+              _fmtScale(_avatarScale), _incAvatarSize, _decAvatarSize),
           const SizedBox(height: 8),
           s(Icons.unfold_more_rounded, 'orbit3-spacing-inc',
-              'orbit3-spacing-dec', 'More spacing', 'Less spacing', _incSpacing,
-              _decSpacing),
+              'orbit3-spacing-dec', 'More spacing', 'Less spacing',
+              _fmtScale(_spacingScale), _incSpacing, _decSpacing),
         ]),
         const SizedBox(width: 8),
         Column(mainAxisSize: MainAxisSize.min, children: [
           s(Icons.gesture_rounded, 'orbit3-curve-inc', 'orbit3-curve-dec',
-              'More curve', 'Less curve', _incCurve, _decCurve),
+              'More curve', 'Less curve', _fmtScale(_curveScale), _incCurve,
+              _decCurve),
           const SizedBox(height: 8),
           s(Icons.groups_rounded, 'orbit3-perrow-inc', 'orbit3-perrow-dec',
-              'More per arch', 'Fewer per arch', _incPerRow, _decPerRow),
+              'More per arch', 'Fewer per arch', '$_perRow', _incPerRow,
+              _decPerRow),
         ]),
+          ],
+        ),
       ],
     );
   }
@@ -394,8 +507,15 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                 key: const ValueKey('orbit3-arch-panel'),
                 controller: _archScroll,
                 physics: const ClampingScrollPhysics(),
-                padding: const EdgeInsets.only(top: 48, bottom: 8),
-                child: ConstrainedBox(
+                padding: const EdgeInsets.only(top: 12, bottom: 8),
+                child: GestureDetector(
+                  // Double-tap ANYWHERE on the expanded surface — arches OR the
+                  // inner circle — toggles every name label (Request 1). As an
+                  // ancestor of every member it shares the gesture arena, so a
+                  // single tap still opens that member's chat (one timeout late).
+                  behavior: HitTestBehavior.translucent,
+                  onDoubleTap: _toggleNames,
+                  child: ConstrainedBox(
                   constraints: BoxConstraints(
                     // Bottom-anchor the content so the circle stays at the
                     // bottom (open anchored on it) even when it all FITS — not
@@ -412,7 +532,7 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                     for (var i = 0; i < layout.rows.length; i++)
                       Builder(builder: (_) {
                         final r = layout.rows.length - 1 - i;
-                        return Orbit3ArcRow(
+                        final row = Orbit3ArcRow(
                           key: ValueKey('orbit3-arch-arc-row-$r'),
                           centres: layout.rows[r],
                           rowItems: overflowItems
@@ -426,9 +546,15 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                           avatar: base,
                           readable: readable,
                           motionEnabled: motionEnabled,
+                          namesVisible: _namesVisible,
                           onFriendTap: _openFriendChat,
                           onGroupTap: _openGroupChat,
                         );
+                        // Tag the LOWEST arch (row 0) so opening anchors it just
+                        // above the Collapse pill (arch-priority expand).
+                        return r == 0
+                            ? KeyedSubtree(key: _lowestArchKey, child: row)
+                            : row;
                       }),
                     // First arch hugs the circle like an extension (168).
                     SizedBox(height: 2 * _spacingScale),
@@ -468,6 +594,7 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                     const SizedBox(height: 96),
                     ],
                   ),
+                  ),
                 ),
               );
             },
@@ -486,9 +613,10 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
             onChanged: (q) => setState(() => _searchQuery = q),
           ),
         ),
-        // Pinned collapse pill — top-centre.
+        // Pinned collapse pill — bottom-centre, in the band between the lowest
+        // arch and the nav bar (between the steppers and the search) (Mod 2).
         Positioned(
-          top: 8,
+          bottom: 12,
           left: 0,
           right: 0,
           child: Center(
@@ -499,6 +627,80 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
           ),
         ),
       ],
+    );
+  }
+
+  /// The COLLAPSED One Circle. When there is overflow it keeps the SAME uniform
+  /// avatar size + snug box it had while expanded, so collapsing only hides the
+  /// arches — no size jump (Request 3). A "+N" arch chip sits directly above it
+  /// (tap to expand). With no overflow it stays the plain Orbit-parity circle.
+  Widget _buildCollapsedOneCircle(
+    BackgroundReadableColors readable,
+    bool motionEnabled,
+  ) {
+    final overflow = orbit3ArchOverflowCount(_items.length);
+    if (overflow <= 0) {
+      return FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Orbit3OneCircle(
+          userPeerId: widget.userPeerId,
+          userAvatarBytes: widget.userAvatarBytes,
+          items: _items,
+          // Cap at 2 orbits; overflow lives on the arch, not the in-ring node.
+          cappedRings: kOrbit3CollapsedRings,
+          showOverflowNode: false,
+          avatarScale: _avatarScale,
+          ringSpacingScale: _spacingScale,
+          namesVisible: _namesVisible,
+          motionEnabled: motionEnabled,
+          searchQuery: _searchQuery,
+          onToggleNames: _toggleNames,
+          onFriendTap: _openFriendChat,
+          onGroupTap: _openGroupChat,
+        ),
+      );
+    }
+    return Padding(
+      // Lift the circle so it rests at the SAME height the expanded scroll puts
+      // it at, so expanding does not move it (Mod 2). Tuned to match the expanded
+      // anchor (measured). The +N chip rides above, where the arches grow in.
+      padding: const EdgeInsets.only(bottom: 128),
+      child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Orbit3ArchBar(count: overflow, onTap: _toggleArch),
+        const SizedBox(height: 10),
+        // Flexible bounds the circle's height to the room left under the chip so
+        // BoxFit.scaleDown fits BOTH axes — on a short/wide surface (landscape,
+        // split-view) the snug box can exceed the pane height and a bare
+        // FittedBox in a Column would RenderFlex-overflow.
+        Flexible(
+          child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Orbit3OneCircle(
+            userPeerId: widget.userPeerId,
+            userAvatarBytes: widget.userAvatarBytes,
+            items: _items,
+            cappedRings: kOrbit3CollapsedRings,
+            showOverflowNode: false,
+            avatarScale: _avatarScale,
+            ringSpacingScale: _spacingScale,
+            // Mirror the expanded inner circle exactly (uniform avatars, snug
+            // box, no re-entrance) so collapse keeps the tuned size (R3).
+            uniformAvatarSize: kOrbit3ArchRowAvatar * _avatarScale,
+            snugBox: true,
+            animateEntrance: false,
+            namesVisible: _namesVisible,
+            motionEnabled: motionEnabled,
+            searchQuery: _searchQuery,
+            onToggleNames: _toggleNames,
+            onFriendTap: _openFriendChat,
+            onGroupTap: _openGroupChat,
+          ),
+        ),
+        ),
+      ],
+      ),
     );
   }
 
@@ -578,9 +780,16 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                               child: AnimatedAlign(
                                 duration: const Duration(milliseconds: 260),
                                 curve: Curves.easeOutCubic,
-                                // The OPEN arch now uses the unified-scroll path;
-                                // this collapsed/constellation path stays centred.
-                                alignment: Alignment.center,
+                                // With overflow the collapsed circle bottom-
+                                // anchors so expanding (which bottom-anchors the
+                                // scroll) does not shift it; constellation and the
+                                // no-overflow circle stay centred (Mod 2).
+                                alignment: (_viewMode ==
+                                            Orbit3ViewMode.oneCircle &&
+                                        orbit3ArchOverflowCount(_items.length) >
+                                            0)
+                                    ? Alignment.bottomCenter
+                                    : Alignment.center,
                                 child: _viewMode == Orbit3ViewMode.constellation
                                     ? LayoutBuilder(
                                         builder: (context, constraints) {
@@ -634,27 +843,8 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                                           );
                                         },
                                       )
-                                    : FittedBox(
-                                        fit: BoxFit.scaleDown,
-                                        child: Orbit3OneCircle(
-                                          userPeerId: widget.userPeerId,
-                                          userAvatarBytes:
-                                              widget.userAvatarBytes,
-                                          items: _items,
-                                          // Cap at 2 orbits; overflow lives on
-                                          // the arch, not the in-ring node.
-                                          cappedRings: kOrbit3CollapsedRings,
-                                          showOverflowNode: false,
-                                          avatarScale: _avatarScale,
-                                          ringSpacingScale: _spacingScale,
-                                          namesVisible: _namesVisible,
-                                          motionEnabled: motionEnabled,
-                                          searchQuery: _searchQuery,
-                                          onToggleNames: _toggleNames,
-                                          onFriendTap: _openFriendChat,
-                                          onGroupTap: _openGroupChat,
-                                        ),
-                                      ),
+                                    : _buildCollapsedOneCircle(
+                                        readable, motionEnabled),
                               ),
                             ),
                           ),
@@ -684,70 +874,6 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                               bottom: 12,
                               child: _buildSteppers(readable),
                             ),
-                            // The ARCH (and, expanded, its arc rows) ride just
-                            // above the circle's OUTER RING — close to the inner
-                            // circle, never pinned to the screen top. The arcs
-                            // fill the space ABOVE the circle, which stays
-                            // visible (and tappable) below.
-                            if (orbit3ArchOverflowCount(_items.length) > 0)
-                              Positioned.fill(
-                                child: LayoutBuilder(
-                                  builder: (context, c) {
-                                    final overflow = orbit3ArchOverflowCount(
-                                        _items.length);
-                                    // FittedBox(scaleDown) fits the 320 box into
-                                    // the padded width; the outer ring (radius
-                                    // 108) tops out this far above the centre.
-                                    // Mirror the circle's REAL layout so the band
-                                    // can end exactly above its top member:
-                                    // FittedBox(scaleDown) inside Padding(all:12),
-                                    // positioned by AnimatedAlign (y=0.30 when
-                                    // open, centre when collapsed).
-                                    final innerW = c.maxWidth - 24;
-                                    final innerH = c.maxHeight - 24;
-                                    final scale = [
-                                      innerW / kOrbit3BaseBox,
-                                      innerH / kOrbit3BaseBox,
-                                      1.0,
-                                    ].reduce((a, b) => a < b ? a : b);
-                                    final childH = kOrbit3BaseBox * scale;
-                                    const alignY = 0.0; // collapsed: centred
-                                    final youY = 12 +
-                                        (innerH - childH) * (alignY + 1) / 2 +
-                                        childH / 2;
-                                    // Top outer-ring member: centre at the ring
-                                    // radius; its avatar extends UP by
-                                    // ringAvatar/2·avatarScale (all ×FittedBox
-                                    // scale). The band ends above it (166 R1).
-                                    final memberTop = youY -
-                                        scale *
-                                            (orbit3RingRadius(
-                                                    kOrbit3CollapsedRings - 1) +
-                                                orbit3RingAvatar(
-                                                        kOrbit3CollapsedRings -
-                                                            1) *
-                                                    _avatarScale /
-                                                    2);
-                                    final bandBottomY = memberTop - 16;
-                                    final top = bandBottomY - 38 < 4
-                                        ? 4.0
-                                        : bandBottomY - 38;
-                                    return Stack(children: [
-                                      Positioned(
-                                        top: top,
-                                        left: 0,
-                                        right: 0,
-                                        child: Center(
-                                          child: Orbit3ArchBar(
-                                            count: overflow,
-                                            onTap: _toggleArch,
-                                          ),
-                                        ),
-                                      ),
-                                    ]);
-                                  },
-                                ),
-                              ),
                           ],
                         ],
                       ),
@@ -969,6 +1095,57 @@ class _ZoomControls extends StatelessWidget {
   }
 }
 
+/// A compact glassy "Reset" pill that restores the dimension steppers to their
+/// defaults and clears the saved value (plan 169). Sits above the ＋/－ grid.
+class _Orbit3ResetPill extends StatelessWidget {
+  final BackgroundReadableColors readable;
+  final VoidCallback onTap;
+  const _Orbit3ResetPill({required this.readable, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      key: const ValueKey('orbit3-reset-dimensions'),
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Semantics(
+        button: true,
+        label: 'Reset dimensions to default',
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: readable.glassSurface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: readable.glassBorder),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.refresh_rounded,
+                      size: 14, color: readable.iconSecondary),
+                  const SizedBox(width: 5),
+                  Text(
+                    'Reset',
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      color: readable.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// A glassy ＋/－ stack for tuning a live parameter on the One Circle (avatar
 /// SIZE or inter-orbit SPACING) — mirrors [_ZoomControls]. A small [headerIcon]
 /// distinguishes the two stacked steppers.
@@ -981,6 +1158,8 @@ class _SizeStepper extends StatelessWidget {
   final String incLabel;
   final String decLabel;
   final IconData headerIcon;
+  final String valueLabel;
+  final Key valueKey;
 
   const _SizeStepper({
     required this.readable,
@@ -991,6 +1170,8 @@ class _SizeStepper extends StatelessWidget {
     required this.incLabel,
     required this.decLabel,
     required this.headerIcon,
+    required this.valueLabel,
+    required this.valueKey,
   });
 
   Widget _btn(IconData icon, VoidCallback onTap, String label, Key key) {
@@ -1027,7 +1208,24 @@ class _SizeStepper extends StatelessWidget {
             children: [
               Padding(
                 padding: const EdgeInsets.only(top: 6, bottom: 3),
-                child: Icon(headerIcon, size: 13, color: readable.iconMuted),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(headerIcon, size: 13, color: readable.iconMuted),
+                    const SizedBox(height: 2),
+                    // The live value (R4) so each ＋/－ combination is legible.
+                    Text(
+                      valueLabel,
+                      key: valueKey,
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        height: 1.0,
+                        fontWeight: FontWeight.w700,
+                        color: readable.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
               ),
               Container(height: 1, width: 26, color: readable.glassBorder),
               _btn(Icons.add_rounded, onIncrease, incLabel, incKey),
