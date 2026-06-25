@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -211,7 +212,15 @@ void main() {
     mediaFileManager = FakeMediaFileManager();
     groupRepo = InMemoryGroupRepository();
     groupMessageRepo = InMemoryGroupMessageRepository();
+    // 162: the feed snapshot loaders resolve media via the STATIC
+    // MediaFileManager.resolveStoredPathSync (not the injected fake instance), so
+    // seed the static documents-dir cache with the fake's deterministic root.
+    // Without it, the local-file/relay-hash integrity checks resolve to a bare
+    // relative path that does not exist and downgrade 'done' media to 'pending'.
+    MediaFileManager.cacheDocumentsDir(FakeMediaFileManager.testRootPath);
   });
+
+  tearDown(MediaFileManager.debugResetDocumentsDirCache);
 
   Future<List<FeedItem>> loadFullFeed() {
     return loadFeed(

@@ -105,6 +105,8 @@ readonly FEED_TESTS=(
   "test/features/feed/presentation/screens/feed_contract_preservation_test.dart"
   # 156 QW-3: reduce-motion gating on the default ambient surface.
   "test/features/identity/presentation/widgets/ambient_background_test.dart"
+  # 163: AppShellController tab-vs-background change-kind discrimination.
+  "test/features/feed/application/app_shell_controller_test.dart"
 )
 
 readonly INTRO_TESTS=(

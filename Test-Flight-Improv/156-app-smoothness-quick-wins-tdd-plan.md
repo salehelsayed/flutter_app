@@ -1,6 +1,6 @@
 # 156 - App Smoothness Quick Wins  (Modification — release-build performance)
 
-Status: awaiting-review
+Status: IMPLEMENTED host-green (2026-06-24) — all 13 QW landed on branch `performance`, all named gates + host-all gates green, 0 new analyze, read-only adversarial review 0 confirmed findings. Only deferred item: QW-13 manual `flutter run --release` tab-absence check (config-hygiene, not a CI gate).
 Spec: free-text intent (no formal spec) — derived from `Test-Flight-Improv/app-smoothness-performance-audit.md` "Quick Wins" table (+ `.findings.json`). Scope is the Quick Wins ONLY; the High/Medium structural findings are out of scope (own future sessions).
 
 ## Planning Progress
@@ -16,13 +16,22 @@ Spec: free-text intent (no formal spec) — derived from `Test-Flight-Improv/app
 ## Execution Progress
 | Time | Phase | Files touched | Command/evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|
-| | contract extraction (git status --short) | | | scope confirmed | |
-| | RED tests added | | | RED for expected reason | |
-| | implementation | | | scoped files only | |
-| | direct GREEN | | | reds now green | |
-| | preservation GREEN | | | sentinels green | |
-| | named gates | | | gate green | |
-| | QA (independent) | | | blocking: none/list | verdict |
+| 2026-06-24 | contract extraction (git status --short) | branch `performance` (clean, pre-impl tag) | snapshot confirmed clean | scope confirmed | implement per-group |
+| 2026-06-24 | RED → impl → GREEN, per QW group | all 16 prod + 18 test files | each RED confirmed fails for the documented reason; then GREEN | RED-first honored per item (not one big batch) | gates |
+| 2026-06-24 | QW-5/6 migrations | 093/094 + app_database_version(92→94) + main.dart onCreate+onUpgrade(<93,<94) | `flutter test 093/094` 7/7 incl. EQP no-temp-b-tree + 2-col negative control | — | — |
+| 2026-06-24 | QW-7 ring | ring_avatar_generator.dart | value-eq + memo + shouldRepaint-false; 27/27 | LRU bound shipped (256) | — |
+| 2026-06-24 | QW-8 scrub | legacy_group_secret_storage_scrub.dart | SCRUB_SKIPPED + zero-scan (counting db) 5/5 | sentinel `group_secrets_scrubbed` | — |
+| 2026-06-24 | QW-4 avatars | user/group/profile avatars | cacheWidth=round(size*dpr); ResizeImage assert; 15/15; gif-exempt lock | folded-in images-media-2 | — |
+| 2026-06-24 | QW-2/3 ambient | ambient_background.dart | RepaintBoundary(child)+glow; disableAnimations gate; 16/16 | scoped to ambient ONLY | — |
+| 2026-06-24 | QW-1 bubble blur | letter_card.dart (both branches) + group test invert | TC-01 findsNothing+fill; dart:ui import dropped; letter_card 106, group 62 | 5 group asserts inverted | — |
+| 2026-06-24 | QW-9 media-gate | conversation_wired.dart | Δ==0 text/status, Δ≥1 media, Δ0 dedup; full file 103/103 | both streams kept (131) | — |
+| 2026-06-24 | QW-10/11/12 | conversation_screen.dart + group_conversation_screen.dart | quote map once/frame; shouldAnimate=isNew; DateFormat hoist; conv 73, group 62 | _formatTime removed both | — |
+| 2026-06-24 | QW-13 orbit flags | orbit2/3_prototype.dart + wiring test | source-guards RED→GREEN; =kDebugMode; wiring relaxed | manual `flutter run --release` DEFERRED | — |
+| 2026-06-24 | registration | scripts/run_test_gates.sh | group_avatar_test→GROUP_TESTS, ambient_background_test→FEED_TESTS | — | — |
+| 2026-06-24 | preservation GREEN | TC-24 (contact_profile) + TC-25 (empty_circle) | both animate under disableAnimations; 15/15 | INV-11 locked | — |
+| 2026-06-24 | named gates | — | **1to1 1200/1200, feed 230/230, groups 882/882, core-host-all PASS, feature-host-all 603 files 0-fail** | 0 regressions | — |
+| 2026-06-24 | hygiene | — | `flutter analyze` 0 NEW (5 pre-existing: mediaTapHandler + 4 group withOpacity); `git diff --check` clean | — | QA |
+| 2026-06-24 | QA (independent) | read-only Explore-agent review (3 lenses + adversarial verify) | see Final Execution Verdict | — | — |
 
 ## Source Of Truth
 - Intent: `Test-Flight-Improv/app-smoothness-performance-audit.md` (Quick Wins) + `app-smoothness-performance-audit.findings.json`
@@ -332,4 +341,16 @@ Sufficiency self-check (Step 4) PASS with explicit, justified exceptions: (a) ev
 **Structural blockers:** none. **Deferred details:** ring LRU bound seam (TC-12 conditional on the impl exposing it). **Accepted differences:** QW-12 bundle-only, QW-13 manual-release, group media-resolve out of scope, **GIF `cacheWidth` (images-media-3) refuted/out-of-scope**. **Post-critic deltas folded in:** 094 → 3-col index + EQP lock; profile avatar folded into QW-4 (TC-08b); FEED_TESTS/GROUP_TESTS registration edits (step 6b); RED command set completed; group test path corrected. Implementation-ready; hand to execution.
 
 ## Final Execution Verdict
-Verdict: (pending execution) | Files changed: … | Tests run (+counts): … | Blocking: … | QA verdict: … | Non-blocking follow-ups (owner): …
+Verdict: **SHIP (host-green)** — all 13 quick wins implemented on branch `performance` via RED→GREEN→mutation-aware TDD.
+
+Files changed (27): 16 production + 11 test, +1140/-212.
+- Production: `letter_card.dart` (QW-1, blur removed both branches, `dart:ui` import dropped), `ambient_background.dart` (QW-2/3, RepaintBoundary + OS reduce-motion), `user_avatar.dart`/`group_avatar.dart`/`profile_avatar_widget.dart` (QW-4 cacheWidth ×3), `093_*`/`094_*` migrations + `app_database_version.dart` (92→94) + `main.dart` onCreate+onUpgrade (QW-5/6), `ring_avatar_generator.dart` (QW-7 ==/hashCode + LRU memo), `legacy_group_secret_storage_scrub.dart` (QW-8 sentinel), `conversation_wired.dart` (QW-9 media-resolve gate), `conversation_screen.dart` + `group_conversation_screen.dart` (QW-10/11/12), `orbit2_prototype.dart`/`orbit3_prototype.dart` (QW-13 `=kDebugMode`), `scripts/run_test_gates.sh` (registration).
+- Tests: TC-01,03,04,06,07,08,08b,09,10,11,12,13,14,15,16,17,18,21,22,23,24,25 added/strengthened; 5 group blur asserts inverted; `orbit3_wiring_test` relaxed.
+
+Tests run (+counts): migrations 7/7 (incl. EQP no-temp-b-tree + 094 2-col negative control); ring 27/27; scrub 5/5; avatars 15/15; ambient 16/16; letter_card 106; group_conversation_screen 62; conversation_wired 103; conversation_screen 73; orbit guards+wiring 4/4; preservation sentinels 15/15. **Named gates: 1to1 1200/1200, feed 230/230, groups 882/882, core-host-all PASS (exit 0), feature-host-all 603 files / 0 fail (exit 0).** `flutter analyze` 0 NEW (5 pre-existing: `mediaTapHandler` closure + 4 `withOpacity` in group screen, none in my added lines); `git diff --check` clean.
+
+QA verdict: read-only adversarial review (3 lenses — correctness/regression, scope-guard, test-integrity — each an Explore agent with NO write access; adversarial verify pass on any blocker/major) returned **0 confirmed-real findings, 0 blocker/major raised**. Scope guards held: `empty_circle_state.dart`/`contact_profile_screen.dart` untouched (TC-24/25 prove both orbits still animate under `disableAnimations`); GIF cacheWidth guards untouched; both `incomingMessageStream`+`messageChanges` kept (131); 094 is 3-col; no migration-data/content/ordering change.
+
+Blocking: none.
+
+Non-blocking follow-ups (owner): (1) **QW-13 manual `flutter run --release`** → confirm Orbit2/Orbit3 tabs absent (config-hygiene; `kDebugMode` is true under `flutter test` so runtime release-absence is not host-observable) — owner: release verifier. (2) GIF `cacheWidth` (`images-media-3`) deliberately NOT shipped (animated-GIF regression risk) — owner: future GIF-survival session. (3) Group incoming-media resolve gate (QW-9 is 1:1 only) — owner: optional follow-up. (4) DB v94 consumes every install's onUpgrade; any concurrent migration must take 095+.

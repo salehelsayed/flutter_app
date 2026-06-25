@@ -753,3 +753,124 @@ void registerFeedInitPerf() {
     expect(binding.reportData, isNotNull);
   });
 }
+
+void _applyWideSurface(WidgetTester tester) {
+  tester.view.physicalSize = const Size(1290, 2796);
+  tester.view.devicePixelRatio = 3.0;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+}
+
+Future<void> _pumpFrames(WidgetTester tester, int count) async {
+  for (var i = 0; i < count; i++) {
+    await tester.pump(_frameStep);
+  }
+}
+
+// 163 (animations-repaint-2 / navigation-hangs-2): advisory perf lane. Drives a
+// run of Feed<->Orbit tab switches and records frame build/raster timings, so the
+// shell-rebuild cost (now RepaintBoundary-isolated + notify-kind-split) is
+// observable on device. Mobile-compatible (uses _FrameTimingCollector only, NOT
+// the VM-service timeline) so it actually runs on a simulator. NOT a host gate.
+void registerShellSwitchPerf() {
+  testWidgets('SHELL_SWITCH 1', (tester) async {
+    VmServiceProxyGoldenFileComparator.useIfRunningOnDevice();
+    binding = IntegrationTestWidgetsFlutterBinding.instance;
+    binding.reportData ??= <String, dynamic>{};
+    _applyWideSurface(tester);
+
+    final env = await _makeEnvironment(
+      const _FeedScenario(id: 'shell_switch', warmIdentityBeforeMount: false),
+    );
+    await tester.pumpWidget(env.buildApp());
+    await _pumpThroughMount(tester, env);
+
+    // Latch the orbit host (one-way) and settle back on Feed.
+    env.appShellController.switchTo('orbit');
+    await _pumpFrames(tester, 12);
+    env.appShellController.switchTo('feed');
+    await _pumpFrames(tester, 12);
+
+    const switchCycles = 10;
+    final collector = _FrameTimingCollector()..start();
+    for (var c = 0; c < switchCycles; c++) {
+      env.appShellController.switchTo('orbit');
+      await _pumpFrames(tester, 10);
+      env.appShellController.switchTo('feed');
+      await _pumpFrames(tester, 10);
+    }
+    await collector.stop();
+
+    final report = collector.toReport();
+    report['switchCycles'] = switchCycles;
+    report['productionCodeChanged'] = false;
+    binding.reportData!['shell_switch_frame_summary'] = report;
+    _printReportEntry('shell_switch_frame_summary');
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _pumpFrames(tester, 3);
+    await env.dispose();
+    expect(binding.reportData, isNotNull);
+  });
+}
+
+// 163 (animations-repaint-2): advisory off-screen lane. Latches Orbit, stays on
+// Feed, and measures idle frame work while Orbit is off-screen — plus the direct
+// 163 observable that the off-screen pane's TickerMode is DISABLED (its ambient
+// + orbit controllers muted) while the active pane stays enabled. Mobile-OK; NOT
+// a host gate.
+void registerFeedOrbitOffscreenPerf() {
+  testWidgets('FEED_ORBIT_OFFSCREEN 1', (tester) async {
+    VmServiceProxyGoldenFileComparator.useIfRunningOnDevice();
+    binding = IntegrationTestWidgetsFlutterBinding.instance;
+    binding.reportData ??= <String, dynamic>{};
+    _applyWideSurface(tester);
+
+    final env = await _makeEnvironment(
+      const _FeedScenario(
+        id: 'feed_orbit_offscreen',
+        warmIdentityBeforeMount: false,
+      ),
+    );
+    await tester.pumpWidget(env.buildApp());
+    await _pumpThroughMount(tester, env);
+
+    // Mount the orbit host, then settle back on Feed so Orbit is off-screen.
+    env.appShellController.switchTo('orbit');
+    await _pumpFrames(tester, 14);
+    env.appShellController.switchTo('feed');
+    await _pumpFrames(tester, 14);
+
+    bool? tickerEnabled(String key) {
+      final finder = find.byKey(ValueKey<String>(key));
+      if (finder.evaluate().isEmpty) return null;
+      return tester.widget<TickerMode>(finder).enabled;
+    }
+
+    final offscreenOrbitEnabled = tickerEnabled('orbit-pane-ticker-mode');
+    final activeFeedEnabled = tickerEnabled('feed-pane-ticker-mode');
+
+    // ~2s idle window on Feed with Orbit off-screen.
+    const idleFrames = 125;
+    final collector = _FrameTimingCollector()..start();
+    await _pumpFrames(tester, idleFrames);
+    await collector.stop();
+
+    final report = collector.toReport();
+    report['idleFrames'] = idleFrames;
+    report['offscreenOrbitTickerEnabled'] = offscreenOrbitEnabled;
+    report['activeFeedTickerEnabled'] = activeFeedEnabled;
+    report['productionCodeChanged'] = false;
+    binding.reportData!['feed_orbit_offscreen_frame_summary'] = report;
+    _printReportEntry('feed_orbit_offscreen_frame_summary');
+
+    // The 163 contract: off-screen pane ticker muted, active pane ticking.
+    expect(offscreenOrbitEnabled, isFalse);
+    expect(activeFeedEnabled, isTrue);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _pumpFrames(tester, 3);
+    await env.dispose();
+    expect(binding.reportData, isNotNull);
+  });
+}

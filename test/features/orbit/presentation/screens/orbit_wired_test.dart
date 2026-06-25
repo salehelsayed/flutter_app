@@ -4218,6 +4218,184 @@ void main() {
       },
     );
   });
+
+  group('163 off-screen orbit subscription gate', () {
+    GroupModel alphaGroup() => GroupModel(
+      id: 'g-1',
+      name: 'Alpha Group',
+      type: GroupType.chat,
+      topicName: 'topic-g-1',
+      createdAt: DateTime.utc(2026, 3, 1),
+      createdBy: 'peer-admin',
+      myRole: GroupRole.admin,
+    );
+
+    ConversationMessage chatMsg(String id) => ConversationMessage(
+      id: id,
+      contactPeerId: 'contact-peer-id',
+      text: 'while away',
+      senderPeerId: 'contact-peer-id',
+      timestamp: DateTime.now().toUtc().toIso8601String(),
+      isIncoming: true,
+      status: 'delivered',
+      createdAt: DateTime.now().toUtc().toIso8601String(),
+    );
+
+    GroupMessage groupMsg(String id) => GroupMessage(
+      id: id,
+      groupId: 'g-1',
+      senderPeerId: 'peer-bob',
+      senderUsername: 'Bob',
+      text: 'group while away',
+      timestamp: DateTime.utc(2026, 3, 2),
+      isIncoming: true,
+      createdAt: DateTime.utc(2026, 3, 2),
+    );
+
+    testWidgets(
+      'TC-163-10: off-screen OrbitWired does NOT process gated events and on '
+      're-activation replays exactly one PER-REASON refresh (chat->friend, '
+      'group->group), losing nothing',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        // Explicitly non-null controller starting on the Feed tab → orbit is
+        // mounted but off-screen.
+        final shellController = AppShellController();
+        final spyContactRepo = _SpyContactRepository();
+        final spyMessageRepo = _SpyMessageRepository();
+        final spyGroupRepo = _SpyGroupRepository();
+        final spyGroupMsgRepo = _SpyGroupMessageRepository();
+        spyContactRepo.seed([testContact]);
+        await spyGroupRepo.saveGroup(alphaGroup());
+
+        final fakeChatListener = _FakeChatMessageListener(
+          messageRepo: spyMessageRepo,
+          contactRepo: spyContactRepo,
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            appShellController: shellController,
+            chatMessageListener: fakeChatListener,
+            contactRepository: spyContactRepo,
+            messageRepository: spyMessageRepo,
+            groupRepository: spyGroupRepo,
+            groupMessageRepository: spyGroupMsgRepo,
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(shellController.activeTab, AppShellTab.feed);
+
+        spyContactRepo.resetTracking();
+        spyMessageRepo.resetTracking();
+        spyGroupRepo.resetTracking();
+        spyGroupMsgRepo.resetTracking();
+
+        // --- Off-screen: gated chat + group events buffer, do NO refresh. ---
+        await spyMessageRepo.saveMessage(chatMsg('msg-offscreen-1'));
+        fakeChatListener.emitIncomingMessage(chatMsg('msg-offscreen-1'));
+        final offscreenGroup = groupMsg('gm-offscreen');
+        await spyGroupMsgRepo.saveMessage(offscreenGroup);
+        groupMessageStreamController.add(offscreenGroup);
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(
+          spyMessageRepo.getConversationThreadSummaryCallCountByPeerId,
+          isEmpty,
+        );
+        expect(spyContactRepo.getContactCallCountByPeerId, isEmpty);
+        expect(spyGroupRepo.getGroupCallCountById, isEmpty);
+        expect(spyGroupMsgRepo.getGroupThreadSummaryCallCountByGroupId, isEmpty);
+
+        // --- Re-activation: replay exactly one PER-REASON refresh. ---
+        shellController.switchTo(AppShellTab.orbit);
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        // chat -> friend refresh (exactly once for the buffered peer).
+        expect(spyMessageRepo.getConversationThreadSummaryCallCountByPeerId, {
+          'contact-peer-id': 1,
+        });
+        expect(spyContactRepo.getContactCallCountByPeerId, {
+          'contact-peer-id': 1,
+        });
+        // group -> group refresh on its OWN targeted path.
+        expect(spyGroupRepo.getGroupCallCountById, {'g-1': 1});
+        expect(spyGroupMsgRepo.getGroupThreadSummaryCallCountByGroupId, {
+          'g-1': 1,
+        });
+        // NOT a friends-only `_loadOrbitData` (which would reload all contacts).
+        expect(spyContactRepo.getActiveContactsCallCount, 0);
+      },
+    );
+
+    testWidgets(
+      'TC-163-10b (preservation): standalone OrbitWired (null appShellController) '
+      'processes live chat AND group events immediately',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        final spyContactRepo = _SpyContactRepository();
+        final spyMessageRepo = _SpyMessageRepository();
+        final spyGroupRepo = _SpyGroupRepository();
+        final spyGroupMsgRepo = _SpyGroupMessageRepository();
+        spyContactRepo.seed([testContact]);
+        await spyGroupRepo.saveGroup(alphaGroup());
+
+        final fakeChatListener = _FakeChatMessageListener(
+          messageRepo: spyMessageRepo,
+          contactRepo: spyContactRepo,
+        );
+
+        await tester.pumpWidget(
+          // No appShellController → null default → standalone (always active).
+          buildOrbitWired(
+            chatMessageListener: fakeChatListener,
+            contactRepository: spyContactRepo,
+            messageRepository: spyMessageRepo,
+            groupRepository: spyGroupRepo,
+            groupMessageRepository: spyGroupMsgRepo,
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        spyContactRepo.resetTracking();
+        spyMessageRepo.resetTracking();
+        spyGroupRepo.resetTracking();
+        spyGroupMsgRepo.resetTracking();
+
+        // Live events are processed IMMEDIATELY (null controller == active).
+        await spyMessageRepo.saveMessage(chatMsg('msg-live-1'));
+        fakeChatListener.emitIncomingMessage(chatMsg('msg-live-1'));
+        final liveGroup = groupMsg('gm-live');
+        await spyGroupMsgRepo.saveMessage(liveGroup);
+        groupMessageStreamController.add(liveGroup);
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(spyMessageRepo.getConversationThreadSummaryCallCountByPeerId, {
+          'contact-peer-id': 1,
+        });
+        expect(spyGroupRepo.getGroupCallCountById, {'g-1': 1});
+        expect(spyGroupMsgRepo.getGroupThreadSummaryCallCountByGroupId, {
+          'g-1': 1,
+        });
+      },
+    );
+  });
 }
 
 /// Identity repo whose [loadIdentity] resolves slowly — holds a deferred
@@ -4312,7 +4490,8 @@ class _SpyMessageRepository extends InMemoryMessageRepository {
   final Map<String, int> getMessageCountForContactCallCountByPeerId = {};
   final Map<String, int> getLatestMessageForContactCallCountByPeerId = {};
   final Map<String, int> getUnreadCountForContactCallCountByPeerId = {};
-  int getConversationThreadSummariesCallCount = 0;
+  // getConversationThreadSummariesCallCount is inherited from
+  // InMemoryMessageRepository (re-declaring it here would shadow + double-count).
   final Map<String, int> getConversationThreadSummaryCallCountByPeerId = {};
 
   @override
@@ -4359,13 +4538,11 @@ class _SpyMessageRepository extends InMemoryMessageRepository {
     return super.getConversationThreadSummary(contactPeerId);
   }
 
-  @override
-  Future<Map<String, ConversationThreadSummary>> getConversationThreadSummaries(
-    Iterable<String> contactPeerIds,
-  ) {
-    getConversationThreadSummariesCallCount++;
-    return super.getConversationThreadSummaries(contactPeerIds);
-  }
+  // NOTE: getConversationThreadSummaries is NOT overridden here — the base
+  // InMemoryMessageRepository already increments getConversationThreadSummariesCallCount.
+  // A spy override that ALSO incremented it double-counted (the subclass field
+  // shadows the base field, so both increments hit one storage), making this
+  // spy report 2 calls per 1 batched call. Inherit the base counter instead.
 
   void resetTracking() {
     getMessageCountForContactCallCountByPeerId.clear();

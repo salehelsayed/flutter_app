@@ -410,6 +410,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _startListeningForGroupMessages();
     _startListeningForPendingGroupInvites();
     _startListeningForIntroductions();
+    _wasOrbitActive = _isOrbitActive;
     _attachExternalRouteChangesListenable(
       widget.externalRouteChangesListenable,
     );
@@ -440,9 +441,60 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
   }
 
+  // 163 (reactive-streams-3): a null appShellController means a standalone Orbit
+  // (no shell to be off-screen behind) → always active. Otherwise Orbit is
+  // active only when it is the selected shell tab.
+  bool get _isOrbitActive =>
+      widget.appShellController == null ||
+      widget.appShellController!.activeTab == AppShellTab.orbit;
+
+  // Per-reason dirty buckets buffer the work that gated off-screen orbit
+  // subscriptions would have done, so re-activation replays exactly one targeted
+  // refresh per reason (pause/dirty-flag, never cancel — preserves 131-class
+  // live-update delivery). Contact-requests are NEVER buffered (they stay live).
+  final Set<String> _dirtyFriendPeerIds = {};
+  final Set<String> _dirtyGroupIds = {};
+  bool _introsDirty = false;
+  bool _invitesDirty = false;
+  bool _wasOrbitActive = true;
+
   void _onAppShellChanged() {
-    if (mounted) {
-      setState(() {});
+    if (!mounted) {
+      return;
+    }
+    final isActive = _isOrbitActive;
+    if (isActive && !_wasOrbitActive) {
+      _replayDirtyOrbitWork();
+    }
+    _wasOrbitActive = isActive;
+    setState(() {});
+  }
+
+  // Replays one targeted refresh per buffered reason on Feed -> Orbit
+  // re-activation — NOT a lone friends-only `_loadOrbitData` (the six handlers
+  // are heterogeneous).
+  void _replayDirtyOrbitWork() {
+    if (_dirtyFriendPeerIds.isNotEmpty) {
+      final peerIds = _dirtyFriendPeerIds.toList();
+      _dirtyFriendPeerIds.clear();
+      for (final peerId in peerIds) {
+        unawaited(_refreshOrbitFriend(peerId));
+      }
+    }
+    if (_dirtyGroupIds.isNotEmpty) {
+      final groupIds = _dirtyGroupIds.toList();
+      _dirtyGroupIds.clear();
+      for (final groupId in groupIds) {
+        unawaited(_refreshOrbitGroup(groupId));
+      }
+    }
+    if (_introsDirty) {
+      _introsDirty = false;
+      _loadIntroductions();
+    }
+    if (_invitesDirty) {
+      _invitesDirty = false;
+      unawaited(_loadPendingGroupInvites());
     }
   }
 
@@ -868,7 +920,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     if (listener == null) return;
 
     _introReceivedSubscription = listener.introReceivedStream.listen(
-      (_) => _loadIntroductions(),
+      (_) {
+        if (!_isOrbitActive) {
+          _introsDirty = true;
+          return;
+        }
+        _loadIntroductions();
+      },
       onError: (error) {
         emitFlowEvent(
           layer: 'FL',
@@ -880,6 +938,20 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
     _introStatusSubscription = listener.introStatusChangedStream.listen(
       (intro) {
+        if (!_isOrbitActive) {
+          _introsDirty = true;
+          final identity = _identity;
+          if (identity != null &&
+              intro.status == IntroductionOverallStatus.mutualAccepted) {
+            final otherPeerId = intro.recipientId == identity.peerId
+                ? intro.introducedId
+                : intro.recipientId;
+            if (otherPeerId.isNotEmpty) {
+              _dirtyFriendPeerIds.add(otherPeerId);
+            }
+          }
+          return;
+        }
         _loadIntroductions();
         final identity = _identity;
         if (identity == null ||
@@ -910,6 +982,11 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _groupJoinedInviteSubscription = listener.groupJoinedStream.listen(
       (group) {
         _markGroupChanged(group.id);
+        if (!_isOrbitActive) {
+          _dirtyGroupIds.add(group.id);
+          _invitesDirty = true;
+          return;
+        }
         unawaited(_refreshOrbitGroup(group.id));
         unawaited(_loadPendingGroupInvites());
       },
@@ -923,7 +1000,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     );
 
     _pendingGroupInviteSubscription = listener.pendingInviteStream.listen(
-      (_) => unawaited(_loadPendingGroupInvites()),
+      (_) {
+        if (!_isOrbitActive) {
+          _invitesDirty = true;
+          return;
+        }
+        unawaited(_loadPendingGroupInvites());
+      },
       onError: (error) {
         emitFlowEvent(
           layer: 'FL',
@@ -1507,6 +1590,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _groupMessageSubscription = listener.groupMessageStream.listen(
       (message) {
         _markGroupChanged(message.groupId);
+        if (!_isOrbitActive) {
+          _dirtyGroupIds.add(message.groupId);
+          return;
+        }
         unawaited(_refreshOrbitGroup(message.groupId));
       },
       onError: (error) {
@@ -1529,6 +1616,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   void _startListeningForChatMessages() {
     _chatSubscription = widget.chatMessageListener.incomingMessageStream.listen(
       (message) {
+        if (!_isOrbitActive) {
+          _dirtyFriendPeerIds.add(message.contactPeerId);
+          return;
+        }
         unawaited(_refreshOrbitFriend(message.contactPeerId));
       },
       onError: (error) {
@@ -1552,6 +1643,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _contactUpdateSubscription = widget.chatMessageListener.contactUpdatedStream
         .listen(
           (contact) {
+            if (!_isOrbitActive) {
+              _dirtyFriendPeerIds.add(contact.peerId);
+              return;
+            }
             unawaited(_refreshOrbitFriend(contact.peerId));
           },
           onError: (error) {

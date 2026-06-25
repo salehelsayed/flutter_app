@@ -39,6 +39,12 @@ void main() {
     case 'FEED_INIT':
       registerFeedInitPerf();
       break;
+    case 'SHELL_SWITCH':
+      registerShellSwitchPerf();
+      break;
+    case 'FEED_ORBIT_OFFSCREEN':
+      registerFeedOrbitOffscreenPerf();
+      break;
     case 'CONVERSATION':
       registerConversationPerf();
       break;

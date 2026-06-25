@@ -40,6 +40,13 @@ void main() {
       tempDir = await Directory.systemTemp.createTemp(
         'group_media_durability_sim_',
       );
+      // 162: the group-feed media verification resolves stored paths via the
+      // static synchronous twin (MediaFileManager.resolveStoredPathSync), which
+      // the real app seeds once at startup. This direct-call sim bypasses app
+      // startup, so seed the documents-dir cache to this run's temp root —
+      // otherwise relative paths fail to resolve (MEDIA_RESOLVE_SYNC_NO_CACHE)
+      // and present media is wrongly demoted done -> pending.
+      MediaFileManager.cacheDocumentsDir(tempDir.path);
     });
 
     tearDown(() async {

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -1552,6 +1553,676 @@ void main() {
       );
     });
 
+  });
+
+  // ── 162: feed reload debounce (per-contact coalescer with sticky escalation) ─
+  group('162 feed reload debounce', () {
+    // Reads the LIVE projected thread for a contact (FeedScreen renders from the
+    // listenable; the `feedItems` prop is a stale last-build snapshot).
+    ThreadFeedItem? threadFor(WidgetTester tester, String contactPeerId) {
+      final feedScreen = tester.widget<FeedScreen>(find.byType(FeedScreen));
+      final items = feedScreen.feedItemsListenable!.value;
+      final matches = items
+          .whereType<ThreadFeedItem>()
+          .where((t) => t.contactPeerId == contactPeerId)
+          .toList();
+      return matches.isEmpty ? null : matches.single;
+    }
+
+    // Delivers all synchronously-queued stream events to the listeners (enqueue +
+    // arm the coalescer timer), fires the timer once, then drains the async flush.
+    Future<void> settleCoalesce(WidgetTester tester) async {
+      await tester.pump(); // deliver queued broadcast events → enqueue + arm
+      await tester.pump(const Duration(milliseconds: 100)); // fire the window
+      await tester.pump(); // drain the async flush
+    }
+
+    ConversationMessage outgoing(
+      String id,
+      String peerId, {
+      String status = 'sent',
+      String text = 'msg',
+      String? timestamp,
+      String? deletedAt,
+      String? hiddenAt,
+    }) {
+      final ts = timestamp ?? DateTime.now().toUtc().toIso8601String();
+      return ConversationMessage(
+        id: id,
+        contactPeerId: peerId,
+        text: text,
+        senderPeerId: 'me-peer',
+        timestamp: ts,
+        isIncoming: false,
+        status: status,
+        createdAt: ts,
+        deletedAt: deletedAt,
+        hiddenAt: hiddenAt,
+      );
+    }
+
+    // An UNREAD incoming message keeps the contact's thread PENDING so the
+    // pending projection (FeedStore._buildItems → projectPendingFeed) keeps it
+    // in `feedItemsListenable`. It must be the NEWEST message (a thread is
+    // "answered" — and dropped — if any outgoing is newer than the newest unread
+    // incoming), so the default sits after the 08:xx outgoing burst timestamps.
+    ConversationMessage unreadIncoming(
+      String id,
+      String peerId, {
+      String text = 'incoming',
+      String? timestamp,
+    }) {
+      final ts = timestamp ?? DateTime.utc(2026, 3, 1, 9, 0).toIso8601String();
+      return ConversationMessage(
+        id: id,
+        contactPeerId: peerId,
+        text: text,
+        senderPeerId: peerId,
+        timestamp: ts,
+        isIncoming: true,
+        status: 'delivered',
+        createdAt: ts,
+      );
+    }
+
+    final contactB = ContactModel(
+      peerId: 'peer-B',
+      publicKey: 'pk-peer-B',
+      rendezvous: '/dns4/relay/tcp/443',
+      username: 'Carol',
+      signature: 'sig',
+      scannedAt: DateTime.now().toUtc().toIso8601String(),
+      mlKemPublicKey: 'mlkem-peer-B',
+    );
+
+    testWidgets(
+      'TC-162-04: a burst of N same-contact repo-change events coalesces into '
+      'ONE feed materialization pass (debounce)',
+      (tester) async {
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester);
+
+        contactRepo.resetGetContactCounts();
+
+        // 5 rapid same-id outgoing status flips for the SAME contact.
+        for (final status in ['sent', 'delivered', 'sent', 'delivered', 'delivered']) {
+          messageRepo.debugEmitMessageChange(
+            outgoing('out-1', testContact.peerId, status: status),
+          );
+        }
+        await settleCoalesce(tester);
+
+        // One effective materialization, not five.
+        expect(contactRepo.getContactCallsByPeerId[testContact.peerId], 1);
+      },
+    );
+
+    testWidgets(
+      'TC-162-05a: debounce flushes once per contact, last-write-wins '
+      '(same-id status flip)',
+      (tester) async {
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        // Unread incoming keeps the thread pending so it stays in the projection.
+        await messageRepo.saveMessage(
+          unreadIncoming('in-a', testContact.peerId),
+        );
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester);
+
+        contactRepo.resetGetContactCounts();
+
+        const lwwTs = '2026-03-01T08:00:00.000Z'; // older than the 09:00 incoming
+        messageRepo.debugEmitMessageChange(
+          outgoing('lww-1', testContact.peerId,
+              status: 'sent', text: 'first', timestamp: lwwTs),
+        );
+        messageRepo.debugEmitMessageChange(
+          outgoing('lww-1', testContact.peerId,
+              status: 'delivered', text: 'latest', timestamp: lwwTs),
+        );
+        await settleCoalesce(tester);
+
+        expect(contactRepo.getContactCallsByPeerId[testContact.peerId], 1);
+        final thread = threadFor(tester, testContact.peerId);
+        expect(thread, isNotNull);
+        final msg = thread!.messages.singleWhere((m) => m.id == 'lww-1');
+        expect(msg.status, 'delivered'); // latest state wins
+        expect(msg.text, 'latest');
+      },
+    );
+
+    testWidgets(
+      'TC-162-05b: delete(X)-then-send(Y) escalates to a full refresh; a HIDDEN '
+      'tombstone X is dropped, Y survives (delete NOT swallowed)',
+      (tester) async {
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final tsX = DateTime.utc(2026, 3, 1, 8, 0).toIso8601String();
+        final tsY = DateTime.utc(2026, 3, 1, 8, 1).toIso8601String();
+        // X is a delivered delete-for-everyone → HIDDEN tombstone (hiddenAt set).
+        final xTomb = outgoing(
+          'X',
+          testContact.peerId,
+          status: 'delivered',
+          text: '',
+          timestamp: tsX,
+          deletedAt: tsX,
+          hiddenAt: tsX,
+        );
+        final ySent = outgoing(
+          'Y',
+          testContact.peerId,
+          status: 'sent',
+          text: 'after delete',
+          timestamp: tsY,
+        );
+        // Unread incoming keeps the thread pending so it stays projected.
+        await messageRepo.saveMessage(
+          unreadIncoming('in-b', testContact.peerId),
+        );
+        await messageRepo.saveMessage(xTomb);
+        await messageRepo.saveMessage(ySent);
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester);
+
+        contactRepo.resetGetContactCounts();
+        messageRepo.resetSpyCounters();
+
+        // delete(X) THEN sent(Y) — delete is NOT the last event.
+        messageRepo.debugEmitMessageChange(xTomb);
+        messageRepo.debugEmitMessageChange(ySent);
+        await settleCoalesce(tester);
+
+        // One materialization for the contact.
+        expect(contactRepo.getContactCallsByPeerId[testContact.peerId], 1);
+        // The destructive escalation ran the FULL refresh (getMessagesPage),
+        // NOT the incremental in-memory apply (which never reads the page).
+        expect(
+          messageRepo.getMessagesPageCalls.where((c) => c.$1 == testContact.peerId),
+          isNotEmpty,
+        );
+        // Status-dependent post-state: the HIDDEN tombstone X is dropped; Y stays.
+        final thread = threadFor(tester, testContact.peerId);
+        expect(thread, isNotNull);
+        final ids = thread!.messages.map((m) => m.id).toSet();
+        expect(ids.contains('X'), isFalse);
+        expect(ids.contains('Y'), isTrue);
+      },
+    );
+
+    testWidgets(
+      'TC-162-05b2: a NON-hidden delete tombstone (sent delete-for-everyone) is '
+      'retained as a visible empty isDeleted row (not purged)',
+      (tester) async {
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final tsX = DateTime.utc(2026, 3, 1, 8, 0).toIso8601String();
+        final tsY = DateTime.utc(2026, 3, 1, 8, 1).toIso8601String();
+        // X is a SENT delete-for-everyone → NON-hidden tombstone (no hiddenAt).
+        final xTomb = outgoing(
+          'X',
+          testContact.peerId,
+          status: 'sent',
+          text: '',
+          timestamp: tsX,
+          deletedAt: tsX,
+        );
+        final ySent = outgoing(
+          'Y',
+          testContact.peerId,
+          status: 'sent',
+          text: 'after delete',
+          timestamp: tsY,
+        );
+        // Unread incoming keeps the thread pending so it stays projected.
+        await messageRepo.saveMessage(
+          unreadIncoming('in-b2', testContact.peerId),
+        );
+        await messageRepo.saveMessage(xTomb);
+        await messageRepo.saveMessage(ySent);
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester);
+
+        contactRepo.resetGetContactCounts();
+        messageRepo.resetSpyCounters();
+
+        messageRepo.debugEmitMessageChange(xTomb);
+        messageRepo.debugEmitMessageChange(ySent);
+        await settleCoalesce(tester);
+
+        expect(contactRepo.getContactCallsByPeerId[testContact.peerId], 1);
+        // The destructive escalation ran the FULL refresh (getMessagesPage).
+        expect(
+          messageRepo.getMessagesPageCalls.where((c) => c.$1 == testContact.peerId),
+          isNotEmpty,
+        );
+        final thread = threadFor(tester, testContact.peerId);
+        expect(thread, isNotNull);
+        final x = thread!.messages.singleWhere((m) => m.id == 'X');
+        expect(x.isDeleted, isTrue); // retained as an empty isDeleted tombstone
+        expect(x.media, isEmpty);
+        expect(thread.messages.any((m) => m.id == 'Y'), isTrue);
+      },
+    );
+
+    testWidgets(
+      'TC-162-05f: a same-id NON-hidden delete burst escalates to a full '
+      'refresh via sawDestructive (no distinct-id co-trigger)',
+      (tester) async {
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final tsX = DateTime.utc(2026, 3, 1, 8, 0).toIso8601String();
+        // Single id X, NON-hidden delete-for-everyone tombstone. sawDistinctIds
+        // stays false (one id) and X is not hidden (no internal isHidden
+        // escalation in `_applyIncomingContactMessageToFeed`), so ONLY
+        // sawDestructive can drive the full-refresh escalation here.
+        final xTomb = outgoing(
+          'X',
+          testContact.peerId,
+          status: 'sent',
+          text: '',
+          timestamp: tsX,
+          deletedAt: tsX,
+        );
+        await messageRepo.saveMessage(xTomb);
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester);
+
+        contactRepo.resetGetContactCounts();
+        messageRepo.resetSpyCounters();
+
+        // Same delete emitted twice → coalesces to one flush; sawDestructive set.
+        messageRepo.debugEmitMessageChange(xTomb);
+        messageRepo.debugEmitMessageChange(xTomb);
+        await settleCoalesce(tester);
+
+        expect(contactRepo.getContactCallsByPeerId[testContact.peerId], 1);
+        // sawDestructive forces the FULL refresh (getMessagesPage). Dropping it
+        // would run the incremental apply, which never reads the page → RED.
+        expect(
+          messageRepo.getMessagesPageCalls.where((c) => c.$1 == testContact.peerId),
+          isNotEmpty,
+        );
+      },
+    );
+
+    testWidgets(
+      'TC-162-05c: the coalescer keys per contact — a burst spanning two '
+      'contacts materializes BOTH (no global collapse)',
+      (tester) async {
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact, contactB]);
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester);
+
+        contactRepo.resetGetContactCounts();
+
+        // Two events per contact (so HEAD == 2 each → RED; fixed == 1 each).
+        messageRepo.debugEmitMessageChange(
+          outgoing('a-1', testContact.peerId, status: 'sent'),
+        );
+        messageRepo.debugEmitMessageChange(
+          outgoing('b-1', contactB.peerId, status: 'sent'),
+        );
+        messageRepo.debugEmitMessageChange(
+          outgoing('a-1', testContact.peerId, status: 'delivered'),
+        );
+        messageRepo.debugEmitMessageChange(
+          outgoing('b-1', contactB.peerId, status: 'delivered'),
+        );
+        await settleCoalesce(tester);
+
+        expect(contactRepo.getContactCallsByPeerId[testContact.peerId], 1);
+        expect(contactRepo.getContactCallsByPeerId[contactB.peerId], 1);
+      },
+    );
+
+    testWidgets(
+      'TC-162-05d: a distinct-id NO-delete burst (sent(X) then sent(Y), X not '
+      'pre-applied) escalates so BOTH X and Y survive',
+      (tester) async {
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final tsX = DateTime.utc(2026, 3, 1, 8, 0).toIso8601String();
+        final tsY = DateTime.utc(2026, 3, 1, 8, 1).toIso8601String();
+        final xMsg = outgoing('X', testContact.peerId, status: 'sent', text: 'X', timestamp: tsX);
+        final yMsg = outgoing('Y', testContact.peerId, status: 'sent', text: 'Y', timestamp: tsY);
+        // Unread incoming keeps the thread pending so it stays projected.
+        await messageRepo.saveMessage(
+          unreadIncoming('in-d', testContact.peerId),
+        );
+        await messageRepo.saveMessage(xMsg);
+        await messageRepo.saveMessage(yMsg);
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester);
+
+        contactRepo.resetGetContactCounts();
+        messageRepo.resetSpyCounters();
+
+        messageRepo.debugEmitMessageChange(xMsg);
+        messageRepo.debugEmitMessageChange(yMsg);
+        await settleCoalesce(tester);
+
+        expect(contactRepo.getContactCallsByPeerId[testContact.peerId], 1);
+        // The discriminating lock: a distinct-id burst escalates to the FULL
+        // refresh (getMessagesPage). A keep-latest draft that drops the sticky
+        // `sawDistinctIds` would run the incremental apply(Y) instead — never
+        // calling getMessagesPage — and X would silently vanish.
+        expect(
+          messageRepo.getMessagesPageCalls.where((c) => c.$1 == testContact.peerId),
+          isNotEmpty,
+        );
+        final thread = threadFor(tester, testContact.peerId);
+        expect(thread, isNotNull);
+        final ids = thread!.messages.map((m) => m.id).toSet();
+        expect(ids.containsAll({'X', 'Y'}), isTrue);
+      },
+    );
+
+    testWidgets(
+      'TC-162-05e: a mixed incoming(refresh=true)+outgoing(refresh=false) burst '
+      'for the same contact still recomputes the unread count exactly once',
+      (tester) async {
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final fakeChatListener = _FakeChatMessageListener(
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+        final tsIn = DateTime.utc(2026, 3, 1, 8, 0).toIso8601String();
+        final tsOut = DateTime.utc(2026, 3, 1, 8, 1).toIso8601String();
+        final incoming = ConversationMessage(
+          id: 'inc-1',
+          contactPeerId: testContact.peerId,
+          text: 'incoming',
+          senderPeerId: testContact.peerId,
+          timestamp: tsIn,
+          isIncoming: true,
+          status: 'delivered',
+          createdAt: tsIn,
+        );
+        final outDelivered = outgoing(
+          'out-1',
+          testContact.peerId,
+          status: 'delivered',
+          timestamp: tsOut,
+        );
+        await messageRepo.saveMessage(incoming);
+        await messageRepo.saveMessage(outDelivered);
+
+        await tester.pumpWidget(
+          buildFeedWired(chatMessageListener: fakeChatListener),
+        );
+        await pumpFeedFrames(tester);
+
+        contactRepo.resetGetContactCounts();
+        messageRepo.resetSpyCounters();
+
+        // Same contact, ONE window: incoming via the chat stream (refresh=true)
+        // + outgoing delivered via messageChanges (refresh=false).
+        fakeChatListener.emitIncomingMessage(incoming);
+        messageRepo.debugEmitMessageChange(outDelivered);
+        await settleCoalesce(tester);
+
+        // One materialization, and the unread recompute is NOT skipped.
+        expect(contactRepo.getContactCallsByPeerId[testContact.peerId], 1);
+        expect(
+          messageRepo.getTotalUnreadCountExcludingArchivedCallCount,
+          greaterThan(0),
+        );
+      },
+    );
+
+    testWidgets(
+      'TC-162-06 (PRESERVATION): a newly-arrived incoming message surfaces within '
+      'one debounce window; the feed coalescer is independent of the 145/131 drain',
+      (tester) async {
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final fakeChatListener = _FakeChatMessageListener(
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        await tester.pumpWidget(
+          buildFeedWired(chatMessageListener: fakeChatListener),
+        );
+        await pumpFeedFrames(tester);
+
+        final ts = DateTime.utc(2026, 3, 1, 9, 0).toIso8601String();
+        final incoming = ConversationMessage(
+          id: 'fresh-1',
+          contactPeerId: testContact.peerId,
+          text: 'fresh arrival',
+          senderPeerId: testContact.peerId,
+          timestamp: ts,
+          isIncoming: true,
+          status: 'delivered',
+          createdAt: ts,
+        );
+        fakeChatListener.emitIncomingMessage(incoming);
+        await settleCoalesce(tester);
+
+        // The message surfaces (not dropped / indefinitely deferred).
+        final thread = threadFor(tester, testContact.peerId);
+        expect(thread, isNotNull);
+        expect(thread!.messages.any((m) => m.id == 'fresh-1'), isTrue);
+        // Independence: the feed debounce never drives the notif-tap drain path.
+        expect(
+          events.map((e) => e['event']),
+          isNot(contains('NOTIFICATION_TAP_TO_LIVE_MESSAGE_TIMING')),
+        );
+      },
+    );
+  });
+
+  group('163 shell rebuild minimization + off-screen pause', () {
+    // Mounts OrbitWired (one-way latch) and returns to the Feed tab at rest, so
+    // both panes are present in the swipe host with Feed active.
+    Future<void> latchOrbitThenReturnToFeed(WidgetTester tester) async {
+      appShellController.switchTo('orbit');
+      await pumpFeedFrames(tester, count: 8);
+      appShellController.switchTo('feed');
+      await pumpFeedFrames(tester, count: 8);
+    }
+
+    testWidgets(
+      'TC-163-02: a background-only change recolors the panes without re-running '
+      'tab side-effects; a tab change still fires them',
+      (tester) async {
+        setPhoneViewport(tester);
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester, count: 8);
+        await latchOrbitThenReturnToFeed(tester);
+        // F8a: confirm the orbit host latched so a later miss is not mistaken
+        // for a missing widget.
+        expect(find.byType(OrbitWired), findsOneWidget);
+        expect(appShellController.activeTab, 'feed');
+
+        // Background-only change: the new preference must reach the panes
+        // (recolor needs the rebuild under minimal scope) but must NOT switch
+        // tabs / re-drive the host.
+        appShellController.setBackgroundPreference(BackgroundPreference.cosmic);
+        await pumpFeedFrames(tester, count: 4);
+        expect(
+          tester.widget<FeedScreen>(find.byType(FeedScreen)).backgroundPreference,
+          BackgroundPreference.cosmic,
+        );
+        expect(appShellController.activeTab, 'feed');
+
+        // Inverse (F8b): a TAB change still fires its side-effects (orbit shows,
+        // tab flips) and preserves the recolor.
+        appShellController.switchTo('orbit');
+        await pumpFeedFrames(tester, count: 8);
+        expect(appShellController.activeTab, 'orbit');
+        expect(find.byType(OrbitWired), findsOneWidget);
+        expect(
+          tester.widget<FeedScreen>(find.byType(FeedScreen)).backgroundPreference,
+          BackgroundPreference.cosmic,
+        );
+      },
+    );
+
+    testWidgets(
+      'TC-163-03: each pane is isolated in its own keyed RepaintBoundary',
+      (tester) async {
+        setPhoneViewport(tester);
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester, count: 8);
+        await latchOrbitThenReturnToFeed(tester);
+        expect(find.byType(OrbitWired), findsOneWidget);
+
+        expect(
+          find.byKey(const ValueKey<String>('feed-pane-repaint-boundary')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey<String>('orbit-pane-repaint-boundary')),
+          findsOneWidget,
+        );
+        // The boundary is an ancestor of each pane (it actually wraps it).
+        expect(
+          find.ancestor(
+            of: find.byType(FeedScreen),
+            matching: find.byKey(
+              const ValueKey<String>('feed-pane-repaint-boundary'),
+            ),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.ancestor(
+            of: find.byType(OrbitWired),
+            matching: find.byKey(
+              const ValueKey<String>('orbit-pane-repaint-boundary'),
+            ),
+          ),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'TC-163-04 (preservation): pane widget instances stay stable across a '
+      'swipe frame (no re-allocation into the AnimatedBuilder)',
+      (tester) async {
+        setPhoneViewport(tester);
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester, count: 8);
+        await latchOrbitThenReturnToFeed(tester);
+
+        final feedBefore = tester.widget<FeedScreen>(find.byType(FeedScreen));
+        final orbitBefore = tester.widget<OrbitWired>(find.byType(OrbitWired));
+
+        // A partial drag drives the host AnimationController WITHOUT a build()
+        // rebuild — the captured pane instances must remain identical.
+        final gesture = await tester.startGesture(
+          tester.getCenter(feedOrbitSwipeHost()),
+        );
+        await gesture.moveBy(const Offset(-70, 0));
+        await tester.pump();
+
+        expect(
+          identical(
+            feedBefore,
+            tester.widget<FeedScreen>(find.byType(FeedScreen)),
+          ),
+          isTrue,
+        );
+        expect(
+          identical(
+            orbitBefore,
+            tester.widget<OrbitWired>(find.byType(OrbitWired)),
+          ),
+          isTrue,
+        );
+
+        await gesture.up();
+        await pumpFeedFrames(tester, count: 8);
+      },
+    );
+
+    bool tickerEnabled(WidgetTester tester, String key) => tester
+        .widget<TickerMode>(find.byKey(ValueKey<String>(key)))
+        .enabled;
+
+    testWidgets(
+      'TC-163-08: the inactive Stack child is ticker-muted at rest, the active '
+      'one enabled',
+      (tester) async {
+        setPhoneViewport(tester);
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester, count: 8);
+        await latchOrbitThenReturnToFeed(tester);
+        expect(find.byType(OrbitWired), findsOneWidget);
+        expect(appShellController.activeTab, 'feed');
+
+        // On Feed at rest: orbit (off-screen) muted, feed (on-screen) ticking.
+        expect(tickerEnabled(tester, 'orbit-pane-ticker-mode'), isFalse);
+        expect(tickerEnabled(tester, 'feed-pane-ticker-mode'), isTrue);
+      },
+    );
+
+    testWidgets(
+      'TC-163-09: mid-swipe BOTH panes stay ticker-enabled (drag AND snap-back); '
+      'inactive muted at rest',
+      (tester) async {
+        setPhoneViewport(tester);
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester, count: 8);
+        await latchOrbitThenReturnToFeed(tester);
+
+        // clause 1 — drag in progress: BOTH enabled.
+        final gesture = await tester.startGesture(
+          tester.getCenter(feedOrbitSwipeHost()),
+        );
+        await gesture.moveBy(const Offset(-70, 0));
+        await tester.pump();
+        expect(tickerEnabled(tester, 'feed-pane-ticker-mode'), isTrue);
+        expect(tickerEnabled(tester, 'orbit-pane-ticker-mode'), isTrue);
+
+        // clause 2 — release → settle (240ms) animating: BOTH still enabled
+        // mid-settle so the outgoing tab does not freeze.
+        await gesture.up();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(tickerEnabled(tester, 'feed-pane-ticker-mode'), isTrue);
+        expect(tickerEnabled(tester, 'orbit-pane-ticker-mode'), isTrue);
+
+        // clause 3 — at rest: exactly one muted.
+        await pumpFeedFrames(tester, count: 8);
+        expect(
+          tickerEnabled(tester, 'feed-pane-ticker-mode') !=
+              tickerEnabled(tester, 'orbit-pane-ticker-mode'),
+          isTrue,
+        );
+      },
+    );
   });
 }
 

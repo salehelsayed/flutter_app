@@ -96,8 +96,12 @@ Future<List<ConversationMessage>> _attachMedia(
     final resolved = <MediaAttachment>[];
     for (final attachment in entry.value) {
       if (attachment.localPath != null && mediaFileManager != null) {
-        final absolutePath =
-            await mediaFileManager.resolveStoredPath(attachment.localPath!);
+        // 162 (db-persistence-7): resolve via the startup-seeded synchronous
+        // twin — pure string work over the cached docs dir, dropping the
+        // per-attachment `path_provider` channel hop that serialized this loop.
+        final absolutePath = MediaFileManager.resolveStoredPathSync(
+          attachment.localPath!,
+        );
         resolved.add(attachment.copyWith(localPath: absolutePath));
       } else {
         resolved.add(attachment);

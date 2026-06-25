@@ -12,12 +12,25 @@ class FakeMediaFileManager extends MediaFileManager {
     'test_docs',
   );
 
+  /// The deterministic test documents root this fake resolves against.
+  ///
+  /// 162: after the loaders swap the async [resolveStoredPath] for the static
+  /// [MediaFileManager.resolveStoredPathSync], a test that still wants the same
+  /// absolute paths must seed `MediaFileManager.cacheDocumentsDir(testRootPath)`
+  /// (the static twin cannot be intercepted by this instance override).
+  static String get testRootPath => _testRootPath;
+
   final List<String> deletedContactIds = <String>[];
   final List<String> deletedPostIds = <String>[];
   final List<String> deletedFilePaths = <String>[];
 
   /// Override the resolve result for testing.
   String? resolveResult;
+
+  /// 162 spy: counts async [resolveStoredPath] invocations. After the loaders
+  /// swap to the synchronous twin this MUST stay 0 (the static twin never routes
+  /// through this instance) — the RED-on-HEAD lever for TC-162-02/03.
+  int resolveStoredPathCount = 0;
 
   /// Override file existence for testing.
   bool? fileExistsOverride;
@@ -73,6 +86,7 @@ class FakeMediaFileManager extends MediaFileManager {
 
   @override
   Future<String> resolveStoredPath(String storedPath) async {
+    resolveStoredPathCount++;
     if (resolveResult != null) return resolveResult!;
     if (storedPath.startsWith('pending_uploads/') ||
         storedPath.startsWith('pending_uploads\\') ||

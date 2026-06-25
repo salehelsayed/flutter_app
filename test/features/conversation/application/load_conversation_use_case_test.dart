@@ -491,7 +491,77 @@ void main() {
 
     setUp(() {
       fakeFileManager = _FakeMediaFileManager('/app/Documents');
+      // 162: `_attachMedia` now resolves via the static `resolveStoredPathSync`,
+      // which the local fake cannot intercept. Seed the static docs-dir cache to
+      // the same root the fake's async override used so the existing absolute
+      // path assertions stay green after the swap.
+      MediaFileManager.cacheDocumentsDir('/app/Documents');
+      addTearDown(MediaFileManager.debugResetDocumentsDirCache);
     });
+
+    test(
+      'TC-162-01: _attachMedia resolves via resolveStoredPathSync '
+      '(no awaited resolveStoredPath per attachment)',
+      () async {
+        final messageRepo = FakeMessageRepository(
+          messagesByContact: {
+            'contact-A': [
+              ConversationMessage(
+                id: 'msg-1',
+                contactPeerId: 'contact-A',
+                senderPeerId: 'contact-A',
+                text: 'Photo',
+                timestamp: '2026-02-09T10:00:00.000Z',
+                status: 'delivered',
+                isIncoming: true,
+                createdAt: '2026-02-09T10:00:01.000Z',
+              ),
+            ],
+          },
+        );
+        final mediaRepo = FakeMediaAttachmentRepository(
+          mediaByMessage: {
+            'msg-1': [
+              const MediaAttachment(
+                id: 'blob-001',
+                messageId: 'msg-1',
+                mime: 'image/jpeg',
+                size: 245000,
+                mediaType: 'image',
+                localPath: 'media/contact-A/blob-001.jpg',
+                downloadStatus: 'done',
+                createdAt: '2026-02-09T10:00:00.000Z',
+              ),
+              const MediaAttachment(
+                id: 'blob-002',
+                messageId: 'msg-1',
+                mime: 'image/jpeg',
+                size: 311000,
+                mediaType: 'image',
+                localPath: 'media/contact-A/blob-002.jpg',
+                downloadStatus: 'done',
+                createdAt: '2026-02-09T10:00:00.000Z',
+              ),
+            ],
+          },
+        );
+
+        final result = await loadConversation(
+          messageRepo: messageRepo,
+          contactPeerId: 'contact-A',
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fakeFileManager,
+        );
+
+        // (a) zero awaited async resolves — the loop must use the sync twin.
+        expect(fakeFileManager.resolveStoredPathCount, 0);
+        // (b) each path resolved exactly as the static twin would resolve it.
+        expect(result.single.media.map((m) => m.localPath).toList(), [
+          MediaFileManager.resolveStoredPathSync('media/contact-A/blob-001.jpg'),
+          MediaFileManager.resolveStoredPathSync('media/contact-A/blob-002.jpg'),
+        ]);
+      },
+    );
 
     test('resolves relative paths to absolute in loadConversation', () async {
       final messageRepo = FakeMessageRepository(
@@ -738,8 +808,14 @@ class _FakeMediaFileManager extends MediaFileManager {
 
   _FakeMediaFileManager(this.basePath);
 
+  /// 162 spy: counts async [resolveStoredPath] invocations. After `_attachMedia`
+  /// swaps to the static synchronous twin this MUST stay 0 — the RED-on-HEAD
+  /// lever for TC-162-01 (the static twin cannot be intercepted by this fake).
+  int resolveStoredPathCount = 0;
+
   @override
   Future<String> resolveStoredPath(String storedPath) async {
+    resolveStoredPathCount++;
     // Relative path: prepend basePath
     if (storedPath.startsWith('media/')) {
       return '$basePath/$storedPath';

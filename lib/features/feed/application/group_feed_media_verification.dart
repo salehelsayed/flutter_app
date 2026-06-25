@@ -28,8 +28,13 @@ Future<MediaAttachment> _resolveGroupFeedAttachmentForDisplay({
   MediaFileManager? mediaFileManager,
 }) async {
   final localPath = attachment.localPath;
+  // 162 (db-persistence-7): resolve via the startup-seeded synchronous twin so
+  // the per-attachment `path_provider` channel hop is gone. The function stays
+  // `async` (the downstream `GroupMediaMimePolicy.validateFile` is still
+  // awaited); only this resolve drops its `await`. The existsSync/lengthSync
+  // integrity verify + every GROUP_FEED_MEDIA_* emit below stay byte-identical.
   final resolvedPath = localPath != null && mediaFileManager != null
-      ? await mediaFileManager.resolveStoredPath(localPath)
+      ? MediaFileManager.resolveStoredPathSync(localPath)
       : localPath;
 
   if (attachment.downloadStatus != 'done') {

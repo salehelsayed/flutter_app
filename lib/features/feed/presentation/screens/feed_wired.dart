@@ -242,6 +242,10 @@ class _FeedWiredState extends State<FeedWired>
   // 160 A9: focus hydrates the focused contact's full unread set + context via
   // a larger page so a >window thread shows every unread line once opened.
   static const _focusHydrationPageSize = 200;
+  // 162 (db-persistence-7): trailing per-contact coalesce window. A drain burst
+  // (131/145/146/147 land N rows → N repo-change emits) collapses into ONE
+  // materialization per contact instead of re-materializing N times back-to-back.
+  static const _feedReloadCoalesceWindow = Duration(milliseconds: 32);
   static const _hostSwipeDecisionThreshold = 12.0;
   static const _hostSwipeCompletionThreshold = 0.28;
   static const _hostSwipeVelocityThreshold = 900.0;
@@ -281,6 +285,13 @@ class _FeedWiredState extends State<FeedWired>
   StreamSubscription<PendingGroupInvite>? _pendingGroupInviteSubscription;
   StreamSubscription<IntroductionModel>? _introReceivedSubscription;
   StreamSubscription<IntroductionModel>? _introStatusSubscription;
+  // 162: per-contact pending coalesce state + its trailing timer. The
+  // repo-change listener and incoming-message handler enqueue here instead of
+  // firing a materialization per event; one flush per contact runs after the
+  // window. Sticky flags escalate to a full refresh whenever the burst could
+  // have dropped a message under the incremental single-id upsert.
+  final Map<String, _PendingContactFeedFlush> _pendingContactFlushes = {};
+  final Map<String, Timer> _pendingContactFlushTimers = {};
   int _orbitBadgeLoadRequestId = 0;
   ImageQualityPreference _qualityPreference = ImageQualityPreference.compressed;
 
@@ -1421,27 +1432,15 @@ class _FeedWiredState extends State<FeedWired>
         .listen(
           (message) {
             if (!mounted) return;
-            if (message.isDeleted || message.isHidden) {
-              // 160 B7: clear the genuinely-removed message's reactions HERE
-              // (the bounded snapshot refresh no longer prunes by page diff, so
-              // off-page survivors keep their reactions — TC-160-10).
-              if (message.isDeleted) {
-                _reactionStore.clearMessageIds({message.id});
-              }
-              unawaited(
-                _refreshContactFeedItem(
-                  message.contactPeerId,
-                  refreshUnreadCount: false,
-                ),
-              );
-              return;
+            // 160 B7: clear a genuinely-removed message's reactions eagerly (the
+            // coalesced refresh no longer prunes by page diff, so off-page
+            // survivors keep their reactions — TC-160-10). 162: defer only the
+            // materialization — enqueue per contact; the sticky-destructive flag
+            // escalates a delete/hide to a full `_refreshContactFeedItem`.
+            if (message.isDeleted) {
+              _reactionStore.clearMessageIds({message.id});
             }
-            unawaited(
-              _applyIncomingContactMessageToFeed(
-                message,
-                refreshUnreadCount: false,
-              ),
-            );
+            _enqueueContactFeedFlush(message, refreshUnreadCount: false);
           },
           onError: (error) {
             emitFlowEvent(
@@ -1463,8 +1462,74 @@ class _FeedWiredState extends State<FeedWired>
 
   void _onIncomingChatMessage(ConversationMessage message) {
     if (!mounted) return;
+    // Eager — must NOT be deferred behind the coalesce timer.
     _sessionReplies.clear(message.contactPeerId);
-    unawaited(_applyIncomingContactMessageToFeed(message));
+    // 162: incoming emits post-persist (chat_message_listener), so a coalesced
+    // full refresh would also surface it; the incremental apply is kept only as
+    // a CPU optimization for the single-id status-flip burst. refreshUnreadCount
+    // defaults to true here (the unread-badge recompute source).
+    _enqueueContactFeedFlush(message, refreshUnreadCount: true);
+  }
+
+  /// 162: enqueue a per-contact feed materialization, collapsing a same-contact
+  /// burst into ONE trailing flush. All flags are STICKY (a later event never
+  /// clears them); [refreshUnreadCount] is OR-accumulated so a mixed incoming
+  /// (true) + outgoing (false) burst still recomputes the unread count once.
+  void _enqueueContactFeedFlush(
+    ConversationMessage message, {
+    required bool refreshUnreadCount,
+  }) {
+    final peerId = message.contactPeerId;
+    final pending = _pendingContactFlushes[peerId];
+    if (pending == null) {
+      _pendingContactFlushes[peerId] = _PendingContactFeedFlush(
+        latestMessage: message,
+        firstPendingId: message.id,
+        sawDistinctIds: false,
+        sawDestructive: message.isDeleted || message.isHidden,
+        sawRefreshUnread: refreshUnreadCount,
+      );
+    } else {
+      pending.latestMessage = message;
+      if (message.id != pending.firstPendingId) pending.sawDistinctIds = true;
+      if (message.isDeleted || message.isHidden) pending.sawDestructive = true;
+      if (refreshUnreadCount) pending.sawRefreshUnread = true;
+    }
+    _pendingContactFlushTimers[peerId]?.cancel();
+    _pendingContactFlushTimers[peerId] = Timer(
+      _feedReloadCoalesceWindow,
+      () => _flushContactFeedFlush(peerId),
+    );
+  }
+
+  void _flushContactFeedFlush(String peerId) {
+    _pendingContactFlushTimers.remove(peerId);
+    final pending = _pendingContactFlushes.remove(peerId);
+    if (pending == null || !mounted) return;
+    // A burst that saw a delete/hide (sawDestructive) OR more than one distinct
+    // id (sawDistinctIds) cannot be safely replayed through the incremental
+    // single-id upsert — it would lose a delete-followed-by-send or an earlier
+    // distinct id. Escalate to a full snapshot reload: last-write-wins from the
+    // DB, surfaces every persisted id, and a non-hidden delete tombstone renders
+    // as an empty isDeleted row (its visible-vs-gone outcome stays owned by the
+    // loader's hiddenAt gate — do NOT purge it here).
+    if (pending.sawDestructive || pending.sawDistinctIds) {
+      unawaited(
+        _refreshContactFeedItem(
+          peerId,
+          refreshUnreadCount: pending.sawRefreshUnread,
+        ),
+      );
+    } else {
+      // Hot path: all-same-single-id, no delete — a status-flip burst. The
+      // incremental in-memory apply of the latest state is sufficient.
+      unawaited(
+        _applyIncomingContactMessageToFeed(
+          pending.latestMessage,
+          refreshUnreadCount: pending.sawRefreshUnread,
+        ),
+      );
+    }
   }
 
   void _startListeningForContactUpdates() {
@@ -2399,6 +2464,16 @@ class _FeedWiredState extends State<FeedWired>
     if (!mounted) {
       return;
     }
+    // 163 (navigation-hangs-2): a background-only change must still rebuild so
+    // the new BackgroundPreference reaches the panes (recolor needs the rebuild
+    // under minimal scope), but it must NOT run the tab-change side-effects
+    // (composer focus clear, orbit-host latch, host slide). Only a tab change
+    // runs those.
+    if (widget.appShellController.lastChangeKind ==
+        AppShellChangeKind.background) {
+      setState(() {});
+      return;
+    }
     final activeTab = widget.appShellController.activeTab;
     if (activeTab != AppShellTab.feed) {
       _clearFeedComposerFocus(notify: false);
@@ -2529,6 +2604,13 @@ class _FeedWiredState extends State<FeedWired>
     _pendingGroupInviteSubscription?.cancel();
     _introReceivedSubscription?.cancel();
     _introStatusSubscription?.cancel();
+    // 162: cancel any pending coalesce timers so a flush cannot fire after
+    // unmount (no setState-after-dispose).
+    for (final timer in _pendingContactFlushTimers.values) {
+      timer.cancel();
+    }
+    _pendingContactFlushTimers.clear();
+    _pendingContactFlushes.clear();
     _hostSwipeController.dispose();
     _totalUnreadCountNotifier.dispose();
     _orbitBadgeCountNotifier.dispose();
@@ -2569,8 +2651,13 @@ class _FeedWiredState extends State<FeedWired>
         ),
       );
     }
-    final feedBody = FeedScreen(
-      username: _username,
+    // 163 (navigation-hangs-2): each pane is isolated in its own RepaintBoundary
+    // (built here, OUTSIDE the AnimatedBuilder.builder, so swipe identity holds)
+    // to contain a rebuild/repaint of one pane from dirtying the other.
+    final feedBody = RepaintBoundary(
+      key: const ValueKey<String>('feed-pane-repaint-boundary'),
+      child: FeedScreen(
+        username: _username,
       userAvatarBytes: _avatarBytes,
       userPeerId: _peerId,
       feedItems: _feedItems,
@@ -2598,9 +2685,13 @@ class _FeedWiredState extends State<FeedWired>
       onUndoDismiss: _onUndoDismiss,
       onCardSwipeActive: _onCardSwipeActive,
       backgroundPreference: widget.appShellController.backgroundPreference,
+      ),
     );
     final orbitBody = _hasMountedOrbitHost
-        ? _buildOrbitHost()
+        ? RepaintBoundary(
+            key: const ValueKey<String>('orbit-pane-repaint-boundary'),
+            child: _buildOrbitHost(),
+          )
         : const SizedBox.shrink();
     final body = LayoutBuilder(
       builder: (context, constraints) {
@@ -2619,25 +2710,44 @@ class _FeedWiredState extends State<FeedWired>
               final hostProgress = _hostSwipeController.value.clamp(0.0, 1.0);
               final feedOffset = -hostProgress * constraints.maxWidth;
               final orbitOffset = (1.0 - hostProgress) * constraints.maxWidth;
+              // 163 (animations-repaint-2): mute the off-screen pane's tickers
+              // (both ambient loops + orbit controllers) via TickerMode at rest,
+              // while keeping BOTH live mid-swipe so the slide animates (drag in
+              // progress OR the snap-back/settle still running).
+              final midSwipe =
+                  (_hostSwipePointer != null && _hostSwipeClaimed) ||
+                  _hostSwipeController.isAnimating;
+              final feedTickerEnabled =
+                  activeTab == AppShellTab.feed || midSwipe;
+              final orbitTickerEnabled =
+                  activeTab == AppShellTab.orbit || midSwipe;
 
               return ClipRect(
                 child: Stack(
                   children: [
-                    Transform.translate(
-                      offset: Offset(feedOffset, 0),
-                      child: SizedBox(
-                        width: constraints.maxWidth,
-                        height: constraints.maxHeight,
-                        child: feedBody,
-                      ),
-                    ),
-                    if (_hasMountedOrbitHost)
-                      Transform.translate(
-                        offset: Offset(orbitOffset, 0),
+                    TickerMode(
+                      key: const ValueKey<String>('feed-pane-ticker-mode'),
+                      enabled: feedTickerEnabled,
+                      child: Transform.translate(
+                        offset: Offset(feedOffset, 0),
                         child: SizedBox(
                           width: constraints.maxWidth,
                           height: constraints.maxHeight,
-                          child: orbitBody,
+                          child: feedBody,
+                        ),
+                      ),
+                    ),
+                    if (_hasMountedOrbitHost)
+                      TickerMode(
+                        key: const ValueKey<String>('orbit-pane-ticker-mode'),
+                        enabled: orbitTickerEnabled,
+                        child: Transform.translate(
+                          offset: Offset(orbitOffset, 0),
+                          child: SizedBox(
+                            width: constraints.maxWidth,
+                            height: constraints.maxHeight,
+                            child: orbitBody,
+                          ),
                         ),
                       ),
                   ],
@@ -2651,4 +2761,28 @@ class _FeedWiredState extends State<FeedWired>
 
     return Scaffold(resizeToAvoidBottomInset: false, body: body);
   }
+}
+
+/// 162: per-contact pending state for the trailing feed-reload coalescer.
+///
+/// [latestMessage] drives the incremental hot path (status-flip burst).
+/// [sawDestructive] / [sawDistinctIds] are sticky escalation flags (a delete/hide
+/// or a second distinct id forces a full snapshot reload, which the incremental
+/// single-id upsert could not represent without losing a message).
+/// [sawRefreshUnread] is OR-accumulated across sources so a mixed
+/// incoming+outgoing burst still recomputes the unread count exactly once.
+class _PendingContactFeedFlush {
+  _PendingContactFeedFlush({
+    required this.latestMessage,
+    required this.firstPendingId,
+    required this.sawDistinctIds,
+    required this.sawDestructive,
+    required this.sawRefreshUnread,
+  });
+
+  ConversationMessage latestMessage;
+  final String firstPendingId;
+  bool sawDistinctIds;
+  bool sawDestructive;
+  bool sawRefreshUnread;
 }

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/account_migration/application/migration_file_manifest_builder.dart';
 import 'package:flutter_app/features/account_migration/domain/models/migration_file_manifest.dart';
@@ -284,6 +285,15 @@ ConversationMessage _makeMessage({
 }
 
 void main() {
+  // 162: the loaders resolve media via the static `resolveStoredPathSync`, which
+  // resolves against the cached docs dir (not the fake's async override). Seed
+  // the cache to the fake's deterministic root so every media test (existing +
+  // TC-162-02/03) resolves to the same absolute paths after the swap.
+  setUp(() {
+    MediaFileManager.cacheDocumentsDir(FakeMediaFileManager.testRootPath);
+  });
+  tearDown(MediaFileManager.debugResetDocumentsDirCache);
+
   group('loadFeed', () {
     test('returns empty list when no contacts', () async {
       final result = await loadFeed(
@@ -1386,5 +1396,213 @@ void main() {
       expect(groupItems.first.messages.first.media, hasLength(1));
       expect(groupItems.first.messages.first.media.first.id, 'att-g1');
     });
+  });
+
+  group('162 media-resolve sync swap', () {
+    test(
+      'TC-162-02: loadContactFeedItems (1:1) materializes media via sync '
+      'resolution, zero awaited resolves',
+      () async {
+        final contacts = [
+          _makeContact('peer-A', 'Alice', '2026-02-09T10:00:00.000Z'),
+        ];
+        // One PENDING (unread) incoming message so the bounded window loads and
+        // its attachments are resolved through `loadConversationPage` →
+        // `_attachMedia` (the 160 path the 1:1 feed resolve now flows through).
+        final repo = FakeMessageRepository(
+          messagesByContact: {
+            'peer-A': [
+              _makeMessage(
+                id: 'm1',
+                contactPeerId: 'peer-A',
+                senderPeerId: 'peer-A',
+                text: 'Two photos',
+                timestamp: '2026-03-01T08:00:00.000Z',
+                isIncoming: true,
+              ),
+            ],
+          },
+        );
+        final mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
+        await mediaAttachmentRepo.saveAttachment(
+          const MediaAttachment(
+            id: 'a1',
+            messageId: 'm1',
+            mime: 'image/jpeg',
+            size: 2048,
+            mediaType: 'image',
+            localPath: 'media/peer-A/a1.jpg',
+            downloadStatus: 'done',
+            createdAt: '2026-03-01T08:00:00.000Z',
+          ),
+        );
+        await mediaAttachmentRepo.saveAttachment(
+          const MediaAttachment(
+            id: 'a2',
+            messageId: 'm1',
+            mime: 'image/jpeg',
+            size: 4096,
+            mediaType: 'image',
+            localPath: 'media/peer-A/a2.jpg',
+            downloadStatus: 'done',
+            createdAt: '2026-03-01T08:00:00.000Z',
+          ),
+        );
+        final mediaFileManager = FakeMediaFileManager();
+
+        final items = await loadContactFeedItems(
+          contactRepo: FakeContactRepository(contacts: contacts),
+          messageRepo: repo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+        );
+
+        // (a) zero awaited async resolves — the loop uses the static sync twin.
+        expect(mediaFileManager.resolveStoredPathCount, 0);
+        // (b) each attachment resolved exactly as the static twin would.
+        final thread = items.whereType<ThreadFeedItem>().single;
+        final withMedia = thread.messages.firstWhere((m) => m.media.isNotEmpty);
+        expect(withMedia.media.map((m) => m.localPath).toList(), [
+          MediaFileManager.resolveStoredPathSync('media/peer-A/a1.jpg'),
+          MediaFileManager.resolveStoredPathSync('media/peer-A/a2.jpg'),
+        ]);
+      },
+    );
+
+    test(
+      'TC-162-03: loadGroupFeedItems resolves via the sync twin AND preserves '
+      'the existsSync/lengthSync verify + GROUP_FEED_MEDIA_* event sequence',
+      () async {
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+        final mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
+        final mediaFileManager = FakeMediaFileManager();
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'g1',
+            name: 'Media Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/g1',
+            createdAt: DateTime(2026, 2, 1),
+            createdBy: 'admin',
+            myRole: GroupRole.member,
+          ),
+        );
+        // Two unread incoming messages → pending group → window loads both.
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-valid',
+            groupId: 'g1',
+            senderPeerId: 'p1',
+            text: 'Valid',
+            timestamp: DateTime.utc(2026, 2, 9, 12, 0),
+            createdAt: DateTime.utc(2026, 2, 9, 12, 0),
+            isIncoming: true,
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-missing',
+            groupId: 'g1',
+            senderPeerId: 'p1',
+            text: 'Missing',
+            timestamp: DateTime.utc(2026, 2, 9, 12, 1),
+            createdAt: DateTime.utc(2026, 2, 9, 12, 1),
+            isIncoming: true,
+          ),
+        );
+
+        const validRelative = 'media/groups/sync-valid.jpg';
+        final validAbsolute = MediaFileManager.resolveStoredPathSync(
+          validRelative,
+        );
+        final validFile = File(validAbsolute)..createSync(recursive: true);
+        validFile.writeAsBytesSync(utf8.encode('group media plaintext'));
+        final relayBlobHash = sha256
+            .convert(utf8.encode('encrypted relay blob bytes'))
+            .toString();
+        await mediaAttachmentRepo.saveAttachment(
+          MediaAttachment(
+            id: 'att-valid',
+            messageId: 'gm-valid',
+            mime: 'image/jpeg',
+            size: validFile.lengthSync(),
+            mediaType: 'image',
+            localPath: validRelative,
+            downloadStatus: 'done',
+            contentHash: relayBlobHash,
+            encryptionKeyBase64: 'media-key',
+            encryptionNonce: 'media-nonce',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            createdAt: '2026-02-09T12:00:00.000Z',
+          ),
+        );
+        const missingRelative = 'media/groups/sync-missing.jpg';
+        final missingAbsolute = MediaFileManager.resolveStoredPathSync(
+          missingRelative,
+        );
+        if (File(missingAbsolute).existsSync()) {
+          File(missingAbsolute).deleteSync();
+        }
+        await mediaAttachmentRepo.saveAttachment(
+          MediaAttachment(
+            id: 'att-missing',
+            messageId: 'gm-missing',
+            mime: 'image/jpeg',
+            size: 128,
+            mediaType: 'image',
+            localPath: missingRelative,
+            downloadStatus: 'done',
+            contentHash: relayBlobHash,
+            encryptionKeyBase64: 'media-key',
+            encryptionNonce: 'media-nonce',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            createdAt: '2026-02-09T12:01:00.000Z',
+          ),
+        );
+
+        final items = await loadGroupFeedItems(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+        );
+
+        // (a) zero awaited async resolves — the group resolve uses the sync twin.
+        expect(mediaFileManager.resolveStoredPathCount, 0);
+
+        // (b) the valid attachment resolved to the sync-twin absolute path.
+        final allMedia = items
+            .single
+            .messages
+            .expand((m) => m.media)
+            .toList();
+        final valid = allMedia.singleWhere((m) => m.id == 'att-valid');
+        final missing = allMedia.singleWhere((m) => m.id == 'att-missing');
+        expect(valid.localPath, validAbsolute);
+        expect(valid.downloadStatus, kMediaDownloadStatusDone);
+        expect(missing.localPath, missingAbsolute);
+        expect(missing.downloadStatus, kMediaDownloadStatusPending);
+
+        // (c) the verify-event sequence is byte-identical: ALLOWED for the valid
+        // attachment, LOCAL_FILE_MISSING (NOT ALLOWED) for the absent one — the
+        // distinct-event discriminator proving the existsSync gate survives.
+        final eventNames = events.map((e) => e['event']).toList();
+        expect(
+          eventNames,
+          containsAll(<String>[
+            'GROUP_FEED_MEDIA_DISPLAY_VERIFY_START',
+            'GROUP_FEED_MEDIA_PLAINTEXT_HASH_VALIDATION_SKIPPED',
+            'GROUP_FEED_MEDIA_DISPLAY_VERIFY_ALLOWED',
+            'GROUP_FEED_MEDIA_LOCAL_FILE_MISSING',
+            'GROUP_FEED_MEDIA_DISPLAY_VERIFY_BLOCKED',
+          ]),
+        );
+      },
+    );
   });
 }

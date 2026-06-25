@@ -13,6 +13,18 @@ class FakeContactRepository implements ContactRepository {
   int getAllContactsCallCount = 0;
   int deleteContactCallCount = 0;
 
+  /// 162 materialization probe: per-peerId `getContact` count. BOTH feed reload
+  /// paths route through `getContact` exactly once — the full reload
+  /// (`loadContactFeedSnapshot`) and the incremental upsert
+  /// (`_applyIncomingContactMessageToFeed`) — so this equals the effective
+  /// per-contact materialization count for the debounce tests.
+  final Map<String, int> getContactCallsByPeerId = <String, int>{};
+
+  void resetGetContactCounts() {
+    getContactCallCount = 0;
+    getContactCallsByPeerId.clear();
+  }
+
   // Last arguments
   ContactModel? lastAddedContact;
 
@@ -40,6 +52,8 @@ class FakeContactRepository implements ContactRepository {
   @override
   Future<ContactModel?> getContact(String peerId) async {
     getContactCallCount++;
+    getContactCallsByPeerId[peerId] =
+        (getContactCallsByPeerId[peerId] ?? 0) + 1;
     return _contacts[peerId];
   }
 

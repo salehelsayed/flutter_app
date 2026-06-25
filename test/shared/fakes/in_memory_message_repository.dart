@@ -20,17 +20,29 @@ class InMemoryMessageRepository
   // mount uses summaries + windowed pages, never per-contact full loads.
   int getMessagesForContactCallCount = 0;
   int getConversationThreadSummariesCallCount = 0;
+  // 162 spy: total-unread recompute observability for the cross-source
+  // (incoming refresh=true + outgoing refresh=false) coalesce test.
+  int getTotalUnreadCountExcludingArchivedCallCount = 0;
   final List<(String, int)> getMessagesPageCalls = <(String, int)>[];
 
   void resetSpyCounters() {
     getMessagesForContactCallCount = 0;
     getConversationThreadSummariesCallCount = 0;
+    getTotalUnreadCountExcludingArchivedCallCount = 0;
     getMessagesPageCalls.clear();
   }
 
   @override
   Stream<ConversationMessage> get messageChanges =>
       _messageChangeController.stream;
+
+  /// 162 test hook: emit an arbitrary message-change onto [messageChanges]
+  /// WITHOUT persisting it, so a test can craft a clean `delete(X)` then
+  /// `sent(Y)` burst or a hidden-vs-non-hidden tombstone that the
+  /// persistence-coupled methods (`saveMessage`/`updateMessageStatus`) cannot.
+  void debugEmitMessageChange(ConversationMessage message) {
+    _messageChangeController.add(message);
+  }
 
   @override
   Future<void> saveMessage(ConversationMessage message) async {
@@ -148,6 +160,7 @@ class InMemoryMessageRepository
 
   @override
   Future<int> getTotalUnreadCountExcludingArchived() async {
+    getTotalUnreadCountExcludingArchivedCallCount++;
     return getTotalUnreadCount();
   }
 
