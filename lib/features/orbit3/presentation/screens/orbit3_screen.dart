@@ -79,6 +79,8 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
   // Live SPACING multiplier (separate +/- stepper) — scales orbit-ring radii AND
   // arch row pitch, independent of avatar size (168 C1). 1.0 = Orbit parity.
   double _spacingScale = 1.0;
+  // Live CURVE multiplier — how deep the arch dome bows (168). 1.0 = default.
+  double _curveScale = 1.0;
   // Drives the unified expanded scroll — arches + circle in ONE surface (167).
   final ScrollController _archScroll = ScrollController();
   String _searchQuery = '';
@@ -276,11 +278,32 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
         _spacingScale = (_spacingScale - 0.1).clamp(0.7, 1.5).toDouble());
   }
 
-  /// The two stacked pinned ＋/－ steppers (spacing above, avatar-size below).
+  void _incCurve() {
+    HapticFeedback.selectionClick();
+    setState(() => _curveScale = (_curveScale + 0.5).clamp(0.5, 2.5).toDouble());
+  }
+
+  void _decCurve() {
+    HapticFeedback.selectionClick();
+    setState(() => _curveScale = (_curveScale - 0.5).clamp(0.5, 2.5).toDouble());
+  }
+
+  /// The stacked pinned ＋/－ steppers: curve, spacing, avatar-size.
   Widget _buildSteppers(BackgroundReadableColors readable) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        _SizeStepper(
+          readable: readable,
+          headerIcon: Icons.gesture_rounded,
+          incKey: const ValueKey('orbit3-curve-inc'),
+          decKey: const ValueKey('orbit3-curve-dec'),
+          incLabel: 'More curve',
+          decLabel: 'Less curve',
+          onIncrease: _incCurve,
+          onDecrease: _decCurve,
+        ),
+        const SizedBox(height: 8),
         _SizeStepper(
           readable: readable,
           headerIcon: Icons.unfold_more_rounded,
@@ -344,7 +367,11 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                   (width / (base + 6)).floor().clamp(6, 7).toInt();
               // Spacing stepper widens the arch row pitch (168 C1).
               final rowHeight = base + 14.0 * _spacingScale;
-              final dip = (base * 0.32).clamp(7.0, 13.0).toDouble();
+              // Curve stepper deepens the arch dome (168); cap at half the row
+              // so the centre avatar never climbs out of its row.
+              final dip = (base * 0.32 * _curveScale)
+                  .clamp(4.0, rowHeight * 0.5)
+                  .toDouble();
               final layout = computeOrbit3ArchArcs(
                 count: overflowItems.length,
                 width: width,
@@ -392,7 +419,8 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                           onGroupTap: _openGroupChat,
                         );
                       }),
-                    SizedBox(height: 16 * _spacingScale), // arch → circle gap
+                    // Arches start CLOSE to the circle (168); scales with spacing.
+                    SizedBox(height: 6 * _spacingScale),
                     Center(
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 12),

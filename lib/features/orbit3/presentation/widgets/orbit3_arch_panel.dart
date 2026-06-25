@@ -1,3 +1,5 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
@@ -19,43 +21,23 @@ class Orbit3ArchBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      key: const ValueKey('orbit3-arch-overflow'),
-      behavior: HitTestBehavior.opaque,
+    return _Orbit3GlassPill(
+      pillKey: const ValueKey('orbit3-arch-overflow'),
       onTap: onTap,
-      child: Semantics(
-        button: true,
-        label: '$count more people — tap to open',
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: AppColors.primaryAccent.withValues(alpha: 0.14),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: AppColors.primaryAccent.withValues(alpha: 0.5),
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(
-                Icons.people_alt_rounded,
-                size: 14,
-                color: Color(0xFF1ED760),
-              ),
-              const SizedBox(width: 5),
-              Text(
-                '+$count',
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF1ED760),
-                ),
-              ),
-            ],
+      semanticLabel: '$count more people — tap to open',
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      children: [
+        const Icon(Icons.people_alt_rounded, size: 14, color: _kArchAccent),
+        const SizedBox(width: 6),
+        Text(
+          '+$count',
+          style: const TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            color: _kArchAccent,
           ),
         ),
-      ),
+      ],
     );
   }
 }
@@ -73,39 +55,91 @@ class Orbit3ArchCollapsePill extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Center(
-        child: GestureDetector(
-          key: const ValueKey('orbit3-arch-collapse'),
-          behavior: HitTestBehavior.opaque,
+        child: _Orbit3GlassPill(
+          pillKey: const ValueKey('orbit3-arch-collapse'),
           onTap: onTap,
-          child: Semantics(
-            button: true,
-            label: 'Collapse',
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-              decoration: BoxDecoration(
-                color: readable.glassSurface,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: readable.glassBorder),
+          semanticLabel: 'Collapse',
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+          children: const [
+            Icon(Icons.keyboard_arrow_up_rounded, size: 16, color: _kArchAccent),
+            SizedBox(width: 5),
+            Text(
+              'Collapse',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: _kArchAccent,
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.keyboard_arrow_up_rounded,
-                    size: 16,
-                    color: readable.iconSecondary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The brand green used for the arch affordances' icons + text.
+const Color _kArchAccent = Color(0xFF1ED760);
+
+/// A glassy, accent-tinted pill with a soft green glow — the shared look for the
+/// expand "+N" and the "Collapse" affordances so they read as a themed pair.
+class _Orbit3GlassPill extends StatelessWidget {
+  final Key pillKey;
+  final VoidCallback onTap;
+  final String semanticLabel;
+  final List<Widget> children;
+  final EdgeInsets padding;
+
+  const _Orbit3GlassPill({
+    required this.pillKey,
+    required this.onTap,
+    required this.semanticLabel,
+    required this.children,
+    required this.padding,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final readable = context.backgroundReadableColors;
+    return GestureDetector(
+      key: pillKey,
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Semantics(
+        button: true,
+        label: semanticLabel,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.primaryAccent.withValues(alpha: 0.30),
+                blurRadius: 16,
+                spreadRadius: -2,
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+              child: Container(
+                padding: padding,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      AppColors.primaryAccent.withValues(alpha: 0.24),
+                      readable.glassSurface.withValues(alpha: 0.55),
+                    ],
                   ),
-                  const SizedBox(width: 4),
-                  Text(
-                    'Collapse',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: readable.textSecondary,
-                    ),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: AppColors.primaryAccent.withValues(alpha: 0.55),
                   ),
-                ],
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: children),
               ),
             ),
           ),

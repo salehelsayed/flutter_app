@@ -493,6 +493,38 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
   });
 
+  testWidgets('curve stepper increases the arch dome amplitude (168 curve)',
+      (tester) async {
+    useShortSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '50');
+    await openArch(tester);
+
+    double amplitude() {
+      final ys = find
+          .descendant(
+              of: find.byKey(const ValueKey('orbit3-arch-arc-row-0')),
+              matching: find.byType(OrbitalAvatar))
+          .evaluate()
+          .map((e) {
+        final box = e.renderObject! as RenderBox;
+        return box.localToGlobal(box.size.center(Offset.zero)).dy;
+      }).toList();
+      return ys.reduce((a, b) => a > b ? a : b) -
+          ys.reduce((a, b) => a < b ? a : b);
+    }
+
+    final a0 = amplitude();
+    for (var i = 0; i < 2; i++) {
+      await tester.tap(find.byKey(const ValueKey('orbit3-curve-inc')));
+      await tester.pump(const Duration(milliseconds: 60));
+    }
+    await tester.pump(const Duration(milliseconds: 2400));
+    expect(amplitude(), greaterThan(a0 + 1),
+        reason: 'more curve = a deeper arch dome');
+    await tester.pump(const Duration(seconds: 1));
+  });
+
   testWidgets('each arch row holds at most 7 avatars (168 7-per-arch fix)',
       (tester) async {
     useShortSurface(tester);

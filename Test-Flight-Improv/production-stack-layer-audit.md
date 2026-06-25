@@ -546,6 +546,99 @@ _Each section: grade · what exists (with file:line evidence) · gaps by severit
 - **Now:** Set `RELAY_BACKEND=redis` with Redis AOF persistence on the EC2 box **and commit it to the deploy runbook/systemd env** so the safe backend isn't an unversioned env var — single highest-leverage fix, converting relay-restart RPO from "everything queued" to near-zero (S). In parallel, add a one-line in-app pre-handoff nudge/warning that keys are device-only and only account migration preserves them (S).
 - **Next:** Stand up a second relay peer and seed both in the client `RelayAddresses` (the selector already fans out), and add scheduled backups (Redis snapshot + `/data/media` sync to object storage) plus an uptime/`up{job="relay-server"}` alert off the existing Prometheus/Grafana stack (M). Repurpose the existing migration snapshot exporter into a client-side encrypted DB/key export-to-file as a manual backup escape hatch that does **not** require a live old device (M).
 - **Later:** Add managed/replicated Redis (cluster or sentinel) and a documented relay disaster-recovery runbook with measured RTO targets; consider optional encrypted key/seed backup or social-recovery so device loss is no longer terminal (L).
+
+---
+
+# Live-Environment Verification Checklist
+
+Several findings in this report describe the **code default and the committed README**, not the confirmed production state — because the relay's deploy config is gitignored (`RELAY_BACKEND`, `REDIS_URL`, `RELAY_PRIVATE_KEY`, the TLS terminator, backup/snapshot policy). Run the checks below against the live relay (`mknoun.xyz` / `13.60.15.36`) to confirm the real state and learn which grades move. Each item lists the **check**, what **good** looks like, and the **grade impact**.
+
+> **Prerequisites:** SSH to the EC2 box, plus AWS console/CLI access for the redundancy/backup items. Commands assume the systemd unit name `relay-server` from `go-relay-server/README.md`. Relay facts referenced below are from the audited source: the node listens `ws:4000 / tcp:4005 / quic:4002` and announces `wss:4001` (`main.go:64-68`, `:55-59`); `/metrics` on `:2112` (`main.go:204-211`); backend default `memory` (`server_bootstrap.go:36`); Redis via `REDIS_URL` (`server_bootstrap.go:88-91`); key override `RELAY_PRIVATE_KEY` over the committed default (`server_config.go:28-35`, `:84-93`); data under `/data/media` + `/data/profiles`.
+
+## A. Backend & durability — *gates launch risk #2 (silent queue loss)*
+
+- [ ] **A1 — Which backend is the relay actually running?**
+  `sudo systemctl show relay-server -p Environment` (look for `RELAY_BACKEND=redis` and `REDIS_URL=…`), then `sudo journalctl -u relay-server | grep -iE "backend|redis|memory"` for the bootstrap selection.
+  **Good:** `RELAY_BACKEND=redis` set and the log confirms the Redis backend.
+  **Bad (= code default):** unset / `memory` → every restart/crash drops all queued offline messages, push tokens, and rendezvous registrations.
+  **Grade impact:** Redis-with-persistence confirmed → **L3 & L14 likely → B; L7, L12 improve.** Memory confirmed → grades stand as written, and this is the single most urgent fix.
+
+- [ ] **A2 — Is Redis persistence enabled?**
+  `redis-cli -u "$REDIS_URL" CONFIG GET appendonly`, `… CONFIG GET save`, `… INFO persistence`.
+  **Good:** `appendonly yes` (AOF) and/or a non-empty `save` (RDB), with `aof_last_write_status:ok`.
+  **Bad:** `appendonly no` + empty `save` → Redis still loses the queue on restart even though the backend is "redis".
+
+- [ ] **A3 — Where does Redis live, and is it replicated?**
+  `redis-cli -u "$REDIS_URL" INFO replication`; inspect the host in `REDIS_URL` (same EC2 box vs managed ElastiCache).
+  **Good:** managed/replicated (e.g. ElastiCache with a replica), or at least off-box with backups.
+  **Bad:** `localhost` / same box, `role:master` + `connected_slaves:0` → shares the single-box failure domain.
+
+## B. Relay identity & transport — *gates parts of risks #1 and #4*
+
+- [ ] **B1 — Is prod running the committed (leaked) relay key?**
+  `sudo journalctl -u relay-server | grep -iE "peer ?id|12D3Koo"` (the node logs its peer ID at boot), or read `RELAY_PRIVATE_KEY` from the A1 env dump.
+  **Good:** a peer ID that is **not** `12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g` — i.e. `RELAY_PRIVATE_KEY` overrides the committed default.
+  **Bad:** the running peer ID **equals** that value → the relay is using the hardcoded key from `server_config.go:28-35` that anyone with repo access can reproduce. (Rotating it forces a client release, since the client pins it at `network_constants.dart:14`.)
+  **Grade impact:** override confirmed → removes one HIGH from **L9** and one MEDIUM from **L6**.
+
+- [ ] **B2 — What terminates TLS for `wss:4001`?**
+  On the box: `sudo ss -tlnp | grep -E ':4001|:4000'`. From anywhere: `openssl s_client -connect mknoun.xyz:4001 -servername mknoun.xyz </dev/null 2>/dev/null | openssl x509 -noout -issuer -subject -enddate`.
+  **Good:** an nginx/caddy/ALB process owns `:4001` with a valid, unexpired cert from a real CA.
+  **Bad:** nothing on `:4001`, self-signed/expired cert, or plaintext → client `wss` connections fail or run unencrypted.
+  **Grade impact:** committing this terminator config to the repo is the "Now" action for **L6**; confirming it rules out silent transport-MITM exposure.
+
+- [ ] **B3 — Is `/metrics` exposed publicly?**
+  From off-box: `curl -s http://mknoun.xyz:2112/metrics | head`.
+  **Good:** connection refused / firewalled (reachable only on localhost or a private security group).
+  **Bad:** returns metrics publicly → unauthenticated operational-data exposure (`main.go:204-211`).
+
+## C. Redundancy & backups — *gates risk #4 (SPOF + recovery)*
+
+- [ ] **C1 — Is there really only one relay instance, in one AZ?**
+  `aws ec2 describe-instances --filters "Name=tag:Name,Values=*relay*" --query "Reservations[].Instances[].[InstanceId,Placement.AvailabilityZone,State.Name]"`; check for any ALB/target group fronting it.
+  **Good:** ≥2 instances across ≥2 AZs, both peer IDs seeded in the client `RelayAddresses` (the multi-relay selector already fans out).
+  **Bad:** one instance, one AZ, no LB → confirmed SPOF (the selector is inert with one box).
+  **Grade impact:** genuine multi-relay + shared media → **L12 improves materially**; otherwise D stands.
+
+- [ ] **C2 — Are relay state and media backed up?**
+  `crontab -l`; `ls -la /var/backups 2>/dev/null`; look for Redis RDB/AOF copies and any `/data/media` + `/data/profiles` sync to object storage; `aws ec2 describe-snapshots --owner self` for EBS snapshot cadence.
+  **Good:** scheduled Redis snapshot + `/data` sync / EBS snapshots with a known retention.
+  **Bad:** none → confirms "no committed backups" (L14); RPO = last restart.
+
+- [ ] **C3 — Disk headroom on `/data`.**
+  `df -h /data`; `du -sh /data/media /data/profiles`.
+  **Good:** ample free space relative to the 5 GB/peer media cap.
+  **Bad:** near-full → the unbounded-media-disk DoS (L10) is closer than it appears.
+
+## D. Observability & push — *gates risk #3 (relay half)*
+
+- [ ] **D1 — Is monitoring off-box?**
+  Inspect the Prometheus targets config; confirm whether Prometheus/Grafana run on the **same** EC2 box (NOTES.md uses `localhost` targets).
+  **Good:** monitoring is off-box, or at least an external `up{job="relay-server"}` probe exists.
+  **Bad:** co-located → the monitor dies with the host it watches (L7, L13); confirmed if targets are `localhost:9090/9100`.
+
+- [ ] **D2 — Alert rules, or dashboards only?**
+  In Grafana/Prometheus, check for alert rules / alertmanager on `relay_inbox_rejected_full_total`, `relay_media_disk_bytes`, `relay_connections_active`, and the push-failure counters.
+  **Good:** alerts fire to a real channel (PagerDuty/Slack/email).
+  **Bad:** dashboards only → confirms L13 "no alerting"; nobody is paged when push fails or disk fills.
+
+- [ ] **D3 — Is push (FCM) configured and working?**
+  Confirm `FIREBASE_SERVICE_ACCOUNT` (from A1) points to a present, valid file; `sudo journalctl -u relay-server | grep -iE "push|fcm|notif"` for send successes vs auth errors.
+  **Good:** push sends succeed in the logs.
+  **Bad:** missing/invalid service account → offline notifications silently fail.
+
+## What flips if everything is green
+
+| If confirmed good | Layers that improve |
+|---|---|
+| A1+A2+A3 — Redis-with-persistence, off-box/replicated | **L3 → B**, **L14 → B**, L7 / L12 improve |
+| B1 — relay key overridden (not the committed default) | L9 (−1 HIGH), L6 (−1 MEDIUM) |
+| C1 — genuine multi-relay across AZs + shared media | **L12 → C/B**, L7 improves |
+| C2 — scheduled backups | L14 improves |
+| D1+D2 — off-box monitoring + alert rules | **L13 → C** (relay half), L7 improves |
+
+If **A1** returns `memory`, treat it as the single most urgent production fix regardless of everything else — it is silent, routine data loss on the offline-delivery path, and the durable backend is one env flip away.
+
 ---
 
 ## Methodology & limitations
@@ -554,7 +647,7 @@ _Each section: grade · what exists (with file:line evidence) · gaps by severit
 
 **Verification outcome.** 0 of 14 grades changed during fact-checking — the draft assessments held — but the skeptics caught and corrected numerous count/citation drifts (e.g. golden-test count 1→0, StartupRouter deps ~60→~53, a `media.go` auth line, the multi-relay flag being on-by-default not off, two `.ipa` files not one) and over/understatements (e.g. contact-request pairing is *not* forward-secret; the relay 1:1 `from`-spoof is cosmetic/push-attribution, bounded by E2E signing). Each section ends with the verifier's note so you can see exactly what was confirmed vs corrected.
 
-**Key limitation — the live relay environment is unverifiable from the repo.** The deploy config (`RELAY_BACKEND`, `REDIS_URL`, the production TLS terminator, `RELAY_PRIVATE_KEY`) is gitignored. Several findings — "defaults to in-memory", "no committed backups", "runs the hardcoded key" — describe the **code default and the committed README**, not a confirmed production state. If the live box already sets `RELAY_BACKEND=redis` with AOF/RDB and overrides the relay key, the Database/Cloud/Scaling/Availability grades improve materially. **Confirm the prod env out-of-band** before treating those as live defects.
+**Key limitation — the live relay environment is unverifiable from the repo.** The deploy config (`RELAY_BACKEND`, `REDIS_URL`, the production TLS terminator, `RELAY_PRIVATE_KEY`) is gitignored. Several findings — "defaults to in-memory", "no committed backups", "runs the hardcoded key" — describe the **code default and the committed README**, not a confirmed production state. If the live box already sets `RELAY_BACKEND=redis` with AOF/RDB and overrides the relay key, the Database/Cloud/Scaling/Availability grades improve materially. **Confirm the prod env out-of-band** before treating those as live defects — the **Live-Environment Verification Checklist** above lists the exact checks and the grade flip each one triggers.
 
 **Scope notes.** Grades are calibrated to what a *pre-launch / TestFlight-stage decentralized app realistically needs* — not to a hyperscale-SaaS bar. "Decentralization N/A" credit is given only where a concern is structurally absent by design (central auth, session store, CDN for E2E ciphertext), never as an excuse for owed-but-missing relay operations.
 
