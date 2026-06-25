@@ -51,22 +51,30 @@ class Orbit3ArchArcLayout {
 ///
 /// y is 0 at the two edges and −[dip] at the centre (negative = up), so the row
 /// reads as an arch. x is inset by half an avatar so nothing clips the edges.
+/// [fullRowCount] is the row CAPACITY: a partial row (n < capacity) is laid at
+/// the full-row pitch and CENTRED, so the last row (e.g. the two groups) stays
+/// TOGETHER instead of spread edge-to-edge. Defaults to [n] (a full row).
 List<Offset> computeOrbit3ArcRow({
   required int n,
   required double width,
   required double avatar,
   double dip = 14,
+  int? fullRowCount,
 }) {
   if (n <= 0) return const [];
-  if (n == 1) return [Offset(width / 2, 0)];
+  final cap = (fullRowCount == null || fullRowCount < n) ? n : fullRowCount;
+  if (cap <= 1) return [Offset(width / 2, 0)];
 
   final left = avatar / 2;
   final right = width - avatar / 2;
-  final step = (right - left) / (n - 1);
+  final step = (right - left) / (cap - 1);
+  final span = step * (n - 1);
+  // Full row → edge-to-edge (start at left); partial row → centred.
+  final start = (n >= cap) ? left : (width - span) / 2;
 
   final out = <Offset>[];
   for (var i = 0; i < n; i++) {
-    final x = left + step * i;
+    final x = start + step * i;
     final u = (x - width / 2) / (width / 2); // −1 … 1 across the row
     final y = dip * (u * u - 1); // 0 at the edges, −dip at the centre
     out.add(Offset(x, y));
@@ -88,7 +96,8 @@ Orbit3ArchArcLayout computeOrbit3ArchArcs({
   var remaining = count;
   while (remaining > 0) {
     final n = min(perRow, remaining);
-    rows.add(computeOrbit3ArcRow(n: n, width: width, avatar: avatar, dip: dip));
+    rows.add(computeOrbit3ArcRow(
+        n: n, width: width, avatar: avatar, dip: dip, fullRowCount: perRow));
     remaining -= n;
   }
   return Orbit3ArchArcLayout(rows: rows);

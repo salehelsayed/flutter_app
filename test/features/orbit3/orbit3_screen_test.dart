@@ -474,6 +474,40 @@ void main() {
     await tester.pump(const Duration(milliseconds: 2400));
   });
 
+  testWidgets('increasing spacing keeps the circle box square — avatars stay on '
+      'the orbit (168 off-orbit fix)', (tester) async {
+    useShortSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '50');
+    await openArch(tester);
+    // Bump spacing to the max so the circle box exceeds the pane width.
+    for (var i = 0; i < 5; i++) {
+      await tester.tap(find.byKey(const ValueKey('orbit3-spacing-inc')));
+      await tester.pump(const Duration(milliseconds: 40));
+    }
+    await tester.pump(const Duration(milliseconds: 2400));
+    final s = tester.getSize(find.byType(Orbit3OneCircle));
+    expect(s.width, closeTo(s.height, 1.0),
+        reason: 'a width-clamped (non-square) box offsets the painter centre '
+            'from the avatar centre → avatars off the rings');
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('each arch row holds at most 7 avatars (168 7-per-arch fix)',
+      (tester) async {
+    useShortSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '50');
+    await openArch(tester);
+    // row 0 is a FULL row → exactly 7 (was 8).
+    expect(
+        find.descendant(
+            of: find.byKey(const ValueKey('orbit3-arch-arc-row-0')),
+            matching: find.byType(OrbitalAvatar)),
+        findsNWidgets(7));
+    await tester.pump(const Duration(seconds: 1));
+  });
+
   testWidgets('100-user population seats 100 and the arch opens + scrolls (C5)',
       (tester) async {
     useShortSurface(tester);

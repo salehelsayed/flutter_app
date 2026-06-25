@@ -96,5 +96,13 @@ void main() {
     await tester.pump(const Duration(milliseconds: 350));
     await drain();
     await capture('arch_pop100_expanded');
+
+    // Wide spacing (168 fix): avatars must stay ON the rings + 7 per arch.
+    for (var i = 0; i < 4; i++) {
+      await tester.tap(find.byKey(const ValueKey('orbit3-spacing-inc')));
+      await tester.pump(const Duration(milliseconds: 40));
+    }
+    await drain();
+    await capture('arch_pop100_wide_spacing');
   });
 }

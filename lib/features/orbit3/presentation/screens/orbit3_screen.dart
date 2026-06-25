@@ -339,8 +339,9 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
               final base = (kOrbit3ArchRowAvatar * _avatarScale)
                   .clamp(20.0, 60.0)
                   .toDouble();
+              // 7 avatars per arch (168 fix).
               final perRow =
-                  (width / (base + 6)).floor().clamp(6, 11).toInt();
+                  (width / (base + 6)).floor().clamp(6, 7).toInt();
               // Spacing stepper widens the arch row pitch (168 C1).
               final rowHeight = base + 14.0 * _spacingScale;
               final dip = (base * 0.32).clamp(7.0, 13.0).toDouble();
@@ -395,7 +396,12 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                     Center(
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: Orbit3OneCircle(
+                        // FittedBox keeps the (spacing-scaled) box SQUARE and
+                        // scaled-to-fit so avatars stay on the rings even when
+                        // wider spacing grows the box past the pane (168 fix).
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Orbit3OneCircle(
                           userPeerId: widget.userPeerId,
                           userAvatarBytes: widget.userAvatarBytes,
                           items: _items,
@@ -411,6 +417,7 @@ class _Orbit3ScreenState extends State<Orbit3Screen>
                           onToggleNames: _toggleNames,
                           onFriendTap: _openFriendChat,
                           onGroupTap: _openGroupChat,
+                          ),
                         ),
                       ),
                     ),
