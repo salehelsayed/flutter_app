@@ -74,6 +74,15 @@ class Orbit3OneCircle extends StatelessWidget {
   /// inner circle steady when the Orbit3 arch expands (168 C4). Default true.
   final bool animateEntrance;
 
+  /// When set, EVERY member renders at this exact diameter (overriding the
+  /// 38/30 Orbit-parity ring sizes) so the inner circle matches the arch avatars
+  /// (168). Already includes any avatar-size scale. Null = parity (InnerSky).
+  final double? uniformAvatarSize;
+
+  /// When true, the box hugs the rings (no 320 floor) so the circle can sit as a
+  /// tight extension just below the arches (168). Default false = Orbit 320 box.
+  final bool snugBox;
+
   const Orbit3OneCircle({
     super.key,
     required this.userPeerId,
@@ -93,6 +102,8 @@ class Orbit3OneCircle extends StatelessWidget {
     this.avatarScale = 1.0,
     this.ringSpacingScale = 1.0,
     this.animateEntrance = true,
+    this.uniformAvatarSize,
+    this.snugBox = false,
   });
 
   Offset _pos(int index, int count, double radius, int ring) {
@@ -117,9 +128,19 @@ class Orbit3OneCircle extends StatelessWidget {
     // Avatar size scales independently of ring spacing; ring radii (and the box)
     // scale by ringSpacingScale so the spacing stepper widens the orbits (168 C1).
     final radii = [for (final r in layout.radii) r * ringSpacingScale];
-    final avatarSizes = [for (final s in layout.avatarSizes) s * avatarScale];
+    // uniformAvatarSize (when set) overrides the 38/30 parity so every member —
+    // and the arch avatars — share one diameter (168).
+    final avatarSizes = [
+      for (final s in layout.avatarSizes) uniformAvatarSize ?? (s * avatarScale),
+    ];
     final centerSize = layout.centerSize * avatarScale;
-    final box = layout.boxSize * ringSpacingScale;
+    // snugBox hugs the (scaled) outer ring + avatar instead of the Orbit 320
+    // floor, so the circle reads as a tight extension below the arches (168).
+    final outerR = radii.isEmpty ? 0.0 : radii.last;
+    final outerAv = avatarSizes.isEmpty ? 0.0 : avatarSizes.last;
+    final box = snugBox
+        ? 2 * (outerR + outerAv / 2 + 8)
+        : layout.boxSize * ringSpacingScale;
     final c = box / 2;
 
     // The expand/collapse node rides the outermost VISIBLE ring (Orbit2 style),

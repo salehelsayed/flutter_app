@@ -227,11 +227,11 @@ void main() {
     final circleTop = minTop(circleAvatars());
     expect(arcsBottom, lessThanOrEqualTo(circleTop + 0.5),
         reason: 'arcs bottom $arcsBottom must stay above circle top $circleTop');
-    // Measure the gap against the circle BOX top (not its inset ring avatars) so
-    // deleting the SizedBox(16) spacer is actually detectable (167 review nit).
+    // The arches hug the circle (168 extension) — the lowest arch sits near the
+    // (snug) box top, never buried deep inside it.
     final circleBoxTop = minTop(find.byType(Orbit3OneCircle));
-    expect(circleBoxTop - arcsBottom, inInclusiveRange(12.0, 30.0),
-        reason: 'the arch→circle gap is ~23px (7px row remainder + 16px spacer)');
+    expect(circleBoxTop - arcsBottom, greaterThan(-20.0),
+        reason: 'the lowest arch is not buried inside the circle box');
     await tester.pump(const Duration(seconds: 1));
   });
 
@@ -537,6 +537,63 @@ void main() {
             of: find.byKey(const ValueKey('orbit3-arch-arc-row-0')),
             matching: find.byType(OrbitalAvatar)),
         findsNWidgets(7));
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('inner-circle avatars match the arch avatars in size (168)',
+      (tester) async {
+    useShortSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '50');
+    await openArch(tester);
+    final circleSizes = tester
+        .widgetList<OrbitalAvatar>(circleAvatars())
+        .map((a) => a.size)
+        .toSet();
+    final archSize =
+        tester.widgetList<OrbitalAvatar>(archAvatars()).first.size;
+    expect(circleSizes.length, 1, reason: 'inner avatars are one uniform size');
+    expect(circleSizes.first, closeTo(archSize, 0.01),
+        reason: 'inner avatar size == arch avatar size');
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('the first arch starts close to the circle, like an extension '
+      '(168)', (tester) async {
+    useShortSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '50');
+    await openArch(tester);
+    final clearance = minTop(circleAvatars()) - maxBottom(archAvatars());
+    expect(clearance, greaterThan(0.0), reason: 'no overlap');
+    expect(clearance, lessThan(30.0),
+        reason: 'the first arch hugs the circle (extension)');
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('per-arch stepper changes the avatars per arch row (168)',
+      (tester) async {
+    useShortSurface(tester);
+    await tester.pumpWidget(wrap());
+    await goTo(tester, '50');
+    await openArch(tester);
+    int row0() => find
+        .descendant(
+            of: find.byKey(const ValueKey('orbit3-arch-arc-row-0')),
+            matching: find.byType(OrbitalAvatar))
+        .evaluate()
+        .length;
+    final n0 = row0();
+    await tester.tap(find.byKey(const ValueKey('orbit3-perrow-dec')));
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.pump(const Duration(milliseconds: 2400));
+    final nDec = row0();
+    expect(nDec, lessThan(n0), reason: 'fewer per arch');
+    await tester.tap(find.byKey(const ValueKey('orbit3-perrow-inc')));
+    await tester.tap(find.byKey(const ValueKey('orbit3-perrow-inc')));
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.pump(const Duration(milliseconds: 2400));
+    expect(row0(), greaterThan(nDec), reason: 'more per arch');
     await tester.pump(const Duration(seconds: 1));
   });
 
