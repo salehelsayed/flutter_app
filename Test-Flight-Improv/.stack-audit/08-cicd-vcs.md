@@ -1,0 +1,30 @@
+## 8. CI/CD & Version Control
+
+**Grade:** D · **Status:** Early · **Decentralization:** Not excused by P2P design — CI/CD is owed in full for both the client and the (centralized) relay.
+
+**Assessment.** This is the weakest-automated layer in an otherwise high-discipline codebase. There is **no CI of any kind** — no `.github/workflows`, no git hooks, no release/deploy automation — so quality is enforced **entirely by a human running scripts**. The redeeming reality is that the hard part is already built: the gate scripts are CI-ready (strict bash `set -euo pipefail` / `set -o pipefail`, clean exit codes, scoped suites), there is a committed analyzer baseline, manual build-number tagging exists, and secret hygiene is clean. The gap is wiring, not capability — the gates are powerful but discretionary, which for a single-developer, pre-launch app is a real-but-bounded risk that does not scale.
+
+**What exists (and how good)**
+- Comprehensive local test gates — strong — `scripts/run_test_gates.sh` (30KB; scoped baseline/1:1/feed/groups/reliability suites) and `scripts/run_host_test_gates.sh:1-3` (`set -euo pipefail`, deterministic host-only suites)
+- Analyzer-regression gate with committed baseline — strong — `scripts/check_flutter_analyze_baseline.sh` diffs `flutter analyze` against `tool/analyzer_baseline/flutter_analyze_baseline.tsv` (81KB, git-tracked) via `tool/analyzer_baseline/analyzer_baseline.dart compare`, propagating its exit code
+- iOS release-readiness preflight — adequate — `scripts/check_push_release_gate.sh:1-3,12-15` (`set -euo pipefail`) validates GoogleService-Info.plist / Info.plist / Runner.entitlements / pbxproj before shipping
+- Reliability/E2E simulators — strong (but manual) — `scripts/run_reliability_simulations.sh`, `scripts/check_reliability_simulation_discovery.sh`
+- Scripted iOS App Store build — adequate (local-only) — `scripts/build_ios_appstore_ipa.sh:25-29` wraps `flutter build ipa --release` with `ios/ExportOptions-AppStore.plist`
+- Android release-build path (config, not automation) — adequate — `android/app/build.gradle.kts:63-92` defines a `release` `signingConfig` and `:152-170` hard-gates `assembleRelease`/`bundleRelease`/`packageRelease` on a present `android/key.properties` + `google-services.json`; a `.aab` is buildable, but there is **no script wrapping it** and no Play upload
+- Version + build-number discipline — adequate — `pubspec.yaml:19` = `1.0.0+106`; git tags `build-99`, `build-100`, plus milestone/closure tags (e.g. `group-chat-reliability-closure-2026-05-14`)
+- Secret hygiene — strong — `.gitignore:56-65,126` excludes `.env`/`.env.*`, `GoogleService-Info.plist`, `google-services.json`, `*-firebase-adminsdk-*.json`, `ios/ExportOptions.plist`, `*.pem`
+- Relay build target — weak — `go-relay-server/Makefile` (`go build -o relay-server .`) is the entire build story
+
+**Gaps / what is missing**
+- **[critical]** No automated CI on push/PR — `.github` does not exist in the app repo (the only `.github/workflows` is vendored under `go-mknoon/third_party/go-libp2p-pubsub/`); `.git/hooks` holds only `.sample` files; no husky/lefthook/pre-commit. Nothing prevents a gate-failing or analyzer-regressing commit from being pushed or tagged. For an E2E post-quantum crypto app this is the highest-leverage missing control.
+- **[high]** No client release automation — TestFlight upload and the `+106` build-number bump are manual; `build_ios_appstore_ipa.sh` runs only on a dev machine; Android has a signing-config build path but **no scripted/automated Android release** (no equivalent build script, no fastlane, no Play upload).
+- **[high]** Manual, unversioned relay deploy — `go-relay-server/README.md:4-37` documents `make build` → `sudo cp relay-server /usr/local/bin/relay-server` → systemd unit → `systemctl restart`; only resilience is `Restart=on-failure` / `RestartSec=5`. No deploy script, no versioned/atomic binary swap, no rollback, no post-deploy health check.
+- **[medium]** Branch sprawl — 122 branch refs (79 local + 43 remote); 37 remote branches already merged into `origin/main` are never deleted (oldest `origin/Milestone-1`, 2026-01-28). No delete-on-merge convention; agent/lane worktree branches (`perf-exec/*`, `worktree-agent-*`) accumulate uncollected.
+- **[medium]** No dependency scanning / branch protection / PR review gate — no dependabot/renovate/CODEOWNERS/PR template; crypto-relevant dependency CVEs (ML-KEM in `go-mknoon`, libp2p, Firebase) are not tracked.
+
+**Decentralization note.** This layer is essentially **not** excused by the app's P2P/decentralized design: the Flutter client still needs automated build/test/release, and the relay — a genuinely centralized component on one EC2 box — still needs deploy automation and rollback. The only sub-capability that is legitimately low-value today is the PR-review/branch-protection *enforcement*, and that is because of **solo-developer team size**, not decentralization. Heavy multi-node IaC/k8s is correctly absent — that is a scale decision (single relay), not a CI/CD failure.
+
+**Recommendations**
+- **Now:** Add one GitHub Actions workflow that runs `scripts/check_flutter_analyze_baseline.sh` + `scripts/run_host_test_gates.sh` (both host-only/deterministic) on PR and on push to `main`/active branches, and enable branch protection requiring that check on `main`. The scripts already exit-code cleanly, so this is mostly YAML. Also prune the 37 merged remote branches and adopt delete-on-merge. (S)
+- **Next:** Tag-driven iOS release on `build-*` tags (macOS runner: `build_ios_appstore_ipa.sh` → fastlane pilot / `xcrun altool` to TestFlight, with automated build-number bump); add the missing scripted Android `bundleRelease` → Play upload path; and commit a `go-relay-server/deploy.sh` doing versioned build → atomic binary swap → `systemctl restart` → health probe, triggered on relay-path changes. (M)
+- **Later:** Stand up a self-hosted macOS runner to run `scripts/run_reliability_simulations.sh` nightly (simulators can't run on hosted CI), and add dependabot/renovate for `go.mod` + `pubspec.yaml` to surface CVEs across the post-quantum crypto surface. (L)

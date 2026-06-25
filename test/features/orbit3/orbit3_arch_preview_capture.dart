@@ -89,5 +89,12 @@ void main() {
     await tester.pump(const Duration(milliseconds: 350));
     await drain();
     await capture('arch_pop50_expanded');
+
+    // 100 users (168 C5): cycling closes the arch; reopen + capture.
+    await goTo('100');
+    await tester.tap(find.byKey(const ValueKey('orbit3-arch-overflow')));
+    await tester.pump(const Duration(milliseconds: 350));
+    await drain();
+    await capture('arch_pop100_expanded');
   });
 }
