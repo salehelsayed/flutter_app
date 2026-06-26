@@ -23,6 +23,16 @@ const Duration interactiveLocalBudget = Duration(milliseconds: 1500);
 /// Interactive send budget for the overall direct send path.
 const Duration interactiveDirectBudget = Duration(seconds: 2);
 
+/// FDC-01: aggregate (serial) ceiling for the direct discover→dial→send leg.
+/// Distinct from — and 3× larger than — the per-step [interactiveDirectBudget]
+/// so a slow step (e.g. a ~1.9s discover) cannot starve dial+send and trip the
+/// outer cap mid-send. Each step is still independently bounded at
+/// [interactiveDirectBudget]; this only accrues when EVERY step makes real
+/// progress (found→dialed→sending) — i.e. an online peer worth waiting for.
+/// A null/failed step returns immediately at its per-step cutoff, never 6s.
+/// (Proposal §4.1 / §8 P1-3: decouple, do NOT shrink the cold-relay budget.)
+const Duration interactiveDirectAggregateBudget = Duration(seconds: 6);
+
 /// Interactive send budget for the inbox store fallback path.
 const Duration interactiveInboxBudget = Duration(seconds: 3);
 
@@ -66,8 +76,61 @@ const Duration kStickyHeadStart = Duration(milliseconds: 120);
 /// on "recently failed/offline".
 const Duration kLowConfidenceWindow = Duration(seconds: 30);
 
+/// FDC-02 §6.2a / §12 (libp2p DefaultDialRanker `RelayDelay`): the relay-LIVE
+/// leg is penalized by this stagger so a viable LAN/direct leg that acks first
+/// WINS and the relay-live leg is never started (suppress-on-early-win), instead
+/// of relay riding the direct leg with no handicap. A warmed `/p2p-circuit` then
+/// races-but-loses to a 30ms LAN hop (§6.1 by priority, not suppression).
+/// Ordering invariant (TC-02-08): kRelayLegStagger > kPublicAddrTail >
+/// kPrivateAddrTail.
+const Duration kRelayLegStagger = Duration(milliseconds: 500);
+
+/// FDC-02 §12 Happy-Eyeballs per-address tails. Pinned here only for the ordering
+/// invariant; their PER-ADDRESS application inside a single dial is the Go host's
+/// `DefaultDialRanker` (FDC-11, device-only). FDC-02 implements only the
+/// leg-granularity [kRelayLegStagger] analog in Dart.
+const Duration kPublicAddrTail = Duration(milliseconds: 250);
+const Duration kPrivateAddrTail = Duration(milliseconds: 30);
+
+/// FDC-02 §6.2b: a circuit-v2 LIVE relay socket is "limited" (~128KB/direction
+/// before reset). Media — and any payload whose ENCRYPTED ENVELOPE
+/// (`jsonString.length`) exceeds this ceiling — NEVER traverses the live relay
+/// leg: it goes LAN-live, direct-live, or the durable inbox (relay-INBOX) only.
+/// Headroom under the 128KB cap. (Invariant 3 / TC-02-03/04/12.)
+const int kLiveRelayMaxPayloadBytes = 96 * 1024;
+
+/// FDC-02 (latency half of P0-3): independent per-step budgets for the direct
+/// discover→dial→send leg, replacing the single collective [interactiveDirectBudget]
+/// cap inside `_tryDirectSendInner` so a slow step can no longer starve the
+/// others. Each step stays bounded by the FDC-01 aggregate ceiling
+/// [interactiveDirectAggregateBudget] (their worst-case SUM, 5000ms, is well
+/// under the 6s ceiling). Discover is held at 2000ms to preserve FDC-01's landed
+/// locks (a 1900ms discover succeeds; a 2100ms discover times out eligibly);
+/// dial/send are tightened to 1500ms (no FDC-01 test pins them higher).
+const Duration kDirectDiscoverBudget = Duration(milliseconds: 2000);
+const Duration kDirectDialBudget = Duration(milliseconds: 1500);
+const Duration kDirectSendBudget = Duration(milliseconds: 1500);
+
+/// FDC-02 observability seam (C2). Production [P2PService] impls do NOT implement
+/// this: the staggered relay-live leg's delivery is an ordinary
+/// `sendMessageWithReply`, indistinguishable on the wire from the direct / reuse
+/// / probe-tail sends. A host fake implements it so a test can attribute the
+/// otherwise-identical circuit send to the relay-LIVE leg specifically — the
+/// leg-attributable proof the leg did/did not start, since "sent while only a
+/// circuit conn exists" over-counts the direct/reuse/probe sends. Mirrors the
+/// existing [ReadinessProofRecorder] capability-interface pattern. Fired only
+/// AFTER the suppress-on-early-win guard passes, so a suppressed leg is never
+/// counted.
+abstract interface class RelayLiveSendObserver {
+  void noteRelayLiveSendStart();
+}
+
 /// Transport preference rank for the grace window: higher wins. 'reuse' ranks
 /// with 'direct' (both are a non-relay live connection); unknown ranks lowest.
+/// FDC-02 (C8): the staggered relay-LIVE leg reuses the existing 'relay' label
+/// (Go labels a live `/p2p-circuit` send 'relay'), so it already ranks 1 < direct
+/// < local with NO numeric change here — the leg granularity, not the rank, is
+/// what FDC-02 adds.
 int _transportRank(String? via) => switch (via) {
   'local' => 3,
   'direct' => 2,
@@ -447,8 +510,17 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final isAlreadyConnected = p2pService.currentState.connections.any(
     (c) => c.peerId == targetPeerId,
   );
+  // FDC-02 (C1 resolution A): a peer whose ONLY live connection is a
+  // `/p2p-circuit` must NOT reuse-short-circuit ahead of the race — the warmed
+  // relay would carry a send a 30ms LAN hop should win (§6.1 by latency). It
+  // falls into the ranked race instead, where the staggered relay-LIVE leg is
+  // the rank-aware circuit send. A peer with any direct connection still reuses.
+  final isCircuitOnlyConnected = _isCircuitOnlyConnected(
+    p2pService,
+    targetPeerId,
+  );
 
-  if (isAlreadyConnected) {
+  if (isAlreadyConnected && !isCircuitOnlyConnected) {
     connectionReused = true;
     sendPath = 'reuse';
     emitFlowEvent(
@@ -659,6 +731,15 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         .catchError((_) => false);
   }
 
+  // FDC-02 §6.2a/b: the staggered relay-LIVE leg joins the race only when a live
+  // `/p2p-circuit` exists for the peer AND the payload may ride a limited live
+  // relay socket (not media, not over [kLiveRelayMaxPayloadBytes]). Otherwise the
+  // race is the existing LAN+direct pair and an all-fail send falls to the
+  // durable inbox (relay-INBOX, FDC-03 territory) — never the live relay socket.
+  final liveRelayEligible =
+      _hasLiveCircuitConnection(p2pService, targetPeerId) &&
+      _liveRelayEligible(hasAttachments, jsonString.length);
+
   // Build race futures
   final raceFutures = <Future<_RaceResult>>[];
 
@@ -697,8 +778,14 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       jsonString,
       transportMetrics: transportMetrics,
     ).timeout(
-      interactiveDirectBudget,
-      onTimeout: () => _RaceResult.failed('direct_timeout'),
+      // FDC-01: the OUTER cap is the aggregate (serial) ceiling, decoupled from
+      // the per-step budget so a slow-but-progressing step can't be starved.
+      // When it does fire the leg is genuinely stuck mid-progress on an online
+      // peer, so the aggregate direct_timeout is relay-probe-eligible (the live
+      // relay tail still runs instead of demoting to the durable inbox).
+      interactiveDirectAggregateBudget,
+      onTimeout: () =>
+          _RaceResult.failed('direct_timeout', relayProbeEligible: true),
     ),
   );
 
@@ -721,7 +808,6 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // the race after the grace window). When [learned] is null every leg is
   // immediately eligible (degenerates to grace-only behavior).
   final completer = Completer<_RaceResult>();
-  var pendingCount = raceFutures.length;
   final failures = <_RaceResult>[];
   _RaceResult? best;
   Timer? graceTimer;
@@ -739,6 +825,43 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // drop a genuinely-alive non-learned success (U-N2: dead learned leg must not
   // trap the send).
   var deferredSuccessOffers = 0;
+  // FDC-02: tracks whether the DIRECT leg (raceFutures[1], up to rank 2) is still
+  // in flight. The staggered relay-live leg can commit a rank-1 ('relay') best
+  // while the slower direct leg is still pending; that pending direct leg can
+  // still outrank the relay best, so completion must wait (grace) for it
+  // (TC-02-07). Cleared the moment the direct leg resolves (success or failure).
+  var directLegPending = true;
+
+  // FDC-02: the staggered relay-LIVE leg, added as a THIRD race future so it is
+  // counted in [pendingCount] below (C4) — a fast LAN+direct DOUBLE failure
+  // therefore cannot settle the race as failed before the relay penalty elapses
+  // and the leg has had its chance (§6.2a / TC-02-02). It starts kRelayLegStagger
+  // behind the LAN/direct legs (the penalty) and is SUPPRESSED — returns a failed
+  // result WITHOUT sending — if a better-ranked leg has already committed `best`
+  // by the time the stagger fires (C3: guard on `best != null`, NOT
+  // `completer.isCompleted`, which stays false through a direct-leg grace window
+  // and would let the leg fire spuriously after a direct win). Its result feeds
+  // the SAME rank machinery at rank 1 ('relay'); an in-flight loser is not
+  // cancellable (relies on receiver dedup). [best] is captured by reference, so
+  // this closure must be built AFTER [best] is declared.
+  if (liveRelayEligible) {
+    raceFutures.add(
+      Future<_RaceResult>(() async {
+        await Future<void>.delayed(kRelayLegStagger);
+        if (best != null) {
+          return _RaceResult.failed('relay_live_suppressed');
+        }
+        return _tryRelayLiveSend(
+          p2pService,
+          targetPeerId,
+          jsonString,
+          transportMetrics: transportMetrics,
+        );
+      }),
+    );
+  }
+
+  var pendingCount = raceFutures.length;
 
   void completeWithBest() {
     if (best != null && !completer.isCompleted) {
@@ -769,9 +892,15 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // True when no still-eligible leg could outrank the current [best].
   bool noPendingLegCanBeatBest() {
     if (best == null) return false;
-    if (pendingCount <= 0 && !localLegEligibilityPending) return true;
-    // The only transport that can exceed 'direct'/'reuse'/'relay' is local.
-    return !localLegEligibilityPending || _transportRank(best!.via) >= 3;
+    final bestRank = _transportRank(best!.via);
+    // A still-pending LOCAL leg (rank 3) can outrank any non-local best.
+    if (localLegEligibilityPending && bestRank < 3) return false;
+    // FDC-02: a still-pending DIRECT leg (up to rank 2) can outrank a rank-1
+    // ('relay') best — the staggered relay-live leg committed first while the
+    // slower direct leg is still in flight (TC-02-07). The relay-live leg itself
+    // is rank 1 (lowest), so a pending relay-live leg never blocks completion.
+    if (directLegPending && bestRank < 2) return false;
+    return true;
   }
 
   // Offers a successful leg result (now WIN-eligible) to the best-within-grace
@@ -806,15 +935,24 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     }
   }
 
-  // Wire each leg. Index 0 is the local leg (see [localLegEligibilityPending]).
+  // Wire each leg. Index 0 is the local leg (see [localLegEligibilityPending]);
+  // index 1 is the direct leg (see [directLegPending]); index 2 (when present)
+  // is the FDC-02 staggered relay-live leg.
   for (var i = 0; i < raceFutures.length; i++) {
     final isLocalLeg = i == 0;
+    final isDirectLeg = i == 1;
     void onResolved(_RaceResult result) {
       pendingCount--;
       if (!result.success) {
         failures.add(result);
         // A failed local leg can no longer produce a top-rank win.
         if (isLocalLeg) localLegEligibilityPending = false;
+        // FDC-02: a failed direct leg can no longer outrank a committed relay
+        // best (mirrors the local-leg clear). Cleared on the OFFER, not at
+        // resolution, for the buffered-success path below — otherwise a buffered
+        // rank-2 direct win could be beaten by a buffered rank-1 relay win whose
+        // head-start offer fires first.
+        if (isDirectLeg) directLegPending = false;
         if (best != null) {
           if (noPendingLegCanBeatBest()) completeWithBest();
         } else if (pendingCount <= 0 && deferredSuccessOffers <= 0) {
@@ -842,6 +980,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         Future<void>.delayed(kStickyHeadStart, () {
           deferredSuccessOffers--;
           if (isLocalLeg) localLegEligibilityPending = false;
+          if (isDirectLeg) directLegPending = false;
           offerSuccess(result);
           // After this (final) offer, if the race has fully resolved with no
           // better leg possible, commit the best now rather than wait out grace.
@@ -849,6 +988,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         });
       } else {
         if (isLocalLeg) localLegEligibilityPending = false;
+        if (isDirectLeg) directLegPending = false;
         offerSuccess(result);
       }
     }
@@ -1265,6 +1405,79 @@ String _resolveGoSendTransport(
   return _inferDirectVsRelayForConnectedPeer(p2pService, peerId);
 }
 
+/// FDC-02: true when the peer has at least one live `/p2p-circuit` connection —
+/// the relay-LIVE leg's eligibility precondition.
+bool _hasLiveCircuitConnection(P2PService p2pService, String peerId) {
+  return p2pService.currentState.connections.any(
+    (c) =>
+        c.peerId == peerId &&
+        c.multiaddrs.any((m) => m.contains('/p2p-circuit')),
+  );
+}
+
+/// FDC-02 (C1 resolution A): true when EVERY live connection to the peer is a
+/// `/p2p-circuit` (relay-backed). Such a peer must NOT take the reuse fast-path —
+/// it races, so a faster LAN/direct hop can still win (§6.1 by latency, not the
+/// warmed circuit). A peer with any direct (non-circuit) connection keeps the
+/// reuse short-circuit; an ambiguous empty-multiaddr connection is treated as
+/// direct (conservative — preserves the existing reuse path).
+bool _isCircuitOnlyConnected(P2PService p2pService, String peerId) {
+  final peerConns = p2pService.currentState.connections
+      .where((c) => c.peerId == peerId)
+      .toList();
+  if (peerConns.isEmpty) return false;
+  return peerConns.every(
+    (c) =>
+        c.multiaddrs.isNotEmpty &&
+        c.multiaddrs.any((m) => m.contains('/p2p-circuit')),
+  );
+}
+
+/// FDC-02 §6.2b: media and oversized (encrypted envelope > [kLiveRelayMaxPayloadBytes])
+/// payloads NEVER traverse the live relay leg (the circuit-v2 socket is
+/// ~128KB-limited). They fall to LAN-live / direct-live / the durable inbox.
+bool _liveRelayEligible(bool hasAttachments, int payloadBytes) =>
+    !hasAttachments && payloadBytes <= kLiveRelayMaxPayloadBytes;
+
+/// FDC-02: the staggered relay-LIVE leg. Sends over the existing live connection
+/// — Go selects the path (normally the `/p2p-circuit`, since this leg runs only
+/// when one exists and no better leg has committed) and LABELS the result
+/// (relay-opportunistic, not relay-forced). Fires the [RelayLiveSendObserver]
+/// seam (no-op in production) right before the send so a host test can attribute
+/// this otherwise-identical `sendMessageWithReply` to the relay-live leg (C2).
+/// Reaching here means the suppress-on-early-win guard already passed, so the
+/// leg actually sends.
+Future<_RaceResult> _tryRelayLiveSend(
+  P2PService p2pService,
+  String targetPeerId,
+  String jsonString, {
+  TransportMetrics? transportMetrics,
+}) async {
+  if (p2pService case final RelayLiveSendObserver observer) {
+    observer.noteRelayLiveSendStart();
+  }
+  try {
+    final sendResult = await p2pService
+        .sendMessageWithReply(
+          targetPeerId,
+          jsonString,
+          timeoutMs: kDirectSendBudget.inMilliseconds,
+        )
+        .timeout(kDirectSendBudget);
+    if (!sendResult.sent) {
+      return _RaceResult.failed('relay_live_send_failed');
+    }
+    return _RaceResult.succeeded(
+      via: _resolveGoSendTransport(p2pService, targetPeerId, sendResult),
+      acknowledged: sendResult.acknowledged,
+    );
+  } on TimeoutException {
+    return _RaceResult.failed('relay_live_timeout');
+  } catch (e) {
+    return _RaceResult.failed('relay_live_error:$e');
+  }
+}
+
 /// Try sending via local WiFi, running a bounded discover-on-send resolve first
 /// when the peer was not already in the discovered map.
 ///
@@ -1469,12 +1682,30 @@ Future<_RaceResult> _tryDirectSendInner(
   String targetPeerId,
   String jsonString,
 ) async {
-  final budgetMs = interactiveDirectBudget.inMilliseconds;
   final timings = <String, int>{};
 
-  // Discover
+  // FDC-02 (latency half of P0-3): each step is bounded by its OWN budget
+  // ([kDirectDiscoverBudget]/[kDirectDialBudget]/[kDirectSendBudget]) instead of
+  // the single collective [interactiveDirectBudget], so a slow step can no longer
+  // starve the others. The worst-case serial sum stays under the FDC-01 aggregate
+  // ceiling ([interactiveDirectAggregateBudget]) applied at the leg's outer
+  // `.timeout` in the race assembly.
+  //
+  // Discover — per-step bounded so a slow-but-online discover yields an
+  // *eligible* peer_not_found (the relay tail runs) instead of being swallowed
+  // by the aggregate ceiling. discoverPeer returns a NULLABLE DiscoveredPeer?,
+  // so onTimeout: () => null type-checks and a timed-out discover collapses into
+  // the existing null-discover branch below (already eligible). Against the real
+  // impl discoverPeer honors its own timeoutMs and returns null on timeout, so
+  // this .timeout is a hang-guard layered atop it; against the test fake (which
+  // ignores timeoutMs) it IS the deterministic cut.
   final discoverStopwatch = Stopwatch()..start();
-  final peer = await p2pService.discoverPeer(targetPeerId, timeoutMs: budgetMs);
+  final peer = await p2pService
+      .discoverPeer(
+        targetPeerId,
+        timeoutMs: kDirectDiscoverBudget.inMilliseconds,
+      )
+      .timeout(kDirectDiscoverBudget, onTimeout: () => null);
   discoverStopwatch.stop();
   timings['discoverMs'] = discoverStopwatch.elapsedMilliseconds;
   if (peer == null) {
@@ -1485,13 +1716,19 @@ Future<_RaceResult> _tryDirectSendInner(
     );
   }
 
-  // Dial
+  // Dial — FDC-02 owns adding this per-step wrapper (FDC-01 left it implicit on
+  // the bridge's timeoutMs). dialPeer returns Future<bool>, so onTimeout: () =>
+  // false type-checks and a timed-out dial collapses into the dial_failed branch
+  // below (already relay-probe-eligible). Hang-guard vs the real impl;
+  // deterministic cut vs the fake (which ignores timeoutMs).
   final dialStopwatch = Stopwatch()..start();
-  final dialed = await p2pService.dialPeer(
-    targetPeerId,
-    addresses: peer.addresses,
-    timeoutMs: budgetMs,
-  );
+  final dialed = await p2pService
+      .dialPeer(
+        targetPeerId,
+        addresses: peer.addresses,
+        timeoutMs: kDirectDialBudget.inMilliseconds,
+      )
+      .timeout(kDirectDialBudget, onTimeout: () => false);
   dialStopwatch.stop();
   timings['dialMs'] = dialStopwatch.elapsedMilliseconds;
   if (!dialed) {
@@ -1502,15 +1739,34 @@ Future<_RaceResult> _tryDirectSendInner(
     );
   }
 
-  // Send
+  // Send — per-step bounded. A send that OVERRUNS its budget becomes an
+  // *eligible* direct_timeout (the relay probe runs), distinct from a definitive
+  // sent:false which stays a NON-eligible send_failed → inbox (preserved). The
+  // sendTimedOut flag keeps the two failure classes separate. (Hang-guard vs the
+  // real impl; deterministic cut vs the test fake — same as discover above.)
   final sendStepStopwatch = Stopwatch()..start();
-  final sendResult = await p2pService.sendMessageWithReply(
-    targetPeerId,
-    jsonString,
-    timeoutMs: budgetMs,
-  );
+  SendMessageResult? sendResult;
+  var sendTimedOut = false;
+  try {
+    sendResult = await p2pService
+        .sendMessageWithReply(
+          targetPeerId,
+          jsonString,
+          timeoutMs: kDirectSendBudget.inMilliseconds,
+        )
+        .timeout(kDirectSendBudget);
+  } on TimeoutException {
+    sendTimedOut = true;
+  }
   sendStepStopwatch.stop();
   timings['sendMs'] = sendStepStopwatch.elapsedMilliseconds;
+  if (sendTimedOut || sendResult == null) {
+    return _RaceResult.failed(
+      sendTimedOut ? 'direct_timeout' : 'send_failed',
+      relayProbeEligible: sendTimedOut,
+      stepTimings: timings,
+    );
+  }
   if (sendResult.streamOpenMs != null) {
     timings['streamOpenMs'] = sendResult.streamOpenMs!;
   }

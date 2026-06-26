@@ -31,7 +31,8 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../domain/repositories/fake_media_attachment_repository.dart';
 
 // -- Fake P2P Service --
-class FakeP2PService implements P2PService, ReadinessProofRecorder {
+class FakeP2PService
+    implements P2PService, ReadinessProofRecorder, RelayLiveSendObserver {
   final NodeState _currentState;
   bool sendMessageResult;
   String? sendMessageReply;
@@ -49,6 +50,26 @@ class FakeP2PService implements P2PService, ReadinessProofRecorder {
   int sendCallCount = 0;
   int probeRelayCallCount = 0;
   int storeInInboxCallCount = 0;
+
+  /// FDC-02 (C2): leg-attributable count of how many times the STAGGERED
+  /// relay-LIVE leg actually started its send. Incremented only by
+  /// [noteRelayLiveSendStart] (fired by `_tryRelayLiveSend` AFTER the
+  /// suppress-on-early-win guard), so a suppressed leg never bumps it and the
+  /// direct/reuse/probe sends — which share `sendMessageWithReply` — are NOT
+  /// counted here. The load-bearing discriminator for "the live leg did/did not
+  /// fire" (delivery alone is masked by receiver dedup, FDC-00 closure caveat).
+  int relayLiveSendCount = 0;
+
+  /// FDC-02: the transport label the relay-LIVE leg's send resolves to (Go's
+  /// label in prod). Defaults to 'relay' (a live `/p2p-circuit` send). Distinct
+  /// from [sendMessageTransport] (the direct/reuse legs) so a rank test can have
+  /// the direct leg label 'direct' while the relay-live leg labels 'relay'.
+  String? relayLiveSendTransport;
+
+  /// Set synchronously by [noteRelayLiveSendStart] right before the relay-live
+  /// leg's `sendMessageWithReply`; consumed (and cleared) synchronously at the
+  /// top of that call so the label is attributed to exactly that send.
+  bool _relayLiveSendActive = false;
 
   String? lastSentPeerId;
   String? lastSentMessage;
@@ -122,6 +143,13 @@ class FakeP2PService implements P2PService, ReadinessProofRecorder {
     String message, {
     int? timeoutMs,
   }) async {
+    // FDC-02 (C2): capture the relay-live marker SYNCHRONOUSLY before any await,
+    // so the relay-live leg's send is labeled distinctly from the direct/reuse
+    // sends that share this method. noteRelayLiveSendStart() is fired by
+    // _tryRelayLiveSend immediately before this call (single-threaded, no await
+    // in between), so the flag belongs to exactly this invocation.
+    final isRelayLive = _relayLiveSendActive;
+    _relayLiveSendActive = false;
     if (shouldThrow) throw Exception('Send failed');
     if (sendDelay > Duration.zero) {
       await Future<void>.delayed(sendDelay);
@@ -135,7 +163,9 @@ class FakeP2PService implements P2PService, ReadinessProofRecorder {
       sent: sendMessageResult,
       acked: sendMessageAcked,
       reply: sendMessageReply,
-      transport: sendMessageTransport,
+      transport: isRelayLive
+          ? (relayLiveSendTransport ?? 'relay')
+          : sendMessageTransport,
     );
   }
 
@@ -145,6 +175,9 @@ class FakeP2PService implements P2PService, ReadinessProofRecorder {
     onDiscover?.call();
     if (shouldThrow && discoverCallCount == 1) {
       throw Exception('Discover failed');
+    }
+    if (discoverDelay > Duration.zero) {
+      await Future<void>.delayed(discoverDelay);
     }
     return discoverPeerResult;
   }
@@ -218,6 +251,13 @@ class FakeP2PService implements P2PService, ReadinessProofRecorder {
   /// `sendMessageWithReply`; [localSendDelay] gates `sendLocalMessage`.
   Duration sendDelay = Duration.zero;
   Duration localSendDelay = Duration.zero;
+
+  /// FDC-01: per-call discover latency so a test can model a slow-but-online
+  /// discover that approaches/exceeds the per-step direct budget. Mirrors
+  /// [sendDelay]/[localSendDelay]; honored at the top of [discoverPeer]. Default
+  /// zero leaves every existing test unchanged (discoverPeer awaited no delay
+  /// before FDC-01).
+  Duration discoverDelay = Duration.zero;
 
   @override
   String? lastKnownGoodTransport(String peerId) => lastKnownGoodTransportResult;
@@ -325,6 +365,12 @@ class FakeP2PService implements P2PService, ReadinessProofRecorder {
 
   @override
   String? get lastRecoveryMethod => null;
+
+  @override
+  void noteRelayLiveSendStart() {
+    relayLiveSendCount++;
+    _relayLiveSendActive = true;
+  }
 
   @override
   void dispose() {}
@@ -2275,8 +2321,18 @@ void main() {
     );
 
     test(
-      'existing relay-backed connection persists relay transport on the reuse fast path',
+      'FDC-02: a circuit-only connection no longer reuse-short-circuits — it '
+      'races (direct leg still labels relay) so a LAN/direct hop can win',
       () async {
+        // FDC-02 resolution A (C1): a peer whose ONLY live connection is a
+        // `/p2p-circuit` must NOT take the reuse fast-path (which would carry a
+        // warmed relay even when a 30ms LAN hop is available, the §6.1 bug).
+        // It now falls into the ranked race. Here there is no LAN and the direct
+        // dial succeeds, so the direct leg delivers — and because a circuit conn
+        // exists with no explicit Go transport, `_resolveGoSendTransport` still
+        // infers 'relay'. So transport stays 'relay', but discover/dial now run
+        // (proof the reuse short-circuit was skipped), and the staggered
+        // relay-live leg is suppressed by the early direct win.
         p2pService = FakeP2PService(
           currentState: NodeState(
             isStarted: true,
@@ -2305,9 +2361,13 @@ void main() {
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
         expect(message!.transport, 'relay');
+        // The reuse short-circuit was skipped: the direct leg discovered+dialed.
+        expect(p2pService.discoverCallCount, 1);
+        expect(p2pService.dialCallCount, 1);
+        // One live send (the direct leg). The staggered relay-live leg was
+        // suppressed by the early direct win, so it never sent.
         expect(p2pService.sendCallCount, 1);
-        expect(p2pService.discoverCallCount, 0);
-        expect(p2pService.dialCallCount, 0);
+        expect(p2pService.relayLiveSendCount, 0);
       },
     );
 
@@ -3816,6 +3876,566 @@ void main() {
       );
       expect(blocked['details']['reason'], 'deleted_row_plain_send');
     });
+  });
+
+  // ─── FDC-01 — direct_timeout mis-route + per-step budget decouple ──────────
+  // Proposal §4.1: a slow-but-ONLINE peer was silently routed to the durable
+  // inbox because (1) the per-step direct budgets were not independent of the
+  // outer aggregate cap (2s ≡ 2s starved dial+send), and (2) the resulting
+  // `direct_timeout` was not relay-probe-eligible. These lock the decouple +
+  // eligibility; preservation of offline-inbox / happy-direct lives above.
+  group('FDC-01 — direct-timeout misroute + per-step budget', () {
+    test(
+      'FDC-01 slow discover within step budget still delivers direct '
+      '(no starvation)',
+      () async {
+        // High-confidence (no prior failed/inboxed row), not local, not
+        // connected. Inner total ≈ 1900ms discover + ~0 dial + 300ms send ≈
+        // 2200ms: every step stays under the 2s per-step budget, but the sum
+        // exceeds the OLD 2s outer cap. On HEAD that cap fires mid-send →
+        // non-eligible direct_timeout → inboxed. With the decoupled aggregate
+        // (6s) the direct leg lands live.
+        p2pService = FakeP2PService(
+          storeInInboxResult: true,
+          sendMessageAcked: true,
+          dialPeerResult: true,
+        )
+          ..discoverDelay = const Duration(milliseconds: 1900)
+          ..sendDelay = const Duration(milliseconds: 300);
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Slow but online',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'direct');
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(p2pService.probeRelayCallCount, 0);
+        expect(p2pService.recordSuccessfulTransportCallCount, 1);
+      },
+    );
+
+    test(
+      'FDC-01 discover-step timeout is relay-probe-eligible '
+      '(online-relay peer delivered live)',
+      () async {
+        // Discover overruns the 2s per-step budget → eligible peer_not_found
+        // (NOT swallowed by the aggregate). The relay probe then delivers live.
+        // sendMessageTransport:'relay' so the post-probe send resolves transport
+        // 'relay' (a connected probe with null transport would infer 'direct').
+        p2pService = FakeP2PService(
+          storeInInboxResult: true,
+          probeRelayResult: RelayProbeResult.connected,
+          sendMessageAcked: true,
+          sendMessageTransport: 'relay',
+        )..discoverDelay = const Duration(milliseconds: 2100);
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Online via relay',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(p2pService.probeRelayCallCount, 1);
+        expect(message!.transport, 'relay');
+        expect(message.status, 'delivered');
+        expect(p2pService.storeInInboxCallCount, 0);
+      },
+    );
+
+    test(
+      'FDC-01 send-step direct_timeout triggers relay probe',
+      () async {
+        // discover + dial fast; send overruns the 2s per-step budget → eligible
+        // direct_timeout → relay probe ATTEMPTED. Probe returns noReservation so
+        // the tail still lands in inbox (preserved offline behavior) — the
+        // discriminator is that the probe RAN at all (probeRelayCallCount == 1),
+        // isolating eligibility from probe outcome.
+        p2pService = FakeP2PService(
+          storeInInboxResult: true,
+          probeRelayResult: RelayProbeResult.noReservation,
+          dialPeerResult: true,
+        )..sendDelay = const Duration(milliseconds: 2100);
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Send times out',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(p2pService.probeRelayCallCount, 1);
+        expect(message!.status, 'inboxed');
+      },
+    );
+
+    test('FDC-01 aggregate direct budget exceeds the per-step budget', () {
+      // Compile-level RED on HEAD (constant absent). Encodes the decouple
+      // invariant: the serial ceiling strictly exceeds — and is ≥3× — any
+      // single per-step budget, while the per-step bound stays ≤4s (:2486).
+      expect(
+        interactiveDirectAggregateBudget.inMilliseconds,
+        greaterThan(interactiveDirectBudget.inMilliseconds),
+      );
+      expect(
+        interactiveDirectAggregateBudget.inMilliseconds,
+        greaterThanOrEqualTo(3 * interactiveDirectBudget.inMilliseconds),
+      );
+      expect(interactiveDirectBudget.inSeconds, lessThanOrEqualTo(4));
+    });
+  });
+
+  // ─── FDC-02 — staggered relay-penalized ranked race + LAN-by-priority ──────
+  // Proposal §6.2: relay is no longer folded (penalty-free) into the direct leg.
+  // A live `/p2p-circuit` peer no longer reuse-short-circuits (C1 resolution A) —
+  // it RACES, with a staggered relay-LIVE leg that (a) is started kRelayLegStagger
+  // behind the LAN/direct legs, (b) is suppressed if a better leg already
+  // committed, (c) never carries media/large payloads, and (d) reuses the
+  // 'relay' rank (1 < direct < local). Leg-attributable proof via
+  // relayLiveSendCount (delivery alone is masked by receiver dedup — FDC-00).
+  group('FDC-02 — staggered relay-penalty ranked race', () {
+    const circuitMultiaddr =
+        '/ip4/10.0.0.8/tcp/4001/p2p/12D3KooWRelay/p2p-circuit';
+    NodeState circuitOnlyState() => const NodeState(
+      isStarted: true,
+      connections: [
+        p2p.ConnectionState(
+          peerId: 'target-peer',
+          multiaddrs: [circuitMultiaddr],
+          direction: 'outbound',
+          status: 'connected',
+        ),
+      ],
+    );
+
+    // TC-02-01 — §6.2a: a LAN ack landing before the relay stagger wins and the
+    // staggered relay-live leg never starts (suppress-on-early-win).
+    test(
+      'FDC-02 relay penalty: LAN ack before the relay stagger wins and the '
+      'relay-live leg never starts',
+      () async {
+        // dialPeerResult:false fails the direct leg so the ONLY thing keeping the
+        // relay-live leg from firing is the stagger vs the 40ms LAN win — i.e.
+        // the stagger is the load-bearing mechanism this test locks (a fast
+        // direct leg would otherwise mask it).
+        p2pService = DurableLanFakeP2PService(
+          currentState: circuitOnlyState(),
+          dialPeerResult: false,
+        )
+          ..localPeers.add('target-peer')
+          // LAN acks at ~40ms — far inside kRelayLegStagger (500ms).
+          ..localSendDelay = const Duration(milliseconds: 40);
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'LAN beats the warmed relay',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.transport, 'local');
+        // Wait out the full stagger window: the relay-live leg reaches its delay,
+        // sees `best` already committed, and is suppressed — never sending.
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+        expect(p2pService.relayLiveSendCount, 0);
+      },
+    );
+
+    // TC-02-01b — C3: a DIRECT win landing WITHIN the stagger window suppresses
+    // the relay-live leg. A direct (rank 2) success only sets `best` and arms a
+    // grace timer — the completer is NOT yet settled when the stagger fires — so
+    // the suppress guard must be `best != null`, NOT `completer.isCompleted`
+    // (which would still be false and let the leg fire spuriously). The local leg
+    // is held slow so its grace window keeps the completer open across t=500ms.
+    test(
+      'FDC-02 relay penalty: a direct win within the stagger window suppresses '
+      'the relay-live leg (guard is best!=null, not completer settled)',
+      () async {
+        p2pService = DurableLanFakeP2PService(currentState: circuitOnlyState())
+          ..localPeers.add('target-peer')
+          // Local leg stays in flight well past the 500ms stagger, so its grace
+          // keeps the completer UNsettled while `best` is already 'direct'.
+          ..localSendDelay = const Duration(milliseconds: 2000)
+          // Direct ack lands at ~400ms (inside the 500ms stagger) and is labeled
+          // 'direct' by Go.
+          ..sendMessageTransport = 'direct'
+          ..sendMessageAcked = true
+          ..discoverDelay = const Duration(milliseconds: 400);
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Direct win inside the stagger suppresses relay-live',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.transport, 'direct');
+        // The relay-live leg saw `best` already committed at t=500ms → suppressed.
+        expect(p2pService.relayLiveSendCount, 0);
+      },
+    );
+
+    // TC-02-02 — §6.2a: when LAN+direct both fail, the staggered relay-live leg
+    // still races and carries (LAN-first is by priority, not suppression). Also
+    // locks C4: the relay-live leg is counted in pendingCount, so the fast
+    // LAN+direct double-failure cannot settle the race as failed before 500ms.
+    test(
+      'FDC-02 relay penalty: when LAN+direct both fail, the staggered '
+      'relay-live leg still carries',
+      () async {
+        p2pService = FakeP2PService(
+          currentState: circuitOnlyState(),
+          dialPeerResult: false, // direct leg fails at dial
+          // C6: pin the probe tail OFF so its identical 'relay' label cannot mask
+          // the remove-_tryRelayLiveSend mutation.
+          probeRelayResult: RelayProbeResult.error,
+          sendMessageAcked: true,
+        );
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Relay carries when LAN+direct fail',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.transport, 'relay');
+        expect(p2pService.relayLiveSendCount, 1);
+      },
+    );
+
+    // TC-02-03 — §6.2b: a media payload with a live circuit skips the relay-live
+    // leg. LAN+direct fail and the probe tail is pinned off, so it lands in inbox
+    // custody — never the live relay socket.
+    test(
+      'FDC-02 media never live-relay: media payload with a live circuit skips '
+      'the relay-live leg',
+      () async {
+        const encryptedAttachment = MediaAttachment(
+          id: 'att-fdc02-media',
+          messageId: '',
+          mime: 'image/jpeg',
+          size: 1024,
+          mediaType: 'image',
+          downloadStatus: 'done',
+          createdAt: '2026-06-26T11:00:00.000Z',
+          contentHash:
+              'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          encryptionKeyBase64: 'key-1',
+          encryptionNonce: 'nonce-1',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+        p2pService = FakeP2PService(
+          currentState: circuitOnlyState(),
+          dialPeerResult: false, // direct leg fails at dial
+          probeRelayResult: RelayProbeResult.error, // probe tail off
+          storeInInboxResult: true, // inbox takes custody
+        );
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'photo over a live circuit?',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          mediaAttachments: const [encryptedAttachment],
+          mediaAttachmentRepo: FakeMediaAttachmentRepository(),
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        // Media never traversed the live relay leg; it landed in durable custody.
+        expect(p2pService.relayLiveSendCount, 0);
+        expect(message!.transport, 'inbox');
+        expect(message.transport, isNot('relay'));
+      },
+    );
+
+    // TC-02-04 — §6.2b: a >ceiling text payload skips the relay-live leg too.
+    test(
+      'FDC-02 large payload never live-relay: a >budget text payload skips the '
+      'relay-live leg',
+      () async {
+        // Encrypted envelope (jsonString.length) must exceed kLiveRelayMaxPayloadBytes
+        // (96KB). PassthroughCryptoBridge carries the plaintext, so a ~200K text
+        // yields a >96KB envelope.
+        final bigText = 'x' * 200000;
+        p2pService = FakeP2PService(
+          currentState: circuitOnlyState(),
+          dialPeerResult: false,
+          probeRelayResult: RelayProbeResult.error,
+          storeInInboxResult: true,
+        );
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: bigText,
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(p2pService.relayLiveSendCount, 0);
+        expect(message!.transport, isNot('relay'));
+      },
+    );
+
+    // TC-02-05 — P0-3 latency half: a slow discover (1.8s) under the per-step
+    // discover budget still delivers live 'direct' (no starvation). Preservation
+    // under FDC-02's per-leg split; re-reds when the discover budget is shrunk.
+    test(
+      'FDC-02 independent budgets: a slow discover (1.8s) still delivers direct',
+      () async {
+        p2pService = FakeP2PService(
+          sendMessageTransport: 'direct',
+          sendMessageAcked: true,
+        )..discoverDelay = const Duration(milliseconds: 1800);
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Slow discover still direct',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.transport, 'direct');
+        expect(p2pService.probeRelayCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+      },
+    );
+
+    // TC-02-06 — per-leg budget isolation: a discover overrunning its OWN budget
+    // fails fast and dial/send are never reached. Re-reds when the discover
+    // budget is widened to the aggregate ceiling.
+    test(
+      'FDC-02 per-leg budget cap: a discover that overruns its budget fails '
+      'fast, dial/send untouched',
+      () async {
+        p2pService = FakeP2PService(
+          probeRelayResult: RelayProbeResult.noReservation,
+          storeInInboxResult: true,
+        )..discoverDelay = const Duration(milliseconds: 2100); // > 2000 budget
+
+        final sw = Stopwatch()..start();
+        final (result, _) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Discover overruns its budget',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+        sw.stop();
+
+        expect(result, SendChatMessageResult.success);
+        // Discover timed out at its budget → dial/send never ran.
+        expect(p2pService.discoverCallCount, 1);
+        expect(p2pService.dialCallCount, 0);
+        expect(p2pService.sendCallCount, 0);
+        // Eligible peer_not_found → relay probe attempted (not swallowed by the
+        // 6s aggregate); bounded well under it.
+        expect(p2pService.probeRelayCallCount, 1);
+        expect(sw.elapsedMilliseconds, lessThan(3000));
+      },
+    );
+
+    // TC-02-07 — §6.2/§12 rank: a relay-live ack within grace of a direct ack
+    // loses to direct (rank 2 > relay rank 1). The direct ack lands AFTER the
+    // stagger (C7) so the relay-live leg is actually in-flight and rank — not
+    // suppression — adjudicates.
+    test(
+      'FDC-02 rank: relay-live ack within grace of a direct ack loses to direct',
+      () async {
+        p2pService = FakeP2PService(
+          currentState: circuitOnlyState(),
+          // Direct leg's send is labeled 'direct' by Go (a direct conn opened);
+          // the relay-live leg labels 'relay' (its own circuit send) via
+          // relayLiveSendTransport's default.
+          sendMessageTransport: 'direct',
+          sendMessageAcked: true,
+          // Slow discover delays the DIRECT ack to ~600ms — after the 500ms
+          // stagger (so relay-live actually starts ~500ms) and within the 150ms
+          // grace of it.
+        )..discoverDelay = const Duration(milliseconds: 600);
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Direct out-ranks an in-flight relay-live',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.transport, 'direct');
+        // The relay-live leg DID start (it was racing, not suppressed) — it just
+        // lost the rank tie.
+        expect(p2pService.relayLiveSendCount, 1);
+      },
+    );
+
+    // TC-02-07b — rank under the sticky HEAD-START buffer: when `learned` is set
+    // and is neither 'direct' nor 'relay', BOTH the direct and relay-live
+    // successes are buffered behind kStickyHeadStart. The buffered rank-2 direct
+    // win must still beat the buffered rank-1 relay-live win even when the
+    // relay-live offer fires first. Locks the directLegPending-on-OFFER fix
+    // (clearing it at resolution lets the relay-live buffered offer commit
+    // 'relay' over a buffered 'direct' milliseconds behind).
+    test(
+      'FDC-02 rank under head-start: a buffered direct win still beats a '
+      'buffered relay-live win (learned=local, circuit warm)',
+      () async {
+        p2pService = FakeP2PService(
+          currentState: circuitOnlyState(),
+          sendMessageTransport: 'direct', // direct leg labels 'direct'
+          sendMessageAcked: true,
+        )
+          // Learned 'local' makes BOTH non-local legs buffer behind the
+          // head-start; the sticky short-circuit fails (LAN down) and falls into
+          // the race.
+          ..lastKnownGoodTransportResult = 'local'
+          ..localSendResult = false
+          // Slow discover delays the direct ack to ~600ms (> the 500ms stagger),
+          // so the relay-live leg resolves first and its buffered offer fires
+          // first — the exact ordering the fix must survive.
+          ..discoverDelay = const Duration(milliseconds: 600);
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Buffered direct out-ranks buffered relay-live',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        // Direct (rank 2) wins over the relay-live (rank 1) buffered offer.
+        expect(message!.transport, 'direct');
+        // The relay-live leg DID race (not suppressed) — it just lost on rank.
+        expect(p2pService.relayLiveSendCount, 1);
+      },
+    );
+
+    // TC-02-08 — §12 constant alignment: the stagger/tail ordering and the
+    // per-leg budgets bounded by the aggregate ceiling. (Rank ordering is locked
+    // behaviorally by TC-02-07/TC-02-01/TC-02-10; `_transportRank` is private.)
+    test('FDC-02 rank invariant: stagger/tail ordering + bounded per-leg budgets',
+        () {
+      expect(kRelayLegStagger > kPublicAddrTail, isTrue);
+      expect(kPublicAddrTail > kPrivateAddrTail, isTrue);
+      // Worst-case serial sum of the per-leg budgets stays within the FDC-01
+      // aggregate ceiling.
+      expect(
+        kDirectDiscoverBudget + kDirectDialBudget + kDirectSendBudget,
+        lessThanOrEqualTo(interactiveDirectAggregateBudget),
+      );
+      // Live-relay payload ceiling sits under the 128KB circuit-v2 cap.
+      expect(kLiveRelayMaxPayloadBytes, lessThan(128 * 1024));
+    });
+
+    // TC-02-09 — §6.2a migrate-onto-winner: a LAN win persists exactly one row
+    // and the relay-live leg never fires. Receiver dedup masks the row count, so
+    // relayLiveSendCount is the load-bearing discriminator (C10 reframing).
+    test(
+      'FDC-02 migrate-onto-winner: LAN win persists one row and the relay-live '
+      'leg never fires',
+      () async {
+        // dialPeerResult:false isolates the stagger as the load-bearing guard
+        // (see TC-02-01) so the kRelayLegStagger=0 mutation re-reds this lock.
+        p2pService = DurableLanFakeP2PService(
+          currentState: circuitOnlyState(),
+          dialPeerResult: false,
+        )
+          ..localPeers.add('target-peer')
+          ..localSendDelay = const Duration(milliseconds: 40);
+        const fixedId = 'msg-fdc02-dedup-001';
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'One row, LAN wins',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: fixedId,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.transport, 'local');
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+        expect(messageRepo.saved, hasLength(1));
+        expect(messageRepo.saved.single.id, fixedId);
+        expect(p2pService.relayLiveSendCount, 0);
+      },
+    );
+
+    // TC-02-10 — preservation: U1 grace (local within grace of direct → local)
+    // still holds with the relay-live leg present (the third race participant
+    // must not disturb the local>direct grace order).
+    test(
+      'FDC-02 preservation: U1 grace local-within-grace still yields '
+      'transport==local with a relay-live leg present',
+      () async {
+        p2pService = DurableLanFakeP2PService(currentState: circuitOnlyState())
+          ..localPeers.add('target-peer')
+          ..localSendDelay = const Duration(milliseconds: 40);
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Grace still prefers local',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.transport, 'local');
+        expect(p2pService.localSendCallCount, 1);
+      },
+    );
   });
 }
 

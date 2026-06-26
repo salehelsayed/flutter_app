@@ -17,6 +17,9 @@ readonly BASELINE_TESTS=(
 readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/integration/two_user_message_exchange_test.dart"
   "test/features/conversation/integration/offline_inbox_roundtrip_test.dart"
+  # FDC-02: staggered relay-penalty ranked race — e2e dedup-masking discriminator
+  # (sender relayLiveSendCount) across sender+receiver fakes.
+  "test/features/conversation/integration/ranked_race_relay_penalty_test.dart"
   "test/features/conversation/integration/media_attachment_flow_test.dart"
   "test/features/conversation/integration/media_retry_smoke_test.dart"
   "test/features/conversation/integration/voice_message_exchange_test.dart"
@@ -29,6 +32,7 @@ readonly ONE_TO_ONE_TESTS=(
   "test/core/database/migrations/077_message_relay_custody_test.dart"
   "test/core/inbox/inbox_round_trip_test.dart"
   "test/core/lifecycle/handle_app_resumed_upload_ordering_test.dart"
+  "test/core/lifecycle/handle_app_resumed_parallel_reprime_test.dart"
   "test/core/services/incoming_message_router_test.dart"
   "test/core/services/pending_message_retrier_upload_ordering_test.dart"
   "test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart"
@@ -46,6 +50,9 @@ readonly ONE_TO_ONE_TESTS=(
   "test/core/database/helpers/inbox_staging_db_helpers_test.dart"
   "test/core/inbox/inbox_staging_repository_impl_test.dart"
   "test/core/services/p2p_service_impl_test.dart"
+  # FDC-13: relay->direct 'upgraded' badge — the _inferTransportForPeer flip is
+  # a 1:1 headline lock (DCUTR-002/013 + T4 census/data asserts).
+  "test/core/services/p2p_service_inbound_transport_test.dart"
   "test/features/conversation/application/download_media_use_case_test.dart"
   "test/features/conversation/application/upload_media_use_case_test.dart"
   "test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart"

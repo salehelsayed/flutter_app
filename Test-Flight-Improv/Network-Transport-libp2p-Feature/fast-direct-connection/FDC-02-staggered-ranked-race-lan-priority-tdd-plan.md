@@ -1,6 +1,26 @@
 # FDC-02 — Staggered relay-penalized ranked race + LAN-by-priority + migrate-onto-winner  (Modification)
 
-Status: awaiting-review — **REVISED 2026-06-26 after source verification; resolve the Critical Review Findings below before implementing.** The static file/line/harness/proposal claims verified ACCURATE (7-agent + main-loop source read); the *mechanism + test design* have confirmed defects (one BLOCKER) captured in the new section.
+Status: **IMPLEMENTED 2026-06-26 (host-green) — C1 resolved via Resolution A (circuit-aware reuse).** All 13 RED tests written first + observed RED, prod wired, 10/10 mutations re-red, gates green. See "Implementation Notes (2026-06-26)" below. Prior status: awaiting-review — REVISED 2026-06-26 after source verification; resolve the Critical Review Findings below before implementing. The static file/line/harness/proposal claims verified ACCURATE (7-agent + main-loop source read); the *mechanism + test design* have confirmed defects (one BLOCKER) captured in the new section. **C1 (the BLOCKER) is now DECIDED → option A (circuit-aware reuse); see the C1 section for the three reconciliations applied — FDC-00 collision map, FDC-04 PS-2/TC-04-14, and the existing `…persists relay transport on the reuse fast path` test (~:2287).**
+
+## Implementation Notes (2026-06-26, host-green)
+
+**C1 resolved = Resolution A (user-approved):** a circuit-ONLY connected peer no longer reuse-short-circuits — `_isCircuitOnlyConnected` gates the reuse fast-path (`if (isAlreadyConnected && !isCircuitOnlyConnected)`), so the peer falls into the staggered race and a faster LAN/direct hop can win (§6.1 by latency). A peer with any direct connection still reuses. The one existing test this changes — `existing relay-backed connection persists relay transport on the reuse fast path` — was rewritten: it now asserts the circuit-only peer RACES (`discoverCallCount==1`, `dialCallCount==1`, still `transport=='relay'` from the direct leg's circuit inference, `relayLiveSendCount==0`).
+
+**Single edited prod file:** `lib/features/conversation/application/send_chat_message_use_case.dart`. Added consts `kRelayLegStagger`/`kPublicAddrTail`/`kPrivateAddrTail`/`kLiveRelayMaxPayloadBytes`/`kDirectDiscoverBudget`/`kDirectDialBudget`/`kDirectSendBudget`; helpers `_hasLiveCircuitConnection`/`_isCircuitOnlyConnected`/`_liveRelayEligible`/`_tryRelayLiveSend`; a `RelayLiveSendObserver` capability interface (C2 leg-attributable seam, mirrors `ReadinessProofRecorder`; production P2PService impls do not implement it → no-op). `_transportRank` UNCHANGED (C8).
+
+**Deviations from the plan (with rationale):**
+- **C2 seam:** instead of a `relayLiveSendCount` predicate on the fake (which would over-count), the relay-live leg fires `RelayLiveSendObserver.noteRelayLiveSendStart()` (defined in the use-case file); the fake increments `relayLiveSendCount` there. The fake also gained `relayLiveSendTransport` (default `'relay'`, captured synchronously) so a rank test can have the direct leg label `'direct'` while the relay-live leg labels `'relay'` (needed for TC-02-07). No P2PService-interface or transport_metrics change. `circuitSendDelay` was NOT needed — relay-live-vs-direct timing is created via `discoverDelay` (direct-only) + `kRelayLegStagger` (relay-live-only).
+- **C5 budgets:** the plan's suggested `kDirectDiscoverBudget≈1500` conflicts with the LANDED FDC-01 test that pins a 1900ms discover as successful. Held discover at **2000ms**; tightened dial/send to **1500ms** (no FDC-01 test pins them higher). Worst-case serial sum 5000ms < 6000ms aggregate ceiling (kept, per C5).
+- **C3/C4 in the grace machinery:** the relay-live leg is a third `raceFutures` entry counted in `pendingCount` (C4); suppress guard is `best != null` (C3). Found + fixed a real integration bug: `noPendingLegCanBeatBest` assumed only `local` could outrank a committed best, but a relay-live `'relay'` (rank 1) best can be beaten by a still-pending DIRECT leg (rank 2) — added a `directLegPending` flag so completion waits (via grace) for the direct leg (TC-02-07).
+- **Added TC-02-01b** (the C3 lock the plan asked for): a direct win WITHIN the stagger window (completer not yet settled) must suppress the relay-live leg — re-reds when the guard is reverted to `completer.isCompleted`.
+
+**Tests:** 11 Tier-1 (TC-02-01, 01b, 02–10) in `send_chat_message_use_case_test.dart` + 2 Tier-2 in NEW `test/features/conversation/integration/ranked_race_relay_penalty_test.dart` (registered in the `1to1` array). All RED-on-scaffolding first, then green. **Mutation sweep 10/10 re-red** (M1 stagger=0, M2 leg-removal, M3 media gate, M4 size gate, M5 discover budget, M6 relay rank, M7 C1 reuse gate, M8 constant order, M9 C3 guard, M-C4 pendingCount).
+
+**Gates (final):** `1to1` **+1264 all pass**; `groups` **+901 all pass**; `baseline` **+112 all pass**; `core-host-all` **EXIT 0, 252 files all pass** (the `transport_metrics_privacy` `sinceProcessStartMs` fail my notes flagged was NOT present this run); `feature-host-all` all pass **except #378 `ambient_background_test.dart`** (Test-Flight-import — concurrent FDC-S4 work, NOT FDC-02); `feed` +278 **-1** same pre-existing `ambient_background`; `flutter analyze` **0-new** (2 pre-existing infos); `git diff --check` **clean**. Diff isolated to the single prod file + its test + the new integration file + `run_test_gates.sh`.
+
+**Sim proof attempted (2026-06-26, sims available):** ran reliability-sim `1to1` #16 `transport_e2e` + #17 `wifi_relay_fallback_smoke` on 4 booted iPhone sims. **Outcome: the transport-label "LAN-wins" claim is NOT obtainable on co-located simulators** — two sims sharing one host's network stack never discover each other directly (every msg routes via inbox/relay), so the LAN leg structurally cannot win. FDC-02's Dart orchestration ran HEALTHY where the network cooperated (#17 S1: cold-start → relayState=online, circuit=5, inbox staged-drain replayed; encrypt→race→custody all work). #17 S3 failed on `send: open stream: identify failed to complete: context deadline exceeded` + `concurrent active dial through the same relay` = the libp2p relay identify-handshake timeout (documented pre-existing libp2p/QUIC issue) in the **Go layer FDC-02 never touches**. **Conclusion unchanged: the real "live LAN/direct leg wins on the wire" proof needs TWO PHYSICAL DEVICES on a shared WiFi** (FDC-00 caveat stands; co-located sims are not a substitute for this specific claim).
+
+⚠ **HAZARD (shared tree):** `new-orbit` carries concurrent uncommitted FDC-S0/S1/S4 work. Pre-existing host fails NOT caused by FDC-02: `ambient_background` (FDC-S4) and `transport_metrics_privacy` `sinceProcessStartMs` (FDC-S0/S1, in core-host-all). Scope any git ops to the four FDC-02 files; do NOT git-checkout.
 Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§6.2 — the corrected core: "staggered ranked race", NOT blind fan-out; §6.1 LAN-by-priority-not-suppression; §12 DefaultDialRanker / iroh-Tailscale "migrate, don't dual-send" / SSB rooms-vs-pubs tier split)
 
 ## Critical Review Findings (source-verified 2026-06-26)
@@ -41,7 +61,7 @@ Recommended resolution (author's call — pick one and rewrite Step 3 + the TC s
   ahead of the LAN/direct race — start the race and only commit the circuit send after `kRelayLegStagger`,
   suppressed by an earlier LAN/direct win. The "relay-live leg" then *is* the staggered, rank-aware circuit send
   carved out of the reuse fast-path. (Touches `:447-512`, a slice the plan currently assigns wholesale to FDC-04 —
-  reconcile the collision-map split with FDC-04, which keeps only the `isLocalPeer` belt-and-suspenders.)
+  reconcile the collision-map split with FDC-04, which keeps only the `isLocalPeer` belt-and-suspenders.) **✅ DECIDED 2026-06-26 → option A.** Reconciliations applied: (1) FDC-00 collision map now assigns the circuit-aware carve-out of `:447-512` to FDC-02 and only the `isLocalPeer` gate to FDC-04; (2) FDC-04 PS-2 + TC-04-14 narrowed to a **direct** conn; (3) the existing preservation test `existing relay-backed connection persists relay transport on the reuse fast path` (`send_chat_message_use_case_test.dart` ~:2287) MUST be rewritten **RED-first in Step 3** — a relay-only conn now races, so its `transport=='relay'` / `discoverCallCount==0` / `dialCallCount==0` asserts no longer hold.
 - **(B):** re-sequence so FDC-04's reuse `isLocalPeer` gate lands **before/with** FDC-02 (contradicts the current
   FDC-02→FDC-04 roadmap order — needs FDC-00 sign-off).
 - **(C):** redefine relay-live eligibility to a state the reuse path does *not* already cover (and document what
@@ -288,8 +308,7 @@ that a 30 ms LAN hop should have carried ("§6.1 relay-bypass, by latency"); med
   and `warmPeer` → **FDC-04** (FDC-02 only ranks *within the race*). ⚠ **C1 inverts the original "FDC-02's ranking
   makes FDC-04's gate redundant-but-kept" claim:** for a *connected* circuit peer the reuse fast-path returns
   before the race, so FDC-04's `isLocalPeer` reuse gate is what makes FDC-02's race ranking *reachable* — not the
-  other way around. Either reconcile this (resolution A pulls a circuit-specific stagger slice of `:447-512` into
-  FDC-02) or re-sequence with FDC-04. Update the FDC-00 collision-map split accordingly.
+  other way around. ✅ **DECIDED 2026-06-26 → resolution A:** FDC-02 pulls the circuit-specific carve-out of `:447-512` (relay-only `/p2p-circuit` ⇒ enter the race); FDC-04 keeps only the `isLocalPeer` gate for the direct-conn case. FDC-00 collision map + FDC-04 PS-2/TC-04-14 + the `~:2287` reuse test all updated accordingly.
 - **Per-address** 30 ms/250 ms Happy-Eyeballs staggering *inside* a single `dialPeer` → that is the Go host's
   `DefaultDialRanker` → **FDC-11** (gated by FDC-S2, device-only). FDC-02 implements the **leg-granularity**
   analog in Dart and pins the constant ordering only.
@@ -337,6 +356,7 @@ that a 30 ms LAN hop should have carried ("§6.1 relay-bypass, by latency"); med
 | `…::NET-REL-01 LAN transport U1/U2/U3/U-N1` (:1698-1833) | exists | `1to1` |
 | `…::falls through to relay when local send fails` (:1590) | exists | `1to1` |
 | `…::Phase 3 — relay probe recovery` group (:1967) | exists | `1to1` |
+| `…::existing relay-backed connection persists relay transport on the reuse fast path` (~:2287) | exists — **⚠ MUST UPDATE in Step 3 (C1/option A): a relay-only conn now races, not pure-reuse** | `1to1` |
 | `integration_test/transport_e2e_test.dart` | exists | `transport` (`:167`) |
 | `integration_test/wifi_relay_fallback_smoke_test.dart` | exists | `transport` (`:166`) |
 | **Staggered-relay-penalty / media-never-live-relay / per-leg-budget / suppress-on-early-win locks** | **MISSING** | to add (Tier-1 into the curated send test; Tier-2 new file → add to `1to1` array) |
@@ -388,6 +408,83 @@ race reachable for a connected circuit peer.**
 | TC-02-10 | `…::FDC-02 preservation: U1 grace local-within-grace still yields transport==local` (re-assert :3027 under new leg wiring) | 1 (app) | Existing U1 setup, now with a relay-live leg present. | N/A — guards regression of the rank machinery. | Unchanged: `transport == 'local'`. | Any rank/stagger change that lets relay/direct beat a within-grace local → fails. | `message.transport` |
 | TC-02-11 | `ranked_race_relay_penalty_test.dart::FDC-02 e2e: sender LAN-wins, relay-live leg never fires, receiver persists one decrypted row` | 2 (integ, two fakes) | Sender + receiver `FakeP2PService`; sender has live circuit + LAN; LAN delivers; receiver dedups by id. | New file; behavior absent on HEAD. | Sender `transport=='local'` + `relayLiveSendCount==0`; receiver has exactly one inbound row for the id. | `kRelayLegStagger=0` → relay-live fires → receiver still one row (dedup) BUT sender `relayLiveSendCount>=1` (proves the *fast-path* discriminator, the thing dedup masks). | sender `relayLiveSendCount` (the FDC-00 dedup-masking discriminator) |
 | TC-02-12 | `ranked_race_relay_penalty_test.dart::FDC-02 e2e: media send with live circuit reaches the receiver via inbox/direct, never the live circuit` | 2 (integ, two fakes) | Media payload; sender has a live circuit; LAN+direct fail. | New file. | Sender `relayLiveSendCount==0`; receiver eventually holds the media row (via inbox custody). | `_liveRelayEligible` true-for-media → `relayLiveSendCount>=1`. | sender `relayLiveSendCount` |
+
+### Existing-test rewrite (C1 / option A) — drop-in for Step 3
+
+> The pre-existing preservation lock `existing relay-backed connection persists relay transport on the
+> reuse fast path` (`send_chat_message_use_case_test.dart` ~:2287) asserted **pure reuse** for a
+> relay-only `/p2p-circuit` conn (`transport=='relay'`, `discoverCallCount==0`, `dialCallCount==0`).
+> Option A makes that block **circuit-aware** → a relay-only conn now **enters the race**, so those
+> asserts invert. Replace the old test body with the drop-in below **RED-first** (it fails on the
+> pre-Step-3 tree — the relay-only conn still pure-reuses and the leg-attributable `relayLiveSendCount`
+> seam does not exist yet) and green it with Step 3's circuit-aware reuse + staggered relay-live leg.
+> It **overlaps TC-02-02** (the new "LAN+direct fail → relay-live carries" lock) and MAY be merged into
+> it; keeping it preserves a named regression lock at the original test's location that pins the
+> *inversion* (a relay-only conn no longer short-circuits ahead of the race).
+
+```dart
+// REWRITES the former
+//   'existing relay-backed connection persists relay transport on the reuse fast path' (~:2287)
+// Option A: the reuse fast-path is circuit-aware — a relay-only /p2p-circuit conn
+// no longer short-circuits; it ENTERS the ranked race. With LAN + direct
+// unavailable, the staggered relay-live leg still carries it (labeled 'relay').
+test(
+  'a relay-only circuit connection enters the ranked race (no pure-reuse) and the '
+  'staggered relay-live leg carries it when LAN+direct fail',
+  () async {
+    p2pService = FakeP2PService(
+      // Same relay-only circuit conn the old test seeded (C11: this `currentState:`
+      // form is permitted; the `relayLiveConnection` constructor-param seam is the
+      // alternative — `_currentState` is `final`, so a mutable setter is NOT).
+      currentState: NodeState(
+        isStarted: true,
+        connections: [
+          const p2p.ConnectionState(
+            peerId: 'target-peer',
+            multiaddrs: ['/ip4/10.0.0.8/tcp/4001/p2p/12D3KooWRelay/p2p-circuit'],
+            direction: 'outbound',
+            status: 'connected',
+          ),
+        ],
+      ),
+      // Silence the competing legs so `relayLiveSendCount` is leg-attributable (C2):
+      discoverLocalPeerResult: false, // no LAN leg wins
+      dialPeerResult: false,          // direct leg dials and fails
+      circuitSendDelay: Duration.zero,
+    );
+
+    final (result, message) = await sendChatMessage(
+      p2pService: p2pService,
+      messageRepo: messageRepo,
+      targetPeerId: 'target-peer',
+      text: 'Hello through the staggered relay-live leg',
+      senderPeerId: 'my-peer',
+      senderUsername: 'Me',
+    );
+
+    // Preserved intent: a relay-backed peer still delivers AS RELAY.
+    expect(result, SendChatMessageResult.success);
+    expect(message, isNotNull);
+    expect(message!.transport, 'relay');
+
+    // INVERSION of the old asserts (old: discoverCallCount==0 && dialCallCount==0,
+    // pure reuse). Option A enters the race → the direct leg attempts discover+dial
+    // before the staggered relay-live leg wins.
+    expect(p2pService.dialCallCount, greaterThan(0));
+    // The 'relay' came from the STAGGERED relay-live leg, NOT the reuse short-circuit.
+    expect(p2pService.relayLiveSendCount, 1);
+  },
+);
+```
+
+- **RED on the pre-Step-3 tree:** the relay-only conn still takes the pure-reuse short-circuit →
+  `dialCallCount==0`; and the leg-attributable `relayLiveSendCount` seam (C2) does not exist yet
+  (compile fail). Both block green until Step 3 lands.
+- **Mutation (re-red after green):** restore the pure-reuse short-circuit for relay-only conns (drop
+  the circuit-aware guard) → reuse fires → `dialCallCount==0` and `relayLiveSendCount==0` → re-red.
+- **Discriminator:** `dialCallCount>0` (race entered, not reused) + `relayLiveSendCount==1` (the
+  staggered relay-live leg, not the reuse path nor the serial probe tail — pin `probeRelayResult` per
+  C6 if the probe tail could otherwise produce an identical `'relay'`).
 
 ## Test Coverage Matrix (zero empty cells)
 
@@ -479,10 +576,15 @@ race reachable for a connected circuit peer.**
    wrappers. **Stop-if:** `U2 cold baseline` (:3148) asserts exactly one discover + one dial — the new budgets must
    not add a retry; verify call counts unchanged.
 
-3. **RED — staggered relay-live leg + stagger + suppress (TC-02-01/02/07/09). ⚠ BLOCKED ON C1** — as written
+3. **RED — staggered relay-live leg + stagger + suppress (TC-02-01/02/07/09). ✅ C1 RESOLVED — option A (2026-06-26)** — as originally written
    ("runs only when a live `/p2p-circuit` connection exists") the leg is unreachable: that state fires the reuse
-   fast-path (`:447-512`), which short-circuits before the race. Resolve C1 first (preferred resolution A folds the
-   staggered circuit send into the reuse path). The wiring below applies once the race is reachable for a connected
+   fast-path (`:447-512`), which short-circuits before the race. **C1 is RESOLVED (option A):** fold the
+   staggered circuit send into the reuse path so a relay-only `/p2p-circuit` conn enters the race instead of
+   short-circuiting. **As part of this step, REWRITE the existing preservation test `existing relay-backed connection
+   persists relay transport on the reuse fast path` (`send_chat_message_use_case_test.dart` ~:2287)** — under option A a
+   relay-only seeded conn now races, so update it to assert the race outcome (the relay-live leg is staggered;
+   `discoverCallCount`/`dialCallCount` may be > 0) instead of pure reuse (`transport=='relay'`, `discoverCallCount==0`,
+   `dialCallCount==0`). The wiring below applies once the race is reachable for a connected
    circuit peer. **Seam:** add `_tryRelayLiveSend(p2pService, peer, jsonString)` that calls `sendMessageWithReply`
    for the circuit path (reuse `_inferDirectVsRelayForConnectedPeer` detection) and returns
    `_RaceResult.succeeded(via: <Go's labeled transport>)` when it acks — **relay-opportunistic** (Go selects the
