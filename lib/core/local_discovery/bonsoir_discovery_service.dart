@@ -4,6 +4,7 @@ import 'package:bonsoir/bonsoir.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/startup_timing.dart';
 
 typedef BonsoirBroadcastFactory =
     BonsoirBroadcast Function(BonsoirService service);
@@ -47,6 +48,12 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
   // discoveryServiceResolved path when the awaited peer first appears.
   final _pendingResolves = <String, Completer<LocalPeer?>>{};
   final _peersController = StreamController<Map<String, LocalPeer>>.broadcast();
+
+  // FDC-S1 (c): peers whose FIRST mDNS resolve has already been timed, so the
+  // resolve-complete timing event fires once per peer (re-resolves from the
+  // refresh timer are skipped). Observation-only.
+  final _fdcTimedResolvePeerIds = <String>{};
+  bool _fdcFirstMdnsResolveEmitted = false;
 
   String? _ownPeerId;
 
@@ -163,6 +170,24 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
           event: 'LOCAL_MDNS_PEER_FOUND',
           details: {'peerId': peerId, 'host': host, 'port': service.port},
         );
+
+        // FDC-S1 (c): process-start → first mDNS resolve of a same-WiFi peer.
+        // Once per distinct peer; the earliest across peers is the global
+        // first-resolve metric (firstResolveOverall). Pair with
+        // LOCAL_MDNS_DISCOVERY_START for the start→resolve delta.
+        if (_fdcTimedResolvePeerIds.add(peerId)) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'FDC_COLDSTART_FIRST_MDNS_RESOLVE_TIMING',
+            details: {
+              'peerId': peerId,
+              'sinceProcessStartMs':
+                  StartupTiming.instance.sinceProcessStartMs() ?? -1,
+              'firstResolveOverall': !_fdcFirstMdnsResolveEmitted,
+            },
+          );
+          _fdcFirstMdnsResolveEmitted = true;
+        }
         break;
       case BonsoirDiscoveryEventType.discoveryServiceLost:
         final service = event.service;

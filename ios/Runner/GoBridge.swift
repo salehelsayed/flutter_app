@@ -32,14 +32,44 @@ class GoBridge: NSObject {
         BridgeInitialize(self)
     }
 
-    private func runOnBackground(_ work: @escaping () -> Any?, result: @escaping FlutterResult) {
+    private func runOnBackground(_ work: @escaping () -> Any?, method: String = "", result: @escaping FlutterResult) {
+        #if DEBUG
+        // FDC-S5 (M1): stamp when the call was handed to the background queue so
+        // the closure below can report how long it waited for a dispatch slot —
+        // the thread-pool serialization signal under concurrent warm/probe work.
+        let receivedAt = DispatchTime.now()
+        #endif
         DispatchQueue.global(qos: .userInitiated).async {
+            #if DEBUG
+            if !method.isEmpty {
+                let waitMs = Double(DispatchTime.now().uptimeNanoseconds - receivedAt.uptimeNanoseconds) / 1_000_000.0
+                self.emitDispatchTiming(method: method, queueWaitMs: waitMs)
+            }
+            #endif
             let value = work()
             DispatchQueue.main.async {
                 result(value)
             }
         }
     }
+
+    #if DEBUG
+    /// FDC-S5 (M1): surface the bridge dispatch queue-wait on the same EventChannel
+    /// Go push events use, so the Dart client (bridge:dispatch_timing raw passthrough)
+    /// folds it into FLOW logs alongside BRIDGE_CALL_TIMING {bridgeMs}. The iOS bridge
+    /// dispatches on DispatchQueue.global(qos:.userInitiated) — a *concurrent* queue —
+    /// so this should read ~0 unless the thread pool is saturated; that is exactly the
+    /// number the deferred two-device M1 run is looking for. DEBUG-only: zero release cost.
+    private func emitDispatchTiming(method: String, queueWaitMs: Double) {
+        let payload: [String: Any] = [
+            "event": "bridge:dispatch_timing",
+            "data": ["method": method, "queueWaitMs": queueWaitMs],
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8) else { return }
+        self.onEvent(json)
+    }
+    #endif
 
     func handleMethodCall(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         let args = call.arguments as? String
@@ -81,7 +111,7 @@ class GoBridge: NSObject {
         case "stopNode":
             runOnBackground({ BridgeStopNode() }, result: result)
         case "nodeStatus":
-            runOnBackground({ BridgeNodeStatus() }, result: result)
+            runOnBackground({ BridgeNodeStatus() }, method: "nodeStatus", result: result)
 
         // Rendezvous
         case "rendezvousRegister":
@@ -89,21 +119,21 @@ class GoBridge: NSObject {
         case "rendezvousUnregister":
             runOnBackground({ BridgeRendezvousUnregister(args ?? "") }, result: result)
         case "rendezvousDiscover":
-            runOnBackground({ BridgeRendezvousDiscover(args ?? "") }, result: result)
+            runOnBackground({ BridgeRendezvousDiscover(args ?? "") }, method: "rendezvousDiscover", result: result)
 
         // Relay
         case "relayReconnect":
             runOnBackground({ BridgeRelayReconnect() }, result: result)
         case "relayProbe":
-            runOnBackground({ BridgeRelayProbe(args ?? "") }, result: result)
+            runOnBackground({ BridgeRelayProbe(args ?? "") }, method: "relayProbe", result: result)
 
         // Peer operations
         case "dialPeer":
-            runOnBackground({ BridgeDialPeer(args ?? "") }, result: result)
+            runOnBackground({ BridgeDialPeer(args ?? "") }, method: "dialPeer", result: result)
         case "disconnectPeer":
             runOnBackground({ BridgeDisconnectPeer(args ?? "") }, result: result)
         case "sendMessage":
-            runOnBackground({ BridgeSendMessage(args ?? "") }, result: result)
+            runOnBackground({ BridgeSendMessage(args ?? "") }, method: "sendMessage", result: result)
         case "confirmDirectMessage":
             runOnBackground({ BridgeConfirmDirectMessage(args ?? "") }, result: result)
 

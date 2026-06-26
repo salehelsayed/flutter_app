@@ -3306,4 +3306,49 @@ PrivateKeyMaterialShouldNeverAppearInDiagnostics
       expect(decoded['ok'], isTrue, reason: '$cmd should be a known command');
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // FDC-S5 (M1): native bridge dispatch queue-wait surfacing.
+  // ---------------------------------------------------------------------------
+  test(
+    'FDC-S5 M1: bridge:dispatch_timing is forwarded to a GO flow event and not '
+    'counted as an unknown push event',
+    () {
+      flowEventLoggingEnabled = true;
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink((payload) {
+        flowEvents.add(Map<String, dynamic>.from(payload));
+      });
+
+      client.debugHandleEventForTest(
+        jsonEncode({
+          'event': 'bridge:dispatch_timing',
+          'data': {'method': 'sendMessage', 'queueWaitMs': 7},
+        }),
+      );
+
+      // The native queue-wait must reach FLOW logs verbatim so the deferred
+      // two-device M1 run can read queueWaitMs alongside BRIDGE_CALL_TIMING.
+      // Assert EXACTLY ONE GO emission so a future accidental double-forward
+      // (e.g. the switch case stops being a no-op) fails this lock.
+      final matches = flowEvents
+          .where((e) => e['event'] == 'bridge:dispatch_timing')
+          .toList();
+      expect(
+        matches,
+        hasLength(1),
+        reason: 'bridge:dispatch_timing should emit exactly one GO flow event',
+      );
+      final dispatch = matches.single;
+      expect(dispatch['layer'], 'GO');
+      final details = dispatch['details'] as Map<String, dynamic>;
+      expect(details['queueWaitMs'], 7);
+      expect(details['method'], 'sendMessage');
+
+      // It carries no push side effect, so it must not inflate the unknown or
+      // malformed push-event counters.
+      expect(client.debugUnknownPushEventCountForTest, 0);
+      expect(client.debugMalformedPushEventCountForTest, 0);
+    },
+  );
 }

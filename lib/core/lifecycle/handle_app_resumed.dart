@@ -138,6 +138,13 @@ Future<bool?> handleAppResumed({
     debugPrint(
       '[RESUME] Step 1: bridge.checkHealth() = $bridgeOk (took ${healthMs}ms)',
     );
+    // FDC-S1 Method 6: warm-resume control. Mirror the existing debugPrint as an
+    // epoch-anchored flow-event so resume steps share the cold-start axis.
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'FDC_RESUME_STEP_TIMING',
+      details: {'step': 'bridge_health', 'ms': healthMs},
+    );
 
     if (!bridgeOk) {
       final reinitStart = DateTime.now();
@@ -146,6 +153,11 @@ Future<bool?> handleAppResumed({
       final reinitMs = DateTime.now().difference(reinitStart).inMilliseconds;
       debugPrint(
         '[RESUME] Step 1b: bridge.reinitialize() done (took ${reinitMs}ms)',
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FDC_RESUME_STEP_TIMING',
+        details: {'step': 'bridge_reinit', 'ms': reinitMs},
       );
       readinessProofRecorder?.noteTransportSessionReset(
         trigger: 'bridge_reinitialize',
@@ -164,6 +176,11 @@ Future<bool?> handleAppResumed({
     final hcMs = DateTime.now().difference(hcStart).inMilliseconds;
     debugPrint(
       '[RESUME] Step 2: performImmediateHealthCheck() done (took ${hcMs}ms)',
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'FDC_RESUME_STEP_TIMING',
+      details: {'step': 'perform_immediate_health_check', 'ms': hcMs},
     );
     debugPrint(
       '[RESUME] Step 2: state AFTER health check: '
@@ -189,6 +206,11 @@ Future<bool?> handleAppResumed({
     await p2pService.drainOfflineInbox();
     final drainMs = DateTime.now().difference(drainStart).inMilliseconds;
     debugPrint('[RESUME] Step 3: drainOfflineInbox() done (took ${drainMs}ms)');
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'FDC_RESUME_STEP_TIMING',
+      details: {'step': 'drain_offline_inbox', 'ms': drainMs},
+    );
 
     final resumeGroupRecoveryEnabled = _resumeGroupRecoveryEnabled(p2pService);
     // Phase 2: captured out of the recovery gate so the background drain

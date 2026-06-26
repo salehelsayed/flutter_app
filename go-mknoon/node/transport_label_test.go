@@ -492,7 +492,7 @@ func TestShouldDeferDirectAck_ReactionAndDeletion(t *testing.T) {
 		typ  string
 		want bool
 	}{
-		{"chat_message", true},   // control: already deferred
+		{"chat_message", true},     // control: already deferred
 		{"message_reaction", true}, // F7: must now defer
 		{"message_deletion", true}, // F7: must now defer
 		{"introduction", false},    // legitimately fire-and-forget

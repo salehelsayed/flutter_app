@@ -13,8 +13,15 @@ import bridge.EventCallback as GoEventCallback
  * MethodChannel `com.mknoon/go_bridge` handles request/response calls.
  * EventChannel `com.mknoon/go_bridge_events` streams push events from Go.
  */
-class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
+class GoBridge(flutterEngine: FlutterEngine, context: android.content.Context) : MethodChannel.MethodCallHandler,
     EventChannel.StreamHandler, GoEventCallback {
+
+    // FDC-S5 (M1): only emit bridge dispatch queue-wait timing on debuggable
+    // builds, so the deferred two-device M1 run can read it while release builds
+    // pay nothing. Derived from the app's debuggable flag (BuildConfig is not
+    // generated for this module under AGP 8 unless explicitly enabled).
+    private val isDebuggable =
+        (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
 
     private val methodChannel = MethodChannel(
         flutterEngine.dartExecutor.binaryMessenger,
@@ -39,8 +46,16 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
         GoMknoon.initialize(this)
     }
 
-    private fun runOnBackground(work: () -> Any?, result: MethodChannel.Result) {
+    private fun runOnBackground(work: () -> Any?, result: MethodChannel.Result, method: String = "") {
+        // FDC-S5 (M1): stamp when the call was handed to the cached thread pool so
+        // the worker can report how long it waited for a thread — the thread-pool
+        // serialization signal under concurrent warm/probe work. A cached pool
+        // spawns a fresh thread per task, so this should read ~0 unless saturated.
+        val receivedAt = if (isDebuggable && method.isNotEmpty()) System.nanoTime() else 0L
         executor.execute {
+            if (receivedAt != 0L) {
+                emitDispatchTiming(method, (System.nanoTime() - receivedAt) / 1_000_000.0)
+            }
             try {
                 val value = work()
                 mainHandler.post { result.success(value) }
@@ -48,6 +63,22 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
                 mainHandler.post { result.error("GO_ERROR", e.message, null) }
             }
         }
+    }
+
+    /// FDC-S5 (M1): surface the bridge dispatch queue-wait on the same EventChannel
+    /// Go push events use, so the Dart client (bridge:dispatch_timing raw passthrough)
+    /// folds it into FLOW logs alongside BRIDGE_CALL_TIMING {bridgeMs}.
+    private fun emitDispatchTiming(method: String, queueWaitMs: Double) {
+        val json = org.json.JSONObject()
+            .put("event", "bridge:dispatch_timing")
+            .put(
+                "data",
+                org.json.JSONObject()
+                    .put("method", method)
+                    .put("queueWaitMs", queueWaitMs),
+            )
+            .toString()
+        onEvent(json)
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -74,21 +105,21 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
             // Node lifecycle
             "startNode" -> runOnBackground({ GoMknoon.startNode(args ?: "") }, result)
             "stopNode" -> runOnBackground({ GoMknoon.stopNode() }, result)
-            "nodeStatus" -> runOnBackground({ GoMknoon.nodeStatus() }, result)
+            "nodeStatus" -> runOnBackground({ GoMknoon.nodeStatus() }, result, "nodeStatus")
 
             // Rendezvous
             "rendezvousRegister" -> runOnBackground({ GoMknoon.rendezvousRegister(args ?: "") }, result)
             "rendezvousUnregister" -> runOnBackground({ GoMknoon.rendezvousUnregister(args ?: "") }, result)
-            "rendezvousDiscover" -> runOnBackground({ GoMknoon.rendezvousDiscover(args ?: "") }, result)
+            "rendezvousDiscover" -> runOnBackground({ GoMknoon.rendezvousDiscover(args ?: "") }, result, "rendezvousDiscover")
 
             // Relay
             "relayReconnect" -> runOnBackground({ GoMknoon.relayReconnect() }, result)
-            "relayProbe" -> runOnBackground({ GoMknoon.relayProbe(args ?: "") }, result)
+            "relayProbe" -> runOnBackground({ GoMknoon.relayProbe(args ?: "") }, result, "relayProbe")
 
             // Peer operations
-            "dialPeer" -> runOnBackground({ GoMknoon.dialPeer(args ?: "") }, result)
+            "dialPeer" -> runOnBackground({ GoMknoon.dialPeer(args ?: "") }, result, "dialPeer")
             "disconnectPeer" -> runOnBackground({ GoMknoon.disconnectPeer(args ?: "") }, result)
-            "sendMessage" -> runOnBackground({ GoMknoon.sendMessage(args ?: "") }, result)
+            "sendMessage" -> runOnBackground({ GoMknoon.sendMessage(args ?: "") }, result, "sendMessage")
             "confirmDirectMessage" -> runOnBackground({ GoMknoon.confirmDirectMessage(args ?: "") }, result)
 
             // Inbox

@@ -41,8 +41,8 @@ const (
 	ForegroundCircuitAddressWaitTimeout = 3 * time.Second
 
 	// PubSub.
-	GroupTopicPrefix                  = "/mknoon/group/"
-	PubSubTimeout = 30 * time.Second
+	GroupTopicPrefix = "/mknoon/group/"
+	PubSubTimeout    = 30 * time.Second
 	// KeyRotationGracePeriod is the DEFAULT key-rotation grace window. It now
 	// constrains only which prior epoch a node will sign/publish under (the
 	// receive path anchors to keys held in the ring, not the clock). Bumped from
@@ -52,7 +52,7 @@ const (
 	// RetainedEpochKeys bounds the held-keys ring: a node decrypts/verifies any
 	// of the last K epochs it legitimately held. Past K, the oldest is evicted
 	// (forward-secrecy bound).
-	RetainedEpochKeys = 5
+	RetainedEpochKeys                 = 5
 	GroupDiscoveryInterval            = 30 * time.Second // periodic rendezvous re-discovery for group peers
 	GroupDiscoveryWarmInterval        = 3 * time.Second  // short foreground retry window while a group is only partially connected
 	GroupDiscoveryWarmRetries         = 3                // bounded warm retries before falling back to slower background cadence
@@ -141,6 +141,13 @@ type NodeConfig struct {
 	KeyRotationGracePeriod            time.Duration // 0 → KeyRotationGracePeriod default; sign/publish-under-prev-epoch window
 	ListenPort                        int           // 0 for random
 	FeatureFlags                      *FeatureFlags // Rollout flags; nil → all enabled
+	// ProcessStartEpochMs is the Dart-side process-start wall-clock epoch
+	// (DateTime.now().millisecondsSinceEpoch captured at the first line of
+	// main()). FDC-S1 instrumentation-only: used solely to compute
+	// sinceProcessStartMs on the node:startup_timing / relay:reservation_timing /
+	// circuit_address:timing emits so cold-start milestones share one clock with
+	// Dart. 0 => not provided (caller predates FDC-S1); never feeds timeout logic.
+	ProcessStartEpochMs int64
 }
 
 // EffectiveFlags returns the feature flags from this config, falling back

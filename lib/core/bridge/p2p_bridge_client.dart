@@ -77,6 +77,11 @@ Future<Map<String, dynamic>> callP2PNodeStart(
   String? namespace,
   Map<String, bool>? featureFlags,
   Duration? keyRotationGracePeriod,
+  // FDC-S1 (observation-only): Dart process-start wall-clock epoch, threaded so
+  // Go can compute sinceProcessStartMs on its cold-start timing emits. Optional;
+  // omitted by callers that don't measure cold start (Go treats absent as
+  // "not provided" and reports -1 — never feeds timeout logic).
+  int? processStartEpochMs,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -93,6 +98,7 @@ Future<Map<String, dynamic>> callP2PNodeStart(
       'featureFlags': featureFlags ?? defaultResilienceFeatureFlags(),
       'namespace': ?namespace,
       'keyRotationGracePeriodMs': ?keyRotationGracePeriod?.inMilliseconds,
+      'processStartEpochMs': ?processStartEpochMs,
     },
   };
 

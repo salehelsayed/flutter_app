@@ -1,4 +1,4 @@
-.PHONY: ios android macos all clean test testpeer verify-bindings
+.PHONY: ios android macos all clean test testpeer lint verify-bindings
 
 MODULE := github.com/mknoon/go-mknoon
 BIND_PKG := $(MODULE)/bridge
@@ -44,6 +44,20 @@ testpeer:
 
 test:
 	go test ./...
+
+# Go hygiene gate for app-owned code (node/ + bridge/; third_party/ is vendored, excluded).
+# gofmt -l only LISTS unformatted files, so wrap it to fail; go vet is the closest analogue to `flutter analyze`.
+# golangci-lint lints only code changed since LINT_BASE (default HEAD = uncommitted work) so the
+# pre-existing large files / branch debt are not flooded — lint your FDC work before committing it.
+# NOTE: do NOT base this on `main` — `new-orbit` is well ahead of main, so a main delta floods legacy
+# code. To lint a whole FDC slice, pass the SHA you branched that work from: `make lint LINT_BASE=<sha>`.
+# Requires golangci-lint installed (brew install golangci-lint).
+LINT_BASE ?= HEAD
+lint:
+	@test -z "$$(gofmt -l node bridge)" || { echo "gofmt -l: unformatted files (run gofmt -w):"; gofmt -l node bridge; exit 1; }
+	go vet ./node/... ./bridge/...
+	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not installed — https://golangci-lint.run/welcome/install/ (brew install golangci-lint)"; exit 1; }
+	golangci-lint run --new-from-rev=$(LINT_BASE) ./node/... ./bridge/...
 
 verify-bindings:
 	../scripts/verify_gomobile_bindings.sh

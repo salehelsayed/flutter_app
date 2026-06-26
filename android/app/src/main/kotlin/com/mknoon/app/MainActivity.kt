@@ -11,7 +11,7 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        goBridge = GoBridge(flutterEngine)
+        goBridge = GoBridge(flutterEngine, applicationContext)
         // Move Account transfer keep-alive: Dart holds/releases a dataSync
         // foreground service so backgrounding mid-transfer cannot freeze the
         // segment upload or the local receiver (audit gap G7).

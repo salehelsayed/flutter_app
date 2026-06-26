@@ -293,7 +293,12 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/startup_timing.dart';
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart'
-    show ValueListenable, ValueNotifier, kDebugMode, kIsWeb;
+    show
+        ValueListenable,
+        ValueNotifier,
+        debugPrintSynchronously,
+        kDebugMode,
+        kIsWeb;
 import 'package:path_provider/path_provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -346,6 +351,23 @@ Future<void>? keychainMirrorBackfill;
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   StartupTiming.instance.mark('app_start');
+  // FDC-S1 measurement harness (observation-only, OFF by default): built with
+  // --dart-define=FDC_FLOW_LOG=1 (or true/yes/on) this forces flow-event logging
+  // on so cold-start `[FLOW]` timing events are visible in a realistic-timing
+  // profile build (logging otherwise defaults to kDebugMode). No effect on a
+  // normal build. Accepts any truthy spelling so the runbook is forgiving —
+  // bool.fromEnvironment only honours the exact strings 'true'/'false'.
+  const fdcFlowLog = String.fromEnvironment('FDC_FLOW_LOG');
+  if (fdcFlowLog == '1' ||
+      fdcFlowLog == 'true' ||
+      fdcFlowLog == 'yes' ||
+      fdcFlowLog == 'on') {
+    flowEventLoggingEnabled = true;
+    // The default debugPrint throttles to ~16KB/s and would drop bursty
+    // cold-start [FLOW] lines; print synchronously so every timing event lands
+    // in logcat/console for capture. Measurement build only.
+    debugPrint = debugPrintSynchronously;
+  }
   // Build-provenance milestone (B6): emit the source revision under test before
   // anything else, so device/harness logs can be matched to the exact build and
   // "fixed in tree, broken on device" build-skew is caught by a log grep.

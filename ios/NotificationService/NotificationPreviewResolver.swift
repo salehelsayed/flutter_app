@@ -111,6 +111,32 @@ final class NotificationPreviewResolver {
     fallbackThreadIdentifier: String? = nil
   ) -> NotificationPreviewResult {
     let data = PushRouteData(userInfo: userInfo)
+
+    // FDC-S1 Method 5(d) (observation-only): record whether the self decrypt key
+    // (App-Group keychain) and the sender peerId (push userInfo) are in hand
+    // inside the out-of-process NSE, with the NSE wall-clock epoch and pushId.
+    // The libp2p host is NOT running here, so the earliest a warm dial can start
+    // is node:start-return on the main isolate. nseEpochMs is correlated by
+    // pushId with the main isolate's FDC_COLDSTART_NOTIF_TAP_NODE_READY to yield
+    // the NSE→main gap off-device (APNs userInfo carries no timestamp to thread
+    // inline). Synchronous NSLog only — does not delay contentHandler.
+    let selfKeyPresent = keyReader.readString(
+      key: PushSharedKeyNames.identityMlKemSecretKey
+    ) != nil
+    let senderPeerIdPresent =
+      (data.string("sender_id", aliases: "s")
+        ?? data.string("group_id", aliases: "g", "groupId")) != nil
+    eventEmitter.emit(
+      event: "FDC_NSE_PEERID_AVAILABLE",
+      details: [
+        "selfKeyPresent": selfKeyPresent ? "true" : "false",
+        "senderPeerIdPresent": senderPeerIdPresent ? "true" : "false",
+        "nseEpochMs": String(Int64(Date().timeIntervalSince1970 * 1000)),
+        "pushId": data.messageId ?? "unknown",
+        "pushType": data.string("type", aliases: "t") ?? "unknown",
+      ]
+    )
+
     guard let type = data.string("type", aliases: "t") else {
       return fallback(
         title: fallbackTitle,

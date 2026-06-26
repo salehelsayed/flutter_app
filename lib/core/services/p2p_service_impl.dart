@@ -15,6 +15,8 @@ import '../local_discovery/local_p2p_service.dart';
 import '../utils/key_conversion.dart';
 import '../utils/chat_console_logger.dart';
 import '../utils/flow_event_emitter.dart';
+import '../utils/startup_timing.dart';
+import '../utils/cold_start_notif_anchor.dart';
 import '../utils/push_diagnostics_logger.dart';
 import '../../features/account_migration/application/account_migration_runtime_network_gate.dart';
 import '../../features/p2p/domain/models/node_state.dart';
@@ -200,6 +202,11 @@ class P2PServiceImpl
 
   /// §24: Prevents duplicate cold-start events when multiple paths race.
   bool _coldStartOnlineEmitted = false;
+
+  /// FDC-S1 (b): one-shot latch so `FDC_COLDSTART_FIRST_CIRCUIT_TIMING` fires
+  /// only on the first non-empty circuitAddresses push per start (addresses
+  /// update repeatedly). Observation-only.
+  bool _coldStartFirstCircuitEmitted = false;
 
   /// §24: True when startNodeCore detected an 'already started' hot-restart.
   bool _isHotRestart = false;
@@ -463,6 +470,7 @@ class P2PServiceImpl
     _startNodeTime = DateTime.now();
     _nodeStartRequestedAt = DateTime.now();
     _coldStartOnlineEmitted = false;
+    _coldStartFirstCircuitEmitted = false;
     _isHotRestart = false;
     _lastStartupRelayRecoveryAttemptAt = null;
     if (kDebugMode) {
@@ -485,10 +493,27 @@ class P2PServiceImpl
         autoRegister: true,
         namespace: namespace,
         keyRotationGracePeriod: _keyRotationGracePeriodOverride,
+        // FDC-S1 (observation-only): thread the canonical process-start epoch
+        // so Go can stamp sinceProcessStartMs on its cold-start timing emits.
+        processStartEpochMs: StartupTiming.instance.processStartEpochMs,
       );
 
       if (response['ok'] == true) {
         _stopped = false;
+        // FDC-S1 (a): process-start → node:start returns (Dart-clock view; Go
+        // emits its own host_ready sinceProcessStartMs on the same anchor).
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'FDC_COLDSTART_NODE_START_RETURN_TIMING',
+          details: {
+            'sinceProcessStartMs':
+                StartupTiming.instance.sinceProcessStartMs() ?? -1,
+          },
+        );
+        // FDC-S1 (d): node is ready on the main isolate — the floor a warm dial
+        // on a cold notif-tap must respect. Emits the correlation event iff this
+        // launch was also a notification tap (see ColdStartNotifAnchor).
+        ColdStartNotifAnchor.instance.recordNodeReady();
         _emitState(NodeState.fromJson(response), source: 'start_response');
         _beginReadinessProofWindow(
           phase: 'cold_start',
@@ -607,6 +632,10 @@ class P2PServiceImpl
           details: {
             'reason': 'relay not healthy after 2s',
             'relayState': _currentState.relayState,
+            // FDC-S1 (b): anchor the 2s fallback poll to process start.
+            'sinceProcessStartMs':
+                StartupTiming.instance.sinceProcessStartMs() ?? -1,
+            'circuitReady': _currentState.circuitAddresses.isNotEmpty,
           },
         );
         _performHealthCheck();
@@ -3513,6 +3542,21 @@ class P2PServiceImpl
       if (circuitAddresses.isNotEmpty) {
         debugPrint('[ADDR] circuit addresses: ${circuitAddresses.join(", ")}');
       }
+    }
+
+    // FDC-S1 (b): process-start → first circuit address available (Dart view of
+    // the EventChannel circuit-address push). One-shot per start.
+    if (!_coldStartFirstCircuitEmitted && circuitAddresses.isNotEmpty) {
+      _coldStartFirstCircuitEmitted = true;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FDC_COLDSTART_FIRST_CIRCUIT_TIMING',
+        details: {
+          'sinceProcessStartMs':
+              StartupTiming.instance.sinceProcessStartMs() ?? -1,
+          'circuitCount': circuitAddresses.length,
+        },
+      );
     }
 
     emitFlowEvent(

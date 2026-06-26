@@ -570,6 +570,7 @@ func StartNode(paramsJSON string) (result string) {
 		ListenPort               int                `json:"listenPort"`
 		KeyRotationGracePeriodMs int64              `json:"keyRotationGracePeriodMs"`
 		FeatureFlags             *node.FeatureFlags `json:"featureFlags"`
+		ProcessStartEpochMs      int64              `json:"processStartEpochMs"` // FDC-S1: Dart process-start epoch (observation-only)
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -589,6 +590,7 @@ func StartNode(paramsJSON string) (result string) {
 		ListenPort:             params.ListenPort,
 		KeyRotationGracePeriod: time.Duration(params.KeyRotationGracePeriodMs) * time.Millisecond,
 		FeatureFlags:           params.FeatureFlags,
+		ProcessStartEpochMs:    params.ProcessStartEpochMs,
 	}
 
 	_, err := n.Start(cfg)

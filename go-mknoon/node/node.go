@@ -54,6 +54,12 @@ type Node struct {
 	relayReadyOnce *sync.Once
 	startedAt      time.Time   // for startup timing instrumentation
 	lastConfig     *NodeConfig // saved for Restart()
+	// processStartEpochMs mirrors NodeConfig.ProcessStartEpochMs (the Dart
+	// process-start wall-clock epoch). FDC-S1 observation-only: read by
+	// sinceProcessStartMs() to stamp cold-start timing emits on Dart's clock.
+	// Written once under n.mu in Start() before any reader goroutine spawns;
+	// 0 => caller predates FDC-S1.
+	processStartEpochMs int64
 
 	// Phase 4: Relay session manager and event dispatcher.
 	relaySessionMgr *RelaySessionManager
@@ -219,6 +225,14 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
+	// FDC-S5 (M2): the write lock acquired here is held (via the deferred
+	// Unlock) across the entire bootstrap below. It is the one real Go-level
+	// serialization point: any concurrent SendMessage/DialPeer/NodeStatus that
+	// takes n.mu.RLock() blocks until Start returns. We stamp the acquire time
+	// here and emit the hold window just before returning, to quantify that
+	// cold-start head-of-line block.
+	startLockAcquiredAt := time.Now()
+
 	if n.isStarted {
 		return nil, fmt.Errorf("node already started")
 	}
@@ -227,6 +241,9 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	cfgCopy := cfg
 	cfgCopy.PersonalRendezvousRefreshInterval = cfgCopy.PersonalRendezvousRefreshEvery()
 	n.lastConfig = &cfgCopy
+	// FDC-S1 (observation-only): capture the Dart process-start epoch so the
+	// startup_timing / reservation / circuit emits can report sinceProcessStartMs.
+	n.processStartEpochMs = cfg.ProcessStartEpochMs
 	flags := cfg.EffectiveFlags()
 	n.featureFlags = &flags
 
@@ -415,9 +432,10 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	}
 
 	n.emitEvent("node:startup_timing", map[string]interface{}{
-		"phase":        "host_ready",
-		"libp2pNewMs":  libp2pNewMs,
-		"pubsubInitMs": pubsubInitMs,
+		"phase":               "host_ready",
+		"libp2pNewMs":         libp2pNewMs,
+		"pubsubInitMs":        pubsubInitMs,
+		"sinceProcessStartMs": n.sinceProcessStartMs(), // FDC-S1 (a)
 	})
 
 	// Warm relay connections concurrently in background.
@@ -448,9 +466,10 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 			select {
 			case <-relayReadyCh:
 				n.emitEvent("node:startup_timing", map[string]interface{}{
-					"phase":           "relay_warm_done",
-					"relayWarmMs":     time.Since(relayWarmStart).Milliseconds(),
-					"relaysAttempted": len(relayInfos),
+					"phase":               "relay_warm_done",
+					"relayWarmMs":         time.Since(relayWarmStart).Milliseconds(),
+					"relaysAttempted":     len(relayInfos),
+					"sinceProcessStartMs": n.sinceProcessStartMs(), // FDC-S1 (b) sub-phase
 				})
 			case <-ctx.Done():
 				// Node stopped before relay connected — no event
@@ -463,6 +482,18 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	if cfg.AutoRegister {
 		go n.autoRegisterPersonalNamespaceForStart()
 	}
+
+	// FDC-S5 (M2): emit the cold-start write-lock hold window. Emitted while the
+	// lock is still held (the deferred Unlock fires on return), so the measured
+	// window covers the whole bootstrap a concurrent RLock waiter would block on.
+	// Surfaced through the existing node:startup_timing raw passthrough, so no
+	// Dart-side change is required to read it on the device M2 run. emitEvent and
+	// the two helpers below never re-acquire n.mu, so this is deadlock-safe.
+	n.emitEvent("node:startup_timing", map[string]interface{}{
+		"phase":               "start_lock_window",
+		"lockHoldMs":          time.Since(startLockAcquiredAt).Milliseconds(),
+		"sinceProcessStartMs": n.sinceProcessStartMs(),
+	})
 
 	return n.stateLocked(), nil
 }
@@ -917,10 +948,11 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 						mgr.OnRequestFailed(attempt.peerID, attempt.err)
 					}
 					n.emitEvent("relay:reservation_timing", map[string]interface{}{
-						"elapsedMs": reserveRpcMs,
-						"outcome":   "failed",
-						"relayId":   peerLabel,
-						"error":     attempt.err.Error(),
+						"elapsedMs":           reserveRpcMs,
+						"outcome":             "failed",
+						"relayId":             peerLabel,
+						"error":               attempt.err.Error(),
+						"sinceProcessStartMs": n.sinceProcessStartMs(), // FDC-S1 (b)
 					})
 					continue
 				}
@@ -929,9 +961,10 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 				reservationWinnerPeer = attempt.peerID.String()
 				log.Printf("[NODE] RefreshRelaySession: reserve %s success", peerLabel)
 				n.emitEvent("relay:reservation_timing", map[string]interface{}{
-					"elapsedMs": reserveRpcMs,
-					"outcome":   "success",
-					"relayId":   peerLabel,
+					"elapsedMs":           reserveRpcMs,
+					"outcome":             "success",
+					"relayId":             peerLabel,
+					"sinceProcessStartMs": n.sinceProcessStartMs(), // FDC-S1 (b)
 				})
 			}
 		}
@@ -1695,9 +1728,10 @@ func (n *Node) waitForCircuitAddress(timeout time.Duration) bool {
 		for _, addr := range h.Addrs() {
 			if strings.Contains(addr.String(), "/p2p-circuit") {
 				n.emitEvent("circuit_address:timing", map[string]interface{}{
-					"elapsedMs": time.Since(start).Milliseconds(),
-					"outcome":   "found",
-					"pollCount": pollCount,
+					"elapsedMs":           time.Since(start).Milliseconds(),
+					"outcome":             "found",
+					"pollCount":           pollCount,
+					"sinceProcessStartMs": n.sinceProcessStartMs(), // FDC-S1 (b)
 				})
 				return true
 			}
@@ -1705,9 +1739,10 @@ func (n *Node) waitForCircuitAddress(timeout time.Duration) bool {
 		time.Sleep(200 * time.Millisecond)
 	}
 	n.emitEvent("circuit_address:timing", map[string]interface{}{
-		"elapsedMs": time.Since(start).Milliseconds(),
-		"outcome":   "timeout",
-		"pollCount": pollCount,
+		"elapsedMs":           time.Since(start).Milliseconds(),
+		"outcome":             "timeout",
+		"pollCount":           pollCount,
+		"sinceProcessStartMs": n.sinceProcessStartMs(), // FDC-S1 (b)
 	})
 	log.Printf("[NODE] Timed out waiting for circuit address after %v", timeout)
 	return false
@@ -1893,6 +1928,18 @@ func (n *Node) emitTimeoutFired(name string, configured time.Duration, start tim
 
 // Phase 4: Uses the async event dispatcher when available, falling back
 // to synchronous delivery for backward compatibility.
+// sinceProcessStartMs returns the elapsed wall-clock ms from the Dart
+// process-start epoch (NodeConfig.ProcessStartEpochMs) to now, anchoring Go
+// cold-start timing emits to Dart's clock. Returns -1 when the epoch was not
+// supplied (caller predates FDC-S1). FDC-S1 observation-only; never gates logic.
+func (n *Node) sinceProcessStartMs() int64 {
+	epoch := n.processStartEpochMs
+	if epoch <= 0 {
+		return -1
+	}
+	return time.Now().UnixMilli() - epoch
+}
+
 func (n *Node) emitEvent(eventName string, data map[string]interface{}) {
 	if n.eventCallback == nil {
 		return

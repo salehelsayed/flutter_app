@@ -59,6 +59,13 @@ class GoBridgeClient extends Bridge {
     'holepunch:success',
     'holepunch:failure',
     'transport:upgraded',
+    // FDC-S5 (M1): native bridge dispatch queue-wait. Emitted (DEBUG builds only)
+    // by the iOS/Android bridge with {method, queueWaitMs} = the time a call sat
+    // between the platform-channel receive and the background-dispatch slot — the
+    // thread-pool serialization signal. Surfaced here alongside BRIDGE_CALL_TIMING
+    // {bridgeMs} so the deferred two-device M1 run can read the queue-wait delta
+    // under concurrent warmPeer without any further client change.
+    'bridge:dispatch_timing',
   };
 
   bool _initialized = false;
@@ -774,6 +781,13 @@ class GoBridgeClient extends Bridge {
             event: eventName.replaceAll(':', '_').toUpperCase(),
             details: eventData,
           );
+          break;
+
+        // FDC-S5 (M1): the GO-layer flow event was already emitted by
+        // _emitRawGoFlowEvent above (bridge:dispatch_timing is in the raw
+        // passthrough set). It carries no push-side effect, so consume it here to
+        // keep it out of the unknown-event counter.
+        case 'bridge:dispatch_timing':
           break;
 
         default:

@@ -1,0 +1,40 @@
+# golangci-lint v2 config — https://golangci-lint.run
+# Invoked by `make lint` as:
+#   golangci-lint run --new-from-rev=$(LINT_BASE) ./node/... ./bridge/...   (LINT_BASE default HEAD)
+# Only code changed since LINT_BASE is reported, so the pre-existing large files (node.go ~2000,
+# bridge.go ~2878, pubsub.go ~3271) and the new-orbit-vs-main delta are NOT flooded — the linters
+# apply to FDC-introduced code. Do NOT base LINT_BASE on `main` (new-orbit is far ahead of it).
+# third_party/ is never in scope because the Makefile passes ./node/... ./bridge/... explicitly.
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck     # unchecked errors  -> "Error handling & idioms" row
+    - errorlint    # %w wrapping / errors.Is/As correctness  -> error idioms
+    - govet        # superset of `go vet`
+    - ineffassign  # ineffective assignments
+    - revive       # exported-symbol DOC COMMENTS + naming  -> "Naming & exported API" row
+    - staticcheck  # standard static-analysis suite
+    - funlen       # function length  -> "File/function size" row
+    - gocyclo      # cyclomatic complexity  -> god-function pressure
+  settings:
+    funlen:
+      lines: 100
+      statements: 60
+    gocyclo:
+      min-complexity: 25
+    revive:
+      rules:
+        - name: exported   # every exported identifier needs a doc comment beginning with its name
+  exclusions:
+    presets:
+      - common-false-positives  # deferred Close()/Remove(), etc.
+      - legacy
+      - std-error-handling
+    rules:
+      # table-driven tests legitimately run long / branchy
+      - path: _test\.go
+        linters:
+          - funlen
+          - gocyclo

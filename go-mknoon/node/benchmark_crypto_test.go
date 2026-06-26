@@ -35,7 +35,7 @@ func TestBenchmark_Ed25519_SignVerify(t *testing.T) {
 	// Use the node's key generation which gives us hex
 	// For sign/verify we need base64 keys - use a test key pair
 	priv := "SGVsbG9Xb3JsZEhlbGxvV29ybGRIZWxsb1dvcmxkMTI=" // test 32-byte base64
-	pub := "dGVzdC1wdWJsaWMta2V5LWZvci1iZW5jaG1hcms=" // placeholder
+	pub := "dGVzdC1wdWJsaWMta2V5LWZvci1iZW5jaG1hcms="      // placeholder
 
 	// These will error with invalid keys, but we verify the API exists
 	_ = hexKey
