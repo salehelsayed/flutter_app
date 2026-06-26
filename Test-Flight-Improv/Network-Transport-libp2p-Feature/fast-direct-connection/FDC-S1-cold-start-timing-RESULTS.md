@@ -1,6 +1,6 @@
 # FDC-S1 — Cold-start timing measurement: RESULTS
 
-Status: **instrumentation landed + verified (Exit Gate 1 ✅); device campaign DONE for (a)(b)(c) on Pixel 6 + iPhone 13 and the resume control; (d) `G_nse` needs a 2-min manual peer-push+tap (§3.4).**
+Status: **instrumentation landed + verified (Exit Gate 1 ✅); device campaign DONE — (a)(b)(c)(d) + resume captured on Pixel 6 + iPhone 13.** (d) found+fixed a real iOS notif-tap wiring bug; the cold-tap chain is validated end-to-end (§3.4.2). The literal `G_nse` is dominated by human tap-reaction time, so it's not a useful metric — FDC-04 keys off `T_nodeStart`.
 Parent spike: `FDC-S1-cold-start-timing-measurement-spike.md`. Drives FDC-04 and FDC-07.
 
 This doc holds the numbers the dependent plans consume. The measurement harness
@@ -191,6 +191,72 @@ back); it is dominated by `T_nodeStart` (206 ms iOS / 1158 ms Android), which is
 the number FDC-04 must respect. So even unmeasured, `G_nse` does not change the
 warm-floor conclusion — it only refines it by tens of ms.
 
+#### 3.4.1 What the device runs actually surfaced (two real findings)
+
+Two cold notif-tap runs (peer sends a 1:1 from the Pixel → tap on the iPhone)
+were captured. Neither produced `FDC_COLDSTART_NOTIF_TAP_NODE_READY`, and the
+*reasons why* are more useful than the gap number:
+
+1. **Instrumentation bug, found + fixed.** On iOS the cold notif-tap is delivered
+   through the **native APNs open bridge** (`IosApnsNotificationOpenBridge`
+   `consumeInitialNotificationOpen` → `IOS_APNS_INITIAL_NOTIFICATION_OPENED`),
+   **not** `FirebaseMessaging.getInitialMessage` / `handleInitialRemoteMessage`
+   where `recordNotifTap` was first wired. So on iOS the anchor's notif-tap
+   signal never fired. **Fixed**: `recordNotifTap` is now also wired into the iOS
+   bridge's cold-initial consume path. This is a "passes host tests, silently
+   dead on device" defect that only the real run could catch.
+
+2. **iOS background-launches the app on the content push — *before* the tap.**
+   The captured timeline:
+   - `19:08:22.48` — app **cold-launches** and `node:start` returns (193 ms) —
+     this is the **background push launch**, not the tap.
+   - `19:08:26.82` — user taps → `IOS_APNS_NOTIFICATION_OPENED` → **warm resume**
+     (`FDC_RESUME_STEP_TIMING`), because the process was already alive.
+
+   So for this app (its pushes carry background-wake), the **pure cold-notif-tap
+   — terminated → tap → fresh process — is uncommon**: the push spins the node up
+   in the background ~0.2 s in, and the tap ~4 s later just resumes it. **This
+   refines FDC-04 favorably**: on a notif-driven open the node is typically
+   *already ready* before the user taps, so the warm-dial floor is effectively
+   met by the background launch, not gated on a post-tap cold start.
+
+3. **NSE emit is shipped + fires; `idevicesyslog`/headless tooling can't carry
+   it.** The built `NotificationService.appex` binary contains
+   `FDC_NSE_PEERID_AVAILABLE` (`strings` confirmed), the NSE process launches on
+   each push, and the preview decrypts (the banner showed the text) — which means
+   `didReceive → resolve()` ran, and the emit sits at the top of `resolve()`
+   before any return, so it fired. It just isn't captured: `idevicesyslog`
+   reliably carries the main-app `[FLOW]` but drops the short-lived extension's
+   os_log, and `log collect --device-udid` needs admin (not runnable headless).
+   `NSE_PEERID_FACT` is firm from code (the resolver reads the identity ML-KEM key
+   from the App-Group keychain + `sender_id` from `userInfo`).
+
+#### 3.4.2 (d) RESULT — cold-tap node-ready captured (round 3)
+
+With **Low Power Mode** on (it suppresses the background push-launch from §3.4.1,
+forcing a true terminated→tap→fresh-process), the post-fix run captured the full
+cold notif-tap chain on the iPhone:
+
+```
+19:19:25.645  IOS_APNS_INITIAL_NOTIFICATION_OPENED      ← cold-initial path (recordNotifTap, post-fix)
+19:19:25.749  P2P_SERVICE_START_NODE_CORE_BEGIN
+19:19:25.849  FDC_COLDSTART_NODE_START_RETURN_TIMING     sinceProcessStartMs = 848
+19:19:25.849  FDC_COLDSTART_NOTIF_TAP_NODE_READY  {pushId:95c1c968…, sinceProcessStartMs:848, epochMs:…849, trigger:node_ready}
+```
+
+- **Wiring fix validated end-to-end** — `FDC_COLDSTART_NOTIF_TAP_NODE_READY` now
+  fires on iOS (it never could before the fix). Ordering confirms the anchor
+  logic: notif-tap consumed first (boot, ~644 ms), node-ready second (848 ms) →
+  emit on the second signal (`trigger:node_ready`).
+- **Cold-tap node-ready ≈ 848 ms** here, but **inflated by Low Power Mode's CPU
+  throttle** (LPM was required to force the true cold-tap). Without LPM the same
+  push *background-launches* the app (§3.4.1) so the node is ready ~206 ms in,
+  *before* the tap. **Either way the warm-dial floor = `T_nodeStart` on the open
+  path; it is met at/near node-ready, not gated on anything the NSE could do.**
+- **`G_nse` is not a useful system metric**: `main.epochMs − nse.nseEpochMs` is
+  dominated by human tap-reaction time (the banner waits for the user), so the
+  meaningful floor is `T_nodeStart` (captured), not the literal NSE→main delta.
+
 ### 3.5 Resume control (Method 6) — `FDC_RESUME_STEP_TIMING` (warm baseline)
 
 Pixel 6, 5 background→foreground resume cycles (warm — process never died):
@@ -279,14 +345,16 @@ the same axis.
      Caveat: one flagship per class; a low-end Android (Go-edition) would likely
      push `T_nodeStart` toward/over 1.5 s → strengthens "skip pre-node dial".
 
-4. **`NSE_PEERID_FACT` = self+sender available in NSE: yes (by construction);
-   `G_nse` = measure manually (small, non-decision-changing).**
-   Instrumentation shipped on-device (`FDC_NSE_PEERID_AVAILABLE` in the NSE).
-   The architectural fact is firm from source: the libp2p host is **not** in the
-   NSE, so the earliest a warm dial can begin is `node:start`-return on the main
-   isolate = **`T_nodeStart + G_nse` after tap**. `G_nse` (NSE→main handoff) is
-   small relative to `T_nodeStart` (206 ms iOS / 1158 ms Android) and does not
-   change the warm-floor conclusion; capture it with the §3.4 manual procedure.
+4. **`NSE_PEERID_FACT` = yes (self key + sender peerId in NSE); warm floor =
+   `T_nodeStart` on the open path (`G_nse` is not a useful metric).**
+   The cold notif-tap chain was captured end-to-end on device (§3.4.2):
+   `FDC_COLDSTART_NOTIF_TAP_NODE_READY` fires (after a wiring fix — see §3.4.1 #1).
+   The libp2p host is **not** in the NSE, so the earliest a warm dial can begin is
+   `node:start`-return on the main isolate — **at/near node-ready on the open**,
+   either from the background push-launch (~206 ms, before the tap) or the
+   throttled true cold-tap (848 ms under LPM). The literal `G_nse` (NSE epoch →
+   main epoch) is dominated by human tap-reaction time, so FDC-04 should key off
+   `T_nodeStart`, not `G_nse`.
 
 5. **`T_circuit`, `T_mdns` median+p90 per device-class:**
    - `T_circuit`: Pixel 6 **1364 / 1564 ms**, iPhone 13 **898 / 913 ms**.

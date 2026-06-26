@@ -1,4 +1,6 @@
 import 'package:flutter/services.dart';
+import 'package:flutter_app/core/notifications/notification_route_target.dart';
+import 'package:flutter_app/core/utils/cold_start_notif_anchor.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 typedef IosApnsNotificationOpenHandler =
@@ -72,6 +74,18 @@ class IosApnsNotificationOpenBridge {
           details: {},
         );
         return false;
+      }
+      // FDC-S1 Method 5(d): on iOS a cold notif-tap is delivered here (the
+      // pending APNs open consumed at launch), NOT via FCM getInitialMessage —
+      // so this is the iOS counterpart to the Android recordNotifTap wiring.
+      // Only the cold-initial consume path is wired (the runtime
+      // `notificationOpened` channel is a warm tap and must not produce a
+      // cold-start node-ready correlation). Observation-only.
+      final initialPayload = _normalizePayload(rawPayload);
+      if (initialPayload != null) {
+        ColdStartNotifAnchor.instance.recordNotifTap(
+          NotificationRouteTarget.messageIdFromRemoteMessageData(initialPayload),
+        );
       }
       return _routePayload(
         rawPayload: rawPayload,
