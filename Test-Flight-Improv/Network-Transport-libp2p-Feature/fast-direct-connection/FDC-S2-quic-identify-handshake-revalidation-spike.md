@@ -1,6 +1,65 @@
 # FDC-S2 - QUIC identify-handshake re-validation  (Spike / Measurement)
 
-Status: open
+Status: **closed — Option A (QUIC LAN-direct reliable). Budget = 750ms.** (executed 2026-06-27, see Verdict below)
+
+---
+
+## ✅ VERDICT / RESULTS  (EXECUTED 2026-06-27 — go-libp2p v0.39.1 / quic-go v0.49.0)
+
+**Verdict: Option A — direct LAN QUIC + identify is reliable (no hang) on v0.39.1.**
+The historical *"QUIC identify handshake hang"* **does NOT reproduce** on the current stack.
+
+> Standalone results doc (full tables + raw-data format): **`FDC-S2-quic-identify-handshake-revalidation-RESULTS.md`**.
+
+**The single number FDC-11/FDC-12 consume — direct-LAN identify budget = `750ms`.**
+(`= max(p95_identify rounded up to 250ms, 750ms) = max(250, 750)`; QUIC M1 p95 was 2ms — orders of
+magnitude under budget, so the `750ms` floor governs, not the measurement.)
+
+**Relay-QUIC control fact:** `defaultQUICRelayAddress` in the client defaults
+(`p2p_bridge_client.dart:13-14`) is **sound** — relay-QUIC identify completes well within budget.
+
+| Measurement | Result | Threshold | Pass |
+|---|---|---|---|
+| **M0** relay-QUIC control (hermetic local QUIC relay) | identify **4ms** | ≤ `ForegroundRelayDialTimeout` 3000ms | ✅ |
+| **M1 QUIC / private** (production config) — N=100 | hang **0/100**, p50 1ms / **p95 2ms** / max 2ms | hang==0 ∧ p95≤1500ms | ✅ |
+| **M1 QUIC / public** — N=100 | hang **0/100**, p95 2ms / max 2ms | — (reachability isolation) | ✅ |
+| **M1 TCP / private** — N=100 | hang **0/100**, p50 2ms / **p95 2ms** / max 3ms | hang==0 ∧ p95≤2000ms | ✅ |
+| **M1 TCP / public** — N=100 | hang **0/100**, p95 4ms / max 10ms | — | ✅ |
+| **M2** cross-version (prod relay **v0.38.2** ← client **v0.39.1**, real network, QUIC) | identify **137ms** (run-to-run 137–164ms) | completes, no skew stall | ✅ |
+
+**Decision-criteria trace (spike §"Decision Criteria"):** Option A iff QUIC M1 `hang_rate==0/100`
+**and** `p95_identify ≤ 1500ms` **and** M0 + M2 both GREEN → `0/100` ✅, `2ms ≤ 1500ms` ✅, M0 4ms ✅,
+M2 137ms ✅ ⇒ **Option A**. (Option B/TCP-only would also have qualified — TCP-direct is independently
+reliable, `0/100` @ p95 2ms — but QUIC wins, so the LAN leg dials QUIC with a TCP fallback lane.)
+
+**Reachability-private NOT implicated:** the `ForceReachabilityPublic` M1 variant is identical to the
+`ForceReachabilityPrivate` (production) variant (both `0/100`, p95 2ms). No `ForceReachabilityPublic`-vs-
+`Private` escalation is needed; FDC-11 keeps `ForceReachabilityPrivate()` for the LAN dial.
+
+**Root-cause of the original hang (corroborates spike Risks):** since QUIC identify completes in single-
+digit ms across 100 iters and the relay-QUIC default already ships, the historical hang was almost
+certainly the **config bug the spike flagged** — `startAdvertising(peerId, wsPort)`
+(`local_discovery_service.dart:169`) advertises the **wsPort, not the libp2p QUIC port**, so the intended
+`dialPeer(peerId, [localMultiaddr])` dialed the **wrong port → hang**, not a transport-stack defect.
+**FDC-11 MUST advertise the QUIC (libp2p) listen port, or the "hang" recurs as a config bug.**
+
+**Harness:** `go-mknoon/node/quic_identify_revalidation_test.go` (standalone; mirrors production
+`node.go:355-364` host options; does NOT modify production code). Reproduce:
+```
+cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run TestQuicIdentifyRevalidation -count=1 -v
+```
+(`GOTOOLCHAIN=go1.25.0` is required — Go 1.26.x panics `crypto/tls bug: where's my session ticket?`
+on quic-go v0.49.0. N overridable via `FDC_S2_ITERS`; `-short` skips all three.) `M1-quic-private` is a
+durable **regression lock**: if a future go-libp2p/quic-go bump reintroduces the indefinite hang, it goes
+RED. The QUIC-vs-TCP evidence comes from raw `conn` transport selection (per-variant dial addr), not the
+production `classifyStreamTransport` label (which can't distinguish QUIC-direct from TCP-direct).
+
+**Residual (NOT closed by this spike — by design):** M3 device confirmation (two physical phones, real
+multicast, iOS-QUIC over real WiFi NIC) is scheduled as **FDC-11's device gate**, per Exit Gate. In-process
+loopback proves the *identify/handshake protocol*; it does not prove iOS UDP path-MTU / NAT-hairpin / UDP
+throttling behaviour.
+
+---
 
 Gates:
 - **FDC-11 (libp2p LAN-direct dial, bonsoir-discovered)** — cannot be finalized until we know a libp2p
@@ -243,15 +302,17 @@ and `hang_rate` = fraction of iters that never complete within a 10s hard ctx OR
 
 ## Exit Gate
 
-- M0 GREEN (relay-QUIC identify ≤ 3s) — control passes.
-- M1 run at N=100 for both QUIC and TCP variants, plus the reachability-private/public pair, with
-  `hang_rate` and `p95_identify` recorded.
-- M2 cross-version (v0.38.2 ↔ v0.39.1) GREEN or its failure characterized.
-- A written verdict (A/B/C) + the budget number + the relay-QUIC control number captured in this doc
-  and referenced by the FDC-11 and FDC-12 plan docs.
-- M3 device confirmation is **scheduled as FDC-11's device gate**, not required to close this spike
+- [x] M0 GREEN (relay-QUIC identify ≤ 3s) — control passes. **(4ms ≤ 3000ms)**
+- [x] M1 run at N=100 for both QUIC and TCP variants, plus the reachability-private/public pair, with
+  `hang_rate` and `p95_identify` recorded. **(all 4 variants 0/100 hang; QUIC p95 2ms, TCP p95 2ms)**
+- [x] M2 cross-version (v0.38.2 ↔ v0.39.1) GREEN or its failure characterized. **(GREEN, prod relay
+  identify 137ms over real network)**
+- [x] A written verdict (A/B/C) + the budget number + the relay-QUIC control number captured in this doc
+  and referenced by the FDC-11 and FDC-12 plan docs. **(Option A, 750ms, M0 4ms / M2 137ms — see
+  Verdict above; FDC-11 §"Resolved by FDC-S2", FDC-12 §"Resolved by FDC-S2".)**
+- [ ] M3 device confirmation is **scheduled as FDC-11's device gate**, not required to close this spike
   (the spike answers the *protocol* question; the device answers the *real-multicast/iOS-QUIC*
-  question).
+  question). **(deferred to FDC-11 device gate — NOT a blocker for closing this spike.)**
 
 ## Risks / Unknowns
 

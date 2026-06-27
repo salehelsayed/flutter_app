@@ -134,6 +134,12 @@ abstract class P2PService {
   ///   - [timeoutMs]: Optional dial timeout in milliseconds
   ///
   /// Returns true if connection was established.
+  ///
+  /// Note (FDC-04 / DESIGN-5): the concrete [P2PServiceImpl] override adds an
+  /// optional `preferQuic` named param used ONLY internally by `warmPeer`'s
+  /// network-change re-warm (Go-inert today). It is intentionally NOT on this
+  /// interface — no caller dials with it through a [P2PService] reference, so
+  /// keeping it off the interface avoids churning every fake's `dialPeer`.
   Future<bool> dialPeer(
     String peerId, {
     List<String>? addresses,
@@ -193,6 +199,21 @@ abstract class P2PService {
   /// implementations (fakes/mocks) so they never report `local`.
   Future<bool> discoverLocalPeer(String peerId, {required Duration timeout}) async =>
       false;
+
+  /// FDC-04: eager LAN-aware warm of a single peer (the open/active one — never
+  /// the roster, PS-4). Overlaps connection setup with reading/typing so the
+  /// first send hits the reuse fast-path. Speculative-only — it NEVER sends a
+  /// message or deposits to the inbox (PS-1), is a no-op while the node is not
+  /// started (PS-3), and is debounced per peer so repeated opens to an offline
+  /// peer never tight-loop a failing dial. It awaits a bounded LAN seed first,
+  /// then skips the speculative dial when the peer is already LAN-visible so a
+  /// same-WiFi peer is never needlessly relay-dialed (INV-1). The contract is
+  /// total/never-throws: all call sites fire it as bare `unawaited(...)`.
+  ///
+  /// [preferQuic] is threaded through to the dial on a network-change re-warm
+  /// (Go-inert today — see [dialPeer]). Default no-op so implementations that
+  /// have no node (fakes/mocks) need only override it when they assert warming.
+  Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {}
 
   /// NET-REL-05 P3 (sticky transport): the last successful LIVE transport
   /// (`'local'` | `'direct'` | `'relay'`) for [peerId], or null if none is

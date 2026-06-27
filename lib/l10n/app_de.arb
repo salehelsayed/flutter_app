@@ -456,6 +456,8 @@
   "message_received_via_direct": "Über Direktverbindung empfangen",
   "message_received_via_wifi": "Über WLAN empfangen",
   "message_received_via_inbox": "Über Posteingang empfangen",
+  "message_sent_via_upgraded": "Auf Direktverbindung hochgestuft",
+  "message_received_via_upgraded": "Über hochgestufte Direktverbindung empfangen",
   "share_send_failed": "Konnte nicht an die ausgewählten Ziele teilen.",
   "group_info_title": "Gruppeninfo",
   "group_edit_details": "Details bearbeiten",

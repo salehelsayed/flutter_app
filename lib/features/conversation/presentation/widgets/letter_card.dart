@@ -1043,6 +1043,10 @@ class LetterCard extends StatelessWidget {
       case 'reuse':
         // Keep old rows renderable after the send path stopped persisting reuse.
         return Icons.device_hub;
+      case 'upgraded':
+        // FDC-13: a relay->direct DCUtR upgrade is MORE direct than a native
+        // direct send — give it a distinct up-arrow badge, not device_hub.
+        return Icons.upgrade;
       case 'relay':
         return Icons.cell_tower;
       case 'inbox':
@@ -1169,6 +1173,8 @@ class LetterCard extends StatelessWidget {
       case 'direct':
       case 'reuse':
         return l10n.message_sent_via_direct;
+      case 'upgraded':
+        return l10n.message_sent_via_upgraded;
       case 'wifi':
       case 'local':
         return l10n.message_sent_via_wifi;
@@ -1185,6 +1191,8 @@ class LetterCard extends StatelessWidget {
       case 'direct':
       case 'reuse':
         return l10n.message_received_via_direct;
+      case 'upgraded':
+        return l10n.message_received_via_upgraded;
       case 'wifi':
       case 'local':
         return l10n.message_received_via_wifi;

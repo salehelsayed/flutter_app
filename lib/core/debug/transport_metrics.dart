@@ -127,6 +127,13 @@ class TransportMetrics {
         return 'wifi';
       case 'reuse':
         return 'direct';
+      case 'upgraded':
+        // FDC-13: a relay->direct upgrade IS direct transport for the
+        // aggregate mix — fold it into the 'direct' bucket so the diagnostics
+        // card / transportMix() census is unchanged (mirrors 'reuse'). The
+        // per-upgrade count remains visible via the relayToDirectUpgrades
+        // counter; the per-message badge still carries the distinct 'upgraded'.
+        return 'direct';
       case 'direct':
       case 'relay':
       case 'wifi':

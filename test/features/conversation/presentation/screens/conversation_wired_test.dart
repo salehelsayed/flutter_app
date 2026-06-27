@@ -574,11 +574,20 @@ class FakeP2PService implements P2PService {
   @override
   void dispose() {}
 
+  // FDC-04 (TC-04-09): record eager-warm calls fired on conversation open.
+  final List<String> warmPeerCalls = [];
+
+  @override
+  Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {
+    warmPeerCalls.add(peerId);
+  }
+
   @override
   Future<bool> dialPeer(
     String peerId, {
     List<String>? addresses,
     int? timeoutMs,
+    bool preferQuic = false,
   }) async => true;
 
   @override
@@ -971,6 +980,31 @@ void main() {
     await tester.pump(const Duration(milliseconds: 500));
     expect(condition(), isTrue);
   }
+
+  group('FDC-04 warm on open', () {
+    // TC-04-09: opening the conversation screen fires warmPeer(contact.peerId)
+    // exactly once (fire-and-forget), on EVERY open. Mutation: remove the warm
+    // call from initState → re-red.
+    testWidgets('TC-04-09: conversation open fires warmPeer once', (
+      tester,
+    ) async {
+      final messageRepo = FakeMessageRepository();
+      final p2p = FakeP2PService();
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        p2pService: p2p,
+      );
+      expect(p2p.warmPeerCalls, [makeContact().peerId]);
+    });
+  });
 
   group('ConversationWired optimistic send', () {
     testWidgets('prefills shared text into the composer', (tester) async {

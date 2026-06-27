@@ -26,10 +26,17 @@ Future<void> prepareNotificationRouteTarget({
   AccountMigrationNetworkGate accountMigrationNetworkGate =
       allowAccountMigrationNetworkSideEffects,
   String? selfPeerId,
+  // FDC-04 (WIRE-1): eager-warm hook forwarded straight through to
+  // prepareNotificationOpen. This wrapper carries no P2PService of its own, so
+  // the real fn is supplied at main.dart (the only seam holding a p2p handle).
+  // Optional/default-null — must be forwarded here or notif-tap warm silently
+  // never fires (the dead-wire that TC-04-10b locks against).
+  Future<void> Function(String peerId)? warmPeer,
 }) async {
   final result = await prepareNotificationOpen(
     routeTarget: routeTarget,
     drainOfflineInbox: drainOfflineInbox,
+    warmPeer: warmPeer,
     drainGroupOfflineInboxForGroup: (groupId) async {
       final allowed = await accountMigrationNetworkGate(
         peerId: selfPeerId,

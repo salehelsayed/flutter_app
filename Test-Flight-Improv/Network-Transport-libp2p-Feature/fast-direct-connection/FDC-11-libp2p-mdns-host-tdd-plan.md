@@ -1,19 +1,35 @@
 # FDC-11 - libp2p LAN-direct dial fed by bonsoir discovery (unify LAN-direct)  (New Feature)
 
-Status: awaiting-review
+Status: **implementation-ready** (FDC-S2 resolved 2026-06-27 → Option A, QUIC, 750ms; `<from FDC-S2>` values threaded). Device-proof (D1) remains the closure gate.
 
 Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§6.5 "Unified LAN-direct over libp2p"; P2-1 table row L358; §8 / §9 Phase 3; open-question #4 L415-416)
 
-> # ⚠ DRAFT — finalize after FDC-S2
-> This plan is **gated by spike FDC-S2 (QUIC identify-handshake re-validation)** and is a
-> **DRAFT**. Every value tagged **`<from FDC-S2>`** (which transport the LAN leg dials — QUIC
-> vs TCP, and the per-leg dial+identify budget) is **provisional** and MUST be replaced by
-> FDC-S2's written verdict (Option A / B / C + the `p95_identify` budget number) before this
-> plan moves to `implementation-ready`. If FDC-S2 returns **Option C** (no reliable libp2p
-> direct-LAN identify on v0.39.1), this entire plan is **shelved / de-scoped to bonsoir+WS
-> only** (proposal §5 L159-160) and the RED catalog below is discarded. The **host-testable**
-> Go-unit portion is detailed fully (RED catalog + matrix); all **real-multicast / iOS-QUIC**
-> rows are flagged as the **device-only closure gate**, not host-closable.
+> # ✅ RESOLVED by FDC-S2 (Option A, 750ms) — implementation-ready
+> FDC-S2 closed **Option A** (direct LAN **QUIC** + identify reliable on v0.39.1; budget **750ms**); the
+> `<from FDC-S2>` values are now threaded through the body/RED catalog/matrix below and Status is flipped to
+> `implementation-ready`. The Go-unit RED catalog is the host-runnable core; the **real-multicast / iOS-QUIC**
+> rows (D1) remain the **device-only closure gate**. Detailed verdict in the banner just below + the RESULTS
+> doc (`FDC-S2-quic-identify-handshake-revalidation-RESULTS.md`).
+
+> ## ✅ Resolved by FDC-S2 (executed 2026-06-27) — **Option A, budget 750ms**
+> FDC-S2 closed with **Option A**: direct LAN **QUIC** + identify is **reliable** on go-libp2p
+> v0.39.1 / quic-go v0.49.0 (M1 QUIC `hang_rate = 0/100`, `p95_identify = 2ms`; M0 relay-QUIC control
+> 4ms; M2 cross-version v0.38.2-relay ← v0.39.1-client 137ms). The historical hang did **not**
+> reproduce. **Resolve the `<from FDC-S2>` placeholders:**
+> - **LAN leg dials QUIC** (`/ip4/<lan>/udp/<quicPort>/quic-v1`), with the **`/tcp/<port>` lane as
+>   fallback** (TCP-direct is independently reliable: `0/100`, p95 2ms — P2-3 "TCP==QUIC" lane).
+> - **Per-leg dial+identify budget = `750ms`** (`= max(p95 rounded↑250ms, 750ms)`; p95 was 2ms so the
+>   750ms floor governs). Fits `interactiveLocalBudget` 1500ms with margin.
+> - **Keep `ForceReachabilityPrivate()`** for the LAN dial — FDC-S2's public-vs-private M1 pair was
+>   identical (`0/100`, p95 2ms), so private reachability is **not** implicated; no host-config nuance.
+> - **HARD REQUIREMENT (FDC-S2 Risks):** advertise the **libp2p QUIC listen port**, NOT `wsPort`.
+>   `startAdvertising(peerId, wsPort)` (`local_discovery_service.dart:169`) is the most likely cause of
+>   the *original* "hang" (dialing the wrong port). If FDC-11 feeds the wsPort to the libp2p dial, the
+>   "hang" recurs as a **config bug**, not a transport bug.
+>
+> ✅ Values threaded through the RED catalog/matrix and Status flipped to `implementation-ready` (2026-06-27);
+> the **device-only** rows (real multicast, iOS-QUIC over real NIC) remain the **M3 / FDC-11 device closure
+> gate** FDC-S2 deferred. Harness: `go-mknoon/node/quic_identify_revalidation_test.go`.
 
 ---
 
@@ -35,10 +51,9 @@ Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§6.5 "Unifi
 
 ## Session Classification
 
-**evidence-gated** (DRAFT). The protocol question is answered by FDC-S2; the real-world
-question (iOS QUIC over real WiFi NIC, real multicast discovery) is **device-only** and is the
-closure gate. The Go-unit tier below is implementation-ready *conditional on* FDC-S2 = Option A
-or B.
+**implementation-ready** (FDC-S2 = Option A, 2026-06-27). The protocol question is answered by FDC-S2; the
+real-world question (iOS QUIC over real WiFi NIC, real multicast discovery) is **device-only** and is the
+closure gate (D1). The Go-unit tier below is implementation-ready.
 
 ## Exact Problem Statement
 
@@ -148,10 +163,10 @@ regardless of discovery source.
 - A `HandleLANPeerFound(pi peer.AddrInfo)` handler: skip self; **debounced per-peer cooldown** (avoid
   swarm 5s→5m backoff on a flapping/offline LAN peer, proposal §6.1 L188-191, §10 L387-388);
   add `pi.Addrs` to peerstore (`AddressTTL`/`ConnectedAddrTTL`); `host.Connect(ctx, pi)` with the
-  **`<from FDC-S2>` per-leg dial+identify budget**. Emit a `node:lan_dial_ready` flow-event.
+  **`750ms` (FDC-S2 Option A) per-leg dial+identify budget**. Emit a `node:lan_dial_ready` flow-event.
 - `WithForceDirectDial`-based **relay→direct upgrade** when a LAN addr is learned for a peer we
   already hold a relay circuit to (proposal §6.5 L282-283).
-- New config constants (warm cooldown, LAN identify budget = `<from FDC-S2>`), the feature flag
+- New config constants (warm cooldown, LAN identify budget = `750ms` (FDC-S2)), the feature flag
   (`EnableLibp2pLANDial`), and a `lanDialHandler` field holding the bonsoir-bridge state.
 - Keep `classifyStreamTransport` semantics: a LAN dial is `"direct"`.
 
@@ -176,10 +191,10 @@ regardless of discovery source.
   `HandleLANPeerFound`, the per-peer cooldown, the `host.Connect` call, the relay→direct upgrade
   helper.
 - `go-mknoon/node/config.go` — add `LANDialWarmCooldown`,
-  `LANDirectIdentifyBudget = <from FDC-S2>`; existing `PeerDialTimeout=2s :29`,
+  `LANDirectIdentifyBudget = 750ms` (FDC-S2 Option A); existing `PeerDialTimeout=2s :29`,
   `InteractiveDialTimeout=4s :76`.
 - `go-mknoon/node/feature_flags.go` — add `EnableLibp2pLANDial` to `FeatureFlags` +
-  `DefaultFeatureFlags()` (default = **`<from FDC-S2>`**: true iff Option A/B).
+  `DefaultFeatureFlags()` (default = **true** — FDC-S2 = Option A).
 
 **Dart (verify untouched — preserved sentinels)**
 - `lib/core/debug/e2e_test_mode.dart:2` `kDisableLocalDiscovery` — the iOS-sim guard the device gate
@@ -258,10 +273,10 @@ regardless of discovery source.
 - **Tier:** Go unit (two in-process hosts, loopback LAN — mirrors FDC-S2 M1, `holepunch_feasibility_test.go` style)
 - **Shape/setup:** hostA = production-mirrored node; hostB = second host listening on
   `/ip4/127.0.0.1/udp/0/quic-v1` (+`/tcp/0`). Subscribe A to `EvtPeerIdentificationCompleted`.
-  Call A's `HandleLANPeerFound(peer.AddrInfo{ID:Bid, Addrs:[B's <from FDC-S2> multiaddr]})`.
+  Call A's `HandleLANPeerFound(peer.AddrInfo{ID:Bid, Addrs:[B's QUIC multiaddr]})` (QUIC per FDC-S2 Option A; the `/tcp` lane is the fallback).
 - **RED-on-HEAD-because:** there is no `HandleLANPeerFound` handler — the symbol doesn't exist.
 - **GREEN-asserts:** A↔B connected (`host.Network().Connectedness(Bid)==Connected`);
-  `EvtPeerIdentificationCompleted` for Bid arrives ≤ `LANDirectIdentifyBudget` (`<from FDC-S2>`);
+  `EvtPeerIdentificationCompleted` for Bid arrives ≤ `LANDirectIdentifyBudget` (`750ms`, FDC-S2);
   the resulting conn's `RemoteMultiaddr()` is **non-circuit** (a raw `/ip4/127.0.0.1/…`, asserted
   by `!isCircuitAddr`, since `classifyStreamTransport` can't distinguish QUIC vs TCP — read the raw
   multiaddr per FDC-S2 risk L265-267).
@@ -416,7 +431,7 @@ regardless of discovery source.
 
 1. The libp2p LAN dial is **flag-gated** (`EnableLibp2pLANDial`) — on⇒wired+dials (T1), off⇒no dial (T2).
 2. A found same-LAN peer becomes a **non-circuit direct conn** with completed identify within the
-   `<from FDC-S2>` budget (T3); its addr is seeded to the peerstore even if the dial fails (T4).
+   `750ms` (FDC-S2) budget (T3); its addr is seeded to the peerstore even if the dial fails (T4).
 3. **Self is never dialed** (T5); repeated finds are **debounced per-peer** to dodge swarm backoff (T6).
 4. A known LAN addr **upgrades a relay conn to direct** via `WithForceDirectDial` (T7; device-confirmed).
 5. A LAN-direct stream still classifies **`"direct"`** (T8) — Dart path-decision contract preserved.
@@ -429,14 +444,15 @@ regardless of discovery source.
 > RED-first. Do not write any production line before its RED test is failing for the real reason.
 > **Stop-if:** FDC-S2 has not produced a written verdict — if Option C, **halt and shelve** (this
 > plan does not ship). If Option B, set the dialed multiaddr to `/tcp/<port>` and the budget per S2.
+> **FDC-S2 = Option A (2026-06-27): proceed — dial QUIC (`/tcp` fallback lane), budget 750ms; neither Stop-if triggers.**
 
 1. **Author the RED catalog** `go-mknoon/node/lan_dial_test.go` (T1-T9). Confirm each fails
    for the stated reason (missing symbols/fields). Seam names: `Node.lanDialHandler` field,
    `Node.HandleLANPeerFound`, `Node.lanWarmCooldown` map, `EnableLibp2pLANDial` flag.
 2. **Add the feature flag** — `feature_flags.go`: `EnableLibp2pLANDial` + `DefaultFeatureFlags()`
-   default = `<from FDC-S2>` (true iff Option A/B). Greens T2's compile; T1 still RED.
+   default = `true` (FDC-S2 = Option A). Greens T2's compile; T1 still RED.
 3. **Add config constants** — `config.go`: `LANDialWarmCooldown`,
-   `LANDirectIdentifyBudget = <from FDC-S2>`.
+   `LANDirectIdentifyBudget = 750ms` (FDC-S2).
 4. **Create `lan_dial.go`** — a `lanDialHandler` type wrapping `*Node`; `HandleLANPeerFound(pi)`:
    self-skip (T5) → cooldown check (T6) → `host.Peerstore().AddAddrs(pi.ID, pi.Addrs, ttl)` (T4) →
    context with `LANDirectIdentifyBudget`, `host.Connect` (T3). Emit `node:lan_peer_found`. Greens
@@ -524,7 +540,7 @@ git diff --check           # expected: clean
 
 ## Done Criteria
 
-- [ ] FDC-S2 verdict written (A/B/C) + budget number consumed (every `<from FDC-S2>` replaced).
+- [x] FDC-S2 verdict written (**Option A**) + budget **750ms** consumed (every `<from FDC-S2>` replaced).
 - [ ] (If A/B) T1-T9 authored RED-first, GREEN, each mutation re-reds.
 - [ ] (If A/B) T10 authored (concurrent-finds `-race` lock); `cd go-mknoon && go test -race ./node/...` PASS (no DATA RACE on `lanWarmCooldown`) and `cd go-mknoon && make lint` clean.
 - [ ] New exported identifiers carry Go doc comments — `HandleLANPeerFound`, `EnableLibp2pLANDial`, `LANDialWarmCooldown` (each comment begins with the identifier name, per Go convention).
@@ -564,8 +580,8 @@ git diff --check           # expected: clean
 
 ## Dependency Impact
 
-- **Gated by FDC-S2** (verdict A/B/C + identify budget) — **hard precondition**; this draft cannot
-  finalize without it.
+- **Gated by FDC-S2** — **RESOLVED 2026-06-27** (Option A; QUIC `/tcp`-fallback; identify budget **750ms**).
+  M3 real-NIC confirmation deferred to **D1** (this plan's device gate).
 - **Shares Go-host files** `node.go` / `config.go` / `feature_flags.go` with **FDC-12** (DCUtR) and
   **FDC-07** (cold-start bonsoir-advertise/reserve timing) → **collision; run sequentially** (roadmap
   Phase 3 ordering; FDC-07 P1 lands before Phase 3 FDC-11/12). New `lan_dial.go` is this plan's own file.

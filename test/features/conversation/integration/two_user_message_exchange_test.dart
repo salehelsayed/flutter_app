@@ -192,6 +192,9 @@ class FakeP2PService implements P2PService {
   }) async => network.hasPeer(peerId);
 
   @override
+  Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {}
+
+  @override
   Future<bool> storeInInbox(
     String toPeerId,
     String message, {

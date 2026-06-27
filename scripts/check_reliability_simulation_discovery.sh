@@ -260,6 +260,7 @@ classify_path() {
     integration_test/conversation_bridge_test.dart|\
     integration_test/media_message_journey_e2e_test.dart|\
     integration_test/voice_message_e2e_test.dart|\
+    integration_test/warm_peer_lan_aware_smoke_test.dart|\
     integration_test/cold_start_sendable_no_user_action_test.dart)
       record "1to1" "$path" "test" "1:1 transport/conversation simulator test"
       return

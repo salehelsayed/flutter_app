@@ -1,18 +1,17 @@
 # FDC-15 — 1:1 media over a peer-authenticated libp2p LAN stream  (New Feature)
 
-Status: awaiting-review
+Status: awaiting-review — **FDC-S2 RESOLVED (Option A, QUIC, 750ms; `<from FDC-S2>` values threaded)**; STILL gated by **FDC-11 device-proof**.
 
-> # ⚠ DRAFT — gated by FDC-11 (direct LAN conn device-proven) + FDC-S2 (QUIC/TCP LAN identify reliable)
-> This plan **cannot finalize** until FDC-11 has shipped a **device-proven** direct libp2p LAN
-> connection (D1 GREEN on both platforms) and FDC-S2 has returned **Option A or B** (a reliable
-> direct-LAN identify on v0.39.1). Every value tagged **`<from FDC-S2>`** (which transport the LAN
-> media stream rides — QUIC vs TCP — and the per-leg open+identify budget) is **provisional**. If
-> FDC-S2 returns **Option C** (no reliable libp2p direct-LAN identify), there is **no direct LAN conn
-> to stream media over**, this plan is **shelved**, and FDC-S6's media-server verdict is trivially
-> "KEEP the WS/HTTP LAN media server — there is no libp2p media lane to retire it for"
-> (`FDC-S6:212-217,262-263`). The **Go protocol/framing/handler/SHA-256-verify** core and the **Dart
-> leg-selection / relay-CDN-still-unconditional** guards are **host-testable now** (conditional on
-> A/B); the **real two-phone LAN media transfer** is the **device-only** closure gate.
+> # ⚠ DRAFT — FDC-S2 RESOLVED (Option A); STILL gated by FDC-11 (direct LAN conn device-proven)
+> **FDC-S2 closed Option A** (2026-06-27): direct LAN **QUIC** + identify is reliable (budget **750ms**), so
+> the `<from FDC-S2>` transport/budget values are now threaded below (QUIC, `/tcp` fallback lane,
+> `LANMediaOpenBudget = 750ms`). The Option-C "shelve this plan / KEEP the WS media server" branch did
+> **NOT** fire. **This plan still cannot finalize until FDC-11 ships a device-proven direct libp2p LAN
+> connection** (D1 GREEN on both platforms) — FDC-15 streams media *over* that conn, so the
+> `EnableLibp2pLANMedia` flag stays **default-OFF until FDC-11 lands + is device-proven**. The **Go
+> protocol/framing/handler/SHA-256-verify** core and the **Dart leg-selection /
+> relay-CDN-still-unconditional** guards are **host-testable now**; the **real two-phone LAN media
+> transfer** is the **device-only** closure gate.
 
 ---
 
@@ -47,7 +46,7 @@ Status: awaiting-review
 **evidence-gated** (DRAFT). The protocol/transport question is answered by FDC-S2; the existence of a
 direct LAN conn is answered by FDC-11. The Go-unit tier (protocol id, handler registration, framed
 header + ciphertext stream, SHA-256 verify, circuit-refusal, label, dedup, lifecycle) is
-implementation-ready **conditional on FDC-S2 = A/B**. The **real-NIC two-phone media transfer** is
+implementation-ready (FDC-S2 = **Option A**, resolved); the remaining hard gate is FDC-11's **device-proven** direct conn. The **real-NIC two-phone media transfer** is
 **device-only** and is the closure gate (sim shares the host mDNS stack →
 `DISABLE_LOCAL_DISCOVERY`, `e2e_test_mode.dart:2`).
 
@@ -179,7 +178,7 @@ transport. FDC-15's media stream reuses `writeFrame`/`readFrame` framing + `clas
   artifact path** (never plaintext) **in addition to / raced with** the WS HTTP-PUT; the relay-CDN
   `uploadMedia` stays **unconditional** at the call sites. Idempotent by blob id / SHA-256.
 - **(Go)** `Stop` removes the `MediaLANProtocol` handler (lifecycle).
-- New config constants (LAN media open/identify budget = `<from FDC-S2>`, idle/stall reuse of
+- New config constants (LAN media open/identify budget = `750ms` (FDC-S2 Option A), idle/stall reuse of
   `MediaIdleTimeout`) and the feature flag.
 
 **Out of scope → owning FDC-xx**
@@ -196,7 +195,7 @@ transport. FDC-15's media stream reuses `writeFrame`/`readFrame` framing + `clas
 ## Files To Inspect Next
 
 **Go (production)**
-- `go-mknoon/node/config.go` — add `MediaLANProtocol`, `LANMediaOpenBudget = <from FDC-S2>`; existing
+- `go-mknoon/node/config.go` — add `MediaLANProtocol`, `LANMediaOpenBudget = 750ms` (FDC-S2 Option A); existing
   `MediaProtocol:24`, `MediaTimeout:34`, `MediaIdleTimeout:35`, `PeerDialTimeout:29`.
 - `go-mknoon/node/node.go` — `SetStreamHandler` block `:391-392` (add media-lan handler, flag-gated),
   `Stop` (`:471+`, remove handler), `openChatStream`/`SendMessageWithTransport` `:1291-1440` (framing +
@@ -205,7 +204,7 @@ transport. FDC-15's media stream reuses `writeFrame`/`readFrame` framing + `clas
   verify → staged temp → framed ack → `media:lan_received`), `SendLANMedia` (non-circuit gate + header
   + ciphertext stream + ack), `isCircuitAddr` reuse.
 - `go-mknoon/node/feature_flags.go` — add `EnableLibp2pLANMedia` to `FeatureFlags` +
-  `DefaultFeatureFlags()` (default = `<from FDC-S2>`: true iff A/B and FDC-11 shipped).
+  `DefaultFeatureFlags()` (default = **false** — S2 = Option A is satisfied; flip true once FDC-11 ships + is device-proven).
 - `go-mknoon/node/media.go` — `mediaUploadProgressReader:118`, `copyMediaDownloadToFile:290`,
   `sendMediaRequest:267`, `setStreamDeadline`, framed read/write helpers to reuse.
 - `go-mknoon/bridge/bridge.go` — `MediaUpload:1426-1458` pattern to mirror for `MediaLANSend`.
@@ -277,7 +276,7 @@ transport. FDC-15's media stream reuses `writeFrame`/`readFrame` framing + `clas
 
 ### TL3 — SendLANMedia over a DIRECT loopback conn stages ciphertext + SHA-256 verified (headline)
 - **file::name** `…::TestSendLANMedia_DirectConn_StagesAndVerifies`
-- **Tier:** Go unit (two in-process hosts, `/ip4/127.0.0.1/udp/0/quic-v1` per `<from FDC-S2>`; mirror
+- **Tier:** Go unit (two in-process hosts, `/ip4/127.0.0.1/udp/0/quic-v1` — QUIC per FDC-S2 Option A; mirror
   `holepunch_feasibility_test.go`). **Shape:** hostA `host.Connect`s hostB (non-circuit); write a
   temp ciphertext blob + its sha256; `A.SendLANMedia(Bid, path, id, opaqueMime, size, sha256)`.
 - **RED-on-HEAD:** no `SendLANMedia` / `handleIncomingLANMedia` symbol.
@@ -511,8 +510,8 @@ transport. FDC-15's media stream reuses `writeFrame`/`readFrame` framing + `clas
    reason (missing constant/symbol/handler). Seam names: `MediaLANProtocol`,
    `Node.handleIncomingLANMedia`, `Node.SendLANMedia`, `errMediaLANRequiresDirect`,
    `lanMediaSeenIds` dedup map.
-2. **Add the constant + flag** — `config.go`: `MediaLANProtocol`, `LANMediaOpenBudget = <from FDC-S2>`;
-   `feature_flags.go`: `EnableLibp2pLANMedia` default `<from FDC-S2>`. Greens TL1 + TL2 compile.
+2. **Add the constant + flag** — `config.go`: `MediaLANProtocol`, `LANMediaOpenBudget = 750ms` (FDC-S2 Option A);
+   `feature_flags.go`: `EnableLibp2pLANMedia` default **false** (flip true after FDC-11 ships + device-proof). Greens TL1 + TL2 compile.
 3. **Create `media_lan.go`** — `handleIncomingLANMedia`: read framed header (id/opaque-mime/size/
    sha256) → dedup by id (TL7) → stream body to temp with incremental SHA-256 (reuse
    `copyMediaDownloadToFile` idle-timeout reader) → verify (TL4) → framed ack `{ok,sha256Verified}` →
@@ -615,8 +614,8 @@ git diff --check           # expected: clean
 
 ## Done Criteria
 
-- [ ] FDC-11 direct LAN conn **device-proven** (D1 GREEN both platforms) + FDC-S2 verdict A/B written
-      (every `<from FDC-S2>` replaced).
+- [x] FDC-S2 verdict written (**Option A**, QUIC, 750ms — every `<from FDC-S2>` replaced).
+- [ ] FDC-11 direct LAN conn **device-proven** (D1 GREEN both platforms) — still owed.
 - [ ] (If A/B) TL1-TL8 + TD1-TD6 authored RED-first, GREEN, each mutation re-reds.
 - [ ] `cd go-mknoon && go test ./...` PASS; `go-relay-server` + `media.go` unchanged + PASS.
 - [ ] `./scripts/run_test_gates.sh 1to1` PASS (+6); `groups` PASS (0 regress — scope); `transport`
@@ -676,8 +675,9 @@ git diff --check           # expected: clean
 
 ## Dependency Impact
 
-- **Gated by FDC-11** (direct LAN conn must exist + be device-proven) and **FDC-S2** (Option A/B +
-  identify budget) — hard preconditions; this DRAFT cannot finalize without both.
+- **Gated by FDC-11** (direct LAN conn must exist + be device-proven) — **still open** — and **FDC-S2** —
+  **RESOLVED 2026-06-27** (Option A, QUIC, identify budget **750ms**). FDC-11's device-proof is the remaining
+  hard precondition.
 - **Enables FDC-S6** — FDC-15 is the named "media-over-libp2p-LAN" prerequisite whose existence +
   device-proof + 14-day soak lets FDC-S6 issue a "retire the WS media server" verdict
   (`FDC-S6:145,212-217`). FDC-15 does **not** itself retire anything.

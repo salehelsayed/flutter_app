@@ -269,7 +269,7 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	// Parse relay addresses
 	relayAddresses := cfg.RelayAddresses
 	if relayAddresses == nil {
-		relayAddresses = []string{DefaultRelayAddress}
+		relayAddresses = DefaultRelayAddresses()
 	}
 	relayAddresses = limitRelayAddresses(relayAddresses, flags)
 	n.relayAddresses = relayAddresses
@@ -837,7 +837,7 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 
 		// Build relay AddrInfos for warm connection.
 		if len(relayAddrs) == 0 {
-			relayAddrs = []string{DefaultRelayAddress}
+			relayAddrs = DefaultRelayAddresses()
 		}
 
 		relayInfoMap := make(map[peer.ID]*peer.AddrInfo)

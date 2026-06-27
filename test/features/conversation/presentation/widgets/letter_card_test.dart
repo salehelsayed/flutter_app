@@ -513,6 +513,18 @@ void main() {
         await tester.pumpWidget(buildTestWidget(transport: 'carrier_pigeon'));
         expect(find.byIcon(Icons.help_outline), findsOneWidget);
       });
+
+      // RT-W1 (FDC-13): a relay->direct upgrade renders a DISTINCT glyph
+      // (Icons.upgrade), never the plain 'direct' device_hub nor the
+      // unrecognized help_outline fallback.
+      testWidgets('shows upgrade icon when transport is upgraded', (
+        tester,
+      ) async {
+        await tester.pumpWidget(buildTestWidget(transport: 'upgraded'));
+        expect(find.byIcon(Icons.upgrade), findsOneWidget);
+        expect(find.byIcon(Icons.device_hub), findsNothing);
+        expect(find.byIcon(Icons.help_outline), findsNothing);
+      });
     });
 
     group('URL links', () {
@@ -2609,6 +2621,89 @@ void main() {
           ),
         );
         expect(find.byIcon(Icons.cell_tower), findsNothing);
+      },
+    );
+
+    // ---- FDC-13: relay->direct UPGRADE badge (TC-19..TC-22) ---------------
+
+    // TC-19 (RT-W2) — OUTGOING reached via 'upgraded' renders the distinct
+    // upgrade glyph, never device_hub (plain direct), help_outline (fallback),
+    // or the inbox glyph.
+    testWidgets(
+      'TC-19 outgoing reached via upgraded → upgrade icon (not device_hub, '
+      'not inbox)',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTransportGlyph(status: 'delivered', transport: 'upgraded'),
+        );
+        expect(find.byIcon(Icons.upgrade), findsOneWidget);
+        expect(find.byIcon(Icons.device_hub), findsNothing);
+        expect(find.byIcon(Icons.help_outline), findsNothing);
+        expect(find.byIcon(Icons.inbox_rounded), findsNothing);
+      },
+    );
+
+    // TC-20 (RT-W3) — OUTGOING 'upgraded' a11y reads the new "Upgraded to
+    // direct connection" label, never the plain "Sent via direct connection".
+    // The bubble merges sender+time+status into ONE Semantics node, so match
+    // by RegExp substring (mirrors TC-17). NOTE: the POSITIVE assert is the
+    // RED driver (dropping the _sentViaSemantic 'upgraded' case falls back to
+    // the generic label, failing the positive find); the negative "Sent via
+    // direct connection" assert is a copy-paste-mislabel guard, not the RED
+    // lock (the upgraded sent string is "Upgraded to …", not "Sent via …").
+    testWidgets(
+      'TC-20 outgoing upgraded a11y → message_sent_via_upgraded (not '
+      'via_direct)',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTransportGlyph(status: 'delivered', transport: 'upgraded'),
+        );
+        expect(
+          find.bySemanticsLabel(RegExp('Upgraded to direct connection')),
+          findsWidgets,
+        );
+        expect(
+          find.bySemanticsLabel(RegExp('Sent via direct connection')),
+          findsNothing,
+        );
+      },
+    );
+
+    // TC-21 (RT-W4) — INCOMING via 'upgraded' shows the incoming upgrade
+    // glyph (the incoming glyph fires for any non-system/non-unknown
+    // transport), never device_hub or help_outline.
+    testWidgets(
+      'TC-21 incoming via upgraded shows the incoming upgrade glyph',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTransportGlyph(isIncoming: true, transport: 'upgraded'),
+        );
+        expect(find.byIcon(Icons.upgrade), findsOneWidget);
+        expect(find.byIcon(Icons.device_hub), findsNothing);
+        expect(find.byIcon(Icons.help_outline), findsNothing);
+      },
+    );
+
+    // TC-22 (RT-W5) — INCOMING 'upgraded' a11y reads the new "Received via
+    // upgraded direct connection" label, never the plain "Received via direct
+    // connection" (the contiguous phrase is broken by "upgraded").
+    testWidgets(
+      'TC-22 incoming upgraded a11y → message_received_via_upgraded (not '
+      'via_direct)',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTransportGlyph(isIncoming: true, transport: 'upgraded'),
+        );
+        expect(
+          find.bySemanticsLabel(
+            RegExp('Received via upgraded direct connection'),
+          ),
+          findsWidgets,
+        );
+        expect(
+          find.bySemanticsLabel(RegExp('Received via direct connection')),
+          findsNothing,
+        );
       },
     );
   });

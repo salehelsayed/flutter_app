@@ -1,6 +1,6 @@
 import 'connection_state.dart';
 
-enum BadgeReadinessState { offline, connecting, online, onlineDotted }
+enum BadgeReadinessState { offline, connecting, online, onlineDotted, onlineDirect }
 
 /// Node state representing the P2P node status.
 class NodeState {
@@ -20,6 +20,13 @@ class NodeState {
   final bool sendCapabilityReady;
   final bool inboxCapabilityReady;
 
+  /// FDC-14: self "directly reachable" axis — true when the node holds a live
+  /// non-relay (LAN/direct) path. Defaults false; the live bridge does not yet
+  /// emit it, so existing states keep their current badge (no silent promotion).
+  /// directReady producer = FDC-14b follow-on (derives from FDC-02 ranked-race
+  /// live LAN/direct + FDC-11 libp2p LAN-direct dial); default false until then.
+  final bool directReady;
+
   const NodeState({
     this.peerId,
     required this.isStarted,
@@ -34,6 +41,7 @@ class NodeState {
     this.featureFlags,
     this.sendCapabilityReady = false,
     this.inboxCapabilityReady = false,
+    this.directReady = false,
   });
 
   /// Stopped node state constant.
@@ -73,6 +81,7 @@ class NodeState {
       ),
       sendCapabilityReady: json['sendCapabilityReady'] == true,
       inboxCapabilityReady: json['inboxCapabilityReady'] == true,
+      directReady: json['directReady'] == true,
     );
   }
 
@@ -97,6 +106,9 @@ class NodeState {
     if (featureFlags != null) result['featureFlags'] = featureFlags;
     result['sendCapabilityReady'] = sendCapabilityReady;
     result['inboxCapabilityReady'] = inboxCapabilityReady;
+    // Always emit (Pattern B, like send/inbox capability) — directReady is a
+    // non-nullable bool, not an omit-when-null nullable field.
+    result['directReady'] = directReady;
 
     return result;
   }
@@ -115,6 +127,7 @@ class NodeState {
     Map<String, bool>? featureFlags,
     bool? sendCapabilityReady,
     bool? inboxCapabilityReady,
+    bool? directReady,
   }) {
     return NodeState(
       peerId: peerId ?? this.peerId,
@@ -130,6 +143,7 @@ class NodeState {
       featureFlags: featureFlags ?? this.featureFlags,
       sendCapabilityReady: sendCapabilityReady ?? this.sendCapabilityReady,
       inboxCapabilityReady: inboxCapabilityReady ?? this.inboxCapabilityReady,
+      directReady: directReady ?? this.directReady,
     );
   }
 
@@ -147,6 +161,10 @@ class NodeState {
   BadgeReadinessState get badgeReadinessState {
     if (!isStarted) return BadgeReadinessState.offline;
     if (!usabilityReady) return BadgeReadinessState.connecting;
+    // FDC-14: a live direct/LAN path is "more connected" than relay-reserved
+    // and is decoupled from it (holds even when relay is not ready). Ranked
+    // above onlineDotted; never bypasses the usabilityReady gate above.
+    if (directReady) return BadgeReadinessState.onlineDirect;
     return relayReady
         ? BadgeReadinessState.onlineDotted
         : BadgeReadinessState.online;
@@ -157,6 +175,7 @@ class NodeState {
     return 'NodeState(peerId: $peerId, isStarted: $isStarted, '
         'connections: ${connections.length}, sendReady: $sendCapabilityReady, '
         'inboxReady: $inboxCapabilityReady'
-        '${relayState != null ? ', relayState: $relayState' : ''})';
+        '${relayState != null ? ', relayState: $relayState' : ''}'
+        '${directReady ? ', directReady: true' : ''})';
   }
 }

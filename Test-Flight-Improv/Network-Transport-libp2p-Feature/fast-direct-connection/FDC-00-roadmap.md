@@ -83,7 +83,7 @@ implementation-ready.
 |---|---|---|---|
 | **FDC-S0** | Baseline + improvement measurement | spike (bookend) | The **measurement bookend** — runs **FIRST** (capture the baseline on today's `new-orbit`, before FDC-01) **and at epic close** (re-measure → a before→after **improvement scorecard**). 10 metrics: perceived 1:1 send latency by scenario · notif-tap→first-live-message · online→inbox **misroute rate** (→0, FDC-01) · transport **distribution** (% local/direct/relay/inbox) · cold-start time-to-online [reuse FDC-S1] · LAN-win-rate [reuse FDC-S6] · reconnect time · reaction-to-offline reliability [FDC-18] · inbox-durability survives relay restart [FDC-10] · host-gate floor. Reuses existing telemetry (`emitFlowEvent`, `NOTIFICATION_TAP_TO_LIVE_MESSAGE_TIMING`, the `transport` column, `TransportMetrics`, Go `benchmark_*_test.go`) — minimal new aggregation. **Gates nothing; it MEASURES the epic.** Felt-UX metrics are device-only. |
 | **FDC-S1** | Cold-start timing measurement | spike | Measure real-device cold-open **time-to-circuit-address** and **time-to-first-mDNS-resolve** (proposal §11.3) so foreground budgets are set from data, not re-timed blind. **Gates FDC-07.** Output: a numbers table + a "do/don't cap the cold relay dial" verdict. |
-| **FDC-S2** | QUIC identify-handshake re-validation | spike | Re-validate the §5 / `UI-15-WS-Server/plan.md` L42-48 "QUIC identify-handshake hang": is a libp2p QUIC/TCP **LAN dial's identify** reliable now? **Gates FDC-11 and FDC-12** (both add libp2p direct-dial paths — FDC-11 the bonsoir-fed LAN dial, FDC-12 the DCUtR upgrade). Device-only. |
+| **FDC-S2** ✅ CLOSED | QUIC identify-handshake re-validation | spike | **EXECUTED 2026-06-27 → Option A (QUIC reliable), budget 750ms.** Re-validate the §5 / `UI-15-WS-Server/plan.md` L42-48 "QUIC identify-handshake hang": is a libp2p QUIC/TCP **LAN dial's identify** reliable now? **Result: hang did NOT reproduce** — M1 QUIC `0/100` hang @ p95 2ms (TCP `0/100` @ p95 2ms; public==private), M0 relay-QUIC control 4ms, M2 cross-version (v0.38.2 relay) 137ms. Harness `go-mknoon/node/quic_identify_revalidation_test.go`. **Unblocks FDC-11 (dial QUIC, budget 750ms, advertise QUIC port NOT wsPort) and FDC-12 (upgraded direct QUIC reaches usable identify; abandon-timeout 750ms).** M3 real-device confirmation deferred to FDC-11's device gate. |
 | **FDC-S3** | Presence-signal decision | spike | Decide the "online-ish" signal: additive **relay-lookup** action (needs deploy, reservation-truth may need go-libp2p relay internals) vs **gossipsub beacon** (no relay change, adds churn; node already inits pubsub `node.go:379`) vs explicit **client→relay status-push** on pause/resume. Also: how to self-publish foreground (§6.3/§11.2). **Gates FDC-08 and FDC-09.** |
 | **FDC-S4** | iOS pause-flush feasibility | spike | Resolve the §6.4 / §10 open invariant: can a **bounded, inbox-store-only** network flush run on the iOS pause transition via `beginBackgroundTask` (or an APNs-backed path) before suspension? Today `handleAppPaused` is local-DB-only, no network (`main.dart:4314-4316`). Output: feasible-or-not + the pre-suspension budget (how many in-flight sends, §11.6). **Gates FDC-06.** |
 | **FDC-S5** | Go-bridge concurrency design note | spike | Design note (no measurement gate) on the §10 hazard: do `warmPeer` + `fastReprime` + the user's send serialize at the Go bridge, or run concurrently? **Finding: the bridge is largely concurrent in the warm/steady state** (concurrent native queues at Swift/Kotlin + Go read-lock layers; Dart `Future.wait` DOES yield real Go concurrency); the **only** serialization point is `Node.Start`'s write lock on the **cold path**. Output: a prioritization contract (keep speculative warm off the cold-start path + behind the node-started gate; the FDC-02/03 race keeps its true-parallel shape) the Phase-0 plans build against. **Informs FDC-04, FDC-05 (advisory design-gate, not a delivery/sequencing gate); first step of the MVP cut.** The verdict is **source-grounded (settled, usable now)**; its **device M1/M2 confirmation rides the post-FDC-04 two-device smoke** and does not gate Phase 0 (S5 status stays "open" only on that device measurement). |
@@ -108,7 +108,7 @@ implementation-ready.
 | **FDC-13** | Relay→direct "upgraded" transport badge | §6.2b / Q4 gap | tdd-plan | Make a relay→direct **upgrade** visible per-message: new `'upgraded'` transport value + `Icons.upgrade` glyph + `message_*_via_upgraded` a11y in `letter_card.dart` (the **only** renderer — no feed `message_bubble` twin). **No DB migration** (existing TEXT column). Incoming render host-testable now via a synthetic `transport:upgraded` event; **outgoing-from-production-data + the upgrade actually firing are gated on FDC-12.** |
 | **FDC-14** | "Online" dot also means directly-reachable + anti-flap | §6.3 / Q7 gap | tdd-plan (DRAFT) | New `BadgeReadinessState.onlineDirect` tier + `NodeState.directReady` input rendered by `ConnectionStatusIndicator`, plus a **badge anti-flap** test. New-tier render + anti-flap host-testable now; **`directReady` signal source gated on FDC-02/FDC-11** (provisional). Anti-flap notes added to FDC-05/06/07. Peer-presence (FDC-08/09) never feeds this dot. |
 | **FDC-15** | 1:1 media over a peer-authenticated libp2p LAN stream | §6.2b / FDC-S6 prereq | tdd-plan (DRAFT) | Stream the same `EncryptedMediaArtifact` ciphertext over a NEW Noise-authenticated libp2p stream (`/mknoon/media-lan/1.0.0`) on the FDC-11 direct LAN conn — replacing the WS path's **TXT-record peerId trust + plaintext `ws://`** with cryptographic peer-AUTH (confidentiality unchanged; media already app-encrypted). Additive behind `EnableLibp2pLanMedia`; WS HTTP-PUT + relay-CDN kept as parallel fallbacks (idempotent by blob-id/SHA-256; relay-CDN stays UNCONDITIONAL — no 112-dangling-attachment regression). **1:1-only** (group media = relay-CDN, untouched). **Gated by FDC-11 + FDC-S2.** Device-only closure. Enables FDC-S6's media-server retire verdict. |
-| **FDC-18** | 1:1 reaction send reliability | reactions gap | tdd-plan | Mirror **FDC-03's concurrent durable inbox** onto the reaction send path (`send_reaction_use_case.dart`) so a reaction to a slow/offline peer is durably queued (not dropped/late) and an online peer isn't demoted to inbox-only. **Calibrated:** the reaction path has a **single** transport leg (thin `sendMessage`) → FDC-01/02's race/budget wins are **N/A**; only the concurrent-inbox + online-not-demoted transfer. Receive last-writer-wins tombstone preserved. **No migration** (table 016 exists). **1:1-only** (group reactions = pubsub, disjoint). Lands **after FDC-03** (copies its pattern); **separate file from the send-path spine → parallelizable** (its own 1-file mini-track). 7 RED tests. |
+| **FDC-18** | 1:1 reaction add+remove send reliability | reactions gap | tdd-plan | Mirror **FDC-03's concurrent durable inbox** onto **both** reaction-toggle halves — `send_reaction_use_case.dart` (add) **and** its structural twin `remove_reaction_use_case.dart` (un-react) — so a toggle to a slow/offline peer is durably queued (not dropped/late) and an online peer isn't demoted to inbox-only. **Calibrated:** each path has a **single** transport leg (thin `sendMessage`) → FDC-01/02's race/budget wins are **N/A**; only the concurrent-inbox + online-not-demoted transfer. Receive last-writer-wins tombstone preserved (dedup is **receiver-side**, byte-identical envelopes). **No migration** (table 016, tombstone column 082 exist). **1:1-only** (group reactions = pubsub, disjoint; receipts/delete use the reply-bearing `sendMessageWithReply` → deferred FDC-19 candidate). Lands **after FDC-03** (copies its pattern); **separate files from the send-path spine → parallelizable** (its own mini-track). Adds a per-file flow-capture helper (none exists today). ~17 RED/preservation locks (FDC-18-01..06b + R1..R5 + P2b). |
 
 ---
 
@@ -171,9 +171,9 @@ lib/features/conversation/application/send_chat_message_use_case.dart   (1893 li
 ```
 
 - FDC-01 edits the `direct_timeout` / `relayProbeEligible` path (`:701`, `:1483`, `:1500`).
-- FDC-02 rewrites the race body + per-leg budgets (`:21`, `:24`, `:48`, `:57`, `:693-703`).
+- FDC-02 rewrites the race body + per-leg budgets (`:21`, `:24`, `:48`, `:57`, `:693-703`) **and — per the C1 resolution (option A, DECIDED 2026-06-26) — makes the reuse fast-path CIRCUIT-AWARE** (`:447-512`): a relay-only `/p2p-circuit` connection no longer short-circuits ahead of the race; the staggered relay-live leg is carved out of that block. **This claims a slice of `:447-512` that the FDC-04 row below originally assigned wholesale to FDC-04.**
 - FDC-03 lifts the inbox out of the low-confidence gate + drops the serial tail (`:608-660`, `:1021-1086`).
-- FDC-04 gates the reuse/sticky short-circuit behind `isLocalPeer` (`:447-465`, `:528-595`).
+- FDC-04 keeps **only the `isLocalPeer` belt-and-suspenders gate** on the reuse/sticky short-circuit (`:447-465`, `:528-595`), landing **on FDC-02's committed tree** (the circuit-awareness already in place). The two edits are **complementary, not duplicative**: FDC-02's carve-out keys on *connection-type* (relay-only ⇒ race); FDC-04's gate keys on *peer-locality* (`isLocalPeer` ⇒ race, covering the direct-conn-to-a-LAN-peer case).
 
 Because they overlap the same hot region of one file, **they MUST run SEQUENTIALLY — never in
 parallel agents/worktrees** (a parallel landing would clobber a sibling's uncommitted edits, exactly
@@ -306,8 +306,8 @@ strictly serial. Plans in **disjoint file sets** can run in parallel sessions/br
 - **E · Relay server (additive):** FDC-10 → FDC-08 → FDC-09 on `inbox.go`/push path; 08/09 gated S3.
 - **F · Transport badge UI:** FDC-13 (`letter_card.dart` — the only renderer).
 - **G · Self online-dot UI:** FDC-14 (`node_state.dart`/`connection_status_indicator.dart` — isolated).
-- **H · Reactions:** FDC-18 (`send_reaction_use_case.dart` — separate file from the spine; **lands after
-  FDC-03** to copy its concurrent-inbox pattern; otherwise parallel).
+- **H · Reactions:** FDC-18 (`send_reaction_use_case.dart` + `remove_reaction_use_case.dart` — separate files
+  from the spine; **lands after FDC-03** to copy its concurrent-inbox pattern; otherwise parallel).
 
 **Wave schedule:**
 - **W0 · spikes (concurrent; they gate everything):** FDC-S5 note first (shapes 04/05), then S1/S2/S3/S4
@@ -440,12 +440,25 @@ A 7-question review of the design against live code surfaced these. Q2/Q3/Q5 wer
   **wifi/direct/relay/inbox** (plan-155 `transportStatusGlyph`, `letter_card.dart`), and the design
   reuses it — but a **relay→direct upgrade** currently folds into the plain `"direct"` badge
   (`_inferTransportForPeer` → `"direct"`); the upgrade is only counted in the **debug** diagnostics
-  card. **FDC-13 (authored)** adds an `"upgraded"` transport value + a distinct `Icons.upgrade` glyph +
-  `message_*_via_upgraded` a11y in the conversation `letter_card.dart`. Two facts from its grounding:
+  card. **FDC-13 (IMPLEMENTED, host-green — uncommitted `new-orbit`)** adds an `"upgraded"` transport
+  value + a distinct `Icons.upgrade` glyph + `message_*_via_upgraded` a11y in the conversation
+  `letter_card.dart`, returns `'upgraded'` from `_inferTransportForPeer`'s upgraded-set branch (the
+  INCOMING data producer), and adds a `TransportMetrics._canonicalTransport` `'upgraded'→'direct'`
+  **census alias** so the aggregate transport-mix / diagnostics card stays identical (mirrors
+  `'reuse'→'direct'`). RT-W1..W5 + RT-S1 + RT-I1 green; all 5 mutations re-red; `1to1` gate full pass;
+  analyze 0-new. **Open issues recorded:**
+  **(O1)** FDC-13 ships the **incoming** upgraded render now (host-testable via a synthetic
+  `transport:upgraded` event) plus the inert OUTGOING widget render, but **outgoing**
+  upgraded-from-production-data needs the Go stream to emit an `"upgraded"` label → **gated on FDC-12**
+  (itself gated on FDC-S2 QUIC-identify re-validation); the actual upgrade firing is likewise FDC-12.
   **(O2)** there is **no feed `message_bubble` transport twin** — the feed Letters bubble renders no
-  transport glyph, so `letter_card` is the only renderer; **(O1)** FDC-13 ships the **incoming** upgraded
-  render now (host-testable via a synthetic `transport:upgraded` event), but **outgoing**
-  upgraded-from-production-data needs the Go stream to emit an `"upgraded"` label → **gated on FDC-12**.
+  transport glyph, so `letter_card` is the only renderer.
+  **(O3)** no backfill of historical persisted `'direct'` rows that were genuinely upgrades — only new
+  receives after the fix carry `'upgraded'` (acceptable).
+  **(O4)** no dedicated `'upgraded'` mix-census bucket — upgrades fold into the `'direct'` bucket via the
+  step-4a alias; the per-upgrade count stays visible via the separate `relayToDirectUpgrades` counter. A
+  distinct census row would ripple into the `kTransportBuckets`-keyed maps + card layout → deferred
+  enhancement. **Pairs with FDC-12** for real-wire firing + outgoing data.
 - **SCOPE NOTE — media byte-path unaffected.** FDC routes media correctly at the **envelope** layer
   (FDC-02 `_liveRelayEligible` gate: media never over the 2min/128KB live relay → direct-or-inbox), but
   the media **byte** transfer (LAN HTTP-PUT `local_media_sender.dart`, relay-CDN `media.go`, inbox)
@@ -472,9 +485,10 @@ A 7-question review of the design against live code surfaced these. Q2/Q3/Q5 wer
   the Go/transport plans (FDC-08..12) below the shared `callP2PMessageSend`. **No regression risk** —
   reactions are a separate use case and the shared `sendMessage`/`storeInInbox` are dependency-only (not
   edited by any FDC plan); if a future plan ever edits those, add a reaction round-trip guard. FDC-13
-  'upgraded' badge = **N/A** (reactions carry no transport field). Reaction send reliability is now **FDC-18 (authored)** — it mirrors only FDC-03's concurrent durable
-  inbox onto `sendReaction` (the reaction path has a SINGLE transport leg → FDC-01/02's race/budget are
-  N/A); lands after FDC-03, separate file, parallelizable.
+  'upgraded' badge = **N/A** (reactions carry no transport field). Reaction send reliability is now **FDC-18 (authored, reviewed)** — it mirrors only FDC-03's concurrent durable
+  inbox onto **both** `sendReaction` (add) **and** `removeReaction` (the structural twin; same thin-`sendMessage`
+  + serial-inbox bug), since each path has a SINGLE transport leg → FDC-01/02's race/budget are N/A; lands
+  after FDC-03, separate files, parallelizable.
 
 ---
 

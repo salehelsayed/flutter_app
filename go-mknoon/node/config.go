@@ -131,6 +131,21 @@ func RelayAddress() string {
 	return DefaultQUICRelay
 }
 
+// DefaultRelayAddresses returns the shipped default relay pool: the default
+// relay peer reachable over BOTH WSS and QUIC transports. Both addresses point
+// at the same relay peer, so the relay selector merges them into one relay with
+// two transport addresses — transport redundancy that removes the single-
+// transport SPOF without requiring a second relay host. Once ops provisions
+// relay #2, its distinct WSS+QUIC addresses are appended here (or injected via
+// NodeConfig.RelayAddresses) to extend the pool to multiple peers.
+//
+// WSS (DefaultRelayAddress) is listed FIRST so it remains the surviving address
+// when EnableMultiRelayRouting is off — limitRelayAddresses truncates to the
+// first address, order-preserving, with no sort.
+func DefaultRelayAddresses() []string {
+	return []string{DefaultRelayAddress, DefaultQUICRelay}
+}
+
 // NodeConfig holds the configuration for starting a Node.
 type NodeConfig struct {
 	PrivateKeyHex                     string        // Ed25519 private key as hex string

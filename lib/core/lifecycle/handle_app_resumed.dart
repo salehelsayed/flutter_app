@@ -73,6 +73,13 @@ Future<bool?> handleAppResumed({
   /// export run is in flight. Must run BEFORE the network gate check, because
   /// the gate denies everything while the stale pause persists.
   Future<bool> Function()? recoverInterruptedExportPause,
+
+  /// FDC-04 (DESIGN-3/SRC-1): resolves the single active conversation peer so
+  /// resume can eagerly warm ONLY it (PS-4 — never the roster). In production
+  /// wired to `ActiveConversationTracker.activePeerId`. Null / null-return /
+  /// a `group:`-prefixed key ⇒ no warm. Fired UNAWAITED in the parallel
+  /// re-prime block so it never adds latency to the resume future.
+  String? Function()? activeConversationPeerId,
 }) async {
   final resumeStart = DateTime.now();
   final readinessProofRecorder = p2pService is ReadinessProofRecorder
@@ -164,7 +171,17 @@ Future<bool?> handleAppResumed({
       );
     }
 
-    // 2. Immediate health check (re-dials relay, re-registers FCM)
+    // 2 + 3. Re-prime + inbox drain — run CONCURRENTLY (FDC-05 / proposal §6.4
+    // recommendation P1-2). On HEAD these were strictly serial: the relay/mDNS
+    // re-prime was awaited, then push, then an awaited inbox drain — so the
+    // first post-resume send sat behind a multi-second awaited network drain
+    // ("open app → send one message → close feels slow").
+    //
+    // Now: kick the bounded re-prime off, fire the inbox drain UNAWAITED, then
+    // await ONLY the re-prime. `bridge.checkHealth()` above stays first — it is
+    // a hard precondition both of these rely on. The Step-8 outbound recovery
+    // sweep below stays strictly ordered and now runs while the drain is still
+    // in flight (it is outbound-only and independent of incoming-drain results).
     final hcStart = DateTime.now();
     debugPrint('[RESUME] Step 2: performImmediateHealthCheck() starting...');
     debugPrint(
@@ -172,7 +189,55 @@ Future<bool?> handleAppResumed({
       'isStarted=${p2pService.currentState.isStarted}, '
       'circuitAddresses=${p2pService.currentState.circuitAddresses.length}',
     );
-    await p2pService.performImmediateHealthCheck();
+    // Re-dials relay, re-registers FCM, restarts mDNS advertising; coalesces
+    // concurrent recovery internally. Kicked off here but NOT yet awaited.
+    final reprime = p2pService.performImmediateHealthCheck();
+
+    // FDC-04 (DESIGN-3/SRC-1): eagerly warm the ONE active conversation peer
+    // (PS-4 — never the roster) so the first post-resume send hits the reuse
+    // fast path. Placed AFTER the health-check kickoff (node confirmed started —
+    // PS-3) and slotted into FDC-05's parallel block alongside the drain, fired
+    // UNAWAITED so it never adds latency to the resume future. Null / empty /
+    // a `group:` key ⇒ no warm (warmPeer is 1:1-only). warmPeer is itself
+    // total/never-throws + debounced, so no extra error handling is needed.
+    final activeWarmPeerId = activeConversationPeerId?.call();
+    if (activeWarmPeerId != null &&
+        activeWarmPeerId.isNotEmpty &&
+        !activeWarmPeerId.startsWith('group:')) {
+      unawaited(p2pService.warmPeer(activeWarmPeerId));
+    }
+
+    // 3. Drain offline inbox (messages queued while backgrounded) — fire-and-
+    // forget so the resume future no longer couples recovery latency onto the
+    // first send. Its own catchError isolates a drain failure from the resume:
+    // it emits a dedicated APP_LIFECYCLE_RESUME_DRAIN_ERROR (never the
+    // whole-resume APP_LIFECYCLE_RESUME_ERROR) and never aborts the Step-8
+    // sweep. The drain keeps its 141 defer-when-!isStarted guard and single-
+    // in-flight coalescing internally; streamed delivery + the conversation
+    // surface's own 'catching up…' affordance cover the now-background drain.
+    debugPrint('[RESUME] Step 3: drainOfflineInbox() starting (unawaited)...');
+    unawaited(
+      p2pService.drainOfflineInbox().catchError((Object e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'APP_LIFECYCLE_RESUME_DRAIN_ERROR',
+          details: {'error': e.toString()},
+        );
+      }),
+    );
+
+    // Observable discriminator that the parallel shape ran (vs HEAD's serial
+    // re-prime → push → awaited drain). Both shapes still end with
+    // APP_LIFECYCLE_RESUME_COMPLETE.
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'APP_LIFECYCLE_RESUME_REPRIME_PARALLEL',
+      details: {},
+    );
+
+    // Await only the bounded re-prime (each step under the foreground 3s budgets
+    // in go-mknoon/node/config.go); the drain continues in the background.
+    await reprime;
     final hcMs = DateTime.now().difference(hcStart).inMilliseconds;
     debugPrint(
       '[RESUME] Step 2: performImmediateHealthCheck() done (took ${hcMs}ms)',
@@ -199,18 +264,6 @@ Future<bool?> handleAppResumed({
         );
       }
     }
-
-    // 3. Drain offline inbox (messages queued while backgrounded)
-    final drainStart = DateTime.now();
-    debugPrint('[RESUME] Step 3: drainOfflineInbox() starting...');
-    await p2pService.drainOfflineInbox();
-    final drainMs = DateTime.now().difference(drainStart).inMilliseconds;
-    debugPrint('[RESUME] Step 3: drainOfflineInbox() done (took ${drainMs}ms)');
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'FDC_RESUME_STEP_TIMING',
-      details: {'step': 'drain_offline_inbox', 'ms': drainMs},
-    );
 
     final resumeGroupRecoveryEnabled = _resumeGroupRecoveryEnabled(p2pService);
     // Phase 2: captured out of the recovery gate so the background drain

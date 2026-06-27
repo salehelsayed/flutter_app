@@ -7,7 +7,11 @@
 // - Cold start after reboot uses inbox-first recovery
 // - Foreground send uses short budget while background recovery is separate
 
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/retry_unacked_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/verify_inbox_custody_use_case.dart';
@@ -18,6 +22,35 @@ import '../../../shared/fakes/test_user.dart' as shared_fakes;
 
 // Reuse the integration test infrastructure from two_user_message_exchange_test.dart
 import 'two_user_message_exchange_test.dart';
+
+/// Captures the [FLOW] events emitted (via debugPrint) during [action]. Mirrors
+/// the unit-test helper so the integration tier can assert the concurrent-deposit
+/// discriminator (CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN).
+Future<List<Map<String, dynamic>>> _captureFlowEvents(
+  Future<void> Function() action,
+) async {
+  final printed = <String>[];
+  final previousLogging = flowEventLoggingEnabled;
+  final originalDebugPrint = debugPrint;
+  flowEventLoggingEnabled = true;
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message != null) printed.add(message);
+  };
+  try {
+    await action();
+  } finally {
+    debugPrint = originalDebugPrint;
+    flowEventLoggingEnabled = previousLogging;
+  }
+  return printed
+      .where((line) => line.startsWith('[FLOW] '))
+      .map(
+        (line) =>
+            jsonDecode(line.substring('[FLOW] '.length))
+                as Map<String, dynamic>,
+      )
+      .toList();
+}
 
 void main() {
   late FakeP2PNetwork network;
@@ -52,6 +85,50 @@ void main() {
   });
 
   group('Offline inbox roundtrip', () {
+    test(
+      'FDC-03-06 first-ever offline send deposits a concurrent inbox copy that '
+      'drains on resume',
+      () async {
+        // Fresh alice→bob with NO prior history. On HEAD this first-ever send is
+        // "high confidence" (no prior failed attempt), so the inbox copy fires
+        // SERIALLY after the race and CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN never
+        // appears. FDC-03 fires it CONCURRENTLY for the unknown-presence peer.
+        bob.setOnline(false);
+
+        late SendChatMessageResult result;
+        ConversationMessage? sent;
+        final events = await _captureFlowEvents(() async {
+          final (r, m) = await alice.sendMessage(
+            bob.peerId,
+            'First ever, while you were away',
+          );
+          result = r;
+          sent = m;
+        });
+
+        expect(result, SendChatMessageResult.success);
+        expect(sent, isNotNull);
+        // Durable custody, not delivery (doc 115).
+        expect(sent!.status, 'inboxed');
+        expect(sent!.transport, 'inbox');
+        // The deposit was CONCURRENT (the discriminator): the BEGIN flow-event
+        // fires even though no prior failed attempt exists. Mutation: re-gate the
+        // concurrent arm behind the recency lookup → BEGIN absent → RED.
+        final names = events.map((e) => e['event']).toList();
+        expect(names, contains('CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN'));
+
+        // Round-trips correctly: Bob drains and ends with exactly one copy
+        // (receiver messageId dedup → no duplicate).
+        bob.setOnline(true);
+        await bob.drainOfflineInbox();
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final bobConvo = await bob.loadConversation(alice.peerId);
+        expect(bobConvo, hasLength(1));
+        expect(bobConvo.single.text, 'First ever, while you were away');
+      },
+    );
+
     test(
       'startup inbox drain completes before relay online state is green',
       () async {
@@ -341,7 +418,11 @@ void main() {
         bob.setOnline(true);
 
         final drained = await bob.drainOfflineInbox();
-        expect(drained, 1);
+        // FDC-03: the original send also left a concurrent durable copy in the
+        // inbox (the fake models every send as unknown-presence). It dedups as a
+        // no-op on drain — the edit still applies (asserted below), so this is a
+        // benign +1 to the drained count.
+        expect(drained, 2);
         await Future.delayed(const Duration(milliseconds: 100));
 
         final bobConvo = await bob.loadConversation(alice.peerId);

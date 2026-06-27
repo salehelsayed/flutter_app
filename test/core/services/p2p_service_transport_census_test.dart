@@ -117,6 +117,9 @@ class _CensusFakeP2PService implements P2PService, ReadinessProofRecorder {
   }) async => true;
 
   @override
+  Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {}
+
+  @override
   Future<bool> storeInInbox(
     String toPeerId,
     String message, {

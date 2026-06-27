@@ -1656,6 +1656,7 @@ class _ControlledP2PService extends FakeP2PService {
     String peerId, {
     List<String>? addresses,
     int? timeoutMs,
+    bool preferQuic = false,
   }) async {
     _dialedPeers.add(peerId);
     return true;

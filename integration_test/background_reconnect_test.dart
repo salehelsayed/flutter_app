@@ -50,6 +50,9 @@ String _badgeLabel(NodeState state) {
     BadgeReadinessState.connecting => 'Connecting',
     BadgeReadinessState.online => 'Online',
     BadgeReadinessState.onlineDotted => 'Online.',
+    // FDC-14: exhaustiveness arm for the new tier (mirrors the indicator's
+    // _labelForBadgeState). Inert until FDC-14b wires the directReady producer.
+    BadgeReadinessState.onlineDirect => 'Online ✦',
   };
 }
 

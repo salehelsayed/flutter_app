@@ -344,6 +344,9 @@ class _FakeP2PService implements P2PService {
   bool isLocalPeer(String peerId) => localPeer;
 
   @override
+  Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {}
+
+  @override
   String? lastKnownGoodTransport(String peerId) => null;
 
   @override

@@ -456,6 +456,8 @@
   "message_received_via_direct": "وَردت عبر اتصال مباشر",
   "message_received_via_wifi": "وَردت عبر واي فاي",
   "message_received_via_inbox": "وَردت عبر صندوق الوارد",
+  "message_sent_via_upgraded": "تمت الترقية إلى اتصال مباشر",
+  "message_received_via_upgraded": "وَردت عبر ترقية إلى اتصال مباشر",
   "share_send_failed": "تعذرت المشاركة مع الأهداف المحددة.",
   "group_info_title": "معلومات المجموعة",
   "group_edit_details": "تعديل التفاصيل",

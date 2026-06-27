@@ -76,6 +76,12 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/presentation/screens/conversation_display_items_memo_test.dart"
   "test/features/conversation/presentation/screens/conversation_wired_change_coalesce_test.dart"
   "test/features/conversation/domain/conversation_window_cap_test.dart"
+  # 170 send button frozen + failure SnackBar overlap (offline-send UX).
+  "test/features/conversation/presentation/screens/conversation_wired_offline_send_ux_test.dart"
+  # FDC-04 LAN-aware eager warmPeer: resume warm-peer lock + notif-tap warm
+  # forward-wiring lock.
+  "test/core/lifecycle/handle_app_resumed_warm_peer_test.dart"
+  "test/features/push/application/prepare_notification_route_target_use_case_test.dart"
 )
 
 readonly FEED_TESTS=(
@@ -173,6 +179,9 @@ readonly TRANSPORT_TESTS=(
   "integration_test/wifi_relay_fallback_smoke_test.dart"
   "integration_test/transport_e2e_test.dart"
   "integration_test/media_stable_id_smoke_test.dart"
+  # FDC-04 LAN-aware warm-peer overlap smoke (host-green proves label wiring;
+  # the real LAN win is device-proof).
+  "integration_test/warm_peer_lan_aware_smoke_test.dart"
 )
 
 readonly RUNTIME_TELEMETRY_TESTS=(

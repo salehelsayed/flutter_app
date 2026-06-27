@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:clock/clock.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -238,6 +239,329 @@ void main() {
 
   tearDown(() {
     service.dispose();
+  });
+
+  // ───────────────────────── FDC-04: warmPeer ─────────────────────────
+  group('FDC-04 warmPeer', () {
+    // (Re)create `service` as a STARTED P2PServiceImpl backed by a fake LAN
+    // stack + optional injected network-change signal / active-peer source.
+    Future<FakeLocalP2PService> startWarmService({
+      Stream<void>? networkChangeSignal,
+      String? Function()? activePeerId,
+    }) async {
+      service.dispose();
+      final localP2P = FakeLocalP2PService();
+      service = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: inboxStagingRepository,
+        localP2PService: localP2P,
+        networkChangeSignal: networkChangeSignal,
+        activePeerId: activePeerId,
+      );
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'self-peer',
+          'isStarted': true,
+          'listenAddresses': <String>[],
+          'circuitAddresses': <String>[],
+          'connections': <dynamic>[],
+        }),
+      );
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+      bridge.calledCommands.clear();
+      bridge.payloadsByCommand.clear();
+      return localP2P;
+    }
+
+    int dials() => bridge.calledCommands.where((c) => c == 'peer:dial').length;
+    Future<void> settle() =>
+        Future<void>.delayed(const Duration(milliseconds: 25));
+
+    // TC-04-01: AWAIT the LAN seed first, THEN re-read isLocalPeer to gate the
+    // speculative dial (DESIGN-1). (a) non-LAN peer → dial fires; (b) the seed
+    // makes the peer LAN-visible → dial SKIPPED.
+    test('TC-04-01: awaits LAN seed first, then gates the dial', () async {
+      // (a) peer stays non-LAN → dial fires after the awaited seed.
+      final localA = await startWarmService();
+      final eventsA = await _captureFlowEvents(() async {
+        await service.warmPeer('peer-remote');
+        await _waitForCondition(
+          () => bridge.calledCommands.contains('peer:dial'),
+          reason: 'expected a speculative dial for a non-LAN peer',
+        );
+      });
+      expect(localA.discoverLocalPeerCallCount, 1);
+      expect(dials(), 1);
+      expect(
+        eventsA.map((e) => e['event']),
+        containsAllInOrder([
+          'P2P_SERVICE_WARM_PEER_BEGIN',
+          'P2P_SERVICE_WARM_PEER_LAN_SEED',
+          'P2P_SERVICE_WARM_PEER_DIAL',
+        ]),
+      );
+
+      // (b) the bounded seed flips the peer LAN-visible → dial SKIPPED. Models
+      // the cold-LAN-map warm-open: isLocalPeer is false at warm-start and only
+      // true AFTER the awaited seed.
+      final localB = await startWarmService();
+      localB.resolvesTo = LocalPeer(
+        peerId: 'peer-lan',
+        host: '192.168.1.50',
+        port: 9999,
+        discoveredAt: DateTime.now().toUtc(),
+      );
+      final eventsB = await _captureFlowEvents(() async {
+        await service.warmPeer('peer-lan');
+        await settle();
+      });
+      expect(localB.discoverLocalPeerCallCount, 1);
+      expect(dials(), 0);
+      expect(
+        eventsB.any(
+          (e) =>
+              e['event'] == 'P2P_SERVICE_WARM_PEER_DIAL_SKIPPED' &&
+              (e['details'] as Map?)?['reason'] == 'is_local',
+        ),
+        isTrue,
+      );
+    });
+
+    // TC-04-02: skip the dial when isLocalPeer is already true (LAN-only).
+    test('TC-04-02: skips the dial when the peer is already LAN-visible',
+        () async {
+      final local = await startWarmService();
+      local.addLocalPeer('peer-lan');
+      final events = await _captureFlowEvents(() async {
+        await service.warmPeer('peer-lan');
+        await settle();
+      });
+      expect(local.discoverLocalPeerCallCount, 1); // the seed still runs
+      expect(dials(), 0);
+      expect(
+        events.any((e) => e['event'] == 'P2P_SERVICE_WARM_PEER_DIAL_SKIPPED'),
+        isTrue,
+      );
+    });
+
+    // TC-04-03: debounce — SEQUENTIAL (post-dial cooldown) and CONCURRENT
+    // (same-tick in-flight sentinel) repeats both collapse to ONE dial.
+    test('TC-04-03: debounce collapses sequential AND concurrent repeats',
+        () async {
+      // (a) sequential: dial fails, second call within cooldown is debounced.
+      await withClock(Clock.fixed(DateTime.utc(2026, 6, 27, 12)), () async {
+        await startWarmService(); // no peer:dial handler → dial fails
+        await service.warmPeer('peer-a');
+        await _waitForCondition(() => dials() == 1, reason: 'first dial');
+        await settle(); // outcome handler sets the cooldown
+        final events = await _captureFlowEvents(() async {
+          await service.warmPeer('peer-a'); // within the (fixed-clock) cooldown
+          await settle();
+        });
+        expect(dials(), 1); // still one
+        expect(
+          events.any((e) => e['event'] == 'P2P_SERVICE_WARM_PEER_DEBOUNCED'),
+          isTrue,
+        );
+      });
+
+      // (b) concurrent burst: the dial hangs; two same-tick warms → ONE dial.
+      await withClock(Clock.fixed(DateTime.utc(2026, 6, 27, 13)), () async {
+        await startWarmService();
+        final hang = Completer<String>();
+        bridge.whenCommand('peer:dial', (_) => hang.future);
+        // SAME synchronous tick — models conv-open + notif-tap + resume.
+        unawaited(service.warmPeer('peer-b'));
+        unawaited(service.warmPeer('peer-b'));
+        await _waitForCondition(() => dials() >= 1, reason: 'first dial');
+        await settle();
+        expect(dials(), 1); // the in-flight sentinel collapsed the burst
+        hang.complete(jsonEncode({'ok': false}));
+        await settle();
+      });
+    });
+
+    // TC-04-04: per-peer cooldown ESCALATES on repeated failing dials
+    // (floor 5s → 2x → …), layered over libp2p's Go-owned swarm backoff.
+    test('TC-04-04: per-peer cooldown escalates on repeated failures',
+        () async {
+      var now = DateTime.utc(2026, 6, 27, 14);
+      await withClock(Clock(() => now), () async {
+        await startWarmService(); // dial keeps failing
+        await service.warmPeer('peer-c');
+        await _waitForCondition(() => dials() == 1, reason: '1st dial');
+        await settle(); // cooldown = now + 5s (floor)
+
+        now = now.add(const Duration(seconds: 6)); // past the 5s floor
+        await service.warmPeer('peer-c');
+        await _waitForCondition(() => dials() == 2, reason: '2nd dial');
+        await settle(); // cooldown = now + 10s (2x escalation)
+
+        now = now.add(const Duration(seconds: 6)); // < the escalated 10s
+        final events = await _captureFlowEvents(() async {
+          await service.warmPeer('peer-c');
+          await settle();
+        });
+        expect(dials(), 2); // still debounced → escalation grew past the floor
+        expect(
+          events.any((e) => e['event'] == 'P2P_SERVICE_WARM_PEER_DEBOUNCED'),
+          isTrue,
+        );
+      });
+    });
+
+    // TC-04-05: PS-3 — no-op when the node is not started (no dial, no seed).
+    test('TC-04-05: no-op when the node is not started (PS-3)', () async {
+      service.dispose();
+      final localP2P = FakeLocalP2PService();
+      service = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: inboxStagingRepository,
+        localP2PService: localP2P,
+      ); // NOT started
+      bridge.calledCommands.clear();
+      final events = await _captureFlowEvents(() async {
+        await service.warmPeer('peer-x');
+        await settle();
+      });
+      expect(localP2P.discoverLocalPeerCallCount, 0);
+      expect(bridge.calledCommands.contains('peer:dial'), isFalse);
+      expect(
+        events.any(
+          (e) =>
+              e['event'] == 'P2P_SERVICE_WARM_PEER_SKIPPED' &&
+              (e['details'] as Map?)?['reason'] == 'not_started',
+        ),
+        isTrue,
+      );
+    });
+
+    // TC-04-06: PS-1 — warmPeer never sends a message or deposits to the inbox.
+    test('TC-04-06: never sends a message or inboxes (PS-1)', () async {
+      final local = await startWarmService();
+      await service.warmPeer('peer-remote'); // non-local → fires a dial only
+      await _waitForCondition(() => dials() == 1, reason: 'speculative dial');
+      await settle();
+      expect(local.sentMessages, isEmpty);
+      // The ONLY bridge command warmPeer may issue is the speculative dial.
+      expect(bridge.calledCommands.where((c) => c != 'peer:dial'), isEmpty);
+    });
+
+    // TC-04-07: network-change re-warms ONLY the active peer, resets its
+    // cooldown (preserving escalation), and drops its learned `local`.
+    test('TC-04-07: network-change re-warms active-only + resets + drops local',
+        () async {
+      var now = DateTime.utc(2026, 6, 27, 15);
+      await withClock(Clock(() => now), () async {
+        final signal = StreamController<void>();
+        final local = await startWarmService(
+          networkChangeSignal: signal.stream,
+          activePeerId: () => 'peer-A',
+        );
+        // Warm A while NON-local → dial fails → A gets a live cooldown.
+        await service.warmPeer('peer-A');
+        await _waitForCondition(() => dials() == 1, reason: 'A dial');
+        await settle();
+        // Warm B too (also in _warmAttempts), but A stays the active peer.
+        await service.warmPeer('peer-B');
+        await _waitForCondition(() => dials() == 2, reason: 'B dial');
+        await settle();
+        // A becomes LAN-visible + learns 'local' (so the entry survives reads).
+        local.addLocalPeer('peer-A');
+        service.recordSuccessfulTransport('peer-A', 'local');
+        expect(service.lastKnownGoodTransport('peer-A'), 'local');
+        final seedBefore = local.discoverLocalPeerCallCount;
+
+        now = now.add(const Duration(seconds: 1)); // well within A's 5s cooldown
+        final events = await _captureFlowEvents(() async {
+          signal.add(null);
+          await _waitForCondition(
+            () => local.discoverLocalPeerCallCount > seedBefore,
+            reason: 'A re-warmed despite the live cooldown (reset worked)',
+          );
+          await settle();
+        });
+        // A re-warmed (seed fired again) despite the just-reset cooldown.
+        expect(local.discoverLocalPeerCallCount, greaterThan(seedBefore));
+        // The learned 'local' was dropped by the network change.
+        expect(service.lastKnownGoodTransport('peer-A'), isNull);
+        // B (warmed but no longer active) was NOT re-warmed → no new dial.
+        // (A's re-warm skips the dial because A is now LAN-visible.)
+        expect(dials(), 2);
+        expect(
+          events.any(
+            (e) => e['event'] == 'P2P_SERVICE_WARM_PEER_NETWORK_CHANGE_REWARM',
+          ),
+          isTrue,
+        );
+        await signal.close();
+      });
+    });
+
+    // TC-04-08: the network-change re-warm threads the (Go-inert) preferQuic
+    // intent flag down to the peer:dial payload.
+    test('TC-04-08: network-change re-warm threads preferQuic to the dial',
+        () async {
+      var now = DateTime.utc(2026, 6, 27, 15, 30);
+      await withClock(Clock(() => now), () async {
+        final signal = StreamController<void>();
+        await startWarmService(
+          networkChangeSignal: signal.stream,
+          activePeerId: () => 'peer-Q', // non-local → the re-warm fires a dial
+        );
+        signal.add(null);
+        await _waitForCondition(() => dials() == 1, reason: 're-warm dial');
+        await settle();
+        final dialPayload = bridge.payloadsFor('peer:dial').last;
+        expect(dialPayload?['preferQuic'], isTrue);
+        await signal.close();
+      });
+    });
+
+    // TC-04-16: rapid network-change FLAPPING coalesces to ONE re-warm
+    // (self-debounce), and the per-peer escalation count is preserved.
+    test('TC-04-16: flap-burst coalesced to one re-warm; escalation preserved',
+        () async {
+      var now = DateTime.utc(2026, 6, 27, 16);
+      await withClock(Clock(() => now), () async {
+        final signal = StreamController<void>();
+        await startWarmService(
+          networkChangeSignal: signal.stream,
+          activePeerId: () => 'peer-A', // non-local → dial keeps failing
+        );
+        // Burst of 3 events within the floor window (clock NOT advanced).
+        signal.add(null);
+        await _waitForCondition(() => dials() == 1, reason: '1st re-warm dial');
+        await settle();
+        signal.add(null);
+        await settle();
+        signal.add(null);
+        await settle();
+        expect(dials(), 1); // self-debounce coalesced the flap to ONE dial
+
+        // Escalation preserved: the 1st failure set cooldown=5s (failureCount
+        // 1). Advance past the floor, flap again → 2nd failure → cooldown 10s
+        // (failureCount 2). A NORMAL warm 6s later is STILL debounced (6 < 10),
+        // which only holds if failureCount was NOT reset per network event.
+        now = now.add(const Duration(seconds: 6));
+        signal.add(null);
+        await _waitForCondition(() => dials() == 2, reason: '2nd re-warm dial');
+        await settle();
+        now = now.add(const Duration(seconds: 6)); // <10s escalated cooldown
+        final events = await _captureFlowEvents(() async {
+          await service.warmPeer('peer-A'); // normal warm, NOT via the signal
+          await settle();
+        });
+        expect(dials(), 2); // still debounced → escalation survived the flaps
+        expect(
+          events.any((e) => e['event'] == 'P2P_SERVICE_WARM_PEER_DEBOUNCED'),
+          isTrue,
+        );
+        await signal.close();
+      });
+    });
   });
 
   group('account migration runtime gate', () {

@@ -560,6 +560,12 @@ class _ConversationWiredState extends State<ConversationWired>
     if (widget.notificationTappedAt != null) {
       unawaited(_drainAndReloadOnce('notif_tap', scrollToLiveEdge: true));
     }
+    // FDC-04: eagerly warm the open peer so the first send hits the reuse fast
+    // path instead of paying a cold discover->dial->send. UNCONDITIONAL — every
+    // open warms (not just notif-tap opens). Speculative + fire-and-forget:
+    // warmPeer is a no-op when the node isn't started (PS-3), never sends or
+    // inboxes (PS-1), is debounced per peer, and is total/never-throws.
+    unawaited(widget.p2pService.warmPeer(widget.contact.peerId));
   }
 
   bool _notificationTimingEmitted = false;
@@ -2025,6 +2031,7 @@ class _ConversationWiredState extends State<ConversationWired>
               SnackBar(
                 content: Text(AppLocalizations.of(context)!.edit_save_failed),
                 behavior: SnackBarBehavior.floating,
+                margin: _composerClearingSnackBarMargin(),
               ),
             );
         }
@@ -2167,6 +2174,25 @@ class _ConversationWiredState extends State<ConversationWired>
           event: 'CONV_FL_OPTIMISTIC_SAVE_ERROR',
           details: {'error': e.toString()},
         );
+      }
+
+      // 170-S2: the message is now durably optimistic (inserted + locally
+      // saved), so release the composer HERE rather than after the network
+      // round-trip. Keeping `_isSending` true through the multi-second
+      // direct->relay->inbox cascade below is what froze the Send button
+      // (compose_area.dart gates the Send onTap on `!isSending`) and blocked a
+      // second message. The remaining upload + `sendChatMessageFn` continue to
+      // run on this already fire-and-forget `_onSend` future; the bubble still
+      // drives sending->sent/failed below and the outer finally still resets
+      // the flag defensively. The top-of-method re-entrancy guard stays
+      // effective for a same-frame double tap because this release only lands
+      // once the optimistic save completes (one pump later) — and the
+      // compose_area controller-clear already swallows the duplicate tap. See
+      // conversation_wired_offline_send_ux_test.dart (TC-01 / TC-02).
+      if (mounted) {
+        setState(() => _isSending = false);
+      } else {
+        _isSending = false;
       }
 
       if (mediaToUpload.isNotEmpty &&
@@ -2479,6 +2505,7 @@ class _ConversationWiredState extends State<ConversationWired>
               content: Text(snackText),
               backgroundColor: Colors.red[700],
               behavior: SnackBarBehavior.floating,
+              margin: _composerClearingSnackBarMargin(),
             ),
           );
         }
@@ -2717,6 +2744,7 @@ class _ConversationWiredState extends State<ConversationWired>
           content: Text(snackText),
           backgroundColor: Colors.red[700],
           behavior: SnackBarBehavior.floating,
+          margin: _composerClearingSnackBarMargin(),
         ),
       );
     }
@@ -3874,6 +3902,27 @@ class _ConversationWiredState extends State<ConversationWired>
     }
   }
 
+  /// 170-S1: logical-px clearance that lifts a floating failure SnackBar above
+  /// the bottom composer. The host Scaffold has no bottomNavigationBar/FAB, so
+  /// Flutter's `_ScaffoldLayout` never lifts a floating bar above the composer
+  /// (which is plain body content) — without this it lands on the Send button.
+  static const double _kComposerSnackBarBottomClearance = 96.0;
+
+  /// 170-S1: bottom margin that keeps a floating failure SnackBar off the
+  /// composer / Send button. Sized from the safe-area inset plus the clearance.
+  /// Guarded for the background send-completion path where the screen may
+  /// already be gone (no MediaQuery lookup off a defunct context).
+  EdgeInsetsGeometry _composerClearingSnackBarMargin() {
+    final bottomInset = mounted
+        ? (MediaQuery.maybeOf(context)?.viewPadding.bottom ?? 0.0)
+        : 0.0;
+    return EdgeInsets.only(
+      left: 8,
+      right: 8,
+      bottom: _kComposerSnackBarBottomClearance + bottomInset,
+    );
+  }
+
   void _showFloatingSnackBar(String text, {Color? backgroundColor}) {
     if (!mounted) return;
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(
@@ -3881,6 +3930,7 @@ class _ConversationWiredState extends State<ConversationWired>
         content: Text(text),
         backgroundColor: backgroundColor,
         behavior: SnackBarBehavior.floating,
+        margin: _composerClearingSnackBarMargin(),
       ),
     );
   }

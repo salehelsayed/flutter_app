@@ -126,6 +126,9 @@ class _FakeP2PService implements P2PService {
       false;
 
   @override
+  Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {}
+
+  @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
   @override
   Future<bool> sendLocalMessage(

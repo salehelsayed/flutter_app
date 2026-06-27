@@ -105,6 +105,11 @@ func main() {
 	profile := NewProfileStore(storageCfg.ProfileDir)
 	biz = newBusinessMetrics()
 
+	// Publish backend durability so ops can scrape/alert on a silently-memory
+	// relay (the live env is gitignored; a regressed RELAY_BACKEND is otherwise
+	// undetectable from outside the box).
+	setBackendDurabilityGauge(backendCfg)
+
 	// Register protocol handlers
 	h.SetStreamHandler(RendezvousProtocol, func(s network.Stream) {
 		HandleRendezvousStream(s, store)
@@ -159,7 +164,7 @@ func main() {
 
 	// Start
 	log.Printf("Starting relay-server v%s", version)
-	log.Printf("Control-plane backend: %s", backendCfg.Kind)
+	log.Printf("Control-plane: %s", backendStartupSummary(backendCfg))
 	keySource := "default"
 	if serverCfg.IsCustomKey() {
 		keySource = "custom"

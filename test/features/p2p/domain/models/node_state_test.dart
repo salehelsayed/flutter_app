@@ -204,4 +204,227 @@ void main() {
       });
     });
   });
+
+  // FDC-14 — self "online" dot also expresses "directly reachable".
+  // A NEW BadgeReadinessState.onlineDirect tier above onlineDotted, computed
+  // from a NEW NodeState.directReady input. directReady defaults false so the
+  // live bridge (which does not emit the field) keeps its current badge.
+  group('FDC-14 onlineDirect tier', () {
+    // T1 — directReady promotes the tier to onlineDirect.
+    test(
+      'badgeReadinessState is onlineDirect when usabilityReady and directReady',
+      () {
+        const state = NodeState(
+          isStarted: true,
+          sendCapabilityReady: true,
+          inboxCapabilityReady: true,
+          relayState: 'online',
+          directReady: true,
+        );
+
+        expect(state.badgeReadinessState, BadgeReadinessState.onlineDirect);
+      },
+    );
+
+    // T2 — onlineDirect outranks onlineDotted AND does not require relayReady.
+    test(
+      'onlineDirect ranks above onlineDotted and holds without relay reservation',
+      () {
+        // (a) both relay-ready and direct-ready → onlineDirect (direct wins).
+        const both = NodeState(
+          isStarted: true,
+          sendCapabilityReady: true,
+          inboxCapabilityReady: true,
+          relayState: 'online',
+          directReady: true,
+        );
+        expect(both.badgeReadinessState, BadgeReadinessState.onlineDirect);
+
+        // (b) relay NOT ready but direct-ready → still onlineDirect. The direct
+        // path alone is enough; it is decoupled from the relay reservation.
+        const directOnly = NodeState(
+          isStarted: true,
+          sendCapabilityReady: true,
+          inboxCapabilityReady: true,
+          relayState: 'degraded',
+          circuitAddresses: [],
+          directReady: true,
+        );
+        expect(directOnly.relayReady, isFalse);
+        expect(
+          directOnly.badgeReadinessState,
+          BadgeReadinessState.onlineDirect,
+        );
+      },
+    );
+
+    // T3 — directReady defaults false and does not promote (PS-3 / PS-6).
+    test('directReady defaults false so existing states keep their badge', () {
+      const relayOnline = NodeState(
+        isStarted: true,
+        sendCapabilityReady: true,
+        inboxCapabilityReady: true,
+        relayState: 'online',
+      );
+      expect(relayOnline.directReady, isFalse);
+      expect(relayOnline.badgeReadinessState, BadgeReadinessState.onlineDotted);
+
+      const relayDegraded = NodeState(
+        isStarted: true,
+        sendCapabilityReady: true,
+        inboxCapabilityReady: true,
+        relayState: 'degraded',
+      );
+      expect(relayDegraded.badgeReadinessState, BadgeReadinessState.online);
+
+      // A JSON map without the directReady key parses to false.
+      final restored = NodeState.fromJson(<String, dynamic>{
+        'isStarted': true,
+        'sendCapabilityReady': true,
+        'inboxCapabilityReady': true,
+        'relayState': 'online',
+      });
+      expect(restored.directReady, isFalse);
+      expect(restored.badgeReadinessState, BadgeReadinessState.onlineDotted);
+    });
+
+    // T4 — directReady round-trips through json/copyWith/toString.
+    test('directReady survives fromJson/toJson and copyWith', () {
+      const original = NodeState(
+        isStarted: true,
+        sendCapabilityReady: true,
+        inboxCapabilityReady: true,
+        relayState: 'online',
+        directReady: true,
+      );
+
+      final roundTripped = NodeState.fromJson(original.toJson());
+      expect(roundTripped.directReady, isTrue);
+
+      // copyWith overrides the field.
+      expect(original.copyWith(directReady: false).directReady, isFalse);
+      // copyWith() with no arg preserves it.
+      expect(original.copyWith().directReady, isTrue);
+
+      // toString surfaces a directReady marker only when true (mirrors the
+      // relayState conditional in node_state.dart).
+      expect(original.toString(), contains('directReady: true'));
+      const notDirect = NodeState(isStarted: true);
+      expect(notDirect.toString(), isNot(contains('directReady')));
+    });
+
+    // T5 (ANTI-FLAP) — a ready sequence never dips to connecting unless
+    // capability is truly lost.
+    test(
+      'ready badge does not flap to connecting across a resume-style sequence',
+      () {
+        // A resume/cold-start emission order where relay/direct inputs wobble —
+        // INCLUDING a plain-online beat where BOTH relay and direct are absent —
+        // while send+inbox capability stays TRUE throughout.
+        const stableCapabilitySequence = <NodeState>[
+          NodeState(
+            isStarted: true,
+            sendCapabilityReady: true,
+            inboxCapabilityReady: true,
+            relayState: 'online',
+          ), // onlineDotted
+          NodeState(
+            isStarted: true,
+            sendCapabilityReady: true,
+            inboxCapabilityReady: true,
+            relayState: 'degraded',
+            circuitAddresses: [],
+            directReady: false,
+          ), // online — the load-bearing beat (relay & direct both absent)
+          NodeState(
+            isStarted: true,
+            sendCapabilityReady: true,
+            inboxCapabilityReady: true,
+            relayState: 'online',
+            directReady: true,
+          ), // onlineDirect
+          NodeState(
+            isStarted: true,
+            sendCapabilityReady: true,
+            inboxCapabilityReady: true,
+            relayState: 'online',
+          ), // onlineDotted
+          NodeState(
+            isStarted: true,
+            sendCapabilityReady: true,
+            inboxCapabilityReady: true,
+            relayState: 'degraded',
+            directReady: true,
+          ), // onlineDirect (relay not ready, direct alone)
+        ];
+
+        for (final state in stableCapabilitySequence) {
+          expect(
+            state.badgeReadinessState,
+            isNot(BadgeReadinessState.connecting),
+            reason: 'capability-stable beat must not flap to connecting',
+          );
+        }
+
+        // A second sequence where ONE beat genuinely loses send capability
+        // (AND has directReady:true) must be — and only it — connecting. This
+        // proves the test discriminates real loss from cosmetic wobble AND that
+        // directReady never bypasses the usabilityReady gate (INV-1 isolation).
+        const capabilityLostSequence = <NodeState>[
+          NodeState(
+            isStarted: true,
+            sendCapabilityReady: true,
+            inboxCapabilityReady: true,
+            relayState: 'online',
+          ), // onlineDotted
+          NodeState(
+            isStarted: true,
+            sendCapabilityReady: false,
+            inboxCapabilityReady: true,
+            relayState: 'online',
+            directReady: true,
+          ), // connecting — send lost, directReady must NOT rescue it
+          NodeState(
+            isStarted: true,
+            sendCapabilityReady: true,
+            inboxCapabilityReady: true,
+            relayState: 'online',
+            directReady: true,
+          ), // onlineDirect
+        ];
+
+        final connectingBeats = capabilityLostSequence
+            .where(
+              (s) => s.badgeReadinessState == BadgeReadinessState.connecting,
+            )
+            .toList();
+        expect(connectingBeats, hasLength(1));
+        expect(connectingBeats.single.directReady, isTrue);
+      },
+    );
+
+    // T10 (SCOPE GUARD) — peer-presence-style inputs do NOT promote the dot.
+    test('peer connections and presence do not set onlineDirect', () {
+      const state = NodeState(
+        isStarted: true,
+        sendCapabilityReady: true,
+        inboxCapabilityReady: true,
+        relayState: 'online',
+        connections: [
+          ConnectionState(
+            peerId: 'peer-conn-1',
+            multiaddrs: ['/ip4/192.168.1.1/tcp/4001'],
+            direction: 'outbound',
+            status: 'connected',
+            connectedAt: '2026-01-15T12:00:00.000Z',
+          ),
+        ],
+        directReady: false,
+      );
+
+      // Having peer connections / a relay socket must not imply direct
+      // self-reachability — peer-presence is a different axis (FDC-08/09).
+      expect(state.badgeReadinessState, BadgeReadinessState.onlineDotted);
+    });
+  });
 }

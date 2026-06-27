@@ -60,9 +60,9 @@ void main() {
       'low-confidence send to offline peer takes inbox custody and surfaces '
       'exactly once on drain',
       () async {
-        // Prior attempt: peer offline → message terminally lands in the inbox.
-        // This seeds the "recently offline" signal that makes the NEXT send
-        // low-confidence.
+        // First send to an offline peer → inbox custody. (FDC-03: the prior
+        // attempt no longer matters — both sends are unknown-presence regardless
+        // of history; this just sets up the two-message round-trip.)
         bob.setOnline(false);
         final (firstResult, firstMsg) = await alice.sendMessage(
           bob.peerId,
@@ -70,13 +70,13 @@ void main() {
         );
         expect(firstResult, SendChatMessageResult.success);
         expect(firstMsg!.transport, 'inbox');
-        // Sequential tail stored once for the first (high-confidence) send.
+        // The first send (unknown-presence, offline) fired the concurrent copy,
+        // which took custody → one store.
         expect(network.storeInInboxCallCount, 1);
 
-        // Second send while still offline: now LOW confidence (prior outgoing
-        // message transport == 'inbox' within 30s, peer not connected/local).
-        // The concurrent inbox copy is fired in parallel; the live race fails
-        // (peer offline) and the durable copy takes custody.
+        // Second send while still offline (also unknown-presence). The concurrent
+        // inbox copy is fired in parallel; the live race fails (peer offline) and
+        // the durable copy takes custody.
         final (secondResult, secondMsg) = await alice.sendMessage(
           bob.peerId,
           'Low-confidence durable',
@@ -93,7 +93,7 @@ void main() {
           network.storeInInboxCallCount,
           2,
           reason: 'one inbox write per message; no double-write on the '
-              'concurrent low-confidence send',
+              'concurrent unknown-presence send',
         );
         expect(network.inboxCount(bob.peerId), 2);
 
@@ -120,26 +120,29 @@ void main() {
     );
 
     test(
-      'NEGATIVE CONTROL (N-online): high-confidence send to online recipient '
-      'delivers live and never touches the inbox',
+      'N-online (FDC-03): unknown-presence send to an online recipient delivers '
+      'LIVE and fires exactly one concurrent durable copy',
       () async {
-        // Peer is online; no prior failure → high confidence. Single live path.
+        // FDC-03: the durable copy now fires for ALL unknown-presence sends (the
+        // fake models no persistent connection), so an online recipient gets the
+        // live delivery AND one concurrent copy (the receiver dedups). The "not a
+        // blanket dual-write" guard now lives on the reuse/local single-path
+        // locks, NOT on online sends.
         final (result, msg) = await alice.sendMessage(
           bob.peerId,
-          'Live and single-path',
+          'Live and durable',
         );
         expect(result, SendChatMessageResult.success);
         expect(msg!.status, 'delivered');
         expect(
           msg.transport,
           isNot('inbox'),
-          reason: 'live transport wins; durable copy not used',
+          reason: 'the live leg wins the transport label',
         );
         expect(
           network.storeInInboxCallCount,
-          0,
-          reason: 'a high-confidence send is strictly single-path — the '
-              'concurrent durable copy must NOT fire on every send',
+          1,
+          reason: 'one concurrent durable copy fires alongside the live leg',
         );
       },
     );

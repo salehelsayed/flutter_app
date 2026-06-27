@@ -227,7 +227,16 @@ class GoBridge: NSObject {
                 NSLog("[GoBridge] BG_TASK_REFUSED — OS would not grant background time")
                 result("")  // empty string signals Dart that no task was granted
             } else {
-                NSLog("[GoBridge] bgBegin: taskId=%@", String(taskId.rawValue))
+                // FDC-S4 (Method step 1): log the ACTUAL OS-granted background
+                // budget right after the assertion is taken, so the device
+                // measurement reads the real per-OS grant rather than the
+                // folklore "~30s". backgroundTimeRemaining MUST be read on the
+                // main thread (this case already runs on main); the OS may
+                // report .greatestFiniteMagnitude until the app is fully
+                // backgrounded, which the parser treats as "unbounded".
+                let remainingSec = UIApplication.shared.backgroundTimeRemaining
+                NSLog("[GoBridge] BG_TASK_GRANTED taskId=%@ backgroundTimeRemainingSec=%.1f",
+                      String(taskId.rawValue), remainingSec)
                 result(String(taskId.rawValue))  // return raw handle as string
             }
 
@@ -245,6 +254,34 @@ class GoBridge: NSObject {
                 UIApplication.shared.endBackgroundTask(taskId)
             }
             result(nil)
+
+        case "bgGrantProbe":
+            // FDC-S4 measurement scaffolding (measurement builds only). Take a
+            // background assertion, read the OS-granted backgroundTimeRemaining
+            // on the main thread, release immediately, and RETURN the seconds to
+            // Dart so the value rides the reliable Flutter [FLOW] log channel —
+            // native os_log buffers while the process is truly suspended, but the
+            // Flutter channel streams, so this is the robust way to capture the
+            // real grant from a genuine home-swipe background.
+            var probeTask = UIApplication.shared.beginBackgroundTask(withName: "mknoon.grantProbe") {}
+            let remaining = UIApplication.shared.backgroundTimeRemaining
+            NSLog("[GoBridge] BG_GRANT_PROBE backgroundTimeRemainingSec=%.1f", remaining)
+            if probeTask != .invalid {
+                UIApplication.shared.endBackgroundTask(probeTask)
+                probeTask = .invalid
+            }
+            result(String(format: "%.1f", remaining))
+
+        case "bgTimeRemaining":
+            // FDC-S4 measurement: read-only backgroundTimeRemaining (no assertion
+            // management — the caller holds the assertion). Used for the DELAYED
+            // read: backgroundTimeRemaining is the DBL_MAX sentinel at
+            // didEnterBackground and only arms the finite countdown a beat later,
+            // so the Dart probe holds an assertion, waits ~1.5s in the background,
+            // then calls this to capture the real finite grant.
+            let timeRemaining = UIApplication.shared.backgroundTimeRemaining
+            NSLog("[GoBridge] BG_TIME_REMAINING backgroundTimeRemainingSec=%.1f", timeRemaining)
+            result(String(format: "%.1f", timeRemaining))
 
         default:
             result(FlutterMethodNotImplemented)

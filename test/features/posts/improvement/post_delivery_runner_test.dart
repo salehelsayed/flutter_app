@@ -632,6 +632,7 @@ class _PolicyFakeP2PService extends FakeP2PService {
     String peerId, {
     List<String>? addresses,
     int? timeoutMs,
+    bool preferQuic = false,
   }) async {
     dialAttempts.add(peerId);
     _dialedPeers.add(peerId);

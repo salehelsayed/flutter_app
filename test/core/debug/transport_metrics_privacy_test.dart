@@ -172,6 +172,11 @@ void main() {
           'proofWindowId',
           'phase',
           'trigger',
+          // FDC-S0/S1 cold-start instrumentation: a relative ms-since-process
+          // -start duration (FDC_COLDSTART_NODE_START_RETURN_TIMING fires on
+          // node start). Aggregate timing only — no peer ID, multiaddr, or
+          // content — so it is non-identifying.
+          'sinceProcessStartMs',
         };
         // Identifier-shaped keys that must never appear on a transport event.
         const forbiddenDetailKeys = <String>{

@@ -36,6 +36,13 @@ const Duration interactiveDirectAggregateBudget = Duration(seconds: 6);
 /// Interactive send budget for the inbox store fallback path.
 const Duration interactiveInboxBudget = Duration(seconds: 3);
 
+/// FDC-03: the serial relay-probe tail was REMOVED from the send path, so the
+/// `NO_RESERVATION` fast-offline signal described below is no longer CONSUMED on
+/// a 1:1 send — an unknown-presence offline peer now takes durable inbox custody
+/// directly. This constant + `_tryRelayProbeSend` are retained (// ignore:
+/// unused_element) per the FDC-03 scope guard for a later FDC plan that re-wires
+/// the probe in-race; the historical rationale follows.
+///
 /// NET-REL-05 U-P5 (relay consolidation, Dart-only): after a successful relay
 /// probe, make a SINGLE post-probe send attempt before inbox fallback.
 /// Consolidated from 2 → 1: the direct race leg already invokes the same
@@ -43,8 +50,7 @@ const Duration interactiveInboxBudget = Duration(seconds: 3);
 /// second post-probe attempt was the redundant layer. The single retained
 /// attempt still covers the online-relay-only peer whose address the direct
 /// leg didn't discover (`peer_not_found` → relayProbeEligible) but who becomes
-/// reachable once the probe establishes the circuit. The probe's unique value
-/// — the `NO_RESERVATION` fast offline signal — is preserved.
+/// reachable once the probe establishes the circuit.
 /// (Moving full relay ownership into Go is OUT OF SCOPE this run: it requires
 /// `make all` + `pod install` and is not host-verifiable; see
 /// `05-send-orchestration-IMPLEMENTATION-PLAN.md` U-P5.)
@@ -66,15 +72,10 @@ const Duration transportGraceWindow = Duration(milliseconds: 150);
 /// before the grace fires.
 const Duration kStickyHeadStart = Duration(milliseconds: 120);
 
-/// NET-REL-05 P1/P4 (concurrent durable fallback): a send is "low confidence"
-/// when the most recent OUTGOING message to this peer terminally failed or was
-/// only delivered via the inbox (peer was offline) within this window. For such
-/// sends we fire [P2PService.storeInInbox] CONCURRENTLY with the live race (as
-/// the group path does) so durable custody lands fast instead of waiting out the
-/// sequential tail — receive-side messageId dedup discards the duplicate. Shares
-/// the 30s horizon of NET-REL-01 `LocalPeer.ttl` so the reliability layers agree
-/// on "recently failed/offline".
-const Duration kLowConfidenceWindow = Duration(seconds: 30);
+// FDC-03: the NET-REL-05 P1/P4 `kLowConfidenceWindow` (30s prior-attempt recency
+// gate) is RETIRED. The concurrent durable inbox now fires for ALL unknown-
+// presence sends (see the `unknownPresence` gate in `sendChatMessage`), not only
+// recently-failed peers, so the recency window no longer gates anything.
 
 /// FDC-02 §6.2a / §12 (libp2p DefaultDialRanker `RelayDelay`): the relay-LIVE
 /// leg is penalized by this stagger so a viable LAN/direct leg that acks first
@@ -504,6 +505,15 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     await messageRepo.updateWireEnvelope(messageId, jsonString);
   }
 
+  // FDC-04 (RC2 / INV-2): hoisted above the reuse/sticky short-circuits so a
+  // LAN-visible peer never reuses a warmed direct/relay conn (or a learned
+  // direct/relay sticky transport) ahead of the LAN leg — the warmed path would
+  // silently bypass a viable ~30ms LAN hop on every conversation open. (FDC-02
+  // already carved out relay-ONLY circuit conns; this adds the orthogonal
+  // direct-conn-to-a-LAN-peer case.) Read once here; still consumed downstream
+  // by the race (unknownPresence + alreadyLocal).
+  final isLocalPeer = p2pService.isLocalPeer(targetPeerId);
+
   // 4.5. Check for existing connected peer first (connection reuse).
   // If the peer is already connected, try to send directly without
   // rediscovering — this is the fastest interactive path.
@@ -520,7 +530,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     targetPeerId,
   );
 
-  if (isAlreadyConnected && !isCircuitOnlyConnected) {
+  if (isAlreadyConnected && !isCircuitOnlyConnected && !isLocalPeer) {
     connectionReused = true;
     sendPath = 'reuse';
     emitFlowEvent(
@@ -585,7 +595,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
 
   // 5. Race: local WiFi and direct discover/dial/send in parallel.
   // The first successful path wins and is the only one to persist.
-  final isLocalPeer = p2pService.isLocalPeer(targetPeerId);
+  // (`isLocalPeer` is read above the reuse block — FDC-04 RC2 hoist.)
 
   // NET-REL-05 P3 (sticky transport): the last-known-good LIVE transport for
   // this peer, or null if none/expired/stale. Returning non-null is a VALIDITY
@@ -598,7 +608,11 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // never blocks: null (expired/stale/absent) degenerates to the full cold race,
   // identical to today, so a stale/dead preference can never trap the send.
   final learned = p2pService.lastKnownGoodTransport(targetPeerId);
-  if (learned != null) {
+  // FDC-04 (RC2 / INV-2): a LAN-visible peer must still race the LAN leg — only
+  // a learned `'local'` may sticky-short-circuit for it; a learned
+  // `'direct'`/`'relay'` would bypass the faster LAN hop, so it falls through to
+  // the full race. A non-local peer keeps the unchanged sticky behavior.
+  if (learned != null && (learned == 'local' || !isLocalPeer)) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_STICKY_TRANSPORT',
@@ -666,50 +680,35 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     );
   }
 
-  // NET-REL-05 P1/P4 (concurrent durable fallback): decide whether this send is
-  // "low confidence" — the peer is not connected (no live or reuse path), not on
-  // the LAN, AND the most recent PRIOR outgoing message to this peer terminally
-  // failed or only landed via the inbox within [kLowConfidenceWindow]. Such a
-  // peer was recently unreachable, so we fire the durable inbox copy in parallel
-  // with the live race below (instead of waiting out the sequential tail).
-  //
-  // Trap guarded: the optimistic 'sending' row for THIS message already exists
-  // (created by the UI). The `last.id != resolvedMessageId` check plus the
-  // terminal-status requirement ensure we inspect the PRIOR attempt, never the
-  // in-flight row. High-confidence sends skip this entirely and stay single-path.
-  var lowConfidence = false;
-  if (!isAlreadyConnected &&
+  // FDC-03 (R6 / P0-2): fire the durable inbox copy CONCURRENTLY with the live
+  // race for ALL "unknown presence" sends — the peer is not already-connected
+  // (no reuse path), not on the LAN, AND has no live peer connection. The 30s
+  // prior-attempt recency gate (the old NET-REL-05 P1/P4 "low confidence" lookup)
+  // is REMOVED: a first-ever / cold notif-tap send is exactly the case that needs
+  // fast durable custody, yet it is never "low confidence" (no prior failed
+  // attempt exists) and so used to pay the slow serial probe→inbox tail. The
+  // three STRUCTURAL guards are KEPT — a reuse/connected send and a LAN-local
+  // send have their own delivery confirmation (the wire ack / the LAN nonce ack)
+  // and must stay single-path: not a blanket dual-write (§6.2 "recipient cost
+  // rises" honesty note). Presence-aware reachable→lazy / unreachable→inbox-first
+  // emphasis (§6.3) is FDC-08; until then everything non-connected/non-local is
+  // treated as UNKNOWN → concurrent inbox. Dropping the recency lookup also
+  // removes one DB await from the hot send path.
+  final unknownPresence =
+      !isAlreadyConnected &&
       !isLocalPeer &&
-      !p2pService.isConnectedToPeer(targetPeerId)) {
-    try {
-      final last = await messageRepo.getLatestMessageForContact(targetPeerId);
-      if (last != null &&
-          !last.isIncoming &&
-          last.id != resolvedMessageId &&
-          (last.status == 'failed' || last.transport == 'inbox')) {
-        final lastAt = DateTime.tryParse(last.createdAt);
-        if (lastAt != null) {
-          final age = DateTime.now().toUtc().difference(lastAt.toUtc());
-          lowConfidence = !age.isNegative && age < kLowConfidenceWindow;
-        }
-      }
-    } catch (_) {
-      // A failed recency lookup must never block the send: stay high-confidence
-      // (single-path) and let the live race + sequential tail carry it.
-      lowConfidence = false;
-    }
-  }
+      !p2pService.isConnectedToPeer(targetPeerId);
 
-  // Fire the durable inbox copy CONCURRENTLY (fire-and-forget) for low-confidence
-  // sends only. This is a parallel durability side-effect, NOT a race
+  // Fire the durable inbox copy CONCURRENTLY (fire-and-forget) for unknown-
+  // presence sends. This is a parallel durability side-effect, NOT a race
   // participant: it never feeds the transport-label completer and never calls a
   // terminal `recordMetrics(rung:...)` — only `recordAttempt(leg:'inbox')`. The
   // SAME [jsonString] envelope (identical payload.id) is used, so a duplicate
-  // arrival is discarded by the receiver's messageId dedup. `concurrentInboxOk`
+  // arrival is discarded by the receiver's messageId dedup. `concurrentInbox`
   // is awaited later (race-failure tail / unacked handoff) to short-circuit the
   // redundant sequential store and avoid a double relay write.
   Future<bool>? concurrentInbox;
-  if (lowConfidence) {
+  if (unknownPresence) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN',
@@ -1022,7 +1021,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       sendStopwatch: sendStopwatch,
       emitTimingEvent: emitTimingEvent,
       // A live leg won the transport label. If a concurrent inbox copy was
-      // fired for this low-confidence send, hand its future to the unacked
+      // fired for this unknown-presence send, hand its future to the unacked
       // branch so the sequential unacked->inbox handoff is skipped when the
       // durable copy already succeeded (avoids a second relay write for one
       // message). When acked, the future is ignored (no handoff runs).
@@ -1136,7 +1135,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   }
 
   // NET-REL-05 P1/P4: the live race failed. If a concurrent durable copy was
-  // fired for this low-confidence send, wait for it before paying for the
+  // fired for this unknown-presence send, wait for it before paying for the
   // sequential relay-probe + inbox tail. If it already took custody, commit
   // 'delivered'/'inbox' and SKIP the redundant tail entirely (no relay probe,
   // no second `storeInInbox`) — this is the latency win: durable custody lands
@@ -1158,48 +1157,17 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     }
   }
 
-  if (raceResult.relayProbeEligible) {
-    final relayProbeResult = await _tryRelayProbeSend(
-      p2pService,
-      targetPeerId,
-      jsonString,
-      failureReason: failureReason,
-      messageId: resolvedMessageId,
-    );
-    transportMetrics?.recordAttempt(
-      leg: 'relay_probe',
-      succeeded: relayProbeResult.success,
-    );
-    if (relayProbeResult.success) {
-      sendPath = 'relay';
-      stepTimings = {...stepTimings, ...relayProbeResult.stepTimings};
-      recordMetrics(transport: relayProbeResult.via, rung: 'relay');
-      return _completeSuccessfulSend(
-        p2pService: p2pService,
-        messageRepo: messageRepo,
-        payload: payload,
-        targetPeerId: targetPeerId,
-        jsonString: jsonString,
-        acknowledged: relayProbeResult.acknowledged,
-        via: relayProbeResult.via!,
-        resolvedMessageId: resolvedMessageId,
-        text: sanitizedText,
-        createdAt: createdAt,
-        editedAt: resolvedEditedAt,
-        mediaAttachmentRepo: mediaAttachmentRepo,
-        attachments: normalizedAttachments,
-        sendStopwatch: sendStopwatch,
-        emitTimingEvent: emitTimingEvent,
-        concurrentInbox: concurrentInbox,
-        extraTimingDetails: {
-          'connectionReused': false,
-          'sendPath': 'relay',
-          ...stepTimings,
-        },
-      );
-    }
-    failureReason = relayProbeResult.reason ?? failureReason;
-  }
+  // FDC-03 (invariant 4 — "no serial relay-probe carrier"): the SERIAL
+  // relay-probe→inbox tail is REMOVED. Live relay recovery is now FDC-02's
+  // IN-RACE staggered relay-live leg (it joins the race when a live
+  // `/p2p-circuit` already exists for the peer). An all-fail race for an
+  // unknown-presence peer takes durable custody via the concurrent inbox copy
+  // fired above (already awaited at the `concurrentInbox != null` short-circuit);
+  // if that copy was null (the connected/local fall-through) or returned false,
+  // the SINGLE sequential `storeInInbox` fallback below is the lone carrier —
+  // preserving "exactly one relay write per message". `_tryRelayProbeSend` is
+  // retained (it may be wired in-race by a later FDC plan; per the scope guard we
+  // do not delete cross-plan symbols) but is no longer consumed on the send path.
 
   // All active paths failed — try offline inbox fallback once.
   emitFlowEvent(
@@ -1787,6 +1755,11 @@ Future<_RaceResult> _tryDirectSendInner(
   );
 }
 
+// FDC-03: no longer consumed on the send path (the serial relay-probe→inbox tail
+// was removed — live relay recovery is FDC-02's in-race relay-live leg). Retained
+// rather than deleted per the FDC-03 scope guard ("do not delete cross-plan
+// symbols speculatively" — a later FDC plan may wire it in-race).
+// ignore: unused_element
 Future<_RaceResult> _tryRelayProbeSend(
   P2PService p2pService,
   String targetPeerId,
@@ -2066,7 +2039,7 @@ Future<ConversationMessage> _persistOutgoingSendResult({
   }
 
   // NET-REL-05 P1/P4: the live write was unacked. If a concurrent durable copy
-  // was fired for this low-confidence send and already took custody, settle as
+  // was fired for this unknown-presence send and already took custody, settle as
   // 'inboxed'/'inbox' WITHOUT a second sequential `storeInInbox` — one message
   // must never produce two relay writes (R1 guard). `concurrentInbox` resolves
   // to false on failure/timeout, in which case we fall through to the normal

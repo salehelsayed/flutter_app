@@ -19,6 +19,28 @@ Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§6.5, §8 P
 > is the closure gate — those rows are flagged `DEVICE-PROOF (closure)` and cannot be proven on
 > host/sim. Do not start implementation until FDC-S2 lands and this banner is removed.
 
+> ### ✅ Resolved by FDC-S2 (executed 2026-06-27) — identify portion only
+> FDC-S2 (the **QUIC identify-handshake re-validation** spike) is closed = **Option A**. It resolves
+> the part of this plan that depends on direct-conn identify, **NOT** the device-only DCUtR items:
+> - **A DCUtR-upgraded direct QUIC conn reaches usable, identify-complete, stream-usable state — YES.**
+>   Direct QUIC identify is `0/100` hang @ `p95 2ms`, and the freshly-identified conn carries a
+>   `ChatProtocol` stream (M1 proves connect → identify-both-ways → stream-usable). So a relay→direct
+>   upgrade that completes identify **does** become a usable leg (it won't "succeed at swarm level while
+>   the app sees a dead leg").
+> - **Upgrade-abandon timeout (abandon back to relay) = `750ms`** (`= max(p95↑250ms, 750ms)`; the same
+>   per-leg dial+identify budget FDC-11 consumes). TCP-direct identify is also `0/100` @ p95 2ms, so the
+>   TCP lane (§8 P2-3) is a sound fallback.
+> - **Reachability (partial signal only):** FDC-S2's M1 public-vs-private pair was identical for a plain
+>   direct dial (`0/100`, p95 2ms each) → direct identify itself is not reachability-sensitive. This does
+>   **NOT** clear the production `<from FDC-S2>` "is it safe to flip off `ForceReachabilityPrivate()` for
+>   DCUtR?" question — AutoNAT arbitration / real-NAT punch behaviour is **device-only** and stays the
+>   FDC-12 DEVICE-PROOF closure gate.
+> - **Still `<from FDC-S2>` (DEVICE-ONLY, NOT closed here):** real-device punch-rate on our relay+NAT mix,
+>   RTT-sync window, TCP-vs-QUIC *upgrade-success* delta, UPnP/PMP reversal payoff. These belong to the
+>   DCUtR device campaign, not the host identify spike. Keep the flag **default-off** until they land.
+>
+> Harness: `go-mknoon/node/quic_identify_revalidation_test.go`.
+
 ---
 
 ## Source Of Truth

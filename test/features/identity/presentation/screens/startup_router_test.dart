@@ -120,6 +120,8 @@ class _TrackingP2PService implements P2PService {
     int? timeoutMs,
   }) async => false;
   @override
+  Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {}
+  @override
   Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => false;
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>

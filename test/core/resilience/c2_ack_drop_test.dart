@@ -83,6 +83,9 @@ class _AckDropP2PService implements P2PService {
       _inner.discoverPeer(peerId, timeoutMs: timeoutMs);
 
   @override
+  Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {}
+
+  @override
   Future<bool> dialPeer(
     String peerId, {
     List<String>? addresses,
@@ -409,7 +412,8 @@ void main() {
     );
 
     test(
-      'probe-assisted live send falls back to inbox delivery when ACK is lost',
+      'relay-only peer with a dropped ACK takes concurrent-inbox custody '
+      '(FDC-03: no probe runs)',
       () async {
         final innerAlice = FakeP2PService(peerId: alicePeerId, network: network);
         final probeP2P = _ProbeConnectedAckDropP2PService(innerAlice);
@@ -431,7 +435,9 @@ void main() {
         expect(msg!.status, 'inboxed'); // 115 P1: custody, not delivery
         expect(msg.transport, 'inbox');
         expect(msg.wireEnvelope, isNotNull);
-        expect(probeP2P.probeRelayCallCount, 1);
+        // FDC-03: the serial relay-probe tail was removed — custody is the
+        // concurrent durable inbox copy, and the probe never runs.
+        expect(probeP2P.probeRelayCallCount, 0);
         expect(network.inboxCount(bob.peerId), 1);
 
         probeP2P.dispose();

@@ -6,7 +6,12 @@ Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§6.3 "onlin
 > **DRAFT for the signal wiring.** The new-tier *rendering* + *anti-flap* tests are concrete and
 > host-testable NOW against an injected `NodeState`. The **direct-ready signal SOURCE** (`directReady`)
 > is **PROVISIONAL `<from FDC-02 / FDC-11>`** — FDC-02 lands the ranked-race "LAN/direct leg is live"
-> notion and FDC-11 lands the bonsoir-fed libp2p LAN-direct dial's LAN address. Until one of those ships, `directReady`
+> notion and FDC-11 lands the bonsoir-fed libp2p LAN-direct dial's LAN address. **Caveat (verified
+> 2026-06-26):** those two plans land the *upstream raw signal* but **neither currently defines, emits,
+> or schedules a `NodeState.directReady` producer** (zero `directReady`/`onlineDirect`/`NodeState`
+> mentions in either; FDC-02 emits only per-message transport *labels* + `relayLiveSendCount`). So the
+> producer wiring is an **UNOWNED follow-on** — call it **FDC-14b** — that must *derive* `directReady`
+> from whatever FDC-02/FDC-11 expose. Until it ships, `directReady`
 > has no production producer and the new tier is **unreachable in production but fully renderable from
 > an injected state**. This plan locks the *contract* (a new input + a new tier + a distinct label +
 > the anti-flap invariant); the producer wiring is a follow-on stop-if (Step 9).
@@ -28,7 +33,7 @@ Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§6.3 "onlin
   "Peer-presence (FDC-08/09) is a **different** axis and never feeds this dot."
 - **Live code (verified by Read this session)**:
   - `lib/features/p2p/domain/models/node_state.dart:3` — `enum BadgeReadinessState { offline, connecting, online, onlineDotted }`.
-  - `node_state.dart:136-142` — `relayReady` (`relayState=='online'` OR `circuitAddresses.isNotEmpty`).
+  - `node_state.dart:136-142` — `relayReady` = `isStarted && (relayState != null ? relayState=='online' : circuitAddresses.isNotEmpty)` — a **guarded branch** (circuit consulted only when `relayState` is null, behind an `!isStarted` gate), NOT a flat OR.
   - `node_state.dart:144-145` — `usabilityReady = isStarted && sendCapabilityReady && inboxCapabilityReady`.
   - `node_state.dart:147-153` — `badgeReadinessState`: `!isStarted`→offline; `!usabilityReady`→connecting; else `relayReady ? onlineDotted : online`.
   - `lib/features/p2p/presentation/widgets/connection_status_indicator.dart:48-66` — `_labelForBadgeState` / `_semanticsLabelForBadgeState` (exhaustive switches over the 4 tiers); `:147-164` colour switch; `:34-46` `_isReadyBadgeState` / `_legacyHealthForBadgeState`; `:100-130` `_onState` (applies downgrades immediately).
@@ -92,8 +97,11 @@ Not a bug — a **deliberate scope boundary**. The badge enum is closed at 4 val
 two label switches (`connection_status_indicator.dart:48-66`) are exhaustive over exactly the 4 tiers,
 so adding a 5th enum value will **fail to compile** until both are extended — the compiler enforces the
 render-completeness this plan needs (a useful RED for the widget tier). **Refute check**: there is no
-pre-existing `directReady`/`lanReady`/`onlineDirect` token in lib/ or test/ (grep this session
-returned only the 4-tier set) — nothing to reuse; this is genuinely additive.
+pre-existing `NodeState.directReady` field, `onlineDirect` enum, or `lanReady` token anywhere — nothing
+to reuse; this is genuinely additive. (Precision: a `directReady` *identifier* does exist in lib/ as an
+unrelated **posts-feature local var** — `post_follow_on_delivery.dart:116,121`,
+`post_delivery_runner.dart:661,666` — a different namespace, not the `NodeState` field; don't be misled
+by a bare `grep directReady`.)
 
 The anti-flap gap: `_onState` (`:100-130`) **applies ready→not-ready downgrades immediately** (locked
 by the existing test "applies ready-state downgrades immediately", indicator_test:365-384). That is
@@ -101,7 +109,7 @@ correct *when the node truly lost capability*, but means the **producer** (NodeS
 from FDC-05/06/07) is the only place a spurious dip can be prevented — the widget intentionally does
 not debounce. So the anti-flap invariant must be asserted at the **NodeState computation tier** (a
 sequence of states whose `badgeReadinessState` never dips to `connecting`) and re-asserted as a
-producer-side acceptance note inside FDC-05/06/07 (see openIssues).
+producer-side acceptance note inside FDC-05/06/07 (see §Open Issues — already mirrored there).
 
 ## Real Scope (In / Out → owning FDC-xx)
 
@@ -115,15 +123,17 @@ producer-side acceptance note inside FDC-05/06/07 (see openIssues).
 
 **Out:**
 - The **`directReady` producer / signal source** — PROVISIONAL `<from FDC-02 (ranked race "LAN/direct
-  leg live") / FDC-11 (libp2p LAN-direct dial, bonsoir-fed LAN address)>`. Wiring the bridge/`p2p_service_impl` to emit
-  `directReady=true` is **owned by FDC-02 / FDC-11** (Step 9 stop-if). This plan defines the field; it
-  does not connect a live producer.
+  leg live") / FDC-11 (libp2p LAN-direct dial, bonsoir-fed LAN address)>`. FDC-02/FDC-11 land the
+  *upstream* signal, but **neither schedules a `NodeState.directReady` producer** (verified 2026-06-26 —
+  see DRAFT caveat). Wiring the bridge/`p2p_service_impl` to *derive and emit* `directReady=true` is an
+  **UNOWNED follow-on (FDC-14b)**, gated on FDC-02/FDC-11 but not owned by them (Step 9 stop-if). This
+  plan defines the field; it does not connect a live producer.
 - **Peer-presence** ("is the *other* peer reachable") — a DIFFERENT axis, **owned by FDC-08 / FDC-09**.
   It must **NEVER** feed this self-dot (FDC-00 self-online-dot gap). Belt: an explicit test asserts peer-presence-style
   inputs (e.g. a presence cache / a peer connection) do NOT flip `onlineDirect`.
 - Per-message transport "upgraded" badge — owned by **FDC-13** (different surface: `letter_card.dart`).
 - Anti-flap producer re-timing itself — owned by **FDC-05 / FDC-06 / FDC-07** (this plan supplies the
-  paste-ready assertion; see openIssues).
+  paste-ready assertion; see §Open Issues).
 
 ## Files To Inspect Next
 
@@ -198,12 +208,21 @@ Each test is written and RED **before** the corresponding production edit.
 **T5 — unit (ANTI-FLAP): a ready sequence never dips to connecting unless capability is truly lost**
 - file::name: `node_state_test.dart::ready badge does not flap to connecting across a resume-style sequence`
 - Tier: unit (computation over a list of states — the producer contract FDC-05/06/07 must honour).
+  **Framing: this is a computation-threshold *preservation* lock (the `badgeReadinessState` threshold
+  never yields `connecting` while capability holds), NOT the binding anti-flap guard. The real flap
+  origin is producer *re-timing* — asserted producer-side in FDC-05/06/07, which already carry the
+  matching preservation rows (see §Open Issues).**
 - Shape/setup: a list modelling a resume/cold-start emission order, e.g.
-  `[onlineDotted, onlineDirect(directReady:true), onlineDotted, onlineDirect]` — i.e. relay/direct
-  inputs wobble while `sendCapabilityReady && inboxCapabilityReady` stay TRUE throughout. Map each to
-  `badgeReadinessState`. Assert NONE equals `BadgeReadinessState.connecting`. A SECOND list where one
-  state genuinely has `sendCapabilityReady:false` asserts that one (and only that one) IS `connecting`
-  (proves the test discriminates real loss from cosmetic wobble, not a tautology).
+  `[onlineDotted, online(relayState:'degraded', directReady:false), onlineDirect(directReady:true), onlineDotted, onlineDirect]`
+  — i.e. relay/direct inputs wobble **including a plain-`online` beat where BOTH relay and direct are
+  absent** while `sendCapabilityReady && inboxCapabilityReady` stay TRUE throughout. **That plain-`online`
+  beat is load-bearing**: without it, the named mutation (`!relayReady && !directReady → connecting`) has
+  no element to flip and T5 cannot re-red (it would pass trivially). Map each to `badgeReadinessState`.
+  Assert NONE equals `BadgeReadinessState.connecting`. A SECOND list where one state genuinely has
+  `sendCapabilityReady:false` **AND `directReady:true`** asserts that one (and only that one) IS
+  `connecting` — proving both that the test discriminates real loss from cosmetic wobble (not a
+  tautology) **and** that `directReady` never bypasses the `usabilityReady` gate (closes the INV-1
+  isolation gap).
 - RED-on-HEAD-because: `onlineDirect`/`directReady` absent (compile). Conceptually also guards the
   computation: if the new branch mistakenly required `relayReady`, an `onlineDirect`-input state with
   relay degraded would fall to `online` (still not connecting — so this test is robust) — the real flap
@@ -253,8 +272,11 @@ Each test is written and RED **before** the corresponding production edit.
   treated as not-ready ⇒ dotted→direct would (wrongly) be a ready→not-ready→... mismatch and the
   connecting→direct case would NOT emit.
 - GREEN-asserts: 0 emits for dotted→direct; 1 emit for connecting→direct.
-- Mutation: omit `onlineDirect` from `_isReadyBadgeState` (`:34-37`) → dotted→direct emits / connecting→direct
-  count wrong → RED.
+- Mutation: omit `onlineDirect` from `_isReadyBadgeState` (`:34-37`) → **connecting→direct emits 0 instead
+  of 1 → RED**. (Under the mutation, dotted→direct still emits 0 — `wasReady=true, isReady=false` makes
+  `isReady && !wasReady` false either way — so the dotted→direct sub-case does NOT discriminate; the
+  load-bearing assertion is the connecting→direct count. Make the connecting→direct sub-case **mandatory**,
+  not optional.)
 - Discriminator: separates "ready-tier reshuffle" (no emit) from "first reach ready" (one emit).
 
 **T9 — widget: onlineDirect keeps green styling + colour (PS-1 family, belt)**
@@ -302,21 +324,32 @@ Each test is written and RED **before** the corresponding production edit.
   Belt: no new test needed (justified — identical widget, identical input contract).
 - **Destructive side-effects**: none — additive enum value + nullable-defaulted field; PS-6 guards no
   silent promotion of existing states/bridge output.
-- **Invariant re-verification**: PS-4 (timing emit) re-verified by T8; PS-5 (`ConnectionHealth`
-  mapping) re-verified by extending `_legacyHealthForBadgeState` and an assert that
-  `healthFromState`/legacy mapping of an onlineDirect badge stays `ConnectionHealth.online` (fold into
-  T9 or add a one-line unit assert in indicator_test's legacy group).
-- **Exhaustiveness compile-guard**: three switches (`_labelForBadgeState`, `_semanticsLabelForBadgeState`,
-  the colour switch) + two helpers (`_isReadyBadgeState`, `_legacyHealthForBadgeState`) all become
-  compile errors on the new enum value — the compiler is a free "render-completeness" net (noted so the
-  implementer extends ALL five, not just the visible label).
+- **Invariant re-verification**: PS-4 (timing emit) re-verified by T8. **PS-5 (`ConnectionHealth`
+  legacy mapping) caveat — DO NOT author an onlineDirect legacy-health assertion, it cannot be exercised:**
+  `_legacyHealthForBadgeState` is a switch expression, so the compiler *forces* an `onlineDirect` arm to
+  **exist**, but its **value is unobservable by test** — the function is library-private (a unit test in a
+  separate library cannot call it) and it is only ever invoked on the *previous* state inside the
+  `if (isReady && !wasReady)` emit gate (`:113-124`), i.e. always on a **not-ready** state, so the
+  `onlineDirect` arm is a dead path. `healthFromState` (`:26-32`) does not read the badge enum at all. ⇒
+  PS-5 for `onlineDirect` is locked by **compiler (arm must exist) + convention (map it alongside
+  `online`/`onlineDotted` → `ConnectionHealth.online`)**, NOT by a runtime assert.
+- **Exhaustiveness compile-guard**: **FOUR** sites become compile errors on the new enum value — the three
+  switch *expressions* (`_labelForBadgeState`, `_semanticsLabelForBadgeState`, `_legacyHealthForBadgeState`)
+  and the colour switch *statement* (its `final baseColor`/`textColor` go unassigned → a definite-assignment
+  compile error, not a non-exhaustive-statement warning). **`_isReadyBadgeState` (`:34-37`) is NOT
+  compiler-guarded** — it is a boolean `==` expression (`state == online || state == onlineDotted`), so
+  adding `onlineDirect` **silently compiles** and treats it as **not-ready** (the exact bug T8 catches).
+  That one helper is the lone *silent* gap: the implementer must extend it by hand (Step 5) and only T8
+  proves it was done. So: 4 compiler-caught sites + 1 test-caught (`_isReadyBadgeState` via T8) = the full
+  five the implementer must extend.
 - **p2p_service_impl_test exhaustive-switch risk**: Step-0 read confirms whether that ONE_TO_ONE test
   switches over `BadgeReadinessState`; if so add the arm (one line). Row justified by Step 0.
 
 ## Invariants (locked by tests)
 
 - INV-1 `onlineDirect` is computed iff `usabilityReady && directReady`, ranked **above** `onlineDotted`,
-  and does **not** require `relayReady` (T1, T2).
+  and does **not** require `relayReady` (T1, T2). `directReady` never bypasses the `usabilityReady` gate:
+  `sendCapabilityReady:false` + `directReady:true` ⇒ `connecting`, not `onlineDirect` (T5 list-2).
 - INV-2 `directReady` defaults false; absent-in-json ⇒ false; no existing state/badge changes (T3, T4, PS-6).
 - INV-3 A capability-stable resume/pause/cold-start sequence never yields `connecting`; real capability
   loss still does (T5).
@@ -336,8 +369,9 @@ Each test is written and RED **before** the corresponding production edit.
    (ranked highest).
 3. **Seam: model input** — add `final bool directReady;` (default `false`) to `NodeState`
    (`:20-21` neighbourhood), plumb through the constructor (`:23-37`), `fromJson` (`:42-77`,
-   `json['directReady'] == true`), `toJson` (`:79-101`, emit only — or always; mirror `sendCapabilityReady`
-   which is always emitted at `:98`), `copyWith` (`:104-134`), and `toString` (`:155-161`, conditional
+   `json['directReady'] == true`), `toJson` (**always emit — Pattern B**, like the unconditional
+   `sendCapabilityReady`/`inboxCapabilityReady` at `:98-99`; NOT the nullable omit-when-null Pattern A used
+   by `relayState` et al.), `copyWith` (`:104-134`), and `toString` (`:155-161`, conditional
    marker like `relayState`). → GREEN T3, T4.
 4. **Seam: computation** — in `badgeReadinessState` (`:147-153`), insert the top branch:
    `if (usabilityReady && directReady) return BadgeReadinessState.onlineDirect;` ABOVE the
@@ -353,8 +387,8 @@ Each test is written and RED **before** the corresponding production edit.
 8. **Run** the two files + `flutter analyze`; if Step-0 found an exhaustive switch in p2p_service_impl_test
    (or anywhere in lib/), add the one-line arm. Re-run gates.
 9. **STOP-IF (producer wiring is OUT of scope)** — do NOT edit `p2p_service_impl.dart` / the bridge to
-   set `directReady=true`. The producer is PROVISIONAL `<from FDC-02 / FDC-11>`. Leave a one-line code
-   comment at the `directReady` field: `// directReady producer wired by FDC-02 (ranked-race live LAN/direct) / FDC-11 (libp2p LAN-direct dial); default false until then.`
+   set `directReady=true`. The producer is an **unowned follow-on (FDC-14b)**, gated on (not owned by)
+   FDC-02/FDC-11. Leave a one-line code comment at the `directReady` field: `// directReady producer = FDC-14b follow-on (derives from FDC-02 ranked-race live LAN/direct + FDC-11 libp2p LAN-direct dial); default false until then.`
 10. **Mutation pass** — apply each row's mutation, confirm the named test re-reds, revert.
 
 ## Risks And Edge Cases (each pinned by a test)
@@ -426,16 +460,43 @@ Each test is written and RED **before** the corresponding production edit.
 - Visible label choice (`'Online··'` vs another distinct string) is the implementer's pick provided it
   is **not equal** to `'Online.'`; the test asserts inequality, not a literal, to avoid bikeshedding the
   glyph while still locking distinctness.
+- **Axis note (design):** "directly reachable" is a *partially-orthogonal* axis, NOT a strict rank above
+  relay-reservation — per **T2 case (b)**, `onlineDirect` can hold with the **relay NOT ready**. So a
+  sighted-user encoding that implies a linear "more dots = more connected" ladder (`'Online'` → `'Online.'`
+  → `'Online··'`) is misleading: an `onlineDirect` node may have *no* relay reservation. The **binding**
+  distinctness is therefore the a11y semantics ("directly reachable", locked by T7); the visible glyph is a
+  secondary, non-load-bearing cue. Prefer a clearer non-linear cue over stacking a third punctuation-only
+  variant on the same green if one is cheap.
+
+## Open Issues
+
+- **Producer-side anti-flap assertion (feeds FDC-05/06/07).** Paste-ready acceptance note for the three
+  re-timing plans: *"A resume / graceful-pause / cold-start emission sequence must NEVER emit an
+  intermediate `NodeState` whose `badgeReadinessState == BadgeReadinessState.connecting` (or `offline`)
+  while send-AND-inbox capability is genuinely retained throughout the transition."* **Status: already
+  landed** as preservation rows in FDC-05 (`:264-268`), FDC-06 (`:287-290`), FDC-07 (`:238-241`), each of
+  which also explicitly cedes the new `onlineDirect` tier to this plan. T5 here is the *computation-tier*
+  half of the same invariant; FDC-05/06/07 own the *emission-order* half.
+- **`directReady` producer (FDC-14b).** Unowned follow-on (see DRAFT caveat + §Dependency Impact): wire a
+  `NodeState.directReady` producer that derives the field from FDC-02's ranked-race live-LAN/direct
+  outcome and/or FDC-11's bonsoir-fed libp2p LAN address. Until it lands, `onlineDirect` is renderable
+  from injected state but unreachable in production. Track FDC-14b in `FDC-00-roadmap.md`.
 
 ## Dependency Impact
 
-- **gatedBy**: FDC-02 / FDC-11 for the `directReady` SIGNAL SOURCE (producer). Render + anti-flap are
-  ungated and host-testable now.
+- **gatedBy**: FDC-02 / FDC-11 for the `directReady` *upstream signal* — but the producer that derives
+  `NodeState.directReady` from it is an **unowned follow-on (FDC-14b)**, scheduled by neither sibling
+  (verified). Render + anti-flap are ungated and host-testable now.
 - **Sequenced after**: FDC-02 (ranked race) and FDC-11 (libp2p LAN-direct dial, bonsoir-fed) — the two `directReady` signal sources (matches **gatedBy** above + the roadmap's `FDC-14←FDC-02/11` spike-gate line); can be
-  AUTHORED/landed (render-only) before them, with the producer connected when they ship.
+  AUTHORED/landed (render-only) before them, with the **FDC-14b** producer connected when they ship.
 - **Collision**: none with the Phase-0 send-path collision file (`send_chat_message_use_case.dart`).
   Touches only `node_state.dart` + `connection_status_indicator.dart` + their two tests — no overlap
-  with FDC-01..04. Safe to land independently.
-- **Feeds**: the anti-flap acceptance one-liner (openIssues) into FDC-05/FDC-06/FDC-07.
+  with FDC-01..04. **Verified vs the closest-coupled siblings FDC-05/06/07:** they do NOT edit
+  `node_state.dart` — they only *assert* preservation against `badgeReadinessState` (FDC-05:264-268,
+  FDC-06:287-290, FDC-07:238-241) and each explicitly cedes the `onlineDirect` tier to this plan. So no
+  model collision; if landed concurrently, FDC-14's enum/field should land **first** so those preservation
+  rows compile against the new tier. Safe to land independently.
+- **Feeds**: the anti-flap acceptance one-liner (§Open Issues) into FDC-05/FDC-06/FDC-07 — **already
+  landed** there as preservation rows (FDC-05:264-268, FDC-06:287-290, FDC-07:238-241).
 </content>
 </invoke>

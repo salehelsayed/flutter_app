@@ -4242,6 +4242,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         ),
       ).allowsAccountNetworkSideEffects,
       selfPeerId: identity?.peerId,
+      // FDC-04 (WIRE-1): the only seam holding a P2PService — supply the real
+      // eager-warm fn so a warm notif-tap overlaps the dial with the screen.
+      warmPeer: widget.p2pService.warmPeer,
     );
   }
 
@@ -4334,12 +4337,36 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   void _onPaused() {
-    // Fire-and-forget: we have at most a few hundred milliseconds.
-    // handleAppPaused() is local DB only — no network calls, no p2pService.
+    // Fire-and-forget: we have at most a few hundred milliseconds of foreground
+    // execution. handleAppPaused() is local-DB-only — no network, no p2pService
+    // — UNLESS the FDC-S4 pause-flush is enabled (--dart-define=FDC_PAUSE_FLUSH=1),
+    // in which case it NARROWS (not deletes) the "no network on pause" rule to a
+    // single *bounded, bg-assertion-protected, inbox-store-only* deposit of the
+    // newest in-flight sends before marking the rest failed — no unbounded
+    // network, no held connection.
+    //
+    // The assertion is acquired inside handleAppPaused (callBgBegin) before the
+    // first network await; once held, the OS background task — not this Dart
+    // future — keeps the process alive across the deposit, so firing unawaited
+    // is acceptable FOR THE MEASUREMENT PROTOTYPE. The remaining risk is the
+    // window between this method returning and callBgBegin actually executing on
+    // the native side; that window is the same one the interactive send path
+    // already relies on, but it is not guaranteed. FDC-06 OWNS hardening this
+    // (restructure _onPaused to begin→await→end). Default OFF leaves the legacy
+    // local-DB-only path byte-for-byte unchanged.
+    // FDC-S4 measurement scaffolding: log the real OS background grant on every
+    // pause (flag-gated; measurement builds only). Lets the grant be measured
+    // from a bare launch+background, no in-flight sends required.
+    if (kFdcPauseFlushEnabled) {
+      unawaited(probePauseBackgroundGrant(widget.bridge));
+    }
     unawaited(
       handleAppPaused(
             messageRepo: widget.messageRepository,
             groupMsgRepo: widget.groupMessageRepository,
+            enablePauseFlush: kFdcPauseFlushEnabled,
+            p2pService: widget.p2pService,
+            bridge: widget.bridge,
           )
           .then((result) {
             if (kDebugMode) {
@@ -4388,6 +4415,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       await handleAppResumed(
         bridge: widget.bridge,
         p2pService: widget.p2pService,
+        // FDC-04 (SRC-1): the 1:1 active-peer source for resume eager-warm
+        // (PS-4 — only the open conversation, never the roster).
+        activeConversationPeerId: () => widget.conversationTracker.activePeerId,
         recoverInterruptedExportPause:
             widget.accountMigrationRecoverExportPause,
         retryPushRegistrationFn: widget.pushRegistrationCoordinator?.retryNow,

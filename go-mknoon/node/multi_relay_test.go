@@ -490,6 +490,77 @@ func TestBuildRelaySelector_FallsBackToDefault(t *testing.T) {
 	if relays[0].ID != defaultInfo.ID {
 		t.Errorf("default relay ID mismatch: got %s, want %s", relays[0].ID, defaultInfo.ID)
 	}
+	// FDC-10: buildRelaySelector's empty-addresses fallback seeds the WSS+QUIC
+	// pool (DefaultRelayAddresses()), so the merged default relay must carry BOTH
+	// transports. This locks relay_selector.go's fallback under the same mutation
+	// discipline as TC-10-03 — reverting it to []string{DefaultRelayAddress}
+	// drops Addrs to 1 and re-reds here.
+	if len(relays[0].Addrs) != 2 {
+		t.Errorf("expected default fallback to merge WSS+QUIC into 2 addrs, got %d", len(relays[0].Addrs))
+	}
+}
+
+// ---------- Default relay pool (FDC-10) ----------
+
+// TC-10-03 — the shipped client default targets a pool (WSS+QUIC to the
+// default relay peer), not a single transport address.
+func TestDefaultRelayAddresses_IncludesWssAndQuic(t *testing.T) {
+	addrs := DefaultRelayAddresses()
+
+	containsAddr := func(want string) bool {
+		for _, a := range addrs {
+			if a == want {
+				return true
+			}
+		}
+		return false
+	}
+	if !containsAddr(DefaultRelayAddress) {
+		t.Fatalf("DefaultRelayAddresses() missing WSS DefaultRelayAddress, got %v", addrs)
+	}
+	if !containsAddr(DefaultQUICRelay) {
+		t.Fatalf("DefaultRelayAddresses() missing QUIC DefaultQUICRelay, got %v", addrs)
+	}
+
+	// Both default addresses point at the SAME relay peer (WSS + QUIC), so the
+	// selector merges them into one relay with two transport addresses — that
+	// is the transport redundancy this ships without requiring relay #2.
+	rs := NewRelaySelector(addrs)
+	if rs.Len() != 1 {
+		t.Fatalf("expected 1 merged relay peer, got %d", rs.Len())
+	}
+	relays := rs.Relays()
+	if len(relays[0].Addrs) != 2 {
+		t.Fatalf("expected 2 transport addresses (WSS+QUIC) on the default relay, got %d", len(relays[0].Addrs))
+	}
+}
+
+// TC-10-04 — a node with nil RelayAddresses consumes the default pool helper,
+// not a single hardcoded address.
+func TestStartNode_NilRelayAddresses_UsesDefaultPool(t *testing.T) {
+	n := NewNode()
+	defer func() { _ = n.Stop() }()
+
+	// RelayAddresses unset (nil) => the nil-default branch must seed the pool.
+	if _, err := n.Start(NodeConfig{
+		PrivateKeyHex: generateTestKey(t),
+		AutoRegister:  false,
+	}); err != nil {
+		t.Fatalf("Start() error: %v", err)
+	}
+
+	want := DefaultRelayAddresses()
+	// Default flags keep EnableMultiRelayRouting=true, so limitRelayAddresses
+	// keeps every default address (n.relayAddresses is set pre-merge at the
+	// nil-default seam, so it equals the helper output exactly).
+	if len(n.relayAddresses) != len(want) {
+		t.Fatalf("n.relayAddresses = %v, want %v", n.relayAddresses, want)
+	}
+	for i := range want {
+		if n.relayAddresses[i] != want[i] {
+			t.Fatalf("n.relayAddresses[%d] = %q, want %q (full: %v)", i, n.relayAddresses[i], want[i], n.relayAddresses)
+		}
+	}
 }
 
 // ---------- Backward compatibility ----------

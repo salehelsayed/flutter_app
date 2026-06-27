@@ -159,6 +159,13 @@ class GoBridgeClient extends Bridge {
     // Background task (iOS)
     'bg:begin': _CmdSpec('bgBegin', false, allowRawStringResponse: true),
     'bg:end': _CmdSpec('bgEnd', true),
+    // FDC-S4 measurement: read the OS background grant (seconds) and return it.
+    'bg:grantProbe': _CmdSpec('bgGrantProbe', false, allowRawStringResponse: true),
+    'bg:timeRemaining': _CmdSpec(
+      'bgTimeRemaining',
+      false,
+      allowRawStringResponse: true,
+    ),
   };
 
   @override

@@ -63,15 +63,10 @@ class _ThrowingInboxStagingRepository extends InMemoryInboxStagingRepository {
 
 class _DiscoverMissProbeConnectedP2PService implements P2PService {
   final FakeP2PService _inner;
-  final bool failFirstSendAfterProbe;
   int probeRelayCallCount = 0;
   int sendMessageWithReplyCallCount = 0;
-  bool _failedFirstPostProbeSend = false;
 
-  _DiscoverMissProbeConnectedP2PService(
-    this._inner, {
-    this.failFirstSendAfterProbe = false,
-  });
+  _DiscoverMissProbeConnectedP2PService(this._inner);
 
   @override
   Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async =>
@@ -103,12 +98,6 @@ class _DiscoverMissProbeConnectedP2PService implements P2PService {
     int? timeoutMs,
   }) async {
     sendMessageWithReplyCallCount++;
-    if (failFirstSendAfterProbe &&
-        probeRelayCallCount > 0 &&
-        !_failedFirstPostProbeSend) {
-      _failedFirstPostProbeSend = true;
-      return const SendMessageResult(sent: false);
-    }
     return _inner.sendMessageWithReply(peerId, message, timeoutMs: timeoutMs);
   }
 
@@ -132,6 +121,9 @@ class _DiscoverMissProbeConnectedP2PService implements P2PService {
     List<String>? addresses,
     int? timeoutMs,
   }) => _inner.dialPeer(peerId, addresses: addresses, timeoutMs: timeoutMs);
+
+  @override
+  Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {}
 
   @override
   Future<bool> storeInInbox(
@@ -529,8 +521,18 @@ void main() {
       bob.dispose();
     });
 
+    // FDC-03: the SERIAL relay-probe→inbox tail was REMOVED. The former
+    // "probe recovers the live path" tests (expired-discoverability live send,
+    // post-recovery-without-restart, one-probe-attempt-then-inbox) are RETIRED —
+    // that mechanism no longer exists. A discover-miss send to a peer with no
+    // live circuit now takes durable INBOX custody via the concurrent copy
+    // (probeRelayCallCount == 0); live relay recovery for a CIRCUIT peer is
+    // FDC-02's in-race relay-live leg (covered in the send-orchestration suite).
+    // This consolidated lock pins the fault-injection recovery contract: a
+    // discover-miss send is never lost and reaches the recipient on drain.
     test(
-      'expired personal discoverability plus live relay still sends without inbox',
+      'discover-miss send to an online peer takes durable inbox custody '
+      'without the relay probe, and drains to the recipient',
       () async {
         final staleRelayPath = _DiscoverMissProbeConnectedP2PService(
           alice.p2pService,
@@ -540,149 +542,36 @@ void main() {
           p2pService: staleRelayPath,
           messageRepo: alice.messageRepo,
           targetPeerId: bob.peerId,
-          text: 'phase4 stale discoverability live send',
+          text: 'phase4 discover-miss durable inbox custody',
           senderPeerId: alice.peerId,
           senderUsername: alice.username,
           bridge: alice.bridge,
           recipientMlKemPublicKey: 'test-mlkem-pk-${bob.peerId}',
-        );
-        await Future<void>.delayed(Duration.zero);
-
-        final deliveredToBob = await bob.messageRepo.getMessagesForContact(
-          alice.peerId,
         );
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(
-          message!.transport,
-          equals('direct'),
-          reason:
-              'The fake network marks the recovered live path as direct; '
-              'the regression contract here is live-send without inbox fallback',
-        );
-        expect(staleRelayPath.probeRelayCallCount, 1);
-        expect(network.deliverCallCount, 1);
-        expect(network.storeInInboxCallCount, 0);
-        expect(
-          deliveredToBob.where(
-            (msg) =>
-                msg.isIncoming &&
-                msg.text == 'phase4 stale discoverability live send',
-          ),
-          hasLength(1),
-        );
-      },
-    );
-
-    test(
-      'post-recovery send does not require simulator restart to regain live path',
-      () async {
-        bob.setOnline(false);
-
-        final (offlineResult, offlineMessage) = await alice.sendMessage(
-          bob.peerId,
-          'phase4 offline fallback before recovery',
-        );
-
-        expect(offlineResult, SendChatMessageResult.success);
-        expect(offlineMessage, isNotNull);
-        expect(offlineMessage!.transport, equals('inbox'));
-        expect(network.storeInInboxCallCount, 1);
-
-        bob.setOnline(true);
-        network.resetCounters();
-
-        // Age the prior inbox delivery out of the NET-REL-05 low-confidence
-        // window. A recent inbox send would (correctly) fire the concurrent
-        // durable copy and take custody at inbox budget; this test pins the
-        // HIGH-confidence recovery contract: the live path returns without a
-        // restart once the unreachable episode is in the past.
-        final backdatedCreatedAt = DateTime.now()
-            .toUtc()
-            .subtract(kLowConfidenceWindow + const Duration(minutes: 1))
-            .toIso8601String();
-        await alice.messageRepo.saveMessage(
-          offlineMessage.copyWith(createdAt: backdatedCreatedAt),
-        );
-
-        final recoveredRelayPath = _DiscoverMissProbeConnectedP2PService(
-          alice.p2pService,
-        );
-
-        final (recoveredResult, recoveredMessage) = await sendChatMessage(
-          p2pService: recoveredRelayPath,
-          messageRepo: alice.messageRepo,
-          targetPeerId: bob.peerId,
-          text: 'phase4 recovered live send without restart',
-          senderPeerId: alice.peerId,
-          senderUsername: alice.username,
-          bridge: alice.bridge,
-          recipientMlKemPublicKey: 'test-mlkem-pk-${bob.peerId}',
-        );
-        await Future<void>.delayed(Duration.zero);
-
-        final deliveredToBob = await bob.messageRepo.getMessagesForContact(
-          alice.peerId,
-        );
-
-        expect(recoveredResult, SendChatMessageResult.success);
-        expect(recoveredMessage, isNotNull);
-        expect(
-          recoveredMessage!.transport,
-          equals('direct'),
-          reason:
-              'The fake network marks the recovered live path as direct; '
-              'the regression contract here is live-send without inbox fallback',
-        );
-        expect(recoveredRelayPath.probeRelayCallCount, 1);
-        expect(network.deliverCallCount, 1);
-        expect(network.storeInInboxCallCount, 0);
-        expect(
-          deliveredToBob.where(
-            (msg) =>
-                msg.isIncoming &&
-                msg.text == 'phase4 recovered live send without restart',
-          ),
-          hasLength(1),
-        );
-      },
-    );
-
-    test(
-      'relay probe makes one live attempt; failure falls to durable inbox',
-      () async {
-        // Contract update (NET-REL-05): relayProbeSendAttempts == 1 — a
-        // failed post-probe live send is not retried; the sequential inbox
-        // tail takes durable custody instead, so the message is never lost
-        // and the sender is not stalled by repeat live attempts.
-        final staleRelayPath = _DiscoverMissProbeConnectedP2PService(
-          alice.p2pService,
-          failFirstSendAfterProbe: true,
-        );
-
-        final (result, message) = await sendChatMessage(
-          p2pService: staleRelayPath,
-          messageRepo: alice.messageRepo,
-          targetPeerId: bob.peerId,
-          text: 'phase4 post-probe failure lands durably in inbox',
-          senderPeerId: alice.peerId,
-          senderUsername: alice.username,
-          bridge: alice.bridge,
-          recipientMlKemPublicKey: 'test-mlkem-pk-${bob.peerId}',
-        );
-        await Future<void>.delayed(Duration.zero);
-
-        expect(result, SendChatMessageResult.success);
-        expect(message, isNotNull);
+        // Custody, not live delivery — the probe tail is gone.
         expect(message!.transport, equals('inbox'));
-        expect(staleRelayPath.probeRelayCallCount, 1);
-        expect(
-          staleRelayPath.sendMessageWithReplyCallCount,
-          1,
-          reason: 'single post-probe live attempt (relayProbeSendAttempts=1)',
-        );
+        // Mutation (prod): restore the `if (raceResult.relayProbeEligible)
+        // { _tryRelayProbeSend(...) }` block → probeRelayCallCount == 1 → RED.
+        expect(staleRelayPath.probeRelayCallCount, 0);
         expect(network.storeInInboxCallCount, 1);
+
+        // The recipient receives exactly one copy on drain.
+        await bob.drainOfflineInbox();
+        await Future<void>.delayed(Duration.zero);
+        final deliveredToBob = await bob.messageRepo.getMessagesForContact(
+          alice.peerId,
+        );
+        expect(
+          deliveredToBob.where(
+            (msg) =>
+                msg.isIncoming &&
+                msg.text == 'phase4 discover-miss durable inbox custody',
+          ),
+          hasLength(1),
+        );
       },
     );
   });

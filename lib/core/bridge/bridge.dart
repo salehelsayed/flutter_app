@@ -784,6 +784,34 @@ Future<String?> callBgBegin(Bridge bridge) async {
   return null;
 }
 
+/// FDC-S4 measurement: reads the OS-granted `backgroundTimeRemaining` (seconds)
+/// via a one-shot native assertion and returns it. Returns null off iOS or on
+/// failure. The value rides the reliable Flutter log channel (native os_log
+/// buffers while the process is truly suspended).
+Future<double?> callBgGrantProbe(Bridge bridge) async {
+  try {
+    final response = await bridge.send(jsonEncode({'cmd': 'bg:grantProbe'}));
+    if (response.isNotEmpty && !response.startsWith('{')) {
+      return double.tryParse(response.trim());
+    }
+  } catch (_) {}
+  return null;
+}
+
+/// FDC-S4 measurement: read-only `backgroundTimeRemaining` (seconds). The caller
+/// must already hold a background assertion. Used for the DELAYED in-background
+/// read (the value is the DBL_MAX sentinel at didEnterBackground and only arms
+/// the finite countdown a beat later). null off iOS / on failure.
+Future<double?> callBgTimeRemaining(Bridge bridge) async {
+  try {
+    final response = await bridge.send(jsonEncode({'cmd': 'bg:timeRemaining'}));
+    if (response.isNotEmpty && !response.startsWith('{')) {
+      return double.tryParse(response.trim());
+    }
+  } catch (_) {}
+  return null;
+}
+
 /// Releases an iOS background task. No-op if taskId is null.
 Future<void> callBgEnd(Bridge bridge, String? taskId) async {
   if (taskId == null) return;

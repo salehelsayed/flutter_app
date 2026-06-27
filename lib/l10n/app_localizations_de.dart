@@ -982,6 +982,13 @@ class AppLocalizationsDe extends AppLocalizations {
   String get message_received_via_inbox => 'Über Posteingang empfangen';
 
   @override
+  String get message_sent_via_upgraded => 'Auf Direktverbindung hochgestuft';
+
+  @override
+  String get message_received_via_upgraded =>
+      'Über hochgestufte Direktverbindung empfangen';
+
+  @override
   String get share_send_failed =>
       'Konnte nicht an die ausgewählten Ziele teilen.';
 

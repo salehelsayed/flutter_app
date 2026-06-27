@@ -44,6 +44,14 @@ class FakeBridge implements Bridge {
   bool throwOnCheckHealth = false;
   bool throwOnReinitialize = false;
 
+  /// Optional hook awaited INSIDE [checkHealth] (after the call count is
+  /// incremented and the throw gate, before returning the result). Lets a test
+  /// record bridge-health COMPLETION ordering relative to the concurrent resume
+  /// re-prime/drain so it can assert checkHealth still runs first (FDC-05
+  /// TC-05-06). The hook may yield (e.g. await a microtask) to expose any
+  /// over-parallelization mutation that moves checkHealth off the front.
+  Future<void> Function()? onCheckHealth;
+
   /// Whether raw messages are retained in [sentMessages]/[lastSentMessage].
   /// Scale tests moving hundreds of MB through migration chunk commands turn
   /// this off so the fake does not hold the whole account in memory.
@@ -261,6 +269,7 @@ class FakeBridge implements Bridge {
     if (throwOnCheckHealth) {
       throw Exception('FakeBridge: checkHealth error');
     }
+    await onCheckHealth?.call();
     return checkHealthResult;
   }
 

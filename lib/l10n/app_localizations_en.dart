@@ -958,6 +958,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get message_received_via_inbox => 'Received via inbox';
 
   @override
+  String get message_sent_via_upgraded => 'Upgraded to direct connection';
+
+  @override
+  String get message_received_via_upgraded =>
+      'Received via upgraded direct connection';
+
+  @override
   String get share_send_failed => 'Could not share to the selected targets.';
 
   @override

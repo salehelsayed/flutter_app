@@ -211,7 +211,7 @@ func (n *Node) buildRelaySelector(serverAddresses []string) *RelaySelector {
 		n.mu.RUnlock()
 	}
 	if len(addrs) == 0 {
-		addrs = []string{DefaultRelayAddress}
+		addrs = DefaultRelayAddresses()
 	}
 	addrs = limitRelayAddresses(addrs, n.currentFeatureFlags())
 	return NewRelaySelector(addrs)

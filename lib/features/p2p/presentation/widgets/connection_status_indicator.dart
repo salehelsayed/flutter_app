@@ -33,7 +33,8 @@ ConnectionHealth healthFromState(NodeState state) {
 
 bool _isReadyBadgeState(BadgeReadinessState state) {
   return state == BadgeReadinessState.online ||
-      state == BadgeReadinessState.onlineDotted;
+      state == BadgeReadinessState.onlineDotted ||
+      state == BadgeReadinessState.onlineDirect;
 }
 
 ConnectionHealth _legacyHealthForBadgeState(BadgeReadinessState state) {
@@ -41,7 +42,8 @@ ConnectionHealth _legacyHealthForBadgeState(BadgeReadinessState state) {
     BadgeReadinessState.offline => ConnectionHealth.offline,
     BadgeReadinessState.connecting => ConnectionHealth.degraded,
     BadgeReadinessState.online ||
-    BadgeReadinessState.onlineDotted => ConnectionHealth.online,
+    BadgeReadinessState.onlineDotted ||
+    BadgeReadinessState.onlineDirect => ConnectionHealth.online,
   };
 }
 
@@ -51,6 +53,9 @@ String _labelForBadgeState(BadgeReadinessState state) {
     BadgeReadinessState.connecting => 'Connecting',
     BadgeReadinessState.online => 'Online',
     BadgeReadinessState.onlineDotted => 'Online.',
+    // FDC-14: a distinct, non-linear cue (NOT a third punctuation-only variant
+    // on the relay-dot ladder — directly-reachable is decoupled from relay).
+    BadgeReadinessState.onlineDirect => 'Online ✦',
   };
 }
 
@@ -62,16 +67,21 @@ String _semanticsLabelForBadgeState(BadgeReadinessState state) {
       'online, send and inbox ready, relay reservation pending',
     BadgeReadinessState.onlineDotted =>
       'online, send and inbox ready, relay reservation ready',
+    // FDC-14: the binding distinctness lives here (a screen reader must hear
+    // "directly reachable", not the relay-reservation phrasing).
+    BadgeReadinessState.onlineDirect =>
+      'online, send and inbox ready, directly reachable',
   };
 }
 
 /// A compact indicator showing the P2P connection status.
 ///
-/// Displays one of four states from the service-owned Phase 6 contract:
+/// Displays one of five states from the service-owned Phase 6 contract:
 /// - "Offline"
 /// - "Connecting"
 /// - "Online"
-/// - "Online."
+/// - "Online." (also relay-reserved)
+/// - "Online ✦" (FDC-14: also directly reachable)
 class ConnectionStatusIndicator extends StatefulWidget {
   final P2PService p2pService;
 
@@ -147,6 +157,7 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
     switch (badgeState) {
       case BadgeReadinessState.online:
       case BadgeReadinessState.onlineDotted:
+      case BadgeReadinessState.onlineDirect:
         baseColor = Colors.green;
         textColor = isLightSurface
             ? const Color(0xFF157A39)

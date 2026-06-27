@@ -345,11 +345,79 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
       expect(received, hasLength(2));
-      expect(received[0].transport, 'direct');
+      // RT-S1 (FDC-13): the upgraded peer's incoming message now surfaces the
+      // DISTINCT 'upgraded' transport on the DATA channel — no longer flattened
+      // to plain 'direct'. The non-upgraded, no-conn peer is unaffected
+      // ('unknown'), proving set membership (not a blanket relabel).
+      expect(received[0].transport, 'upgraded');
       expect(received[1].transport, 'unknown');
+      // RT-S1a (FDC-13): the aggregate transport-mix census is UNCHANGED — the
+      // step-4a `'upgraded'->'direct'` canonicalization alias keeps the
+      // upgraded receive counted in the 'direct' bucket (mirrors 'reuse'),
+      // while the badge still carries 'upgraded'. Without that alias the
+      // upgraded receive would fold to 'unknown' (['direct']1->0, ['unknown']
+      // 1->2), so these three asserts double as the lock on step 4a.
       expect(metrics.transportMix()['direct'], 1);
       expect(metrics.transportMix()['unknown'], 1);
       expect(metrics.transportMix()['relay'], 0);
+
+      await sub.cancel();
+    },
+  );
+
+  // RT-I1 (FDC-13): end-to-end readout — a synthetic `transport:upgraded`
+  // tracer event registers the peer, and a subsequent incoming message from it
+  // surfaces 'upgraded' on BOTH the streamed ChatMessage AND the greppable
+  // MSG_RECEIVED_TRANSPORT flow event (distinct observation channels from
+  // DCUTR-002's messageStream + census).
+  test(
+    "DCUTR-013: synthetic upgrade event surfaces 'upgraded' on the receiver "
+    'readout (streamed message + MSG_RECEIVED_TRANSPORT flow event)',
+    () async {
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+
+      const upgradedPeerShort = 'def67890';
+      const upgradedPeerId = '12D3KooWReadoutUpgradePeerdef67890';
+
+      final received = <ChatMessage>[];
+      final sub = service.messageStream.listen(received.add);
+
+      final events = await _captureFlowEvents(() async {
+        emitTransportDiagnosticEvent('transport:upgraded', {
+          'fromTransport': 'relay',
+          'toTransport': 'direct',
+          'elapsedMs': 25,
+          'remotePeerShort': upgradedPeerShort,
+        });
+        bridge.onMessageReceived?.call(
+          const ChatMessage(
+            from: upgradedPeerId,
+            to: 'self-peer',
+            content: 'hello after upgrade',
+            timestamp: '2026-01-01T00:00:00.000Z',
+            isIncoming: true,
+            transport: null,
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      });
+
+      // Streamed ChatMessage readout (copyWith(transport:) at the receive
+      // path) carries the distinct 'upgraded' value.
+      expect(received, hasLength(1));
+      expect(received.single.transport, 'upgraded');
+
+      // Greppable MSG_RECEIVED_TRANSPORT flow-event detail also reads
+      // 'upgraded'.
+      expect(
+        events.any(
+          (event) =>
+              event['event'] == 'MSG_RECEIVED_TRANSPORT' &&
+              (event['details'] as Map<String, dynamic>)['transport'] ==
+                  'upgraded',
+        ),
+        isTrue,
+      );
 
       await sub.cancel();
     },

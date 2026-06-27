@@ -22,6 +22,12 @@ Future<PrepareNotificationOpenResult> prepareNotificationOpen({
   required NotificationRouteTarget routeTarget,
   required Future<void> Function() drainOfflineInbox,
   required DrainGroupOfflineInboxForGroupFn drainGroupOfflineInboxForGroup,
+  // FDC-04: optional eager-warm hook for the 1:1 conversation route. Default
+  // null keeps existing callers unchanged. On a WARM notif-tap (node already
+  // started) this overlaps the dial with the screen appearing; on a COLD tap
+  // it is a no-op (the service-level PS-3 gate). Forwarded from
+  // prepareNotificationRouteTarget, supplied at main.dart.
+  Future<void> Function(String peerId)? warmPeer,
 }) async {
   try {
     switch (routeTarget.kind) {
@@ -41,6 +47,17 @@ Future<PrepareNotificationOpenResult> prepareNotificationOpen({
             );
           }),
         );
+        // FDC-04: warm the target peer (conversation route only). peerId is
+        // String? on NotificationRouteTarget but the .conversation ctor
+        // guarantees non-null. Fire-and-forget; warmPeer is total/never-throws,
+        // but mirror the drain's swallow so a stray throw can't escape to the
+        // outer catch (which would fail the route).
+        final warmPeerId = routeTarget.peerId;
+        if (warmPeer != null && warmPeerId != null) {
+          unawaited(Future<void>.sync(() => warmPeer(warmPeerId)).catchError((
+            Object _,
+          ) {}));
+        }
         break;
       case NotificationRouteTargetKind.contactRequest:
       case NotificationRouteTargetKind.intros:

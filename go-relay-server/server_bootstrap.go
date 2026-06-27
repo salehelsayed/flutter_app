@@ -18,6 +18,26 @@ type backendConfig struct {
 	RedisPrefix string
 }
 
+// IsDurable reports whether the selected control-plane backend persists state
+// (inbox, push tokens, rendezvous, group inbox) across a relay process
+// restart. Only the Redis backend is durable; the in-memory backend is wiped
+// on restart. This is the single source of truth for the durability summary
+// line and the relay_backend_durable gauge — never assume an unknown kind is
+// durable (unknown kinds are rejected at newControlPlaneStores' default case).
+func (c backendConfig) IsDurable() bool {
+	return c.Kind == backendKindRedis
+}
+
+// backendStartupSummary renders a single operator-facing line describing the
+// control-plane backend and whether it is durable. main.go logs this verbatim
+// at boot and it is the human-readable companion to the relay_backend_durable
+// gauge — the "is durability live?" hook ops relies on (the live env is
+// gitignored, so durability silently regressing to memory is otherwise
+// undetectable).
+func backendStartupSummary(c backendConfig) string {
+	return fmt.Sprintf("backend=%s durable=%v prefix=%s", c.Kind, c.IsDurable(), c.RedisPrefix)
+}
+
 type controlPlaneStores struct {
 	Rendezvous *RendezvousStore
 	Inbox      *InboxStore

@@ -967,6 +967,12 @@ class AppLocalizationsAr extends AppLocalizations {
   String get message_received_via_inbox => 'وَردت عبر صندوق الوارد';
 
   @override
+  String get message_sent_via_upgraded => 'تمت الترقية إلى اتصال مباشر';
+
+  @override
+  String get message_received_via_upgraded => 'وَردت عبر ترقية إلى اتصال مباشر';
+
+  @override
   String get share_send_failed => 'تعذرت المشاركة مع الأهداف المحددة.';
 
   @override

@@ -1,6 +1,20 @@
 # FDC-S4 - iOS pause-flush feasibility  (Spike / Decision)
 
-Status: open
+Status: **EXECUTED** — device campaign run on **iPhone 13 / iOS 26.5** (real device; the simulator can't
+suspend → reports `DBL_MAX`). Full numbers + method in **`FDC-S4-ios-pause-flush-feasibility-RESULTS.md`**. **Verdict: Option A FEASIBLE** — reuse the existing `beginBackgroundTask` bridge
+(`callBgBegin`/`callBgEnd` → `GoBridge.swift` `bgBegin`/`bgEnd`); **no new native code.** Measured headlines:
+granted `backgroundTimeRemaining` ≈ **28.7 s** (8/8 finite reads, min = median = p90; ≥25 s ✅, the 8 s ceiling
+sits ~20 s under it); a real in-flight message deposited to the relay inbox in **~52 ms**, row left in custody,
+**no app termination** in any trial; per-message **3 s** budget **device-PROVEN** (NLC 100 % loss → `storeInInbox`
+cut at `ms:3006`, row marked `failed` cleanly); overall ceiling **≤8 s** confirmed safe (host-locked; the 8 s
+trip itself not device-reached); cap **N = 5** (observed p95 `sendingCount` = 1).
+⚠ **Two carry-forward caveats for FDC-06:** (1) only **ONE** iOS version (26.5) measured — Exit-Gate-1's
+"≥2 iOS versions" is **NOT fully satisfied**; (2) at the **pause instant** — the flush's own read point —
+`backgroundTimeRemaining` reads `DBL_MAX` (the finite ≈28.7 s only arms ~1.5 s into background), so **FDC-06
+must NOT read `backgroundTimeRemaining` at pause to size/gate the flush — use the fixed 8 s ceiling.** The
+wider normal-usage `getSendingOutgoingMessages().length` distribution (Exit-Gate-2) was **not** collected (a
+Send-button UX bug blocked staging a large burst) → cap = 5 is a conservative default, not a measured-p95-driven
+value.
 
 Gates: **FDC-06 (Lifecycle split + graceful handoff / pause-flush)** cannot be finalized
 until this resolves. FDC-06 (proposal §6.4 / P1-2 / state machine §7 `on PAUSE | HIDDEN`)
@@ -245,16 +259,24 @@ the expiration handler).
 
 ## Expected Output (consumed by FDC-06)
 
-- **Feasible: YES** (expected) — bounded network flush on iOS pause is feasible by **reusing
-  the existing `beginBackgroundTask` bridge** (`GoBridge.swift:183-217` / `callBgBegin`/
-  `callBgEnd`), no new native code and no APNs path for v1.
+- **Feasible: YES** (device-corroborated, not just inferred) — bounded network flush on iOS pause is
+  feasible by **reusing the existing `beginBackgroundTask` bridge** (`GoBridge.swift:183-217` / `callBgBegin`/
+  `callBgEnd`), no new native code and no APNs path for v1. **Device evidence:** the pause→flush path fires
+  end-to-end on real iOS; a real in-flight message was deposited to the relay inbox in **~52 ms** with the row
+  left in custody; **no app termination** in any trial.
 - **Mechanism:** in `_onPaused`, `callBgBegin` → bounded newest-first `storeInInbox` loop over
   in-flight `sending` rows (each carries `wireEnvelope`) → `callBgEnd` in `finally`; deposit
   succeeds → leave message in custody (do not mark `failed`); deposit fails / over ceiling →
   today's `sending → failed`.
-- **The bound (to be confirmed by device measurement, defaults to plan against):**
-  per-message ≈ **3s**, overall ceiling ≈ **8s**, cap **N = 5** newest-first, requires a granted
-  budget of **≥ ~25s** (measured, not assumed).
+- **The bound (MEASURED — iPhone 13 / iOS 26.5 device campaign):**
+  per-message **3 s** (device-PROVEN: NLC 100 % loss → `storeInInbox` cut at `ms:3006` → `failed`), overall
+  ceiling **≤8 s** (host-locked; the 8 s trip needs N≥3 simultaneous hangs, not device-reached because of a
+  Send-button UX bug), cap **N = 5** newest-first (observed p95 `sendingCount` = 1; the wider normal-usage
+  distribution per Exit-Gate-2 was NOT collected — cap = 5 is conservative), granted `backgroundTimeRemaining`
+  **≈ 28.7 s** (8/8 finite, min = median = p90; ≥25 s ✅). ⚠ **`backgroundTimeRemaining` reads `DBL_MAX` at the
+  pause instant** (finite ≈28.7 s only arms ~1.5 s into background) → **FDC-06 must use the FIXED 8 s ceiling,
+  never read `backgroundTimeRemaining` to gate/size the flush.** ⚠ Only ONE iOS version measured (Exit-Gate-1
+  "≥2 versions" not fully met).
 - **Invariant reconciliation:** the "no network on pause" rule
   (`handle_app_paused.dart:24-25`) is **narrowed, not deleted** — it becomes "no *unbounded*
   network and no *connection-holding* on pause; a single bounded inbox-store-only deposit under
@@ -263,15 +285,18 @@ the expiration handler).
 ## Exit Gate
 
 The spike is done when:
-1. A device trial has logged the **actual** `backgroundTimeRemaining` grant on ≥2 current iOS
-   versions, and the bounded prototype flush completes < ceiling in ≥95% of N∈{1,3,8} trials
-   without app termination.
-2. The observed `getSendingOutgoingMessages().length` distribution at pause is recorded and the
-   cap N is fixed from its 95th percentile.
-3. The deposit-first / mark-failed-only-on-reject ordering is confirmed against the recipient
-   receiving each id exactly once (dedup verified).
-4. The Expected-Output numbers (per-message / ceiling / cap / required grant) are written back
-   into FDC-06 as concrete constants.
+1. ⚠ **PARTIAL** — `backgroundTimeRemaining` logged at **≈28.7 s**, but on **only ONE** iOS version (26.5),
+   not the required **≥2** (sim can't suspend → `DBL_MAX`); the flush completed without app termination in all
+   trials, but the ≥95 % of N∈{1,3,8} matrix was **not** fully run (a Send-button UX bug blocked staging N≥3
+   bursts). **Carry-forward (FDC-06 device-proof, deferred-not-waived):** confirm on a 2nd iOS major + run the
+   N-burst matrix.
+2. ⚠ **PARTIAL** — observed p95 `sendingCount` = **1** (every pause), so cap **N = 5** is set conservatively
+   above it; the **wider normal-usage distribution was NOT collected** (test scenarios only; UX bug blocked a
+   large burst). Cap = 5 stands; widen the sample post-launch.
+3. ✅ **DONE** — deposit-first ordering holds; a real deposit landed in **~52 ms** with the row left in custody
+   (not `failed`); `messageId` dedup verified server-side.
+4. ✅ **DONE** — the per-message 3 s / ceiling ≤8 s / cap N=5 / grant ≈28.7 s numbers + the **`DBL_MAX`-at-pause**
+   design constraint are written back into FDC-06.
 
 ## Risks / Unknowns
 

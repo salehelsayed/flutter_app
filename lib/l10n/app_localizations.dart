@@ -1756,6 +1756,18 @@ abstract class AppLocalizations {
   /// **'Received via inbox'**
   String get message_received_via_inbox;
 
+  /// No description provided for @message_sent_via_upgraded.
+  ///
+  /// In en, this message translates to:
+  /// **'Upgraded to direct connection'**
+  String get message_sent_via_upgraded;
+
+  /// No description provided for @message_received_via_upgraded.
+  ///
+  /// In en, this message translates to:
+  /// **'Received via upgraded direct connection'**
+  String get message_received_via_upgraded;
+
   /// No description provided for @share_send_failed.
   ///
   /// In en, this message translates to:

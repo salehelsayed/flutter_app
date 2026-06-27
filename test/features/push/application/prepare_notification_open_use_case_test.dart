@@ -33,6 +33,48 @@ void main() {
       expect(drainedGroups, isEmpty);
     });
 
+    // TC-04-10: the conversation route fires the optional warmPeer hook for the
+    // target peer. Mutation: remove the warm hook from the conversation case →
+    // re-red. (On a COLD tap the service-level PS-3 gate makes it a no-op; this
+    // only proves the hook fires.)
+    test('TC-04-10: conversation route fires warmPeer for the target peer',
+        () async {
+      final warmed = <String>[];
+      final result = await prepareNotificationOpen(
+        routeTarget: const NotificationRouteTarget.conversation('peer-123'),
+        drainOfflineInbox: () async {},
+        drainGroupOfflineInboxForGroup: (_) async {},
+        warmPeer: (pid) async {
+          warmed.add(pid);
+        },
+      );
+      expect(result.ok, isTrue);
+      expect(warmed, ['peer-123']);
+    });
+
+    // TC-04-10: warmPeer is NOT fired for group / intros / contactRequest / post
+    // routes — warmPeer is 1:1-conversation-only.
+    test('TC-04-10: warmPeer is not fired for non-conversation routes',
+        () async {
+      final warmed = <String>[];
+      Future<void> run(NotificationRouteTarget rt) async {
+        await prepareNotificationOpen(
+          routeTarget: rt,
+          drainOfflineInbox: () async {},
+          drainGroupOfflineInboxForGroup: (_) async {},
+          warmPeer: (pid) async {
+            warmed.add(pid);
+          },
+        );
+      }
+
+      await run(const NotificationRouteTarget.group('g1'));
+      await run(const NotificationRouteTarget.intros());
+      await run(const NotificationRouteTarget.contactRequest('peer-x'));
+      await run(const NotificationRouteTarget.post('post-1'));
+      expect(warmed, isEmpty);
+    });
+
     test(
       'group target drains the targeted group inbox before navigation',
       () async {

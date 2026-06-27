@@ -5,6 +5,13 @@
 class ActiveConversationTracker {
   String? _activePeerId;
 
+  /// FDC-04: the peer of the currently-viewed conversation, or null when none
+  /// is open. Read by the resume path to eagerly warm ONLY the active peer
+  /// (PS-4 — never the roster). The value is the normalized active key; for a
+  /// `group:` surface it is a `group:` key, so the warm producer must guard
+  /// against dialing a non-1:1 key (callers skip a `group:`-prefixed value).
+  String? get activePeerId => _activePeerId;
+
   /// Mark a conversation as actively being viewed.
   void setActive(String peerId) {
     _activePeerId = normalizeActiveKey(peerId);

@@ -183,10 +183,14 @@ class FakeP2PService
   }
 
   @override
+  Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {}
+
+  @override
   Future<bool> dialPeer(
     String peerId, {
     List<String>? addresses,
     int? timeoutMs,
+    bool preferQuic = false,
   }) async {
     dialCallCount++;
     return dialPeerResult;
@@ -1395,7 +1399,10 @@ void main() {
         expect(message!.status, 'failed');
         expect(messageRepo.saved.length, 1);
         expect(messageRepo.saved.first.status, 'failed');
-        expect(p2pService.storeInInboxCallCount, 1);
+        // FDC-03: unknown-presence fires the concurrent inbox (attempt 1, fails
+        // — storeInInboxResult false) then the serial fallback retries once
+        // (attempt 2, also fails) → 2 calls. The message still persists 'failed'.
+        expect(p2pService.storeInInboxCallCount, 2);
       },
     );
 
@@ -1556,7 +1563,9 @@ void main() {
       expect(message!.status, 'sent');
       expect(message.transport, 'direct');
       expect(message.wireEnvelope, isNotNull);
-      expect(p2pService.storeInInboxCallCount, 1);
+      // FDC-03: concurrent inbox (attempt 1, fails) + serial unacked handoff
+      // (attempt 2, fails) → 2 calls; the message still persists 'sent'.
+      expect(p2pService.storeInInboxCallCount, 2);
     });
 
     test(
@@ -1577,7 +1586,9 @@ void main() {
         expect(message!.status, 'sent');
         expect(message.transport, 'direct');
         expect(message.wireEnvelope, isNotNull);
-        expect(p2pService.storeInInboxCallCount, 1);
+        // FDC-03: concurrent inbox (attempt 1, fails) + serial unacked handoff
+        // (attempt 2, fails) → 2 calls; the message still persists 'sent'.
+        expect(p2pService.storeInInboxCallCount, 2);
       },
     );
 
@@ -2010,35 +2021,22 @@ void main() {
     });
   });
 
-  group('Phase 3 — relay probe recovery', () {
+  // FDC-03: the SERIAL relay-probe→inbox tail was REMOVED. These tests, formerly
+  // "Phase 3 — relay probe recovery," now pin the post-probe-tail reality: a
+  // race-fail send to an unknown-presence peer takes durable INBOX custody
+  // (probeRelayCallCount == 0 throughout — the probe never runs); LIVE relay
+  // recovery is FDC-02's IN-RACE staggered relay-live leg, exercised by the
+  // seeded-circuit case below (and the FDC-02 group). The general mutation for
+  // these: restoring the `if (raceResult.relayProbeEligible) { _tryRelayProbeSend
+  // (...) }` block makes probeRelayCallCount == 1 and these RED.
+  group('Phase 3 — race-fail recovery (FDC-03: probe tail removed)', () {
     test(
-      'relay probe success persists relay when send result transport says relay',
+      'circuit-only peer recovers LIVE via the FDC-02 in-race relay leg '
+      '(state-inferred relay label)',
       () async {
-        p2pService = FakeP2PService(
-          useNullDiscover: true,
-          sendMessageTransport: 'relay',
-        );
-        p2pService.probeRelayResult = RelayProbeResult.connected;
-
-        final (result, message) = await sendChatMessage(
-          p2pService: p2pService,
-          messageRepo: messageRepo,
-          targetPeerId: 'target-peer',
-          text: 'Hello through relay probe',
-          senderPeerId: 'my-peer',
-          senderUsername: 'Me',
-        );
-
-        expect(result, SendChatMessageResult.success);
-        expect(message, isNotNull);
-        expect(message!.status, 'delivered');
-        expect(message.transport, 'relay');
-      },
-    );
-
-    test(
-      'relay probe falls back to state inference only when send transport is absent',
-      () async {
+        // A live `/p2p-circuit` connection exists → FDC-02's staggered relay-live
+        // leg carries the send and `_resolveGoSendTransport` infers 'relay'. This
+        // is the live-relay recovery that REPLACED the serial probe tail.
         p2pService = FakeP2PService(
           currentState: NodeState(
             isStarted: true,
@@ -2056,13 +2054,12 @@ void main() {
           useNullDiscover: true,
           sendMessageTransport: null,
         );
-        p2pService.probeRelayResult = RelayProbeResult.connected;
 
         final (result, message) = await sendChatMessage(
           p2pService: p2pService,
           messageRepo: messageRepo,
           targetPeerId: 'target-peer',
-          text: 'Hello with inferred relay fallback',
+          text: 'Hello via the in-race relay leg',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
         );
@@ -2071,65 +2068,74 @@ void main() {
         expect(message, isNotNull);
         expect(message!.status, 'delivered');
         expect(message.transport, 'relay');
+        // The probe tail is gone — recovery was the in-race relay leg.
+        expect(p2pService.probeRelayCallCount, 0);
       },
     );
 
     test(
-      'discover miss then relay probe connected sends live without inbox',
+      'discover miss for an unknown-presence peer → durable inbox custody '
+      '(no probe)',
       () async {
-        p2pService = FakeP2PService(useNullDiscover: true);
+        // FDC-03: formerly "discover miss then relay probe connected sends live."
+        // With the probe tail removed and no live circuit, the concurrent durable
+        // inbox copy holds custody.
+        p2pService = FakeP2PService(
+          useNullDiscover: true,
+          storeInInboxResult: true,
+        );
         p2pService.probeRelayResult = RelayProbeResult.connected;
 
         final (result, message) = await sendChatMessage(
           p2pService: p2pService,
           messageRepo: messageRepo,
           targetPeerId: 'target-peer',
-          text: 'Hello through probe',
+          text: 'Hello → inbox custody',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
         );
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.status, 'delivered');
-        expect(message.transport, 'direct');
+        expect(message!.status, 'inboxed');
+        expect(message.transport, 'inbox');
         expect(p2pService.discoverCallCount, 1);
-        expect(p2pService.dialCallCount, 1);
-        expect(p2pService.probeRelayCallCount, 1);
-        expect(p2pService.sendCallCount, 1);
-        expect(p2pService.storeInInboxCallCount, 0);
+        expect(p2pService.probeRelayCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 1);
       },
     );
 
     test(
-      'dial failed then relay probe connected sends live without inbox',
+      'dial failure for an unknown-presence peer → durable inbox custody '
+      '(no probe)',
       () async {
-        p2pService = FakeP2PService(dialPeerResult: false);
+        // FDC-03: formerly "dial failed then relay probe connected sends live."
+        p2pService = FakeP2PService(
+          dialPeerResult: false,
+          storeInInboxResult: true,
+        );
         p2pService.probeRelayResult = RelayProbeResult.connected;
 
         final (result, message) = await sendChatMessage(
           p2pService: p2pService,
           messageRepo: messageRepo,
           targetPeerId: 'target-peer',
-          text: 'Hello after dial failure',
+          text: 'Hello after dial failure → inbox',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
         );
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.status, 'delivered');
-        expect(message.transport, 'direct');
-        expect(p2pService.discoverCallCount, 1);
-        expect(p2pService.dialCallCount, 2);
-        expect(p2pService.probeRelayCallCount, 1);
-        expect(p2pService.sendCallCount, 1);
-        expect(p2pService.storeInInboxCallCount, 0);
+        expect(message!.status, 'inboxed');
+        expect(message.transport, 'inbox');
+        expect(p2pService.probeRelayCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 1);
       },
     );
 
     test(
-      'discover miss then relay probe noReservation falls to inbox',
+      'offline peer (no reservation) → durable inbox custody, no probe',
       () async {
         p2pService = FakeP2PService(
           useNullDiscover: true,
@@ -2141,58 +2147,31 @@ void main() {
           p2pService: p2pService,
           messageRepo: messageRepo,
           targetPeerId: 'target-peer',
-          text: 'Hello queued after no reservation',
+          text: 'Hello queued offline',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
         );
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.status, 'inboxed'); // 115 P1: custody, not delivery
+        expect(message!.status, 'inboxed'); // doc 115: custody, not delivery
         expect(message.transport, 'inbox');
-        expect(p2pService.probeRelayCallCount, 1);
+        // FDC-03: the probe no longer runs; custody is the concurrent inbox.
+        expect(p2pService.probeRelayCallCount, 0);
         expect(p2pService.sendCallCount, 0);
         expect(p2pService.storeInInboxCallCount, 1);
       },
     );
 
     test(
-      'discover miss then relay probe error preserves inbox fallback',
+      'unacked live attempt for an unknown-presence peer hands off to inbox',
       () async {
+        // FDC-03: formerly "probe-connected send with lost ACK." With the probe
+        // gone, the unacked custody is the concurrent inbox copy.
         p2pService = FakeP2PService(
-          useNullDiscover: true,
-          storeInInboxResult: true,
-        );
-        p2pService.probeRelayResult = RelayProbeResult.error;
-
-        final (result, message) = await sendChatMessage(
-          p2pService: p2pService,
-          messageRepo: messageRepo,
-          targetPeerId: 'target-peer',
-          text: 'Hello fallback after probe error',
-          senderPeerId: 'my-peer',
-          senderUsername: 'Me',
-        );
-
-        expect(result, SendChatMessageResult.success);
-        expect(message, isNotNull);
-        expect(message!.status, 'inboxed'); // 115 P1: custody, not delivery
-        expect(message.transport, 'inbox');
-        expect(p2pService.probeRelayCallCount, 1);
-        expect(p2pService.sendCallCount, 0);
-        expect(p2pService.storeInInboxCallCount, 1);
-      },
-    );
-
-    test(
-      'probe-connected send with lost ACK hands off to inbox immediately',
-      () async {
-        p2pService = FakeP2PService(
-          useNullDiscover: true,
           sendMessageReply: null,
           storeInInboxResult: true,
         );
-        p2pService.probeRelayResult = RelayProbeResult.connected;
 
         final (result, message) = await sendChatMessage(
           p2pService: p2pService,
@@ -2205,26 +2184,22 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        // 115 P1 contract flip: custody → 'inboxed', envelope retained.
+        // doc 115 P1 contract: custody → 'inboxed', envelope retained.
         expect(message!.status, 'inboxed');
         expect(message.transport, 'inbox');
         expect(message.wireEnvelope, isNotNull);
-        expect(p2pService.probeRelayCallCount, 1);
-        expect(p2pService.sendCallCount, 1);
+        expect(p2pService.probeRelayCallCount, 0);
         expect(p2pService.storeInInboxCallCount, 1);
       },
     );
 
-    // NET-REL-05 P5 consolidation pin. With the direct leg missing
-    // (useNullDiscover) the ONLY sendMessageWithReply caller is the post-probe
-    // loop, so sendCallCount equals exactly relayProbeSendAttempts. The probe
-    // connects but every post-probe send returns sent:false, forcing the loop to
-    // run to its full count. P5 collapsed that count from 2 → 1 (suppressing the
-    // redundant second send). This test pins it to ONE attempt: reverting
-    // relayProbeSendAttempts 1 → 2 makes sendCallCount 2 and turns this RED.
     test(
-      'probe-connected but post-probe send fails attempts exactly once (P5)',
+      'live send fails for an unknown-presence peer → durable inbox custody '
+      '(no probe, no post-probe send)',
       () async {
+        // FDC-03: formerly the P5 post-probe-send-attempt pin. The probe loop is
+        // gone, so there is no post-probe send and probeRelayCallCount == 0; the
+        // direct leg missed (useNullDiscover) so sendCallCount stays 0.
         p2pService = FakeP2PService(
           useNullDiscover: true,
           sendMessageResult: false,
@@ -2236,23 +2211,17 @@ void main() {
           p2pService: p2pService,
           messageRepo: messageRepo,
           targetPeerId: 'target-peer',
-          text: 'Hello with failing post-probe send',
+          text: 'Hello with failing live send',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
         );
 
-        // The probe connected and dialed, but the live send never landed, so the
-        // message is durably handed off to the inbox (custody → 'inboxed').
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
         expect(message!.status, 'inboxed');
         expect(message.transport, 'inbox');
-        expect(p2pService.probeRelayCallCount, 1);
-        // Load-bearing: exactly ONE post-probe send attempt (P5: 2 → 1). This is
-        // the only sendMessageWithReply caller on this path (direct leg missed
-        // via useNullDiscover), so the count is the attempt count verbatim.
-        expect(p2pService.sendCallCount, relayProbeSendAttempts);
-        expect(p2pService.sendCallCount, 1);
+        expect(p2pService.probeRelayCallCount, 0);
+        expect(p2pService.sendCallCount, 0);
         expect(p2pService.storeInInboxCallCount, 1);
       },
     );
@@ -2371,6 +2340,108 @@ void main() {
       },
     );
 
+    // ───────── FDC-04: LAN-aware reuse/sticky gate (RC2 / INV-2) ─────────
+    // TC-04-12: a same-WiFi peer with a DIRECT connection no longer takes the
+    // reuse fast-path — it races so the LAN leg can win. (FDC-02 already carved
+    // out relay-only circuits; the isLocalPeer gate adds the orthogonal
+    // direct-conn-to-a-LAN-peer case.) Mutation: drop `&& !isLocalPeer` from the
+    // reuse condition → reuse fires for a local peer → re-red.
+    test(
+      'TC-04-12: LAN-visible peer with a direct conn does not reuse — LAN wins',
+      () async {
+        p2pService = FakeP2PService(
+          useNullDiscover: true, // direct race leg misses → only LAN can win
+          currentState: NodeState(
+            isStarted: true,
+            connections: [
+              const p2p.ConnectionState(
+                peerId: 'target-peer',
+                multiaddrs: ['/ip4/192.168.1.20/tcp/4001'], // DIRECT, not circuit
+                direction: 'outbound',
+                status: 'connected',
+              ),
+            ],
+          ),
+        )..localPeers.add('target-peer'); // isLocalPeer → true
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'same-wifi hello',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message!.transport, 'local'); // raced LAN, not the reused conn
+        expect(p2pService.localSendCallCount, 1); // the LAN leg fired
+        expect(p2pService.sendCallCount, 0); // reuse short-circuit NOT taken
+      },
+    );
+
+    // TC-04-13: a learned 'relay'/'direct' sticky transport must NOT short-
+    // circuit a LAN-visible peer — only a learned 'local' may. Mutation: drop
+    // the isLocalPeer guard from the sticky condition → sticky relay fires →
+    // re-red.
+    test(
+      'TC-04-13: learned relay sticky does not short-circuit a LAN peer',
+      () async {
+        p2pService = FakeP2PService(useNullDiscover: true)
+          ..localPeers.add('target-peer') // isLocalPeer → true
+          ..lastKnownGoodTransportResult = 'relay'; // learned relay
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'same-wifi hello 2',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message!.transport, 'local'); // sticky skipped → LAN raced + won
+        expect(p2pService.localSendCallCount, 1);
+        expect(p2pService.sendCallCount, 0); // the learned-relay sticky NOT taken
+      },
+    );
+
+    // TC-04-14: PS-2 preservation — a NON-local peer with a DIRECT conn STILL
+    // takes the reuse fast-path (the gate is LAN-only, not a blanket disable).
+    // Green-on-HEAD; re-reds only under a broaden-the-gate mutation.
+    test('TC-04-14: non-local direct-conn peer still reuses (PS-2)', () async {
+      p2pService = FakeP2PService(
+        currentState: NodeState(
+          isStarted: true,
+          connections: [
+            const p2p.ConnectionState(
+              peerId: 'target-peer',
+              multiaddrs: ['/ip4/127.0.0.1/tcp/4001'], // DIRECT
+              direction: 'outbound',
+              status: 'connected',
+            ),
+          ],
+        ),
+      ); // isLocalPeer → false (not in localPeers)
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'remote reuse',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message!.transport, 'direct'); // reuse preserved
+      expect(p2pService.sendCallCount, 1); // the reuse send fired
+      expect(p2pService.localSendCallCount, 0);
+      expect(p2pService.discoverCallCount, 0); // no race — it reused
+      expect(p2pService.dialCallCount, 0);
+    });
+
     test(
       'explicit send transport beats conflicting mixed peer state on the reuse fast path',
       () async {
@@ -2413,7 +2484,11 @@ void main() {
     );
 
     test(
-      'existing LAN-visible peer records actual Go transport on the reuse fast path',
+      // FDC-04 (RC2/INV-2 / TC-04-12): a LAN-visible peer with a direct conn no
+      // longer takes the reuse fast path — it races so the LAN leg can win (see
+      // TC-04-12). This test therefore covers the recording-on-reuse path for a
+      // NON-LOCAL connected peer (the case that still reuses).
+      'existing non-local connected peer records actual Go transport on the reuse fast path',
       () async {
         p2pService = FakeP2PService(
           currentState: NodeState(
@@ -2427,7 +2502,7 @@ void main() {
               ),
             ],
           ),
-        )..localPeers.add('target-peer');
+        ); // NOT LAN-visible → still reuses under FDC-04
 
         final (result, message) = await sendChatMessage(
           p2pService: p2pService,
@@ -2768,7 +2843,12 @@ void main() {
   // ─── Section 4 — inbox call-site regression guard ──────────────────────
   group('Section 4 — inbox call-site regression guard', () {
     test(
-      'storeInInbox is NOT called when direct P2P succeeds with ACK',
+      // FDC-03: the durability tier now fires CONCURRENTLY for unknown-presence
+      // sends even when the direct leg ACKs (receiver messageId dedup discards
+      // the duplicate). The "no phantom push on a confirmed path" guard now lives
+      // on the reuse/local single-path locks (FDC-03-P1/P2), not on direct ACKs.
+      'storeInInbox IS called once (concurrent durability) when direct P2P '
+      'succeeds with ACK (FDC-03)',
       () async {
         p2pService = FakeP2PService(
           sendMessageResult: true, // P2P succeeds with ACK
@@ -2778,15 +2858,16 @@ void main() {
           p2pService: p2pService,
           messageRepo: messageRepo,
           targetPeerId: 'target-peer',
-          text: 'Direct success no inbox',
+          text: 'Direct success concurrent inbox',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
         );
 
         expect(result, SendChatMessageResult.success);
         expect(message!.status, 'delivered');
-        // Inbox must NOT be called on ACK'd direct send — avoids phantom push
-        expect(p2pService.storeInInboxCallCount, 0);
+        expect(message.transport, 'direct'); // the live leg wins the label
+        // One concurrent durable copy fired alongside the winning live leg.
+        expect(p2pService.storeInInboxCallCount, 1);
       },
     );
 
@@ -2891,8 +2972,9 @@ void main() {
 
         expect(result, SendChatMessageResult.peerNotFound);
         expect(message!.status, 'failed');
-        // The failure fallback attempted inbox once
-        expect(p2pService.storeInInboxCallCount, 1);
+        // FDC-03: the concurrent inbox attempt fails (storeInInboxResult false),
+        // then the serial fallback retries once — both fail → 2 calls.
+        expect(p2pService.storeInInboxCallCount, 2);
       },
     );
   });
@@ -2961,45 +3043,51 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(stopwatch.elapsed.inSeconds, lessThan(3));
-        expect(p2pService.storeInInboxCallCount, 0); // no inbox on success
+        // FDC-03: unknown-presence fires the concurrent durable copy even on a
+        // fast direct success — fire-and-forget, so it does not block the sub-3s
+        // return (the timing assertion above proves the live path is not stalled).
+        expect(p2pService.storeInInboxCallCount, 1);
       },
     );
   });
 
   group('NET-REL-04 — per-leg send-attempt census', () {
     test(
-      'direct leg failure is recorded even when the relay probe delivers '
+      'direct leg failure is recorded even when the durable inbox delivers '
       '(the delivered-only mix cannot show this)',
       () async {
-        // Direct race leg fails (discover miss → peer_not_found), then the
-        // relay probe connects and delivers.
-        p2pService = FakeP2PService(useNullDiscover: true);
-        p2pService.probeRelayResult = RelayProbeResult.connected;
+        // FDC-03: formerly "even when the relay probe delivers." The probe tail
+        // is gone; the direct race leg fails (discover miss → peer_not_found) and
+        // the CONCURRENT durable inbox carries custody. The census must still
+        // record the direct FAILURE alongside the inbox SUCCESS.
+        p2pService = FakeP2PService(
+          useNullDiscover: true,
+          storeInInboxResult: true,
+        );
         final metrics = TransportMetrics();
 
         final (result, message) = await sendChatMessage(
           p2pService: p2pService,
           messageRepo: messageRepo,
           targetPeerId: 'target-peer',
-          text: 'Hello through probe',
+          text: 'Hello through durable inbox',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
           transportMetrics: metrics,
         );
 
         expect(result, SendChatMessageResult.success);
-        expect(message!.status, 'delivered');
+        expect(message!.status, 'inboxed'); // custody, not delivery (doc 115)
 
-        // The direct attempt failed, the relay probe attempt succeeded.
+        // The direct attempt failed; the inbox attempt succeeded — the per-leg
+        // census shows the failed leg even though delivery happened elsewhere.
         expect(metrics.attemptCounts()['direct'], 1);
         expect(metrics.attemptFailureCounts()['direct'], 1);
-        expect(metrics.attemptCounts()['relay_probe'], 1);
-        expect(metrics.attemptFailureCounts()['relay_probe'], 0);
-        // The terminal rung is relay_probe, not failed.
-        expect(metrics.rungDistribution()['relay_probe'], 1);
+        expect(metrics.attemptCounts()['inbox'], 1);
+        expect(metrics.attemptFailureCounts()['inbox'], 0);
+        // Not a terminal failure; the probe leg never ran (pre-init stays 0).
         expect(metrics.rungDistribution()['failed'], 0);
-        // Inbox was never reached.
-        expect(metrics.attemptCounts()['inbox'], 0);
+        expect(metrics.attemptCounts()['relay_probe'], 0);
       },
     );
 
@@ -3061,8 +3149,13 @@ void main() {
       expect(result, isNot(SendChatMessageResult.success));
       expect(message!.status, 'failed');
       expect(metrics.attemptFailureCounts()['direct'], 1);
-      expect(metrics.attemptFailureCounts()['relay_probe'], 1);
-      expect(metrics.attemptFailureCounts()['inbox'], 1);
+      // FDC-03: the probe tail is gone, so no relay_probe leg is attempted
+      // (pre-init stays 0); the concurrent inbox attempt is the failed durable
+      // leg here.
+      expect(metrics.attemptFailureCounts()['relay_probe'], 0);
+      // FDC-03: the inbox leg is tried TWICE (concurrent attempt + serial retry),
+      // both fail → 2 recorded inbox failures.
+      expect(metrics.attemptFailureCounts()['inbox'], 2);
       expect(metrics.rungDistribution()['failed'], 1);
       // No transport bucket incremented for a failed send.
       expect(metrics.totalTransportSamples, 0);
@@ -3411,15 +3504,61 @@ void main() {
         expect(custody!['id'], idPrefix);
       });
 
-      test('RELAY_PROBE_CONNECTED carries the id (relay-probe recovery)',
-          () async {
-        // useNullDiscover → the live race fails with peer_not_found, which makes
-        // the relay probe eligible (mirrors the Phase 3 relay-probe tests).
-        final p2p = FakeP2PService(
-          useNullDiscover: true,
-          sendMessageTransport: 'relay',
+      // FDC-03: the RELAY_PROBE_CONNECTED id-correlation test is RETIRED — the
+      // serial relay-probe tail (and its CHAT_MSG_SEND_RELAY_PROBE_CONNECTED
+      // event) was removed. Live relay recovery is FDC-02's in-race relay-live
+      // leg; the BEGIN/CUSTODY id correlation above still covers the durable
+      // inbox path that now carries an offline send.
+    });
+
+    // ─── FDC-03 — generalize the concurrent durable inbox to ALL unknown- ──
+    // presence sends (R6 / P0-2). The 30s prior-attempt recency gate is REMOVED:
+    // a send that is not already-connected, not LAN-local, and has no live peer
+    // connection fires the durable inbox copy CONCURRENTLY with the live race,
+    // independent of prior-attempt recency. The OLD "U-N3 high-confidence does
+    // NOT fire" / "stale stays high-confidence" negative controls are INVERTED by
+    // FDC-03 (a high-confidence unknown-presence send now DOES fire) and replaced
+    // by FDC-03-01..05 below. The "not a blanket dual-write" invariant now lives
+    // on the kept reuse/local structural guards (FDC-03-P1/P2) and the 116 EF-2
+    // gate (which already asserts storeInInboxCallCount==0 on a downgrade-blocked
+    // send — the FDC-03-P3 lock), NOT on prior-attempt recency. FDC-03-P4 is the
+    // existing U3 test above (low-confidence ⊂ unknown-presence, still fires).
+    group('FDC-03 concurrent durable inbox — unknown-presence generalization',
+        () {
+      test(
+          'FDC-03-01 unknown-presence live-success ALSO deposits one concurrent '
+          'inbox copy', () async {
+        // Default fake: not connected, not local, discover succeeds, live send
+        // acked. No prior attempt → HIGH confidence on HEAD, where the old gate
+        // fired NO concurrent inbox (the old U-N3 asserted count 0).
+        p2pService = FakeP2PService();
+        expect(messageRepo.latestMessageForContact, isNull);
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'First-ever send to an unknown-presence peer',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
         );
-        p2p.probeRelayResult = RelayProbeResult.connected;
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        // The live leg wins the transport label...
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'direct');
+        // ...AND the durable inbox copy fired CONCURRENTLY exactly once.
+        // Mutation: re-add the recency gate (wrap the arm back in a low-confidence
+        // `if` / restore getLatestMessageForContact) → count back to 0 → RED.
+        expect(p2pService.storeInInboxCallCount, 1);
+        expect(p2pService.sendCallCount, 1);
+      });
+
+      test(
+          'FDC-03-02 CONCURRENT_INBOX_BEGIN fires for an unknown-presence send '
+          'whose live leg WINS', () async {
+        final p2p = FakeP2PService(); // live success, no prior attempt
         final repo = FakeMessageRepository();
 
         late ConversationMessage sent;
@@ -3428,7 +3567,7 @@ void main() {
             p2pService: p2p,
             messageRepo: repo,
             targetPeerId: 'target-peer',
-            text: 'relay probe recovery',
+            text: 'unknown-presence live win',
             senderPeerId: 'my-peer',
             senderUsername: 'Me',
           );
@@ -3436,74 +3575,232 @@ void main() {
           sent = message!;
         });
 
-        final connected =
-            detailsOf(events, 'CHAT_MSG_SEND_RELAY_PROBE_CONNECTED');
-        expect(connected, isNotNull,
-            reason: 'relay probe must run on a peer_not_found live race');
-        expect(connected!['id'], sent.id.substring(0, 8));
+        final names = events.map((e) => e['event']).toList();
+        // The deposit ran CONCURRENTLY (not on the serial unhappy path)...
+        // Mutation: move the BEGIN emit back behind the recency gate → absent.
+        expect(names, contains('CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN'));
+        final begin = events.firstWhere(
+          (e) => e['event'] == 'CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN',
+        );
+        expect((begin['details'] as Map)['id'], sent.id.substring(0, 8));
+        // ...in parallel with a WINNING live leg (terminal success via direct).
+        final success = events.firstWhere(
+          (e) => e['event'] == 'CHAT_MSG_SEND_SUCCESS',
+        );
+        expect((success['details'] as Map)['via'], 'direct');
       });
-    });
 
-    // U-N3 — concurrent NEGATIVE control: a HIGH-confidence send (no prior
-    // failed/inbox attempt) does NOT fire the inbox. Proves the change is not a
-    // blanket dual-write of every send (acceptance #5). The live send succeeds
-    // with no inbox call at all.
-    test('U-N3 concurrent neg: high-confidence send does NOT fire inbox',
-        () async {
-      p2pService = FakeP2PService();
-      // No prior attempt → high confidence.
-      expect(messageRepo.latestMessageForContact, isNull);
+      test(
+          'FDC-03-03 race failure for an unknown-presence peer commits inbox '
+          'custody WITHOUT the relay probe', () async {
+        // Direct leg misses (peer_not_found → relay-probe-eligible on HEAD); the
+        // concurrent inbox accepts custody. The serial probe tail is GONE.
+        p2pService = FakeP2PService(
+          useNullDiscover: true,
+          storeInInboxResult: true,
+        )..probeRelayResult = RelayProbeResult.connected;
 
-      final (result, message) = await sendChatMessage(
-        p2pService: p2pService,
-        messageRepo: messageRepo,
-        targetPeerId: 'target-peer',
-        text: 'High-confidence send',
-        senderPeerId: 'my-peer',
-        senderUsername: 'Me',
-      );
+        late ConversationMessage sent;
+        final events = await captureFlowEvents(() async {
+          final (result, message) = await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            text: 'unknown-presence race failure → inbox custody',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+          );
+          expect(result, SendChatMessageResult.success);
+          sent = message!;
+        });
 
-      expect(result, SendChatMessageResult.success);
-      expect(message!.status, 'delivered');
-      expect(message.transport, 'direct');
-      // Strictly single-path: no concurrent inbox.
-      expect(p2pService.storeInInboxCallCount, 0);
-    });
+        expect(sent.status, 'inboxed');
+        expect(sent.transport, 'inbox');
+        expect(sent.wireEnvelope, isNotNull); // custody retained (doc 115)
+        // RED on HEAD because the recency gate left concurrentInbox null, so a
+        // race-fail ran the probe (count 1) and delivered live; FDC-03 takes
+        // concurrent-inbox custody instead. NOTE: with storeInInboxResult true the
+        // custody short-circuit returns BEFORE the (removed) probe location, so
+        // the dedicated probe-tail-removal mutation lock is FDC-03-03b below
+        // (which fails the concurrent copy to actually reach that spot).
+        expect(p2pService.probeRelayCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 1);
+        final names = events.map((e) => e['event']).toList();
+        expect(names, contains('CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN'));
+        expect(names, contains('CHAT_MSG_SEND_CONCURRENT_INBOX_CUSTODY'));
+        expect(names, isNot(contains('CHAT_MSG_SEND_RELAY_PROBE_CONNECTED')));
+      });
 
-    // U-N3 (gate detail) — a prior attempt that is STALE (older than the 30s
-    // low-confidence window) stays high-confidence: no concurrent inbox. Proves
-    // the recency gate, not merely the presence of a failed prior attempt.
-    test('U-N3 concurrent neg: stale prior failure stays high-confidence',
-        () async {
-      p2pService = FakeP2PService();
-      messageRepo.latestMessageForContact = ConversationMessage(
-        id: 'old-attempt-id',
-        contactPeerId: 'target-peer',
-        senderPeerId: 'my-peer',
-        text: 'Ancient failed message',
-        timestamp: '2020-01-01T00:00:00.000Z',
-        status: 'failed',
-        isIncoming: false,
-        // Well outside kLowConfidenceWindow (30s).
-        createdAt: DateTime.now()
-            .toUtc()
-            .subtract(const Duration(minutes: 10))
-            .toIso8601String(),
-      );
+      test(
+          'FDC-03-03b race-fail whose concurrent copy ALSO fails reaches the '
+          'former probe location WITHOUT running the probe (invariant #4 lock)',
+          () async {
+        // The concurrent copy FAILS (storeInInboxResult: false), so the custody
+        // short-circuit does NOT fire and control reaches the spot where the
+        // serial relay-probe tail used to sit. The probe is gone, so it never
+        // runs even though the race is relay-eligible (peer_not_found). This is
+        // the ONLY test that actually exercises the removed-probe location.
+        // RED on HEAD: there concurrentInbox was null → the probe ran → count 1
+        // and the message was delivered live. Mutation: restore the
+        // `if (raceResult.relayProbeEligible) { _tryRelayProbeSend(...) }` block →
+        // probeRelayCallCount == 1 (and result success) → RED.
+        p2pService = FakeP2PService(
+          useNullDiscover: true, // direct misses → peer_not_found (relay-eligible)
+          storeInInboxResult: false, // concurrent copy fails → no short-circuit
+        )..probeRelayResult = RelayProbeResult.connected;
 
-      final (result, message) = await sendChatMessage(
-        p2pService: p2pService,
-        messageRepo: messageRepo,
-        targetPeerId: 'target-peer',
-        text: 'Send after an old failure',
-        senderPeerId: 'my-peer',
-        senderUsername: 'Me',
-      );
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'concurrent fails → reach the removed probe location',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
 
-      expect(result, SendChatMessageResult.success);
-      expect(message!.transport, 'direct');
-      // Stale prior failure → still single-path.
-      expect(p2pService.storeInInboxCallCount, 0);
+        // The probe never runs (invariant #4: no serial relay-probe carrier)...
+        expect(p2pService.probeRelayCallCount, 0);
+        // ...and control reached the serial tail past the probe spot: the inbox
+        // was attempted twice (concurrent + serial retry), both failing.
+        expect(p2pService.storeInInboxCallCount, 2);
+        expect(result, SendChatMessageResult.peerNotFound);
+        expect(message!.status, 'failed');
+      });
+
+      test('FDC-03-04 concurrent custody writes storeInInbox EXACTLY once',
+          () async {
+        // Live race fails to land (send returns false); the concurrent inbox
+        // succeeds and takes custody — so the serial store must be SKIPPED.
+        p2pService = FakeP2PService(
+          sendMessageResult: false,
+          storeInInboxResult: true,
+        );
+
+        late ConversationMessage sent;
+        final events = await captureFlowEvents(() async {
+          final (result, message) = await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            text: 'one relay write only',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+          );
+          expect(result, SendChatMessageResult.success);
+          sent = message!;
+        });
+
+        expect(sent.status, 'inboxed');
+        // Exactly one storeInInbox: the concurrent copy. Mutation: remove the
+        // "skip serial store when concurrent custody succeeded" short-circuit →
+        // the serial store runs after the concurrent one → count 2 → RED.
+        expect(p2pService.storeInInboxCallCount, 1);
+        final names = events.map((e) => e['event']).toList();
+        expect(names, contains('CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN'));
+        expect(names, contains('CHAT_MSG_SEND_CONCURRENT_INBOX_CUSTODY'));
+      });
+
+      test(
+          'FDC-03-05 unacked live write for an unknown-presence peer settles '
+          'inboxed via the concurrent copy', () async {
+        // The live write is sent-but-unacked (sendMessageReply: null); the
+        // concurrent inbox already holds custody, so the unacked branch settles
+        // 'inboxed' WITHOUT a second sequential store.
+        p2pService = FakeP2PService(
+          sendMessageReply: null,
+          storeInInboxResult: true,
+        );
+
+        late ConversationMessage sent;
+        final events = await captureFlowEvents(() async {
+          final (result, message) = await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            text: 'unacked → concurrent custody',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+          );
+          expect(result, SendChatMessageResult.success);
+          sent = message!;
+        });
+
+        expect(sent.status, 'inboxed');
+        expect(sent.transport, 'inbox');
+        expect(sent.wireEnvelope, isNotNull);
+        expect(p2pService.storeInInboxCallCount, 1);
+        final names = events.map((e) => e['event']).toList();
+        // Settled via the concurrent copy, NOT the serial handoff. Mutation:
+        // re-gate the unacked concurrent branch behind the old low-conf flag →
+        // it falls to the serial handoff → HANDOFF_BEGIN reappears → RED.
+        expect(
+          names,
+          contains('CHAT_MSG_SEND_UNACKED_CONCURRENT_INBOX_CUSTODY'),
+        );
+        expect(
+          names,
+          isNot(contains('CHAT_MSG_SEND_UNACKED_INBOX_HANDOFF_BEGIN')),
+        );
+      });
+
+      // ── Preserved single-path locks (green on HEAD) — "not a blanket dual- ──
+      // write." FDC-03-P3 = the existing 116 EF-2 gate (a downgrade-blocked send
+      // already asserts storeInInboxCallCount==0); FDC-03-P4 = the existing U3
+      // low-confidence test (low-confidence ⊂ unknown-presence, still fires).
+      test('FDC-03-P1 reuse send does NOT fire the concurrent inbox', () async {
+        // A peer with a live (non-circuit) connection reuses the wire ack and
+        // returns BEFORE the unknownPresence gate is evaluated. The load-bearing
+        // lock is discoverCallCount == 0 (the reuse early-return is taken); the
+        // gate's !isAlreadyConnected term then keeps storeInInboxCallCount at 0.
+        // Mutation: remove the reuse early-return → discoverCallCount == 1 → RED.
+        p2pService = FakeP2PService(
+          currentState: NodeState(
+            isStarted: true,
+            connections: [
+              const p2p.ConnectionState(
+                peerId: 'target-peer',
+                multiaddrs: ['/ip4/127.0.0.1/tcp/4001'],
+                direction: 'outbound',
+                status: 'connected',
+              ),
+            ],
+          ),
+        );
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'reuse stays single-path',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message!.transport, 'direct'); // reuse labels 'direct'
+        expect(p2pService.discoverCallCount, 0); // proof of the reuse path
+        expect(p2pService.storeInInboxCallCount, 0);
+      });
+
+      test('FDC-03-P2 LAN-local send does NOT fire the concurrent inbox',
+          () async {
+        // A LAN-local peer has the nonce ack — single-path. Mutation: drop the
+        // !isLocalPeer guard → the concurrent inbox fires → count 1 → RED.
+        p2pService = DurableLanFakeP2PService()..localPeers.add('target-peer');
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'LAN-local stays single-path',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message!.transport, 'local');
+        expect(p2pService.storeInInboxCallCount, 0);
+      });
     });
 
     // U4 — dedup (happy): the same messageId winning on more than one path
@@ -3593,11 +3890,11 @@ void main() {
       expect(message, isNotNull);
       expect(message!.status, 'inboxed'); // 115 P1: custody, not delivery
       expect(message.transport, 'inbox');
-      // Probe ran once and detected offline; no post-probe live send fired
-      // (NO_RESERVATION skips the relay send loop straight to inbox).
-      expect(p2pService.probeRelayCallCount, 1);
+      // FDC-03: the probe tail is gone — the concurrent durable inbox carries
+      // custody; no probe and no live send fire for this discover-miss peer.
+      expect(p2pService.probeRelayCallCount, 0);
       expect(p2pService.sendCallCount, 0);
-      // Inbox took custody exactly once.
+      // Inbox took custody exactly once (the concurrent copy).
       expect(p2pService.storeInInboxCallCount, 1);
       // The whole offline path stays comfortably bounded.
       expect(sw.elapsedMilliseconds, lessThan(2000));
@@ -3771,7 +4068,9 @@ void main() {
       expect(result, SendChatMessageResult.success);
       expect(message!.status, 'delivered');
       expect(message.transport, 'direct');
-      expect(p2pService.storeInInboxCallCount, 0);
+      // FDC-03: unknown-presence now fires one concurrent durable copy alongside
+      // the winning live leg (status/transport unchanged).
+      expect(p2pService.storeInInboxCallCount, 1);
     });
   });
 
@@ -3916,53 +4215,58 @@ void main() {
         expect(message, isNotNull);
         expect(message!.status, 'delivered');
         expect(message.transport, 'direct');
-        expect(p2pService.storeInInboxCallCount, 0);
+        // FDC-03: the concurrent durable copy fires for this unknown-presence
+        // send (count 1); the direct leg still WINS (no starvation) — FDC-01's
+        // intent is preserved, only the durability side-effect is new.
+        expect(p2pService.storeInInboxCallCount, 1);
         expect(p2pService.probeRelayCallCount, 0);
         expect(p2pService.recordSuccessfulTransportCallCount, 1);
       },
     );
 
     test(
-      'FDC-01 discover-step timeout is relay-probe-eligible '
-      '(online-relay peer delivered live)',
+      'FDC-01 discover-step timeout → durable inbox custody '
+      '(FDC-03: probe tail removed)',
       () async {
         // Discover overruns the 2s per-step budget → eligible peer_not_found
-        // (NOT swallowed by the aggregate). The relay probe then delivers live.
-        // sendMessageTransport:'relay' so the post-probe send resolves transport
-        // 'relay' (a connected probe with null transport would infer 'direct').
+        // (NOT swallowed by the aggregate). FDC-03: the serial probe tail is
+        // gone, so the eligible-timeout peer takes durable custody via the
+        // CONCURRENT inbox (the live-relay path is now FDC-02's in-race leg, which
+        // requires a pre-existing circuit). FDC-01's step-budget enforcement is
+        // still exercised here (the discover times out at the step budget).
         p2pService = FakeP2PService(
           storeInInboxResult: true,
           probeRelayResult: RelayProbeResult.connected,
           sendMessageAcked: true,
-          sendMessageTransport: 'relay',
         )..discoverDelay = const Duration(milliseconds: 2100);
 
         final (result, message) = await sendChatMessage(
           p2pService: p2pService,
           messageRepo: messageRepo,
           targetPeerId: 'target-peer',
-          text: 'Online via relay',
+          text: 'Online via durable inbox',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
         );
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(p2pService.probeRelayCallCount, 1);
-        expect(message!.transport, 'relay');
-        expect(message.status, 'delivered');
-        expect(p2pService.storeInInboxCallCount, 0);
+        // The probe never runs (tail removed); custody is the concurrent inbox.
+        expect(p2pService.probeRelayCallCount, 0);
+        expect(message!.transport, 'inbox');
+        expect(message.status, 'inboxed');
+        expect(p2pService.storeInInboxCallCount, 1);
       },
     );
 
     test(
-      'FDC-01 send-step direct_timeout triggers relay probe',
+      'FDC-01 send-step direct_timeout → durable inbox custody '
+      '(FDC-03: no probe)',
       () async {
         // discover + dial fast; send overruns the 2s per-step budget → eligible
-        // direct_timeout → relay probe ATTEMPTED. Probe returns noReservation so
-        // the tail still lands in inbox (preserved offline behavior) — the
-        // discriminator is that the probe RAN at all (probeRelayCallCount == 1),
-        // isolating eligibility from probe outcome.
+        // direct_timeout. FDC-03: the probe tail is gone, so the timed-out send
+        // takes durable custody via the CONCURRENT inbox (no probe runs). FDC-01's
+        // send-step budget enforcement is still exercised (the send times out).
         p2pService = FakeP2PService(
           storeInInboxResult: true,
           probeRelayResult: RelayProbeResult.noReservation,
@@ -3980,8 +4284,9 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(p2pService.probeRelayCallCount, 1);
+        expect(p2pService.probeRelayCallCount, 0);
         expect(message!.status, 'inboxed');
+        expect(p2pService.storeInInboxCallCount, 1);
       },
     );
 
@@ -4236,7 +4541,9 @@ void main() {
         expect(message, isNotNull);
         expect(message!.transport, 'direct');
         expect(p2pService.probeRelayCallCount, 0);
-        expect(p2pService.storeInInboxCallCount, 0);
+        // FDC-03: the concurrent durable copy fires for this unknown-presence
+        // send; the direct leg still wins (FDC-02's no-starvation intent holds).
+        expect(p2pService.storeInInboxCallCount, 1);
       },
     );
 
@@ -4268,9 +4575,10 @@ void main() {
         expect(p2pService.discoverCallCount, 1);
         expect(p2pService.dialCallCount, 0);
         expect(p2pService.sendCallCount, 0);
-        // Eligible peer_not_found → relay probe attempted (not swallowed by the
-        // 6s aggregate); bounded well under it.
-        expect(p2pService.probeRelayCallCount, 1);
+        // FDC-03: the probe tail is gone — the eligible peer_not_found takes
+        // durable custody via the concurrent inbox; bounded well under the 6s
+        // aggregate.
+        expect(p2pService.probeRelayCallCount, 0);
         expect(sw.elapsedMilliseconds, lessThan(3000));
       },
     );
@@ -4484,10 +4792,14 @@ class _ThrowOnInboxP2PService implements P2PService {
       : null;
 
   @override
+  Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {}
+
+  @override
   Future<bool> dialPeer(
     String peerId, {
     List<String>? addresses,
     int? timeoutMs,
+    bool preferQuic = false,
   }) async => p2pSucceeds;
 
   @override
@@ -4608,10 +4920,14 @@ class _ThrowOnSendP2PService implements P2PService {
       );
 
   @override
+  Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {}
+
+  @override
   Future<bool> dialPeer(
     String peerId, {
     List<String>? addresses,
     int? timeoutMs,
+    bool preferQuic = false,
   }) async => true;
 
   @override
@@ -4736,10 +5052,14 @@ class _FlakyDiscoverP2PService implements P2PService {
   }
 
   @override
+  Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {}
+
+  @override
   Future<bool> dialPeer(
     String peerId, {
     List<String>? addresses,
     int? timeoutMs,
+    bool preferQuic = false,
   }) async => true;
 
   @override
@@ -4859,10 +5179,14 @@ class _SlowLocalFastDirectP2PService implements P2PService {
       );
 
   @override
+  Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {}
+
+  @override
   Future<bool> dialPeer(
     String peerId, {
     List<String>? addresses,
     int? timeoutMs,
+    bool preferQuic = false,
   }) async => true;
 
   @override

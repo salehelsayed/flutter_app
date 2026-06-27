@@ -249,7 +249,11 @@ void main() {
           originalId,
         );
         expect(offlineResult, SendChatMessageResult.success);
-        expect(network.inboxCount(bob.peerId), 1);
+        // FDC-03: every unknown-presence send now deposits a concurrent durable
+        // copy (the fake models no persistent connection, so the online original
+        // AND the offline reply each leave one). The original's copy dedups on
+        // drain, so the final convo below is unchanged.
+        expect(network.inboxCount(bob.peerId), 2);
 
         await bobSub.cancel();
 
@@ -268,7 +272,9 @@ void main() {
         bob.setOnline(true);
 
         final drained = await bob.drainOfflineInbox();
-        expect(drained, 1);
+        // FDC-03: the online original also left a concurrent durable copy; it
+        // dedups on drain (convo stays length 2 below) — benign +1.
+        expect(drained, 2);
         await Future.delayed(const Duration(milliseconds: 50));
 
         final bobConvo = await bob.loadConversationWith(alice.peerId);

@@ -21,7 +21,7 @@ class _ThrowingDialFakeP2PService extends FakeP2PService {
   _ThrowingDialFakeP2PService({super.initialState});
 
   @override
-  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs}) async {
+  Future<bool> dialPeer(String peerId, {List<String>? addresses, int? timeoutMs, bool preferQuic = false}) async {
     dialPeerCallCount++;
     lastDialPeerId = peerId;
     throw Exception('dial exploded');

@@ -84,6 +84,15 @@ NodeState _stateForBadgeState(BadgeReadinessState state) {
       sendCapabilityReady: true,
       inboxCapabilityReady: true,
     ),
+    // FDC-14: directReady on top of usabilityReady promotes to onlineDirect.
+    BadgeReadinessState.onlineDirect => const NodeState(
+      isStarted: true,
+      relayState: 'online',
+      circuitAddresses: ['/p2p-circuit/relay1'],
+      sendCapabilityReady: true,
+      inboxCapabilityReady: true,
+      directReady: true,
+    ),
   };
 }
 
@@ -98,6 +107,37 @@ Future<_FakeP2PService> _pumpIndicator(
     ),
   );
   return fakeService;
+}
+
+/// Reads the single label [Text] inside the indicator without hard-coding the
+/// onlineDirect glyph (the plan locks distinctness, not a literal). Relies on
+/// the test states carrying no connections, so the debug count Text is absent.
+Text _labelTextWidget(WidgetTester tester) {
+  return tester.widget<Text>(
+    find.descendant(
+      of: find.byType(ConnectionStatusIndicator),
+      matching: find.byType(Text),
+    ),
+  );
+}
+
+/// Reads the status-dot colour (the small circle [Container]'s baseColor) — the
+/// outer badge box uses a borderRadius, the dot uses [BoxShape.circle], so the
+/// circle decoration uniquely identifies the dot.
+Color? _dotColor(WidgetTester tester) {
+  final containers = tester.widgetList<Container>(
+    find.descendant(
+      of: find.byType(ConnectionStatusIndicator),
+      matching: find.byType(Container),
+    ),
+  );
+  for (final c in containers) {
+    final deco = c.decoration;
+    if (deco is BoxDecoration && deco.shape == BoxShape.circle) {
+      return deco.color;
+    }
+  }
+  return null;
 }
 
 void main() {
@@ -379,6 +419,153 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(find.text('Connecting'), findsOneWidget);
+
+      fakeService.dispose();
+    });
+  });
+
+  // FDC-14 — the onlineDirect tier: a distinct visible + semantics label, a
+  // ready state for timing/colour, above onlineDotted.
+  group('FDC-14 onlineDirect rendering', () {
+    // T6 — distinct visible label (NOT the onlineDotted 'Online.').
+    testWidgets('renders the onlineDirect tier with a distinct visible label', (
+      tester,
+    ) async {
+      final fakeService = await _pumpIndicator(
+        tester,
+        _stateForBadgeState(BadgeReadinessState.onlineDotted),
+      );
+      expect(find.text('Online.'), findsOneWidget);
+
+      fakeService.pushState(
+        _stateForBadgeState(BadgeReadinessState.onlineDirect),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      final directLabel = _labelTextWidget(tester).data;
+      expect(directLabel, isNotNull);
+      expect(directLabel, isNotEmpty);
+      // Headline acceptance: the onlineDirect label is distinct from BOTH
+      // neighbouring ready tiers — onlineDotted's 'Online.' and plain 'Online'.
+      expect(directLabel, isNot('Online.'));
+      expect(directLabel, isNot('Online'));
+      expect(find.text('Online.'), findsNothing);
+      expect(find.text(directLabel!), findsOneWidget);
+
+      fakeService.dispose();
+    });
+
+    // T7 — distinct "directly reachable" semantics label.
+    testWidgets(
+      'onlineDirect exposes a distinct directly-reachable semantics label',
+      (tester) async {
+        final fakeService = await _pumpIndicator(
+          tester,
+          _stateForBadgeState(BadgeReadinessState.onlineDotted),
+        );
+        final semanticsHandle = tester.ensureSemantics();
+        final dottedLabel = tester
+            .getSemantics(find.byType(ConnectionStatusIndicator))
+            .label;
+
+        fakeService.pushState(
+          _stateForBadgeState(BadgeReadinessState.onlineDirect),
+        );
+        await tester.pump();
+        await tester.pump();
+
+        final directLabel = tester
+            .getSemantics(find.byType(ConnectionStatusIndicator))
+            .label;
+
+        expect(directLabel, isNot(dottedLabel));
+        expect(directLabel, contains('directly reachable'));
+        expect(directLabel, isNot(contains('relay reservation')));
+
+        semanticsHandle.dispose();
+        fakeService.dispose();
+      },
+    );
+
+    // T8 — onlineDirect is a ready state: no TIME_TO_ONLINE_BADGE re-emit on
+    // dotted→direct, but exactly one on connecting→direct (first reach ready).
+    testWidgets(
+      'no badge timing re-emit moving between Online. and onlineDirect',
+      (tester) async {
+        // Sub-case A: dotted → direct is a ready-tier reshuffle → no emit.
+        final fakeService = await _pumpIndicator(
+          tester,
+          _stateForBadgeState(BadgeReadinessState.onlineDotted),
+        );
+        final reshuffleEvents = await _captureFlowEvents(() async {
+          fakeService.pushState(
+            _stateForBadgeState(BadgeReadinessState.onlineDirect),
+          );
+          await tester.pump();
+          await tester.pump();
+        });
+        expect(
+          reshuffleEvents
+              .where((e) => e['event'] == 'TIME_TO_ONLINE_BADGE_WIDGET')
+              .toList(),
+          isEmpty,
+        );
+        fakeService.dispose();
+
+        // Unmount the indicator so the next _pumpIndicator builds a FRESH State
+        // (same widget type with no key would otherwise reuse the State and skip
+        // initState — leaving it subscribed to the disposed stream above).
+        await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+        await tester.pump();
+
+        // Sub-case B (LOAD-BEARING): connecting → direct is the first-reach-ready
+        // transition → exactly one emit. This is the assertion that re-reds when
+        // onlineDirect is omitted from _isReadyBadgeState.
+        final fakeService2 = await _pumpIndicator(
+          tester,
+          _stateForBadgeState(BadgeReadinessState.connecting),
+        );
+        final reachEvents = await _captureFlowEvents(() async {
+          fakeService2.pushState(
+            _stateForBadgeState(BadgeReadinessState.onlineDirect),
+          );
+          await tester.pump();
+          await tester.pump();
+        });
+        expect(
+          reachEvents
+              .where((e) => e['event'] == 'TIME_TO_ONLINE_BADGE_WIDGET')
+              .toList(),
+          hasLength(1),
+        );
+        fakeService2.dispose();
+      },
+    );
+
+    // T9 — onlineDirect keeps the green ready styling: BOTH the label text
+    // colour AND the status-dot (baseColor) match the plain-online green.
+    testWidgets('onlineDirect keeps the green ready styling', (tester) async {
+      final fakeService = await _pumpIndicator(
+        tester,
+        _stateForBadgeState(BadgeReadinessState.online),
+      );
+      final onlineColor = tester.widget<Text>(find.text('Online')).style?.color;
+      final onlineDotColor = _dotColor(tester);
+
+      fakeService.pushState(
+        _stateForBadgeState(BadgeReadinessState.onlineDirect),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      final directColor = _labelTextWidget(tester).style?.color;
+      final directDotColor = _dotColor(tester);
+      expect(directColor, onlineColor);
+      // Lock the visible dot colour too, so a dot-only colour mutation (base
+      // non-green, text green) cannot slip past a text-only assertion.
+      expect(directDotColor, onlineDotColor);
+      expect(directDotColor, Colors.green);
 
       fakeService.dispose();
     });

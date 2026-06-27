@@ -136,6 +136,28 @@ func TestInboxRejectAndTTLPruneTelemetry(t *testing.T) {
 	}
 }
 
+// TC-10-05 — durability gauge is from-repo machine-checkable.
+func TestRelayBackendDurableGauge(t *testing.T) {
+	setBackendDurabilityGauge(backendConfig{Kind: backendKindRedis})
+	if got := metricValue(t, relayBackendDurable); got != 1 {
+		t.Fatalf("relay_backend_durable = %v after redis config, want 1", got)
+	}
+
+	setBackendDurabilityGauge(backendConfig{Kind: backendKindMemory})
+	if got := metricValue(t, relayBackendDurable); got != 0 {
+		t.Fatalf("relay_backend_durable = %v after memory config, want 0", got)
+	}
+
+	// Scrape-contract: the gauge name must appear in the /metrics body so ops
+	// can curl it on a live box (the LIVE half of "is durability live?").
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	promhttp.Handler().ServeHTTP(rec, req)
+	if !strings.Contains(rec.Body.String(), "relay_backend_durable") {
+		t.Fatal("/metrics scrape missing relay_backend_durable gauge")
+	}
+}
+
 func TestRelayMetricsHandlerScrapeContract(t *testing.T) {
 	const proto = "metrics_contract_scrape"
 

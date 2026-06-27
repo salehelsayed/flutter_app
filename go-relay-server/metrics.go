@@ -12,6 +12,16 @@ var connectionsActive = promauto.NewGauge(prometheus.GaugeOpts{
 	Help: "Current number of connected peers.",
 })
 
+// relayBackendDurable is 1 when the running control-plane backend is durable
+// (redis) and 0 when it is in-memory (control-plane state wiped on restart).
+// Ops scrapes/alerts on this to confirm the live relay actually persists
+// inbox/push/rendezvous state — the from-repo machine-checkable half of
+// "is durability live?".
+var relayBackendDurable = promauto.NewGauge(prometheus.GaugeOpts{
+	Name: "relay_backend_durable",
+	Help: "1 when the control-plane backend is durable (redis), 0 when in-memory (wiped on restart).",
+})
+
 var inboxMessagesPending = promauto.NewGauge(prometheus.GaugeOpts{
 	Name: "relay_inbox_messages_pending",
 	Help: "Messages currently waiting in inbox.",
@@ -105,6 +115,17 @@ var inboxRejectedFullCounter = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "relay_inbox_rejected_full_total",
 	Help: "1:1 inbox messages rejected because the recipient inbox is full.",
 })
+
+// setBackendDurabilityGauge publishes whether the running control-plane backend
+// is durable, mapping cfg.IsDurable() to the relay_backend_durable gauge. Called
+// once at boot so a silently-memory relay (env unset) is alertable.
+func setBackendDurabilityGauge(c backendConfig) {
+	if c.IsDurable() {
+		relayBackendDurable.Set(1)
+		return
+	}
+	relayBackendDurable.Set(0)
+}
 
 func recordInboxExpiredPruned(count int) {
 	if count <= 0 {

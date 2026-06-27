@@ -184,6 +184,9 @@ class _WifiFirstVoiceP2PService implements P2PService {
   }) => _inner.dialPeer(peerId, addresses: addresses, timeoutMs: timeoutMs);
 
   @override
+  Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {}
+
+  @override
   Future<bool> storeInInbox(
     String toPeerId,
     String message, {
@@ -318,6 +321,9 @@ class _WidgetVoiceP2PService implements P2PService {
     List<String>? addresses,
     int? timeoutMs,
   }) async => true;
+
+  @override
+  Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {}
 
   @override
   Future<bool> storeInInbox(
@@ -1472,7 +1478,10 @@ void main() {
 
         bob.setOnline(true);
         final drained = await bob.drainOfflineInbox();
-        expect(drained, 1);
+        // FDC-03: the original send left a concurrent durable copy in the inbox
+        // (the fake models every send as unknown-presence); it dedups on drain
+        // and the edited copy still applies (asserted below) — benign +1.
+        expect(drained, 2);
         await waitForBob();
 
         await bobHarness.expectMessageCount(alice.peerId, 1);
@@ -1544,7 +1553,10 @@ void main() {
 
         bob.setOnline(true);
         final drained = await bob.drainOfflineInbox();
-        expect(drained, 1);
+        // FDC-03: the original send left a concurrent durable copy in the inbox
+        // (the fake models every send as unknown-presence); it dedups on drain
+        // and the delete still applies — benign +1.
+        expect(drained, 2);
         await waitForBob();
 
         final delivered = await alice.messageRepo.getMessage(sentMessage.id);

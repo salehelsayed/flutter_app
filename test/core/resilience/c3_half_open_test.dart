@@ -92,6 +92,9 @@ class _HalfOpenP2PService implements P2PService {
       _inner.discoverPeer(peerId, timeoutMs: timeoutMs);
 
   @override
+  Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {}
+
+  @override
   Future<bool> dialPeer(
     String peerId, {
     List<String>? addresses,
@@ -191,6 +194,9 @@ class _DiscoverMissProbeConnectedP2PService implements P2PService {
     probeRelayCallCount++;
     return RelayProbeResult.connected;
   }
+
+  @override
+  Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {}
 
   @override
   NodeState get currentState => _inner.currentState;
@@ -442,18 +448,19 @@ void main() {
     });
 
     test(
-      'discover miss plus probe-connected relay stays live instead of falling to inbox',
+      'discover miss for an unknown-presence peer takes durable inbox custody '
+      '(FDC-03: probe tail removed) and drains to the recipient',
       () async {
+        // FDC-03: the serial relay-probe→inbox tail was removed. With no live
+        // circuit, a discover-miss send no longer recovers LIVE via an on-demand
+        // probe; the concurrent durable inbox copy holds custody and the
+        // recipient receives it on drain. (Live relay recovery for a CIRCUIT peer
+        // is FDC-02's in-race relay-live leg.)
         final innerAlice = FakeP2PService(
           peerId: alicePeerId,
           network: network,
         );
         final probeP2P = _DiscoverMissProbeConnectedP2PService(innerAlice);
-
-        final bobReceived = Completer<void>();
-        bob.chatListener.incomingMessageStream.listen((_) {
-          if (!bobReceived.isCompleted) bobReceived.complete();
-        });
 
         final (result, msg) = await sendChatMessage(
           p2pService: probeP2P,
@@ -468,12 +475,14 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(msg, isNotNull);
-        expect(msg!.status, 'delivered');
-        expect(msg.transport, 'direct');
-        expect(probeP2P.probeRelayCallCount, 1);
-        expect(network.inboxCount(bob.peerId), 0);
+        // Custody, not live delivery (doc 115) — the probe never runs.
+        expect(msg!.status, 'inboxed');
+        expect(msg.transport, 'inbox');
+        expect(probeP2P.probeRelayCallCount, 0);
+        expect(network.inboxCount(bob.peerId), 1);
 
-        await bobReceived.future.timeout(const Duration(seconds: 2));
+        // The recipient receives exactly one copy on drain.
+        await bob.drainOfflineInbox();
         final bobMessages = await bob.loadConversationWith(alicePeerId);
         expect(bobMessages, hasLength(1));
         expect(bobMessages.first.text, 'Hello after discover miss');

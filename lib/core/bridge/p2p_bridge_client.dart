@@ -356,6 +356,12 @@ Future<Map<String, dynamic>> callP2PRendezvousDiscover(
 ///   - [peerId]: The peer ID to dial
 ///   - [addresses]: Optional list of multiaddrs (discovers if not provided)
 ///   - [timeoutMs]: Optional dial timeout in milliseconds
+///   - [preferQuic]: FDC-04 (DESIGN-5) QUIC-first re-warm intent. INERT on the
+///     wire — Go's `peer:dial` handler unmarshals only `{PeerId, Addresses,
+///     TimeoutMs}` and silently drops this field; the real QUIC-first ordering
+///     is a Go-touching follow-up (FDC-11/FDC-12). Threaded so the Dart intent
+///     is host-observable; sent unconditionally so a future Go change can read
+///     it without a payload-shape change.
 ///
 /// Returns: `{ "ok": true, "connected": true, "peerId": "..." }`
 Future<Map<String, dynamic>> callP2PPeerDial(
@@ -363,11 +369,12 @@ Future<Map<String, dynamic>> callP2PPeerDial(
   required String peerId,
   List<String>? addresses,
   int? timeoutMs,
+  bool preferQuic = false,
 }) async {
   emitFlowEvent(
     layer: 'FL',
     event: 'P2P_PEER_DIAL_REQUEST',
-    details: {'peerId': peerId},
+    details: {'peerId': peerId, if (preferQuic) 'preferQuic': true},
   );
 
   final request = {
@@ -376,6 +383,7 @@ Future<Map<String, dynamic>> callP2PPeerDial(
       'peerId': peerId,
       if (addresses != null) 'addresses': addresses,
       if (timeoutMs != null) 'timeoutMs': timeoutMs,
+      'preferQuic': preferQuic,
     },
   };
 

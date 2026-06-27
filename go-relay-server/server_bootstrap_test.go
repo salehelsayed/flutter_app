@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -83,6 +84,71 @@ func TestNewControlPlaneStores_SelectsRedisBackends(t *testing.T) {
 	results := storesB.Rendezvous.Discover("ns-1", "other-peer", 10)
 	if len(results) != 1 {
 		t.Fatalf("expected Redis-backed bootstrap instances to share state, got %d result(s)", len(results))
+	}
+}
+
+// TC-10-01 — durability is machine-checkable.
+func TestBackendConfig_IsDurable(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  backendConfig
+		want bool
+	}{
+		{name: "memory is not durable", cfg: backendConfig{Kind: backendKindMemory}, want: false},
+		{name: "redis is durable", cfg: backendConfig{Kind: backendKindRedis}, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.cfg.IsDurable(); got != tc.want {
+				t.Fatalf("IsDurable() = %v, want %v for kind %q", got, tc.want, tc.cfg.Kind)
+			}
+		})
+	}
+}
+
+// TC-10-02 — operator-visible durability summary line.
+func TestBackendStartupSummary_ReportsDurability(t *testing.T) {
+	redisSummary := backendStartupSummary(backendConfig{Kind: backendKindRedis, RedisPrefix: "relay:"})
+	if !strings.Contains(redisSummary, "backend=redis") {
+		t.Fatalf("redis summary missing backend token: %q", redisSummary)
+	}
+	if !strings.Contains(redisSummary, "durable=true") {
+		t.Fatalf("redis summary missing durable=true token: %q", redisSummary)
+	}
+
+	memorySummary := backendStartupSummary(backendConfig{Kind: backendKindMemory})
+	if !strings.Contains(memorySummary, "backend=memory") {
+		t.Fatalf("memory summary missing backend token: %q", memorySummary)
+	}
+	if !strings.Contains(memorySummary, "durable=false") {
+		t.Fatalf("memory summary missing durable=false token: %q", memorySummary)
+	}
+}
+
+// P-B — redis deploy misconfig fails loudly (characterization; green on HEAD).
+func TestNewControlPlaneStores_RedisRequiresURL(t *testing.T) {
+	_, err := newControlPlaneStores(context.Background(), backendConfig{
+		Kind:     backendKindRedis,
+		RedisURL: "",
+	}, DefaultServerLimits(), "/path/that/does/not/exist.json")
+	if err == nil {
+		t.Fatal("expected error when RELAY_BACKEND=redis with empty REDIS_URL")
+	}
+	if !strings.Contains(err.Error(), "REDIS_URL is required") {
+		t.Fatalf("expected REDIS_URL-required error, got %v", err)
+	}
+}
+
+// P-C — unknown backend fails loudly (characterization; green on HEAD).
+func TestNewControlPlaneStores_UnknownBackendErrors(t *testing.T) {
+	_, err := newControlPlaneStores(context.Background(), backendConfig{
+		Kind: "postgres",
+	}, DefaultServerLimits(), "/path/that/does/not/exist.json")
+	if err == nil {
+		t.Fatal("expected error for unsupported relay backend")
+	}
+	if !strings.Contains(err.Error(), "unsupported relay backend") {
+		t.Fatalf("expected unsupported-backend error, got %v", err)
 	}
 }
 

@@ -1401,9 +1401,12 @@ void main() {
           expect(count, 1);
         });
 
-        // Leak guard preserved: the v1 envelope never reaches any transport
-        // (the legacy skip routes straight to the fallback rebuild).
-        expect(p2pService.storeInInboxCallCount, 0);
+        // Leak guard preserved: the v1 envelope never reaches any transport.
+        // FDC-03: the rebuilt (NOT legacy) payload now also fires one concurrent
+        // durable copy on this unknown-presence retry. The direct send carries
+        // the rebuilt edit payload (asserted below) and the inbox attempt carries
+        // the same rebuilt jsonString — so no v1 envelope leaks.
+        expect(p2pService.storeInInboxCallCount, 1);
         expect(
           events.any(
             (e) =>

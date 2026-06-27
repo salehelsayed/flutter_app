@@ -62,6 +62,19 @@ class _LearnedTransport {
   const _LearnedTransport(this.transport, this.at);
 }
 
+/// FDC-04: per-peer eager-warm debounce/backoff bookkeeping. [inFlight] is set
+/// SYNCHRONOUSLY at `warmPeer` entry (before the first await) so a same-tick
+/// conv-open + notif-tap + resume burst collapses to ONE dial (DESIGN-4).
+/// [nextEligibleAt] is the post-dial escalating cooldown floor; [failureCount]
+/// drives the 5s->2x->…->ceil growth (CONSIST-1) — a thin Dart debounce layered
+/// OVER libp2p's Go-owned per-`(peer,transport)` swarm backoff, not a
+/// reimplementation of it. Keyed by FULL peerId (transport-agnostic).
+class _WarmAttempt {
+  bool inFlight = false;
+  DateTime? nextEligibleAt;
+  int failureCount = 0;
+}
+
 /// Implementation of P2PService backed by the Go native bridge.
 class P2PServiceImpl
     implements
@@ -118,6 +131,29 @@ class P2PServiceImpl
   /// disconnect / addresses-updated. The race always falls back to the full
   /// race on any sticky-leg failure, so a stale entry can never trap a send.
   final Map<String, _LearnedTransport> _learnedTransport = {};
+
+  /// FDC-04: per-peer eager-warm debounce/backoff state, keyed by FULL peerId
+  /// (transport-agnostic — CONSIST-1). Session-scoped, in-memory only; lost on
+  /// restart (a restart is a fresh warm). The first warm-bookkeeping map here.
+  final Map<String, _WarmAttempt> _warmAttempts = {};
+
+  /// FDC-04 (RC4): injected WiFi<->cellular network-change signal. Default
+  /// null/empty in tests + until the OS source is wired (connectivity_plus or a
+  /// native NWPathMonitor/ConnectivityManager channel — a bounded follow-up).
+  /// On each event, [onNetworkChanged] re-warms the ONE active peer.
+  final Stream<void>? _networkChangeSignal;
+  StreamSubscription<void>? _networkChangeSub;
+
+  /// FDC-04 (DESIGN-3): resolves the single active conversation peer to re-warm
+  /// on a network change (PS-4 — never the roster). In production wired to
+  /// `ActiveConversationTracker.activePeerId`. Null / null-return ⇒ no re-warm.
+  final String? Function()? _activePeerId;
+
+  /// FDC-04 (DESIGN-2): self-debounce floor for the network-change re-warm so
+  /// WiFi<->cellular flapping coalesces to ONE re-warm instead of tight-looping
+  /// a failing QUIC dial and tripping the libp2p 5s->5min swarm backoff. Kept
+  /// DISTINCT from the per-peer [_WarmAttempt.nextEligibleAt] cooldown.
+  DateTime? _lastNetworkRewarmAt;
 
   final _stateController = StreamController<NodeState>.broadcast();
   final _messageController = StreamController<ChatMessage>.broadcast();
@@ -282,6 +318,9 @@ class P2PServiceImpl
     Future<String?> Function(ChatMessage message)? predecryptInboxChatEntry,
     TransportMetrics? transportMetrics,
     Duration? keyRotationGracePeriodOverride,
+    // FDC-04: optional, default null keeps every existing call site unchanged.
+    Stream<void>? networkChangeSignal,
+    String? Function()? activePeerId,
   }) : _bridge = bridge,
        _localP2P = localP2PService,
        _pushTokenStore = pushTokenStore,
@@ -297,7 +336,9 @@ class P2PServiceImpl
            replayRecoveredInboxMessageDeletion,
        _predecryptInboxChatEntry = predecryptInboxChatEntry,
        _transportMetrics = transportMetrics,
-       _keyRotationGracePeriodOverride = keyRotationGracePeriodOverride {
+       _keyRotationGracePeriodOverride = keyRotationGracePeriodOverride,
+       _networkChangeSignal = networkChangeSignal,
+       _activePeerId = activePeerId {
     // Register event handlers on the bridge
     _bridge.onMessageReceived = (msg) {
       final transport =
@@ -381,6 +422,11 @@ class P2PServiceImpl
       discoveryActive: false,
       discoveredPeerCount: _localP2P?.discoveredPeers.length ?? 0,
     );
+
+    // FDC-04 (RC4): re-warm the active peer on a WiFi<->cellular change. Default
+    // null signal ⇒ no subscription (tests + until the OS source lands).
+    // onNetworkChanged is total/never-throws.
+    _networkChangeSub = _networkChangeSignal?.listen((_) => onNetworkChanged());
 
     unawaited(_restorePersistedPushTokenIfNeeded());
   }
@@ -2122,6 +2168,7 @@ class P2PServiceImpl
     String peerId, {
     List<String>? addresses,
     int? timeoutMs,
+    bool preferQuic = false,
   }) async {
     if (!await _allowsAccountNetworkSideEffects('p2p_dial_peer')) {
       return false;
@@ -2133,6 +2180,11 @@ class P2PServiceImpl
     };
     if (timeoutMs != null) {
       details['timeoutMs'] = timeoutMs;
+    }
+    // FDC-04 (DESIGN-5): host-observable threading of the QUIC-first intent.
+    // INERT on the wire — Go's peer:dial drops unknown JSON fields.
+    if (preferQuic) {
+      details['preferQuic'] = true;
     }
     emitFlowEvent(
       layer: 'FL',
@@ -2146,6 +2198,7 @@ class P2PServiceImpl
         peerId: peerId,
         addresses: addresses,
         timeoutMs: timeoutMs,
+        preferQuic: preferQuic,
       );
 
       if (response['ok'] == true) {
@@ -2170,6 +2223,204 @@ class P2PServiceImpl
         details: {'error': e.toString()},
       );
       return false;
+    }
+  }
+
+  // ─── FDC-04: LAN-aware eager warm ──────────────────────────────────────────
+
+  /// FDC-04 warm budgets. Conservative defaults pending FDC-S1's measured
+  /// numbers (swap when S1 lands; record the assumption inline).
+  /// - [_warmLanTimeout] bounds the LAN seed (= interactiveLocalBudget 1500ms).
+  /// - [_warmDialTimeout] bounds the speculative dial (= the foreground
+  ///   InteractiveDialTimeout 4s).
+  /// - [_warmCooldownFloor]/[_warmCooldownCeil] bound the per-peer escalating
+  ///   debounce (libp2p's own per-`(peer,transport)` swarm backoff is 5s->5min).
+  static const _warmLanTimeout = Duration(milliseconds: 1500);
+  static const _warmDialTimeout = Duration(seconds: 4);
+  static const _warmCooldownFloor = Duration(seconds: 5);
+  static const _warmCooldownCeil = Duration(minutes: 5);
+
+  static String _shortPeer(String peerId) =>
+      peerId.length > 10 ? peerId.substring(0, 10) : peerId;
+
+  @override
+  Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {
+    // ROBUST-1: total/never-throws. Every call site fires `unawaited(...)` with
+    // NO error handler, so any throw from the gate/emit/_warmAttempts body would
+    // otherwise leak as an unhandled async error (test-zone failure / prod
+    // PlatformDispatcher.onError). Wrap the whole body; clear the in-flight
+    // sentinel on any thrown path so a failed warm cannot wedge the debounce.
+    final attempt = _warmAttempts.putIfAbsent(peerId, () => _WarmAttempt());
+    try {
+      // PS-3 / FDC-S5 (INV-4): a strict no-op while the node is not started — it
+      // must never contend for the Node.Start write lock. The cold notif-tap
+      // win is FDC-07's, not this plan's.
+      if (!_currentState.isStarted) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_SERVICE_WARM_PEER_SKIPPED',
+          details: {'reason': 'not_started'},
+        );
+        return;
+      }
+
+      // DESIGN-4 + RC3 (INV-3): the in-flight + escalating-cooldown debounce is
+      // read AND the in-flight sentinel set SYNCHRONOUSLY here, BEFORE the first
+      // await below — so a same-tick conv-open + notif-tap + resume burst
+      // collapses to ONE dial, not just sequential repeats.
+      final now = clock.now();
+      if (attempt.inFlight ||
+          (attempt.nextEligibleAt != null &&
+              now.isBefore(attempt.nextEligibleAt!))) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_SERVICE_WARM_PEER_DEBOUNCED',
+          details: {'peerId': _shortPeer(peerId)},
+        );
+        return;
+      }
+      attempt.inFlight = true;
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_WARM_PEER_BEGIN',
+        details: {
+          'peerId': _shortPeer(peerId),
+          if (preferQuic) 'preferQuic': true,
+        },
+      );
+
+      // GATE-1: mirror dialPeer's account gate (`p2p_dial_peer`). A denied gate
+      // ⇒ no seed/dial, the same observable as PS-3 (no independent TC).
+      if (!await _allowsAccountNetworkSideEffects('p2p_warm_peer')) {
+        attempt.inFlight = false;
+        return;
+      }
+
+      // DESIGN-1 / INV-1: AWAIT the bounded LAN seed FIRST, then re-read
+      // isLocalPeer to gate the speculative dial. Evaluating isLocalPeer at
+      // warm-START would speculative-dial every same-WiFi peer whose LAN entry
+      // isn't seeded yet — landing a wasteful /p2p-circuit relay conn and
+      // accruing relay backoff. discoverLocalPeer returns as soon as the peer is
+      // found, and warm overlaps reading/typing, so the bounded wait is free.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_WARM_PEER_LAN_SEED',
+        details: {'peerId': _shortPeer(peerId)},
+      );
+      final seededLocal = await discoverLocalPeer(
+        peerId,
+        timeout: _warmLanTimeout,
+      ).catchError((Object _) => false);
+
+      if (seededLocal || isLocalPeer(peerId)) {
+        // The LAN lane is viable — leave it for the send-path ranked race to win
+        // (INV-2 is the correctness backstop); never relay-dial a same-WiFi peer.
+        attempt.inFlight = false;
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_SERVICE_WARM_PEER_DIAL_SKIPPED',
+          details: {'peerId': _shortPeer(peerId), 'reason': 'is_local'},
+        );
+        return;
+      }
+
+      // Non-blocking speculative dial: the call site is never delayed beyond the
+      // LAN seed. libp2p coalesces this with the real send dial (FDC-S5 §7), so
+      // it is not a wasted connection on the happy path. The outcome handler
+      // clears the in-flight sentinel and sets the escalating cooldown.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_WARM_PEER_DIAL',
+        details: {
+          'peerId': _shortPeer(peerId),
+          if (preferQuic) 'preferQuic': true,
+        },
+      );
+      unawaited(
+        dialPeer(
+          peerId,
+          timeoutMs: _warmDialTimeout.inMilliseconds,
+          preferQuic: preferQuic,
+        ).then((ok) => _onWarmDialOutcome(peerId, ok)).catchError((Object _) {
+          _onWarmDialOutcome(peerId, false);
+        }),
+      );
+    } catch (_) {
+      attempt.inFlight = false;
+    }
+  }
+
+  /// FDC-04: resolves a completed (or failed) speculative warm dial. Success
+  /// clears the per-peer entry (next open warms fresh); failure escalates the
+  /// cooldown 5s->2x->…->ceil. Always clears the in-flight sentinel.
+  void _onWarmDialOutcome(String peerId, bool ok) {
+    final attempt = _warmAttempts[peerId];
+    if (attempt == null) return;
+    attempt.inFlight = false;
+    if (ok) {
+      _warmAttempts.remove(peerId);
+      return;
+    }
+    attempt.failureCount += 1;
+    var interval = _warmCooldownFloor;
+    for (var i = 1; i < attempt.failureCount; i++) {
+      interval *= 2;
+      if (interval >= _warmCooldownCeil) {
+        interval = _warmCooldownCeil;
+        break;
+      }
+    }
+    attempt.nextEligibleAt = clock.now().add(interval);
+  }
+
+  /// FDC-04 (RC4, DESIGN-2/3, INV-6): WiFi<->cellular re-warm of the ONE active
+  /// peer (never the roster — PS-4). Total/never-throws (driven by a stream
+  /// listener). Resets only [_WarmAttempt.nextEligibleAt] (preserving the
+  /// escalation count so a still-failing peer keeps escalating), drops a learned
+  /// `local` transport (the network switch closed it), self-debounces flap
+  /// bursts to ONE re-warm, and re-fires `warmPeer` preferring QUIC.
+  @visibleForTesting
+  void onNetworkChanged() {
+    try {
+      // DESIGN-2: coalesce flap-bursts. A timestamp DISTINCT from the per-peer
+      // cooldown — WiFi<->cellular flapping (elevators/transit) must not
+      // tight-loop a failing QUIC re-warm and trip the libp2p swarm backoff.
+      final now = clock.now();
+      if (_lastNetworkRewarmAt != null &&
+          now.difference(_lastNetworkRewarmAt!) < _warmCooldownFloor) {
+        return;
+      }
+      _lastNetworkRewarmAt = now;
+
+      // PS-4: re-warm only the ONE active peer, never _warmAttempts.keys.
+      final peerId = _activePeerId?.call();
+      if (peerId == null || peerId.isEmpty) return;
+
+      // Reset the per-peer cooldown to permit an immediate re-warm, but PRESERVE
+      // the escalation count (failureCount) so a still-failing peer keeps
+      // escalating from where it was.
+      _warmAttempts[peerId]?.nextEligibleAt = null;
+
+      // The network switch closed every non-QUIC connection: a learned 'local'
+      // transport now points at a dead path. Drop it — an ADDITIVE invalidation
+      // trigger, NOT a TTL change (consistent with the disconnect/addresses
+      // invalidations that p2p_service_learned_transport_invalidation_test locks).
+      final learned = _learnedTransport[peerId];
+      if (learned != null && learned.transport == 'local') {
+        _learnedTransport.remove(peerId);
+      }
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_WARM_PEER_NETWORK_CHANGE_REWARM',
+        details: {'peerId': _shortPeer(peerId)},
+      );
+
+      // Prefer QUIC on the re-warm (Go-inert today — DESIGN-5).
+      unawaited(warmPeer(peerId, preferQuic: true));
+    } catch (_) {
+      // total/never-throws
     }
   }
 
@@ -3023,7 +3274,11 @@ class P2PServiceImpl
     // /p2p-circuit multiaddr for it (libp2p does not re-fire connectedness on
     // an upgrade).
     if (_peersUpgradedToDirect.contains(_shortId(peerId))) {
-      return 'direct';
+      // FDC-13: surface the relay->direct UPGRADE as a distinct 'upgraded'
+      // value (not flattened to plain 'direct') so the per-message badge can
+      // show the upgrade. The aggregate census still counts it as 'direct' via
+      // the TransportMetrics._canonicalTransport 'upgraded'->'direct' alias.
+      return 'upgraded';
     }
     var sawDirectConnection = false;
     for (final connection in _currentState.connections) {
@@ -4268,6 +4523,7 @@ class P2PServiceImpl
     _localPeersSub?.cancel();
     _localMediaSub?.cancel();
     _transportDiagnosticSub?.cancel();
+    _networkChangeSub?.cancel();
     _lanPermProbeTimer?.cancel();
     _setLocalDiscoveryInactive();
     _localP2P?.dispose();

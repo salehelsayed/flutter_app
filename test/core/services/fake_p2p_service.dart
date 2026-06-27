@@ -31,6 +31,13 @@ class FakeP2PService
   String? recoveryMethod;
   Future<void> Function()? onDrainOfflineInbox;
 
+  /// Optional hook awaited INSIDE [performImmediateHealthCheck], after the call
+  /// count is incremented. Lets a test hold the resume re-prime open (e.g. await
+  /// a Completer the test never completes) so it can observe the inbox drain
+  /// firing CONCURRENTLY while the re-prime is still pending (FDC-05 TC-05-02),
+  /// or record re-prime ordering relative to bridge health (TC-05-06).
+  Future<void> Function()? onPerformImmediateHealthCheck;
+
   /// Ordered log of all sendMessage calls for multi-send assertions.
   final List<({String peerId, String content})> sentMessageLog = [];
 
@@ -64,6 +71,22 @@ class FakeP2PService
   String? lastDialPeerId;
   String? lastStoreInInboxPeerId;
   String? lastStoreInInboxMessage;
+  int? lastStoreInInboxTimeoutMs;
+
+  /// FDC-S4: ordered log of every storeInInbox deposit (recipient + payload +
+  /// per-call timeout) so the pause-flush tests can assert newest-first
+  /// ordering, the per-message budget, and the cap.
+  final List<({String toPeerId, String message, int? timeoutMs})>
+  storeInInboxLog = [];
+
+  /// FDC-S4: per-call override for storeInInbox. When set, its result is
+  /// returned (and it may advance a virtual clock or throw) instead of the
+  /// static [storeInInboxResult] — lets a test make specific recipients
+  /// succeed/fail or simulate a slow/hung deposit deterministically. Mirrors
+  /// the full storeInInbox signature (including [timeoutMs]) so a test can also
+  /// branch on the per-message budget.
+  Future<bool> Function(String toPeerId, String message, {int? timeoutMs})?
+  onStoreInInbox;
 
   FakeP2PService({
     NodeState? initialState,
@@ -155,15 +178,27 @@ class FakeP2PService
     return discoverPeerResult;
   }
 
+  // FDC-04/FDC-11: warmPeer call tracking (conformance stub for the eager
+  // warm-dial interface; `preferQuic` is Go-inert today).
+  int warmPeerCallCount = 0;
+  String? lastWarmPeerId;
+
   @override
   Future<bool> dialPeer(
     String peerId, {
     List<String>? addresses,
     int? timeoutMs,
+    bool preferQuic = false,
   }) async {
     dialPeerCallCount++;
     lastDialPeerId = peerId;
     return dialPeerResult;
+  }
+
+  @override
+  Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {
+    warmPeerCallCount++;
+    lastWarmPeerId = peerId;
   }
 
   @override
@@ -175,6 +210,14 @@ class FakeP2PService
     storeInInboxCallCount++;
     lastStoreInInboxPeerId = toPeerId;
     lastStoreInInboxMessage = message;
+    lastStoreInInboxTimeoutMs = timeoutMs;
+    storeInInboxLog.add((
+      toPeerId: toPeerId,
+      message: message,
+      timeoutMs: timeoutMs,
+    ));
+    final hook = onStoreInInbox;
+    if (hook != null) return hook(toPeerId, message, timeoutMs: timeoutMs);
     return storeInInboxResult;
   }
 
@@ -195,6 +238,7 @@ class FakeP2PService
     if (throwOnHealthCheck) {
       throw Exception('FakeP2PService: health check error');
     }
+    await onPerformImmediateHealthCheck?.call();
   }
 
   @override

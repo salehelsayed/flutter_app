@@ -8,7 +8,7 @@ Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§6.1 "Eager
 ## Source Of Truth
 
 - **Proposal** §6.1 (the headline + the §6.1 "trap that defeats LAN-first" + "Honest scope") and §8 **P0-1**, refined by **§12** ("Strongly-validated patterns to borrow verbatim": *"Warm by peer-identity … Bound every warm dial with per-`(peerId,transport)` backoff (libp2p quadratic 5s→5min). Warm only the per-peer you'll use, never the roster … Add network-change (WiFi↔cellular) as a re-warm trigger; prefer QUIC (a network switch closes ALL connections except QUIC)."*).
-- **This epic's roadmap** [`FDC-00-roadmap.md`](FDC-00-roadmap.md): FDC-04 row, the **COLLISION MAP** (FDC-01→02→03→**04** all edit `send_chat_message_use_case.dart`, run **sequentially**), the secondary collision on `p2p_service_impl.dart` (FDC-04/05/08), the Phase-0 sequencing, and the **host-test false-positive caveat** (dedup can mask a dead live path → device-proof mandatory for FDC-04).
+- **This epic's roadmap** [`FDC-00-roadmap.md`](FDC-00-roadmap.md): FDC-04 row, the **COLLISION MAP** (FDC-01→02→03→**04** all edit `send_chat_message_use_case.dart`, run **sequentially**), the secondary collision on `p2p_service_impl.dart` (FDC-04/08 — **not** FDC-05, which only reorders `handle_app_resumed.dart` call sites + the test fake), the Phase-0 sequencing, and the **host-test false-positive caveat** (dedup can mask a dead live path → device-proof mandatory for FDC-04).
 - **Gating spikes:** [`FDC-S5`](FDC-S5-go-bridge-concurrency-design-note.md) (warm must stay off the serialized send-critical bridge path; gate `warmPeer` behind node-started; bound to the open peer, never the roster) and [`FDC-S1`](FDC-S1-cold-start-timing-measurement-spike.md) (calibrates the warm budgets + the cold-tap aggressiveness verdict; confirms cold notif-tap warm cannot overlap reading time).
 - **`scripts/run_test_gates.sh` wins over prose** for what "green" means — the literal arrays/commands in Acceptance Gates below are authoritative.
 
@@ -26,7 +26,7 @@ Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§6.1 "Eager
 
 ## Exact Problem Statement
 
-**What's broken/missing.** Opening a conversation, tapping a notification, or resuming the app **never dials the specific peer**. The first send therefore always pays a full cold `discover → dial → send` (proposal §4 R1, verified: `warmBackground` at `p2p_service_impl.dart:572-647` warms LAN discovery + inbox drain + health-check but **never dials the contact**). The dominant component of the perceived send window on exactly the reported "open app → send one message → close" case is this missing pre-warm.
+**What's broken/missing.** Opening a conversation, tapping a notification, or resuming the app **never dials the specific peer**. The first send therefore always pays a full cold `discover → dial → send` (proposal §4 R1, verified: `warmBackground` at `p2p_service_impl.dart:596-676` warms LAN discovery + inbox drain + health-check but **never dials the contact**). The dominant component of the perceived send window on exactly the reported "open app → send one message → close" case is this missing pre-warm.
 
 **Who feels it.** Every 1:1 sender on a warm-open (app already running, node started): they watch a multi-second "sending…" because the connection is established lazily *at* send-time instead of *during* reading/typing.
 
@@ -44,10 +44,10 @@ Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§6.1 "Eager
 
 **What must stay unchanged → preserved sentinels.**
 - `warmPeer` is **speculative only**: it **never sends a message** and never deposits to the inbox (no `sendMessage`/`sendMessageWithReply`/`storeInInbox` from the warm path). → preserved sentinel **PS-1**.
-- The existing send ladder for a **non-local** connected peer is byte-for-byte unchanged: reuse fast-path still fires (`:447-465`). → preserved sentinel **PS-2**.
+- The existing send ladder for a **non-local** connected peer **with a DIRECT connection** is byte-for-byte unchanged: reuse fast-path still fires (block `:447-512`, guard at `:447-451`). → preserved sentinel **PS-2**. ⚠ **Narrowed (C1 / FDC-02 option A, 2026-06-26):** a non-local peer whose ONLY connection is a relay-only `/p2p-circuit` **no longer reuses** — FDC-02 made that block circuit-aware (relay-only ⇒ enter the staggered race). PS-2 now covers the **direct-conn** reuse path only; FDC-04 lands on FDC-02's committed tree, so the circuit-awareness is already present.
 - `warmPeer` is a **no-op when the node is not started** (`!currentState.isStarted`) — it must never contend for the `Node.Start` write lock (FDC-S5 §6). The cold notif-tap win is **FDC-07's**, not this plan's. → preserved sentinel **PS-3**.
 - Warm is **bounded to the open/active peer, never the roster** (FDC-S5 decision-criteria 3; Berty "hundreds of peers cripples the phone"). → preserved sentinel **PS-4**.
-- `warmBackground` (`:572-647`) keeps its current LAN-discovery/inbox/health-check behavior; `warmPeer` is **additive**, not a replacement. → preserved sentinel **PS-5**.
+- `warmBackground` (`:596-676`) keeps its current LAN-discovery/inbox/health-check behavior; `warmPeer` is **additive**, not a replacement. → preserved sentinel **PS-5**.
 
 ---
 
@@ -55,8 +55,8 @@ Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§6.1 "Eager
 
 | # | Mechanism (file:line, read & verified) | Confirmed / Refuted |
 |---|---|---|
-| RC1 | **No per-peer eager warm.** `P2PService` (abstract, `lib/core/services/p2p_service.dart:56-…`) has `warmBackground()` (`:90`), `dialPeer(...)` (`:137`), `discoverLocalPeer(...)` (`:194`), `isLocalPeer(...)` (`:189`) but **no `warmPeer`**. `warmBackground` impl (`p2p_service_impl.dart:572-647`) does fast-circuit poll + inbox drain + `_startLocalDiscovery` — it **never calls `dialPeer` for a contact**. | **Confirmed.** New method needed. |
-| RC2 | **Reuse fast-path is LAN-blind.** `send_chat_message_use_case.dart:447-451` short-circuits on `currentState.connections.any((c)=>c.peerId==target)` and sends over it with **no `isLocalPeer` gate**; `isLocalPeer` is first read at `:516`, *after* the reuse block can `return`. Sticky short-circuit (`:528-595`) similarly reuses a learned `direct`/`relay` transport; only the learned `'local'` entry is LAN-revalidated (`p2p_service_impl.dart:4117`). | **Confirmed.** A warmed relay conn would bypass LAN. |
+| RC1 | **No per-peer eager warm.** `P2PService` (abstract, `lib/core/services/p2p_service.dart:56-…`) has `warmBackground()` (`:90`), `dialPeer(...)` (`:137`), `discoverLocalPeer(...)` (`:194`), `isLocalPeer(...)` (`:189`) but **no `warmPeer`**. `warmBackground` impl (`p2p_service_impl.dart:596-676`) does fast-circuit poll + inbox drain + `_startLocalDiscovery` — it **never calls `dialPeer` for a contact**. | **Confirmed.** New method needed. |
+| RC2 | **Reuse fast-path is LAN-blind.** `send_chat_message_use_case.dart:447-451` short-circuits on `currentState.connections.any((c)=>c.peerId==target)` and sends over it with **no `isLocalPeer` gate**; `isLocalPeer` is first read at `:516`, *after* the reuse block can `return`. Sticky short-circuit (`:528-595`) similarly reuses a learned `direct`/`relay` transport; only the learned `'local'` entry is LAN-revalidated (`p2p_service_impl.dart:4161`, inside `lastKnownGoodTransport` `:4144-4166`). | **Confirmed.** A warmed relay conn would bypass LAN. |
 | RC3 | **No warm cooldown / backoff in Dart.** No per-peer attempt map exists in `p2p_service_impl.dart`; nothing debounces repeated `dialPeer`. The only backoff is libp2p-swarm-internal (Go), which is exactly what repeated failing warms would trip. | **Confirmed.** New bounded cooldown needed. |
 | RC4 | **No network-change trigger / no connectivity source.** `grep` for `connectivity_plus`/`Connectivity`/`NWPathMonitor`/`onConnectivityChanged` across `lib/`, `ios/Runner`, `go-mknoon`, `pubspec.yaml` → **zero** app-level network-change listener (only the libp2p-internal `connectedness` notions in Go vendor). | **Confirmed.** Signal source is a new (injectable) seam. |
 | RC5 (refuted — do NOT re-introduce) | "The single bridge serializes warm behind the user's send in the warm state." | **Refuted by FDC-S5** at every layer (iOS concurrent global queue `GoBridge.swift:35-42`; Android cached pool `GoBridge.kt:38`; Go `nodeMu` pointer-read `bridge.go:1027-1029`; `n.mu` RWMutex read-concurrent `node.go:1417-1419`) **and now confirmed empirically** by the host microbench `TestConcurrentSendDialNoSerialize` (`go-mknoon/node/benchmark_bridge_concurrency_test.go`, run under `-race`, GOTOOLCHAIN=go1.25.0): **8 concurrent dials finish in ~0.6 s vs a ~4.8 s serial floor**, and a **real user send completes in <1 ms while 8 speculative warm dials each block ~0.6 s** — the user send is not head-of-line blocked. (Host numbers; device M1 still pending per FDC-S5 Exit Gate.) **Do NOT add a Dart priority queue (Option C) or a second channel (Option D).** The ONE real block is `Node.Start`'s write lock (`node.go:219-220`) — cold path only, host-quantified at ~15 ms via the FDC-S5 M2 `node:startup_timing{phase:start_lock_window}` instrument → handled by **PS-3** (gate warm behind node-started). |
@@ -68,12 +68,12 @@ Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§6.1 "Eager
 
 **In scope (FDC-04):**
 - NEW `P2PService.warmPeer(String peerId)` — abstract default no-op (fakes compile unchanged) + `P2PServiceImpl` implementation: gate on `isStarted` (PS-3); per-`(peerId,transport)` cooldown/backoff (RC3); **`discoverLocalPeer` first** to seed the LAN map, in parallel with a speculative `dialPeer` that is **skipped when `isLocalPeer` is already true** (RC1/§6.1); **no send** (PS-1).
-- Gate the send **reuse fast-path** (`:447-465`) and **sticky short-circuit** (`:528-595`) behind an `isLocalPeer` check so a warmed relay/direct conn never bypasses a viable LAN path (RC2). **(COLLISION edit — after FDC-03.)**
+- Gate the send **reuse fast-path** (block `:447-512`, guard `:447-451`) and **sticky short-circuit** (`:528-595`) behind an `isLocalPeer` check so a warmed relay/direct conn never bypasses a viable LAN path (RC2). **(COLLISION edit — lands on FDC-02's committed tree, after FDC-03.)** ⚠ **C1 / FDC-02 option A (2026-06-26):** FDC-02 already made this block **circuit-aware** (relay-only `/p2p-circuit` ⇒ enter the race). FDC-04 therefore adds **only the `isLocalPeer` predicate** (belt-and-suspenders for the **direct-conn** case — a direct conn to a LAN-visible peer should also defer to the LAN leg); it does NOT re-implement the relay-only carve-out. The predicates are complementary (connection-type vs peer-locality).
 - Call sites firing `warmPeer`: **conversation-open** (`conversation_wired.dart` `initState` `:498-563`), **notif-tap conversation route** (`prepare_notification_open_use_case.dart` conversation case `:28-44`, plumbed via `prepare_notification_route_target_use_case.dart`), **resume** (`handle_app_resumed.dart:130-191`, the **active conversation peer**, bounded — PS-4, fired in **parallel**, not serialized behind the awaited drain).
 - NEW network-change re-warm: an **injectable** `Stream<void>` signal (default empty) → on event, reset the active peer's cooldown, drop its learned `local` transport, and re-fire `warmPeer` preferring QUIC.
 
 **Out of scope → owning FDC-xx:**
-- The staggered ranked race / per-leg budgets → **FDC-02**. FDC-04 only adds the `isLocalPeer` reuse gate; it does **not** rewrite the race body.
+- The staggered ranked race / per-leg budgets **and the circuit-aware reuse carve-out** → **FDC-02** (C1 / option A). FDC-04 only adds the `isLocalPeer` reuse gate on top; it does **not** rewrite the race body or re-implement the relay-only carve-out.
 - Generalizing the concurrent durable inbox / dropping the serial probe→inbox tail → **FDC-03**.
 - `direct_timeout`→inbox mis-route correctness fix → **FDC-01**.
 - Parallel resume re-prime (relay reserve + mDNS restart fan-out) → **FDC-05** (FDC-04 adds only the per-peer warm call into the resume flow; the broader parallelization is FDC-05).
@@ -87,28 +87,29 @@ Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§6.1 "Eager
 
 **Production — entry / service:**
 - `lib/core/services/p2p_service.dart` — abstract `P2PService`: add `warmPeer` (default no-op) near `warmBackground` `:90`; reference `dialPeer :137`, `isLocalPeer :189`, `discoverLocalPeer :194`, `lastKnownGoodTransport :203`.
-- `lib/core/services/p2p_service_impl.dart` — `warmBackground :572-647`, `dialPeer :2092-2145`, `isConnectedToPeer :4092`, `isLocalPeer :4097`, `lastKnownGoodTransport :4100-4122`, `recordSuccessfulTransport :4124-4129`, `discoverLocalPeer :4131-4143`. New: `warmPeer`, `_warmAttempts` map, `onNetworkChanged`.
+- `lib/core/services/p2p_service_impl.dart` — `warmBackground :596-676`, `dialPeer :2120-2180` (account-gate `'p2p_dial_peer'` at `:2126`), `isConnectedToPeer :4135`, `isLocalPeer :4140`, `lastKnownGoodTransport :4144-4166` (`clock.now()` `:4149`, learned-`'local'` LAN-revalidation `:4161`), `recordSuccessfulTransport :4168-4173`, `discoverLocalPeer :4176-4187`. New: `warmPeer`, `_warmAttempts` map, `onNetworkChanged`. **NB: the `p2p_service_impl.dart` line anchors here are `new-orbit` working-tree-relative and the 4000-block has drifted ~+44 lines across drafts — re-locate every impl anchor by symbol after rebasing on the FDC-03 tree; do not trust the digits.**
 
 **Production — send path (COLLISION):**
-- `lib/features/conversation/application/send_chat_message_use_case.dart` — reuse `:447-512`, sticky `:528-595`, `isLocalPeer` read `:516`.
+- `lib/features/conversation/application/send_chat_message_use_case.dart` — reuse `:447-512`, sticky `:528-595`, `isLocalPeer` read `:516`. ⚠ **FDC-02 (option A) already modified the reuse block (circuit-aware carve-out)** — re-locate the guard by symbol on FDC-02's committed tree; the digits will have drifted.
 
 **Production — call sites:**
 - `lib/features/conversation/presentation/screens/conversation_wired.dart` — `initState :498-563` (warm on open), already holds `widget.p2pService`.
-- `lib/features/push/application/prepare_notification_open_use_case.dart` `:21-72` + `prepare_notification_route_target_use_case.dart :15-66` (notif-tap warm hook, optional injected `warmPeer` fn).
-- `lib/core/lifecycle/handle_app_resumed.dart :130-191` (resume warm — active peer, parallel).
-- `lib/main.dart` — `ConversationWired(...)` construction `:3290`, `:4118`; conversation notif route `:4014-4053`; lifecycle `_onPaused :4314`, `didChangeAppLifecycleState :4288`.
+- `lib/features/push/application/prepare_notification_open_use_case.dart` `:21-72` + `prepare_notification_route_target_use_case.dart :15-29` (notif-tap warm hook, NEW optional injected `warmPeer` fn). **NB: `prepareNotificationRouteTarget` carries `bridge`/`selfPeerId` only — NO `P2PService` access today; the real `warmPeer` must be added as a param to BOTH use-cases and supplied from the `main.dart` wiring site, not "plumbed from an existing p2p handle".**
+- `lib/core/lifecycle/handle_app_resumed.dart` — `handleAppResumed` signature `:37-76` (NO active-peer param today — one must be ADDED), `performImmediateHealthCheck()` `:175`, `await drainOfflineInbox()` `:206`. Place the unawaited `warmPeer` **after `:175`** (node confirmed started, PS-3) and **before the awaited drain at `:206`** so it runs parallel to the drain, not serialized behind it.
+- `lib/main.dart` — the TWO actual warm-wiring edit sites: `_prepareNotificationRouteTarget` invocation `:4227` (pass `warmPeer: widget.p2pService.warmPeer`) and `_onResumed` → `handleAppResumed(...)` call `:4388` (thread the active-peer source / `conversationTracker`). *(Context only, NOT edited by Steps 9–14: `ConversationWired(...)` constructions `:3312`/`:4140`, conversation notif-route case `:4036-4075`, `_onPaused :4336`, `didChangeAppLifecycleState :4292`.)*
 
 **Direct + integration tests (where RED tests land):**
-- `test/core/services/p2p_service_impl_test.dart` (1to1 array `:48`).
-- `test/features/conversation/application/send_chat_message_use_case_test.dart` (1to1 `:36`).
-- `test/features/conversation/presentation/screens/conversation_wired_test.dart` (1to1 `:63`).
-- `test/features/push/application/prepare_notification_open_use_case_test.dart` (1to1 `:66`).
-- NEW `test/core/lifecycle/handle_app_resumed_warm_peer_test.dart` (register in `ONE_TO_ONE_TESTS`).
-- NEW `integration_test/warm_peer_lan_aware_smoke_test.dart` (register in `TRANSPORT_TESTS` + sims `classify_path()`).
+- `test/core/services/p2p_service_impl_test.dart` (1to1 array `:48`) — TC-04-01..08 + TC-04-16.
+- `test/features/conversation/application/send_chat_message_use_case_test.dart` (1to1 `:36`) — TC-04-12/13/14.
+- `test/features/conversation/presentation/screens/conversation_wired_test.dart` (1to1 `:63`) — TC-04-09.
+- `test/features/push/application/prepare_notification_open_use_case_test.dart` (1to1 `:66`) — TC-04-10.
+- NEW `test/features/push/application/prepare_notification_route_target_use_case_test.dart` — TC-04-10b (forward-wiring lock); register in `ONE_TO_ONE_TESTS`.
+- NEW `test/core/lifecycle/handle_app_resumed_warm_peer_test.dart` — TC-04-11; register in `ONE_TO_ONE_TESTS`.
+- NEW `integration_test/warm_peer_lan_aware_smoke_test.dart` — TC-04-15; register in `TRANSPORT_TESTS` + sims `classify_path()`.
 
 **Dependency-only context:**
 - `lib/core/local_discovery/{local_p2p_service,local_discovery_service}.dart` — `discoverLocalPeer`, `isLocalPeer` LAN-map source.
-- `lib/core/services/p2p_service_learned_transport_invalidation_test.dart` — the existing `lastKnownGoodTransport` invalidation locks the network-change drop must not regress.
+- `test/core/services/p2p_service_learned_transport_invalidation_test.dart` — the existing `lastKnownGoodTransport` invalidation locks the network-change drop must not regress.
 
 ---
 
@@ -123,7 +124,8 @@ Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§6.1 "Eager
 | `test/features/push/application/prepare_notification_open_use_case_test.dart` | exists | `ONE_TO_ONE_TESTS:66` | Home for the notif-tap warm hook lock. |
 | `test/core/lifecycle/handle_app_resumed_upload_ordering_test.dart` | exists | `ONE_TO_ONE_TESTS:31` | Sibling resume test; the resume warm gets its own NEW file (registered). |
 | `integration_test/transport_e2e_test.dart`, `wifi_relay_fallback_smoke_test.dart` | exist | `TRANSPORT_TESTS:166-167` | Transport-label smokes; the NEW warm-overlap smoke joins this array. |
-| `handle_app_resumed_warm_peer_test.dart` | **MISSING (create)** | add to `ONE_TO_ONE_TESTS` | Resume warm-peer lock. |
+| `handle_app_resumed_warm_peer_test.dart` | **MISSING (create)** | add to `ONE_TO_ONE_TESTS` | Resume warm-peer lock (TC-04-11). |
+| `prepare_notification_route_target_use_case_test.dart` | **MISSING (create)** | add to `ONE_TO_ONE_TESTS` | Notif-tap warm **forward-wiring** lock (TC-04-10b) — proves the optional hook isn't a dead wire. |
 | `warm_peer_lan_aware_smoke_test.dart` | **MISSING (create)** | add to `TRANSPORT_TESTS` | Host-fake LAN-aware overlap smoke (host-green ≠ validated; device-proof below). |
 
 ---
@@ -134,11 +136,14 @@ Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§6.1 "Eager
 
 ### U — `warmPeer` core (`test/core/services/p2p_service_impl_test.dart`)
 
-**TC-04-01 ::  warmPeer seeds the LAN map (discoverLocalPeer) before/parallel with the speculative dial**
-- Tier U. Setup: started `P2PServiceImpl` with a fake bridge + a fake `LocalP2PService` recording `discoverLocalPeer` calls; `isLocalPeer→false`. Call `warmPeer(peer)`.
+**TC-04-01 ::  warmPeer AWAITS the LAN seed first, then re-evaluates isLocalPeer to gate the speculative dial (DESIGN-1)**
+- Tier U. Setup: started `P2PServiceImpl` with a fake bridge + a fake `LocalP2PService` recording `discoverLocalPeer` calls. Two sub-scenarios: **(a)** the peer stays non-LAN after the seed → dial fires; **(b)** the seed makes the peer LAN-visible — the common **cold-LAN-map warm-open**: a same-WiFi contact not messaged this session, so `isLocalPeer` reads false at warm-start and flips true only AFTER the awaited seed. Call `warmPeer(peer)`.
 - RED-on-HEAD: `warmPeer` does not exist → compile/`NoSuchMethod`.
-- GREEN-asserts: `discoverLocalPeer(peer, timeout: warmLanTimeout)` invoked **and** `callP2PPeerDial`/`dialPeer(peer)` invoked; emits `P2P_SERVICE_WARM_PEER_BEGIN` then both `…_LAN_SEED` and `…_DIAL`. The LAN-seed future is started no later than the dial (assert via recorded begin order).
-- Mutation: drop the `discoverLocalPeer` call from `warmPeer` → TC re-reds (LAN never seeded → §6.1 relay-bypass).
+- GREEN-asserts: `discoverLocalPeer(peer, timeout: warmLanTimeout)` is invoked **and awaited BEFORE** the `isLocalPeer` re-read that gates the dial; in **(a)** `callP2PPeerDial`/`dialPeer(peer)` fires; in **(b)** the dial is **skipped** (`…_DIAL_SKIPPED {reason:'is_local'}`). Emits `P2P_SERVICE_WARM_PEER_BEGIN` → `…_LAN_SEED` → then either `…_DIAL` or `…_DIAL_SKIPPED`.
+- **Why await-first, not parallel:** evaluating `isLocalPeer` at warm-START (the prior `Future.wait([lan, dial])` shape) speculative-dials every same-WiFi peer whose LAN entry isn't seeded yet — landing a wasteful `/p2p-circuit` relay conn and accruing relay backoff. (The send-path reuse gate of RC2/TC-04-12 is the *correctness* backstop — a warmed relay conn won't be reused for a LAN-visible peer — but awaiting the bounded seed first avoids the wasteful dial/conn churn and makes INV-1 real rather than textual.) Tradeoff: a genuinely-remote peer's dial is delayed by ≤ `warmLanTimeout`; acceptable because `discoverLocalPeer` returns as soon as the peer is found and warm overlaps reading/typing anyway.
+- Mutation A (ordering): evaluate `isLocalPeer` BEFORE awaiting the seed → scenario (b) speculative-dials a now-LAN peer → re-red.
+- Mutation B (LAN-seed present): drop the `discoverLocalPeer` call entirely → scenario (b) never flips local → re-red (LAN never seeded).
+- Mutation C (dial-leg present): drop the speculative `dialPeer` from warmPeer → scenario (a) re-reds (no dial).
 - Discriminator: `P2P_SERVICE_WARM_PEER_LAN_SEED` distinguishes the LAN leg from the dial leg.
 
 **TC-04-02 ::  warmPeer skips the speculative dial when isLocalPeer is already true (LAN-only)**
@@ -147,16 +152,18 @@ Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§6.1 "Eager
 - GREEN-asserts: `discoverLocalPeer` fires; `dialPeer` **not** called; emits `P2P_SERVICE_WARM_PEER_DIAL_SKIPPED {reason:'is_local'}`.
 - Mutation: remove the `if (!isLocalPeer)` guard around the dial → dial fires for a local peer → re-red.
 
-**TC-04-03 ::  warmPeer is debounced — a second call within the cooldown does not re-dial**
-- Tier U. Setup: `withClock`; `isLocalPeer→false`, dial fails (offline). Call `warmPeer(peer)` twice within `warmCooldownFloor`.
+**TC-04-03 ::  warmPeer is debounced — both SEQUENTIAL (post-dial) and CONCURRENT (in-flight) repeats collapse to one dial (DESIGN-4)**
+- Tier U. Setup: `withClock`; `isLocalPeer→false`. Two sub-scenarios: **(a) sequential** — dial fails (offline); call `warmPeer(peer)`, let the dial resolve, call again within `warmCooldownFloor`. **(b) concurrent burst** — the dial future hangs (not yet resolved); fire two `unawaited(warmPeer(peer))` in the SAME synchronous tick (models conv-open + notif-tap + resume all firing on one warm-open).
 - RED-on-HEAD: no `warmPeer`.
-- GREEN-asserts: `dialPeer` invoked **once**; the second call emits `P2P_SERVICE_WARM_PEER_DEBOUNCED`.
-- Mutation: remove the `recentlyWarmed` early-return → second dial fires → re-red.
+- GREEN-asserts: in BOTH (a) and (b) `dialPeer` is invoked **exactly once**; the second call emits `P2P_SERVICE_WARM_PEER_DEBOUNCED`. **(b) requires an in-flight sentinel recorded SYNCHRONOUSLY at warmPeer entry, BEFORE the first await** — a cooldown set only *after* the dial resolves does not collapse a same-tick burst (libp2p same-peer dial coalescing would mask it on the wire, but the Dart-level debounce headline — the plan's value prop — must hold).
+- Mutation A (sequential): remove the `recentlyWarmed` early-return → second sequential dial fires → re-red.
+- Mutation B (concurrent): move the in-flight sentinel set to AFTER the dial completes (post-await) → scenario (b) fires two dials → re-red.
 
-**TC-04-04 ::  per-(peer,transport) backoff escalates on repeated failing dials (5s→…)**
+**TC-04-04 ::  per-PEER Dart warm-cooldown escalates on repeated failing dials (5s→…), layered over libp2p's Go-owned per-`(peer,transport)` swarm backoff (CONSIST-1)**
 - Tier U. Setup: `withClock`; dial keeps failing. Call `warmPeer`, advance clock past floor, call again (fails again), advance again.
 - RED-on-HEAD: no `warmPeer`.
 - GREEN-asserts: the `nextEligibleAt` interval **grows** between consecutive failures (floor→2×→… capped at `warmCooldownCeil`); a call before `nextEligibleAt` is `…_DEBOUNCED`, a call after re-dials.
+- **Keying honesty (CONSIST-1):** warmPeer fires a single **transport-agnostic** `dialPeer(peerId)` (Dart cannot know which transport libp2p chose), so the Dart cooldown is keyed by **peerId only**. The proposal's per-`(peerId,transport)` *quadratic* backoff (5s→5min) is **libp2p-swarm-internal (Go-owned) and unchanged by this plan**; the Dart per-peer cooldown is a thin debounce *layered over* it, not a reimplementation. (There is no separate "LAN-leg cooldown" — drop that framing.)
 - Mutation: make the cooldown a fixed constant (no growth) → the "advance to 2× then still debounced" assertion re-reds.
 
 **TC-04-05 ::  warmPeer is a no-op when the node is not started (PS-3 / FDC-S5)**
@@ -171,19 +178,28 @@ Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§6.1 "Eager
 - GREEN-asserts: `sendMessage`/`sendMessageWithReply`/`storeInInbox` call-count **== 0**.
 - Mutation: add a stray `sendMessageWithReply` in the warm body → re-red.
 
-**TC-04-07 ::  network-change re-warms the active peer, resets its cooldown, and drops its learned `local` transport**
-- Tier U. Setup: started service with an injected `networkChangeSignal` `StreamController`; `recordSuccessfulTransport(peer,'local')`; warm `peer` once (cooldown now active). Push one event on `networkChangeSignal` (mark `peer` active).
+**TC-04-07 ::  network-change re-warms ONLY the active peer, resets its cooldown, and drops its learned `local` transport (MUT-1, DESIGN-3)**
+- Tier U. Setup: started service with an injected `networkChangeSignal` `StreamController` **and an injected single active-peer source** (`String? Function()` / `ActiveConversationTracker.activePeerId`) returning `peerA`; `recordSuccessfulTransport(peerA,'local')`; warm `peerA` once (cooldown now active); ALSO warm a second `peerB` earlier this session (so `_warmAttempts` holds both) but leave `peerA` the active peer. Push one event on `networkChangeSignal`.
 - RED-on-HEAD: no `warmPeer`/`onNetworkChanged`.
-- GREEN-asserts: after the event `dialPeer`/`discoverLocalPeer` fires **again despite the live cooldown**; `lastKnownGoodTransport(peer)` returns null (the `local` entry was dropped); emits `P2P_SERVICE_WARM_PEER_NETWORK_CHANGE_REWARM`.
-- Mutation: make `onNetworkChanged` skip the cooldown reset → no re-warm within cooldown → re-red.
+- GREEN-asserts: after the event `dialPeer`/`discoverLocalPeer` fires **again for `peerA` despite the live cooldown**; **`peerB` (warmed but no longer active) is NOT re-warmed** (PS-4 — the re-warm targets the active-peer source, never `_warmAttempts.keys`); `lastKnownGoodTransport(peerA)` returns null (the `local` entry was dropped); emits `P2P_SERVICE_WARM_PEER_NETWORK_CHANGE_REWARM`.
+- Mutation A (cooldown reset): make `onNetworkChanged` skip the cooldown reset → no re-warm within cooldown → re-red.
+- Mutation B (drop-local): remove the `_learnedTransport.remove(peerA)` / `=='local'` drop → the `lastKnownGoodTransport(peerA)==null` assertion re-reds.
+- Mutation C (active-only bound): target `_warmAttempts.keys` instead of the active-peer source → `peerB` re-warmed → the "peerB NOT re-warmed" assertion re-reds (PS-4 roster guard).
 - Discriminator: `…_NETWORK_CHANGE_REWARM` vs the plain `…_BEGIN` proves the re-warm came from the network edge, not a fresh open.
 
-**TC-04-08 ::  network-change re-warm prefers QUIC**
+**TC-04-16 ::  rapid network-change flapping is coalesced — N events within one cooldown window produce ONE re-warm, and escalation is preserved (DESIGN-2)**
+- Tier U. Setup: `withClock`; active peer `peerA`, dial keeps failing (unreachable / QUIC down). Push N (`>=3`) events on `networkChangeSignal` within `warmCooldownFloor`.
+- RED-on-HEAD: no `onNetworkChanged`.
+- GREEN-asserts: `dialPeer` fires **once** across the burst — the network-change path enforces its own minimum re-warm interval (`>= warmCooldownFloor`, keyed on a `lastNetworkRewarmAt` timestamp distinct from the per-peer cooldown); the per-peer backoff **multiplier is preserved** (`onNetworkChanged` resets only `nextEligibleAt` to floor to permit an immediate first re-warm, NOT the escalation counter), so a still-failing peer keeps escalating. WiFi↔cellular flapping (elevators/transit) therefore cannot tight-loop a failing QUIC dial and trip the libp2p 5s→5m swarm backoff — the exact §6.1/§10 degradation the plan exists to prevent.
+- Mutation A: drop the network-change self-debounce (`lastNetworkRewarmAt`) → N dials → re-red.
+- Mutation B: reset the escalation multiplier (not just `nextEligibleAt`) on every event → the "still-escalating after a flap" assertion re-reds.
+
+**TC-04-08 ::  network-change re-warm threads the (Dart-side) `preferQuic` intent flag to `callP2PPeerDial` — INERT on the wire until a Go change (DESIGN-5)**
 - Tier U. Setup: as TC-04-07. Inspect the `dialPeer` invocation on the network-change re-warm.
 - RED-on-HEAD: no `warmPeer`; `dialPeer` has no preference param.
-- GREEN-asserts: the re-warm dial passes the new additive `preferQuic: true` (or a QUIC-first `addresses` ordering) — `callP2PPeerDial` receives the QUIC-preference flag.
+- GREEN-asserts: the re-warm dial passes the new additive `preferQuic: true` and `callP2PPeerDial` receives it in the Dart payload.
 - Mutation: drop the `preferQuic` flag on the network-change dial → re-red.
-- Honesty: this is a **hint**; true transport selection is Go-owned (`classifyStreamTransport node.go:123-136`). The host lock asserts the *hint is passed*; the *actual QUIC win* is device-proof (Device/Relay Proof Profile).
+- **Honesty (DESIGN-5, verified):** the Dart `preferQuic` flag is **INERT on the wire today**. The Go `peer:dial` handler unmarshals only `{PeerId, Addresses, TimeoutMs}` and calls `DialPeerWithTimeout(peerId, addresses, timeoutMs)` (`bridge.go:962-973`); Go's `json.Unmarshal` **silently drops** an unknown `preferQuic` field, and `callP2PPeerDial` (`p2p_bridge_client.dart:361-378`) sends only `{peerId, addresses?, timeoutMs?}`. So this TC locks only that the *Dart intent is threaded*, NOT any transport effect. The **actual QUIC-first selection requires a Go change** (add `PreferQuic` to the struct + extend `DialPeerWithTimeout` + QUIC-first address ordering in `node.go`) and is **REASSIGNED to a Go-touching follow-up (FDC-11/FDC-12), OUT of FDC-04 scope** — see Accepted Differences. The QUIC device-proof done-criterion moves with it; **FDC-04 does NOT claim a QUIC win**, only that a network change triggers a plain re-warm carrying the (currently inert) intent flag.
 
 ### W — call sites
 
@@ -194,17 +210,25 @@ Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§6.1 "Eager
 - Mutation: remove the `warmPeer` call from `initState` → re-red.
 
 **TC-04-10 ::  notif-tap conversation route fires warmPeer for the target peer (`prepare_notification_open_use_case_test.dart`)**
-- Tier W/U (application). Setup: call `prepareNotificationOpen` with a `conversation` route target carrying a peerId + an injected `warmPeer` spy.
+- Tier W/U (application). Setup: call `prepareNotificationOpen` with a `conversation` route target carrying a non-null `peerId` + an injected `warmPeer` spy.
 - RED-on-HEAD: `prepareNotificationOpen` has no warm hook (only `drainOfflineInbox`).
-- GREEN-asserts: `warmPeer(targetPeerId)` invoked once for the `conversation` case; **not** for `group`/`intros`/`contactRequest`/`post` cases.
+- GREEN-asserts: `warmPeer(routeTarget.peerId!)` invoked once for the `conversation` case; **not** for `group`/`intros`/`contactRequest`/`post` cases. (`NotificationRouteTarget.peerId` is `String?`; the `.conversation` constructor guarantees non-null, so the call uses `peerId!` — mirrors existing `main.dart` `routeTarget.peerId!` usage at `:4062`.)
 - Mutation: remove the warm hook from the `conversation` case → re-red.
 - Honesty: on a **cold** notif-tap the service-level PS-3 gate (TC-04-05) makes the warm a no-op; this lock only proves the *hook fires*, the win is warm-resume.
 
-**TC-04-11 ::  resume warms the active conversation peer, bounded and in parallel (`handle_app_resumed_warm_peer_test.dart`, NEW)**
-- Tier U. Setup: call `handleAppResumed` with a fake `P2PService` recording `warmPeer`, an active-peer source (`conversationTracker`/active-peer arg) set to one peer, and a roster of many contacts.
-- RED-on-HEAD: resume flow (`:130-191`) never warms a peer.
-- GREEN-asserts: `warmPeer(activePeer)` invoked; **roster peers are NOT warmed** (count ≤ bounded N, PS-4); the warm is **not** awaited behind the serial drain (does not increase drain latency).
-- Mutation: change resume to warm `for (c in roster) warmPeer(c)` → the "roster not warmed / count ≤ N" assertion re-reds.
+**TC-04-10b ::  the notif-tap warm hook is actually WIRED through `prepareNotificationRouteTarget` — not a dead optional param (`prepare_notification_route_target_use_case_test.dart`) (WIRE-1)**
+- Tier U (application). Setup: call the production wrapper `prepareNotificationRouteTarget` with a `conversation` route target and a `warmPeer` recorder threaded through it. Because the hook is an **optional param defaulting null** (TC-04-10), a null/dead wire at the route-target seam OR at `main.dart:4227` passes TC-04-10 green while notif-tap warm silently never fires in production — exactly the host false-positive class flagged for TC-04-15.
+- RED-on-HEAD: `prepareNotificationRouteTarget` has no `warmPeer` param to forward (it carries `bridge`/`selfPeerId` only — no `P2PService`).
+- GREEN-asserts: a non-null `warmPeer` supplied to `prepareNotificationRouteTarget` is forwarded to `prepareNotificationOpen` and fires for the `conversation` case.
+- Mutation: drop the forward (stop passing `warmPeer` from `prepareNotificationRouteTarget` into `prepareNotificationOpen`) → re-red.
+- Source-wiring lock: the `main.dart:4227` supply of `warmPeer: widget.p2pService.warmPeer` is verified by inspection (Step 12) — there is no host seam above `_prepareNotificationRouteTarget`.
+
+**TC-04-11 ::  resume warms the active conversation peer (and ONLY it), bounded and in parallel (`handle_app_resumed_warm_peer_test.dart`, NEW) (DESIGN-3/SRC-1)**
+- Tier U. Setup: call `handleAppResumed` with a fake `P2PService` recording `warmPeer` and a **NEW injected active-peer source**. *(Today `handleAppResumed` has NO active-peer/`conversationTracker` param, and `ActiveConversationTracker` exposes NO active-peer getter — only `setActive`/`isViewing`. Step 14 must ADD both: `String? get activePeerId` on the tracker and an active-peer param on `handleAppResumed`, threaded from `main.dart:4388`.)* Two sub-cases: **(a)** the active-peer source returns one `peerA` with a roster of many contacts; **(b)** the active-peer source returns null (no conversation open).
+- RED-on-HEAD: resume flow never warms a peer; `handleAppResumed` has no active-peer param to read.
+- GREEN-asserts: **(a)** `warmPeer(peerA)` invoked exactly once; **roster peers are NOT warmed** (PS-4); the warm is **`unawaited`**, placed after `performImmediateHealthCheck()` (`:175`) and before the awaited `drainOfflineInbox()` (`:206`) so it runs parallel to the drain and does not increase drain latency. **(b)** active peer null → **no** `warmPeer` fires.
+- Mutation A (roster bound): change resume to warm `for (c in roster) warmPeer(c)` → "roster not warmed" re-reds.
+- Mutation B (null guard): warm unconditionally even when the active-peer source is null → sub-case (b) re-reds.
 
 ### U — send-path reuse/sticky gate (COLLISION; `send_chat_message_use_case_test.dart`)
 
@@ -221,11 +245,11 @@ Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§6.1 "Eager
 - GREEN-asserts: `CHAT_MSG_SEND_STICKY_TRANSPORT` for a non-`local` learned value does not short-circuit when `isLocalPeer` is true; `via=='local'`.
 - Mutation: remove the `isLocalPeer` guard from the sticky gate → sticky relay fires → re-red.
 
-**TC-04-14 ::  PS-2 preservation — a NON-local connected peer still takes the reuse fast-path (no regression)**
-- Tier U. Setup: `isLocalPeer(target)→false`; `connections` contains `target`; reuse send succeeds.
-- RED-on-HEAD: passes today (preservation) — written to FAIL if the new gate over-fires (i.e. if the gate accidentally blocks non-local reuse).
+**TC-04-14 ::  PS-2 preservation — a NON-local connected peer with a DIRECT conn still takes the reuse fast-path (no regression)**
+- Tier U. Setup: `isLocalPeer(target)→false`; `connections` contains `target` **via a DIRECT (non-`/p2p-circuit`) multiaddr** (e.g. `/ip4/.../tcp/4001`, NOT a relay circuit); reuse send succeeds. ⚠ **C1 / FDC-02 option A:** do NOT seed a relay-only `/p2p-circuit` conn here — under FDC-02 a relay-only conn now enters the race, so a circuit-seeded setup would (correctly) NOT reuse and this preservation test would mis-fire. PS-2 preserves the **direct-conn** reuse path only.
+- RED-on-HEAD: passes today (preservation) — written to FAIL if the new gate over-fires (i.e. if the gate accidentally blocks non-local **direct** reuse).
 - GREEN-asserts: `CHAT_MSG_SEND_REUSE_CONNECTION` emitted; `sendPath=='reuse'`; transport unchanged vs HEAD.
-- Mutation: broaden the gate to `if (!isAlreadyConnected || isLocalPeer)`-style over-block → non-local reuse skipped → re-red. (Locks the gate is **LAN-only**, not a blanket reuse disable.)
+- Mutation: broaden the gate to `if (!isAlreadyConnected || isLocalPeer)`-style over-block → non-local direct reuse skipped → re-red. (Locks the gate is **LAN-only**, not a blanket reuse disable.)
 
 ### I — transport-gate smoke (`integration_test/warm_peer_lan_aware_smoke_test.dart`, NEW)
 
@@ -242,20 +266,22 @@ Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§6.1 "Eager
 
 | Spec case | Behavior props | Tier | Test file::name | RED reason on HEAD | Mutation revert | Acceptance gate cmd | Harness registration |
 |---|---|---|---|---|---|---|---|
-| warmPeer seeds LAN first + dials | RC1, §6.1 | U | `p2p_service_impl_test.dart::TC-04-01` | no `warmPeer` method | drop `discoverLocalPeer` call | `run_test_gates.sh 1to1` | already in `ONE_TO_ONE_TESTS:48` |
+| warmPeer awaits LAN seed, THEN gates dial | RC1, §6.1, DESIGN-1 | U | `p2p_service_impl_test.dart::TC-04-01` | no `warmPeer` method | A: eval isLocalPeer before seed; B: drop `discoverLocalPeer`; C: drop dial | `run_test_gates.sh 1to1` | already in `ONE_TO_ONE_TESTS:48` |
 | skip dial when isLocalPeer | §6.1 | U | `p2p_service_impl_test.dart::TC-04-02` | no `warmPeer` | remove `if(!isLocalPeer)` | `1to1` | `:48` |
 | debounce within cooldown | RC3 | U | `p2p_service_impl_test.dart::TC-04-03` | no `warmPeer` | remove `recentlyWarmed` early-return | `1to1` | `:48` |
 | backoff escalates 5s→ceil | RC3, §12 | U | `p2p_service_impl_test.dart::TC-04-04` | no `warmPeer` | fixed (non-growing) cooldown | `1to1` | `:48` |
 | no-op when node not started | PS-3, FDC-S5 | U | `p2p_service_impl_test.dart::TC-04-05` | no `warmPeer` | drop `isStarted` gate | `1to1` | `:48` |
 | never sends / inboxes | PS-1 | U | `p2p_service_impl_test.dart::TC-04-06` | no `warmPeer` | add stray `sendMessageWithReply` | `1to1` | `:48` |
-| network-change re-warm + reset + drop local | RC4, §12 | U | `p2p_service_impl_test.dart::TC-04-07` | no `onNetworkChanged` | skip cooldown reset | `1to1` | `:48` |
-| network-change prefers QUIC | §12 | U | `p2p_service_impl_test.dart::TC-04-08` | no preferQuic param | drop `preferQuic` flag | `1to1` | `:48` |
+| network-change re-warm: active-only + reset + drop local | RC4, §12, MUT-1, DESIGN-3 | U | `p2p_service_impl_test.dart::TC-04-07` | no `onNetworkChanged` | A: skip cooldown reset; B: skip local-drop; C: target `_warmAttempts.keys` | `1to1` | `:48` |
+| network-change threads (Go-inert) preferQuic flag | §12, DESIGN-5 | U | `p2p_service_impl_test.dart::TC-04-08` | no preferQuic param | drop `preferQuic` flag | `1to1` | `:48` |
+| network-change flap coalesced to ONE re-warm | DESIGN-2 | U | `p2p_service_impl_test.dart::TC-04-16` | no `onNetworkChanged` | A: drop self-debounce; B: reset escalation multiplier | `1to1` | `:48` |
 | conv-open fires warmPeer | call site | W | `conversation_wired_test.dart::TC-04-09` | initState no warm | remove initState warm | `1to1` | `ONE_TO_ONE_TESTS:63` |
 | notif-tap fires warmPeer (conversation only) | call site | W/U | `prepare_notification_open_use_case_test.dart::TC-04-10` | no warm hook | remove conversation-case hook | `1to1` | `:66` |
-| resume warms active peer, bounded/parallel | PS-4, call site | U | `handle_app_resumed_warm_peer_test.dart::TC-04-11` | resume no warm | warm whole roster | `1to1` | **ADD to `ONE_TO_ONE_TESTS`** |
+| notif-tap warm hook WIRED through route-target (not dead) | WIRE-1 | U | `prepare_notification_route_target_use_case_test.dart::TC-04-10b` | no `warmPeer` param to forward | drop the forward to `prepareNotificationOpen` | `1to1` | **NEW file → ADD to `ONE_TO_ONE_TESTS`** |
+| resume warms active peer (and ONLY it), bounded/parallel | PS-4, call site, DESIGN-3 | U | `handle_app_resumed_warm_peer_test.dart::TC-04-11` | resume no warm; no active-peer param | A: warm whole roster; B: warm when active==null | `1to1` | **ADD to `ONE_TO_ONE_TESTS`** |
 | local peer + relay conn → no reuse, LAN attempted | RC2, §6.1 | U | `send_chat_message_use_case_test.dart::TC-04-12` | reuse LAN-blind `:447-451` | remove `&& !isLocalPeer` | `1to1` | `ONE_TO_ONE_TESTS:36` |
 | local peer + learned relay → no sticky | RC2 | U | `send_chat_message_use_case_test.dart::TC-04-13` | sticky LAN-blind `:528-595` | remove isLocalPeer sticky gate | `1to1` | `:36` |
-| non-local connected → reuse preserved | PS-2 | U | `send_chat_message_use_case_test.dart::TC-04-14` | (preservation) over-block | broaden gate to block non-local | `1to1` | `:36` |
+| non-local connected **via DIRECT conn** → reuse preserved | PS-2 | U | `send_chat_message_use_case_test.dart::TC-04-14` | (preservation) over-block | broaden gate to block non-local direct | `1to1` | `:36` |
 | warm-then-LAN-send label `local` | RC1/RC2 wire | I | `warm_peer_lan_aware_smoke_test.dart::TC-04-15` | no `warmPeer`; relay label | revert reuse gate | `run_test_gates.sh transport` | **ADD to `TRANSPORT_TESTS` + sims `classify_path()`** |
 
 No empty cells.
@@ -277,12 +303,12 @@ No empty cells.
 
 ## Invariants (locked by tests)
 
-- **INV-1** `warmPeer` seeds the LAN map (`discoverLocalPeer`) **before/at-least-parallel** with the speculative dial, so the LAN lane can win the FDC-02 ranked race (TC-04-01).
-- **INV-2** A warmed **relay/direct** connection never satisfies the send reuse/sticky short-circuit when the peer is LAN-visible (TC-04-12/13); non-local reuse is unchanged (TC-04-14).
-- **INV-3** `warmPeer` is single-shot/debounced/backoff-bounded per `(peerId,transport)` — repeated warms to an offline peer never tight-loop a failing dial (TC-04-03/04).
+- **INV-1** `warmPeer` **awaits** the bounded LAN seed (`discoverLocalPeer`) and re-reads `isLocalPeer` **before** deciding the speculative dial, so a same-WiFi peer is never needlessly relay-dialed and the LAN lane can win the FDC-02 ranked race (TC-04-01). The send-path reuse gate (INV-2) is the *correctness* backstop; this ordering is the *efficiency/churn* guard that makes the LAN-first intent real, not textual.
+- **INV-2** A warmed **relay/direct** connection never satisfies the send reuse/sticky short-circuit when the peer is LAN-visible (TC-04-12/13); non-local **direct** reuse is unchanged (TC-04-14). (A non-local **relay-only** conn is handled upstream by FDC-02's circuit-aware reuse — C1 / option A — not by this `isLocalPeer` gate.)
+- **INV-3** `warmPeer` is single-shot/debounced per **peerId** in Dart (in-flight sentinel for same-tick bursts + post-dial escalating cooldown), layered over libp2p's Go-owned per-`(peerId,transport)` swarm backoff — repeated **and concurrent** warms to an offline peer never tight-loop a failing dial (TC-04-03/04).
 - **INV-4** `warmPeer` is a strict no-op while the node is not started (PS-3, TC-04-05) — never contends for the `Node.Start` write lock; cold-tap warming is honestly empty.
 - **INV-5** `warmPeer` never sends or inboxes (PS-1, TC-04-06) — speculative only.
-- **INV-6** A network change re-warms the active peer, resets its cooldown, drops its learned `local` transport, and prefers QUIC (TC-04-07/08).
+- **INV-6** A network change re-warms **only the active peer** (never `_warmAttempts.keys`), resets its `nextEligibleAt` (preserving the escalation counter), drops its learned `local` transport, **coalesces flap-bursts to one re-warm**, and threads a (currently Go-inert) `preferQuic` intent flag (TC-04-07/08/16).
 - **INV-7** Warm is bounded to the open/active peer, never the roster (PS-4, TC-04-11).
 
 ---
@@ -292,23 +318,23 @@ No empty cells.
 > RED first for every step. Land **on top of FDC-03's committed tree** (collision file). Each behavior-bearing edit names its seam.
 
 1. **RED:** add TC-04-05 (PS-3 no-op) and TC-04-06 (PS-1 no-send) to `p2p_service_impl_test.dart`. Both fail to compile (no `warmPeer`). *Seam:* `P2PService.warmPeer`.
-2. **GREEN (skeleton):** add `Future<void> warmPeer(String peerId)` to `lib/core/services/p2p_service.dart` as an abstract **default no-op** (so all fakes/mocks compile unchanged — mirror the `discoverLocalPeer` default at `:194`). Implement in `p2p_service_impl.dart`: first lines `if (!currentState.isStarted) { emit …SKIPPED not_started; return; }` then `await _allowsAccountNetworkSideEffects('p2p_warm_peer')`. No dial yet. TC-04-05/06 green. *Stop-if:* if `_allowsAccountNetworkSideEffects` gate semantics differ for warm, reuse the existing pattern (`dialPeer` uses `'p2p_dial_peer'` at `:2097`).
+2. **GREEN (skeleton):** add `Future<void> warmPeer(String peerId, {bool preferQuic = false})` to `lib/core/services/p2p_service.dart` as an abstract **default no-op** (so all fakes/mocks compile unchanged — mirror the `discoverLocalPeer` default at `:194`). Implement in `p2p_service_impl.dart` with the **whole body wrapped in a top-level `try/catch` that completes normally** — `warmPeer` is a **total, never-throwing** contract (ROBUST-1): all 4 call sites fire it as bare `unawaited(...)` with no error handler, so any throw from the gate/emit/`_warmAttempts` body would otherwise leak as an unhandled async error (test-zone failure / prod `PlatformDispatcher.onError`). First lines: `if (!currentState.isStarted) { emit …SKIPPED not_started; return; }` then `if (!await _allowsAccountNetworkSideEffects('p2p_warm_peer')) return;`. No dial yet. TC-04-05/06 green. *Note:* the `'p2p_warm_peer'` account-gate mirrors `dialPeer`'s existing `'p2p_dial_peer'` gate (`:2126`) — a non-behavioral reuse of the established pattern, exercised transitively (denied gate ⇒ no dial/seed, same observable as PS-3), so it carries no independent TC (GATE-1).
 3. **RED:** TC-04-01 (LAN-seed + dial) and TC-04-02 (skip dial when local). *Seam:* warmPeer body.
-4. **GREEN:** body = `final lan = discoverLocalPeer(peerId, timeout: warmLanTimeout);` started first; `final dial = isLocalPeer(peerId) ? Future.value(false) : dialPeer(peerId, timeoutMs: warmDialTimeout.inMilliseconds);` then `await Future.wait([lan, dial])` with per-leg `catchError`. Emit `…_BEGIN/_LAN_SEED/_DIAL/_DIAL_SKIPPED`. *Seam:* `warmPeer` + `dialPeer :2092` + `discoverLocalPeer :4131`.
+4. **GREEN (await-seed-FIRST, then gate — DESIGN-1):** body = `final local = await discoverLocalPeer(peerId, timeout: warmLanTimeout).catchError((_) => false);` then `if (local || isLocalPeer(peerId)) { emit …_DIAL_SKIPPED {reason:'is_local'}; }` else fire the **non-blocking** dial: `unawaited(dialPeer(peerId, timeoutMs: warmDialTimeout.inMilliseconds, preferQuic: preferQuic).then(_onWarmDialOutcome).catchError(_onWarmDialError)); emit …_DIAL;`. Emit `…_BEGIN` at entry and `…_LAN_SEED` around the seed. Awaiting the bounded seed before deciding the dial avoids relay-dialing a same-WiFi peer whose LAN entry isn't seeded yet; the dial stays non-blocking so the call site is never delayed beyond `warmLanTimeout`. *Seam:* `warmPeer` + `dialPeer :2120` + `discoverLocalPeer :4176`.
 5. **RED:** TC-04-03 (debounce) + TC-04-04 (backoff escalation). *Seam:* `_warmAttempts` map.
-6. **GREEN:** add `final Map<String,_WarmAttempt> _warmAttempts` (key `peerId` for the dial leg; the proposal's "per-(peer,transport)" is honored by keying the dial-leg cooldown separately from any future LAN-leg cooldown). `recentlyWarmed(peer)` early-returns `…_DEBOUNCED` if `clock.now() < nextEligibleAt`. On dial failure, `nextEligibleAt = now + min(prev*2, warmCooldownCeil)` starting `warmCooldownFloor`; on success, reset/remove the entry. Use `clock.now()` (matches `lastKnownGoodTransport :4105`) so `withClock` drives it. *Stop-if (FDC-S1):* `warmCooldownFloor`/`Ceil`, `warmLanTimeout`, `warmDialTimeout` default to {5s, 5m, 1500ms (=`interactiveLocalBudget`), 4s (=`InteractiveDialTimeout`)} — swap to S1's measured values when S1 lands; record the assumption inline.
+6. **GREEN:** add `final Map<String,_WarmAttempt> _warmAttempts` keyed by **peerId** (transport-agnostic — CONSIST-1; the per-`(peer,transport)` quadratic backoff is libp2p-swarm-internal, NOT reimplemented here). `_WarmAttempt` carries an **`inFlight` flag set SYNCHRONOUSLY at warmPeer entry, before the first await** (DESIGN-4), plus `nextEligibleAt` + the escalation count. `recentlyWarmed(peer)` early-returns `…_DEBOUNCED` if `inFlight` **or** `clock.now() < nextEligibleAt` — so a same-tick conv-open+notif-tap+resume burst collapses to one dial, not just sequential repeats. On dial completion: success clears the entry; failure sets `nextEligibleAt = now + min(prev*2, warmCooldownCeil)` from `warmCooldownFloor` and bumps the escalation count; always clear `inFlight`. Use `clock.now()` (matches `lastKnownGoodTransport :4149`) so `withClock` drives it. *Stop-if (FDC-S1):* `warmCooldownFloor`/`Ceil`, `warmLanTimeout`, `warmDialTimeout` default to {5s, 5m, 1500ms (=`interactiveLocalBudget`), 4s (=`InteractiveDialTimeout`)} — swap to S1's measured values when S1 lands; record the assumption inline.
 7. **RED:** TC-04-07 (network-change re-warm) + TC-04-08 (preferQuic). *Seam:* `onNetworkChanged` + injected `networkChangeSignal`.
-8. **GREEN:** add a constructor-injected `Stream<void>? networkChangeSignal` (default null → empty), subscribe in the start path; `void onNetworkChanged()` → for the active/last-warmed peer(s): `_warmAttempts.remove(peer)` (reset cooldown), drop `_learnedTransport[peer]` if `=='local'`, then `warmPeer(peer, preferQuic:true)`. Add additive `bool preferQuic=false` to `dialPeer` (and `callP2PPeerDial`) — passed through to Go as a hint; default false keeps every existing caller unchanged. Emit `…_NETWORK_CHANGE_REWARM`. *Stop-if:* the real OS connectivity source is a **bounded follow-up** — decide between (a) add `connectivity_plus` and map `onConnectivityChanged` → the signal, or (b) a native `NWPathMonitor`/`ConnectivityManager` MethodChannel. This plan wires the *behavior* against the injectable stream; do NOT block FDC-04 on the source choice. Flag in Accepted Differences.
+8. **GREEN:** add a constructor-injected `Stream<void>? networkChangeSignal` (default null → empty) **and an injected single active-peer source** `String? Function()? activePeerId` (default null; in prod = `ActiveConversationTracker.activePeerId` from Step 14 — DESIGN-3). Subscribe to the signal in the start path; `void onNetworkChanged()` → resolve the **ONE** active peer via `activePeerId?.call()`; **null ⇒ no-op** (never iterate `_warmAttempts.keys` — PS-4). For that peer: self-debounce the signal (`if (clock.now() - _lastNetworkRewarmAt < warmCooldownFloor) return;` then set `_lastNetworkRewarmAt`) so WiFi↔cellular flapping coalesces to one re-warm (DESIGN-2); reset only `nextEligibleAt` to floor **preserving** the escalation count; drop `_learnedTransport[peer]` if `=='local'`; then `warmPeer(peer, preferQuic:true)`. Add additive `bool preferQuic=false` to `dialPeer` (and `callP2PPeerDial`); default false keeps every existing caller unchanged. **Honesty (DESIGN-5):** `preferQuic` is **Dart-only and INERT on the wire** — the Go `peer:dial` handler drops unknown JSON fields (`bridge.go:962-973`); the real QUIC-first ordering is a Go-touching follow-up (FDC-11/FDC-12), out of scope. Emit `…_NETWORK_CHANGE_REWARM`. *Stop-if:* the real OS connectivity source is a **bounded follow-up** — (a) add `connectivity_plus` and map `onConnectivityChanged` → the signal, or (b) a native `NWPathMonitor`/`ConnectivityManager` MethodChannel. This plan wires the *behavior* against the injectable stream; do NOT block FDC-04 on the source choice. Flag in Accepted Differences.
 9. **RED:** TC-04-09 (conv-open). *Seam:* `conversation_wired.dart initState`.
-10. **GREEN:** in `initState` (`:560` region, alongside the existing notif-tap drain) add `unawaited(widget.p2pService.warmPeer(_contact.peerId));` — fire-and-forget, after the existing setup. *Seam:* `conversation_wired.dart:498-563`.
+10. **GREEN:** add `unawaited(widget.p2pService.warmPeer(widget.contact.peerId));` — fire-and-forget — **UNCONDITIONALLY at the end of `initState` (after the `:560-562` notif-tap-drain block), NOT inside the `if (widget.notificationTappedAt != null)` block** (CONV-6): TC-04-09 requires warm on **every** open, including a normal (non-notif) open. *Seam:* `conversation_wired.dart:498-563`.
 11. **RED:** TC-04-10 (notif-tap). *Seam:* `prepareNotificationOpen` conversation case.
-12. **GREEN:** add an optional `Future<void> Function(String peerId)? warmPeer` param to `prepareNotificationOpen` (default null); in the `conversation` case call `if (warmPeer != null) unawaited(warmPeer(routeTarget.peerId))`. Plumb from `prepareNotificationRouteTarget` (carries the route target + p2p access). *Seam:* `prepare_notification_open_use_case.dart:28-44` + `prepare_notification_route_target_use_case.dart`.
+12. **GREEN:** add an optional `Future<void> Function(String peerId)? warmPeer` param to **BOTH** `prepareNotificationOpen` AND `prepareNotificationRouteTarget` (default null on each). In `prepareNotificationOpen`'s `conversation` case: `final pid = routeTarget.peerId; if (warmPeer != null && pid != null) unawaited(warmPeer(pid));` (NOTIF-5 — `peerId` is `String?`). `prepareNotificationRouteTarget` **forwards** its `warmPeer` to `prepareNotificationOpen` — it carries NO `P2PService` of its own (`bridge`/`selfPeerId` only — SRC-2). Supply the real fn at the only seam that holds p2p: `main.dart:4227` (`_prepareNotificationRouteTarget` → `prepareNotificationRouteTarget(..., warmPeer: widget.p2pService.warmPeer)`). *Seam:* `prepare_notification_open_use_case.dart:28-44` + `prepare_notification_route_target_use_case.dart:15-29` + `main.dart:4227`. Locked by TC-04-10 (hook) **and TC-04-10b (forward wiring)**.
 13. **RED:** TC-04-11 (resume, bounded/parallel). *Seam:* `handle_app_resumed.dart`.
-14. **GREEN:** in `handleAppResumed`, after the health-check (so the node is confirmed started — PS-3) fire `unawaited(p2pService.warmPeer(activePeer))` for the active conversation peer **only** (source: an injected active-peer getter / `conversationTracker`), **not** the roster (PS-4). Must NOT be awaited inside the serial drain chain. *Seam:* `handle_app_resumed.dart:130-191`. *Stop-if:* if **FDC-05** (parallel resume re-prime) already restructured this `:130-191` block, slot the `warmPeer` call into FDC-05's parallel set instead of the serial chain — do NOT re-serialize. Pin order with FDC-05 (recommend FDC-05 first; see Dependency Impact).
-15. **RED:** TC-04-12/13/14 (reuse/sticky `isLocalPeer` gate). *Seam:* `send_chat_message_use_case.dart` reuse `:447-451` + sticky `:528-595`.
-16. **GREEN (COLLISION edit):** hoist the `isLocalPeer` read **above** the reuse block; change reuse condition to `if (isAlreadyConnected && !isLocalPeer)`; gate the sticky short-circuit so a non-`local` learned value does not short-circuit a LAN-visible peer (`if (learned != null && (learned == 'local' || !isLocalPeer))`). Preserve the existing `'local'` revalidation. *Seam:* `:447-516`, `:528-595`. *Stop-if:* if FDC-02 already moved this region, rebase onto FDC-02's race body; the gate is the only FDC-04 change here.
+14. **GREEN (the active-peer source must be CREATED — DESIGN-3/SRC-1):** (a) add `String? get activePeerId => _activePeerId;` to `ActiveConversationTracker` (today it exposes only `setActive`/`clear`/`isViewing` — no read-back); (b) add an active-peer param to `handleAppResumed` (e.g. `String? Function()? activeConversationPeerId`, or pass the `ActiveConversationTracker`) — it has **no** such param today; (c) thread it at `main.dart:4388` (`widget.conversationTracker` is already in scope at that call site); (d) fire `unawaited(p2pService.warmPeer(activePeer))` for the resolved active peer **only** (PS-4), **null ⇒ no warm**, placed **after `performImmediateHealthCheck()` (`:175`, node confirmed started — PS-3) and before the awaited `drainOfflineInbox()` (`:206`)** so it runs parallel to the drain, never serialized behind it. *Seam:* `handle_app_resumed.dart` signature `:37-76` + body `:175-206`; `active_conversation_tracker.dart`; `main.dart:4388`. *Stop-if:* if **FDC-05** (parallel resume re-prime) already restructured the resume block, slot the `warmPeer` call into FDC-05's parallel set — do NOT re-serialize. Pin order with FDC-05 (recommend FDC-05 first; see Dependency Impact).
+15. **RED:** TC-04-12/13 (reuse/sticky `isLocalPeer` gate, red-on-HEAD); write **TC-04-14 green-on-HEAD as a preservation lock** — it does NOT red on HEAD, only under its broaden-gate mutation (RED-1). *Seam:* `send_chat_message_use_case.dart` reuse guard `:447-451` + sticky `:528-595`.
+16. **GREEN (COLLISION edit):** hoist the `isLocalPeer` read **from `:516` to above the reuse guard at `:447-451`**; **AND the `isLocalPeer` predicate into the reuse condition that FDC-02/option A already made circuit-aware** → effectively `if (isAlreadyConnected && !isRelayOnlyCircuit && !isLocalPeer)` (re-locate FDC-02's exact circuit-aware condition by symbol and add `&& !isLocalPeer`); gate the sticky short-circuit so a non-`local` learned value does not short-circuit a LAN-visible peer (`if (learned != null && (learned == 'local' || !isLocalPeer))`). Preserve the existing `'local'` revalidation. **`CHAT_MSG_SEND_REUSE_CONNECTION`/`CHAT_MSG_SEND_STICKY_TRANSPORT` are EXISTING emits** (`:454`/`:530`) — the gate only changes the *condition guarding* them, it does not add emits (EVT-1). *Seam:* hoist `:516`→`:447`, reuse guard `:447-451`, sticky `:528-595`. *Stop-if (CONSIST-2 — UPDATED for C1/option A):* this reuse short-circuit (`:447-451`) fires **before** FDC-02's ranked race (`:514+`). ⚠ **Under C1/option A, FDC-02 ALREADY modified this short-circuit** to be circuit-aware (a relay-only `/p2p-circuit` conn now falls into the race), so FDC-04 lands on a tree where relay-only conns already bypass reuse; FDC-04 adds **only the `isLocalPeer` predicate** for the **direct-conn-to-a-LAN-peer** case. Confirm FDC-02's circuit-aware condition is present before adding `&& !isLocalPeer`; the `isLocalPeer` gate is the only FDC-04 change here. (The earlier "FDC-02 rewrites only the race body, not this short-circuit" framing is **superseded by option A**.)
 17. **RED:** TC-04-15 (transport smoke). *Seam:* new `integration_test/warm_peer_lan_aware_smoke_test.dart`.
-18. **GREEN + register:** author the smoke; append it to `TRANSPORT_TESTS` in `scripts/run_test_gates.sh` and add a `classify_path()` + dart-define case in `scripts/check_reliability_simulation_discovery.sh`. Append `handle_app_resumed_warm_peer_test.dart` to `ONE_TO_ONE_TESTS`.
+18. **GREEN + register:** author the smoke; append it to `TRANSPORT_TESTS` in `scripts/run_test_gates.sh` and add a **`classify_path()` rule** in `scripts/check_reliability_simulation_discovery.sh` (e.g. `record "1to1" "$path" "test" "1:1 warm-peer LAN-aware transport smoke"`) so the auto-discovered file is classified — otherwise `discover_candidates` falls through to `record "unclassified"` and the discovery check FAILs. *(No `--dart-define` here — that dispatch lives only in `run_test_gates.sh`, not in `check_reliability_simulation_discovery.sh`, whose `classify_path()` is a plain `case`/`record` matcher — HG-2.)* Append `handle_app_resumed_warm_peer_test.dart` to `ONE_TO_ONE_TESTS`.
 19. **Mutation pass:** for every behavior-bearing edit, apply its catalogued mutation, confirm the named TC re-reds, revert.
 20. **Gates:** run the full Acceptance Gates (on the FDC-03 tree), `flutter analyze`, `git diff --check`; then `graphify update .` + `./graphify-arch/refresh_arch_graph.sh` (per CLAUDE.md, app-owned edits).
 
@@ -325,7 +351,12 @@ No empty cells.
 | Network switch leaves stale `local` learned transport + dead cooldown | TC-04-07 (drop+reset) |
 | Warm fans out across the roster → thread-pool saturation (Berty) | TC-04-11 (bounded to active peer, PS-4) |
 | New reuse gate over-blocks non-local reuse → latency regression | TC-04-14 (PS-2 preservation) |
-| preferQuic hint mis-asserted as a real QUIC win | TC-04-08 host = hint only; device-proof for the wire |
+| preferQuic mis-asserted as a real QUIC win | TC-04-08 = Dart-intent only; INERT on the wire (Go drops the field) → QUIC win reassigned to FDC-11/12 (DESIGN-5) |
+| Concurrent conv-open+notif-tap+resume burst fires duplicate dials | TC-04-03(b) — synchronous in-flight sentinel (DESIGN-4) |
+| WiFi↔cellular flapping tight-loops a failing QUIC re-warm | TC-04-16 — network-change self-debounce + escalation preserved (DESIGN-2) |
+| Resume can't identify the active peer (no source today) | Step 14 adds `ActiveConversationTracker.activePeerId` + `handleAppResumed` param (TC-04-11 / DESIGN-3) |
+| Notif-tap warm hook left a dead/null wire (passes host green) | TC-04-10b — forward-through-`prepareNotificationRouteTarget` lock (WIRE-1) |
+| `warmPeer` body throws → unhandled async error at a bare `unawaited` site | Step 2 total/never-throws contract (ROBUST-1) |
 | Host fake passes via dedup though LAN leg never fired | TC-04-15 honesty note + mandatory device-proof |
 | Collision clobber of FDC-01/02/03 edits | land sequentially on FDC-03's committed tree; full `1to1` re-run |
 
@@ -333,11 +364,11 @@ No empty cells.
 
 ## Device/Relay Proof Profile
 
-**Host-logic closure only (NOT full plan closure):** TC-04-01..14 (warm core, gates, call sites, reuse/sticky gate) close the *logic* in pure Dart against existing fakes — but **full plan closure requires the sim/device proof below** (the LAN-`local` win is not host-provable; `messageId` dedup can mask a dead LAN leg).
+**Host-logic closure only (NOT full plan closure):** TC-04-01..14 + TC-04-10b + TC-04-16 (warm core, gates, call sites, forward-wiring, flap-coalesce, reuse/sticky gate) close the *logic* in pure Dart against existing fakes — but **full plan closure requires the sim/device proof below** (the LAN-`local` win is not host-provable; `messageId` dedup can mask a dead LAN leg).
 
 **Requires sim/device (NOT host-closable):**
 - **TC-04-15 wire behavior** — host-green proves label-wiring + delivery only; `messageId` dedup can mask a dead LAN leg (roadmap host-test caveat). 
-- **Closure scenario:** a real **two-device same-WiFi pair**: open the conversation (fires `warmPeer`), observe (via flow-events / transport label) that the subsequent send takes **`local`** and that a pre-existing relay conn did **not** bypass it; then toggle WiFi→cellular and confirm the **network-change re-warm** prefers QUIC. Run `./scripts/check_reliability_simulation_discovery.sh` then `/sims 1to1 --only N` (after adding the `classify_path()` case). Note: iOS sim shares a host mDNS stack → LAN-`local` validation is **device-only** (`e2e_test_mode.dart:2 kDisableLocalDiscovery`; proposal §6.5).
+- **Closure scenario:** a real **two-device same-WiFi pair**: open the conversation (fires `warmPeer`), observe (via flow-events / transport label) that the subsequent send takes **`local`** and that a pre-existing relay conn did **not** bypass it; then toggle WiFi→cellular and confirm the **network-change re-warm fires** (the `…_NETWORK_CHANGE_REWARM` event emits and re-dials the active peer). **The actual QUIC-first transport selection is NOT validated here — it is reassigned to the Go-touching FDC-11/FDC-12 (DESIGN-5).** Run `./scripts/check_reliability_simulation_discovery.sh` then `/sims 1to1 --only N` (after adding the `classify_path()` case). Note: iOS sim shares a host mDNS stack → LAN-`local` validation is **device-only** (`e2e_test_mode.dart:2 kDisableLocalDiscovery`; proposal §6.5).
 - **Cold notif-tap** — device-confirm the PS-3 no-op (warm empty before node-start); the cold win is FDC-07, gated FDC-S1.
 
 ---
@@ -346,13 +377,13 @@ No empty cells.
 
 ```bash
 # 1:1 home gate (warmPeer unit + reuse/sticky gate + call sites). Run on the FDC-03 tree.
-./scripts/run_test_gates.sh 1to1            # expected pass count: 1226 (capture FDC-03-green baseline; prior 1:1 ~1226)
+./scripts/run_test_gates.sh 1to1            # expected: >= FDC-03-green baseline (~1226) + ~16 new warmPeer/gate/wiring TCs (≈1242). This is the regression FLOOR, NOT an exact match — count rises as TC-04-01..16 + TC-04-10b + handle_app_resumed_warm_peer land.
 
 # transport gate (warm-overlap smoke joins TRANSPORT_TESTS)
 ./scripts/run_test_gates.sh transport       # expected: device/fixture-gated (skips on lone sim)
 
 # feed regression floor
-./scripts/run_test_gates.sh feed            # expected: 279 (prior ~276)
+./scripts/run_test_gates.sh feed            # expected: 279 (FDC-S0/FDC-03 baseline floor; FDC-04 adds NO feed tests → unchanged)
 
 # host floors
 ./scripts/run_host_test_gates.sh feature-host-all   # 0 fail
@@ -370,7 +401,7 @@ git diff --check
 /sims 1to1 --only N                          # asserts transport label local (NOT relay) on warm-open
 ```
 
-No Go/relay changes in FDC-04 (the `preferQuic` hint is an additive Dart→bridge param; the Go-side honoring of it, if any, is flagged but not required for host closure). `cd go-mknoon && go test ./...` must stay green if the bridge param is plumbed.
+No Go/relay changes in FDC-04: the `preferQuic` flag is a **Dart-only** param that the Go `peer:dial` handler silently drops (`bridge.go:962-973` unmarshals only `{PeerId,Addresses,TimeoutMs}`), so it is **inert on the wire** and needs no Go edit — the real QUIC-first ordering is reassigned to a Go-touching follow-up (FDC-11/FDC-12). Because FDC-04 plumbs no bridge param the Go suite is unaffected; if a future rebase DOES touch the bridge, run it under the declared toolchain — `cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./...` (Go 1.26.x panics `crypto/tls bug: where's my session ticket?` — quic-go v0.49.0 vs Go 1.26 crypto/tls — a FAIL with zero `--- FAIL:` lines; the RC5 microbench row uses the same pin).
 
 ---
 
@@ -385,14 +416,14 @@ No Go/relay changes in FDC-04 (the `preferQuic` hint is an additive Dart→bridg
 
 ## Done Criteria
 
-- [ ] `warmPeer` added (abstract default no-op + impl): LAN-seed-first, isLocalPeer-skip-dial, debounce + escalating per-peer backoff, PS-3 not-started no-op, PS-1 never-send.
+- [ ] `warmPeer` added (abstract default no-op + impl): **await-LAN-seed-first THEN gate dial**, isLocalPeer-skip-dial, **in-flight + escalating per-peer** debounce (collapses concurrent bursts), PS-3 not-started no-op, PS-1 never-send, **total/never-throws** (top-level try/catch).
 - [ ] Reuse + sticky short-circuit gated behind `isLocalPeer` (RC2); non-local reuse preserved (PS-2).
-- [ ] Call sites wired: conv-open, notif-tap (conversation only), resume (active peer, bounded, parallel).
-- [ ] Network-change re-warm: reset cooldown + drop learned `local` + preferQuic, against the injectable signal.
-- [ ] TC-04-01..15 RED-first then GREEN; every behavior edit mutation-verified (re-red + revert).
-- [ ] `handle_app_resumed_warm_peer_test.dart` added to `ONE_TO_ONE_TESTS`; `warm_peer_lan_aware_smoke_test.dart` added to `TRANSPORT_TESTS` + sims `classify_path()`.
+- [ ] Call sites wired: conv-open (**unconditional**), notif-tap (conversation only, **forwarded through `prepareNotificationRouteTarget` + supplied at `main.dart:4227`**), resume (active peer via **NEW `ActiveConversationTracker.activePeerId` getter + new `handleAppResumed` param threaded at `main.dart:4388`**, bounded, parallel).
+- [ ] Network-change re-warm: **active-peer-only** + reset `nextEligibleAt` (keep escalation) + drop learned `local` + **flap-coalesce** + thread the (Go-inert) `preferQuic` flag, against the injectable signal.
+- [ ] TC-04-01..16 + TC-04-10b RED-first then GREEN; every behavior edit mutation-verified (re-red + revert).
+- [ ] `handle_app_resumed_warm_peer_test.dart` + NEW `prepare_notification_route_target_use_case_test.dart` added to `ONE_TO_ONE_TESTS`; `warm_peer_lan_aware_smoke_test.dart` added to `TRANSPORT_TESTS` + sims `classify_path()`.
 - [ ] All Acceptance Gates green on the FDC-03 tree; `flutter analyze` 0-new; `git diff --check` clean.
-- [ ] Two-device same-WiFi smoke shows `local` on warm-open and QUIC-pref on WiFi→cellular (device-proof, can be deferred-not-waived with FDC-S1).
+- [ ] Two-device same-WiFi smoke shows `local` on warm-open and the network-change re-warm fires on WiFi→cellular (device-proof, deferred-not-waived with FDC-S1). **The actual QUIC-pref transport win is NOT an FDC-04 done-criterion — it requires the Go change reassigned to FDC-11/FDC-12.**
 - [ ] `graphify update .` + `./graphify-arch/refresh_arch_graph.sh` run.
 
 ---
@@ -414,7 +445,7 @@ No Go/relay changes in FDC-04 (the `preferQuic` hint is an additive Dart→bridg
 
 - **Group conversations** are not warmed (1:1 only) — `warmPeer` is wired into 1:1 surfaces only; group warm is a future plan if measured worthwhile.
 - **Network-change OS source deferred** — FDC-04 ships the behavior against an injectable `Stream<void>`; the real `connectivity_plus`/native-path-monitor wiring is a bounded follow-up (no `connectivity_plus` in `pubspec.yaml` today, verified). The behavior is fully host-locked now (TC-04-07/08).
-- **preferQuic is a hint** — the Dart→bridge flag is asserted host-side; the actual QUIC transport selection is Go-owned and device-proven.
+- **preferQuic is INERT in FDC-04 (DESIGN-5)** — the Dart `preferQuic` flag is threaded to `callP2PPeerDial` and host-asserted (TC-04-08), but the Go `peer:dial` handler drops unknown JSON fields (`bridge.go:962-973`), so it has **zero wire effect** here. The actual QUIC-first transport selection (Go struct field + `DialPeerWithTimeout` param + `node.go` ordering) and its device-proof are **reassigned to a Go-touching follow-up (FDC-11/FDC-12)**. FDC-04 ships only the network-change-triggered plain re-warm carrying the intent flag.
 - **Cold notif-tap warm is intentionally empty** (PS-3) — accepted; the cold win is FDC-07.
 
 ---
@@ -426,4 +457,4 @@ No Go/relay changes in FDC-04 (the `preferQuic` hint is an additive Dart→bridg
 - **COLLISION (sequential, after FDC-03)**: `lib/features/conversation/application/send_chat_message_use_case.dart` — the reuse/sticky `isLocalPeer` gate. Land on FDC-03's committed tree per the FDC-00 collision rule (FDC-01→02→03→04).
 - **Secondary collision** (different phases — serialize only if co-scheduled): `lib/core/services/p2p_service_impl.dart` with FDC-08 (presence-lookup cache). *(FDC-05 does NOT edit `p2p_service_impl.dart` — it reorders call sites in `handle_app_resumed.dart` + the test fake only.)*
 - **Tertiary collision (real FDC-04↔FDC-05 overlap):** `lib/core/lifecycle/handle_app_resumed.dart` (`:130-191`) — this plan's resume `warmPeer` call-site (step 14) and FDC-05's un-serialization of that block touch the same region. **Land FDC-05 first** and slot the warm call into its parallel block; if FDC-04 lands first, rebase the resume call when FDC-05 restructures (see Step-14 stop-if).
-- **Feeds**: FDC-02's ranked race relies on INV-1 (LAN seeded first) and can later drop the explicit `isLocalPeer` gate in favor of ranking (proposal §6.2: "keep it only as belt-and-suspenders"). FDC-07 owns the cold-start win this plan honestly defers.
+- **Feeds**: FDC-02's ranked race **benefits from** INV-1 (LAN seeded first; FDC-02's local leg does its own `discoverLocalPeer`, so it benefits-from rather than requires the pre-seed). ⚠ **C1 / option A reconciliation:** FDC-02 made the reuse block **circuit-aware** (relay-only `/p2p-circuit` ⇒ race), so FDC-04's `isLocalPeer` reuse gate is **complementary, not redundant** — it covers the **direct-conn-to-a-LAN-visible-peer** case that FDC-02's connection-type carve-out does not. (The earlier framing that the gate is "redundant belt-and-suspenders" and that FDC-02 "rewrites only the race body, not this short-circuit" is **superseded by option A**.) A future ranking-only refinement MAY still drop the gate per proposal §6.2. FDC-07 owns the cold-start win this plan honestly defers. **preferQuic QUIC-first ordering is reassigned to FDC-11/FDC-12 (Go-touching).**

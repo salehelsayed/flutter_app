@@ -228,10 +228,14 @@ class FakeP2PService implements P2PService, DurableLanSender {
   }
 
   @override
+  Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {}
+
+  @override
   Future<bool> dialPeer(
     String peerId, {
     List<String>? addresses,
     int? timeoutMs,
+    bool preferQuic = false,
   }) async {
     if (dialDelay != null) await Future.delayed(dialDelay!);
     if (dialAlwaysFails) return false;

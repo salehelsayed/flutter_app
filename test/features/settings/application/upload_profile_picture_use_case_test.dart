@@ -162,6 +162,8 @@ class _FakeP2PService implements P2PService {
     int? timeoutMs,
   }) async => true;
   @override
+  Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {}
+  @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
       [];
   @override
