@@ -20,6 +20,12 @@ type nodeHolePunchTracer struct {
 	attempts  atomic.Int64
 	successes atomic.Int64
 	failures  atomic.Int64
+	// lastRttMs holds the most recent StartHolePunchEvt RTT (ms) so it can be
+	// threaded onto the transport:upgraded telemetry that EndHolePunchEvt emits
+	// (FDC-12 TC-12-07 — RTT-sync-window tuning input for FDC-S2). Last-write-wins
+	// across concurrent punches to different peers; this is observation-only
+	// telemetry, never a routing/security input.
+	lastRttMs atomic.Int64
 }
 
 func newNodeHolePunchTracer(n *Node) *nodeHolePunchTracer {
@@ -47,6 +53,7 @@ func (t *nodeHolePunchTracer) Trace(evt *holepunch.Event) {
 		})
 
 	case *holepunch.StartHolePunchEvt:
+		t.lastRttMs.Store(e.RTT.Milliseconds())
 		t.n.emitEvent("holepunch:attempt", map[string]interface{}{
 			"step":            "started",
 			"rttMs":           e.RTT.Milliseconds(),
@@ -65,15 +72,26 @@ func (t *nodeHolePunchTracer) Trace(evt *holepunch.Event) {
 			})
 			// Relay->direct upgrade signal. libp2p does NOT re-fire
 			// EvtPeerConnectednessChanged on an upgrade, so this dedicated event
-			// (and the connections-map correction below) is the only observation
-			// of the transition.
-			t.n.emitEvent("transport:upgraded", map[string]interface{}{
-				"remotePeerShort": remoteShort,
-				"fromTransport":   "relay",
-				"toTransport":     "direct",
-				"elapsedMs":       e.EllapsedTime.Milliseconds(),
-			})
-			t.n.markPeerUpgradedToDirect(evt.Remote)
+			// (and the connections-map correction inside markPeerUpgradedToDirect)
+			// is the only observation of the transition.
+			//
+			// FDC-12: the session Notifiee (peer_session.go) ALSO re-points on the
+			// new direct conn and emits transport:upgraded. Emit here ONLY if this
+			// tracer is the path that actually flips the connections entry
+			// circuit->direct; if the Notifiee flipped it first,
+			// markPeerUpgradedToDirect returns false and we skip — so the two paths
+			// emit transport:upgraded EXACTLY ONCE regardless of which observes the
+			// upgrade first (the tracer's emit, when it wins, carries the richer
+			// rttMs/elapsedMs telemetry).
+			if t.n.markPeerUpgradedToDirect(evt.Remote) {
+				t.n.emitEvent("transport:upgraded", map[string]interface{}{
+					"remotePeerShort": remoteShort,
+					"fromTransport":   "relay",
+					"toTransport":     "direct",
+					"elapsedMs":       e.EllapsedTime.Milliseconds(),
+					"rttMs":           t.lastRttMs.Load(),
+				})
+			}
 		} else {
 			t.failures.Add(1)
 			t.n.emitEvent("holepunch:failure", map[string]interface{}{
@@ -133,14 +151,19 @@ func sanitizeTracerErr(s string) string {
 // markPeerUpgradedToDirect corrects the one-shot-stale connections map after a
 // relay->direct hole-punch upgrade: under n.mu it clears Limited and re-samples
 // Address from the first non-circuit connection to the peer (best-effort).
-func (n *Node) markPeerUpgradedToDirect(remote peer.ID) {
+//
+// It returns true iff it actually FLIPPED an existing circuit (Limited) entry to
+// direct. It returns false when there is no entry, or when the entry is already
+// direct (e.g. the FDC-12 session Notifiee re-pointed first). Callers use this to
+// emit transport:upgraded exactly once across the tracer and Notifiee paths.
+func (n *Node) markPeerUpgradedToDirect(remote peer.ID) bool {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
 	key := remote.String()
 	info, ok := n.connections[key]
-	if !ok {
-		return
+	if !ok || !info.Limited {
+		return false
 	}
 	info.Limited = false
 	if n.host != nil {
@@ -152,4 +175,5 @@ func (n *Node) markPeerUpgradedToDirect(remote peer.ID) {
 		}
 	}
 	n.connections[key] = info
+	return true
 }

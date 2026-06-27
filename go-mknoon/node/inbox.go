@@ -29,6 +29,11 @@ type inboxRequest struct {
 	EntryIds []string `json:"entryIds,omitempty"`
 	Token    string   `json:"token,omitempty"`
 	Platform string   `json:"platform,omitempty"`
+	// FDC-09 presence_set write field (additive): carries {state, ttlMs} for the
+	// self-publish action. omitempty keeps every other action's frame unchanged.
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+	// FDC-09 §12: the opaque wake-token SET registered via register_wake_tokens.
+	WakeTokens []string `json:"wakeTokens,omitempty"`
 }
 
 type inboxResponse struct {
@@ -330,6 +335,100 @@ func (n *Node) RelayPresenceLookup(peerIdStr string) (RelayPresenceResult, error
 	})
 	if err != nil {
 		return RelayPresenceResult{Presence: RelayPresenceUnknown}, err
+	}
+	return result, nil
+}
+
+// RelayPresenceSetResult is the decoded `presence_set` write outcome. OK is true
+// when the relay accepted the self-publish; on an OLD relay it is false with
+// Error == "Unknown action: presence_set", which the client maps to "presence
+// unsupported -> skip" (NET-REL-07).
+type RelayPresenceSetResult struct {
+	OK    bool
+	Error string
+}
+
+// parsePresenceSetResponse decodes a relay `presence_set` reply. A malformed or
+// non-OK reply (including an old relay's "Unknown action: presence_set") yields
+// OK:false with the relay's error text — never a thrown error, because presence
+// is a best-effort HINT that must never throw away a send.
+func parsePresenceSetResponse(respBytes []byte) RelayPresenceSetResult {
+	var resp inboxResponse
+	if err := json.Unmarshal(respBytes, &resp); err != nil {
+		return RelayPresenceSetResult{OK: false, Error: "invalid response"}
+	}
+	if resp.Status == "OK" {
+		return RelayPresenceSetResult{OK: true}
+	}
+	return RelayPresenceSetResult{OK: false, Error: resp.Error}
+}
+
+// RelayPresenceSet SELF-PUBLISHES this node's coarse foreground/background state
+// to the relay via the additive `presence_set` inbox action (FDC-09 §6.3 write
+// side, Option C). The relay derives the subject peer from the AUTHENTICATED
+// stream identity (anti-spoof), so this carries only {state, ttlMs}. It is a
+// best-effort HINT feeding the read-side emphasis (FDC-08): a relay outage / old
+// relay never throws away delivery — the inbox + push remain the guarantee
+// (PRESENCE_NEVER_LOAD_BEARING).
+//
+// It tries each configured relay in turn (parity with store/probe/lookup): a
+// connect/stream/read failure rolls over to the next relay, while ANY received
+// reply — including an old relay's "Unknown action: presence_set" — is a
+// definitive answer (OK:false, surfaced for the client's NET-REL-07 skip).
+func (n *Node) RelayPresenceSet(state string, ttlMs int64) (RelayPresenceSetResult, error) {
+	n.mu.RLock()
+	h := n.host
+	n.mu.RUnlock()
+
+	if h == nil {
+		return RelayPresenceSetResult{}, fmt.Errorf("node not started")
+	}
+
+	rs := n.buildRelaySelector(nil)
+
+	result := RelayPresenceSetResult{}
+	err := rs.ForEach(func(relay RelayInfo) error {
+		ctx, cancel := context.WithTimeout(n.ctx, RelayProbeTimeout)
+		defer cancel()
+
+		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
+			return fmt.Errorf("connect to relay: %w", err)
+		}
+
+		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
+		if err != nil {
+			return fmt.Errorf("open inbox stream: %w", err)
+		}
+		streamOK := false
+		defer finishStream(s, &streamOK)
+		setStreamDeadline(s, RelayProbeTimeout)
+
+		req := inboxRequest{
+			Action:   "presence_set",
+			From:     n.peerId,
+			Metadata: map[string]interface{}{"state": state, "ttlMs": ttlMs},
+		}
+		reqBytes, err := json.Marshal(req)
+		if err != nil {
+			return fmt.Errorf("marshal request: %w", err)
+		}
+		if err := writeFrame(s, reqBytes); err != nil {
+			return fmt.Errorf("write request: %w", err)
+		}
+
+		respBytes, err := readFrame(s)
+		if err != nil {
+			return fmt.Errorf("read response: %w", err)
+		}
+
+		// A received reply is definitive (even an old relay's Unknown-action) —
+		// stop rolling over.
+		result = parsePresenceSetResponse(respBytes)
+		streamOK = true
+		return nil
+	})
+	if err != nil {
+		return RelayPresenceSetResult{}, err
 	}
 	return result, nil
 }
@@ -710,6 +809,73 @@ func (n *Node) InboxRegisterToken(token string, platform string) error {
 
 		log.Printf("[INBOX] Push token registered on relay %s (%s)",
 			relay.ID.String()[:min(20, len(relay.ID.String()))], platform)
+		streamOK = true
+		return nil
+	})
+}
+
+// RelayRegisterWakeTokens registers this peer's opaque wake-token SET (the tokens
+// it minted for its contacts) with all configured relays via the additive
+// `register_wake_tokens` action (FDC-09 §12 access-token gate). Succeeds if at
+// least one relay accepts. An old relay's "Unknown action" is surfaced as an
+// error so the caller degrades gracefully (the plain push keeps working ungated,
+// NET-REL-07) — it never throws away delivery.
+func (n *Node) RelayRegisterWakeTokens(tokens []string) error {
+	n.mu.RLock()
+	h := n.host
+	n.mu.RUnlock()
+
+	if h == nil {
+		return fmt.Errorf("node not started")
+	}
+
+	rs := n.buildRelaySelector(nil)
+
+	return rs.FanOut(func(relay RelayInfo) error {
+		timeout := InboxTimeout
+		ctx, cancel := context.WithTimeout(n.ctx, timeout)
+		defer cancel()
+
+		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
+			return fmt.Errorf("connect to relay: %w", err)
+		}
+
+		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
+		if err != nil {
+			return fmt.Errorf("open inbox stream: %w", err)
+		}
+		streamOK := false
+		defer finishStream(s, &streamOK)
+		setStreamDeadline(s, timeout)
+
+		req := inboxRequest{
+			Action:     "register_wake_tokens",
+			WakeTokens: tokens,
+		}
+
+		reqBytes, err := json.Marshal(req)
+		if err != nil {
+			return fmt.Errorf("marshal request: %w", err)
+		}
+
+		if err := writeFrame(s, reqBytes); err != nil {
+			return fmt.Errorf("write request: %w", err)
+		}
+
+		respBytes, err := readFrame(s)
+		if err != nil {
+			return fmt.Errorf("read response: %w", err)
+		}
+
+		var resp inboxResponse
+		if err := json.Unmarshal(respBytes, &resp); err != nil {
+			return fmt.Errorf("unmarshal response: %w", err)
+		}
+
+		if resp.Status != "OK" {
+			return fmt.Errorf("register wake tokens failed: %s", resp.Error)
+		}
+
 		streamOK = true
 		return nil
 	})

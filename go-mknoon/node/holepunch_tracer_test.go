@@ -51,6 +51,14 @@ func TestHolePunchTracer_AttemptThenSuccess_CountsAndEmits(t *testing.T) {
 
 	remote := testRemotePeerID(t)
 
+	// A real upgrade flips an existing circuit (Limited) entry — seed it so the
+	// tracer's transport:upgraded emit fires (FDC-12 gates that emit on the flip
+	// to dedup against the session Notifiee).
+	n.connections[remote.String()] = connectionInfo{
+		PeerId:  remote.String(),
+		Limited: true,
+	}
+
 	tracer.Trace(&holepunch.Event{
 		Remote: remote,
 		Type:   holepunch.HolePunchAttemptEvtT,
@@ -225,4 +233,47 @@ func hasEventWithStep(events []map[string]interface{}, step string) bool {
 		}
 	}
 	return false
+}
+
+// FDC-12 TC-12-07 — the relay->direct transport:upgraded telemetry carries the
+// punch RTT (threaded from the preceding StartHolePunchEvt) plus elapsed time so
+// FDC-S2 can tune the synchronized-dial window from real device data. The full
+// remote peer id is intentionally NOT added: the short-only telemetry privacy
+// invariant stays, and the Dart sticky write resolves short->full from live
+// connections instead (p2p_service_transport_upgrade_test.dart).
+func TestTracer_EmitsRttAndElapsed(t *testing.T) {
+	collector := &testEventCollector{}
+	n := newTracerTestNode(collector)
+	tracer := newNodeHolePunchTracer(n)
+	remote := testRemotePeerID(t)
+
+	// Seed the circuit entry the upgrade flips (FDC-12 gates the tracer's
+	// transport:upgraded emit on the flip — see markPeerUpgradedToDirect).
+	n.connections[remote.String()] = connectionInfo{
+		PeerId:  remote.String(),
+		Limited: true,
+	}
+
+	tracer.Trace(&holepunch.Event{
+		Remote: remote,
+		Type:   holepunch.StartHolePunchEvtT,
+		Evt:    &holepunch.StartHolePunchEvt{RTT: 7 * time.Millisecond},
+	})
+	tracer.Trace(&holepunch.Event{
+		Remote: remote,
+		Type:   holepunch.EndHolePunchEvtT,
+		Evt:    &holepunch.EndHolePunchEvt{Success: true, EllapsedTime: 42 * time.Millisecond},
+	})
+
+	upgrades := collector.collectEvents("transport:upgraded")
+	if len(upgrades) != 1 {
+		t.Fatalf("expected exactly 1 transport:upgraded, got %d: %+v", len(upgrades), upgrades)
+	}
+	u := upgrades[0]
+	if got, ok := u["rttMs"]; !ok || got != float64(7) {
+		t.Fatalf("transport:upgraded rttMs = %v (present=%v), want 7 (threaded from StartHolePunchEvt.RTT)", u["rttMs"], ok)
+	}
+	if got, ok := u["elapsedMs"]; !ok || got != float64(42) {
+		t.Fatalf("transport:upgraded elapsedMs = %v (present=%v), want 42", u["elapsedMs"], ok)
+	}
 }

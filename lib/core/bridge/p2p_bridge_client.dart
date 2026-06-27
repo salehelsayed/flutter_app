@@ -54,6 +54,14 @@ Map<String, bool> defaultResilienceFeatureFlags() {
       'MKNOON_ENABLE_DEFERRED_DIRECT_ACK',
       defaultValue: true,
     ),
+    // FDC-12: gates the Go-side opportunistic DCUtR relay->direct upgrade
+    // (ForceReachabilityPublic + active hole punch). Defaults OFF until the
+    // DCUtR device campaign is GREEN; flip on for the device-proof via
+    // --dart-define=MKNOON_ENABLE_DCUTR_UPGRADE=true.
+    'enableDcutrUpgrade': const bool.fromEnvironment(
+      'MKNOON_ENABLE_DCUTR_UPGRADE',
+      defaultValue: false,
+    ),
   };
 }
 
@@ -250,6 +258,100 @@ Future<Map<String, dynamic>> callP2PRelayPresence(
   );
 
   return {'presence': presence, 'ageMs': ageMs, 'ok': response['ok']};
+}
+
+/// Calls the bridge to SELF-PUBLISH the local peer's coarse foreground/background
+/// presence via the additive `presence_set` action (FDC-09) — the WRITE twin of
+/// [callP2PRelayPresence]. The relay derives the subject from the authenticated
+/// stream identity (anti-spoof), so only `state`/`ttlMs` are sent.
+///
+/// Returns a map: `ok` (bool — relay accepted) and `unsupported` (bool — an old
+/// relay answered "Unknown action: presence_set"). An old relay / `ok:false` /
+/// exception NEVER throws away delivery: presence is a best-effort HINT, so the
+/// caller degrades to "skip" (NET-REL-07), never retries/spams.
+Future<Map<String, dynamic>> callP2PRelayPresenceSet(
+  Bridge bridge, {
+  required String state,
+  required int ttlMs,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_RELAY_PRESENCE_SET_REQUEST',
+    details: {'state': state, 'ttlMs': ttlMs},
+  );
+
+  final request = {
+    'cmd': 'relay:presence_set',
+    'payload': {'state': state, 'ttlMs': ttlMs},
+  };
+
+  final responseJson = await bridge
+      .send(jsonEncode(request))
+      .timeout(const Duration(seconds: 5));
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  // An old relay returns {status:"ERROR", error:"Unknown action: presence_set"}
+  // (or the bridge surfaces it as {ok:false, error:"Unknown action: ..."}).
+  // Degrade to "unsupported -> skip" (NET-REL-07), never retry/spam.
+  final errorText =
+      (response['error'] ?? response['errorMessage'] ?? '').toString();
+  final isUnknownAction = errorText.toLowerCase().contains('unknown action');
+  if (isUnknownAction) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_RELAY_PRESENCE_SET_UNKNOWN_ACTION',
+      details: {'state': state},
+    );
+  }
+
+  final ok = response['ok'] == true && !isUnknownAction;
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_RELAY_PRESENCE_SET_RESPONSE',
+    details: {'ok': ok, 'unsupported': isUnknownAction, 'state': state},
+  );
+
+  return {'ok': ok, 'unsupported': isUnknownAction};
+}
+
+/// Calls the bridge to register the recipient's opaque wake-token SET with the
+/// relay via the additive `register_wake_tokens` action (FDC-09 §12). Returns a
+/// map: `ok` (bool — relay accepted) and `unsupported` (bool — an old relay
+/// answered "Unknown action"). An old relay / failure NEVER throws away the plain
+/// push — the caller degrades gracefully (NET-REL-07).
+Future<Map<String, dynamic>> callP2PRegisterWakeTokens(
+  Bridge bridge, {
+  required List<String> tokens,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_REGISTER_WAKE_TOKENS_REQUEST',
+    details: {'count': tokens.length},
+  );
+
+  final request = {
+    'cmd': 'inbox:register_wake_tokens',
+    'payload': {'tokens': tokens},
+  };
+
+  final responseJson = await bridge
+      .send(jsonEncode(request))
+      .timeout(const Duration(seconds: 5));
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  final errorText =
+      (response['error'] ?? response['errorMessage'] ?? '').toString();
+  final isUnknownAction = errorText.toLowerCase().contains('unknown action');
+  final ok = response['ok'] == true && !isUnknownAction;
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_REGISTER_WAKE_TOKENS_RESPONSE',
+    details: {'ok': ok, 'unsupported': isUnknownAction},
+  );
+
+  return {'ok': ok, 'unsupported': isUnknownAction};
 }
 
 /// Calls the bridge to stop the P2P node.

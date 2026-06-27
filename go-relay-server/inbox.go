@@ -784,6 +784,10 @@ type inboxMessage struct {
 	Message   string                 `json:"message"`
 	Timestamp int64                  `json:"timestamp"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	// FDC-09 §12: the opaque wake-token the sender presented (TRANSIENT — json:"-",
+	// never persisted or returned in a retrieve). Read once at store time for the
+	// access-token wake gate; the durable message shape is unchanged.
+	WakeToken string `json:"-"`
 }
 
 func ensureInboxMessageID(entry inboxMessage) inboxMessage {
@@ -798,14 +802,18 @@ type InboxStore struct {
 	backend  InboxBackend
 	push     *PushService
 	capacity int
+	// FDC-09 §12 access-token wake gate (always non-nil; fail-open until a
+	// recipient registers a set).
+	wakeTokens *memoryWakeTokenStore
 }
 
 // NewInboxStore creates an InboxStore with an in-memory backend.
 func NewInboxStore(push *PushService) *InboxStore {
 	return &InboxStore{
-		backend:  newMemoryInboxBackend(),
-		push:     push,
-		capacity: maxMessagesPerPeer,
+		backend:    newMemoryInboxBackend(),
+		push:       push,
+		capacity:   maxMessagesPerPeer,
+		wakeTokens: newMemoryWakeTokenStore(),
 	}
 }
 
@@ -823,10 +831,30 @@ func NewInboxStoreWithBackendAndCapacity(
 		capacity = maxMessagesPerPeer
 	}
 	return &InboxStore{
-		backend:  backend,
-		push:     push,
-		capacity: capacity,
+		backend:    backend,
+		push:       push,
+		capacity:   capacity,
+		wakeTokens: newMemoryWakeTokenStore(),
 	}
+}
+
+// RegisterWakeTokens registers the recipient's authorized opaque wake-token set
+// (FDC-09 §12). The subject is the AUTHENTICATED stream peer (the dispatch arm
+// passes remotePeer) — a peer registers only ITS OWN authorized set.
+func (is *InboxStore) RegisterWakeTokens(peerId string, tokens []string) {
+	if is.wakeTokens == nil {
+		return
+	}
+	is.wakeTokens.RegisterWakeTokens(peerId, tokens)
+}
+
+// ClearWakeTokens drops a recipient's authorized wake-token set (e.g. on
+// unregister_token — no orphaned wake authorization).
+func (is *InboxStore) ClearWakeTokens(peerId string) {
+	if is.wakeTokens == nil {
+		return
+	}
+	is.wakeTokens.ClearWakeTokens(peerId)
 }
 
 func (is *InboxStore) Store(toPeerId string, entry inboxMessage) (InboxStoreResult, error) {
@@ -864,9 +892,24 @@ func (is *InboxStore) Store(toPeerId string, entry inboxMessage) (InboxStoreResu
 		toPeerId[:min(20, len(toPeerId))],
 		entry.From[:min(20, len(entry.From))])
 
-	// Fire push notification only for supported user-visible envelope types.
+	// Fire push only for supported user-visible envelope types (the existing
+	// ShouldNotify type filter) AND only when the sender is authorized to wake the
+	// recipient (FDC-09 §12 access-token gate — LAYERED ON TOP of ShouldNotify,
+	// never replacing or widening it). The gate is presence-INDEPENDENT: the
+	// store->push seam never consults the presence store, so a wrong presence value
+	// can never suppress (or trigger) a wake (PRESENCE_NEVER_LOAD_BEARING). It is
+	// FAIL-OPEN when the recipient has registered no wake-token set, so existing
+	// push delivery for already-paired contacts is unchanged. The message is
+	// already STORED above either way — only the wake is gated (delivery preserved).
 	if metadata := extractChatPushMetadata(entry.Message); metadata.ShouldNotify {
-		go is.push.SendNotification(context.Background(), toPeerId, entry.From, entry.Message)
+		if is.wakeTokens == nil || !wakeTokenGateEnforced ||
+			is.wakeTokens.IsAuthorized(toPeerId, entry.WakeToken) {
+			go is.push.SendNotification(context.Background(), toPeerId, entry.From, entry.Message)
+		} else {
+			pushSentCounter.WithLabelValues("unauthorized_wake").Inc()
+			log.Printf("[INBOX] Suppressed unauthorized wake for %s (no valid wake-token; message still stored)",
+				toPeerId[:min(20, len(toPeerId))])
+		}
 	}
 	return InboxStoreResultStored, nil
 }
@@ -1433,6 +1476,12 @@ type inboxRequest struct {
 	EntryIds []string               `json:"entryIds,omitempty"`
 	Token    string                 `json:"token,omitempty"`
 	Platform string                 `json:"platform,omitempty"`
+	// FDC-09 §12 access-token wake gate (additive). WakeToken is the opaque token a
+	// SENDER presents on `store` to authorize waking the recipient; WakeTokens is
+	// the SET a RECIPIENT registers via `register_wake_tokens`. omitempty keeps
+	// every other action's frame byte-identical (NET-REL-07).
+	WakeToken  string   `json:"wakeToken,omitempty"`
+	WakeTokens []string `json:"wakeTokens,omitempty"`
 	// Group inbox fields.
 	GroupId                string   `json:"groupId,omitempty"`
 	RecipientPeerIds       []string `json:"recipientPeerIds,omitempty"`
@@ -1556,6 +1605,7 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 				Message:   req.Message,
 				Timestamp: time.Now().UnixMilli(),
 				Metadata:  req.Metadata,
+				WakeToken: req.WakeToken, // FDC-09 §12: presented opaque wake-token (transient)
 			}
 			result, err := inbox.Store(req.To, entry)
 			if err != nil {
@@ -1638,6 +1688,15 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 
 	case "unregister_token":
 		inbox.push.UnregisterToken(remotePeer)
+		inbox.ClearWakeTokens(remotePeer) // FDC-09 §12: no orphaned wake authorization
+		resp = inboxResponse{Status: "OK"}
+
+	case "register_wake_tokens":
+		// FDC-09 §12: the recipient registers the opaque wake-token SET it minted
+		// for its contacts (anti-spam — only a contact presenting a member token can
+		// wake it). Subject = the AUTHENTICATED stream peer (remotePeer), never a
+		// request field. An empty set clears the gate (back to fail-open).
+		inbox.RegisterWakeTokens(remotePeer, req.WakeTokens)
 		resp = inboxResponse{Status: "OK"}
 
 	case "group_store":
@@ -1727,6 +1786,9 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 	case "presence_get":
 		resp = handlePresenceGet(req, h, presence)
 
+	case "presence_set":
+		resp = handlePresenceSet(s.Conn().RemotePeer(), req, presence)
+
 	default:
 		resp = inboxResponse{Status: "ERROR", Error: fmt.Sprintf("Unknown action: %s", req.Action)}
 	}
@@ -1757,6 +1819,73 @@ func handlePresenceGet(req inboxRequest, h host.Host, presence *PresenceStore) i
 
 	ageMs := res.ageMs
 	return inboxResponse{Status: "OK", Presence: res.presence, AgeMs: &ageMs}
+}
+
+// maxPresenceSelfTTL bounds a self-published presence TTL so a misbehaving peer
+// cannot claim "reachable forever". The locked default is relayPresenceTTL
+// (≈180 s); this is the generous upper clamp (FDC-S3 device-tunable window).
+const maxPresenceSelfTTL = 10 * time.Minute
+
+// handlePresenceSet answers the additive `presence_set` inbox action (FDC-09):
+// a peer SELF-PUBLISHES its coarse foreground/background state to the shared
+// presence store. The subject is the AUTHENTICATED stream peer (`self`), NEVER a
+// request field — a peer can publish only ITS OWN presence (anti-spoof). The
+// write records BOTH the self-published state (with its TTL, preferred by the
+// resolver) AND seeds the connectedness last-seen, so a STALE self-state
+// degrades to `unknown` via the same R5 freshness rule the last-seen uses
+// (FDC-S3: never silently `unreachable`).
+//
+// Presence is a HINT, never load-bearing: this WRITE feeds the read-side
+// emphasis hint only — the store→push delivery seam never consults it
+// (PRESENCE_NEVER_LOAD_BEARING). Old relays answer "Unknown action: presence_set"
+// (the stable `default` arm), which new clients map to "unsupported -> skip"
+// (NET-REL-07).
+func handlePresenceSet(self peer.ID, req inboxRequest, presence *PresenceStore) inboxResponse {
+	if presence == nil {
+		return inboxResponse{Status: "ERROR", Error: "presence store unavailable"}
+	}
+
+	state := trimmedString(req.Metadata["state"])
+	switch state {
+	case "foreground", "background":
+		// accepted coarse self-published states
+	default:
+		return inboxResponse{Status: "ERROR", Error: fmt.Sprintf("invalid presence state: %q", state)}
+	}
+
+	ttl := relayPresenceTTL
+	if ms := presenceMetadataTTLMs(req.Metadata); ms > 0 {
+		ttl = time.Duration(ms) * time.Millisecond
+		if ttl > maxPresenceSelfTTL {
+			ttl = maxPresenceSelfTTL
+		}
+	}
+
+	presence.SetSelfPublished(self, state, ttl)
+	presence.RecordSeen(self) // seed last-seen so a stale self-state degrades to `unknown`, not `unreachable`
+	return inboxResponse{Status: "OK"}
+}
+
+// presenceMetadataTTLMs extracts the optional `ttlMs` from a `presence_set`
+// request's Metadata map. JSON numbers decode to float64 through the
+// map[string]interface{} field; the other arms tolerate a node-side int64 /
+// json.Number for robustness. A missing/zero value falls back to the default.
+func presenceMetadataTTLMs(meta map[string]interface{}) int64 {
+	if meta == nil {
+		return 0
+	}
+	switch v := meta["ttlMs"].(type) {
+	case float64:
+		return int64(v)
+	case int64:
+		return v
+	case int:
+		return int64(v)
+	case json.Number:
+		n, _ := v.Int64()
+		return n
+	}
+	return 0
 }
 
 func writeResponse(s network.Stream, resp inboxResponse) {

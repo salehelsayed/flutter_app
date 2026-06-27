@@ -98,6 +98,35 @@ func TestPresenceGet_ReturnsReachableForConnectedPeer(t *testing.T) {
 	}
 }
 
+// R1b — a peer that has been CONNECTED longer than the TTL still reports
+// reachable with a FRESH ageMs (< TTL). The connectedness-seeded last-seen is
+// only stamped on a NotConnected->Connected transition (EvtPeerConnectednessChanged
+// is transition-only), so a steadily-connected peer's last-seen ages past the
+// TTL — but a live socket means "seen now", so ageMs must NOT report that stale
+// record age (locks `reachable requires ageMs < relayTTL` for the common case).
+func TestPresenceGet_ConnectedPeerReportsFreshAgeDespiteStaleLastSeen(t *testing.T) {
+	env, _ := newPresenceTestEnv(t)
+
+	base := time.Now()
+	cur := base
+	env.presence.now = func() time.Time { return cur }
+
+	// Seed last-seen at the connect transition, then let it age WELL past the TTL
+	// while the socket stays connected (mocknet connection persists; only the
+	// store clock advances).
+	env.presence.RecordSeen(env.sender.ID())
+	cur = base.Add(relayPresenceTTL + 2*time.Minute)
+
+	resp, _ := sendPresenceGet(t, env, env.sender.ID().String())
+	if resp.Presence != presenceReachable {
+		t.Fatalf("presence = %q, want %q (still connected)", resp.Presence, presenceReachable)
+	}
+	if resp.AgeMs == nil || *resp.AgeMs >= relayPresenceTTL.Milliseconds() {
+		t.Fatalf("connected ageMs = %v, want a FRESH value < %d (a live socket is seen-now, not the stale last-seen)",
+			resp.AgeMs, relayPresenceTTL.Milliseconds())
+	}
+}
+
 // R2 — presence_get returns unreachable for a disconnected, never-seen peer,
 // and the response schema NEVER carries a foreground/background field.
 func TestPresenceGet_UnreachableForDisconnected(t *testing.T) {
@@ -257,6 +286,190 @@ func TestPresenceStore_ConcurrentRecordAndLookup(t *testing.T) {
 				ps.SetSelfPublished(pids[j%len(pids)], "foreground", time.Minute)
 			}
 		}()
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				_ = ps.Lookup(pids[j%len(pids)], j%2 == 0)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// ---------------------------------------------------------------------------
+// FDC-09 — `presence_set` self-publish WRITE (Option C, FDC-S3-locked).
+//
+// FDC-08 created the shared presence store (SetSelfPublished + a Lookup resolver
+// that already PREFERS a fresh self-published state). FDC-09 adds the additive
+// `presence_set` inbox action that wires a peer's authenticated self-publish to
+// that write seam. A self-publish records BOTH the foreground/background state
+// AND seeds the connectedness last-seen, so a TTL'd self-state degrades to
+// `unknown` via the SAME R5 freshness path the last-seen uses — never silently
+// `unreachable`. The action targets the AUTHENTICATED stream peer only (a peer
+// can publish ITS OWN presence, never another's).
+// ---------------------------------------------------------------------------
+
+// sendPresenceSet drives a `presence_set` request to the server over a real
+// stream from env.sender (the authenticated self-publisher) and returns the
+// decoded response. The relay derives the subject peer from the stream's
+// authenticated RemotePeer, NOT from any request field (anti-spoof).
+func sendPresenceSet(t *testing.T, env *inboxStreamEnv, state string, ttlMs int64) inboxResponse {
+	t.Helper()
+	stream, err := env.sender.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+	if err != nil {
+		t.Fatalf("open presence_set stream: %v", err)
+	}
+	defer stream.Close()
+
+	sendInboxReq(t, stream, inboxRequest{
+		Action:   "presence_set",
+		Metadata: map[string]interface{}{"state": state, "ttlMs": ttlMs},
+	})
+
+	data, err := readFrame(stream)
+	if err != nil {
+		t.Fatalf("read presence_set frame: %v", err)
+	}
+	var resp inboxResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		t.Fatalf("decode presence_set response: %v", err)
+	}
+	return resp
+}
+
+// TC-09-01 — `presence_set` is an additive action that stores the caller's
+// self-published foreground state. RED on HEAD: the action is unknown -> the
+// `default` dispatch arm answers "Unknown action: presence_set" (Status ERROR).
+// The self-state is ISOLATED from the connectedness-seeded last-seen by reading
+// at an age PAST the last-seen TTL but WITHIN the (deliberately longer) self
+// TTL: only a fresh self-published state can keep the peer reachable there.
+func TestPresenceSet_AdditiveAction_StoresState(t *testing.T) {
+	env, _ := newPresenceTestEnv(t)
+
+	base := time.Now()
+	cur := base
+	env.presence.now = func() time.Time { return cur }
+
+	// Self TTL deliberately LONGER than the connectedness last-seen TTL.
+	resp := sendPresenceSet(t, env, "foreground", (relayPresenceTTL + 10*time.Minute).Milliseconds())
+	if resp.Status != "OK" {
+		t.Fatalf("presence_set status = %q, want OK (additive action must be accepted)", resp.Status)
+	}
+
+	// Advance past the connectedness last-seen TTL but within the self TTL.
+	cur = base.Add(relayPresenceTTL + time.Minute)
+
+	// Read the store with connected=false: reachable ONLY if the self-state write
+	// landed (a stale last-seen alone would read `unknown`, an absent state
+	// `unreachable`).
+	res := env.presence.Lookup(env.sender.ID(), false)
+	if res.presence != presenceReachable {
+		t.Fatalf("self-published presence = %q, want %q (presence_set must store the self-state)", res.presence, presenceReachable)
+	}
+}
+
+// TC-09-02 — a self-published state degrades to `unknown` after its TTL (never
+// silently `unreachable`), via the SAME R5 freshness rule the last-seen uses
+// (FDC-09's write feeds the same expiresAt). RED on HEAD: no presence_set action.
+func TestPresenceSet_TTLExpiry_DegradesToUnknown(t *testing.T) {
+	env, _ := newPresenceTestEnv(t)
+
+	base := time.Now()
+	cur := base
+	env.presence.now = func() time.Time { return cur }
+
+	resp := sendPresenceSet(t, env, "background", relayPresenceTTL.Milliseconds())
+	if resp.Status != "OK" {
+		t.Fatalf("presence_set status = %q, want OK", resp.Status)
+	}
+
+	// Past BOTH the self TTL and the last-seen TTL.
+	cur = base.Add(relayPresenceTTL + time.Second)
+	res := env.presence.Lookup(env.sender.ID(), false)
+	if res.presence != presenceUnknown {
+		t.Fatalf("expired self-published presence = %q, want %q (must never silently be unreachable)", res.presence, presenceUnknown)
+	}
+}
+
+// TC-09b-01 — a fresh self-published `background` resolves to `unreachable`
+// (§6.3 inbox-first + push-to-wake), while `foreground` resolves to `reachable`
+// (direct-race + lazy inbox). The relay consumes the self-published fg/bg
+// INTERNALLY to pick the COARSE value; the response still exposes no fg/bg field
+// (locked separately by TestPresenceResponseNeverClaimsForeground). Disconnected
+// peers (connected=false) so the connectedness branch cannot mask the self-state
+// branch. RED on HEAD: rule #1 folds ANY fresh self-state to reachable.
+func TestPresenceSet_BackgroundResolvesUnreachable_ForegroundReachable(t *testing.T) {
+	env, _ := newPresenceTestEnv(t)
+
+	fg := genDisconnectedPeerID(t)
+	bg := genDisconnectedPeerID(t)
+	env.presence.SetSelfPublished(fg, "foreground", relayPresenceTTL)
+	env.presence.SetSelfPublished(bg, "background", relayPresenceTTL)
+
+	if resp, _ := sendPresenceGet(t, env, fg.String()); resp.Presence != presenceReachable {
+		t.Fatalf("fresh foreground self-state presence = %q, want %q", resp.Presence, presenceReachable)
+	}
+	if resp, _ := sendPresenceGet(t, env, bg.String()); resp.Presence != presenceUnreachable {
+		t.Fatalf("fresh background self-state presence = %q, want %q (§6.3 inbox-first; HEAD wrongly folds bg->reachable)", resp.Presence, presenceUnreachable)
+	}
+}
+
+// TC-09-03 (NET-REL-07) — an UNIMPLEMENTED action degrades via the stable
+// `default` arm to the exact "Unknown action: <action>" text. This locks the
+// contract an OLD relay returns for `presence_set` (which a new client maps to
+// "presence unsupported -> skip", Dart TC-09-08). On THIS build presence_set is
+// known, so the stable default-arm format is exercised with a sentinel action.
+func TestPresenceSet_BackCompat_OldRelayUnknownAction(t *testing.T) {
+	env, _ := newPresenceTestEnv(t)
+
+	stream, err := env.sender.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	defer stream.Close()
+
+	sendInboxReq(t, stream, inboxRequest{Action: "presence_set_UNIMPLEMENTED_v2"})
+	resp := recvInboxResp(t, stream)
+	if resp.Status != "ERROR" {
+		t.Fatalf("status = %q, want ERROR for an unknown action", resp.Status)
+	}
+	if want := "Unknown action: presence_set_UNIMPLEMENTED_v2"; resp.Error != want {
+		t.Fatalf("error = %q, want %q (stable default-arm contract for NET-REL-07)", resp.Error, want)
+	}
+}
+
+// TC-09-09 — the FDC-09 `presence_set` WRITE (self-state + last-seen seed) is a
+// net-new third concurrent accessor of the shared presence map, alongside
+// FDC-08's connectedness write (RecordSeen) and the presence_get read (Lookup).
+// `go test -race ./...` must stay clean; dropping the store's mutex re-reds this.
+func TestPresenceStore_PresenceSetWriteRaceClean(t *testing.T) {
+	ps := NewPresenceStore()
+	pids := make([]peer.ID, 8)
+	for i := range pids {
+		pids[i] = genDisconnectedPeerID(t)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(3)
+		// FDC-09 presence_set write path (self-state + last-seen seed — exactly
+		// what handlePresenceSet performs).
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				p := pids[j%len(pids)]
+				ps.SetSelfPublished(p, "foreground", relayPresenceTTL)
+				ps.RecordSeen(p)
+			}
+		}()
+		// FDC-08 connectedness write.
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				ps.RecordSeen(pids[j%len(pids)])
+			}
+		}()
+		// presence_get read + TTL expiry evaluation.
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 200; j++ {

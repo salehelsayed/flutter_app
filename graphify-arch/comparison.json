@@ -140,28 +140,28 @@
   },
   "architecture": {
     "graph": "graphify-arch/graphify-out/graph.json",
-    "nodes": 42300,
-    "edges": 65776,
-    "communities": 923,
-    "source_files": 2177,
-    "avg_edges_per_node": 1.555,
-    "avg_nodes_per_community": 45.83,
-    "app_owned_nodes": 40643,
-    "app_owned_ratio": 0.9608,
+    "nodes": 42459,
+    "edges": 66089,
+    "communities": 927,
+    "source_files": 2187,
+    "avg_edges_per_node": 1.5565,
+    "avg_nodes_per_community": 45.8,
+    "app_owned_nodes": 40801,
+    "app_owned_ratio": 0.961,
     "noise_nodes": 0,
     "noise_ratio": 0.0,
-    "unknown_source_nodes": 1657,
-    "unknown_source_ratio": 0.0392,
+    "unknown_source_nodes": 1658,
+    "unknown_source_ratio": 0.039,
     "top_hub_noise_count": 0,
     "top_hub_noise_ratio": 0.0,
     "top_source_dirs": [
       [
         "lib",
-        17478
+        17501
       ],
       [
         "test",
-        14080
+        14128
       ],
       [
         "integration_test",
@@ -169,11 +169,11 @@
       ],
       [
         "go-mknoon",
-        2180
+        2229
       ],
       [
         "go-relay-server",
-        789
+        827
       ],
       [
         "scripts",
@@ -195,7 +195,7 @@
       {
         "id": "package_flutter_test_flutter_test_dart",
         "label": "package:flutter_test/flutter_test.dart",
-        "degree": 1018,
+        "degree": 1021,
         "source_file": "",
         "noise": false
       },
@@ -223,7 +223,7 @@
       {
         "id": "dart_convert",
         "label": "dart:convert",
-        "degree": 408,
+        "degree": 410,
         "source_file": "",
         "noise": false
       },
@@ -258,10 +258,10 @@
     ]
   },
   "deltas": {
-    "nodes": -0.5968,
-    "edges": -0.6307,
-    "communities": -0.7893,
-    "app_owned_ratio": 1.1738,
+    "nodes": -0.5953,
+    "edges": -0.6289,
+    "communities": -0.7884,
+    "app_owned_ratio": 1.1742,
     "noise_ratio": -1.0,
     "top_hub_noise_ratio": -1.0
   }

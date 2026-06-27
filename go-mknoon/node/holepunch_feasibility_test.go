@@ -21,6 +21,7 @@ package node
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -132,6 +133,88 @@ func TestHolePunchFeasibility_LoopbackUpgradeObservable(t *testing.T) {
 	if tracerA.Successes() < 1 {
 		t.Fatalf("tracerA.Successes() = %d, want >= 1 when a direct conn opened", tracerA.Successes())
 	}
+}
+
+// FDC-12 TC-12-08 — a punched conn classifies "direct" over the TCP lane too,
+// not only QUIC (punchr: TCP==QUIC). SKIP-tolerant: loopback forced-public hosts
+// do not auto-hole-punch, and even when a punch lands it may take the QUIC lane,
+// so a missing TCP-direct conn is a SKIP (feasibility-only) — never a failure,
+// the same discipline as TestHolePunchFeasibility_LoopbackUpgradeObservable. The
+// real TCP-lane proof is the two-device DEVICE-PROOF (TC-12-12), not this SKIP.
+func TestFeasibility_DirectUpgrade_TcpLane(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping loopback hole-punch TCP-lane feasibility test in -short mode")
+	}
+
+	_, relayAddr := startNW002LocalCircuitRelay(t)
+
+	tracerA := newNodeHolePunchTracer(nil)
+	tracerB := newNodeHolePunchTracer(nil)
+	capA := &testEventCollector{}
+	capB := &testEventCollector{}
+
+	nodeA := startNW002RelayNodeWithTracer(t, relayAddr, capA, tracerA)
+	nodeB := startNW002RelayNodeWithTracer(t, relayAddr, capB, tracerB)
+
+	if err := nodeA.DialPeerViaRelay(nodeB.PeerId()); err != nil {
+		t.Fatalf("nodeA circuit dial to nodeB: %v", err)
+	}
+
+	targetID, err := peer.Decode(nodeB.PeerId())
+	if err != nil {
+		t.Fatalf("decode nodeB peer ID: %v", err)
+	}
+
+	deadline := time.Now().Add(8 * time.Second)
+	var tcpConn network.Conn
+	for time.Now().Before(deadline) {
+		if c := firstDirectTCPConn(nodeA, targetID); c != nil {
+			tcpConn = c
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if tcpConn == nil {
+		t.Skipf("no direct TCP upgrade materialized on loopback within the window "+
+			"(forced-public hosts do not auto-hole-punch; a punch may also take the QUIC lane); "+
+			"tracerA.Successes()=%d. Feasibility-only and expected flaky on loopback.",
+			tracerA.Successes())
+	}
+
+	if tcpConn.Stat().Limited {
+		t.Fatal("upgraded TCP conn must have Stat().Limited == false (real direct conn, not a circuit)")
+	}
+	if got := classifyStreamTransportConn(tcpConn); got != "direct" {
+		t.Fatalf("classifyStreamTransport over upgraded TCP conn = %q, want direct", got)
+	}
+	if tracerA.Successes() < 1 {
+		t.Fatalf("tracerA.Successes() = %d, want >= 1 when a direct TCP conn opened", tracerA.Successes())
+	}
+}
+
+// firstDirectTCPConn returns the first non-limited, non-circuit TCP connection
+// (a /tcp/ remote multiaddr that is not QUIC and not a /ws relay leg) from n to
+// peer, or nil if none exists yet.
+func firstDirectTCPConn(n *Node, p peer.ID) network.Conn {
+	h := n.Host()
+	if h == nil {
+		return nil
+	}
+	for _, c := range h.Network().ConnsToPeer(p) {
+		if c.Stat().Limited {
+			continue
+		}
+		addr := c.RemoteMultiaddr()
+		if addr == nil || isCircuitAddr(addr) {
+			continue
+		}
+		s := addr.String()
+		if strings.Contains(s, "/tcp/") && !strings.Contains(s, "/quic") && !strings.Contains(s, "/ws") {
+			return c
+		}
+	}
+	return nil
 }
 
 // firstDirectConn returns the first non-limited, non-circuit connection from n

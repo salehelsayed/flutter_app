@@ -152,28 +152,9 @@ void main() {
     );
     final repo = FakeMessageRepository();
 
-    final (result, _) = await _sendCapturingResult(p2p, repo);
-
-    // The durable copy fired despite the (wrong) reachable hint, so the
-    // backgrounded peer is still woken by the relay's store-triggered push.
-    expect(p2p.storeInInboxCallCount, greaterThanOrEqualTo(1));
-    // The send succeeds via durable inbox custody (NOT lost).
-    expect(result, SendChatMessageResult.success);
-  });
-
-  // The "lazy" reachable branch must FIRE the concurrent inbox, distinguishing it
-  // from a hypothetical "skipped" mutation (the C7 discriminator).
-  test('reachable lazy path emits CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN', () async {
-    final p2p = _PresenceFake(
-      presence: RelayPresence.reachable,
-      sendMessageResult: false,
-      useNullDiscover: true,
-      storeInInboxResult: true,
-    );
-    final repo = FakeMessageRepository();
-
+    SendChatMessageResult? result;
     final events = await captureFlowEvents(() async {
-      await sendChatMessage(
+      final (r, _) = await sendChatMessage(
         p2pService: p2p,
         messageRepo: repo,
         targetPeerId: 'target-peer',
@@ -181,24 +162,20 @@ void main() {
         senderPeerId: 'me',
         senderUsername: 'Me',
       );
+      result = r;
     });
 
-    expect(_has(events, 'CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN'), isTrue);
+    // The hint was (wrongly) reachable...
     expect((_emphasis(events)!['details'] as Map)['presence'], 'reachable');
+    // ...yet the PRESENCE-PATH durable copy STILL fired (lazy = fired, NOT
+    // skipped). Asserting the concurrent BEGIN event — not just the deposit
+    // count — keeps this load-bearing: it re-reds if the reachable branch ever
+    // skips/defers the concurrent deposit, even though the :1172 backstop would
+    // independently rescue the message. The store triggers the relay's
+    // push-to-wake for the backgrounded peer.
+    expect(_has(events, 'CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN'), isTrue);
+    expect(p2p.storeInInboxCallCount, greaterThanOrEqualTo(1));
+    // And the message is delivered (durable inbox custody), never lost.
+    expect(result, SendChatMessageResult.success);
   });
-}
-
-Future<(SendChatMessageResult, Object?)> _sendCapturingResult(
-  _PresenceFake p2p,
-  FakeMessageRepository repo,
-) async {
-  final (result, message) = await sendChatMessage(
-    p2pService: p2p,
-    messageRepo: repo,
-    targetPeerId: 'target-peer',
-    text: 'hi',
-    senderPeerId: 'me',
-    senderUsername: 'Me',
-  );
-  return (result, message);
 }

@@ -110,14 +110,15 @@ func (ps *PresenceStore) SetSelfPublished(pid peer.ID, state string, ttl time.Du
 // Lookup resolves a peer's coarse presence WITHOUT dialing a circuit, given the
 // peer's live socket connectedness. Resolution order (FDC-S3 read contract):
 //
-//  1. a FRESH self-published presence_set state (preferred)   -> reachable
+//  1. a FRESH self-published presence_set state (preferred)   -> reachable iff `foreground`, else unreachable
 //  2. a live socket connection (connected == true)           -> reachable
 //  3. a FRESH connectedness-seeded last-seen (age < TTL)      -> reachable
 //  4. a STALE last-seen (age >= TTL)                          -> unknown (never silently unreachable)
 //  5. nothing known and not connected                        -> unreachable
 //
 // The answer is "online-ish, TTL-lagged" — it is never a foreground/background
-// claim (PRESENCE_IS_ONLINE_ISH_NOT_FOREGROUND).
+// claim in the WIRE response (PRESENCE_IS_ONLINE_ISH_NOT_FOREGROUND); rule #1
+// consumes the self-published fg/bg INTERNALLY to choose the coarse value.
 func (ps *PresenceStore) Lookup(pid peer.ID, connected bool) presenceResolution {
 	ps.mu.RLock()
 	e, ok := ps.entries[pid]
@@ -135,17 +136,32 @@ func (ps *PresenceStore) Lookup(pid peer.ID, connected bool) presenceResolution 
 	}
 
 	// (1) Prefer a fresh self-published state (FDC-09 writes it; before FDC-09
-	// lands selfState is always "", so this falls through to connectedness).
+	// lands selfState is always "", so this falls through to connectedness). The
+	// relay consumes the self-published fg/bg INTERNALLY to pick the coarse value
+	// (FDC-09b): `foreground` -> reachable (§6.3 direct-race + lazy inbox);
+	// `background` -> unreachable (§6.3 inbox-first + push-to-wake, so a peer that
+	// said "I'm backgrounded" commits its durable copy first and the relay
+	// store->push fires sooner — live legs stay best-effort, so a lingering socket
+	// is not lost). The response still exposes ONLY the coarse value, never a
+	// fg/bg field (PRESENCE_IS_ONLINE_ISH_NOT_FOREGROUND). A STALE self-state
+	// (past selfTTL) falls through to the connectedness/last-seen ladder below,
+	// degrading to `unknown`, never silently `unreachable`.
 	if ok && e.selfState != "" && now.Sub(e.selfPublishedAt) < e.selfTTL {
-		return presenceResolution{presence: presenceReachable, ageMs: ageMs}
+		if e.selfState == "foreground" {
+			return presenceResolution{presence: presenceReachable, ageMs: ageMs}
+		}
+		return presenceResolution{presence: presenceUnreachable, ageMs: ageMs}
 	}
 
-	// (2) A live socket connection is the authoritative "online-ish" signal.
+	// (2) A live socket connection is the authoritative "online-ish" signal — the
+	// peer is reachable RIGHT NOW, so report ageMs=0 regardless of how old the
+	// connectedness-seeded last-seen stamp is. libp2p's EvtPeerConnectednessChanged
+	// fires only on TRANSITIONS (never periodically), so a steadily-connected
+	// peer's last-seen ages monotonically past the TTL while it stays genuinely
+	// reachable; reporting that stale age would violate the locked freshness
+	// contract `reachable requires ageMs < relayTTL` (FDC-S3 canonical schema).
 	if connected {
-		if ageMs < 0 {
-			ageMs = 0
-		}
-		return presenceResolution{presence: presenceReachable, ageMs: ageMs}
+		return presenceResolution{presence: presenceReachable, ageMs: 0}
 	}
 
 	// (3)/(4) Connectedness-seeded last-seen, gated by the freshness TTL.

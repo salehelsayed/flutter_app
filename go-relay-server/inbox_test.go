@@ -883,6 +883,157 @@ func TestInboxStore_KeyExchangeRetryContactRequestDoesNotSendPush(t *testing.T) 
 	}
 }
 
+// ---------------------------------------------------------------------------
+// FDC-09 §12 — push-to-wake hardening (visible / access-token / HINT-only).
+// (Opaque-routing TC-09-12 deferred per scope decision 2026-06-27.)
+// ---------------------------------------------------------------------------
+
+// TC-09-10 — the 1:1 `new_message` wake is a VISIBLE alert, not a pure silent /
+// content-available-only push (which iOS throttles to ~1-2/hr). The builder is
+// already alert-class (apns-push-type alert + non-empty Aps.Alert), so this
+// LOCKS that shape: a regression to a content-available-only wake re-reds.
+// (Device row TC-09-20 is the real proof; host asserts message SHAPE only.)
+func TestWakePush_VisibleAlert_NotSilentOnly(t *testing.T) {
+	msg := buildPushMessage(
+		"fcm-token",
+		"peer-from",
+		`{"type":"chat_message","version":"2","id":"wake-1","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`,
+	)
+
+	if msg.APNS == nil {
+		t.Fatal("wake must carry APNS config")
+	}
+	// iOS: alert push-type (NOT background/silent — a silent content-available push
+	// is iOS-throttled).
+	if got := msg.APNS.Headers["apns-push-type"]; got != "alert" {
+		t.Fatalf("apns-push-type = %q, want alert (a silent/background wake is iOS-throttled)", got)
+	}
+	// A non-empty Aps.Alert so visibility does NOT depend on content-available only.
+	if msg.APNS.Payload == nil || msg.APNS.Payload.Aps == nil || msg.APNS.Payload.Aps.Alert == nil {
+		t.Fatal("wake must carry a non-empty Aps.Alert (visible), not rely on content-available only")
+	}
+	// MutableContent preserved for the NSE decrypt-and-replace path.
+	if !msg.APNS.Payload.Aps.MutableContent {
+		t.Fatal("wake must keep MutableContent for the NSE decrypt path")
+	}
+	// Android: high priority so the data wake is delivered promptly even backgrounded.
+	if msg.Android == nil || msg.Android.Priority != "high" {
+		t.Fatal("wake must be Android high-priority")
+	}
+}
+
+// TC-09-11 — the §12 access-token gate: once a recipient registers a wake-token
+// set, ONLY a sender presenting a member token wakes it; an absent / non-member
+// token is suppressed (counter unauthorized_wake) but the message is STILL stored
+// (delivery preserved). The gate LAYERS ON TOP of the ShouldNotify type filter.
+func TestWakePush_AccessTokenGate_OnlyContactsWake(t *testing.T) {
+	// Enforcement ships OFF (the send-side token presentation is not wired yet, so
+	// real senders present an empty token — see FDC-09 H1 / wakeTokenGateEnforced).
+	// Enable it for this mechanism test, then restore the safe default.
+	wakeTokenGateEnforced = true
+	t.Cleanup(func() { wakeTokenGateEnforced = false })
+
+	tokenStore := newMemoryPushTokenStore()
+	tokenStore.RegisterToken("peer-recipient", "fcm-token", "android")
+	push := NewPushServiceWithBackend(tokenStore)
+	recorder := newRecordingPushSender()
+	push.sender = recorder.Send
+	inbox := NewInboxStore(push)
+
+	// Recipient opts in: registers the opaque wake-token set it minted for contacts.
+	inbox.RegisterWakeTokens("peer-recipient", []string{"tok-alice", "tok-bob"})
+
+	visible := func(id string) string {
+		return `{"type":"chat_message","version":"2","id":"` + id +
+			`","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`
+	}
+
+	// (a) A valid member token -> the wake fires (and the message is stored).
+	res, err := inbox.Store("peer-recipient", inboxMessage{
+		From: "peer-alice", Message: visible("m-ok"),
+		Timestamp: time.Now().UnixMilli(), WakeToken: "tok-alice",
+	})
+	if err != nil || res != InboxStoreResultStored {
+		t.Fatalf("authorized store: res=%v err=%v", res, err)
+	}
+	select {
+	case <-recorder.sentSignal:
+		// expected: authorized wake fired
+	case <-time.After(2 * time.Second):
+		t.Fatal("a valid member wake-token must fire a push")
+	}
+
+	// (b) A non-member token -> NO push, but the message is STILL stored.
+	res, err = inbox.Store("peer-recipient", inboxMessage{
+		From: "peer-intruder", Message: visible("m-spam"),
+		Timestamp: time.Now().UnixMilli(), WakeToken: "tok-WRONG",
+	})
+	if err != nil || res != InboxStoreResultStored {
+		t.Fatalf("unauthorized store must STILL store the message: res=%v err=%v", res, err)
+	}
+	select {
+	case <-recorder.sentSignal:
+		t.Fatal("a non-member wake-token must NOT fire a push (§12 anti-spam)")
+	case <-time.After(200 * time.Millisecond):
+		// expected: no push for the unauthorized wake
+	}
+}
+
+// TC-09-13 (FDC-S3 hard gate: presence NEVER load-bearing; relay-side twin of
+// FDC-08's C7) — a user-visible store fires the wake push REGARDLESS of any
+// presence state. The store->push seam never consults the presence store, so a
+// WRONG presence (here a peer self-published `foreground` while actually offline)
+// can never suppress the wake. The decoupling is structural: InboxStore.Store has
+// no presence reference, so a `presence==reachable => skip` regression cannot
+// compile against it without first wiring presence in — which this locks against.
+func TestWakePush_StillDelivers_WhenPresenceWrong(t *testing.T) {
+	tokenStore := newMemoryPushTokenStore()
+	tokenStore.RegisterToken("peer-recipient", "fcm-token", "android")
+	push := NewPushServiceWithBackend(tokenStore)
+	recorder := newRecordingPushSender()
+	push.sender = recorder.Send
+	inbox := NewInboxStore(push)
+
+	// A WRONG self-published presence for the (actually offline) recipient. The
+	// store->push seam must not consult it — presence is a HINT, never a gate.
+	presence := NewPresenceStore()
+	presence.SetSelfPublished(genDisconnectedPeerID(t), "foreground", relayPresenceTTL)
+	_ = presence // deliberately NOT passed into inbox.Store — proving the decoupling
+
+	res, err := inbox.Store("peer-recipient", inboxMessage{
+		From:      "peer-sender",
+		Message:   `{"type":"chat_message","version":"2","id":"hint-1","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`,
+		Timestamp: time.Now().UnixMilli(),
+	})
+	if err != nil || res != InboxStoreResultStored {
+		t.Fatalf("store: res=%v err=%v", res, err)
+	}
+	select {
+	case <-recorder.sentSignal:
+		// expected: the wake fired regardless of (wrong) presence
+	case <-time.After(2 * time.Second):
+		t.Fatal("the wake push must fire for a user-visible store regardless of presence")
+	}
+}
+
+// FDC-09 §12 rider (Blind-Spot Sweep) — unregister_token clears the recipient's
+// wake-token set so no orphaned wake authorization survives a deregistration; the
+// gate then fails OPEN again (existing push restored).
+func TestWakePush_UnregisterClearsWakeTokens(t *testing.T) {
+	inbox := NewInboxStore(NewPushServiceWithBackend(newMemoryPushTokenStore()))
+	inbox.RegisterWakeTokens("peer-x", []string{"tok-1"})
+	if !inbox.wakeTokens.HasRegisteredSet("peer-x") {
+		t.Fatal("precondition: a set is registered")
+	}
+	inbox.ClearWakeTokens("peer-x")
+	if inbox.wakeTokens.HasRegisteredSet("peer-x") {
+		t.Fatal("clear must drop the wake-token set (no orphaned authorization)")
+	}
+	if !inbox.wakeTokens.IsAuthorized("peer-x", "anything") {
+		t.Fatal("after clear, the gate must fail open (existing push restored)")
+	}
+}
+
 func TestBuildGroupPushMessage_CarriesEncryptedDataWithoutPlaintextPreview(t *testing.T) {
 	msg := buildGroupPushMessage(
 		"fcm-token",

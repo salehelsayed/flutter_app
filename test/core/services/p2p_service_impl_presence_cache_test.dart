@@ -18,6 +18,12 @@ class _CountingBridge extends Bridge {
   Object? ageMs = 1200;
   int presenceCallCount = 0;
 
+  // FDC-09 presence_set (write twin).
+  int presenceSetCallCount = 0;
+  final List<Map<String, dynamic>> presenceSetPayloads = [];
+  // Response the fake relay returns for relay:presence_set. Default: accepted.
+  Map<String, dynamic> presenceSetResponse = const {'ok': true};
+
   @override
   bool get isInitialized => true;
 
@@ -39,6 +45,13 @@ class _CountingBridge extends Bridge {
     if (req['cmd'] == 'relay:presence_get') {
       presenceCallCount++;
       return jsonEncode({'ok': true, 'presence': presence, 'ageMs': ageMs});
+    }
+    if (req['cmd'] == 'relay:presence_set') {
+      presenceSetCallCount++;
+      presenceSetPayloads.add(
+        Map<String, dynamic>.from(req['payload'] as Map),
+      );
+      return jsonEncode(presenceSetResponse);
     }
     return jsonEncode({'ok': false, 'errorCode': 'UNHANDLED'});
   }
@@ -129,5 +142,60 @@ void main() {
     );
     expect(blocked, isNotEmpty);
     expect((blocked.first['details'] as Map)['operation'], 'p2p_get_presence');
+  });
+
+  // FDC-09 happy path — setPresence sends the self-publish and reports published.
+  test('setPresence publishes foreground/background to the relay', () async {
+    final r = await service.setPresence('foreground', 180000);
+    expect(r, PresenceSetResult.published);
+    expect(bridge.presenceSetCallCount, 1);
+    expect(bridge.presenceSetPayloads.single['state'], 'foreground');
+    expect(bridge.presenceSetPayloads.single['ttlMs'], 180000);
+  });
+
+  // TC-09-07 (move-feature safety; mirrors C3b) — a paused account-move makes
+  // NO presence_set bridge call on EITHER state and returns `blocked`, emitting
+  // P2P_SERVICE_ACCOUNT_MIGRATION_NETWORK_BLOCKED{operation: p2p_set_presence}.
+  // A moving device must not announce itself reachable while ceding the account.
+  test('TC-09-07: setPresence is gated by _allowsAccountNetworkSideEffects', () async {
+    final gatedService = P2PServiceImpl(
+      bridge: bridge,
+      inboxStagingRepository: staging,
+      accountMigrationNetworkGate:
+          ({String? peerId, required String operation}) async => false,
+    );
+    addTearDown(gatedService.dispose);
+
+    final flowEvents = <Map<String, dynamic>>[];
+    debugSetFlowEventSink(
+      (p) => flowEvents.add(Map<String, dynamic>.from(p)),
+    );
+
+    // Both the pause (background) AND resume (foreground) paths must no-op.
+    expect(await gatedService.setPresence('background', 180000),
+        PresenceSetResult.blocked);
+    expect(await gatedService.setPresence('foreground', 180000),
+        PresenceSetResult.blocked);
+
+    expect(bridge.presenceSetCallCount, 0); // gate-blocked => zero bridge calls
+
+    final blocked = flowEvents.where(
+      (e) => e['event'] == 'P2P_SERVICE_ACCOUNT_MIGRATION_NETWORK_BLOCKED',
+    );
+    expect(blocked, isNotEmpty);
+    expect((blocked.first['details'] as Map)['operation'], 'p2p_set_presence');
+  });
+
+  // TC-09-08 (impl half / NET-REL-07) — an OLD relay's "Unknown action:
+  // presence_set" maps to PresenceSetResult.unsupported (skip), never a hard
+  // failure or retry. Delivery is never affected (presence is a HINT).
+  test('TC-09-08: old relay Unknown action maps setPresence to unsupported', () async {
+    bridge.presenceSetResponse = {
+      'status': 'ERROR',
+      'error': 'Unknown action: presence_set',
+    };
+    final r = await service.setPresence('foreground', 180000);
+    expect(r, PresenceSetResult.unsupported);
+    expect(bridge.presenceSetCallCount, 1); // tried once, not retried
   });
 }

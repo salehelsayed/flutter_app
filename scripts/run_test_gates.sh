@@ -97,6 +97,11 @@ readonly ONE_TO_ONE_TESTS=(
   # feature-host-all; appended here so the load-bearing "presence is never a
   # delivery gate" locks also run in the curated 1to1 gate.
   "test/features/conversation/application/send_presence_emphasis_test.dart"
+  # FDC-12: DCUtR relay->direct upgrade — Dart sticky/badge handling (TC-12-09/09b)
+  # and the default-off flag plumb (TC-12-10). test/core/** is NOT auto-globbed
+  # into the curated 1to1 gate, so these are appended explicitly.
+  "test/core/services/p2p_service_transport_upgrade_test.dart"
+  "test/core/services/p2p_service_dcutr_flag_test.dart"
 )
 
 readonly FEED_TESTS=(

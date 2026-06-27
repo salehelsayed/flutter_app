@@ -1,6 +1,6 @@
 # FDC-08 — Relay presence lookup (additive inbox action)  (New Feature)
 
-Status: **ready (host tiers) — finalized against FDC-S3 (closed 2026-06-27); live-relay-env closure (S1) + device-tuning of TTL constants remain**
+Status: **ready (host tiers) — finalized against FDC-S3 (closed 2026-06-27); live-relay-env closure (LR1) + device-tuning of TTL constants remain**
 
 Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§6.3 presence-aware emphasis; §8 P1-1; §11 open-question 2)
 
@@ -29,7 +29,7 @@ Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§6.3 presen
 >   delivered** via inbox + push-to-wake (added below as **C7**).
 >
 > **What still gates closure (NOT the mechanism):** the **live-relay-env**
-> closure **S1** (real reservation/connectedness truth + real-wire
+> closure **LR1** (real reservation/connectedness truth + real-wire
 > faster-than-probe + end-to-end NET-REL-07 additive-deploy safety) and the
 > device-tuning of the TTL constants. These need a deployable relay (FDC-09
 > coordinates the env per FDC-S3 risk note); they are NOT a mechanism decision.
@@ -74,7 +74,7 @@ is closed, so the relay truth-source is **decided** (connectedness + net-new
 last-seen map; reservation truth OUT) and the host-testable portions (client
 cache, enum, bridge cmd shape, send-path three-way emphasis, relay dispatch +
 `ageMs`/staleness logic, additive-contract) are **fully implementation-ready
-now**. The remaining gate is the **live-relay-env closure** S1 (real-wire
+now**. The remaining gate is the **live-relay-env closure** LR1 (real-wire
 faster-than-probe + end-to-end NET-REL-07 additive-deploy) and **device-tuning**
 of the TTL constants — a deploy/measurement task, **not** a mechanism decision.
 
@@ -306,7 +306,7 @@ under `test/` (1to1 gate); `integration_test/{wifi_relay_fallback_smoke,transpor
 | **`RelayPresenceLookup` node test** (`inbox_presence_test.go` N1–N3) | **MISSING** | add to go-mknoon node |
 | **`lookupRelayPresence` Dart unit + cache test** (C1–C4) | **MISSING** | `test/core/bridge/**` + `test/core/services/**` AUTO-glob into `core-host-all` |
 | **`send_presence_emphasis_test.dart`** (C5–C7) | **MISSING** | `test/features/**` auto-globs `feature-host-all` only — **manually append to `ONE_TO_ONE_TESTS` (`run_test_gates.sh` array, before `)` at :85)** for the `1to1` gate |
-| **`relay_presence_get_smoke_test.dart`** real-wire sim (S1) | **MISSING (live-relay-env-gated)** | `classify_path()` case in `check_reliability_simulation_discovery.sh` (mirror transport example :255-267) **+ append to `TRANSPORT_TESTS`** |
+| **`relay_presence_get_smoke_test.dart`** real-wire sim (LR1) | **MISSING (live-relay-env-gated)** | `classify_path()` case in `check_reliability_simulation_discovery.sh` (mirror transport example :255-267) **+ append to `TRANSPORT_TESTS`** |
 
 ## RED Test Catalog
 > Tiers: **Go-relay unit** / **Go-node(client) unit** / **Dart application unit**
@@ -520,7 +520,7 @@ under `test/` (1to1 gate); `integration_test/{wifi_relay_fallback_smoke,transpor
 
 ### Simulator (real relay) — live-relay-env closure gate
 
-**S1 — sim: live relay answers presence without a circuit dial** ⚠ live-relay-env-gated
+**LR1 (live-relay-env closure scenario; NOT the FDC-S1 cold-start spike) — sim: live relay answers presence without a circuit dial** ⚠ live-relay-env-gated
 `integration_test/relay_presence_get_smoke_test.dart` (renamed from
 `relay_presence_lookup_smoke_test.dart` per FDC-S3) — `TRANSPORT_TESTS` +
 `/sims 1to1 --only <N>` scenario.
@@ -556,7 +556,7 @@ under `test/` (1to1 gate); `integration_test/{wifi_relay_fallback_smoke,transpor
 | Read-only presence | no store/consume | Go-relay unit | inbox_presence_test.go::R4 | no action | enqueue on presence | `cd go-relay-server && GOTOOLCHAIN=go1.25.0 go test ./...` | go test ./... |
 | Stale last-seen ⇒ unknown + ageMs | age≥TTL→`unknown` not `unreachable` | Go-relay unit | inbox_presence_test.go::R5 | no action | stale→`unreachable` | `cd go-relay-server && GOTOOLCHAIN=go1.25.0 go test ./...` | go test ./... |
 | Connectedness handler seeds net-new map + race-safe | handler writes last-seen; sync.Map | Go-relay unit | inbox_presence_test.go::R6 | no last-seen map | handler stops writing map | `cd go-relay-server && GOTOOLCHAIN=go1.25.0 go test -race ./...` | go test -race ./... |
-| Real-wire faster-than-probe + additive-safe | live relay, NET-REL-07 e2e | sim (real relay) | relay_presence_get_smoke_test.dart::S1 | feature unshipped | n/a (live-relay-env) | `./scripts/run_test_gates.sh transport` + `/sims 1to1 --only <N>` | add `classify_path()` case in `check_reliability_simulation_discovery.sh` (mirror :255-267) + append to `TRANSPORT_TESTS` |
+| Real-wire faster-than-probe + additive-safe | live relay, NET-REL-07 e2e | sim (real relay) | relay_presence_get_smoke_test.dart::LR1 | feature unshipped | n/a (live-relay-env) | `./scripts/run_test_gates.sh transport` + `/sims 1to1 --only <N>` | add `classify_path()` case in `check_reliability_simulation_discovery.sh` (mirror :255-267) + append to `TRANSPORT_TESTS` |
 
 ## Blind-Spot Sweep
 - **Lifecycle/derived-state durability:** presence cache must survive nothing —
@@ -581,14 +581,14 @@ under `test/` (1to1 gate); `integration_test/{wifi_relay_fallback_smoke,transpor
   fresh chat-message store sets `ShouldNotify`, so honoring "lazy = fire-don't-
   await" (the `reachable` branch still deposits the durable copy) **does** trigger
   the wake for a just-backgrounded peer. C7 asserts the deposit fires; do **not**
-  over-claim "push fires on every store." Row: **C7** + S1 (real-wire push).
+  over-claim "push fires on every store." Row: **C7** + LR1 (real-wire push).
 - **Go bridge concurrency (§10, per FDC-S5):** the bridge is **concurrent in the
   warm/steady state** (only `Node.Start`'s cold-path write lock serializes), so a
   presence lookup does not blanket-serialize behind the user's send; the residual
   risk is **native thread-pool / dial-limit contention** if lookups are unbounded.
   **N/A to host RED**, but flagged: presence must be **off the send-critical path**
   (cache-served or fire-before-typing), not awaited inline ahead of send — the
-  10–15 s client cache (C3) bounds the call rate. Closure: **S1** (`PRESENCE_DECISION_MS`).
+  10–15 s client cache (C3) bounds the call rate. Closure: **LR1** (`PRESENCE_DECISION_MS`).
 - **Relay-side concurrency (net-new shared state):** the last-seen map is written
   by the connectedness goroutine and read by the per-stream handler — covered by
   **R6** + `go test -race`. This is a real shared-mutable-state addition, not a
@@ -656,24 +656,24 @@ under `test/` (1to1 gate); `integration_test/{wifi_relay_fallback_smoke,transpor
    GREEN R1–R6 (incl. `go test -race`). **Stop-if FDC-09:** coordinate so both
    plans read/write the **same** `presence_store.go` (avoid two divergent maps);
    per roadmap order FDC-08 lands the map+read first, FDC-09 rebases the write on.
-8. **S1 (live-relay-env closure):** additive relay redeploy + sim scenario
+8. **LR1 (live-relay-env closure):** additive relay redeploy + sim scenario
    registration (`classify_path()` + `TRANSPORT_TESTS`); run transport gate +
    `/sims 1to1`. Device-tune the TTL constants (FDC-S3 Methods 1/2/5 inherited).
 
 ## Risks And Edge Cases
 - **Truth-source mismatch** (connectedness lies on iOS socket-linger) — pinned
-  by R1/R2/R5 + S1 real-wire. The proposal already declares this "online-ish,
+  by R1/R2/R5 + LR1 real-wire. The proposal already declares this "online-ish,
   TTL-lagged"; the relay TTL (R5) and the client cache TTL bound the lie (C3/C4).
 - **Stale last-seen reported as `unreachable`** (would wrongly push a maybe-online
   peer to inbox-first) — R5 locks age≥TTL→`unknown` not `unreachable`.
-- **Old relay in the field** (NET-REL-07) — C2/N3/R3 + S1(c).
+- **Old relay in the field** (NET-REL-07) — C2/N3/R3 + LR1(c).
 - **Presence-as-gate regression** (someone makes `unreachable` drop live legs or
   `reachable` skip/defer inbox) — **C7** (the load-bearing gate) + C5/C6/R4.
 - **Just-backgrounded peer hinted `reachable`** loses its wake — covered because
   the `reachable` branch still deposits (fire-don't-await) → the fresh chat store
-  triggers the relay push (`inbox.go:867`, ShouldNotify). C7 + S1.
+  triggers the relay push (`inbox.go:867`, ShouldNotify). C7 + LR1.
 - **Bridge HOL-block** — keep presence off the awaited send-critical path
-  (cache-served, 10–15 s TTL bounds the rate); S1 `PRESENCE_DECISION_MS`.
+  (cache-served, 10–15 s TTL bounds the rate); LR1 `PRESENCE_DECISION_MS`.
 - **Net-new shared relay state data race** — last-seen map written by
   connectedness goroutine, read by stream goroutine — R6 + `go test -race`.
 - **Budget/timeout NET-REL lock regression** — run the full 1to1 + transport
@@ -682,7 +682,7 @@ under `test/` (1to1 gate); `integration_test/{wifi_relay_fallback_smoke,transpor
 ## Device/Relay Proof Profile
 - **Host-only closure:** C1–C7, C3b, N1–N3, R1–R6 (resolver locked by FDC-S3)
   close via `GOTOOLCHAIN=go1.25.0 go test [-race] ./...` (both Go modules) + host gates.
-- **Requires live-relay-env (distinct from device-proof):** S1 — real
+- **Requires live-relay-env (distinct from device-proof):** LR1 — real
   connectedness-truth, real-wire faster-than-5s-probe, end-to-end NET-REL-07
   additive-deploy safety, and the device-tuned TTL constants (FDC-S3 Methods
   1/2/5). Closure scenario: `/sims 1to1 --only <N>` after additive relay redeploy
@@ -703,12 +703,12 @@ cd /Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon && make lint       
 # Dart host (C1–C7 + C3b)
 ./scripts/run_host_test_gates.sh core-host-all                                        # expect: 0 fail (~249/249 core files PASS) — C1–C4, C3b auto-glob
 ./scripts/run_test_gates.sh 1to1                                                       # expect: ~1226 baseline +N (C5/C6/C7 appended to ONE_TO_ONE_TESTS), 0 reg
-# Transport integration + sim closure (S1) — after additive relay redeploy
+# Transport integration + sim closure (LR1) — after additive relay redeploy
 ./scripts/run_test_gates.sh transport                                                  # expect: +1 (live-relay-env-gated; skips on lone sim)
 # group-safety floor (presence lookup must not become load-bearing for group delivery — Scope Guard)
 ./scripts/run_test_gates.sh groups                                                     # expect: 0 fail (no group regression)
 ./scripts/check_reliability_simulation_discovery.sh                                    # relay_presence_get_smoke_test.dart MUST list (else classify_path wiring is wrong)
-/sims 1to1 --only <N — from the dry-run plan after S1 registration>
+/sims 1to1 --only <N — from the dry-run plan after LR1 registration>
 # Hygiene
 flutter analyze    # 0 new
 git diff --check
@@ -741,7 +741,7 @@ git diff --check
 - [ ] R1–R6 GREEN; R3 additive-contract preserved; R6 race-clean; each mutation re-reds.
 - [ ] `{presence, ageMs}` schema + freshness rule (age≥TTL→`unknown`) locked (R5, C1, C4).
 - [ ] Move-feature gate locked (C3b): paused move ⇒ no bridge call, `unknown`.
-- [ ] S1 closure run on real relay (faster-than-probe + NET-REL-07 e2e) + TTL device-tuned.
+- [ ] LR1 closure run on real relay (faster-than-probe + NET-REL-07 e2e) + TTL device-tuned.
 - [ ] `relay:probe` / introduction path provably unchanged.
 - [ ] Both Go modules (`GOTOOLCHAIN=go1.25.0`, incl. `-race`) + 1to1 + transport
       gates green; `flutter analyze` 0 new; `git diff --check` clean.
@@ -782,7 +782,7 @@ git diff --check
 ## Dependency Impact
 - **FDC-S3: RESOLVED** (closed 2026-06-27) — no longer a gate; resolver + schema
   + constants locked. Remaining external dependency = the **live-relay-env** for
-  S1 closure (FDC-09 stands it up per FDC-S3 risk note).
+  LR1 closure (FDC-09 stands it up per FDC-S3 risk note).
 - **Sequencing (FDC-00 §Phase-2 / E + W3 tracks): FDC-10 → FDC-08 → FDC-09**,
   serial on `inbox.go`. FDC-10 (Redis durability) lands first to avoid raising
   inbox custody volume on a restart-losable backend — though presence itself is

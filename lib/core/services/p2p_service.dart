@@ -73,6 +73,34 @@ abstract interface class RelayPresenceLookup {
   Future<RelayPresence> lookupRelayPresence(String peerId);
 }
 
+/// FDC-09: the outcome of a `presence_set` self-publish. [published] = the relay
+/// accepted it; [unsupported] = an OLD relay answered "Unknown action:
+/// presence_set" (NET-REL-07 — degrade to skip, never retry/spam); [blocked] =
+/// the account-migration gate paused network side-effects (a moving device must
+/// not announce itself reachable); [failed] = a transient relay/bridge error.
+enum PresenceSetResult { published, unsupported, blocked, failed }
+
+/// FDC-09: optional capability for services that can SELF-PUBLISH the local
+/// peer's coarse foreground/background presence to the relay via the additive
+/// `presence_set` action — the WRITE twin of [RelayPresenceLookup]. The relay
+/// provably cannot infer foreground from a TTL-lagged socket, so the peer must
+/// announce it (FDC-S3 Option C).
+///
+/// Kept OFF the base [P2PService] interface — exactly like [RelayPresenceLookup]
+/// — so the many hand-written `implements P2PService` fakes do not all have to
+/// grow it. Callers consult it via an `is RelayPresenceSet` check and no-op when
+/// the service does not implement it (graceful, NET-REL-07-aligned). Presence is
+/// a best-effort HINT and NEVER load-bearing for delivery.
+abstract interface class RelayPresenceSet {
+  /// Self-publishes [state] (`foreground`|`background`) with a freshness
+  /// [ttlMs]. Move-gated as its FIRST line (returns [PresenceSetResult.blocked]
+  /// while a move has paused network side-effects — a moving device must not
+  /// announce itself reachable). Never throws — any error degrades to
+  /// [PresenceSetResult.failed]; an old relay degrades to
+  /// [PresenceSetResult.unsupported].
+  Future<PresenceSetResult> setPresence(String state, int ttlMs);
+}
+
 /// Abstract interface for P2P networking service.
 ///
 /// This service manages the P2P node lifecycle, peer connections,

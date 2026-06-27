@@ -73,8 +73,12 @@ const _transportDiagnosticPayloadKeys = <String, Set<String>>{
     'fromTransport',
     'toTransport',
     'elapsedMs',
+    'rttMs',
     'remotePeerShort',
   },
+  // FDC-12: the direct leg died and fell back to relay. Short id only (privacy);
+  // the Dart handler resolves short->full from live connections to clear sticky.
+  'transport:downgraded': {'fromTransport', 'toTransport', 'remotePeerShort'},
 };
 
 /// Broadcast stream for relay media-upload progress events emitted by the

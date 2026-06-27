@@ -91,7 +91,8 @@ class P2PServiceImpl
         ReadinessProofRecorder,
         P2PFullInboxDrain,
         DurableLanSender,
-        RelayPresenceLookup {
+        RelayPresenceLookup,
+        RelayPresenceSet {
   final Bridge _bridge;
   final LocalP2PService? _localP2P;
   final PushTokenStore? _pushTokenStore;
@@ -3386,8 +3387,36 @@ class P2PServiceImpl
         _transportMetrics?.recordHolePunchFailure();
         break;
       case 'transport:upgraded':
-        _transportMetrics?.recordRelayToDirectUpgrade();
-        _recordPeerUpgrade(event['remotePeerShort'] as String?);
+        {
+          _transportMetrics?.recordRelayToDirectUpgrade();
+          final short = event['remotePeerShort'] as String?;
+          // FDC-13: surface the relay->direct UPGRADE as the distinct 'upgraded'
+          // per-message badge.
+          _recordPeerUpgrade(short);
+          // FDC-12: ALSO prime the sticky transport cache so the next send's
+          // sticky/reuse fast-path reuses the direct conn. The telemetry carries
+          // only the sanitized short id; _learnedTransport is keyed by full peer
+          // id, so resolve short->full from the live connection set.
+          final fullId = _resolveFullPeerId(short);
+          if (fullId != null) {
+            recordSuccessfulTransport(fullId, 'direct');
+          }
+        }
+        break;
+      case 'transport:downgraded':
+        {
+          // FDC-12: the direct leg died (a relay/circuit leg may survive). Revert
+          // the FDC-13 'upgraded' badge so it stops lying, and clear the sticky
+          // direct preference so the next send re-probes instead of reusing a
+          // dead direct leg. Distinct from peer:disconnected (the peer stays
+          // connected via the surviving leg).
+          final short = event['remotePeerShort'] as String?;
+          _recordPeerDowngrade(short);
+          final fullId = _resolveFullPeerId(short);
+          if (fullId != null) {
+            _learnedTransport.remove(fullId);
+          }
+        }
         break;
     }
   }
@@ -3396,6 +3425,37 @@ class P2PServiceImpl
     if (remotePeerShort != null && remotePeerShort.isNotEmpty) {
       _peersUpgradedToDirect.add(remotePeerShort);
     }
+  }
+
+  /// FDC-12: reverts a peer's relay->direct upgrade badge when its direct leg
+  /// dies (transport:downgraded). Mirrors [_recordPeerUpgrade] in reverse.
+  void _recordPeerDowngrade(String? remotePeerShort) {
+    if (remotePeerShort != null && remotePeerShort.isNotEmpty) {
+      _peersUpgradedToDirect.remove(remotePeerShort);
+    }
+  }
+
+  /// FDC-12: resolves a sanitized short peer id (last 8 chars, as carried by the
+  /// transport-diagnostic telemetry) to the full peer id of a currently-connected
+  /// peer. The sticky cache ([_learnedTransport]) is keyed by full peer id, but
+  /// the upgrade/downgrade events carry only the short id (privacy), so the
+  /// session-scoped sticky write/clear resolves through the live connection set.
+  ///
+  /// Returns null when ZERO or MORE THAN ONE live connections share the short id
+  /// (a last-8-char collision). The sticky cache is a non-authoritative
+  /// optimization (the send race always falls back to the full race), so on an
+  /// ambiguous short id it is correct to skip the write/clear rather than risk
+  /// priming the WRONG peer's sticky entry.
+  String? _resolveFullPeerId(String? remotePeerShort) {
+    if (remotePeerShort == null || remotePeerShort.isEmpty) return null;
+    String? match;
+    for (final c in _currentState.connections) {
+      if (_shortId(c.peerId) == remotePeerShort) {
+        if (match != null && match != c.peerId) return null; // collision → fail-safe
+        match = c.peerId;
+      }
+    }
+    return match;
   }
 
   String? _inferTransportForPeer(String peerId) {
@@ -4562,6 +4622,55 @@ class P2PServiceImpl
         return RelayPresence.unreachable;
       default:
         return RelayPresence.unknown;
+    }
+  }
+
+  @override
+  Future<PresenceSetResult> setPresence(String state, int ttlMs) async {
+    // Move-feature gate FIRST (account-migration safety): a paused / migrating /
+    // migrated-out device must NOT announce itself reachable while ceding the
+    // account (mirrors lookupRelayPresence's 'p2p_get_presence' / registerPush
+    // Token's 'p2p_register_push_token'). The token is a log label only — never
+    // validated against an allowlist. CRITICAL: this self-gates the primitive
+    // because the PAUSE caller (handle_app_paused) is itself UNgated, unlike the
+    // resume path. Skip (no bridge call) when paused.
+    if (!await _allowsAccountNetworkSideEffects('p2p_set_presence')) {
+      return PresenceSetResult.blocked;
+    }
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_SERVICE_SET_PRESENCE_BEGIN',
+      details: {'state': state, 'ttlMs': ttlMs},
+    );
+
+    try {
+      final result = await callP2PRelayPresenceSet(
+        _bridge,
+        state: state,
+        ttlMs: ttlMs,
+      );
+      if (result['unsupported'] == true) {
+        // Old relay (NET-REL-07): degrade to skip, never retry/spam.
+        return PresenceSetResult.unsupported;
+      }
+      final ok = result['ok'] == true;
+      emitFlowEvent(
+        layer: 'FL',
+        event: ok
+            ? 'P2P_SERVICE_SET_PRESENCE_SUCCESS'
+            : 'P2P_SERVICE_SET_PRESENCE_FAILED',
+        details: {'state': state, 'ok': ok},
+      );
+      return ok ? PresenceSetResult.published : PresenceSetResult.failed;
+    } catch (e) {
+      // Best-effort hint: any failure degrades to `failed` (never throws).
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_SET_PRESENCE_EXCEPTION',
+        details: {'state': state, 'error': e.toString()},
+      );
+      return PresenceSetResult.failed;
     }
   }
 

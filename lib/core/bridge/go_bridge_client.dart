@@ -30,6 +30,7 @@ class GoBridgeClient extends Bridge {
     'holepunch:success',
     'holepunch:failure',
     'transport:upgraded',
+    'transport:downgraded',
   };
   static const _rawFlowPassthroughEvents = <String>{
     'node:startup_timing',
@@ -59,6 +60,7 @@ class GoBridgeClient extends Bridge {
     'holepunch:success',
     'holepunch:failure',
     'transport:upgraded',
+    'transport:downgraded',
     // FDC-S5 (M1): native bridge dispatch queue-wait. Emitted (DEBUG builds only)
     // by the iOS/Android bridge with {method, queueWaitMs} = the time a call sat
     // between the platform-channel receive and the background-dispatch slot — the
@@ -116,6 +118,11 @@ class GoBridgeClient extends Bridge {
     // dispatch ('relayPresenceGet' -> Bridge PresenceGet) + gomobile framework
     // rebuild land with the S1 device/live-relay closure.
     'relay:presence_get': _CmdSpec('relayPresenceGet', true),
+    // FDC-09: self-publish foreground/background presence (WRITE twin of
+    // presence_get). Native MethodChannel dispatch ('relayPresenceSet' -> Bridge
+    // PresenceSet) + gomobile framework rebuild land with the device/live-relay
+    // closure (same deferral as presence_get).
+    'relay:presence_set': _CmdSpec('relayPresenceSet', true),
     // Peer
     'peer:dial': _CmdSpec('dialPeer', true),
     'peer:disconnect': _CmdSpec('disconnectPeer', true),
@@ -133,6 +140,11 @@ class GoBridgeClient extends Bridge {
     'inbox:ack': _CmdSpec('inboxAck', true),
     'inbox:register_token': _CmdSpec('inboxRegisterToken', true),
     'inbox:unregister_token': _CmdSpec('inboxUnregisterToken', true),
+    // FDC-09 §12: register the recipient's opaque wake-token set (access-token
+    // anti-spam gate). Native MethodChannel dispatch ('inboxRegisterWakeTokens'
+    // -> Bridge RegisterWakeTokens) + framework rebuild land with the device
+    // closure (same deferral as presence_get/presence_set).
+    'inbox:register_wake_tokens': _CmdSpec('inboxRegisterWakeTokens', true),
     // Media
     'media:upload': _CmdSpec('mediaUpload', true),
     'media:download': _CmdSpec('mediaDownload', true),
@@ -748,11 +760,12 @@ class GoBridgeClient extends Bridge {
 
         // NET-REL-02 Option A: forward DCUtR hole-punch / relay->direct
         // telemetry to FLOW logs (HOLEPUNCH_ATTEMPT / HOLEPUNCH_SUCCESS /
-        // HOLEPUNCH_FAILURE / TRANSPORT_UPGRADED).
+        // HOLEPUNCH_FAILURE / TRANSPORT_UPGRADED / TRANSPORT_DOWNGRADED).
         case 'holepunch:attempt':
         case 'holepunch:success':
         case 'holepunch:failure':
         case 'transport:upgraded':
+        case 'transport:downgraded':
           final safeEventData = sanitizeTransportDiagnosticEventData(
             eventName,
             eventData,

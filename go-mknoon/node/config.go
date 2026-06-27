@@ -99,6 +99,16 @@ const (
 	// flapping/offline LAN peer cannot tight-loop the swarm into its 5s→5m dial
 	// backoff (proposal §6.1, §10).
 	LANDialWarmCooldown = 5 * time.Second
+
+	// UpgradeAbandonTimeout (FDC-12 — opportunistic DCUtR relay->direct upgrade) is
+	// the per-leg budget after which a DCUtR upgrade dial is abandoned back to the
+	// relay leg (the user never waits on the punch; relay + inbox always backstop).
+	// FDC-S2 Option A: max(p95 dial+identify rounded↑250ms, 750ms); the measured
+	// direct-QUIC identify p95 was 2ms so the 750ms floor governs — the SAME single
+	// source of truth as FDC-11's LANDirectIdentifyBudget (both derive from the one
+	// FDC-S2 measurement). The production abandon-dial path is DEVICE-only and
+	// gated by EnableDcutrUpgrade.
+	UpgradeAbandonTimeout = 750 * time.Millisecond
 )
 
 // TimeoutProfile bundles per-operation timeout durations for a given

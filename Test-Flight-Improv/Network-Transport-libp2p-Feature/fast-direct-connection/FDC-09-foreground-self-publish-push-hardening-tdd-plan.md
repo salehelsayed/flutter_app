@@ -690,7 +690,7 @@ APNs throttling; FDC-S3 Method note).
 run under FDC-S3 Methods 1/2. **Closure scenario:** `./scripts/check_reliability_simulation_discovery.sh`
 then `/sims <scope> --only N` (new scenario needs a `classify_path()` case + dart-define case first).
 Live relay env reproducibility is an **open dependency** (per MEMORY the relay env is gitignored;
-FDC-09 must confirm a deployable relay before these run — it also stands up the env FDC-08's S1 needs).
+FDC-09 must confirm a deployable relay before these run — it also stands up the env FDC-08's LR1 needs).
 
 ---
 
@@ -801,6 +801,35 @@ Expected counts: capture the green baseline before FDC-09 starts (per FDC-00 clo
 - Group-push §12 parity is **deferred** to an open issue (1:1 wake hardened first).
 - The §12 push-hardening half (access-token / opaque / visible) is **independent** of the presence_set
   write and **may ship as a separate sub-PR** — they only share the `inbox.go` push-path edits.
+
+**Implementation-time decisions (2026-06-27, post-review):**
+- **§12 access-token enforcement ships OFF (`wakeTokenGateEnforced = false`).** The relay gate is RECORDED
+  but inert until the **send-side token presentation** lands (the go-mknoon `InboxStoreDetailed` store path
+  attaching the recipient-issued token to its `store` request). Until then every real sender presents an
+  empty token, so enforcing the gate the instant a recipient registers a set would hard-silence ALL that
+  recipient's 1:1 pushes (still stored, no wake). **Strict ship-order:** send-side presentation → flip the
+  flag. `register_wake_tokens` + `IssueWakeTokensUseCase` are safe to pre-provision while inert. (Review H1.)
+- **TC-09-10 "visible" is a PRESERVATION LOCK, not a behavior change.** The `new_message` wake is already
+  alert-class on iOS (`apns-push-type:alert` + non-empty `Aps.Alert` + `MutableContent` for the NSE) and
+  the Android data-only delivery is DELIBERATE (the app decrypts-and-renders real content). Adding a generic
+  Android `Notification` block would have regressed `inbox_test.go` (612/704/1197) and degraded the
+  decrypt-and-render path. The plan's RC4 "wake leans silent" was stale — the lock guards against a future
+  regression to content-available-only. (Device row TC-09-20 remains the real proof.)
+- **`presence_set` writes to the FIRST responding relay (`ForEach`), not all (`FanOut`).** Deliberate: it
+  mirrors the FDC-08 `RelayPresenceLookup` read path, presence is a non-load-bearing HINT, and each relay's
+  connectedness last-seen already provides the reachability baseline. In a multi-relay pool the self-state
+  enrichment lands on one relay; a fan-out write is a possible follow-up. `register_wake_tokens` DOES fan
+  out (parity with `register_token`). (Review L1.)
+- **The fg/bg label is consumed INTERNALLY by the resolver — RESOLVED in FDC-09b.** Originally
+  `presence_store.go::Lookup` rule #1 folded ANY fresh self-state to `reachable`, so a `background`
+  self-publish read `reachable` and the §6.3 read side direct-raced a backgrounded peer instead of going
+  inbox-first. **FDC-09b** (`FDC-09b-presence-fgbg-resolver-fix-tdd-plan.md`) branches rule #1 on the
+  self-state: `foreground → reachable`, `background → unreachable` (→ §6.3 inbox-first + push-to-wake; live
+  legs stay best-effort). The WIRE response stays coarse — no fg/bg field (`PRESENCE_IS_ONLINE_ISH_NOT_FOREGROUND`
+  holds); the fg/bg is consumed internally to pick the coarse value, which is exactly Option C's purpose.
+  Locked by `TestPresenceSet_BackgroundResolvesUnreachable_ForegroundReachable`. (Severity was
+  wake-promptness/emphasis, never delivery — TC-09-13 / `PRESENCE_NEVER_LOAD_BEARING` guarantees inbox+push
+  regardless.)
 
 ## Dependency Impact
 

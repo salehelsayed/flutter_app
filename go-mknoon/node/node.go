@@ -50,6 +50,11 @@ type Node struct {
 	eventCallback  EventCallback
 	eventSub       event.Subscription
 	connections    map[string]connectionInfo
+	// peerSession is the FDC-12 network.Notifiee that keeps connections[peer] on
+	// the BEST live conn across a DCUtR relay->direct upgrade (and back). It is
+	// registered in Start (after n.host is set) and removed in Stop. nil before
+	// Start / after Stop.
+	peerSession    *peerSessionNotifiee
 	relayReady     chan struct{}
 	relayReadyOnce *sync.Once
 	startedAt      time.Time   // for startup timing instrumentation
@@ -349,8 +354,11 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	}
 	// Reachability stays ForceReachabilityPrivate() in production; the test seam
 	// may swap to ForceReachabilityPublic() for PROTOCOL-feasibility tests only.
+	// FDC-12: EnableDcutrUpgrade ALSO opts into public reachability so the DCUtR
+	// holepuncher can actively upgrade relay->direct. Flag OFF (the default) is
+	// byte-identical to HEAD (ForceReachabilityPrivate, zero punches).
 	reachabilityOpt := libp2p.ForceReachabilityPrivate()
-	if n.forcePublicReachabilityForTests {
+	if dcutrReachabilityMode(flags.EnableDcutrUpgrade, n.forcePublicReachabilityForTests) == "public" {
 		reachabilityOpt = libp2p.ForceReachabilityPublic()
 	}
 
@@ -393,6 +401,17 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	// Wired unconditionally (holds the per-peer cooldown state); the actual dial
 	// is gated on EnableLibp2pLANDial inside HandleLANPeerFound.
 	n.lanDialHandler = newLANDialHandler(n)
+
+	// FDC-12: register the per-conn session Notifiee so connections[peer] tracks
+	// the BEST live conn across a relay->direct DCUtR upgrade (and back). libp2p
+	// does NOT re-fire EvtPeerConnectednessChanged when a punch opens a SECOND
+	// (direct) conn to an already-connected peer, so the EventBus-driven
+	// watchConnectionEvents path alone would keep pointing at the stale
+	// /p2p-circuit leg. Wired unconditionally (it only corrects an already-opened
+	// conn — EnableDcutrUpgrade controls whether a direct conn is opened at all).
+	// Removed in Stop via StopNotify.
+	n.peerSession = newPeerSessionNotifiee(n)
+	h.Network().Notify(n.peerSession)
 
 	// Log announced addresses (post-filter).
 	announceAddrs := h.Addrs()
@@ -556,6 +575,12 @@ func (n *Node) Stop() error {
 		n.cancel()
 	}
 	if n.host != nil {
+		// FDC-12: deregister the session Notifiee before closing the host so no
+		// re-point fires after Stop (host.Close() also tears down notifiees, but
+		// StopNotify is explicit and mirrors FDC-11's clear-on-Stop discipline).
+		if n.peerSession != nil {
+			n.host.Network().StopNotify(n.peerSession)
+		}
 		if err := n.host.Close(); err != nil {
 			return fmt.Errorf("host close: %w", err)
 		}
@@ -565,6 +590,7 @@ func (n *Node) Stop() error {
 	n.connections = make(map[string]connectionInfo)
 	n.relayPeerOrder = nil
 	n.host = nil
+	n.peerSession = nil
 	n.eventSub = nil
 	// FDC-11: tear down the LAN-dial handler so a Stop/Start cycle re-wires
 	// cleanly with an empty cooldown (no leak, no double-wire).

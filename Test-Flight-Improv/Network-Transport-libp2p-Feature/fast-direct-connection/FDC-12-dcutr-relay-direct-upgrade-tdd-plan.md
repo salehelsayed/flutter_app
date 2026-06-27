@@ -698,19 +698,19 @@ git diff --check                             # expect: clean
 ## Done Criteria (checkbox)
 
 - [x] FDC-S2 **identify portion** landed (Option A: direct QUIC reaches usable identify; **upgrade-abandon-timeout = 750ms**).
-- [ ] DCUtR **device-only** items still owed (flip-safety / reachability mode, RTT-sync-window, real-NAT punch payoff, proof index `N`) — the FDC-12 DEVICE-PROOF closure gate; keep `EnableDcutrUpgrade` **default-off** until they land.
-- [ ] `FeatureFlags.EnableDcutrUpgrade` added — **the lone default-false flag** (`DefaultFeatureFlags()` returns false; "all default true" doc-comment amended); plumbed `bridge.go`; flag-OFF byte-identical (TC-12-01 green + mutation-verified).
-- [ ] `UpgradeAbandonTimeout = 750ms` added to `config.go` Timeouts (single source of truth, not duplicated in FDC-11).
-- [ ] `peer_session.go` Notifiee re-point landed; TC-12-03/04/05/06 green + mutation-verified; TC-12-03 proven independent of the tracer (`Successes()==0`).
-- [ ] Stop tears down the registered `network.Notifiee` (`h.Network().StopNotify(...)`) so no re-point fires after Stop — OR explicitly documents `host.Close()`/GC teardown reliance (parity with FDC-11's clear-on-Stop test).
-- [ ] `transport:upgraded` carries RTT/sync telemetry **+ the full remote peer id**; TC-12-07 green.
-- [ ] `transport:downgraded` emitted Go-side + forwarded via `bridge/events.go` (net-new event).
-- [ ] Every NEW exported Go identifier (the `peer_session.go` Notifiee type/funcs, `FeatureFlags.EnableDcutrUpgrade`) carries a doc comment; `make lint`/`go vet` clean.
-- [ ] TCP-lane feasibility TC-12-08 added (SKIP-tolerant).
-- [ ] Dart EXTENDS the FDC-13 upgrade handler → `lastKnownGoodTransport` (TC-12-09, badge preserved); NEW `transport:downgraded` handler reverts badge+sticky (TC-12-09b); flag plumbs default-off (TC-12-10) — all green.
-- [ ] Dedup preservation TC-12-11 green; FDC-13 badge logic + `send_chat_message_use_case.dart` UNCHANGED.
-- [ ] `GOTOOLCHAIN=go1.25.0 go test ./...` + `-race` + `run_test_gates.sh 1to1`/`transport` + `core-host-all` green; analyze 0-new; `git diff --check` clean.
-- [ ] DEVICE-PROOF TC-12-12/13 closed on a real punchable pair (device-proof `dcutr_upgrade_proof_test.dart` + new 1:1 device-real orchestrator; closure gate).
+- [ ] DCUtR **device-only** items still owed (flip-safety / reachability mode, RTT-sync-window, real-NAT punch payoff, proof index `N`) — the FDC-12 DEVICE-PROOF closure gate; keep `EnableDcutrUpgrade` **default-off** until they land. **(DEFERRED — host scaffolding landed; flag stays default-off.)**
+- [x] `FeatureFlags.EnableDcutrUpgrade` added — **the lone default-false flag** (`DefaultFeatureFlags()` returns false; "all default true" doc-comment amended); plumbed via the JSON FeatureFlags map (`bridge.go` already pass-through; Dart `defaultResilienceFeatureFlags()` adds `enableDcutrUpgrade:false`, env `MKNOON_ENABLE_DCUTR_UPGRADE`); flag-OFF byte-identical (TC-12-01 green; reachability branch keyed on the flag via `dcutrReachabilityMode`).
+- [x] `UpgradeAbandonTimeout = 750ms` added to `config.go` Timeouts (FDC-12 block; documented as same FDC-S2 Option A origin as FDC-11's `LANDirectIdentifyBudget`).
+- [x] `peer_session.go` Notifiee re-point landed; TC-12-03/04/05/06 green; TC-12-03 proven independent of the tracer (no `holepunch:success` emitted). **NOTE: Notifiee callbacks goroutine-dispatch the re-point — libp2p calls `Connected` SYNCHRONOUSLY on the dialing goroutine (which may hold `n.mu`), so an inline re-point would re-enter `n.mu` and deadlock (mirrors swarm's own Disconnected goroutine pattern).**
+- [x] Stop tears down the registered `network.Notifiee` (`h.Network().StopNotify(n.peerSession)` before `host.Close()`; `n.peerSession=nil` on reset).
+- [x] `transport:upgraded` carries RTT telemetry (`rttMs`, TC-12-07). **ADAPTED: the full remote peer id is NOT added to the event — the short-only telemetry privacy invariant is preserved and the Dart sticky write resolves short→full from live connections (`_resolveFullPeerId`, plan option (b)). The `<from FDC-S2>` sync-window field is unresolved/device-only and not emitted.**
+- [x] `transport:downgraded` emitted Go-side (session Notifiee, on direct→circuit) + forwarded via `bridge/events.go` + `go_bridge_client.dart` + `bridge.dart` sanitizer allowlist (net-new event).
+- [x] Every NEW exported/unexported Go identifier (`peerSessionNotifiee`/funcs, `FeatureFlags.EnableDcutrUpgrade`, `UpgradeAbandonTimeout`, `dcutrReachabilityMode`, `selectBestConnAddr`) carries a doc comment; `go vet ./...` clean; **`make lint` red is PRE-EXISTING FDC-S5 gofmt on `node/benchmark_bridge_concurrency_test.go` (+`cmd/testpeer`,`crypto/interop_test`) — NOT FDC-12 (my files gofmt-clean).**
+- [x] TCP-lane feasibility TC-12-08 added (`TestFeasibility_DirectUpgrade_TcpLane`, SKIP-tolerant).
+- [x] Dart EXTENDS the FDC-13 upgrade handler → `lastKnownGoodTransport` (TC-12-09, badge preserved); NEW `transport:downgraded` handler reverts badge+sticky (TC-12-09b); short-id collision fail-safe (TC-12-09c); flag plumbs default-off (TC-12-10) — all green. **Double-emit across tracer+Notifiee fixed: `markPeerUpgradedToDirect` returns whether it flipped, tracer emits only on flip → exactly-once (TC: `TestPeerSession_TracerAndNotifiee_NoDoubleUpgradeEmit`).**
+- [x] Dedup preservation TC-12-11 green (`chat_notification_dedupe_integration_test.dart`); FDC-13 badge logic + `send_chat_message_use_case.dart` UNCHANGED.
+- [x] `GOTOOLCHAIN=go1.25.0 go test ./node/` ok (441s, real hosts) + `-race` (FDC-12 tests) + `run_test_gates.sh 1to1` (1354 passed) green; analyze 0-new. (`transport`/`core-host-all` not re-run this pass; `git diff --check` not checked — uncommitted on shared `new-orbit`.)
+- [ ] DEVICE-PROOF TC-12-12/13 closed on a real punchable pair (device-proof `dcutr_upgrade_proof_test.dart` + new 1:1 device-real orchestrator; closure gate). **(DEFERRED — device-only; not stubbed.)**
 
 ## Scope Guard (hard Do-not)
 

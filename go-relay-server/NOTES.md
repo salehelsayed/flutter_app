@@ -109,3 +109,33 @@
   └────────────────────────────────┴──────────────────────────────────┘
 
   If up{job="relay-server"} shows 0 or is missing, your relay-server isn't running yet with the new metrics build — deploy it first.
+
+  ---
+  Appendix: additive inbox dispatch actions (FDC-08 / FDC-09)
+
+  The inbox stream handler (`HandleInboxStream`, `inbox.go`) dispatches on
+  `req.Action`. All actions below are ADDITIVE: an old relay answers
+  `{"status":"ERROR","error":"Unknown action: <action>"}`, which new clients map
+  to a graceful skip (NET-REL-07 back-compat). Presence is a HINT, never
+  load-bearing — the inbox + push remain the delivery guarantee.
+
+  - `presence_get`  (FDC-08, READ): coarse "online-ish, TTL-lagged" presence for a
+    peer (no circuit dial). Reply `{presence: reachable|unreachable|unknown, ageMs}`.
+  - `presence_set`  (FDC-09, WRITE): a peer SELF-PUBLISHES its foreground/background
+    state (`metadata: {state, ttlMs}`). Subject = the AUTHENTICATED stream peer
+    (anti-spoof). Records the self-state + seeds last-seen so a stale state degrades
+    to `unknown` (≈180 s TTL, clamp 10 min).
+  - `register_wake_tokens` (FDC-09 §12): a recipient registers the opaque wake-token
+    SET it minted for its contacts (`wakeTokens: [...]`). The store-path push gate
+    then wakes ONLY a sender presenting a member token (`store` carries `wakeToken`);
+    a non-member wake is suppressed (metric `push_sent_total{result="unauthorized_wake"}`)
+    but the message is still stored. FAIL-OPEN until a recipient registers a set, so
+    existing push delivery is unchanged. Cleared on `unregister_token`.
+    NOTE: enforcement ships OFF (`wakeTokenGateEnforced=false`) — a registered set is
+    RECORDED but never suppresses — until the SEND-SIDE token presentation lands
+    (the store request attaching the recipient-issued token). Strict ship-order;
+    flip on only once both halves are live, else all of a registered recipient's
+    1:1 pushes hard-silence (every sender presents an empty token).
+
+  Presence + wake-token stores are in-memory (a relay bounce loses them and fails
+  OPEN back to existing push); durability is FDC-10's gap.

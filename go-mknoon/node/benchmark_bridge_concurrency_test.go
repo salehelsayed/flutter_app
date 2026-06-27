@@ -105,7 +105,7 @@ func TestConcurrentSendDialNoSerialize(t *testing.T) {
 	// is robust under the race detector and on loaded CI (the block is real-time
 	// wait on a dial deadline, which -race does not slow).
 	serialFloor := time.Duration(k) * dialBlock // ~4.8s
-	concurrentCeiling := 3 * dialBlock           // 1.8s
+	concurrentCeiling := 3 * dialBlock          // 1.8s
 
 	t.Run("concurrent_dials_are_not_serialized_at_node_mutex", func(t *testing.T) {
 		nodeA := New(&testEventCollector{})

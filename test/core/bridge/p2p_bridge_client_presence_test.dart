@@ -106,4 +106,86 @@ void main() {
       expect(eventNames(), contains('P2P_RELAY_PRESENCE_UNKNOWN_ACTION'));
     },
   );
+
+  // TC-09-08a (FDC-09 WRITE) — callP2PRelayPresenceSet sends relay:presence_set
+  // with {state, ttlMs} and reports ok on accept.
+  test(
+    'callP2PRelayPresenceSet sends relay:presence_set with {state, ttlMs}',
+    () async {
+      bridge.nextResponse = {'ok': true};
+
+      final result = await callP2PRelayPresenceSet(
+        bridge,
+        state: 'foreground',
+        ttlMs: 180000,
+      );
+
+      expect(bridge.lastParsedRequest!['cmd'], 'relay:presence_set');
+      final payload = bridge.lastParsedRequest!['payload'] as Map;
+      expect(payload['state'], 'foreground');
+      expect(payload['ttlMs'], 180000);
+
+      expect(result['ok'], isTrue);
+      expect(result['unsupported'], isFalse);
+
+      final names = eventNames();
+      expect(names, contains('P2P_RELAY_PRESENCE_SET_REQUEST'));
+      expect(names, contains('P2P_RELAY_PRESENCE_SET_RESPONSE'));
+    },
+  );
+
+  // TC-09-08a (NET-REL-07) — an old relay's "Unknown action: presence_set" maps
+  // to {ok:false, unsupported:true} so the caller degrades to skip (never spams).
+  test(
+    'callP2PRelayPresenceSet maps Unknown action to unsupported (skip)',
+    () async {
+      bridge.nextResponse = {
+        'status': 'ERROR',
+        'error': 'Unknown action: presence_set',
+      };
+
+      final result = await callP2PRelayPresenceSet(
+        bridge,
+        state: 'background',
+        ttlMs: 180000,
+      );
+
+      expect(result['ok'], isFalse);
+      expect(result['unsupported'], isTrue);
+      expect(eventNames(), contains('P2P_RELAY_PRESENCE_SET_UNKNOWN_ACTION'));
+    },
+  );
+
+  // FDC-09 §12 — callP2PRegisterWakeTokens sends inbox:register_wake_tokens with
+  // the token set and reports ok on accept.
+  test('callP2PRegisterWakeTokens sends inbox:register_wake_tokens', () async {
+    bridge.nextResponse = {'ok': true};
+
+    final result = await callP2PRegisterWakeTokens(
+      bridge,
+      tokens: ['tok-1', 'tok-2'],
+    );
+
+    expect(bridge.lastParsedRequest!['cmd'], 'inbox:register_wake_tokens');
+    expect((bridge.lastParsedRequest!['payload'] as Map)['tokens'], [
+      'tok-1',
+      'tok-2',
+    ]);
+    expect(result['ok'], isTrue);
+    expect(result['unsupported'], isFalse);
+  });
+
+  // NET-REL-07 — an old relay's "Unknown action" maps to {ok:false,
+  // unsupported:true} so the caller degrades (plain push keeps working).
+  test('callP2PRegisterWakeTokens maps Unknown action to unsupported', () async {
+    bridge.nextResponse = {
+      'status': 'ERROR',
+      'error': 'Unknown action: register_wake_tokens',
+    };
+
+    final result = await callP2PRegisterWakeTokens(bridge, tokens: ['tok-1']);
+
+    expect(result['ok'], isFalse);
+    expect(result['unsupported'], isTrue);
+  });
 }

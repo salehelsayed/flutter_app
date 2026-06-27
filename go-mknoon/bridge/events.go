@@ -19,6 +19,7 @@ type EventCallback interface {
 	//   "holepunch:attempt"       — { step, attempt, rttMs?, remotePeerShort }
 	//   "holepunch:success"       — { step, fromTransport, toTransport, elapsedMs, remotePeerShort }
 	//   "holepunch:failure"       — { step, error, elapsedMs?, remotePeerShort }
-	//   "transport:upgraded"      — { fromTransport, toTransport, elapsedMs, remotePeerShort }
+	//   "transport:upgraded"      — { fromTransport, toTransport, elapsedMs, rttMs?, remotePeerShort }
+	//   "transport:downgraded"    — { fromTransport, toTransport, remotePeerShort }  (FDC-12: direct leg died, fell back to relay)
 	OnEvent(jsonString string)
 }
