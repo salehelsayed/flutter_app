@@ -140,36 +140,36 @@
   },
   "architecture": {
     "graph": "graphify-arch/graphify-out/graph.json",
-    "nodes": 42203,
-    "edges": 65605,
-    "communities": 912,
-    "source_files": 2170,
-    "avg_edges_per_node": 1.5545,
-    "avg_nodes_per_community": 46.28,
-    "app_owned_nodes": 40548,
+    "nodes": 42300,
+    "edges": 65776,
+    "communities": 923,
+    "source_files": 2177,
+    "avg_edges_per_node": 1.555,
+    "avg_nodes_per_community": 45.83,
+    "app_owned_nodes": 40643,
     "app_owned_ratio": 0.9608,
     "noise_nodes": 0,
     "noise_ratio": 0.0,
-    "unknown_source_nodes": 1655,
+    "unknown_source_nodes": 1657,
     "unknown_source_ratio": 0.0392,
     "top_hub_noise_count": 0,
     "top_hub_noise_ratio": 0.0,
     "top_source_dirs": [
       [
         "lib",
-        17466
+        17478
       ],
       [
         "test",
-        14005
+        14080
       ],
       [
         "integration_test",
-        5839
+        5841
       ],
       [
         "go-mknoon",
-        2174
+        2180
       ],
       [
         "go-relay-server",
@@ -195,7 +195,7 @@
       {
         "id": "package_flutter_test_flutter_test_dart",
         "label": "package:flutter_test/flutter_test.dart",
-        "degree": 1013,
+        "degree": 1018,
         "source_file": "",
         "noise": false
       },
@@ -216,14 +216,14 @@
       {
         "id": "package_flutter_material_dart",
         "label": "package:flutter/material.dart",
-        "degree": 422,
+        "degree": 423,
         "source_file": "",
         "noise": false
       },
       {
         "id": "dart_convert",
         "label": "dart:convert",
-        "degree": 407,
+        "degree": 408,
         "source_file": "",
         "noise": false
       },
@@ -258,9 +258,9 @@
     ]
   },
   "deltas": {
-    "nodes": -0.5977,
-    "edges": -0.6317,
-    "communities": -0.7918,
+    "nodes": -0.5968,
+    "edges": -0.6307,
+    "communities": -0.7893,
     "app_owned_ratio": 1.1738,
     "noise_ratio": -1.0,
     "top_hub_noise_ratio": -1.0

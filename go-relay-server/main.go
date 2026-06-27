@@ -105,6 +105,11 @@ func main() {
 	profile := NewProfileStore(storageCfg.ProfileDir)
 	biz = newBusinessMetrics()
 
+	// FDC-08: shared per-peer presence store backing the additive `presence_get`
+	// read (and FDC-09's future `presence_set` write). Seeded by the
+	// connectedness handler below; read read-only by the presence_get action.
+	presence := NewPresenceStore()
+
 	// Publish backend durability so ops can scrape/alert on a silently-memory
 	// relay (the live env is gitignored; a regressed RELAY_BACKEND is otherwise
 	// undetectable from outside the box).
@@ -115,7 +120,7 @@ func main() {
 		HandleRendezvousStream(s, store)
 	})
 	h.SetStreamHandler(InboxProtocol, func(s network.Stream) {
-		HandleInboxStream(s, inbox, groupInbox)
+		HandleInboxStream(s, inbox, groupInbox, h, presence)
 	})
 	h.SetStreamHandler(MediaProtocol, func(s network.Stream) {
 		HandleMediaStream(s, media, profile)
@@ -146,6 +151,9 @@ func main() {
 		for ev := range sub.Out() {
 			switch e := ev.(type) {
 			case event.EvtPeerConnectednessChanged:
+				// FDC-08: seed the net-new last-seen map (distinct from the
+				// HLL-only RecordPeerSeen below, which discards the peer ID).
+				recordConnectednessPresence(presence, e)
 				if e.Connectedness == network.Connected {
 					connectionsActive.Inc()
 					connectionsCounter.Inc()

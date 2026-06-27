@@ -5,11 +5,20 @@ class LocalPeer {
   final int port;
   final DateTime discoveredAt;
 
+  /// FDC-11: the remote's libp2p LAN multiaddrs (QUIC, optionally TCP), built
+  /// from the bonsoir TXT `quicPort`/`tcpPort` attributes at resolve time, e.g.
+  /// `/ip4/<host>/udp/<quicPort>/quic-v1`. Fed to the Go LAN-direct dial
+  /// (`lan:peer_found`). Empty when the peer advertised no libp2p ports (an
+  /// older client, or the WS-only path) — distinct from [port], which is the
+  /// WebSocket port for the bespoke LAN byte path.
+  final List<String> libp2pAddresses;
+
   const LocalPeer({
     required this.peerId,
     required this.host,
     required this.port,
     required this.discoveredAt,
+    this.libp2pAddresses = const [],
   });
 
   /// Time after which a discovered entry is considered stale and skipped.
@@ -166,7 +175,16 @@ abstract class LocalDiscoveryService {
   ///
   /// [peerId] is the libp2p peer ID to advertise in the TXT record.
   /// [wsPort] is the local WebSocket server port to advertise.
-  Future<void> startAdvertising(String peerId, int wsPort);
+  /// FDC-11: [quicPort]/[tcpPort] are the libp2p host's own LAN listen ports
+  /// (from `host.Addrs()`); advertised additively in the TXT so a same-WiFi peer
+  /// can build the QUIC/TCP multiaddr for the libp2p LAN-direct dial. Null when
+  /// the libp2p listen ports are unknown (the WS-only path is unaffected).
+  Future<void> startAdvertising(
+    String peerId,
+    int wsPort, {
+    int? quicPort,
+    int? tcpPort,
+  });
 
   /// Stop advertising and discovery.
   Future<void> stopAdvertising();

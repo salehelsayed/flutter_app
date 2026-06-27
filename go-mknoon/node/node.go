@@ -112,6 +112,11 @@ type Node struct {
 	// ForceReachabilityPublic() so PROTOCOL-feasibility tests can drive a real
 	// loopback hole punch; false in production (private reachability untouched).
 	forcePublicReachabilityForTests bool
+
+	// FDC-11: bonsoir-fed libp2p LAN-direct dial. Wired in Start() once n.host is
+	// set, nilled in Stop(). Holds the per-peer warm cooldown + dial. See
+	// lan_dial.go / HandleLANPeerFound.
+	lanDialHandler *lanDialHandler
 }
 
 type connectionInfo struct {
@@ -384,6 +389,11 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	n.host = h
 	n.peerId = h.ID().String()
 
+	// FDC-11: wire the bonsoir-fed LAN-direct dial handler now that n.host is set.
+	// Wired unconditionally (holds the per-peer cooldown state); the actual dial
+	// is gated on EnableLibp2pLANDial inside HandleLANPeerFound.
+	n.lanDialHandler = newLANDialHandler(n)
+
 	// Log announced addresses (post-filter).
 	announceAddrs := h.Addrs()
 	log.Printf("[NODE] Announcing %d addresses (loopback/link-local filtered out)", len(announceAddrs))
@@ -437,6 +447,12 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 		"pubsubInitMs":        pubsubInitMs,
 		"sinceProcessStartMs": n.sinceProcessStartMs(), // FDC-S1 (a)
 	})
+
+	// FDC-07: emit the dispatch-time reserve anchor BEFORE kicking off the
+	// relay-warm / auto-register goroutines, so it is ordered strictly ahead of
+	// the completion-time relay_warm_done below. Observability only (S1: the
+	// dispatch is already as early as Start allows).
+	n.emitReserveDispatchAnchor()
 
 	// Warm relay connections concurrently in background.
 	// Each relayInfo may contain multiple addresses (e.g. WSS + QUIC) for
@@ -550,6 +566,14 @@ func (n *Node) Stop() error {
 	n.relayPeerOrder = nil
 	n.host = nil
 	n.eventSub = nil
+	// FDC-11: tear down the LAN-dial handler so a Stop/Start cycle re-wires
+	// cleanly with an empty cooldown (no leak, no double-wire).
+	if n.lanDialHandler != nil {
+		n.lanDialHandler.mu.Lock()
+		n.lanDialHandler.cooldown = nil
+		n.lanDialHandler.mu.Unlock()
+		n.lanDialHandler = nil
+	}
 	n.groupDialBackoff = make(map[string]groupPeerDialState)
 	n.groupRecoverySem = make(chan struct{}, GroupDiscoveryConcurrency)
 	n.relayReadyOnce = &sync.Once{} // reset so next Start() can use it

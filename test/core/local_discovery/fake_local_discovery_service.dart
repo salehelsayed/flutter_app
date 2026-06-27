@@ -11,6 +11,8 @@ class FakeLocalDiscoveryService implements LocalDiscoveryService {
 
   String? advertisedPeerId;
   int? advertisedPort;
+  int? advertisedQuicPort;
+  int? advertisedTcpPort;
   bool isAdvertising = false;
 
   /// Simulate discovering a peer on the local network.
@@ -26,9 +28,16 @@ class FakeLocalDiscoveryService implements LocalDiscoveryService {
   }
 
   @override
-  Future<void> startAdvertising(String peerId, int wsPort) async {
+  Future<void> startAdvertising(
+    String peerId,
+    int wsPort, {
+    int? quicPort,
+    int? tcpPort,
+  }) async {
     advertisedPeerId = peerId;
     advertisedPort = wsPort;
+    advertisedQuicPort = quicPort;
+    advertisedTcpPort = tcpPort;
     isAdvertising = true;
   }
 

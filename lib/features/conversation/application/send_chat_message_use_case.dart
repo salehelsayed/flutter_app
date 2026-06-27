@@ -36,6 +36,13 @@ const Duration interactiveDirectAggregateBudget = Duration(seconds: 6);
 /// Interactive send budget for the inbox store fallback path.
 const Duration interactiveInboxBudget = Duration(seconds: 3);
 
+/// FDC-08: tight bound on the presence-hint lookup so it stays OFF the
+/// send-critical path. In steady state it is a 10–15s-cached read (≈0ms); a cold
+/// lookup that exceeds this degrades to `RelayPresence.unknown` (today's full
+/// concurrent race) while the underlying lookup still completes and warms the
+/// cache for the next send. Consulted ONLY on the not-live-reachable path.
+const Duration _presenceHintBudget = Duration(milliseconds: 400);
+
 /// FDC-03: the serial relay-probe tail was REMOVED from the send path, so the
 /// `NO_RESERVATION` fast-offline signal described below is no longer CONSUMED on
 /// a 1:1 send — an unknown-presence offline peer now takes durable inbox custody
@@ -728,6 +735,52 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           return ok;
         })
         .catchError((_) => false);
+
+    // FDC-08 (§6.3) presence emphasis — consulted ONLY here on the
+    // not-live-reachable path (a connected/local peer is delivered live, fast
+    // path untouched). It is a HINT, NEVER a delivery gate: the durable inbox
+    // copy above ALWAYS fires regardless of the hint (PRESENCE_NEVER_REPLACES_
+    // INBOX / the C7 load-bearing gate). It only biases whether the live race or
+    // the durable copy commits first; the FDC-02/03 race ladder below is
+    // unchanged. Bounded + cache-served so it stays off the send-critical path,
+    // degrading to `unknown` (today's fully-concurrent behavior) on miss/timeout.
+    final presenceLookup = p2pService is RelayPresenceLookup
+        ? p2pService as RelayPresenceLookup
+        : null;
+    var presenceEmphasis = RelayPresence.unknown;
+    if (presenceLookup != null) {
+      presenceEmphasis = await presenceLookup
+          .lookupRelayPresence(targetPeerId)
+          .timeout(
+            _presenceHintBudget,
+            onTimeout: () => RelayPresence.unknown,
+          );
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_PRESENCE_EMPHASIS',
+      details: {
+        'id': resolvedMessageId.substring(0, 8),
+        'targetPeerId': targetPrefix,
+        'presence': presenceEmphasis.name,
+      },
+    );
+
+    // `unreachable` → commit the durable copy FIRST (custody + the relay's
+    // store-triggered push-to-wake) before the live race builds; the live legs
+    // still run afterwards (best-effort, NEVER dropped). `reachable`/`unknown`
+    // keep today's fully-concurrent behavior (lazy inbox racing the live legs).
+    // This is the same single storeInInbox future (non-null here — it was just
+    // created above) — awaiting it here and again in the race-failure tail never
+    // produces a second relay write.
+    if (presenceEmphasis == RelayPresence.unreachable) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_PRESENCE_INBOX_FIRST',
+        details: {'id': resolvedMessageId.substring(0, 8)},
+      );
+      await concurrentInbox;
+    }
   }
 
   // FDC-02 §6.2a/b: the staggered relay-LIVE leg joins the race only when a live

@@ -73,6 +73,7 @@ type inboxStreamEnv struct {
 	sender    host.Host
 	recipient host.Host
 	intruder  host.Host
+	presence  *PresenceStore
 }
 
 func setupInboxStreamEnv(t *testing.T, inbox *InboxStore, groupInbox *GroupInboxStore) *inboxStreamEnv {
@@ -103,8 +104,9 @@ func setupInboxStreamEnv(t *testing.T, inbox *InboxStore, groupInbox *GroupInbox
 		t.Fatal(err)
 	}
 
+	presence := NewPresenceStore()
 	server.SetStreamHandler(InboxProtocol, func(s network.Stream) {
-		HandleInboxStream(s, inbox, groupInbox)
+		HandleInboxStream(s, inbox, groupInbox, server, presence)
 	})
 
 	t.Cleanup(func() {
@@ -119,6 +121,7 @@ func setupInboxStreamEnv(t *testing.T, inbox *InboxStore, groupInbox *GroupInbox
 		sender:    sender,
 		recipient: recipient,
 		intruder:  intruder,
+		presence:  presence,
 	}
 }
 

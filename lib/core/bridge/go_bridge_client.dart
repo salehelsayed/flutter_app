@@ -112,9 +112,17 @@ class GoBridgeClient extends Bridge {
     // Relay
     'relay:reconnect': _CmdSpec('relayReconnect', false),
     'relay:probe': _CmdSpec('relayProbe', true),
+    // FDC-08: cheap presence lookup (no circuit dial). Native MethodChannel
+    // dispatch ('relayPresenceGet' -> Bridge PresenceGet) + gomobile framework
+    // rebuild land with the S1 device/live-relay closure.
+    'relay:presence_get': _CmdSpec('relayPresenceGet', true),
     // Peer
     'peer:dial': _CmdSpec('dialPeer', true),
     'peer:disconnect': _CmdSpec('disconnectPeer', true),
+    // FDC-11: bonsoir-discovered same-WiFi peer → libp2p LAN-direct dial. Native
+    // MethodChannel dispatch ('lanPeerFound' -> Bridge HandleLANPeerFound) +
+    // gomobile framework rebuild land with the D1 device closure.
+    'lan:peer_found': _CmdSpec('lanPeerFound', true),
     // Messaging
     'message:send': _CmdSpec('sendMessage', true),
     'message:confirm': _CmdSpec('confirmDirectMessage', true),

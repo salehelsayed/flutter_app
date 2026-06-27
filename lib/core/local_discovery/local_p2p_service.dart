@@ -18,6 +18,11 @@ class LocalP2PService {
   final LocalWsServer _wsServer;
 
   String? _peerId;
+  // FDC-11: the libp2p host's own LAN listen ports (from NodeState.listenAddresses),
+  // advertised in the bonsoir TXT alongside wsPort so a same-WiFi peer can build
+  // the libp2p LAN-direct multiaddr. Cached so restartAdvertising re-publishes them.
+  int? _quicPort;
+  int? _tcpPort;
 
   LocalP2PService({
     required LocalDiscoveryService discovery,
@@ -26,17 +31,34 @@ class LocalP2PService {
        _wsServer = wsServer;
 
   /// Start the local WebSocket server and begin mDNS advertising/discovery.
-  Future<void> start(String peerId) async {
+  /// FDC-11: [quicPort]/[tcpPort] are the libp2p host's LAN listen ports; when
+  /// known they are advertised additively (the wsPort advert/WS path is
+  /// unchanged). Null when the libp2p ports are not yet known (cold-start before
+  /// the host reports its listen addresses) — a later restartAdvertising
+  /// re-publishes once they are.
+  Future<void> start(String peerId, {int? quicPort, int? tcpPort}) async {
     _peerId = peerId;
+    _quicPort = quicPort;
+    _tcpPort = tcpPort;
     final port = await _wsServer.start();
 
     emitFlowEvent(
       layer: 'FL',
       event: 'LOCAL_P2P_SERVICE_START',
-      details: {'peerId': peerId, 'wsPort': port},
+      details: {
+        'peerId': peerId,
+        'wsPort': port,
+        'quicPort': ?quicPort,
+        'tcpPort': ?tcpPort,
+      },
     );
 
-    await _discovery.startAdvertising(peerId, port);
+    await _discovery.startAdvertising(
+      peerId,
+      port,
+      quicPort: quicPort,
+      tcpPort: tcpPort,
+    );
   }
 
   /// Stop mDNS and the WebSocket server.
@@ -54,12 +76,22 @@ class LocalP2PService {
     if (peerId == null || port == null) return;
 
     await _discovery.stopAdvertising();
-    await _discovery.startAdvertising(peerId, port);
+    await _discovery.startAdvertising(
+      peerId,
+      port,
+      quicPort: _quicPort,
+      tcpPort: _tcpPort,
+    );
 
     emitFlowEvent(
       layer: 'FL',
       event: 'LOCAL_P2P_SERVICE_RESTART_ADVERTISING',
-      details: {'peerId': peerId, 'wsPort': port},
+      details: {
+        'peerId': peerId,
+        'wsPort': port,
+        'quicPort': ?_quicPort,
+        'tcpPort': ?_tcpPort,
+      },
     );
   }
 

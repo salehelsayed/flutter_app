@@ -150,8 +150,21 @@ class FakeP2PService
     return stopNodeResult;
   }
 
+  // FDC-18: benign send-leg delay so a test can make the live `sendMessage`
+  // resolve AFTER the concurrent inbox deposit has started (the FDC-18-02/R2
+  // live-win-still-deposits race). Default Duration.zero keeps every existing
+  // test green.
+  Duration sendMessageDelay = Duration.zero;
+
+  // FDC-18: explicit override for `isConnectedToPeer` (the unit fake has no
+  // `connectedPeers` set — that lives in the integration fake). Default false
+  // preserves the historical bare-`false` behaviour; a test flips this true to
+  // exercise the confirmed-path single-path guard (FDC-18-03/R3).
+  bool isConnectedToPeerResult = false;
+
   @override
   Future<bool> sendMessage(String peerId, String message) async {
+    if (sendMessageDelay > Duration.zero) await Future.delayed(sendMessageDelay);
     sendMessageCallCount++;
     lastSendMessagePeerId = peerId;
     lastSendMessageContent = message;
@@ -261,7 +274,7 @@ class FakeP2PService
       RelayProbeResult.error;
 
   @override
-  bool isConnectedToPeer(String peerId) => false;
+  bool isConnectedToPeer(String peerId) => isConnectedToPeerResult;
 
   @override
   bool isLocalPeer(String peerId) => false;

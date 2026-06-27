@@ -50,6 +50,8 @@ readonly ONE_TO_ONE_TESTS=(
   "test/core/database/helpers/inbox_staging_db_helpers_test.dart"
   "test/core/inbox/inbox_staging_repository_impl_test.dart"
   "test/core/services/p2p_service_impl_test.dart"
+  # FDC-07: cold-start early mDNS discovery hoist + idempotent/move-gated seam.
+  "test/core/services/p2p_service_early_discovery_ordering_test.dart"
   # FDC-13: relay->direct 'upgraded' badge — the _inferTransportForPeer flip is
   # a 1:1 headline lock (DCUTR-002/013 + T4 census/data asserts).
   "test/core/services/p2p_service_inbound_transport_test.dart"
@@ -82,6 +84,19 @@ readonly ONE_TO_ONE_TESTS=(
   # forward-wiring lock.
   "test/core/lifecycle/handle_app_resumed_warm_peer_test.dart"
   "test/features/push/application/prepare_notification_route_target_use_case_test.dart"
+  # FDC-18: 1:1 reaction add+remove send reliability — concurrent durable inbox
+  # (mirror of FDC-01+FDC-03 onto sendReaction/removeReaction). These already
+  # auto-glob into feature-host-all; appended here so the headline reaction
+  # locks also run in the curated 1to1 gate. (emoji_reaction_exchange stays in
+  # OPTIONAL_MANUAL_TESTS; group reaction files are out of scope.)
+  "test/features/conversation/application/send_reaction_use_case_test.dart"
+  "test/features/conversation/application/remove_reaction_use_case_test.dart"
+  "test/features/conversation/application/handle_incoming_reaction_use_case_test.dart"
+  "test/features/conversation/integration/reaction_roundtrip_test.dart"
+  # FDC-08: 1:1 presence-emphasis send locks (C5/C6/C7). Auto-globs into
+  # feature-host-all; appended here so the load-bearing "presence is never a
+  # delivery gate" locks also run in the curated 1to1 gate.
+  "test/features/conversation/application/send_presence_emphasis_test.dart"
 )
 
 readonly FEED_TESTS=(

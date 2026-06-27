@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
+import 'package:flutter_app/features/conversation/application/outbound_envelope_policy.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -10,30 +12,68 @@ import 'package:flutter_app/features/groups/domain/repositories/group_message_re
 /// upload/send task, so pause recovery leaves them alone.
 const Duration kPausedGroupSendingRecoveryThreshold = Duration(minutes: 2);
 
-// ── FDC-S4: bounded pause-flush (Option A prototype) ────────────────────────
-// Spike: Test-Flight-Improv/Network-Transport-libp2p-Feature/fast-direct-connection/
-//        FDC-S4-ios-pause-flush-feasibility-spike.md
+// ── FDC-06: bounded pause-flush (ships ENABLED — productionized from the
+//    FDC-S4 Option-A prototype) ───────────────────────────────────────────
+// Spike that proved it feasible on a real device:
+//   Test-Flight-Improv/Network-Transport-libp2p-Feature/fast-direct-connection/
+//   FDC-S4-ios-pause-flush-feasibility-spike.md
 //
-// MEASUREMENT-ONLY prototype, OFF by default. When OFF this handler is the
-// byte-for-byte legacy local-DB-only pause handler ("no network on pause").
-// When ON (built with `--dart-define=FDC_PAUSE_FLUSH=1`), the invariant is
-// NARROWED — not deleted — to: "no *unbounded* network and no
-// *connection-holding* on pause; a single bounded, bg-assertion-protected,
-// inbox-store-only deposit of the newest in-flight sends is permitted."
+// On pause/hidden the "no network on pause" rule is NARROWED — not deleted —
+// to: "no *unbounded* network and no *connection-holding*; a single bounded,
+// bg-assertion-protected, inbox-store-only deposit of the newest in-flight
+// sends is permitted." A deposited row is persisted as durable custody
+// ('inboxed'/transport:'inbox', see handleAppPaused) — NOT left 'sending', so
+// resume neither re-fails nor re-sends it.
 //
-// FDC-06 (graceful-pause-flush) OWNS finalizing/locking this (the exact custody
-// status for a deposited row, group parity, and whether `_onPaused` should also
-// `await`). Do not flip the default here — flip it via the dart-define for a
-// device-measurement build, then write the measured bound back into FDC-06.
+// SHIP DECISION (FDC-06 NR-3 — "Ship ON, keep kill-switch"): ships ENABLED in
+// a normal build. A dart-define kill-switch disables it WITHOUT a code change
+// if a device regression appears:
+//   --dart-define=FDC_PAUSE_FLUSH_DISABLE=1     (accepts 1/true/yes/on)
+// The legacy measurement opt-out --dart-define=FDC_PAUSE_FLUSH=off
+// (0/false/no/off) is also honoured. Device closure proof (T8) is still owed
+// on a 2nd iOS major + an N>=3 burst (plan 170) — deferred, not waived.
 //
-// Accepts any truthy spelling (1/true/yes/on) so the runbook is forgiving;
+// Any truthy/falsy spelling is accepted so the runbook is forgiving;
 // bool.fromEnvironment alone only honours the exact strings 'true'/'false'.
 const String _fdcPauseFlushRaw = String.fromEnvironment('FDC_PAUSE_FLUSH');
-const bool kFdcPauseFlushEnabled =
+const String _fdcPauseFlushDisableRaw = String.fromEnvironment(
+  'FDC_PAUSE_FLUSH_DISABLE',
+);
+
+/// Explicit opt-IN spelling for FDC_PAUSE_FLUSH (also arms the FDC-S4
+/// grant-probe below — the device runbook's existing flag).
+const bool _kFdcPauseFlushExplicitOn =
     _fdcPauseFlushRaw == '1' ||
     _fdcPauseFlushRaw == 'true' ||
     _fdcPauseFlushRaw == 'yes' ||
     _fdcPauseFlushRaw == 'on';
+
+/// Explicit opt-OUT spelling for FDC_PAUSE_FLUSH (measurement runbook).
+const bool _kFdcPauseFlushExplicitOff =
+    _fdcPauseFlushRaw == '0' ||
+    _fdcPauseFlushRaw == 'false' ||
+    _fdcPauseFlushRaw == 'no' ||
+    _fdcPauseFlushRaw == 'off';
+
+/// Kill-switch: --dart-define=FDC_PAUSE_FLUSH_DISABLE=1 (1/true/yes/on).
+const bool _kFdcPauseFlushKillSwitch =
+    _fdcPauseFlushDisableRaw == '1' ||
+    _fdcPauseFlushDisableRaw == 'true' ||
+    _fdcPauseFlushDisableRaw == 'yes' ||
+    _fdcPauseFlushDisableRaw == 'on';
+
+/// FDC-06: the bounded pause-flush ships ON by default; either kill-switch
+/// (`FDC_PAUSE_FLUSH_DISABLE=1` or `FDC_PAUSE_FLUSH=off`) turns it off.
+const bool kFdcPauseFlushEnabled =
+    !_kFdcPauseFlushKillSwitch && !_kFdcPauseFlushExplicitOff;
+
+/// FDC-S4 grant-probe gate (measurement builds ONLY — default OFF). The probe
+/// takes + releases a ~1.5s background assertion on every pause, so it must
+/// NEVER fire in a normal production build (decoupled from the ship flag in
+/// FDC-06). Kept until T8 closes on a 2nd iOS major (the device RESULTS parser
+/// greps APP_LIFECYCLE_PAUSE_GRANT_PROBE). Arm it with the device runbook's
+/// existing --dart-define=FDC_PAUSE_FLUSH=1.
+const bool kFdcPauseGrantProbeEnabled = _kFdcPauseFlushExplicitOn;
 
 /// Max in-flight `sending` rows the pause-flush deposits (newest-first). Rows
 /// beyond the cap keep today's `sending → failed` + resume-retry behaviour.
@@ -199,6 +239,29 @@ Future<AppPausedResult> handleAppPaused({
       // Step 2: Transition each NON-deposited sending message to failed.
       for (final msg in sendingMessages) {
         if (flushOutcome.depositedIds.contains(msg.id)) {
+          // FDC-06 (NR-1): an ACCEPTED deposit is durable custody — persist it
+          // as 'inboxed'/transport:'inbox' (mirror
+          // retry_unacked_messages_use_case.dart:98) so it is NOT left
+          // 'sending'. Resume's recoverStuckSendingMessages + retry_failed then
+          // leave it alone (no re-fail, no re-send), and a double `_onPaused`
+          // (hidden+paused) re-deposits nothing — the row has left the
+          // `status='sending'` query.
+          try {
+            await messageRepo.saveMessage(
+              normalizeOutgoingDeleteTombstoneVisibility(
+                msg.copyWith(status: 'inboxed', transport: 'inbox'),
+              ),
+            );
+          } catch (e) {
+            // Non-fatal: the deposit already landed in relay custody. A failed
+            // local status write leaves the row 'sending' (resume re-fails +
+            // retries; the relay dedups by messageId). Do not abort the batch.
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'APP_LIFECYCLE_PAUSE_FLUSH_CUSTODY_ERROR',
+              details: {'id': _shortId(msg.id), 'error': e.toString()},
+            );
+          }
           // Deposited to the durable inbox under custody — must NOT be marked
           // failed: it is in fact in flight to the recipient via the relay.
           emitFlowEvent(
@@ -356,10 +419,18 @@ Future<_PauseFlushOutcome> _pauseFlushInFlightSends({
     return _PauseFlushOutcome.empty;
   }
 
-  // Newest-first, only rows that carry a serialized envelope to deposit.
+  // Newest-first, only rows that carry a serialized, non-legacy envelope to
+  // deposit. A legacy-unsafe envelope (a stale pre-format-change wire format a
+  // `sending` row may still carry after an app update) is skipped here —
+  // mirroring retry_unacked_messages_use_case:77 — and falls through to the
+  // caller's mark-failed path, since the relay would reject/mis-handle it.
   final candidates =
       messages
-          .where((m) => (m.wireEnvelope?.isNotEmpty ?? false))
+          .where(
+            (m) =>
+                (m.wireEnvelope?.isNotEmpty ?? false) &&
+                !isUnsafeLegacyOutboundEnvelope(m.wireEnvelope!),
+          )
           .toList(growable: false)
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
   final capped = candidates.take(cap).toList(growable: false);

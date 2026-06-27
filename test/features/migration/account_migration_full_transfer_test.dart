@@ -699,7 +699,12 @@ class _SharedFakeDiscovery implements LocalDiscoveryService {
   _SharedFakeDiscovery(this.registry);
 
   @override
-  Future<void> startAdvertising(String peerId, int wsPort) async {
+  Future<void> startAdvertising(
+    String peerId,
+    int wsPort, {
+    int? quicPort,
+    int? tcpPort,
+  }) async {
     advertisedPeerId = peerId;
     registry[peerId] = LocalPeer(
       peerId: peerId,

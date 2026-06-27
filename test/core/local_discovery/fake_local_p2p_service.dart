@@ -24,12 +24,14 @@ class FakeLocalP2PService implements LocalP2PService {
     String peerId, {
     String host = '192.168.1.100',
     int port = 9999,
+    List<String> libp2pAddresses = const [],
   }) {
     _localPeers[peerId] = LocalPeer(
       peerId: peerId,
       host: host,
       port: port,
       discoveredAt: DateTime.now().toUtc(),
+      libp2pAddresses: libp2pAddresses,
     );
     _peersController.add(Map.unmodifiable(_localPeers));
   }
@@ -45,10 +47,15 @@ class FakeLocalP2PService implements LocalP2PService {
     _messageController.add(msg);
   }
 
+  int? startedQuicPort;
+  int? startedTcpPort;
+
   @override
-  Future<void> start(String peerId) async {
+  Future<void> start(String peerId, {int? quicPort, int? tcpPort}) async {
     started = true;
     startedPeerId = peerId;
+    startedQuicPort = quicPort;
+    startedTcpPort = tcpPort;
   }
 
   @override

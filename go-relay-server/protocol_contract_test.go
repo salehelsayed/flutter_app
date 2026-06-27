@@ -78,6 +78,7 @@ func TestProtocolIDContract_Frozen(t *testing.T) {
 // ones, so a RENAME silently gives every un-updated client an empty value.
 func TestResponseKeyContract_Frozen(t *testing.T) {
 	// Fully populate every field so omitempty does not hide a key.
+	presenceAge := int64(1200)
 	resp := inboxResponse{
 		Status:        "OK",
 		Error:         "e",
@@ -96,6 +97,9 @@ func TestResponseKeyContract_Frozen(t *testing.T) {
 		SourcePeerId:  "p",
 		RangeHash:     "r",
 		HeadMessageId: "h",
+		// FDC-08 presence_get additive keys (consciously registered below).
+		Presence: "reachable",
+		AgeMs:    &presenceAge,
 	}
 
 	data, err := json.Marshal(resp)
@@ -115,6 +119,7 @@ func TestResponseKeyContract_Frozen(t *testing.T) {
 
 	frozen := []string{
 		"acked",
+		"ageMs", // FDC-08 presence_get (additive)
 		"capacity",
 		"error",
 		"expiresAtMs",
@@ -127,6 +132,7 @@ func TestResponseKeyContract_Frozen(t *testing.T) {
 		"messages",
 		"nextCursor",
 		"occupancy",
+		"presence", // FDC-08 presence_get (additive)
 		"rangeHash",
 		"sourcePeerId",
 		"status",
@@ -193,4 +199,61 @@ func TestStatusValueContract_Frozen(t *testing.T) {
 		t.Fatalf("malformed store status = %q, frozen contract requires %q (NET-REL-07)", resp.Status, "ERROR")
 	}
 	badStream.Close()
+}
+
+// TestPresenceGetIsAdditive (FDC-08 / NET-REL-07) proves the new `presence_get`
+// action is purely additive: (a) it answers OK for a known peer, (b) every
+// existing action keeps its exact status behaviour alongside it, and (c) an
+// unknown action STILL returns the literal "Unknown action: <x>" string that
+// new clients hitting an OLD relay degrade to `unknown` on. Renaming/removing an
+// existing action while adding presence turns this RED.
+func TestPresenceGetIsAdditive(t *testing.T) {
+	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
+	inbox := NewInboxStore(push)
+	groupInbox := NewGroupInboxStore(500, 7*24*time.Hour)
+	env := setupInboxStreamEnv(t, inbox, groupInbox)
+
+	open := func(from host.Host) network.Stream {
+		t.Helper()
+		stream, err := from.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+		if err != nil {
+			t.Fatalf("open inbox stream: %v", err)
+		}
+		return stream
+	}
+
+	// (a) The new action works: the sender is socket-connected -> reachable.
+	presenceStream := open(env.sender)
+	sendInboxReq(t, presenceStream, inboxRequest{Action: "presence_get", To: env.sender.ID().String()})
+	if resp := recvInboxResp(t, presenceStream); resp.Status != "OK" || resp.Presence == "" {
+		t.Fatalf("presence_get response = %#v, want OK with a presence value", resp)
+	}
+	presenceStream.Close()
+
+	// (b) Existing actions are untouched: a valid store still -> "OK".
+	storeStream := open(env.sender)
+	sendInboxReq(t, storeStream, inboxRequest{
+		Action:  "store",
+		To:      env.recipient.ID().String(),
+		From:    env.sender.ID().String(),
+		Message: `{"type":"chat_message","version":"1","payload":{"id":"additive-1","text":"hi"}}`,
+	})
+	if resp := recvInboxResp(t, storeStream); resp.Status != "OK" {
+		t.Fatalf("store alongside presence_get = %q, want OK (existing action must be unchanged)", resp.Status)
+	}
+	storeStream.Close()
+
+	// (c) The degrade path is intact: an unknown action still returns the exact
+	// literal string old/new clients map to `unknown`.
+	unknownStream := open(env.sender)
+	sendInboxReq(t, unknownStream, inboxRequest{Action: "definitely_not_an_action"})
+	resp := recvInboxResp(t, unknownStream)
+	unknownStream.Close()
+	if resp.Status != "ERROR" {
+		t.Fatalf("unknown action status = %q, want ERROR", resp.Status)
+	}
+	if resp.Error != "Unknown action: definitely_not_an_action" {
+		t.Fatalf("unknown action error = %q, want the frozen %q literal (NET-REL-07 degrade rides on it)",
+			resp.Error, "Unknown action: definitely_not_an_action")
+	}
 }

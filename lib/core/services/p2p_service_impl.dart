@@ -62,6 +62,14 @@ class _LearnedTransport {
   const _LearnedTransport(this.transport, this.at);
 }
 
+/// FDC-08: a cached relay-presence answer plus the time it was recorded, for
+/// short-TTL read-time expiry (mirrors [_LearnedTransport]).
+class _PresenceCacheEntry {
+  final RelayPresence presence;
+  final DateTime at;
+  const _PresenceCacheEntry(this.presence, this.at);
+}
+
 /// FDC-04: per-peer eager-warm debounce/backoff bookkeeping. [inFlight] is set
 /// SYNCHRONOUSLY at `warmPeer` entry (before the first await) so a same-tick
 /// conv-open + notif-tap + resume burst collapses to ONE dial (DESIGN-4).
@@ -82,7 +90,8 @@ class P2PServiceImpl
         DetailedInboxStore,
         ReadinessProofRecorder,
         P2PFullInboxDrain,
-        DurableLanSender {
+        DurableLanSender,
+        RelayPresenceLookup {
   final Bridge _bridge;
   final LocalP2PService? _localP2P;
   final PushTokenStore? _pushTokenStore;
@@ -132,6 +141,14 @@ class P2PServiceImpl
   /// race on any sticky-leg failure, so a stale entry can never trap a send.
   final Map<String, _LearnedTransport> _learnedTransport = {};
 
+  /// FDC-08 short-TTL presence cache (≈10–15s, FDC-S3-locked / device-tunable),
+  /// keyed by FULL peerId. Read-time TTL eviction mirrors [lastKnownGoodTransport]
+  /// (`clock.now()`-based, withClock-testable). Intentionally non-durable and
+  /// re-derived: it is never carried across a resume / WiFi↔cellular switch, so a
+  /// stale `reachable` can never bias a send (C4).
+  final Map<String, _PresenceCacheEntry> _presenceCache = {};
+  static const Duration _presenceCacheTtl = Duration(seconds: 12);
+
   /// FDC-04: per-peer eager-warm debounce/backoff state, keyed by FULL peerId
   /// (transport-agnostic — CONSIST-1). Session-scoped, in-memory only; lost on
   /// restart (a restart is a fresh warm). The first warm-bookkeeping map here.
@@ -172,6 +189,12 @@ class P2PServiceImpl
   int _consecutiveHealthCheckExceptions = 0;
   bool _stopped = true; // starts stopped; cleared when node starts
   bool _localDiscoveryActive = false;
+
+  /// FDC-11: peers already forwarded to the Go libp2p LAN-direct dial, so a
+  /// re-emitted discovery snapshot (the stream re-fires on every change) does
+  /// not re-cross the bridge for the same peer. The Go side also debounces via
+  /// its per-peer cooldown, so this is a cheap front-line dedup.
+  final Set<String> _lanDialForwardedPeerIds = <String>{};
 
   /// P4: one-shot heuristic timer for suspected iOS Local-Network permission
   /// denial. Started on discovery activation; fires after 12s with zero peers
@@ -417,6 +440,10 @@ class P2PServiceImpl
         discoveryActive: _localDiscoveryActive,
         discoveredPeerCount: peers.length,
       );
+      // FDC-11: forward newly-discovered same-WiFi peers (carrying libp2p
+      // QUIC/TCP multiaddrs) to the Go LAN-direct dial. Fire-and-forget so the
+      // metrics path above is never blocked on the migration gate.
+      unawaited(_forwardLanPeersToLibp2pDial(peers));
     });
     _recordLanAvailability(
       discoveryActive: false,
@@ -480,6 +507,12 @@ class P2PServiceImpl
 
     final success = await startNodeCore(privateKeyBase64, peerId);
     if (success) {
+      // FDC-07: kick off LAN mDNS discovery EARLY — before the warmBackground
+      // inbox-drain body — so a same-WiFi peer can populate the LAN map ahead of
+      // the first send window. Fire-and-forget + opportunistic: never blocks
+      // node-start or the send race, and idempotent with the warm-body and
+      // StartupRouter triggers.
+      unawaited(startEarlyLocalDiscovery());
       unawaited(_warmBackgroundSafely());
     }
     return success;
@@ -696,21 +729,18 @@ class P2PServiceImpl
       }
     });
 
-    // Run inbox drain and local discovery concurrently.
+    // FDC-07: LAN discovery is hoisted ahead of the inbox-drain body. On the
+    // cold-start path startNode already kicked it off; this idempotent trigger
+    // covers any standalone warmBackground caller (e.g. integration harnesses /
+    // resume re-warm). Opportunistic — never folded into the drain barrier.
+    unawaited(startEarlyLocalDiscovery());
+
+    // Run proactive-send-proof and inbox drain concurrently.
     final futures = <Future>[];
     futures.add(_attemptProactiveSendProofIfNeeded(trigger: 'warm_background'));
     futures.add(
       _drainOfflineInbox().timeout(warmTaskTimeout).catchError((_) {}),
     );
-
-    final localPeerId = _currentState.peerId;
-    if (_localP2P != null && localPeerId != null) {
-      futures.add(
-        _startLocalDiscovery(
-          localPeerId,
-        ).timeout(warmTaskTimeout).catchError((_) {}),
-      );
-    }
 
     await Future.wait(futures);
 
@@ -721,17 +751,77 @@ class P2PServiceImpl
     );
   }
 
+  /// FDC-07: cold-start early mDNS advertise/discover seam. Hoisted out of the
+  /// warmBackground futures list (where it raced the inbox drain) so a same-WiFi
+  /// peer can populate the LAN map before the first send window. Triggered by
+  /// [startNode] (service-level) and by the cold-start orchestrator
+  /// (StartupRouter) — the [_startLocalDiscovery] entry guard collapses the two
+  /// seams to a single start. Strictly opportunistic: it never blocks the
+  /// send/relay race. Re-asserts the account-move network gate that
+  /// warmBackground used to provide transitively (hoisting out of that body must
+  /// not leak a wire op during an account move).
+  Future<void> startEarlyLocalDiscovery() async {
+    if (_localDiscoveryActive) return;
+    if (!await _allowsAccountNetworkSideEffects('p2p_lan_discovery')) {
+      return;
+    }
+    final localPeerId = _currentState.peerId;
+    if (_localP2P == null || localPeerId == null) return;
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_SERVICE_EARLY_LOCAL_DISCOVERY_START',
+      details: {},
+    );
+    await _startLocalDiscovery(localPeerId);
+  }
+
   Future<void> _startLocalDiscovery(String localPeerId) async {
+    // FDC-07: idempotency entry guard. `_localDiscoveryActive` is only set AFTER
+    // localP2P.start() returns, so without this guard the early seam + the
+    // warm-body trigger could both reach localP2P.start() before either flips
+    // the flag, double-starting bonsoir.
+    if (_localDiscoveryActive) return;
     final localP2P = _localP2P;
     if (localP2P == null) return;
 
     try {
-      await localP2P.start(localPeerId);
+      // FDC-11: thread the libp2p host's own LAN listen ports (from the node
+      // state) into the bonsoir advert so a same-WiFi peer can build the libp2p
+      // LAN-direct multiaddr. Null when the host has not yet reported its listen
+      // addresses (cold-start early seam) — a later restartAdvertising
+      // re-publishes once they are known.
+      final listenAddresses = _currentState.listenAddresses;
+      await localP2P.start(
+        localPeerId,
+        quicPort: _libp2pListenPort(listenAddresses, quic: true),
+        tcpPort: _libp2pListenPort(listenAddresses, quic: false),
+      );
       _setLocalDiscoveryActive();
     } catch (_) {
       _setLocalDiscoveryInactive();
       rethrow;
     }
+  }
+
+  /// FDC-11: extracts the libp2p QUIC (`/udp/<p>/quic-v1`) or plain-TCP
+  /// (`/tcp/<p>`, excluding the WS lane) LAN listen port from the host's
+  /// reported listen multiaddrs. Returns null if none is present.
+  static int? _libp2pListenPort(
+    List<String> listenAddresses, {
+    required bool quic,
+  }) {
+    for (final addr in listenAddresses) {
+      if (quic) {
+        final m = RegExp(r'/udp/(\d+)/quic-v1').firstMatch(addr);
+        if (m != null) return int.tryParse(m.group(1)!);
+      } else {
+        // Plain libp2p TCP transport — skip the WS lane and the QUIC addr.
+        if (addr.contains('/ws') || addr.contains('quic')) continue;
+        final m = RegExp(r'/tcp/(\d+)').firstMatch(addr);
+        if (m != null) return int.tryParse(m.group(1)!);
+      }
+    }
+    return null;
   }
 
   void _setLocalDiscoveryActive() {
@@ -789,6 +879,46 @@ class P2PServiceImpl
         suspectedPermissionDenied: suspectedPermissionDenied,
       ),
     );
+  }
+
+  /// FDC-11: forward bonsoir-discovered same-WiFi peers carrying libp2p QUIC/TCP
+  /// multiaddrs to the Go LAN-direct dial (`lan:peer_found`). Each peer is
+  /// forwarded at most once (the Go side also debounces per-peer). Gated by the
+  /// `'p2p_lan_dial'` account-migration runtime gate: because bonsoir emits
+  /// peer-found events continuously for the app lifetime, a delivered event can
+  /// land AFTER a migration starts — so this needs its own runtime gate at the
+  /// forward point (the `'p2p_lan_discovery'` startup gate fires only once).
+  Future<void> _forwardLanPeersToLibp2pDial(
+    Map<String, LocalPeer> peers,
+  ) async {
+    for (final peer in peers.values) {
+      if (peer.libp2pAddresses.isEmpty) continue;
+      if (_lanDialForwardedPeerIds.contains(peer.peerId)) continue;
+      if (!await _allowsAccountNetworkSideEffects(
+        'p2p_lan_dial',
+        peerId: peer.peerId,
+      )) {
+        // Gate paused (migration in progress): drop this event and leave the
+        // peer un-forwarded so a later snapshot retries once the gate reopens.
+        continue;
+      }
+      _lanDialForwardedPeerIds.add(peer.peerId);
+      try {
+        await callP2PLanPeerFound(
+          _bridge,
+          peerId: peer.peerId,
+          addresses: peer.libp2pAddresses,
+        );
+      } catch (e) {
+        // Transient bridge failure — allow a later snapshot to retry.
+        _lanDialForwardedPeerIds.remove(peer.peerId);
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_SERVICE_LAN_PEER_FOUND_FORWARD_ERROR',
+          details: {'error': e.toString()},
+        );
+      }
+    }
   }
 
   /// Maximum number of inbox pages to drain in a single pass.
@@ -4384,6 +4514,54 @@ class P2PServiceImpl
       return RelayProbeResult.error;
     } catch (e) {
       return RelayProbeResult.error;
+    }
+  }
+
+  @override
+  Future<RelayPresence> lookupRelayPresence(String peerId) async {
+    // Move-feature gate FIRST (account-migration safety): a paused / migrating /
+    // migrated-out device must not emit a presence round-trip. The token is a
+    // log label only — never validated against an allowlist (mirrors
+    // probeRelay's 'p2p_probe_relay'). Degrade to unknown when paused.
+    if (!await _allowsAccountNetworkSideEffects('p2p_get_presence')) {
+      return RelayPresence.unknown;
+    }
+
+    // Short-TTL cache (read-time eviction, mirrors lastKnownGoodTransport):
+    // clock.now()-based so it is withClock-testable. A stale entry is evicted
+    // and re-queried — a `reachable` is NEVER trusted past the TTL (C4).
+    final cached = _presenceCache[peerId];
+    if (cached != null) {
+      if (clock.now().difference(cached.at) <= _presenceCacheTtl) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_RELAY_PRESENCE_CACHE_HIT',
+          details: {'peerId': peerId, 'presence': cached.presence.name},
+        );
+        return cached.presence;
+      }
+      _presenceCache.remove(peerId);
+    }
+
+    try {
+      final result = await callP2PRelayPresence(_bridge, peerId: peerId);
+      final presence = _relayPresenceFromString(result['presence'] as String?);
+      _presenceCache[peerId] = _PresenceCacheEntry(presence, clock.now());
+      return presence;
+    } catch (_) {
+      // Best-effort hint: any failure degrades to unknown (today's full race).
+      return RelayPresence.unknown;
+    }
+  }
+
+  RelayPresence _relayPresenceFromString(String? s) {
+    switch (s) {
+      case 'reachable':
+        return RelayPresence.reachable;
+      case 'unreachable':
+        return RelayPresence.unreachable;
+      default:
+        return RelayPresence.unknown;
     }
   }
 

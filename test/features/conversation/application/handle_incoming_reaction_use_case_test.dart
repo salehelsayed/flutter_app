@@ -3,6 +3,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -28,6 +29,20 @@ ChatMessage _makeReactionMessage(String content) {
     timestamp: DateTime.now().toUtc().toIso8601String(),
     isIncoming: true,
   );
+}
+
+/// FDC-18 Prerequisite P0: capture the flow events emitted while [action] runs.
+Future<List<Map<String, dynamic>>> _captureFlowEvents(
+  Future<void> Function() action,
+) async {
+  final events = <Map<String, dynamic>>[];
+  debugSetFlowEventSink((payload) => events.add(payload));
+  try {
+    await action();
+  } finally {
+    debugSetFlowEventSink(null);
+  }
+  return events;
 }
 
 void main() {
@@ -770,6 +785,94 @@ void main() {
       expect(stored.single.emoji, '❤️');
       expect(stored.single.timestamp, '2026-02-27T10:02:00.000Z');
     });
+
+    test(
+      'FDC-18-06 a stale duplicate reaction (older than the current tombstone) '
+      'is ignored under the raised concurrent-inbox duplicate pressure',
+      () async {
+        // FDC-18 fires the durable inbox copy CONCURRENTLY for unknown-presence
+        // toggles, so a drained OLD copy can arrive AFTER a newer remove. The
+        // receive last-writer-wins tombstone must still win — receive path is
+        // unedited; this pins it under the new duplicate pressure (M6 weakens
+        // _isStaleComparedToCurrent -> the stale add resurrects -> RED).
+
+        // 1. Active add at T1.
+        await reactionRepo.saveReaction(
+          const MessageReaction(
+            id: 'r-add',
+            messageId: 'msg-1',
+            emoji: '👍',
+            senderPeerId: _senderPeerId,
+            timestamp: '2026-02-27T10:00:00.000Z',
+            createdAt: '2026-02-27T10:00:01.000Z',
+          ),
+        );
+
+        final v2 = ReactionPayload.buildEncryptedEnvelope(
+          senderPeerId: _senderPeerId,
+          kem: 'k',
+          ciphertext: 'c',
+          nonce: 'n',
+        );
+
+        // 2. Remove at T2 > T1 → tombstone.
+        bridge.responses['message.decrypt'] = {
+          'ok': true,
+          'plaintext': jsonEncode({
+            'id': 'r-remove',
+            'messageId': 'msg-1',
+            'emoji': '👍',
+            'action': 'remove',
+            'senderPeerId': _senderPeerId,
+            'timestamp': '2026-02-27T10:01:00.000Z',
+          }),
+        };
+        await handleIncomingReaction(
+          message: _makeReactionMessage(v2),
+          messageRepo: messageRepo,
+          reactionRepo: reactionRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownMlKemSecretKey: _ownMlKemSecretKey,
+        );
+        expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+
+        // 3. A STALE drained add (T1 < T2) must be ignored, not resurrect.
+        bridge.responses['message.decrypt'] = {
+          'ok': true,
+          'plaintext': jsonEncode({
+            'id': 'r-add',
+            'messageId': 'msg-1',
+            'emoji': '👍',
+            'action': 'add',
+            'senderPeerId': _senderPeerId,
+            'timestamp': '2026-02-27T10:00:00.000Z',
+          }),
+        };
+        late HandleReactionResult result;
+        ReactionChange? change;
+        final events = await _captureFlowEvents(() async {
+          final (r, c) = await handleIncomingReaction(
+            message: _makeReactionMessage(v2),
+            messageRepo: messageRepo,
+            reactionRepo: reactionRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            ownMlKemSecretKey: _ownMlKemSecretKey,
+          );
+          result = r;
+          change = c;
+        });
+
+        expect(result, HandleReactionResult.success);
+        expect(change, isNull);
+        expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+        expect(
+          events.map((e) => e['event']),
+          contains('REACTION_RECEIVE_STALE_IGNORED'),
+        );
+      },
+    );
 
     test('ignores add action when the target message is missing', () async {
       bridge.responses['message.decrypt'] = {

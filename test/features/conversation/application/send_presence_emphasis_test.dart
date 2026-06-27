@@ -1,0 +1,204 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart'
+    show SendChatMessageResult;
+import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
+
+// Reuse the canonical send-use-case test harness (fake p2pService + message
+// repo + the sendChatMessage wrapper + flow-event capture) so these presence
+// tests exercise the REAL send path. `show` avoids the duplicate `main` clash.
+import 'send_chat_message_use_case_test.dart'
+    show FakeP2PService, FakeMessageRepository, sendChatMessage, captureFlowEvents;
+
+// FDC-08 C5/C6/C7 — the §6.3 presence emphasis at the send `unknownPresence`
+// seam. Presence is a HINT, NEVER a delivery gate: the durable inbox ALWAYS
+// fires (C5/C7); `unreachable` only commits the durable copy first (C6).
+
+/// A send-path fake that adds a configurable [RelayPresence] (the optional
+/// [RelayPresenceLookup] capability) and records inbox-vs-live ordering.
+class _PresenceFake extends FakeP2PService implements RelayPresenceLookup {
+  _PresenceFake({
+    required this.presence,
+    this.inboxDelay = Duration.zero,
+    super.sendMessageResult,
+    super.storeInInboxResult,
+    super.useNullDiscover,
+  });
+
+  final RelayPresence presence;
+  final Duration inboxDelay;
+  int presenceLookupCount = 0;
+
+  /// Ordered completion/entry markers: 'inbox-call', 'inbox-done', 'live'.
+  final List<String> order = [];
+
+  @override
+  Future<RelayPresence> lookupRelayPresence(String peerId) async {
+    presenceLookupCount++;
+    return presence;
+  }
+
+  @override
+  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
+    order.add('inbox-call');
+    final r = await super.storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+    if (inboxDelay > Duration.zero) {
+      await Future<void>.delayed(inboxDelay);
+    }
+    order.add('inbox-done');
+    return r;
+  }
+
+  void _markLive() {
+    if (!order.contains('live')) order.add('live');
+  }
+
+  @override
+  Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) {
+    _markLive();
+    return super.discoverPeer(peerId, timeoutMs: timeoutMs);
+  }
+
+  @override
+  Future<bool> discoverLocalPeer(String peerId, {required Duration timeout}) {
+    _markLive();
+    return super.discoverLocalPeer(peerId, timeout: timeout);
+  }
+}
+
+Map<String, dynamic>? _emphasis(List<Map<String, dynamic>> events) {
+  for (final e in events) {
+    if (e['event'] == 'CHAT_MSG_PRESENCE_EMPHASIS') return e;
+  }
+  return null;
+}
+
+bool _has(List<Map<String, dynamic>> events, String name) =>
+    events.any((e) => e['event'] == name);
+
+void main() {
+  // C5 — reachable presence keeps the durable inbox deposit (lazy, NOT skipped).
+  test('reachable presence keeps the durable inbox deposit (lazy, not suppressed)', () async {
+    final p2p = _PresenceFake(
+      presence: RelayPresence.reachable,
+      storeInInboxResult: true,
+    );
+    final repo = FakeMessageRepository();
+
+    final events = await captureFlowEvents(() async {
+      await sendChatMessage(
+        p2pService: p2p,
+        messageRepo: repo,
+        targetPeerId: 'target-peer',
+        text: 'hi',
+        senderPeerId: 'me',
+        senderUsername: 'Me',
+      );
+    });
+
+    // The durable copy still fired even though the hint was reachable.
+    expect(p2p.storeInInboxCallCount, greaterThanOrEqualTo(1));
+    expect(p2p.presenceLookupCount, 1);
+    final emphasis = _emphasis(events);
+    expect(emphasis, isNotNull);
+    expect((emphasis!['details'] as Map)['presence'], 'reachable');
+  });
+
+  // C6 — unreachable presence commits the durable copy FIRST, then the live legs
+  // (still run, best-effort).
+  test('unreachable presence commits inbox first then live (best-effort)', () async {
+    final p2p = _PresenceFake(
+      presence: RelayPresence.unreachable,
+      inboxDelay: const Duration(milliseconds: 60),
+      sendMessageResult: false, // live legs fail (peer is offline)
+      storeInInboxResult: true,
+    );
+    final repo = FakeMessageRepository();
+
+    final events = await captureFlowEvents(() async {
+      await sendChatMessage(
+        p2pService: p2p,
+        messageRepo: repo,
+        targetPeerId: 'target-peer',
+        text: 'hi',
+        senderPeerId: 'me',
+        senderUsername: 'Me',
+      );
+    });
+
+    final emphasis = _emphasis(events);
+    expect((emphasis!['details'] as Map)['presence'], 'unreachable');
+    expect(_has(events, 'CHAT_MSG_PRESENCE_INBOX_FIRST'), isTrue);
+
+    // Ordering: the inbox deposit COMPLETED before any live leg started.
+    final inboxDone = p2p.order.indexOf('inbox-done');
+    final firstLive = p2p.order.indexOf('live');
+    expect(inboxDone, greaterThanOrEqualTo(0));
+    expect(firstLive, greaterThanOrEqualTo(0),
+        reason: 'live legs must still run (best-effort), not be dropped');
+    expect(inboxDone, lessThan(firstLive),
+        reason: 'unreachable => durable copy committed before the live race');
+  });
+
+  // C7 ⭐ — a WRONG `reachable` hint for an actually-offline peer STILL deposits
+  // the durable copy (+ relay push-to-wake). The single load-bearing gate:
+  // presence is a HINT, never a delivery gate.
+  test('reachable hint for an offline peer still deposits the durable copy', () async {
+    final p2p = _PresenceFake(
+      presence: RelayPresence.reachable, // WRONG hint
+      sendMessageResult: false, // every live leg fails (peer is really offline)
+      useNullDiscover: true, // direct discover yields nothing
+      storeInInboxResult: true,
+    );
+    final repo = FakeMessageRepository();
+
+    final (result, _) = await _sendCapturingResult(p2p, repo);
+
+    // The durable copy fired despite the (wrong) reachable hint, so the
+    // backgrounded peer is still woken by the relay's store-triggered push.
+    expect(p2p.storeInInboxCallCount, greaterThanOrEqualTo(1));
+    // The send succeeds via durable inbox custody (NOT lost).
+    expect(result, SendChatMessageResult.success);
+  });
+
+  // The "lazy" reachable branch must FIRE the concurrent inbox, distinguishing it
+  // from a hypothetical "skipped" mutation (the C7 discriminator).
+  test('reachable lazy path emits CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN', () async {
+    final p2p = _PresenceFake(
+      presence: RelayPresence.reachable,
+      sendMessageResult: false,
+      useNullDiscover: true,
+      storeInInboxResult: true,
+    );
+    final repo = FakeMessageRepository();
+
+    final events = await captureFlowEvents(() async {
+      await sendChatMessage(
+        p2pService: p2p,
+        messageRepo: repo,
+        targetPeerId: 'target-peer',
+        text: 'hi',
+        senderPeerId: 'me',
+        senderUsername: 'Me',
+      );
+    });
+
+    expect(_has(events, 'CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN'), isTrue);
+    expect((_emphasis(events)!['details'] as Map)['presence'], 'reachable');
+  });
+}
+
+Future<(SendChatMessageResult, Object?)> _sendCapturingResult(
+  _PresenceFake p2p,
+  FakeMessageRepository repo,
+) async {
+  final (result, message) = await sendChatMessage(
+    p2pService: p2p,
+    messageRepo: repo,
+    targetPeerId: 'target-peer',
+    text: 'hi',
+    senderPeerId: 'me',
+    senderUsername: 'Me',
+  );
+  return (result, message);
+}

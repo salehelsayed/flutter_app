@@ -29,9 +29,21 @@ type FeatureFlags struct {
 	// EnableDeferredDirectAck delays direct chat ACK until Flutter confirms
 	// receiver-side terminal handling for that chat nonce.
 	EnableDeferredDirectAck bool `json:"enableDeferredDirectAck"`
+
+	// EnableLibp2pLANDial gates the FDC-11 bonsoir-fed libp2p LAN-direct dial
+	// (HandleLANPeerFound → host.Connect over a same-WiFi QUIC multiaddr). Unlike
+	// the relay flags above it defaults to FALSE: the LAN dial is additive and
+	// fail-safe (peers fall back to the WS LAN leg + relay), but the new
+	// advertise/parse wiring is device-unproven (a wrong port re-triggers the
+	// FDC-S2 QUIC-identify hang as a config bug), so it stays off until the D1
+	// two-phone device gate is GREEN — matching sibling Phase-3 flag discipline
+	// (FDC-12 EnableDcutrUpgrade, FDC-15 EnableLibp2pLANMedia).
+	EnableLibp2pLANDial bool `json:"enableLibp2pLANDial"`
 }
 
-// DefaultFeatureFlags returns a FeatureFlags with all features enabled.
+// DefaultFeatureFlags returns a FeatureFlags with all relay features enabled.
+// EnableLibp2pLANDial (FDC-11) is the lone exception — it defaults to false
+// until the D1 device gate is GREEN (see the field doc).
 func DefaultFeatureFlags() FeatureFlags {
 	return FeatureFlags{
 		EnableSharedRelayBackend:     true,
@@ -40,5 +52,6 @@ func DefaultFeatureFlags() FeatureFlags {
 		EnableInPlaceRelayRecovery:   true,
 		EnableResumeGroupRecovery:    true,
 		EnableDeferredDirectAck:      true,
+		EnableLibp2pLANDial:          false, // FDC-11: off until D1 device-proven
 	}
 }

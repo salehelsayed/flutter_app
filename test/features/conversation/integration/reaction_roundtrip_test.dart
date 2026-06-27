@@ -18,11 +18,26 @@
 /// No new fakes.
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_reaction_use_case.dart';
 
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/test_user.dart';
+
+/// FDC-18 Prerequisite P0: capture the flow events emitted while [action] runs.
+Future<List<Map<String, dynamic>>> _captureFlowEvents(
+  Future<void> Function() action,
+) async {
+  final events = <Map<String, dynamic>>[];
+  debugSetFlowEventSink((payload) => events.add(payload));
+  try {
+    await action();
+  } finally {
+    debugSetFlowEventSink(null);
+  }
+  return events;
+}
 
 void main() {
   late FakeP2PNetwork network;
@@ -114,6 +129,67 @@ void main() {
       expect(onTarget.single.emoji, '🔥');
       expect(onTarget.single.senderPeerId, alice.peerId);
       expect(onTarget.single.messageId, targetMsg.id);
+    },
+  );
+
+  test(
+    'FDC-18-06b first-ever offline reaction deposits concurrently and '
+    'round-trips to exactly one reaction after drain',
+    () async {
+      // Observe Bob's receive end-to-end.
+      final bobReactionFuture =
+          bob.reactionListener!.incomingReactionStream.first;
+
+      // Bob sends a message to Alice; the reaction targets THIS message (so the
+      // target exists on Bob's side for the receive-time validation).
+      final (sendResult, targetMsg) = await bob.sendMessage(
+        alice.peerId,
+        'React to me while Bob is offline',
+      );
+      expect(sendResult, SendChatMessageResult.success);
+      expect(targetMsg, isNotNull);
+      final targetId = targetMsg!.id;
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      // Bob goes offline: Alice's live reaction send will miss, so the
+      // concurrent durable inbox copy is the delivery tier.
+      bob.setOnline(false);
+
+      late SendReactionResult reactionResult;
+      final events = await _captureFlowEvents(() async {
+        final (r, _) = await alice.sendReaction(bob.peerId, targetId, '🔥');
+        reactionResult = r;
+      });
+
+      // Offline peer's reaction still takes custody, via the CONCURRENT arm.
+      expect(reactionResult, SendReactionResult.success);
+      expect(
+        events.map((e) => e['event']),
+        contains('REACTION_SEND_CONCURRENT_INBOX_BEGIN'),
+      );
+
+      // Bob comes back and drains: the inbox copy replays to him.
+      bob.setOnline(true);
+      await bob.drainOfflineInbox();
+
+      final received = await bobReactionFuture.timeout(
+        const Duration(seconds: 2),
+        onTimeout: () => throw StateError(
+          'Bob never received the drained offline reaction',
+        ),
+      );
+      expect(received.emoji, '🔥');
+      expect(received.messageId, targetId);
+
+      // Exactly one reaction row after drain (byte-identical dedup => no dupes).
+      final onTarget = await bob.reactionRepo!.getReactionsForMessage(targetId);
+      expect(
+        onTarget.length,
+        1,
+        reason: 'drained offline reaction must produce exactly one row',
+      );
+      expect(onTarget.single.emoji, '🔥');
+      expect(onTarget.single.senderPeerId, alice.peerId);
     },
   );
 }

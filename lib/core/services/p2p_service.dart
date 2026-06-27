@@ -48,6 +48,31 @@ abstract interface class DurableLanSender {
   });
 }
 
+/// FDC-08: the coarse, "online-ish, TTL-lagged" relay presence answer used as a
+/// §6.3 emphasis HINT for the 1:1 send decision (direct-race-with-lazy-inbox vs
+/// inbox-first). [reachable]/[unreachable] are §6.3's `online`/`offline`. It is
+/// NEVER a foreground/background claim and NEVER load-bearing for delivery — the
+/// durable inbox always fires regardless of the hint.
+enum RelayPresence { reachable, unreachable, unknown }
+
+/// Optional capability for services that can cheaply look up a peer's coarse
+/// relay presence via the additive `presence_get` action (FDC-08).
+///
+/// Kept OFF the base [P2PService] interface — exactly like [DurableLanSender],
+/// [ReadinessProofRecorder] and [DetailedInboxStore] — so the many hand-written
+/// `implements P2PService` fakes do not all have to grow it. The send path
+/// consults it via an `is RelayPresenceLookup` check and degrades to
+/// [RelayPresence.unknown] (today's full concurrent race) when the service does
+/// not implement it (graceful, NET-REL-07-aligned).
+abstract interface class RelayPresenceLookup {
+  /// Looks up [peerId]'s coarse relay presence WITHOUT dialing a circuit (unlike
+  /// [P2PService.probeRelay]). Short-TTL cached; gated by the account-migration
+  /// network gate (returns [RelayPresence.unknown] while a move has paused
+  /// network side-effects). Never throws — any error degrades to
+  /// [RelayPresence.unknown].
+  Future<RelayPresence> lookupRelayPresence(String peerId);
+}
+
 /// Abstract interface for P2P networking service.
 ///
 /// This service manages the P2P node lifecycle, peer connections,

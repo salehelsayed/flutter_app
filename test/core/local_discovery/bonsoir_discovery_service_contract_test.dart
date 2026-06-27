@@ -292,6 +292,55 @@ void main() {
       await flush();
       expect(service.discoveredPeers.keys, ['peer-d']);
     });
+
+    // T12 (FDC-11): the advertisement carries the libp2p QUIC (+TCP) listen
+    // ports in the TXT, distinct from the wsPort — FDC-S2's hard requirement
+    // ("advertise the libp2p QUIC port, NOT wsPort").
+    test('startAdvertising publishes libp2p quicPort in the TXT', () async {
+      await service.startAdvertising(
+        'me-peer',
+        54321,
+        quicPort: 45000,
+        tcpPort: 45001,
+      );
+
+      final attrs = broadcast().service.attributes;
+      expect(broadcast().service.port, 54321, reason: 'wsPort advert stays');
+      expect(attrs['quicPort'], '45000');
+      expect(attrs['tcpPort'], '45001');
+      expect(attrs['peerId'], 'me-peer');
+      // The QUIC port must be distinct from the wsPort (the whole point).
+      expect(attrs['quicPort'], isNot('54321'));
+    });
+
+    // T13 (FDC-11): a resolved peer carries the libp2p QUIC multiaddr built from
+    // the TXT quicPort — never from service.port (= wsPort), which would feed
+    // the dial the wrong port (the FDC-S2 hang as a config bug).
+    test('resolved peer carries libp2p QUIC multiaddr built from TXT', () async {
+      await service.startAdvertising('me-peer', 54321);
+
+      discovery().emit(
+        _resolvedEvent(
+          'peer-a',
+          host: '192.168.0.9',
+          port: 54321, // wsPort
+          quicPort: 45000,
+          tcpPort: 45001,
+        ),
+      );
+      await flush();
+
+      final peer = service.discoveredPeers['peer-a'];
+      expect(peer, isNotNull);
+      expect(peer!.libp2pAddresses, contains('/ip4/192.168.0.9/udp/45000/quic-v1'));
+      expect(peer.libp2pAddresses, contains('/ip4/192.168.0.9/tcp/45001'));
+      // NEVER the wsPort (54321) in any built multiaddr.
+      expect(
+        peer.libp2pAddresses.any((a) => a.contains('54321')),
+        isFalse,
+        reason: 'must build from quicPort/tcpPort, never the wsPort',
+      );
+    });
   });
 }
 
@@ -308,6 +357,8 @@ BonsoirDiscoveryEvent _resolvedEvent(
   String peerId, {
   required String? host,
   required int port,
+  int? quicPort,
+  int? tcpPort,
 }) {
   return BonsoirDiscoveryEvent(
     type: BonsoirDiscoveryEventType.discoveryServiceResolved,
@@ -315,7 +366,11 @@ BonsoirDiscoveryEvent _resolvedEvent(
       name: 'mknoon',
       type: '_mknoon._tcp',
       port: port,
-      attributes: {'peerId': peerId},
+      attributes: {
+        'peerId': peerId,
+        if (quicPort != null) 'quicPort': '$quicPort',
+        if (tcpPort != null) 'tcpPort': '$tcpPort',
+      },
       host: host,
     ),
   );

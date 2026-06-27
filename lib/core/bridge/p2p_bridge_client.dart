@@ -183,6 +183,75 @@ Future<Map<String, dynamic>> callP2PRelayProbe(
   return response;
 }
 
+/// Calls the bridge to look up a peer's coarse relay presence via the additive
+/// `presence_get` action (FDC-08) — WITHOUT dialing a circuit (unlike
+/// [callP2PRelayProbe]). It normalizes the reply to a coarse presence string and
+/// surfaces `ageMs`, degrading anything that is not a clean answer (an old
+/// relay's "Unknown action", an `ok:false` envelope, an unrecognized value) to
+/// `'unknown'` — NEVER `'unreachable'` — so a stale/old/garbled hint can never
+/// throw away a send (NET-REL-07).
+///
+/// Returns a map: `presence` (reachable|unreachable|unknown), `ageMs`
+/// (nullable int), `ok` (nullable bool).
+Future<Map<String, dynamic>> callP2PRelayPresence(
+  Bridge bridge, {
+  required String peerId,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_RELAY_PRESENCE_REQUEST',
+    details: {'peerId': peerId},
+  );
+
+  final request = {
+    'cmd': 'relay:presence_get',
+    'payload': {'peerId': peerId},
+  };
+
+  final responseJson = await bridge
+      .send(jsonEncode(request))
+      .timeout(const Duration(seconds: 5));
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  // An old relay (or a bridge that passes the raw relay reply through) returns
+  // {status:"ERROR", error:"Unknown action: presence_get"} — degrade to
+  // 'unknown' (NET-REL-07), never 'unreachable', and flag it so field
+  // monitoring can see un-upgraded relays.
+  final errorText =
+      (response['error'] ?? response['errorMessage'] ?? '').toString();
+  final isUnknownAction =
+      response['status'] == 'ERROR' &&
+      errorText.toLowerCase().contains('unknown action');
+  if (isUnknownAction) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_RELAY_PRESENCE_UNKNOWN_ACTION',
+      details: {'peerId': peerId},
+    );
+  }
+
+  String presence;
+  if (isUnknownAction ||
+      response['ok'] == false ||
+      response['status'] == 'ERROR') {
+    presence = 'unknown';
+  } else {
+    final raw = (response['presence'] ?? 'unknown').toString();
+    presence = (raw == 'reachable' || raw == 'unreachable' || raw == 'unknown')
+        ? raw
+        : 'unknown';
+  }
+  final ageMs = response['ageMs'];
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_RELAY_PRESENCE_RESPONSE',
+    details: {'presence': presence, 'ageMs': ageMs, 'ok': response['ok']},
+  );
+
+  return {'presence': presence, 'ageMs': ageMs, 'ok': response['ok']};
+}
+
 /// Calls the bridge to stop the P2P node.
 ///
 /// Returns: `{ "ok": true, "stopped": true }` on success.
@@ -358,10 +427,11 @@ Future<Map<String, dynamic>> callP2PRendezvousDiscover(
 ///   - [timeoutMs]: Optional dial timeout in milliseconds
 ///   - [preferQuic]: FDC-04 (DESIGN-5) QUIC-first re-warm intent. INERT on the
 ///     wire — Go's `peer:dial` handler unmarshals only `{PeerId, Addresses,
-///     TimeoutMs}` and silently drops this field; the real QUIC-first ordering
-///     is a Go-touching follow-up (FDC-11/FDC-12). Threaded so the Dart intent
-///     is host-observable; sent unconditionally so a future Go change can read
-///     it without a payload-shape change.
+///     TimeoutMs}` and silently drops this field. FDC-11 resolves the LAN path
+///     by dialing the QUIC multiaddr directly (preferQuic is moot there); the
+///     generic QUIC-first ordering on a non-LAN re-warm is deferred to FDC-12.
+///     Threaded so the Dart intent is host-observable; sent unconditionally so a
+///     future Go change (FDC-12) can read it without a payload-shape change.
 ///
 /// Returns: `{ "ok": true, "connected": true, "peerId": "..." }`
 Future<Map<String, dynamic>> callP2PPeerDial(
@@ -394,6 +464,49 @@ Future<Map<String, dynamic>> callP2PPeerDial(
     layer: 'FL',
     event: 'P2P_PEER_DIAL_RESPONSE',
     details: {'ok': response['ok'], 'connected': response['connected']},
+  );
+
+  return response;
+}
+
+/// FDC-11: forwards a bonsoir-discovered same-WiFi peer (carrying the remote's
+/// libp2p QUIC/TCP LAN multiaddrs) to the Go host's `lan:peer_found` handler,
+/// which seeds the peerstore and issues a libp2p LAN-direct dial gated by
+/// EnableLibp2pLANDial.
+///
+/// Parameters:
+///   - [bridge]: The Bridge instance
+///   - [peerId]: The discovered peer's libp2p peer ID
+///   - [addresses]: The remote's libp2p LAN multiaddrs (QUIC preferred, TCP
+///     fallback) — built from the TXT `quicPort`/`tcpPort`, NEVER the wsPort.
+///
+/// Returns: `{ "ok": true }`
+Future<Map<String, dynamic>> callP2PLanPeerFound(
+  Bridge bridge, {
+  required String peerId,
+  required List<String> addresses,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_LAN_PEER_FOUND_REQUEST',
+    details: {'peerId': peerId, 'addrCount': addresses.length},
+  );
+
+  final request = {
+    'cmd': 'lan:peer_found',
+    'payload': {
+      'peerId': peerId,
+      'addresses': addresses,
+    },
+  };
+
+  final responseJson = await bridge.send(jsonEncode(request));
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_LAN_PEER_FOUND_RESPONSE',
+    details: {'ok': response['ok']},
   );
 
   return response;

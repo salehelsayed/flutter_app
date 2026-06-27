@@ -42,6 +42,11 @@ type inboxResponse struct {
 	Messages    []InboxMessage `json:"messages,omitempty"`
 	HasMore     bool           `json:"hasMore,omitempty"`
 	Acked       int            `json:"acked,omitempty"`
+	// FDC-08 presence_get response fields (additive). Presence is "online-ish",
+	// never a foreground/background claim. AgeMs is the age of the relay's
+	// freshest record for the peer in ms (-1 when nothing is known).
+	Presence string `json:"presence,omitempty"`
+	AgeMs    int64  `json:"ageMs,omitempty"`
 }
 
 var ErrInboxFull = errors.New("inbox full")
@@ -214,6 +219,119 @@ func (n *Node) InboxStoreDetailed(
 		return nil
 	})
 	return lastOutcome, err
+}
+
+// RelayPresence is the coarse, "online-ish, TTL-lagged" presence answer the
+// relay's additive `presence_get` action returns. It is NEVER a
+// foreground/background claim.
+type RelayPresence string
+
+const (
+	RelayPresenceReachable   RelayPresence = "reachable"
+	RelayPresenceUnreachable RelayPresence = "unreachable"
+	RelayPresenceUnknown     RelayPresence = "unknown"
+)
+
+// RelayPresenceResult is the decoded `presence_get` answer: a coarse presence
+// plus the age (ms) of the relay's freshest record for the peer.
+type RelayPresenceResult struct {
+	Presence RelayPresence
+	AgeMs    int64
+}
+
+// parsePresenceResponse decodes a relay `presence_get` reply into a
+// RelayPresenceResult. It NEVER returns an error for a protocol-level problem
+// (malformed JSON, a non-OK status such as an old relay's
+// "Unknown action: presence_get", or an unrecognized presence value): all of
+// those degrade to `unknown` so a stale/old/garbled hint can never throw away a
+// send (NET-REL-07 / INBOX_UNKNOWN_ACTION_DEGRADES_TO_UNKNOWN_PRESENCE).
+func parsePresenceResponse(respBytes []byte) RelayPresenceResult {
+	var resp inboxResponse
+	if err := json.Unmarshal(respBytes, &resp); err != nil {
+		return RelayPresenceResult{Presence: RelayPresenceUnknown}
+	}
+	if resp.Status != "OK" {
+		// Old relay (Unknown action) or any error -> unknown, never unreachable.
+		return RelayPresenceResult{Presence: RelayPresenceUnknown}
+	}
+	presence := RelayPresence(resp.Presence)
+	switch presence {
+	case RelayPresenceReachable, RelayPresenceUnreachable, RelayPresenceUnknown:
+		// recognized
+	default:
+		presence = RelayPresenceUnknown
+	}
+	return RelayPresenceResult{Presence: presence, AgeMs: resp.AgeMs}
+}
+
+// RelayPresenceLookup asks the relay whether a peer is online-ish via the
+// additive `presence_get` inbox action — WITHOUT dialing a circuit (unlike the
+// blind ≤5 s DialPeerViaRelay probe). It is the cheap up-front emphasis hint
+// the send path consults (FDC-08 §6.3): reachable -> direct-race + lazy inbox /
+// unreachable -> inbox-first + push / unknown -> today's full concurrent race.
+//
+// It tries each configured relay in turn (parity with the store/probe paths): a
+// connect/stream/read failure rolls over to the next relay, while ANY received
+// reply — including an old relay's "Unknown action" — is a definitive answer
+// that degrades to `unknown` rather than retrying. If every relay is
+// unreachable it returns `unknown` plus the aggregate error, so a relay outage
+// is never mistaken for an offline peer.
+func (n *Node) RelayPresenceLookup(peerIdStr string) (RelayPresenceResult, error) {
+	n.mu.RLock()
+	h := n.host
+	n.mu.RUnlock()
+
+	if h == nil {
+		return RelayPresenceResult{Presence: RelayPresenceUnknown}, fmt.Errorf("node not started")
+	}
+
+	rs := n.buildRelaySelector(nil)
+
+	result := RelayPresenceResult{Presence: RelayPresenceUnknown}
+	err := rs.ForEach(func(relay RelayInfo) error {
+		ctx, cancel := context.WithTimeout(n.ctx, RelayProbeTimeout)
+		defer cancel()
+
+		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
+			return fmt.Errorf("connect to relay: %w", err)
+		}
+
+		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
+		if err != nil {
+			return fmt.Errorf("open inbox stream: %w", err)
+		}
+		streamOK := false
+		defer finishStream(s, &streamOK)
+		setStreamDeadline(s, RelayProbeTimeout)
+
+		req := inboxRequest{
+			Action: "presence_get",
+			To:     peerIdStr,
+			From:   n.peerId,
+		}
+		reqBytes, err := json.Marshal(req)
+		if err != nil {
+			return fmt.Errorf("marshal request: %w", err)
+		}
+		if err := writeFrame(s, reqBytes); err != nil {
+			return fmt.Errorf("write request: %w", err)
+		}
+
+		respBytes, err := readFrame(s)
+		if err != nil {
+			return fmt.Errorf("read response: %w", err)
+		}
+
+		// A received reply is definitive (even an old relay's Unknown-action,
+		// which parsePresenceResponse degrades to unknown) — stop rolling over.
+		result = parsePresenceResponse(respBytes)
+		streamOK = true
+		return nil
+	})
+	if err != nil {
+		return RelayPresenceResult{Presence: RelayPresenceUnknown}, err
+	}
+	return result, nil
 }
 
 // InboxRetrieve retrieves pending messages from the offline inbox.

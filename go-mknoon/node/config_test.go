@@ -93,3 +93,38 @@ func TestGroupPublishPeerSettleWindows_StayShortForForegroundSend(t *testing.T) 
 		)
 	}
 }
+
+// TestConfig_TimeoutsMatchExecutedS1Verdict_NoRetime is FDC-07's permanent
+// regression lock encoding the EXECUTED FDC-S1 timing verdict
+// (FDC-S1-cold-start-timing-RESULTS.md §4: FOREGROUND_RELAY_BUDGET_MS=keep 3s,
+// DIALTIMEOUT_RETIME=no). FDC-07 ships the cold-start mDNS/anchor hoist with
+// ZERO timeout-value changes — S1 measured T_circuit p90 at 1564ms (Pixel 6) /
+// 913ms (iPhone 13), both already inside the 3s foreground budget, so there is
+// no value to move. The refuted "cap the cold relay dial to 3s" would abandon a
+// slow-but-succeeding cold QUIC/TLS handshake → MORE inbox fallback; this test
+// re-reds the instant anyone re-introduces it. Unlike the relationship checks
+// above, these are LITERAL equality locks on the six cold-start durations.
+func TestConfig_TimeoutsMatchExecutedS1Verdict_NoRetime(t *testing.T) {
+	cases := []struct {
+		name string
+		got  time.Duration
+		want time.Duration
+	}{
+		{"DialTimeout", DialTimeout, 15 * time.Second},
+		{"ForegroundRelayDialTimeout", ForegroundRelayDialTimeout, 3 * time.Second},
+		{"ForegroundRelayReserveTimeout", ForegroundRelayReserveTimeout, 3 * time.Second},
+		{"ForegroundCircuitAddressWaitTimeout", ForegroundCircuitAddressWaitTimeout, 3 * time.Second},
+		{"InteractiveDialTimeout", InteractiveDialTimeout, 4 * time.Second},
+		{"InteractiveSendTimeout", InteractiveSendTimeout, 3 * time.Second},
+	}
+	for _, tc := range cases {
+		if tc.got != tc.want {
+			t.Errorf(
+				"%s = %v, want %v — FDC-S1 verdict DIALTIMEOUT_RETIME=no: no cold-start "+
+					"timeout value moves in FDC-07 (did someone re-introduce the refuted "+
+					"\"cap to 3s\"?)",
+				tc.name, tc.got, tc.want,
+			)
+		}
+	}
+}

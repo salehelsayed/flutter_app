@@ -12,7 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
 
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/messaging"
@@ -1462,6 +1464,13 @@ type inboxResponse struct {
 	SourcePeerId  string                 `json:"sourcePeerId,omitempty"`
 	RangeHash     string                 `json:"rangeHash,omitempty"`
 	HeadMessageId string                 `json:"headMessageId,omitempty"`
+	// FDC-08 presence_get response fields (additive — `omitempty` keeps every
+	// other action's response byte-identical for NET-REL-07). Presence is
+	// "online-ish", never a foreground/background claim. AgeMs is a pointer so a
+	// legitimate `ageMs:0` on a presence response is still emitted, while every
+	// non-presence response omits the key entirely.
+	Presence string `json:"presence,omitempty"`
+	AgeMs    *int64 `json:"ageMs,omitempty"`
 }
 
 func fitRetrievePendingResponse(
@@ -1494,7 +1503,13 @@ func fitRetrievePendingResponse(
 	return nil, true, fmt.Errorf("single retrieve_pending entry exceeds %d-byte frame limit", maxFrameLen)
 }
 
-func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInboxStore) {
+// HandleInboxStream dispatches a single inbox request over a libp2p stream. Its
+// gocyclo is pre-existing (the 11-case action dispatch); FDC-08 adds one
+// delegating `presence_get` arm (-> handlePresenceGet) and does not refactor the
+// inherited switch (out of scope — see FDC-08 Scope Guard / named-handler rule).
+//
+//nolint:gocyclo,funlen // pre-existing dispatch size/complexity; FDC-08 adds one delegating case
+func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInboxStore, h host.Host, presence *PresenceStore) {
 	start := time.Now()
 	activeStreams.WithLabelValues("inbox").Inc()
 	streamResult := "ok"
@@ -1709,12 +1724,39 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 			}
 		}
 
+	case "presence_get":
+		resp = handlePresenceGet(req, h, presence)
+
 	default:
 		resp = inboxResponse{Status: "ERROR", Error: fmt.Sprintf("Unknown action: %s", req.Action)}
 	}
 
 	writeResponse(s, resp)
 	log.Printf("[INBOX] Stream closed for %s", remotePeer[:min(20, len(remotePeer))])
+}
+
+// handlePresenceGet answers the additive `presence_get` inbox action: a cheap,
+// read-only "is this peer online-ish?" lookup that replaces the blind ≤5 s
+// circuit dial on the send-decision path (FDC-08). It NEVER dials a circuit and
+// NEVER mutates inbox state (PRESENCE_LOOKUP_IS_READ_ONLY) — it reads the
+// peer's live socket connectedness plus the shared presence store's last-seen /
+// self-published state. The answer is coarse "online-ish, TTL-lagged" and
+// carries no foreground/background field (PRESENCE_IS_ONLINE_ISH_NOT_FOREGROUND).
+// A stale last-seen resolves to `unknown`, never silently `unreachable`.
+func handlePresenceGet(req inboxRequest, h host.Host, presence *PresenceStore) inboxResponse {
+	if req.To == "" {
+		return inboxResponse{Status: "ERROR", Error: "Missing required field: to"}
+	}
+	pid, err := peer.Decode(req.To)
+	if err != nil {
+		return inboxResponse{Status: "ERROR", Error: fmt.Sprintf("invalid peer ID: %v", err)}
+	}
+
+	connected := h.Network().Connectedness(pid) == network.Connected
+	res := presence.Lookup(pid, connected)
+
+	ageMs := res.ageMs
+	return inboxResponse{Status: "OK", Presence: res.presence, AgeMs: &ageMs}
 }
 
 func writeResponse(s network.Stream, resp inboxResponse) {

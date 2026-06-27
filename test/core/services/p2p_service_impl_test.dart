@@ -800,6 +800,107 @@ void main() {
     );
   });
 
+  // ───────────────────── FDC-11: lan:peer_found forwarder ─────────────────
+  group('FDC-11 lan:peer_found forwarder', () {
+    const lanPeerId = 'lan-peer';
+    const lanAddrs = ['/ip4/192.168.1.50/udp/45000/quic-v1'];
+
+    Future<FakeLocalP2PService> startService({
+      Set<String> blockedOperations = const {},
+      List<String>? observedOperations,
+    }) async {
+      service.dispose();
+      final localP2P = FakeLocalP2PService();
+      service = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: inboxStagingRepository,
+        localP2PService: localP2P,
+        accountMigrationNetworkGate: ({peerId, required operation}) async {
+          observedOperations?.add(operation);
+          return !blockedOperations.contains(operation);
+        },
+      );
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'self-peer',
+          'isStarted': true,
+          'listenAddresses': <String>[],
+          'circuitAddresses': <String>[],
+          'connections': <dynamic>[],
+        }),
+      );
+      bridge.whenCommand('lan:peer_found', (_) => jsonEncode({'ok': true}));
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+      bridge.calledCommands.clear();
+      bridge.payloadsByCommand.clear();
+      return localP2P;
+    }
+
+    // T11: with the runtime gate paused for 'p2p_lan_dial', a delivered LAN
+    // peer-found issues NO bridge crossing (the move-feature gate lock).
+    test(
+      'lan:peer_found forward blocked when account network side-effects paused',
+      () async {
+        final observed = <String>[];
+        final localP2P = await startService(
+          blockedOperations: {'p2p_lan_dial'},
+          observedOperations: observed,
+        );
+
+        localP2P.addLocalPeer(lanPeerId, libp2pAddresses: lanAddrs);
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+
+        expect(bridge.calledCommands, isNot(contains('lan:peer_found')));
+        expect(
+          observed,
+          contains('p2p_lan_dial'),
+          reason: 'the runtime gate must be consulted at the forward point',
+        );
+      },
+    );
+
+    // With the gate open, the resolved LAN peer (carrying libp2p multiaddrs) is
+    // forwarded exactly once; re-emitting the same peer does not double-forward.
+    test('lan:peer_found forwarded once when the gate is open', () async {
+      final localP2P = await startService();
+
+      localP2P.addLocalPeer(lanPeerId, libp2pAddresses: lanAddrs);
+      await _waitForCondition(
+        () => bridge.calledCommands.contains('lan:peer_found'),
+        reason: 'expected a lan:peer_found forward when the gate is open',
+      );
+
+      expect(
+        bridge.calledCommands.where((c) => c == 'lan:peer_found').length,
+        1,
+      );
+      final payload = bridge.payloadsFor('lan:peer_found').single;
+      expect(payload?['peerId'], lanPeerId);
+      expect(payload?['addresses'], lanAddrs);
+
+      // Re-emitting the same peer must not re-cross the bridge (per-peer dedup).
+      localP2P.addLocalPeer(lanPeerId, libp2pAddresses: lanAddrs);
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+      expect(
+        bridge.calledCommands.where((c) => c == 'lan:peer_found').length,
+        1,
+      );
+    });
+
+    // A WS-only peer (older client / no libp2p ports advertised) is never
+    // forwarded to the libp2p dial.
+    test('peer without libp2p addresses is not forwarded', () async {
+      final localP2P = await startService();
+
+      localP2P.addLocalPeer(lanPeerId); // libp2pAddresses defaults to []
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+
+      expect(bridge.calledCommands, isNot(contains('lan:peer_found')));
+    });
+  });
+
   group('transport inference', () {
     test(
       'account migration gate blocks inbound Go messages before stream emission',

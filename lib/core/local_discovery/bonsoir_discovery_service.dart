@@ -66,17 +66,51 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
   // after discovery is being stopped.
   bool _stopping = false;
 
+  /// FDC-11: builds the resolved peer's libp2p LAN multiaddrs from its
+  /// advertised QUIC (+TCP) TXT ports. QUIC is preferred (FDC-S2 Option A); the
+  /// TCP lane is the fallback. Returns empty when no libp2p port was advertised
+  /// (older client / WS-only path). Built from the libp2p port, never the
+  /// wsPort.
+  static List<String> _buildLibp2pAddresses(
+    String host,
+    Map<String, String> attributes,
+  ) {
+    final proto = host.contains(':') ? 'ip6' : 'ip4';
+    final addrs = <String>[];
+    final quicPort = int.tryParse(attributes['quicPort'] ?? '');
+    if (quicPort != null && quicPort > 0) {
+      addrs.add('/$proto/$host/udp/$quicPort/quic-v1');
+    }
+    final tcpPort = int.tryParse(attributes['tcpPort'] ?? '');
+    if (tcpPort != null && tcpPort > 0) {
+      addrs.add('/$proto/$host/tcp/$tcpPort');
+    }
+    return addrs;
+  }
+
   @override
-  Future<void> startAdvertising(String peerId, int wsPort) async {
+  Future<void> startAdvertising(
+    String peerId,
+    int wsPort, {
+    int? quicPort,
+    int? tcpPort,
+  }) async {
     _ownPeerId = peerId;
     _stopping = false;
 
-    // Advertise our service.
+    // Advertise our service. FDC-11: additively carry the libp2p QUIC (+TCP)
+    // listen ports in the TXT so a same-WiFi peer can build the libp2p
+    // LAN-direct multiaddr — the `wsPort` advert stays for the WS byte path.
+    // (FDC-S2 hard requirement: advertise the libp2p QUIC port, NOT wsPort.)
     final service = BonsoirService(
       name: _serviceName,
       type: _serviceType,
       port: wsPort,
-      attributes: {'peerId': peerId},
+      attributes: {
+        'peerId': peerId,
+        if (quicPort != null) 'quicPort': '$quicPort',
+        if (tcpPort != null) 'tcpPort': '$tcpPort',
+      },
     );
 
     // Bonsoir's native iOS log formatting can crash while stringifying
@@ -152,11 +186,18 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
         final host = service.host;
         if (host == null) return;
 
+        // FDC-11: build the remote's libp2p LAN multiaddrs from its advertised
+        // QUIC (+TCP) TXT ports — NEVER from service.port (= wsPort), which would
+        // feed the libp2p dial the wrong port and re-trigger the FDC-S2
+        // QUIC-identify "hang" as a config bug.
+        final libp2pAddresses = _buildLibp2pAddresses(host, service.attributes);
+
         final peer = LocalPeer(
           peerId: peerId,
           host: host,
           port: service.port,
           discoveredAt: DateTime.now().toUtc(),
+          libp2pAddresses: libp2pAddresses,
         );
         _peers[peerId] = peer;
         _peersController.add(Map.unmodifiable(_peers));

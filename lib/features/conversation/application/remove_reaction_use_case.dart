@@ -93,28 +93,57 @@ Future<RemoveReactionResult> removeReaction({
     return RemoveReactionResult.encryptionFailed;
   }
 
-  // 4. Send — try direct, fall back to inbox
+  // 4. Send — FDC-18: concurrent durable inbox, the twin of the add path. The
+  //    un-react toggle gets the identical treatment so the reaction stays
+  //    symmetric (fast to react AND fast to un-react). See
+  //    send_reaction_use_case.dart for the full rationale: unknown-presence =>
+  //    fire storeInInbox concurrently with the live send; connected =>
+  //    single live path; exactly one storeInInbox per toggle.
+  final unknownPresence = !p2pService.isConnectedToPeer(targetPeerId);
+
+  Future<bool>? concurrentInbox;
+  if (unknownPresence) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'REACTION_REMOVE_CONCURRENT_INBOX_BEGIN',
+      details: {
+        'messageId':
+            messageId.length > 8 ? messageId.substring(0, 8) : messageId,
+      },
+    );
+    concurrentInbox = p2pService
+        .storeInInbox(targetPeerId, jsonString)
+        .catchError((_) => false);
+  }
+
+  bool delivered;
   try {
     final sent = await p2pService.sendMessage(targetPeerId, jsonString);
-    if (!sent) {
-      final storedInInbox = await p2pService.storeInInbox(
-        targetPeerId,
-        jsonString,
-      );
-      if (!storedInInbox) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'REACTION_REMOVE_SEND_FAILED',
-          details: {'reason': 'direct_and_inbox_failed'},
-        );
-        return RemoveReactionResult.sendFailed;
-      }
+    if (sent) {
+      delivered = true;
+    } else if (concurrentInbox != null) {
+      delivered = await concurrentInbox;
+    } else {
+      delivered = await p2pService.storeInInbox(targetPeerId, jsonString);
     }
   } catch (e) {
+    if (concurrentInbox != null) {
+      delivered = await concurrentInbox;
+    } else {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'REACTION_REMOVE_SEND_FAILED',
+        details: {'error': e.toString()},
+      );
+      return RemoveReactionResult.sendFailed;
+    }
+  }
+
+  if (!delivered) {
     emitFlowEvent(
       layer: 'FL',
       event: 'REACTION_REMOVE_SEND_FAILED',
-      details: {'error': e.toString()},
+      details: {'reason': 'direct_and_inbox_failed'},
     );
     return RemoveReactionResult.sendFailed;
   }

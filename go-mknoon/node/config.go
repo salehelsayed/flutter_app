@@ -88,6 +88,17 @@ const (
 	StreamReadDeadline   = 10 * time.Second
 	InboundReadDeadline  = 15 * time.Second // inbound reads may come from slow peers
 	DirectConfirmTimeout = 2 * time.Second  // must stay within interactive direct-send budget
+
+	// FDC-11 — bonsoir-fed libp2p LAN-direct dial.
+	// LANDirectIdentifyBudget is the per-leg dial+identify budget for a same-WiFi
+	// LAN-direct QUIC dial — FDC-S2 Option A: max(p95 rounded↑250ms, 750ms); the
+	// measured p95 was 2ms so the 750ms floor governs. Fits interactiveLocalBudget
+	// (1500ms) with margin.
+	LANDirectIdentifyBudget = 750 * time.Millisecond
+	// LANDialWarmCooldown debounces repeated bonsoir finds for the same peer so a
+	// flapping/offline LAN peer cannot tight-loop the swarm into its 5s→5m dial
+	// backoff (proposal §6.1, §10).
+	LANDialWarmCooldown = 5 * time.Second
 )
 
 // TimeoutProfile bundles per-operation timeout durations for a given

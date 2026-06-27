@@ -37,5 +37,6 @@ func featureFlagsStatusMap(flags FeatureFlags) map[string]bool {
 		"enableInPlaceRelayRecovery":   flags.EnableInPlaceRelayRecovery,
 		"enableResumeGroupRecovery":    flags.EnableResumeGroupRecovery,
 		"enableDeferredDirectAck":      flags.EnableDeferredDirectAck,
+		"enableLibp2pLANDial":          flags.EnableLibp2pLANDial,
 	}
 }

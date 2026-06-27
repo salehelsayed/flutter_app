@@ -4337,27 +4337,29 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   void _onPaused() {
-    // Fire-and-forget: we have at most a few hundred milliseconds of foreground
-    // execution. handleAppPaused() is local-DB-only — no network, no p2pService
-    // — UNLESS the FDC-S4 pause-flush is enabled (--dart-define=FDC_PAUSE_FLUSH=1),
-    // in which case it NARROWS (not deletes) the "no network on pause" rule to a
-    // single *bounded, bg-assertion-protected, inbox-store-only* deposit of the
-    // newest in-flight sends before marking the rest failed — no unbounded
-    // network, no held connection.
+    // Fire-and-forget (PS-4): we have at most a few hundred milliseconds of
+    // foreground execution. handleAppPaused() is local-DB-only EXCEPT for the
+    // FDC-06 bounded pause-flush, which ships ENABLED (kFdcPauseFlushEnabled;
+    // kill-switch --dart-define=FDC_PAUSE_FLUSH_DISABLE=1). The flush NARROWS
+    // (does not delete) the "no network on pause" rule to a single *bounded,
+    // bg-assertion-protected, inbox-store-only* deposit of the newest in-flight
+    // sends — persisting each accepted row to durable custody
+    // ('inboxed'/'inbox') and marking the rest failed — with no unbounded
+    // network and no held connection.
     //
-    // The assertion is acquired inside handleAppPaused (callBgBegin) before the
-    // first network await; once held, the OS background task — not this Dart
-    // future — keeps the process alive across the deposit, so firing unawaited
-    // is acceptable FOR THE MEASUREMENT PROTOTYPE. The remaining risk is the
-    // window between this method returning and callBgBegin actually executing on
-    // the native side; that window is the same one the interactive send path
-    // already relies on, but it is not guaranteed. FDC-06 OWNS hardening this
-    // (restructure _onPaused to begin→await→end). Default OFF leaves the legacy
-    // local-DB-only path byte-for-byte unchanged.
-    // FDC-S4 measurement scaffolding: log the real OS background grant on every
-    // pause (flag-gated; measurement builds only). Lets the grant be measured
-    // from a bare launch+background, no in-flight sends required.
-    if (kFdcPauseFlushEnabled) {
+    // Stays `unawaited` (FDC-06 Step 7, resolved): the assertion is acquired
+    // inside handleAppPaused (callBgBegin) before the first network await, and
+    // once held it is the native OS background task — not this Dart future —
+    // that keeps the process alive across the deposit (S4 device-verified, the
+    // same window the interactive send path already relies on). If a device
+    // flake ever appears, the fallback is a bounded `await` here that still
+    // never throws.
+    //
+    // FDC-S4 grant-probe is MEASUREMENT-ONLY (kFdcPauseGrantProbeEnabled, armed
+    // by --dart-define=FDC_PAUSE_FLUSH=1) and must NOT fire in a normal build —
+    // it takes a ~1.5s bg assertion on every pause. Kept until T8 closes on a
+    // 2nd iOS major (the device RESULTS parser greps PAUSE_GRANT_PROBE).
+    if (kFdcPauseGrantProbeEnabled) {
       unawaited(probePauseBackgroundGrant(widget.bridge));
     }
     unawaited(
@@ -4716,6 +4718,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         shareIntentService: widget.shareIntentService,
         initialShareIntentCapture: _initialShareIntentCapture,
         ensureRuntimeServicesReady: _ensureRuntimeServicesReady,
+        // FDC-07: start LAN mDNS discovery early on the cold-start branch. Bound
+        // to the concrete impl method (off the P2PService interface to avoid
+        // churning the fakes); idempotent with startNode's own early seam.
+        startEarlyLocalDiscovery: () => widget.p2pService.startEarlyLocalDiscovery(),
         appShellController: widget.appShellController,
         pendingPostTargetStore: widget.pendingPostTargetStore,
         postsPrivacySettingsRepository: widget.postsPrivacySettingsRepository,

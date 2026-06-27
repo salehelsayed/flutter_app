@@ -82,6 +82,9 @@ String at(int s) => '2026-01-01T00:00:${s.toString().padLeft(2, '0')}.000Z';
 Future<String> statusOf(InMemoryMessageRepository repo, String id) async =>
     (await repo.getMessage(id))!.status;
 
+Future<String?> transportOf(InMemoryMessageRepository repo, String id) async =>
+    (await repo.getMessage(id))!.transport;
+
 void main() {
   // ─────────────────────────────────────────────────────────────────────────
   group('FDC-S4 pause-flush — DISABLED (default): invariant preserved', () {
@@ -126,7 +129,12 @@ void main() {
 
   // ─────────────────────────────────────────────────────────────────────────
   group('FDC-S4 pause-flush — ENABLED: deposit-first / mark-on-reject', () {
-    test('accepted deposit leaves the row in CUSTODY (not marked failed)',
+    // FDC-06 NR-1 (HEADLINE — the custody flip): an ACCEPTED deposit is durable
+    // custody, so it is persisted 'inboxed'/transport:'inbox' (mirror
+    // retry_unacked_messages_use_case) — NOT left in 'sending'. Resume's
+    // recoverStuckSendingMessages + retry_failed then leave it alone (NR-5) and
+    // a 2nd pause re-deposits nothing (NR-4).
+    test('accepted deposit persists the row as inboxed/transport:inbox (custody)',
         () async {
       final repo = InMemoryMessageRepository();
       await repo.saveMessage(
@@ -150,10 +158,12 @@ void main() {
       // Deposited to the recipient with the row's wire envelope.
       expect(p2p.storeInInboxLog.single.toPeerId, 'peer-a');
       expect(p2p.storeInInboxLog.single.message, 'envelope-1');
-      // In custody → NOT marked failed.
+      // In durable custody → persisted 'inboxed'/'inbox', NOT marked failed and
+      // NOT left 'sending'.
       expect(result.flushDepositedCount, 1);
       expect(result.transitionedCount, 0);
-      expect(await statusOf(repo, 'm1'), 'sending');
+      expect(await statusOf(repo, 'm1'), 'inboxed');
+      expect(await transportOf(repo, 'm1'), 'inbox');
       // Assertion taken before the deposit and released after.
       expect(bridge.commandLog, containsAllInOrder(['bg:begin', 'bg:end']));
       expect(bridge.bgEndTaskIds, ['7']);
@@ -230,7 +240,7 @@ void main() {
 
       expect(p2p.storeInInboxLog.map((e) => e.toPeerId), ['peer-a']);
       expect(result.flushDepositedCount, 1);
-      expect(await statusOf(repo, 'with'), 'sending');
+      expect(await statusOf(repo, 'with'), 'inboxed'); // accepted → custody
       expect(await statusOf(repo, 'without'), 'failed');
     });
 
@@ -262,8 +272,8 @@ void main() {
 
       expect(result.flushDepositedCount, 2);
       expect(result.transitionedCount, 1);
-      expect(await statusOf(repo, 'a'), 'sending'); // accepted → custody
-      expect(await statusOf(repo, 'c'), 'sending'); // accepted → custody
+      expect(await statusOf(repo, 'a'), 'inboxed'); // accepted → custody
+      expect(await statusOf(repo, 'c'), 'inboxed'); // accepted → custody
       expect(await statusOf(repo, 'b'), 'failed'); // rejected → failed
     });
 
@@ -331,7 +341,7 @@ void main() {
       expect(await statusOf(repo, 'm1'), 'failed');
       expect(await statusOf(repo, 'm2'), 'failed');
       expect(await statusOf(repo, 'm3'), 'failed');
-      expect(await statusOf(repo, 'm8'), 'sending');
+      expect(await statusOf(repo, 'm8'), 'inboxed'); // newest → custody
     });
 
     test('per-message budget is passed as storeInInbox timeoutMs', () async {
@@ -420,7 +430,7 @@ void main() {
       // No assertion held, but the bounded deposit still proceeds.
       expect(p2p.storeInInboxCallCount, 1);
       expect(result.flushDepositedCount, 1);
-      expect(await statusOf(repo, 'm1'), 'sending');
+      expect(await statusOf(repo, 'm1'), 'inboxed'); // accepted → custody
       // callBgEnd(null) is a no-op → no bg:end recorded.
       expect(bridge.bgEndTaskIds, isEmpty);
     });
@@ -480,6 +490,133 @@ void main() {
       expect(complete['details']['skipped'], 0);
       expect(complete['details']['cappedOut'], 0);
       expect(complete['details']['expired'], false);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // FDC-06: custody durability + ship-it decision (NR-2..NR-5). NR-1 is the
+  // edited lock #3 above (the custody flip from 'sending' → 'inboxed'/'inbox').
+  group('FDC-06 pause-flush — custody durability + ship decision', () {
+    // NR-2 (legacy-unsafe guard): mirror retry_unacked_messages_use_case — a
+    // stale pre-format-change envelope must NOT be deposited (the relay would
+    // reject/mis-handle it); it falls through to today's mark-failed.
+    test('a legacy-unsafe wireEnvelope is NOT deposited and is marked failed',
+        () async {
+      final repo = InMemoryMessageRepository();
+      // Newest: a v1 chat_message envelope → isUnsafeLegacyOutboundEnvelope.
+      await repo.saveMessage(
+        sendingMsg(
+          id: 'legacy',
+          contactPeerId: 'peer-legacy',
+          createdAt: at(2),
+          wireEnvelope: '{"type":"chat_message","version":"1"}',
+        ),
+      );
+      // Control: a non-legacy envelope still deposits to custody.
+      await repo.saveMessage(
+        sendingMsg(
+          id: 'ok',
+          contactPeerId: 'peer-ok',
+          createdAt: at(1),
+          wireEnvelope: 'envelope-ok',
+        ),
+      );
+      final p2p = FakeP2PService()..storeInInboxResult = true;
+      final bridge = _FlushFakeBridge();
+
+      final result = await handleAppPaused(
+        messageRepo: repo,
+        p2pService: p2p,
+        bridge: bridge,
+        enablePauseFlush: true,
+      );
+
+      // The legacy row is never deposited; only the control reaches the inbox.
+      expect(p2p.storeInInboxLog.map((e) => e.toPeerId), ['peer-ok']);
+      expect(result.flushDepositedCount, 1);
+      // Legacy → today's mark-failed; control → durable custody (NR-1).
+      expect(await statusOf(repo, 'legacy'), 'failed');
+      expect(await statusOf(repo, 'ok'), 'inboxed');
+      expect(await transportOf(repo, 'ok'), 'inbox');
+    });
+
+    // NR-3 (SHIP decision — "Ship ON, keep kill-switch"): a normal build (no
+    // dart-defines) ships the bounded flush ENABLED, while the FDC-S4
+    // measurement-only grant-probe stays OFF (it must NOT take a ~1.5s bg
+    // assertion on every production pause). Disable the flush without a code
+    // change via --dart-define=FDC_PAUSE_FLUSH_DISABLE=1 (or FDC_PAUSE_FLUSH=off).
+    test('SHIP decision: pause-flush ON by default; grant-probe stays OFF',
+        () async {
+      expect(kFdcPauseFlushEnabled, isTrue);
+      expect(kFdcPauseGrantProbeEnabled, isFalse);
+    });
+
+    // NR-4 (idempotence): `_onPaused` fires for BOTH `hidden` and `paused`
+    // (main.dart, no debounce). The custody flip is the self-heal — once the
+    // row is 'inboxed' it leaves the `status='sending'` query, so the 2nd pause
+    // deposits nothing and takes no 2nd bg assertion.
+    test('two consecutive pauses deposit each row at most once', () async {
+      final repo = InMemoryMessageRepository();
+      await repo.saveMessage(
+        sendingMsg(id: 'm1', contactPeerId: 'peer-a', createdAt: at(1)),
+      );
+      final p2p = FakeP2PService()..storeInInboxResult = true;
+      final bridge = _FlushFakeBridge();
+
+      await handleAppPaused(
+        messageRepo: repo,
+        p2pService: p2p,
+        bridge: bridge,
+        enablePauseFlush: true,
+      );
+      await handleAppPaused(
+        messageRepo: repo,
+        p2pService: p2p,
+        bridge: bridge,
+        enablePauseFlush: true,
+      );
+
+      expect(p2p.storeInInboxCallCount, 1);
+      expect(bridge.bgBeginCount, 1);
+      expect(await statusOf(repo, 'm1'), 'inboxed');
+    });
+
+    // NR-5 (resume survival — the new 'inboxed'/'inbox' resting state must
+    // survive every later transition the old 'sending'/'failed' states implied).
+    test('an inboxed/inbox custody row survives resume recoverStuck + retry',
+        () async {
+      final repo = InMemoryMessageRepository();
+      // Past-dated (older than the recovery cutoff) so a *sending* row WOULD be
+      // recovered — proving the custody status choice matters.
+      await repo.saveMessage(
+        sendingMsg(id: 'm1', contactPeerId: 'peer-a', createdAt: at(1)),
+      );
+      final p2p = FakeP2PService()..storeInInboxResult = true;
+      final bridge = _FlushFakeBridge();
+
+      // Pause-flush deposits + (NR-1) marks the row inboxed/inbox.
+      await handleAppPaused(
+        messageRepo: repo,
+        p2pService: p2p,
+        bridge: bridge,
+        enablePauseFlush: true,
+      );
+      expect(await statusOf(repo, 'm1'), 'inboxed');
+      expect(await transportOf(repo, 'm1'), 'inbox');
+
+      // Resume Step-8a: blanket recoverStuckSendingMessages (UPDATE … WHERE
+      // status='sending'). An 'inboxed' row is not 'sending' → untouched.
+      final recovered = await repo.recoverStuckSendingMessages(
+        olderThan: const Duration(seconds: 1),
+      );
+      expect(recovered, 0);
+      expect(await statusOf(repo, 'm1'), 'inboxed');
+
+      // Neither resume retry path can pick it up: retry_failed loads exactly
+      // getFailedOutgoingMessages(); the row is in neither the failed nor the
+      // sending set, so it is never re-sent.
+      expect(await repo.getFailedOutgoingMessages(), isEmpty);
+      expect(await repo.getSendingOutgoingMessages(), isEmpty);
     });
   });
 }

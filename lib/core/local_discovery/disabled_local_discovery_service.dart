@@ -8,7 +8,12 @@ class DisabledLocalDiscoveryService implements LocalDiscoveryService {
   final _peersController = StreamController<Map<String, LocalPeer>>.broadcast();
 
   @override
-  Future<void> startAdvertising(String peerId, int wsPort) async {
+  Future<void> startAdvertising(
+    String peerId,
+    int wsPort, {
+    int? quicPort,
+    int? tcpPort,
+  }) async {
     emitFlowEvent(
       layer: 'FL',
       event: 'LOCAL_MDNS_DISABLED',

@@ -190,6 +190,15 @@ class StartupRouter extends StatefulWidget {
   final Future<void>? initialShareIntentCapture;
   final Future<void> Function()? ensureRuntimeServicesReady;
 
+  /// FDC-07: cold-start hook that starts LAN mDNS discovery early (ahead of the
+  /// warmBackground inbox-drain body) so a same-WiFi peer can populate the LAN
+  /// map before the first send window. Wired in main.dart to the concrete
+  /// [P2PServiceImpl.startEarlyLocalDiscovery]; kept as an optional callback
+  /// (NOT a [P2PService] interface method) so it adds no churn to the many
+  /// `implements P2PService` fakes. Opportunistic + idempotent — invoked once
+  /// node-start succeeds, after [ensureRuntimeServicesReady].
+  final Future<void> Function()? startEarlyLocalDiscovery;
+
   final AppShellController appShellController;
   final PendingPostTargetStore pendingPostTargetStore;
   final PostsPrivacySettingsRepository postsPrivacySettingsRepository;
@@ -250,6 +259,7 @@ class StartupRouter extends StatefulWidget {
     this.shareIntentService,
     this.initialShareIntentCapture,
     this.ensureRuntimeServicesReady,
+    this.startEarlyLocalDiscovery,
     required this.appShellController,
     required this.pendingPostTargetStore,
     required this.postsPrivacySettingsRepository,
@@ -651,6 +661,11 @@ class _StartupRouterState extends State<StartupRouter> {
     if (result == StartNodeResult.success) {
       StartupTiming.instance.mark('p2p_startup_complete');
       StartupTiming.instance.printSummary();
+      // FDC-07: trigger early LAN mDNS discovery on the cold-start branch — AFTER
+      // the plan-164 ensureRuntimeServicesReady gate (above; node-start ordering
+      // is NOT reordered) and BEFORE the group-rejoin/drain block below.
+      // Idempotent with startNode's own early seam; opportunistic (never blocks).
+      unawaited(widget.startEarlyLocalDiscovery?.call());
       unawaited(
         refreshNearbyOnStartup(
           nearbyLocationService: widget.nearbyLocationService,
@@ -1099,6 +1114,7 @@ class _StartupRouterState extends State<StartupRouter> {
       shareIntentService: widget.shareIntentService,
       initialShareIntentCapture: widget.initialShareIntentCapture,
       ensureRuntimeServicesReady: widget.ensureRuntimeServicesReady,
+      startEarlyLocalDiscovery: widget.startEarlyLocalDiscovery,
       appShellController: widget.appShellController,
       pendingPostTargetStore: widget.pendingPostTargetStore,
       postsPrivacySettingsRepository: widget.postsPrivacySettingsRepository,
