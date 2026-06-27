@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'bridge.dart';
+import '../local_discovery/lan_address_classifier.dart';
 import '../utils/flow_event_emitter.dart';
 
 /// Default rendezvous server address (WSS).
@@ -60,6 +61,16 @@ Map<String, bool> defaultResilienceFeatureFlags() {
     // --dart-define=MKNOON_ENABLE_DCUTR_UPGRADE=true.
     'enableDcutrUpgrade': const bool.fromEnvironment(
       'MKNOON_ENABLE_DCUTR_UPGRADE',
+      defaultValue: false,
+    ),
+    // FDC-15: gates the Go-side peer-direct LAN media byte stream
+    // (MediaLANProtocol handler registration). Defaults OFF until the two-phone
+    // media device gate (D1) is GREEN; flip on for the device-proof via
+    // --dart-define=MKNOON_ENABLE_LIBP2P_LAN_MEDIA=true. The Dart send leg reads
+    // the same flag back from currentState.featureFlags, so one value gates both
+    // halves end-to-end.
+    'enableLibp2pLANMedia': const bool.fromEnvironment(
+      'MKNOON_ENABLE_LIBP2P_LAN_MEDIA',
       defaultValue: false,
     ),
   };
@@ -591,7 +602,18 @@ Future<Map<String, dynamic>> callP2PLanPeerFound(
   emitFlowEvent(
     layer: 'FL',
     event: 'P2P_LAN_PEER_FOUND_REQUEST',
-    details: {'peerId': peerId, 'addrCount': addresses.length},
+    details: {
+      'peerId': peerId,
+      'addrCount': addresses.length,
+      // FDC-S6 instrument point 2 (net-new private-IP discriminator): the raw
+      // multiaddrs are redacted out of the log by flow_event_emitter, so compute
+      // the private-IP gate here and carry only the non-sensitive boolean + a
+      // short join prefix. A bonsoir-fed peer advertising an RFC1918/link-local
+      // addr is the soak's evidence that a later `"direct"` win to this peer was
+      // a real same-WiFi LAN dial, not a WAN/DCUtR `"direct"` false positive.
+      'peer': peerId.length > 10 ? peerId.substring(0, 10) : peerId,
+      'lanPrivateIp': multiaddrsContainPrivateIp(addresses),
+    },
   );
 
   final request = {
@@ -1031,6 +1053,72 @@ Future<Map<String, dynamic>> callP2PMediaUpload(
     layer: 'FL',
     event: 'P2P_MEDIA_UPLOAD_RESPONSE',
     details: {'ok': response['ok'], 'id': response['id']},
+  );
+
+  return response;
+}
+
+/// FDC-15: streams a 1:1 media ciphertext blob to [toPeerId] over the
+/// peer-authenticated libp2p LAN-direct conn (`media:lan_send` → Go
+/// `MediaLANSend` → `Node.SendLANMedia`). The Go node refuses unless a
+/// non-circuit conn exists, computes the SHA-256 of the ciphertext file, and the
+/// receiver verifies it. Best-effort acceleration only — the relay-CDN upload
+/// stays unconditional at the caller.
+///
+/// There is no LAN media progress stream yet (Go `MediaLANSend` emits none), so
+/// this rides a stall-only watchdog (it reuses the media-upload progress stream,
+/// whose events never match a LAN id, so the stall timer is never re-armed). The
+/// native dispatch + EventChannel are device-deferred (FDC-11/FDC-15 D1).
+///
+/// Returns: `{ "ok": true, "acked": bool, "sha256Verified": bool, "transport": "direct" }`.
+Future<Map<String, dynamic>> callP2PLanMediaSend(
+  Bridge bridge, {
+  required String id,
+  required String toPeerId,
+  required String fromPeerId,
+  required String mime,
+  required String filePath,
+  bool enc = false,
+  String? encScheme,
+  int? durationMs,
+  int? payloadSizeBytes,
+  Duration? stallTimeout,
+  Duration? maxTimeout,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_LAN_MEDIA_SEND_REQUEST',
+    details: {'id': id, 'toPeerId': toPeerId, 'mime': mime},
+  );
+
+  final request = {
+    'cmd': 'media:lan_send',
+    'payload': {
+      'id': id,
+      'to': toPeerId,
+      'from': fromPeerId,
+      'mime': mime,
+      'filePath': filePath,
+      'enc': enc,
+      if (encScheme != null) 'encScheme': encScheme,
+      if (durationMs != null) 'durationMs': durationMs,
+    },
+  };
+
+  final response = await _sendMediaTransferWithWatchdog(
+    bridge: bridge,
+    request: request,
+    progressStream: mediaUploadProgressStream,
+    id: id,
+    stallTimeout: stallTimeout ?? mediaTransferDefaultStallTimeout,
+    maxTimeout: maxTimeout ?? mediaTransferMaxTimeout(payloadSizeBytes),
+    watchdogLabel: 'media:lan_send',
+  );
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_LAN_MEDIA_SEND_RESPONSE',
+    details: {'ok': response['ok'], 'id': id},
   );
 
   return response;

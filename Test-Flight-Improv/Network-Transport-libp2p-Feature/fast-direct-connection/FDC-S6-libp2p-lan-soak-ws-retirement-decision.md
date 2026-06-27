@@ -1,6 +1,63 @@
 # FDC-S6 - libp2p-LAN soak + WS-transport retirement decision  (Spike / Decision)
 
-Status: open
+Status: open — soak **instruments + harness LANDED** (2026-06-27, host-verified); the
+device **soak + verdict stay PENDING**, hard-gated on FDC-11 D1 (still open).
+
+> ## ⓘ Implementation landed (2026-06-27 — instruments + harness, host-verified)
+> Everything device-independent the soak needs is in the tree; only the real-device
+> soak (gated on FDC-11 D1) + the verdict remain. Mirrors FDC-S1/S4 (instrument
+> first, fill numbers from the campaign). Landed + host-green:
+> 1. **Precondition** — `'upgraded'→'direct'` label-bucketing lock added to
+>    `test/core/debug/transport_metrics_test.dart` (GREEN; mutation-verified RED-able:
+>    removing the FDC-13 fold fails exactly that one test).
+> 2. **Instrument 2 (private-IP discriminator, net-new)** — `lanPrivateIp` boolean now
+>    rides `P2P_LAN_PEER_FOUND_REQUEST` (`p2p_bridge_client.dart`), computed by the new
+>    pure `lib/core/local_discovery/lan_address_classifier.dart` (RFC1918/link-local/ULA).
+>    Computed **before** emit because `flow_event_emitter` redacts raw multiaddrs out of
+>    the log — so the gate can't be parsed post-hoc; it must be a non-sensitive boolean.
+> 3. **Instrument 5 (double-delivery counter, net-new)** — `CHAT_MSG_DOUBLE_DELIVERY`
+>    `{id, kept, dropped}` at the messageId-dedup drop in
+>    `handle_incoming_chat_message_use_case.dart` (kept=stored leg, dropped=incoming leg).
+> 4. **Harness** `fdc-s6-measurement/` (README + `fdc_s6_capture.sh` +
+>    `fdc_s6_parse.py` with Wilson-LB win-rate / Newcombe failure-delta CI /
+>    double-delivery-by-leg-pair / private-IP gate; self-tested on a sample log) +
+>    **`FDC-S6-libp2p-lan-soak-RESULTS.md`** scaffold.
+> 5. **Version pin** comment beside go-libp2p in `go-mknoon/go.mod` ("re-run soak on bump").
+>
+> The win leg per send is read from the pre-existing `MSG_RECEIVED_TRANSPORT{from,
+> transport}`. **Boundary** (vs the Method's framing): `node:lan_peer_found` (Go) carries
+> only `{peer, addrCount}` — no multiaddr — so there is no Go-side private-IP source; the
+> Dart `lanPrivateIp` boolean is authoritative (a Go-side confirm would need a NEW
+> pre-computed boolean in `lan_dial.go`, never the raw multiaddr).
+
+> ## ⓘ Review update (2026-06-27 — /tdd-plan verify→refute, 9-agent)
+> The decision FRAME holds (3-component split, false-positive transport-label guard, fail-safe =
+> keep-both, FDC-11/S2 gating). The WS/media-stack anchors (`LocalWsServer`/`LocalMediaServer`/
+> `LocalMediaSender`/migration 012) all re-confirmed at HEAD. Substantive changes folded in below:
+> 1. **HEADLINE WIN-RATE WAS BROKEN post-FDC-12/13 (blocker).** `transportMix()`'s `'direct'` bucket
+>    folds in `'reuse'` AND `'upgraded'` (DCUtR relay→direct, `transport_metrics.dart:130-136`), and
+>    Go `classifyStreamTransport` labels *any* non-circuit conn `"direct"` with **no private-IP check**
+>    (`node.go:150-162`). So `count(direct)` over-counts WAN-direct + DCUtR-upgraded as LAN wins. The
+>    win-rate must be derived from the per-send `node:lan_peer_found` trace + a private-IP multiaddr
+>    gate, EXCLUDING `reuse`/`upgraded` — NOT from the aggregate bucket. ⇒ the doc's "no new
+>    measurement primitive needed" is **false**; a private-IP discriminator + a double-delivery
+>    counter are net-new.
+> 2. **Statistical rigor.** The 14-day window had no sample floor + a bare point estimate + a
+>    sequential ON/OFF A/B + an unsatisfiable "ZERO net-new failures". Replaced with a
+>    Wilson-LB-≥95% bar over a ≥385-send-per-platform-direction floor, within-pair concurrent
+>    attribution (no sequential A/B), and a non-inferiority margin instead of absolute zero.
+> 3. **Data collection was undefined.** All three label stores are non-exporting (local SQLCipher
+>    column / session-scoped in-memory `transportMix()` / flow-events gated off in release). Added a
+>    Collection-mechanism subsection (`--dart-define=FDC_FLOW_LOG=1` + per-device log capture) and a
+>    `FDC-S6-libp2p-lan-soak-RESULTS.md` + `fdc-s6-measurement/` harness, mirroring FDC-S1/S4.
+> 4. **Currency.** FDC-S2 is now **CLOSED → Option A (750ms)**, so "if C, shelved" is settled;
+>    FDC-11 host-impl is **committed** (D1 device-proof still the open gate); `startAdvertising`
+>    already carries `{quicPort,tcpPort}` (FDC-11); FDC-15 is reviewed + scope-EXPANDED. The LAN-dial
+>    flag is `EnableLibp2pLANDial` (capital LAN) AND the Dart `'p2p_lan_dial'` gate.
+> 5. **~25 file:line anchors re-grounded** (telemetry/Go/discovery + every FDC-11/S2 cross-ref
+>    drifted under concurrent churn; the WS/media-stack anchors are unchanged). A measurement-instrument
+>    PRECONDITION (lock `'upgraded'→'direct'`, currently untested) and a VERDICT-recording block were
+>    added.
 
 Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§5 "WebSocket-over-WiFi vs
 libp2p", L128-160; §6.5 "Unified LAN-direct over libp2p (end-state)", L276-286; §10 "LAN
@@ -26,7 +83,7 @@ Given libp2p-LAN chat is device-proven (FDC-11 D1 GREEN on both platforms), **sh
 **or keep them?** Bonsoir discovery (`BonsoirDiscoveryService` `_mknoon._tcp`) is **NOT a
 retirement candidate** — iOS raw multicast is entitlement-blocked, so iOS needs bonsoir for
 *discovery* regardless of which *transport* wins (proposal §5 L133-139; FDC-11 platform-constraint
-section L115-133).
+section `:154-177`, iOS entitlement `:165-168`).
 
 The number this spike produces: a **soak dataset** (libp2p-LAN win-rate + LAN-direct delivery
 success/failure deltas vs the bonsoir+WS baseline, on real iOS+Android pairs, over N days) and a
@@ -51,10 +108,11 @@ guaranteed:
   latency and risks net-new LAN-direct chat failures the single smoke never measured.
 
 **This conclusion is currently owned by NO plan.** FDC-11/D1 device-proves only that the
-libp2p-LAN **chat** path works (one pass/fail smoke, `FDC-11` D1 L333-348); FDC-S2 only decides
-**protocol feasibility** (Option A/B/C, `FDC-S2` L111-148); and FDC-11 **explicitly keeps
-bonsoir+WS** ("Keep bonsoir+WS as the proven foreground/iOS fast path", `FDC-11:73-76`; Scope
-Guard "Do **NOT** remove or alter bonsoir+WS", `FDC-11:506`). FDC-S6 fills that gap.
+libp2p-LAN **chat** path works (one pass/fail smoke, `FDC-11` D1 `:536-554`); FDC-S2 only decided
+**protocol feasibility** (now CLOSED → Option A, `FDC-S2` Options `:170-208`, verdict `:3-9`); and
+FDC-11 **explicitly keeps bonsoir+WS** ("bonsoir+WS stays as the proven foreground/iOS fast path",
+`FDC-11:108`; Scope Guard "Do **NOT** remove the WS byte path … the `wsPort` advert STAYS",
+`FDC-11:762`). FDC-S6 fills that gap.
 
 ---
 
@@ -81,58 +139,85 @@ bytes** — both on the LAN media server, distinct from the chat transport.
 
 ### bonsoir is the DISCOVERY layer — it STAYS on BOTH platforms regardless
 
-`BonsoirDiscoveryService` (`bonsoir_discovery_service.dart:16`) advertises/browses
-`_mknoon._tcp` (`:17`) via OS-blessed Bonjour/NSD; `startAdvertising(peerId, wsPort)`
-(`local_discovery_service.dart:168-169`) advertises the **WebSocket port**. iOS raw UDP multicast
+`BonsoirDiscoveryService` (`bonsoir_discovery_service.dart:17`) advertises/browses
+`_mknoon._tcp` (`:18`) via OS-blessed Bonjour/NSD; `startAdvertising(peerId, wsPort, {quicPort,
+tcpPort})` (`local_discovery_service.dart:182-187`) advertises the **WebSocket port** — and, since
+FDC-11, **additively the libp2p QUIC/TCP ports** in the same TXT (`bonsoir_discovery_service.dart:
+111-112`). iOS raw UDP multicast
 needs Apple's `com.apple.developer.networking.multicast` entitlement the app does NOT hold; bonsoir
 is therefore the discovery on **both** platforms (no libp2p-native `mdns.NewMdnsService` on either —
 iOS for the entitlement, Android to avoid a redundant second mechanism) and **feeds the discovered
-LAN address into libp2p for the dial** (proposal §5 L133-139; FDC-11 L115-133; Q1 verdict
+LAN address into libp2p for the dial** (proposal §5 L133-139; FDC-11 `:154-177`; Q1 verdict
 `FDC-DESIGN-QA-1to1.md:18-37`). **Retiring the WS *transport* does not retire bonsoir** — they are
 different layers (discovery vs transport).
-A subtlety to fold into any chat-retirement plan: `startAdvertising` advertises the **wsPort**, so
-if WS chat is retired, the advertised TXT must switch to (or also carry) the libp2p host port —
-otherwise discovery still points at a dead WS port (FDC-S2 risk L260-263; FDC-11 Scope Guard
-"do not feed wsPort into the libp2p LAN dial" `:507`).
+A subtlety to fold into any chat-retirement plan: `startAdvertising` still advertises the **wsPort**
+(alongside the libp2p QUIC/TCP ports FDC-11 already added). The "**also carry** the libp2p port"
+half is therefore **already done** — the remaining WS-chat-removal work is only to **DROP the
+now-dead wsPort advert** (and stop the WS server), not to add the libp2p ports; otherwise discovery
+keeps pointing at a dead WS port (FDC-S2 risk `:322-324`; FDC-11 Scope Guard
+"do not feed wsPort into the libp2p LAN dial" `:766`).
 
 ### FDC-11 device-proves only the libp2p-LAN CHAT dial — never media
 
 FDC-11's device gate **D1** proves a same-WiFi peer becomes a `"direct"` (non-circuit) libp2p
 **chat** stream that `DefaultDialRanker` ranks ahead of relay, on **both** platforms (bonsoir-fed
-`host.Connect` on both — no libp2p-native mDNS on either) — `FDC-11:333-348`, matrix row
-`:363`. It is a **single pass/fail smoke** ("B is discovered ... the resulting send classifies
+`host.Connect` on both — no libp2p-native mDNS on either) — `FDC-11:536-554`, matrix row
+`:573`. It is a **single pass/fail smoke** ("B is discovered ... the resulting send classifies
 `"direct"` ... no duplicate delivered"), not a soak. **No FDC plan moves LAN MEDIA bytes onto
 libp2p.** The media byte-path is explicitly out of scope: *"the media byte transfer stays on the
 existing dedicated channels ... only the small chat envelope rides the new libp2p/mDNS/DCUtR
-paths"* (`FDC-00-roadmap.md` SCOPE NOTE; Q6 `FDC-DESIGN-QA-1to1.md:132-149`). So media
-bytes today travel **LAN HTTP-PUT (`local_media_sender.dart`) or relay-CDN (`media.go`)**, never
-libp2p.
+paths"* (`FDC-00-roadmap.md` SCOPE NOTE `:462-468`; Q6 `FDC-DESIGN-QA-1to1.md:132-149`). So media
+bytes today travel **LAN HTTP-PUT (`local_media_sender.dart`) or relay-CDN (`media.go:327`
+`MediaUpload`/`:420` `MediaDownload`)**, never libp2p.
 
 ### Transport-label telemetry ALREADY EXISTS to measure which leg won
 
-The soak does not need new measurement primitives — the labels are already live:
+The soak reuses the live transport labels — but, post-FDC-12/13, the labels alone are **not enough**
+to isolate a genuine LAN win (see the ⚠ caveat below):
 
-- **Go side:** `classifyStreamTransport` (`node.go:123-136`) labels every chat stream `"direct"`
-  (non-circuit `RemoteMultiaddr`) vs `"relay"` (circuit addr) — used at `node.go:1411,1619`. A
-  libp2p-LAN dial is `"direct"`; a relay circuit is `"relay"`. (It cannot distinguish
-  QUIC-direct from TCP-direct — read raw multiaddr for that, FDC-S2 risk L265-267.)
-- **Dart side:** the WS LAN path tags its delivered/received messages `'wifi'`/`'local'`
-  (`p2p_service_impl.dart:349,3297`), libp2p-direct → `'direct'`, relay → `'relay'`, inbox →
-  `'inbox'`; persisted in the `transport` TEXT column (`migrations/012_transport_column.dart:28`,
-  free-text `wifi/local/direct/reuse/relay/inbox/NULL`).
+- **Go side:** `classifyStreamTransport` (`node.go:150-162`) labels every chat stream `"direct"`
+  (non-circuit conn) vs `"relay"` (circuit addr on EITHER local or remote multiaddr) — used at
+  `node.go:1520,1728`, non-circuit fall-through at `:162`. A relay circuit is `"relay"`; **anything
+  else is `"direct"`** — including a WAN/public-IP direct dial and a DCUtR-upgraded (FDC-12)
+  relay→direct conn, **not only a LAN dial**. There is **no private-IP/RFC1918 check** in the
+  function (the nearest helper `isNonRoutableAddr` `node.go:180` covers only loopback/link-local and
+  isn't called here). It also cannot distinguish QUIC-direct from TCP-direct — read the raw multiaddr
+  for both distinctions (FDC-S2 risk `:327`).
+- **Dart side:** the WS LAN path tags its delivered/received messages `'wifi'`
+  (`p2p_service_impl.dart:400/:410/:421/:430` received, `:3743/:3751` delivered); the inbound
+  libp2p/relay label comes from `msg.transport` (Go `classifyStreamTransport`) recorded at `:369`
+  → `'direct'`/`'relay'`; inbox → `'inbox'`. (`'local'` is **not** a delivered tag — it is a
+  learned-reachability label that canonicalizes → `'wifi'`.) Persisted in the `transport` TEXT column
+  (`migrations/012_transport_column.dart:28`, free-text `wifi/local/direct/reuse/relay/inbox/NULL`).
 - **Aggregation:** `TransportMetrics` (`transport_metrics.dart:87`) canonicalizes raw labels into
-  buckets `direct/relay/wifi/inbox` (`:3-8`, `:34-37`, `_canonicalTransport :120-157`) and counts
-  them (`recordTransport :161`, `transportMix() :226`); `recordRelayToDirectUpgrade()` (`:219-224`,
-  fired from `p2p_service_impl.dart:2978-2979` on `transport:upgraded`) is the upgrade counter.
+  **five** buckets `direct/relay/wifi/inbox/unknown` (`kTransportBuckets :4-10`; `_canonicalTransport
+  :123-145`) and counts them (`recordTransport :168`, `transportMix() :233`);
+  `recordRelayToDirectUpgrade()` (`:227`, fired from `p2p_service_impl.dart:3389-3391` on
+  `transport:upgraded`) is the upgrade counter.
 - **Flow-events:** FDC-13's per-message badge work + the `node:*` flow-events FDC-11's D1 records
-  (`node:lan_peer_found` / `EvtPeerIdentificationCompleted` / transport-label, `FDC-11:348,455`)
-  give a per-send "which leg won" trace.
+  (`node:lan_peer_found` / `EvtPeerIdentificationCompleted` / transport-label, `FDC-11:553`) give a
+  per-send "which leg won" trace — and are the **only** source that isolates a bonsoir-fed LAN dial
+  from a WAN/DCUtR `"direct"` (see caveat). NOTE: flow-events emit only when `flowEventLoggingEnabled`
+  is true, which defaults to `kDebugMode` and is **off in profile/TestFlight builds** — the soak
+  binary MUST be built `--dart-define=FDC_FLOW_LOG=1` (see "Collection mechanism" below).
+
+> ⚠ **The `'direct'` bucket is NOT "libp2p-LAN-direct".** `_canonicalTransport` folds **`'reuse'`**
+> (`:128-129`) AND **`'upgraded'`** (`:130-136`, FDC-13's DCUtR relay→direct fold) into `'direct'`,
+> and Go labels WAN-direct/DCUtR-direct identically to a LAN dial. So `count(direct)` via
+> `transportMix()` **over-counts** the libp2p-LAN win. The headline win-rate must instead be derived
+> from the per-send `node:lan_peer_found → EvtPeerIdentificationCompleted → transport` trace (gated
+> on a **private-IP** `RemoteMultiaddr`), and must **exclude** raw `reuse`/`upgraded` sends and any
+> send that fired `transport:upgraded`. This is a **net-new discriminator** — contradicting the "no
+> new measurement primitive needed" claim. (`transportMix()` is also session-scoped + resets each
+> launch + read only by the Settings debug card — it cannot accumulate a 14-day dataset.)
 
 **The canonical false-positive caveat applies to the soak too** (proposal §9.1; `FDC-00` Closure caveat): because the receiver **dedupes by `messageId`** (proposal §10 L397-398), a delivered
 message tagged `'wifi'` proves the WS leg won *that* send, but a green *delivery* can be satisfied
 by the inbox copy even if a live LAN leg never fired. So the soak must read the **transport label
-of the winning leg**, not merely "did it deliver." A `'wifi'`/`'local'` win = WS won; a `'direct'`
-non-circuit win = libp2p-LAN won; `'relay'`/`'inbox'` = neither LAN leg won.
+of the winning leg**, not merely "did it deliver." A `'wifi'`/`'local'` win = WS won; a
+**bonsoir-fed, private-IP, non-circuit `'direct'` win** = libp2p-LAN won (a bare `'direct'` alone is
+ambiguous — it can be WAN/DCUtR-direct, ⚠ above); `'relay'`/`'inbox'`/`'reuse'`/`'upgraded'` =
+neither LAN leg won.
 
 ---
 
@@ -143,77 +228,121 @@ This is the crux: the WS stack is **not one thing**. Decide each on its own evid
 | # | Component | Today (file:line) | Retirement gate | Verdict owner |
 |---|---|---|---|---|
 | **1** | **WS LAN CHAT transport** | `LocalWsServer` WS + nonce-ACK (`local_ws_server.dart:28`, ack `:294`) | **Retire candidate** — gated on FDC-11 chat device-proof (D1) **+ this soak's win-rate/no-net-new-failure bar** | FDC-S6 |
-| **2** | **WS/HTTP LAN MEDIA server** | `LocalMediaServer` HTTP PUT (`local_media_server.dart:42`) + `LocalMediaSender` offer/PUT/uploaded (`local_media_sender.dart:17`) | **Covered by FDC-15** (authored, DRAFT — `/mknoon/media-lan/1.0.0` peer-auth stream). Retiring it depends on **FDC-15 device-proof + soak** meeting the 95% / zero-net-new-failure bar, OR an explicit decision to **accept relay-CDN-only LAN media**. FDC-11 carries **zero** media device-proof (chat-only) | FDC-S6 issues the verdict; **FDC-15** executes the media path |
-| **3** | **bonsoir DISCOVERY** | `BonsoirDiscoveryService` `_mknoon._tcp` (`bonsoir_discovery_service.dart:16-17`) | **STAYS — never retired.** bonsoir is the discovery on **both** platforms; the libp2p-LAN dial is *fed by* bonsoir on both (iOS entitlement-blocked from raw multicast, Android avoids a redundant second mechanism) | n/a (permanent) |
+| **2** | **WS/HTTP LAN MEDIA server** | `LocalMediaServer` HTTP PUT (`local_media_server.dart:42`) + `LocalMediaSender` offer/PUT/uploaded (`local_media_sender.dart:17`) | **Covered by FDC-15** (reviewed + scope-EXPANDED 2026-06-27, still pre-device-proof — `/mknoon/media-lan/1.0.0` peer-auth stream; the review added a **receive→render leg + Dart non-circuit-direct predicate + 5-layer bridge wiring**, none built yet). Retiring it depends on **FDC-15 device-proof + soak** meeting the same bar (below), OR an explicit decision to **accept relay-CDN-only LAN media**. FDC-11 carries **zero** media device-proof (chat-only) | FDC-S6 issues the verdict; **FDC-15** executes the media path |
+| **3** | **bonsoir DISCOVERY** | `BonsoirDiscoveryService` `_mknoon._tcp` (`bonsoir_discovery_service.dart:17-18`) | **STAYS — never retired.** bonsoir is the discovery on **both** platforms; the libp2p-LAN dial is *fed by* bonsoir on both (iOS entitlement-blocked from raw multicast, Android avoids a redundant second mechanism) | n/a (permanent) |
 
 **Why media must be split out:** FDC-11 proves the **chat** dial is `"direct"`; it proves
 **nothing** about moving image/video/voice **bytes** over libp2p. If WS chat is retired but the
 WS media server is left in place, that is **fine and safe** (media keeps its dedicated HTTP-PUT
 LAN path + relay-CDN fallback). If someone wants to retire the **media** server too, they must
 first either (a) author and device-prove a **media-over-libp2p-LAN** plan, or (b) explicitly
-accept **relay-CDN-only LAN media** (slower bytes on same-WiFi). Component 2 is therefore **gated behind FDC-15** (now authored, DRAFT — device-proof + soak pending) —
+accept **relay-CDN-only LAN media** (slower bytes on same-WiFi). Component 2 is therefore **gated behind FDC-15** (reviewed + scope-EXPANDED 2026-06-27 — receive→render leg + Dart predicate + 5-layer bridge wiring now required; device-proof + soak still pending) —
 it cannot ride FDC-11.
 
 ---
 
 ## Method (the soak)
 
-Instrument and collect the **existing** transport-label telemetry on **real device pairs, BOTH
-iOS+Android**, over a soak window. No new measurement primitive is needed — read the labels above.
+Collect the transport-label telemetry on **real device pairs, BOTH iOS+Android**, over a soak
+window. (NOT "read, don't add" — post-FDC-12/13 the win-rate needs a net-new LAN-specific
+discriminator and the double-delivery counter does not exist yet; see ⚠ above and points 2/5.)
 
-**Population & window.** Real two-device 1:1 pairs on the **same WiFi**, with FDC-11 shipped
-(flag `EnableLibp2pLanDial` on per FDC-S2 verdict). Run **N = 14 days** minimum (long enough to
-catch intermittent NIC/iOS-throttle behavior the §9 host caveat says is device-only). Cover both
-platform *directions*: Android→Android, iOS→iOS, **and the cross pair** Android↔iOS (the
-bonsoir-fed dial runs on both platforms and must be exercised both as sender and receiver).
+**Population & window.** Real two-device 1:1 pairs on the **same WiFi**, with FDC-11 host-impl
+committed and its **D1 device-proof GREEN** (hard prerequisite). A LAN dial requires BOTH the Go
+flag **`EnableLibp2pLANDial`** (capital LAN; `feature_flags.go:44`, default false `:83`) AND the
+Dart **`'p2p_lan_dial'`** runtime gate (`p2p_service_impl.dart:888-902`) open. Run **N ≥ 14 days**
+AND clear the minimum sample floor (Decision Criteria) — long enough to catch intermittent
+NIC/iOS-throttle behavior the §9 host caveat says is device-only. Cover both platform *directions*:
+Android→Android, iOS→iOS, **and the cross pair** Android↔iOS (sender and receiver each side).
 
-**Instrument points (read, don't add).**
-1. **Which leg won a same-WiFi send** — read the persisted `transport` value of the *delivered*
-   message (`migrations/012_transport_column.dart:28`) joined to the live leg's label:
-   `'direct'` non-circuit (`classifyStreamTransport` `node.go:135`) = **libp2p-LAN won**;
-   `'wifi'`/`'local'` (`p2p_service_impl.dart:349,3297`) = **WS LAN won**; `'relay'`/`'inbox'` =
-   **neither LAN leg won** (fell to relay/inbox). Bucket via `TransportMetrics.transportMix()`
-   (`transport_metrics.dart:226`).
-2. **libp2p-LAN win-rate** = `count(direct, non-circuit, same-WiFi) / count(all same-WiFi sends)`
-   per platform-direction. (This is the headline retire-chat number.)
-3. **LAN-direct delivery success/failure delta vs the bonsoir+WS baseline** — compare the
-   same-WiFi *delivery success rate* and *time-to-ack* with the libp2p-LAN lane ON vs a baseline
-   window with it OFF (`EnableLibp2pLanDial=false`, WS-only). Net-new failures = sends that
-   succeeded on WS-baseline but now fall to relay/inbox or fail with the libp2p lane present.
-4. **bonsoir-fed-dial reliability (both platforms)** — per platform, the fraction of same-WiFi sends where the
-   bonsoir-discovered LAN addr produced a `"direct"` libp2p stream (vs discovered-but-never-dialed
-   → relay). Read the `node:lan_peer_found` → `EvtPeerIdentificationCompleted` → transport-label
-   trace (`FDC-11:455`).
-5. **Double-delivery rate during the parallel-run window** — count `messageId`-dedup hits where
-   *both* a WS-`'wifi'` copy and a libp2p-`'direct'` copy arrived (proposal §10 L397-398; the
-   receiver dedup at `handle_incoming_chat_message_use_case.dart` is the safety net,
-   `FDC-DESIGN-QA-1to1.md:120-128`).
+**Instrument points.**
+1. **Which leg won a same-WiFi send** — read the per-send `node:lan_peer_found →
+   EvtPeerIdentificationCompleted → transport`-label flow-event trace (`FDC-11:553`), joined to the
+   persisted `transport` value (`migrations/012_transport_column.dart:28`). A **bonsoir-fed,
+   private-IP, non-circuit `'direct'` stream** = **libp2p-LAN won**; `'wifi'`
+   (`p2p_service_impl.dart:400/:3743`) = **WS LAN won**; `'relay'`/`'inbox'` = **neither LAN leg
+   won**. Do **NOT** read the leg from `TransportMetrics.transportMix()` (`transport_metrics.dart:233`)
+   — its `'direct'` bucket folds in `reuse`/`upgraded` and is session-scoped (⚠ above).
+2. **libp2p-LAN win-rate** = `count(bonsoir-fed private-IP non-circuit 'direct' wins, same-WiFi,
+   EXCLUDING reuse/upgraded/transport:upgraded sends) / count(all same-WiFi sends)`, per
+   platform-direction. (Headline retire-chat number — see the CI bar in Decision Criteria; a bare
+   `count(direct)` over-counts WAN/DCUtR-direct.)
+3. **LAN-direct delivery success/failure delta — WITHIN-pair, not a sequential A/B.** A sequential
+   ON-window-then-flag-OFF-window comparison is **confounded** by network/app-version/device/
+   location/time-of-day. Prefer (a) **concurrent parallel-run attribution** — keep BOTH lanes live
+   (already required by point 5) and attribute per-send on the winning-leg label, so each send is its
+   own control; a net-new failure = a send whose WS-`'wifi'` leg would have committed but that
+   instead fell to relay/inbox/failed with the libp2p lane present; or (b) **per-pair interleaved**
+   randomization of the runtime flag on the SAME pairs in the SAME window/location; (c) only if
+   neither is feasible, a sequential A/B **with a recorded confound caveat** and ON/OFF windows
+   matched on app-version, device set, location, time-of-day.
+4. **bonsoir-fed-dial reliability (both platforms)** — per platform, the fraction of same-WiFi sends
+   where the bonsoir-discovered LAN addr produced a `"direct"` libp2p stream (vs discovered-but-
+   never-dialed → relay). Read the `node:lan_peer_found` → `EvtPeerIdentificationCompleted` →
+   transport-label trace (`FDC-11:553`).
+5. **Double-delivery rate during the parallel-run window** — count `messageId`-dedup collisions,
+   **keyed by the `(first-leg, second-leg)` transport-label pair** (under FDC-12 the co-arrival can
+   be relay+direct or inbox+direct, not only WS-`'wifi'`+libp2p-`'direct'`). **This counter does NOT
+   exist today** — the receiver dedup (`handle_incoming_chat_message_use_case.dart:303` lookup) drops
+   the second copy at `:344` with **no record of its leg**. It is a **net-new instrument**: emit a
+   flow-event/counter at the `duplicate` return recording the transport label of BOTH the kept and
+   the dropped copy. (Receiver dedup is the safety net, `FDC-DESIGN-QA-1to1.md:120-128`.)
+
+**Collection mechanism (net-new — the labels exist but do not export).** All three label stores are
+non-exporting: the `transport` column lives only in each device's local SQLCipher `messages` DB; the
+`node:*`/FDC-13 flow-events emit only when `flowEventLoggingEnabled` (defaults `kDebugMode`, off in
+profile/TestFlight); `transportMix()` is session-scoped + display-only. So:
+- Build the soak binary (profile/TestFlight) with **`--dart-define=FDC_FLOW_LOG=1`** (forces
+  `flowEventLoggingEnabled=true` + synchronous print so bursty `node:*` lines aren't dropped;
+  `main.dart:360-369`) — observation-only, inert in a normal build (the FDC-S1/S4 measurement-flag
+  precedent).
+- Capture per device via `adb logcat -v time` (Android) / `idevicesyslog` (iOS), as
+  `fdc-s1-measurement/scripts/fdc_{android,ios}_trials.sh` do.
+- A 14-day **passive** soak can't keep a cable attached, so run it as an **attended multi-session
+  N-trial campaign** (per-trial log files), exactly like FDC-S1 — N ≥ 14 days is the duration floor;
+  the trials supply the sample floor. There is **no durable on-device export** today (the `transport`
+  column is queryable but un-exported; `transportMix()` is display-only).
+- **Per-platform-direction attribution is NOT in the persisted column** (it has no peer/platform/
+  same-WiFi dimension) — pair the ephemeral flow-event trace to the known two-device platform pair
+  per trial. The **baseline arm must log the SAME trace**, else the delta has no comparable baseline.
+- Record results in a **`FDC-S6-libp2p-lan-soak-RESULTS.md`** + a **`fdc-s6-measurement/`** harness
+  (`scripts/` adapted from `fdc-s1-measurement/scripts/`, keyed on a win-leg `DONE_EVENT` =
+  `node:lan_peer_found`/transport-label line; `fdc_s6_parse.py` from `fdc_parse.py`; plus `logs/`,
+  `results/`), mirroring FDC-S1/S4.
 
 **How to read which leg won (the false-positive guard).** A delivery alone is NOT evidence the
 LAN leg fired — the inbox copy can satisfy delivery via `messageId` dedup (proposal §9.1;
 `FDC-00` Closure caveat). The win is the **transport label of the leg that committed first**, captured
 per-send via FDC-13's badge data + the `node:*` flow-events. Sims is **N/A** for the win-rate
-(iOS sim shares the host mDNS/bonsoir stack → device-only, `e2e_test_mode.dart:2`,
-`FDC-11:341-343`) — this is a **manual real-device soak**, exactly like D1.
+(iOS sim shares the host mDNS/bonsoir stack → device-only, `e2e_test_mode.dart:2` disable-flag;
+mDNS-sharing rationale `FDC-11:545,552`) — this is a **manual real-device soak**, exactly like D1.
 
 ---
 
 ## Decision Criteria (concrete thresholds)
 
 **RETIRE the WS CHAT transport (component 1) ONLY iff ALL hold:**
-- **libp2p-LAN chat win-rate ≥ 95%** of same-WiFi 1:1 sends, sustained over **N ≥ 14 days**, on
-  **BOTH** platforms (bonsoir-fed-dial on both — no libp2p-native mDNS on either), measured per instrument
-  point 2;
-- **ZERO net-new LAN-direct delivery failures** vs the bonsoir+WS baseline (instrument point 3 —
-  a same-WiFi send that delivered on WS-baseline must not regress to relay/inbox/fail with the
-  libp2p lane present);
-- **bonsoir-fed dial device-proven on both platforms** at the same bar (instrument point 4 ≥ 95% per platform);
+- **libp2p-LAN chat win-rate clears a confidence bound, not a point estimate:** the **Wilson score
+  95% lower bound** of instrument-point-2's win-rate must be **≥ 95%**, computed **per
+  platform-direction** (Android→Android, iOS→iOS, Android↔iOS), sustained over **N ≥ 14 days**. (A
+  bare ≥95% point estimate is NOT sufficient — 95% over 20 sends has a Wilson LB ≈ 75%.)
+- **Minimum sample floor: ≥ 385 successfully-attempted same-WiFi sends per platform-direction**
+  (≈ ±5 pp at 95% conf; clearing a Wilson LB ≥ 95% at this n needs an observed rate ≈ ≥ 97%). The
+  14-day window is a **duration floor, never a substitute for the sample floor** — this
+  operationalizes the qualitative "keep when data is thin" fail-safe below into a hard rule.
+- **No statistically-significant increase in LAN-direct delivery failure rate** vs the bonsoir+WS
+  baseline (instrument point 3): the **upper 95% CI (Newcombe/Wilson) of
+  [failureRate(libp2p-ON) − failureRate(baseline)] ≤ +1.0 pp** (a non-inferiority margin), per
+  platform-direction. Every observed failure is still root-caused; the **gate is the CI on the
+  difference, not an absolute zero count** — a single flaky-NIC/iOS-throttle drop must not veto.
+- **bonsoir-fed dial device-proven on both platforms** at the same Wilson-LB-≥95% + ≥385-send bar
+  (instrument point 4).
 - **FDC-11 D1 GREEN on both platforms** (hard prerequisite — the device-proof landed).
 
 **RETIRE the WS MEDIA server (component 2) ONLY iff:**
 - a **libp2p-LAN media path is device-proven** (requires the NEW media-over-libp2p plan, e.g.
-  FDC-15, to exist + ship + soak) **AND meets the same 95% / zero-net-new-failure / 14-day bar**
-  on both platforms; **OR**
+  FDC-15, to exist + ship + soak) **AND meets the same Wilson-LB-≥95% win-rate + ≥385-send sample
+  floor + non-inferiority (≤ +1.0 pp) failure-delta bar** on both platforms; **OR**
 - an explicit product decision **accepts relay-CDN-only LAN media** (no libp2p media path; same-
   WiFi media falls to `media.go` CDN latency) — a deliberate, recorded trade, **not** a default.
 
@@ -231,6 +360,25 @@ thin or mixed.
 
 ---
 
+## Soak preconditions (lock the instrument before trusting the data)
+
+The entire dataset rests on the transport labels bucketing correctly, so lock the instrument first:
+
+- **`test/core/debug/transport_metrics_test.dart` MUST stay GREEN** before and throughout the soak —
+  it is the label-bucketing sentinel (it already locks `local→wifi`, `reuse→direct`, and
+  `direct/relay/inbox` stability, `:21-70`).
+- **ADD one net-new RED/GREEN case locking `'upgraded'→'direct'`** — that fold
+  (`transport_metrics.dart:130-136`, FDC-13) is **currently untested** (zero `upgraded` hits in the
+  test file), so a refactor could silently re-bucket the LAN-win signal and corrupt the dataset.
+  This is the one place this decision spike legitimately needs a RED/GREEN test, and it is a hard
+  precondition, not the soak itself.
+  - Gate: `flutter test test/core/debug/transport_metrics_test.dart` (host floor, AUTO-glob under
+    `test/core/**`).
+- **Build flag:** `--dart-define=FDC_FLOW_LOG=1` set on every soak + baseline binary (else the
+  win-leg trace is silent on profile/TestFlight — see Collection mechanism).
+
+---
+
 ## Expected Output
 
 1. **A per-component verdict:**
@@ -243,25 +391,53 @@ thin or mixed.
    authored here:**
    - a **media-over-libp2p-LAN plan** (e.g. **FDC-15**) IF media-server retirement is wanted (its
      own device-proof + soak); otherwise the recorded **relay-CDN-only LAN media acceptance**;
-   - a **WS-chat-removal plan** (delete `LocalWsServer` chat path, repoint `startAdvertising` off
-     `wsPort` to the libp2p host port, drop the nonce-ACK) — **only** once component-1 criteria are
-     met.
+   - a **WS-chat-removal plan** (delete `LocalWsServer` chat path, **drop the now-dead `wsPort` TXT
+     advert** — the libp2p QUIC/TCP ports are already advertised since FDC-11, so no port needs
+     *adding* — and drop the nonce-ACK) — **only** once component-1 criteria are met.
    These are prerequisites/outputs, authored later via `/tdd-plan` if and when the verdict says
    "retire."
 
 ---
 
+## VERDICT (RECORDED — fill on close; mirrors FDC-S3's locked-Status pattern)
+
+> Until filled, Status stays `open`. On close, set the Status line to the one-line verdict and fill:
+>
+> **Status:** open → closed — retire-chat = `<Y/N>` / retire-media = `<Y/N>` / keep-bonsoir = always.
+> **Soak dataset:** `FDC-S6-libp2p-lan-soak-RESULTS.md` (harness `fdc-s6-measurement/`).
+> **Version pin:** go-libp2p `v0.39.1` / quic-go `v0.49.0` (the exact pair the soak ran on; re-run on
+> any go-libp2p bump — see Risks).
+>
+> | metric (per platform-direction) | A→A | i→i | A↔i |
+> |---|---|---|---|
+> | libp2p-LAN win-rate (Wilson 95% LB) | | | |
+> | n (same-WiFi sends) | | | |
+> | failure-rate delta vs WS-baseline (upper 95% CI) | | | |
+> | bonsoir-fed-dial reliability (Wilson 95% LB) | | | |
+> | double-delivery rate (by leg-pair) | | | |
+>
+> **Verdict:** retire-chat = `<Y/N + which thresholds cleared/missed>`; retire-media = `<N unless
+> FDC-15 device-proven + soak, OR explicit relay-CDN-only acceptance>`; keep-bonsoir = always.
+> **Follow-on plans named (if "retire"):** WS-chat-removal plan / media-over-libp2p (FDC-15) or the
+> recorded relay-CDN-only acceptance.
+
+---
+
 ## Exit Gate
 
-- The 14-day soak dataset captured (win-rate, net-new-failure delta, bonsoir-fed-dial
-  reliability, double-delivery rate) on real iOS+Android pairs.
-- A written **per-component verdict** (retire-chat? / retire-media? / keep-bonsoir=always)
-  recorded in this doc against the thresholds above, with the soak dataset referenced.
+- The soak dataset captured (per-platform-direction win-rate Wilson-LB, net-new-failure delta CI,
+  bonsoir-fed-dial reliability, double-delivery rate by leg-pair) on real iOS+Android pairs over
+  **N ≥ 14 days AND ≥ 385 sends/platform-direction**, recorded in `FDC-S6-libp2p-lan-soak-RESULTS.md`
+  (harness `fdc-s6-measurement/`).
+- The **Soak preconditions** are met (transport_metrics_test.dart green incl. the net-new
+  `'upgraded'→'direct'` lock; soak + baseline binaries built `--dart-define=FDC_FLOW_LOG=1`).
+- A written **per-component verdict** (retire-chat? / retire-media? / keep-bonsoir=always) filled
+  into the **VERDICT block above** against the thresholds, with the soak dataset referenced.
 - The named follow-on plans (media-over-libp2p / WS-chat-removal) listed for any "retire" verdict.
 - **FDC-11 device-proof is a HARD prerequisite** — this spike cannot close before FDC-11 D1 is
-  GREEN on both platforms (and transitively FDC-S2 resolved to Option A/B, not C — if C, FDC-11 is
-  shelved and the answer is trivially "KEEP WS, there is no libp2p-LAN lane to retire it for",
-  `FDC-S2:139-148`, `FDC-11:7-16`).
+  GREEN on both platforms. (The transitive FDC-S2 gate is now **settled**: FDC-S2 CLOSED →
+  **Option A** (QUIC LAN-direct reliable, 750ms budget; `FDC-S2:3-9`), so the libp2p-LAN lane exists
+  and the "if C, trivially KEEP WS" branch — `FDC-S2:199-208`, `FDC-11:623`/`:753` — does not fire.)
 
 ---
 
@@ -283,10 +459,14 @@ thin or mixed.
   retirement. The whole point of FDC-S6 is the **sustained** measurement D1 cannot provide
   (`FDC-00` false-positive caveat). Treating D1 as sufficient is the premature-retirement
   failure mode this doc exists to prevent.
-- **wsPort advertisement coupling.** `startAdvertising(peerId, wsPort)`
-  (`local_discovery_service.dart:169`) advertises the WS port; a WS-chat-removal plan must repoint
-  discovery at the libp2p host port or discovery silently points at a dead port (FDC-S2 risk
-  L260-263). Folded into the named WS-chat-removal follow-on, not solved here.
+- **wsPort advertisement coupling (already half-solved).** `startAdvertising(peerId, wsPort,
+  {quicPort, tcpPort})` (`local_discovery_service.dart:182-187`) advertises the WS port **and** the
+  libp2p QUIC/TCP ports (FDC-11). So the WS-chat-removal follow-on must **drop the now-dead wsPort
+  advert** (not *add* the libp2p ports — already there), else discovery silently points at a dead
+  port (FDC-S2 risk `:322-324`). Folded into the named follow-on, not solved here.
 - **Cross-version / future go-libp2p bumps** can shift the win-rate (FDC-S2 pins the verdict to
-  v0.39.1; `FDC-S2:268-270`) — the soak verdict is pinned to the same version pair and must be
-  re-checked on any libp2p bump.
+  go-libp2p `v0.39.1` / quic-go `v0.49.0`; `FDC-S2:330-332`) — the soak verdict is pinned to the same
+  pair and must be re-checked on any bump. Because "re-check on bump" is otherwise an untested
+  assumption, make the trigger concrete: embed the exact version pair in the **VERDICT block** above,
+  add a `// FDC-S6 soak verdict pinned to v0.39.1 — re-run soak on bump` comment beside go-libp2p in
+  `go-mknoon/go.mod`, and a line item in any libp2p-bump PR checklist pointing back to FDC-S6/FDC-S2.

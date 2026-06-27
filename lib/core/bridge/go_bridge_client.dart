@@ -8,6 +8,7 @@ import 'bridge.dart';
 import '../database/db_write_transaction.dart';
 import '../../features/p2p/domain/models/chat_message.dart';
 import '../../features/p2p/domain/models/connection_state.dart';
+import '../local_discovery/local_discovery_service.dart';
 import '../utils/flow_event_emitter.dart';
 import '../utils/push_diagnostics_logger.dart';
 
@@ -78,6 +79,13 @@ class GoBridgeClient extends Bridge {
   StreamSubscription<dynamic>? _eventSubscription;
   int _malformedPushEventCount = 0;
   int _unknownPushEventCount = 0;
+
+  /// FDC-15: callback for an inbound libp2p-LAN media blob (the Go
+  /// `media:lan_received` event). Declared on the concrete client (NOT the
+  /// abstract [Bridge]) so adding it does not break the many `implements Bridge`
+  /// fakes. Production wires this to the `linkIncomingLocalMedia` pipeline in
+  /// main.dart; left null until the lane is active.
+  void Function(LocalMediaReady)? onLocalMediaReceived;
 
   @override
   bool get isInitialized => _initialized;
@@ -150,6 +158,11 @@ class GoBridgeClient extends Bridge {
     'media:download': _CmdSpec('mediaDownload', true),
     'media:delete': _CmdSpec('mediaDelete', true),
     'media:list': _CmdSpec('mediaList', true),
+    // FDC-15: 1:1 media over a libp2p LAN stream. The native `mediaLanSend`
+    // MethodChannel handler (GoBridge.swift/.kt) + the gomobile framework
+    // rebuild land with the D1 device closure; this Dart-side registration is
+    // host-complete so the send leg resolves the command at that point.
+    'media:lan_send': _CmdSpec('mediaLanSend', true),
     // Profile
     'profile:upload': _CmdSpec('profileUpload', true),
     'profile:download': _CmdSpec('profileDownload', true),
@@ -816,6 +829,23 @@ class GoBridgeClient extends Bridge {
         // passthrough set). It carries no push-side effect, so consume it here to
         // keep it out of the unknown-event counter.
         case 'bridge:dispatch_timing':
+          break;
+
+        case 'media:lan_received':
+          // FDC-15: route the libp2p-LAN media receipt to the typed consumer.
+          // It MUST NOT fall through to _recordUnknownPushEvent — that bumps
+          // _unknownPushEventCount and can regress the 1:1 gate
+          // (go_bridge_client_test.dart is in ONE_TO_ONE_TESTS).
+          if (onLocalMediaReceived != null) {
+            try {
+              onLocalMediaReceived!(LocalMediaReady.fromJson(eventData));
+            } catch (e) {
+              debugPrint(
+                '[GoBridgeClient] Error parsing media:lan_received: '
+                '${sanitizeDiagnosticText(e)}',
+              );
+            }
+          }
           break;
 
         default:

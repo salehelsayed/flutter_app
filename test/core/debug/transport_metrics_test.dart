@@ -32,6 +32,32 @@ void main() {
       expect(metrics.totalTransportSamples, 2);
     });
 
+    test(
+      "'upgraded' (FDC-13 DCUtR relay->direct) folds into direct, mirroring "
+      'reuse — FDC-S6 soak label-bucketing lock',
+      () {
+        // FDC-S6 PRECONDITION: the entire libp2p-LAN soak dataset rests on the
+        // transport labels bucketing correctly. The 'upgraded'->'direct' fold
+        // (transport_metrics.dart _canonicalTransport, added by FDC-13) was
+        // previously UNTESTED, so a refactor could silently re-bucket the
+        // LAN-win signal into 'unknown' and corrupt the win-rate. This locks it.
+        // RED if the `case 'upgraded': return 'direct';` arm is removed
+        // (then these three would land in 'unknown' instead of 'direct').
+        final metrics = TransportMetrics();
+        metrics.recordTransport('upgraded');
+        metrics.recordTransport('UPGRADED'); // case-normalized
+        metrics.recordTransport('  upgraded '); // whitespace-normalized
+        expect(metrics.transportMix(), {
+          'direct': 3,
+          'relay': 0,
+          'wifi': 0,
+          'inbox': 0,
+          'unknown': 0,
+        });
+        expect(metrics.totalTransportSamples, 3);
+      },
+    );
+
     test('null and unrecognized transports increment unknown only', () {
       final metrics = TransportMetrics();
       metrics.recordTransport(null);

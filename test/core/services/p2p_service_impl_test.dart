@@ -241,6 +241,68 @@ void main() {
     service.dispose();
   });
 
+  Future<void> startNodeForDirectReadyProducer({
+    String relayState = 'online',
+    List<String> circuitAddresses = const [],
+    bool proveReadiness = true,
+  }) async {
+    bridge.whenCommand(
+      'node:start',
+      (_) => jsonEncode({
+        'ok': true,
+        'peerId': 'self-peer',
+        'isStarted': true,
+        'listenAddresses': <String>[],
+        'circuitAddresses': circuitAddresses,
+        'connections': <dynamic>[],
+        'relayState': relayState,
+        'healthyRelayCount': relayState == 'online' ? 1 : 0,
+      }),
+    );
+    bridge.whenCommand(
+      'inbox:retrieve',
+      (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+    );
+
+    await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+
+    if (!proveReadiness) return;
+    service.recordSuccessfulSendProof(
+      source: 'test_send',
+      trigger: 'test_action',
+      sendPath: 'direct',
+    );
+    await service.retrieveInbox();
+    expect(service.currentState.usabilityReady, isTrue);
+  }
+
+  void connectPeerForDirectReadyProducer({
+    required String peerId,
+    required List<String> multiaddrs,
+    bool isRelay = false,
+  }) {
+    bridge.onPeerConnected?.call(
+      p2p.ConnectionState(
+        peerId: peerId,
+        multiaddrs: multiaddrs,
+        direction: 'outbound',
+        status: 'connected',
+        isRelay: isRelay,
+      ),
+    );
+  }
+
+  void disconnectPeerForDirectReadyProducer(String peerId) {
+    bridge.onPeerDisconnected?.call(
+      p2p.ConnectionState(
+        peerId: peerId,
+        multiaddrs: const [],
+        direction: 'outbound',
+        status: 'disconnected',
+      ),
+    );
+  }
+
   // ───────────────────────── FDC-04: warmPeer ─────────────────────────
   group('FDC-04 warmPeer', () {
     // (Re)create `service` as a STARTED P2PServiceImpl backed by a fake LAN
@@ -330,87 +392,98 @@ void main() {
     });
 
     // TC-04-02: skip the dial when isLocalPeer is already true (LAN-only).
-    test('TC-04-02: skips the dial when the peer is already LAN-visible',
-        () async {
-      final local = await startWarmService();
-      local.addLocalPeer('peer-lan');
-      final events = await _captureFlowEvents(() async {
-        await service.warmPeer('peer-lan');
-        await settle();
-      });
-      expect(local.discoverLocalPeerCallCount, 1); // the seed still runs
-      expect(dials(), 0);
-      expect(
-        events.any((e) => e['event'] == 'P2P_SERVICE_WARM_PEER_DIAL_SKIPPED'),
-        isTrue,
-      );
-    });
+    test(
+      'TC-04-02: skips the dial when the peer is already LAN-visible',
+      () async {
+        final local = await startWarmService();
+        local.addLocalPeer('peer-lan');
+        final events = await _captureFlowEvents(() async {
+          await service.warmPeer('peer-lan');
+          await settle();
+        });
+        expect(local.discoverLocalPeerCallCount, 1); // the seed still runs
+        expect(dials(), 0);
+        expect(
+          events.any((e) => e['event'] == 'P2P_SERVICE_WARM_PEER_DIAL_SKIPPED'),
+          isTrue,
+        );
+      },
+    );
 
     // TC-04-03: debounce — SEQUENTIAL (post-dial cooldown) and CONCURRENT
     // (same-tick in-flight sentinel) repeats both collapse to ONE dial.
-    test('TC-04-03: debounce collapses sequential AND concurrent repeats',
-        () async {
-      // (a) sequential: dial fails, second call within cooldown is debounced.
-      await withClock(Clock.fixed(DateTime.utc(2026, 6, 27, 12)), () async {
-        await startWarmService(); // no peer:dial handler → dial fails
-        await service.warmPeer('peer-a');
-        await _waitForCondition(() => dials() == 1, reason: 'first dial');
-        await settle(); // outcome handler sets the cooldown
-        final events = await _captureFlowEvents(() async {
-          await service.warmPeer('peer-a'); // within the (fixed-clock) cooldown
+    test(
+      'TC-04-03: debounce collapses sequential AND concurrent repeats',
+      () async {
+        // (a) sequential: dial fails, second call within cooldown is debounced.
+        await withClock(Clock.fixed(DateTime.utc(2026, 6, 27, 12)), () async {
+          await startWarmService(); // no peer:dial handler → dial fails
+          await service.warmPeer('peer-a');
+          await _waitForCondition(() => dials() == 1, reason: 'first dial');
+          await settle(); // outcome handler sets the cooldown
+          final events = await _captureFlowEvents(() async {
+            await service.warmPeer(
+              'peer-a',
+            ); // within the (fixed-clock) cooldown
+            await settle();
+          });
+          expect(dials(), 1); // still one
+          expect(
+            events.any((e) => e['event'] == 'P2P_SERVICE_WARM_PEER_DEBOUNCED'),
+            isTrue,
+          );
+        });
+
+        // (b) concurrent burst: the dial hangs; two same-tick warms → ONE dial.
+        await withClock(Clock.fixed(DateTime.utc(2026, 6, 27, 13)), () async {
+          await startWarmService();
+          final hang = Completer<String>();
+          bridge.whenCommand('peer:dial', (_) => hang.future);
+          // SAME synchronous tick — models conv-open + notif-tap + resume.
+          unawaited(service.warmPeer('peer-b'));
+          unawaited(service.warmPeer('peer-b'));
+          await _waitForCondition(() => dials() >= 1, reason: 'first dial');
+          await settle();
+          expect(dials(), 1); // the in-flight sentinel collapsed the burst
+          hang.complete(jsonEncode({'ok': false}));
           await settle();
         });
-        expect(dials(), 1); // still one
-        expect(
-          events.any((e) => e['event'] == 'P2P_SERVICE_WARM_PEER_DEBOUNCED'),
-          isTrue,
-        );
-      });
-
-      // (b) concurrent burst: the dial hangs; two same-tick warms → ONE dial.
-      await withClock(Clock.fixed(DateTime.utc(2026, 6, 27, 13)), () async {
-        await startWarmService();
-        final hang = Completer<String>();
-        bridge.whenCommand('peer:dial', (_) => hang.future);
-        // SAME synchronous tick — models conv-open + notif-tap + resume.
-        unawaited(service.warmPeer('peer-b'));
-        unawaited(service.warmPeer('peer-b'));
-        await _waitForCondition(() => dials() >= 1, reason: 'first dial');
-        await settle();
-        expect(dials(), 1); // the in-flight sentinel collapsed the burst
-        hang.complete(jsonEncode({'ok': false}));
-        await settle();
-      });
-    });
+      },
+    );
 
     // TC-04-04: per-peer cooldown ESCALATES on repeated failing dials
     // (floor 5s → 2x → …), layered over libp2p's Go-owned swarm backoff.
-    test('TC-04-04: per-peer cooldown escalates on repeated failures',
-        () async {
-      var now = DateTime.utc(2026, 6, 27, 14);
-      await withClock(Clock(() => now), () async {
-        await startWarmService(); // dial keeps failing
-        await service.warmPeer('peer-c');
-        await _waitForCondition(() => dials() == 1, reason: '1st dial');
-        await settle(); // cooldown = now + 5s (floor)
-
-        now = now.add(const Duration(seconds: 6)); // past the 5s floor
-        await service.warmPeer('peer-c');
-        await _waitForCondition(() => dials() == 2, reason: '2nd dial');
-        await settle(); // cooldown = now + 10s (2x escalation)
-
-        now = now.add(const Duration(seconds: 6)); // < the escalated 10s
-        final events = await _captureFlowEvents(() async {
+    test(
+      'TC-04-04: per-peer cooldown escalates on repeated failures',
+      () async {
+        var now = DateTime.utc(2026, 6, 27, 14);
+        await withClock(Clock(() => now), () async {
+          await startWarmService(); // dial keeps failing
           await service.warmPeer('peer-c');
-          await settle();
+          await _waitForCondition(() => dials() == 1, reason: '1st dial');
+          await settle(); // cooldown = now + 5s (floor)
+
+          now = now.add(const Duration(seconds: 6)); // past the 5s floor
+          await service.warmPeer('peer-c');
+          await _waitForCondition(() => dials() == 2, reason: '2nd dial');
+          await settle(); // cooldown = now + 10s (2x escalation)
+
+          now = now.add(const Duration(seconds: 6)); // < the escalated 10s
+          final events = await _captureFlowEvents(() async {
+            await service.warmPeer('peer-c');
+            await settle();
+          });
+          expect(
+            dials(),
+            2,
+          ); // still debounced → escalation grew past the floor
+          expect(
+            events.any((e) => e['event'] == 'P2P_SERVICE_WARM_PEER_DEBOUNCED'),
+            isTrue,
+          );
         });
-        expect(dials(), 2); // still debounced → escalation grew past the floor
-        expect(
-          events.any((e) => e['event'] == 'P2P_SERVICE_WARM_PEER_DEBOUNCED'),
-          isTrue,
-        );
-      });
-    });
+      },
+    );
 
     // TC-04-05: PS-3 — no-op when the node is not started (no dial, no seed).
     test('TC-04-05: no-op when the node is not started (PS-3)', () async {
@@ -451,117 +524,133 @@ void main() {
 
     // TC-04-07: network-change re-warms ONLY the active peer, resets its
     // cooldown (preserving escalation), and drops its learned `local`.
-    test('TC-04-07: network-change re-warms active-only + resets + drops local',
-        () async {
-      var now = DateTime.utc(2026, 6, 27, 15);
-      await withClock(Clock(() => now), () async {
-        final signal = StreamController<void>();
-        final local = await startWarmService(
-          networkChangeSignal: signal.stream,
-          activePeerId: () => 'peer-A',
-        );
-        // Warm A while NON-local → dial fails → A gets a live cooldown.
-        await service.warmPeer('peer-A');
-        await _waitForCondition(() => dials() == 1, reason: 'A dial');
-        await settle();
-        // Warm B too (also in _warmAttempts), but A stays the active peer.
-        await service.warmPeer('peer-B');
-        await _waitForCondition(() => dials() == 2, reason: 'B dial');
-        await settle();
-        // A becomes LAN-visible + learns 'local' (so the entry survives reads).
-        local.addLocalPeer('peer-A');
-        service.recordSuccessfulTransport('peer-A', 'local');
-        expect(service.lastKnownGoodTransport('peer-A'), 'local');
-        final seedBefore = local.discoverLocalPeerCallCount;
-
-        now = now.add(const Duration(seconds: 1)); // well within A's 5s cooldown
-        final events = await _captureFlowEvents(() async {
-          signal.add(null);
-          await _waitForCondition(
-            () => local.discoverLocalPeerCallCount > seedBefore,
-            reason: 'A re-warmed despite the live cooldown (reset worked)',
+    test(
+      'TC-04-07: network-change re-warms active-only + resets + drops local',
+      () async {
+        var now = DateTime.utc(2026, 6, 27, 15);
+        await withClock(Clock(() => now), () async {
+          final signal = StreamController<void>();
+          final local = await startWarmService(
+            networkChangeSignal: signal.stream,
+            activePeerId: () => 'peer-A',
           );
+          // Warm A while NON-local → dial fails → A gets a live cooldown.
+          await service.warmPeer('peer-A');
+          await _waitForCondition(() => dials() == 1, reason: 'A dial');
           await settle();
+          // Warm B too (also in _warmAttempts), but A stays the active peer.
+          await service.warmPeer('peer-B');
+          await _waitForCondition(() => dials() == 2, reason: 'B dial');
+          await settle();
+          // A becomes LAN-visible + learns 'local' (so the entry survives reads).
+          local.addLocalPeer('peer-A');
+          service.recordSuccessfulTransport('peer-A', 'local');
+          expect(service.lastKnownGoodTransport('peer-A'), 'local');
+          final seedBefore = local.discoverLocalPeerCallCount;
+
+          now = now.add(
+            const Duration(seconds: 1),
+          ); // well within A's 5s cooldown
+          final events = await _captureFlowEvents(() async {
+            signal.add(null);
+            await _waitForCondition(
+              () => local.discoverLocalPeerCallCount > seedBefore,
+              reason: 'A re-warmed despite the live cooldown (reset worked)',
+            );
+            await settle();
+          });
+          // A re-warmed (seed fired again) despite the just-reset cooldown.
+          expect(local.discoverLocalPeerCallCount, greaterThan(seedBefore));
+          // The learned 'local' was dropped by the network change.
+          expect(service.lastKnownGoodTransport('peer-A'), isNull);
+          // B (warmed but no longer active) was NOT re-warmed → no new dial.
+          // (A's re-warm skips the dial because A is now LAN-visible.)
+          expect(dials(), 2);
+          expect(
+            events.any(
+              (e) =>
+                  e['event'] == 'P2P_SERVICE_WARM_PEER_NETWORK_CHANGE_REWARM',
+            ),
+            isTrue,
+          );
+          await signal.close();
         });
-        // A re-warmed (seed fired again) despite the just-reset cooldown.
-        expect(local.discoverLocalPeerCallCount, greaterThan(seedBefore));
-        // The learned 'local' was dropped by the network change.
-        expect(service.lastKnownGoodTransport('peer-A'), isNull);
-        // B (warmed but no longer active) was NOT re-warmed → no new dial.
-        // (A's re-warm skips the dial because A is now LAN-visible.)
-        expect(dials(), 2);
-        expect(
-          events.any(
-            (e) => e['event'] == 'P2P_SERVICE_WARM_PEER_NETWORK_CHANGE_REWARM',
-          ),
-          isTrue,
-        );
-        await signal.close();
-      });
-    });
+      },
+    );
 
     // TC-04-08: the network-change re-warm threads the (Go-inert) preferQuic
     // intent flag down to the peer:dial payload.
-    test('TC-04-08: network-change re-warm threads preferQuic to the dial',
-        () async {
-      var now = DateTime.utc(2026, 6, 27, 15, 30);
-      await withClock(Clock(() => now), () async {
-        final signal = StreamController<void>();
-        await startWarmService(
-          networkChangeSignal: signal.stream,
-          activePeerId: () => 'peer-Q', // non-local → the re-warm fires a dial
-        );
-        signal.add(null);
-        await _waitForCondition(() => dials() == 1, reason: 're-warm dial');
-        await settle();
-        final dialPayload = bridge.payloadsFor('peer:dial').last;
-        expect(dialPayload?['preferQuic'], isTrue);
-        await signal.close();
-      });
-    });
+    test(
+      'TC-04-08: network-change re-warm threads preferQuic to the dial',
+      () async {
+        var now = DateTime.utc(2026, 6, 27, 15, 30);
+        await withClock(Clock(() => now), () async {
+          final signal = StreamController<void>();
+          await startWarmService(
+            networkChangeSignal: signal.stream,
+            activePeerId: () =>
+                'peer-Q', // non-local → the re-warm fires a dial
+          );
+          signal.add(null);
+          await _waitForCondition(() => dials() == 1, reason: 're-warm dial');
+          await settle();
+          final dialPayload = bridge.payloadsFor('peer:dial').last;
+          expect(dialPayload?['preferQuic'], isTrue);
+          await signal.close();
+        });
+      },
+    );
 
     // TC-04-16: rapid network-change FLAPPING coalesces to ONE re-warm
     // (self-debounce), and the per-peer escalation count is preserved.
-    test('TC-04-16: flap-burst coalesced to one re-warm; escalation preserved',
-        () async {
-      var now = DateTime.utc(2026, 6, 27, 16);
-      await withClock(Clock(() => now), () async {
-        final signal = StreamController<void>();
-        await startWarmService(
-          networkChangeSignal: signal.stream,
-          activePeerId: () => 'peer-A', // non-local → dial keeps failing
-        );
-        // Burst of 3 events within the floor window (clock NOT advanced).
-        signal.add(null);
-        await _waitForCondition(() => dials() == 1, reason: '1st re-warm dial');
-        await settle();
-        signal.add(null);
-        await settle();
-        signal.add(null);
-        await settle();
-        expect(dials(), 1); // self-debounce coalesced the flap to ONE dial
-
-        // Escalation preserved: the 1st failure set cooldown=5s (failureCount
-        // 1). Advance past the floor, flap again → 2nd failure → cooldown 10s
-        // (failureCount 2). A NORMAL warm 6s later is STILL debounced (6 < 10),
-        // which only holds if failureCount was NOT reset per network event.
-        now = now.add(const Duration(seconds: 6));
-        signal.add(null);
-        await _waitForCondition(() => dials() == 2, reason: '2nd re-warm dial');
-        await settle();
-        now = now.add(const Duration(seconds: 6)); // <10s escalated cooldown
-        final events = await _captureFlowEvents(() async {
-          await service.warmPeer('peer-A'); // normal warm, NOT via the signal
+    test(
+      'TC-04-16: flap-burst coalesced to one re-warm; escalation preserved',
+      () async {
+        var now = DateTime.utc(2026, 6, 27, 16);
+        await withClock(Clock(() => now), () async {
+          final signal = StreamController<void>();
+          await startWarmService(
+            networkChangeSignal: signal.stream,
+            activePeerId: () => 'peer-A', // non-local → dial keeps failing
+          );
+          // Burst of 3 events within the floor window (clock NOT advanced).
+          signal.add(null);
+          await _waitForCondition(
+            () => dials() == 1,
+            reason: '1st re-warm dial',
+          );
           await settle();
+          signal.add(null);
+          await settle();
+          signal.add(null);
+          await settle();
+          expect(dials(), 1); // self-debounce coalesced the flap to ONE dial
+
+          // Escalation preserved: the 1st failure set cooldown=5s (failureCount
+          // 1). Advance past the floor, flap again → 2nd failure → cooldown 10s
+          // (failureCount 2). A NORMAL warm 6s later is STILL debounced (6 < 10),
+          // which only holds if failureCount was NOT reset per network event.
+          now = now.add(const Duration(seconds: 6));
+          signal.add(null);
+          await _waitForCondition(
+            () => dials() == 2,
+            reason: '2nd re-warm dial',
+          );
+          await settle();
+          now = now.add(const Duration(seconds: 6)); // <10s escalated cooldown
+          final events = await _captureFlowEvents(() async {
+            await service.warmPeer('peer-A'); // normal warm, NOT via the signal
+            await settle();
+          });
+          expect(dials(), 2); // still debounced → escalation survived the flaps
+          expect(
+            events.any((e) => e['event'] == 'P2P_SERVICE_WARM_PEER_DEBOUNCED'),
+            isTrue,
+          );
+          await signal.close();
         });
-        expect(dials(), 2); // still debounced → escalation survived the flaps
-        expect(
-          events.any((e) => e['event'] == 'P2P_SERVICE_WARM_PEER_DEBOUNCED'),
-          isTrue,
-        );
-        await signal.close();
-      });
-    });
+      },
+    );
   });
 
   group('account migration runtime gate', () {
@@ -1407,79 +1496,76 @@ void main() {
       },
     );
 
-    test(
-      'F3 step 2 lock: a drain interrupted before commit leaves the entry '
-      'recoverable — a later (serialized) drain still replays it',
-      () async {
-        service.dispose();
-        final repo = InMemoryInboxStagingRepository();
-        var attempt = 0;
+    test('F3 step 2 lock: a drain interrupted before commit leaves the entry '
+        'recoverable — a later (serialized) drain still replays it', () async {
+      service.dispose();
+      final repo = InMemoryInboxStagingRepository();
+      var attempt = 0;
 
-        service = P2PServiceImpl(
-          bridge: bridge,
-          inboxStagingRepository: repo,
-          replayRecoveredInboxChatMessage:
-              (message, {String? stagedEntryId}) async {
-                attempt++;
-                // First replay is "interrupted" (retryable → row retained); a
-                // later drain must pick it back up and commit it.
-                if (attempt == 1) {
-                  return (
-                    disposition: RecoveredInboxChatDisposition.retryable,
-                    reasonCode: 'decryption_deferred',
-                    reasonDetail: null,
-                  );
-                }
+      service = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: repo,
+        replayRecoveredInboxChatMessage:
+            (message, {String? stagedEntryId}) async {
+              attempt++;
+              // First replay is "interrupted" (retryable → row retained); a
+              // later drain must pick it back up and commit it.
+              if (attempt == 1) {
                 return (
-                  disposition: RecoveredInboxChatDisposition.committed,
-                  reasonCode: 'stored',
+                  disposition: RecoveredInboxChatDisposition.retryable,
+                  reasonCode: 'decryption_deferred',
                   reasonDetail: null,
                 );
-              },
-        );
-        bridge.whenCommand(
-          'node:start',
-          (_) => jsonEncode({
-            'ok': true,
-            'peerId': 'self-peer',
-            'isStarted': true,
-            'listenAddresses': [],
-          }),
-        );
-        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
-        bridge.whenCommand(
-          'inbox:retrieve_pending',
-          (_) => jsonEncode({
-            'ok': true,
-            'messages': [
-              _pendingInboxRow(
-                entryId: 'entry-recover-1',
-                from: 'remote-peer',
-                message: _chatEnvelope(
-                  id: 'm1',
-                  text: 'hi',
-                  senderPeerId: 'remote-peer',
-                ),
+              }
+              return (
+                disposition: RecoveredInboxChatDisposition.committed,
+                reasonCode: 'stored',
+                reasonDetail: null,
+              );
+            },
+      );
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'self-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+        }),
+      );
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+      bridge.whenCommand(
+        'inbox:retrieve_pending',
+        (_) => jsonEncode({
+          'ok': true,
+          'messages': [
+            _pendingInboxRow(
+              entryId: 'entry-recover-1',
+              from: 'remote-peer',
+              message: _chatEnvelope(
+                id: 'm1',
+                text: 'hi',
+                senderPeerId: 'remote-peer',
               ),
-            ],
-            'hasMore': false,
-          }),
-        );
+            ),
+          ],
+          'hasMore': false,
+        }),
+      );
 
-        await service.drainOfflineInbox();
-        // The first drain replayed once but did NOT commit → entry retained.
-        expect(attempt, greaterThanOrEqualTo(1));
+      await service.drainOfflineInbox();
+      // The first drain replayed once but did NOT commit → entry retained.
+      expect(attempt, greaterThanOrEqualTo(1));
 
-        await service.drainOfflineInbox();
-        // A later serialized drain re-replays the still-pending entry: the
-        // mutex + stage idempotency must never DROP an interrupted entry.
-        expect(
-          attempt,
-          greaterThanOrEqualTo(2),
-          reason: 'an interrupted-before-commit entry must be re-replayed',
-        );
-      },
-    );
+      await service.drainOfflineInbox();
+      // A later serialized drain re-replays the still-pending entry: the
+      // mutex + stage idempotency must never DROP an interrupted entry.
+      expect(
+        attempt,
+        greaterThanOrEqualTo(2),
+        reason: 'an interrupted-before-commit entry must be re-replayed',
+      );
+    });
 
     // 146 TC-07 (PROD-CRITICAL end-to-end leg): the serial staged-inbox drain
     // (`_replayStagedInboxEntries`) replays ALL entries even when each replayed
@@ -1603,12 +1689,15 @@ void main() {
         // The handler must return CLEANLY (committed replay), not throw post-
         // persist: assert every entry committed and NO replay exception.
         final committed = events
-            .where((e) => e['event'] == 'P2P_SERVICE_INBOX_STAGED_CHAT_COMMITTED')
+            .where(
+              (e) => e['event'] == 'P2P_SERVICE_INBOX_STAGED_CHAT_COMMITTED',
+            )
             .length;
         expect(
           committed,
           n,
-          reason: 'every entry committed via a clean replay (not the catch path)',
+          reason:
+              'every entry committed via a clean replay (not the catch path)',
         );
         expect(
           events.where(
@@ -1922,63 +2011,62 @@ void main() {
       },
     );
 
-    test(
-      'direct chat with confirmNonce keeps staged row retryable when the '
-      'live-direct replay callback asks for retry',
-      () async {
-        final repo = InMemoryInboxStagingRepository();
-        service = P2PServiceImpl(
-          bridge: bridge,
-          inboxStagingRepository: repo,
-          replayLiveDirectChatMessage: (_, {String? stagedEntryId}) async {
-            return (
-              disposition: RecoveredInboxChatDisposition.retryable,
-              reasonCode: 'missing_mlkem_secret',
-              reasonDetail: 'secret unavailable',
-            );
-          },
-          replayRecoveredInboxChatMessage: (_, {String? stagedEntryId}) async {
-            fail('live direct retry must not route through the recovery '
-                'callback');
-          },
-        );
+    test('direct chat with confirmNonce keeps staged row retryable when the '
+        'live-direct replay callback asks for retry', () async {
+      final repo = InMemoryInboxStagingRepository();
+      service = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: repo,
+        replayLiveDirectChatMessage: (_, {String? stagedEntryId}) async {
+          return (
+            disposition: RecoveredInboxChatDisposition.retryable,
+            reasonCode: 'missing_mlkem_secret',
+            reasonDetail: 'secret unavailable',
+          );
+        },
+        replayRecoveredInboxChatMessage: (_, {String? stagedEntryId}) async {
+          fail(
+            'live direct retry must not route through the recovery '
+            'callback',
+          );
+        },
+      );
 
-        bridge.whenCommand(
-          'message:confirm',
-          (_) => jsonEncode({'ok': true, 'confirmed': true}),
-        );
+      bridge.whenCommand(
+        'message:confirm',
+        (_) => jsonEncode({'ok': true, 'confirmed': true}),
+      );
 
-        bridge.onMessageReceived?.call(
-          ChatMessage(
-            from: 'remote-peer',
-            to: 'self-peer',
-            content: _chatEnvelope(
-              id: 'msg-direct-retry',
-              text: 'retry me later',
-              senderPeerId: 'remote-peer',
-            ),
-            timestamp: '2026-04-01T00:00:00.000Z',
-            isIncoming: true,
-            transport: 'direct',
-            confirmNonce: 'nonce-direct-retry',
+      bridge.onMessageReceived?.call(
+        ChatMessage(
+          from: 'remote-peer',
+          to: 'self-peer',
+          content: _chatEnvelope(
+            id: 'msg-direct-retry',
+            text: 'retry me later',
+            senderPeerId: 'remote-peer',
           ),
-        );
+          timestamp: '2026-04-01T00:00:00.000Z',
+          isIncoming: true,
+          transport: 'direct',
+          confirmNonce: 'nonce-direct-retry',
+        ),
+      );
 
-        await Future<void>.delayed(const Duration(milliseconds: 10));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
 
-        final entry = repo.entry('direct:nonce-direct-retry');
-        expect(entry, isNotNull);
-        expect(entry!.status, 'retryable');
-        expect(entry.rejectReasonCode, 'missing_mlkem_secret');
-        expect(entry.rejectReasonDetail, 'secret unavailable');
-        final confirmPayloads = bridge.payloadsFor('message:confirm');
-        expect(confirmPayloads, hasLength(1));
-        expect(
-          confirmPayloads.single,
-          equals({'nonce': 'nonce-direct-retry', 'ok': true}),
-        );
-      },
-    );
+      final entry = repo.entry('direct:nonce-direct-retry');
+      expect(entry, isNotNull);
+      expect(entry!.status, 'retryable');
+      expect(entry.rejectReasonCode, 'missing_mlkem_secret');
+      expect(entry.rejectReasonDetail, 'secret unavailable');
+      final confirmPayloads = bridge.payloadsFor('message:confirm');
+      expect(confirmPayloads, hasLength(1));
+      expect(
+        confirmPayloads.single,
+        equals({'nonce': 'nonce-direct-retry', 'ok': true}),
+      );
+    });
 
     test(
       'without replay callback direct chat still uses the legacy raw stream path',
@@ -2156,31 +2244,28 @@ void main() {
         stagedAt: '2026-04-01T00:00:01.000Z',
       );
 
-      test(
-        'a retried direct: entry stays notify-capable (live-direct) on the '
-        'prefix-blind sweep',
-        () async {
-          final repo = InMemoryInboxStagingRepository();
-          repo.seed(seedChatEntry('direct:nonce-retry-sweep'));
-          final liveDirect = <String?>[];
-          final liveLan = <String?>[];
-          final recovered = <String?>[];
-          service = buildSweepService(
-            repo: repo,
-            liveDirect: liveDirect,
-            liveLan: liveLan,
-            recovered: recovered,
-          );
+      test('a retried direct: entry stays notify-capable (live-direct) on the '
+          'prefix-blind sweep', () async {
+        final repo = InMemoryInboxStagingRepository();
+        repo.seed(seedChatEntry('direct:nonce-retry-sweep'));
+        final liveDirect = <String?>[];
+        final liveLan = <String?>[];
+        final recovered = <String?>[];
+        service = buildSweepService(
+          repo: repo,
+          liveDirect: liveDirect,
+          liveLan: liveLan,
+          recovered: recovered,
+        );
 
-          await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
-          await service.drainOfflineInbox();
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+        await service.drainOfflineInbox();
 
-          expect(liveDirect, ['direct:nonce-retry-sweep']);
-          expect(recovered, isEmpty);
-          expect(liveLan, isEmpty);
-          expect(repo.entry('direct:nonce-retry-sweep'), isNull);
-        },
-      );
+        expect(liveDirect, ['direct:nonce-retry-sweep']);
+        expect(recovered, isEmpty);
+        expect(liveLan, isEmpty);
+        expect(repo.entry('direct:nonce-retry-sweep'), isNull);
+      });
 
       test(
         'a retried lan: entry stays notify-capable (live-lan) on the sweep',
@@ -2303,88 +2388,85 @@ void main() {
     // TC-14 (145): the durable drain success telemetry carries per-segment
     // durations (retrieveMs/ackMs/replayMs) in addition to the staged/replayed
     // counts, so the relay round-trip can be profiled.
-    test(
-      'P2P_SERVICE_INBOX_STAGED_DRAIN_SUCCESS carries numeric '
-      'retrieveMs/ackMs/replayMs',
-      () async {
-        final repo = InMemoryInboxStagingRepository();
-        repo.seed(
-          InboxStagingEntry(
-            entryId: 'entry-timed',
-            ownerPeerId: 'self-peer',
-            senderPeerId: 'remote-peer',
-            messageType: 'chat_message',
-            relayTimestamp: '2026-04-01T00:00:00.000Z',
-            envelope: jsonEncode({
-              'type': 'chat_message',
-              'version': '1',
-              'payload': {
-                'id': 'msg-timed',
-                'text': 'hello',
-                'senderPeerId': 'remote-peer',
-                'senderUsername': 'Alice',
-                'timestamp': '2026-04-01T00:00:00.000Z',
-              },
-            }),
-            stagedAt: '2026-04-01T00:00:01.000Z',
-          ),
-        );
-
-        bridge.whenCommand(
-          'node:start',
-          (_) => jsonEncode({
-            'ok': true,
-            'peerId': 'self-peer',
-            'isStarted': true,
-            'listenAddresses': [],
-            'circuitAddresses': [],
-            'connections': [],
+    test('P2P_SERVICE_INBOX_STAGED_DRAIN_SUCCESS carries numeric '
+        'retrieveMs/ackMs/replayMs', () async {
+      final repo = InMemoryInboxStagingRepository();
+      repo.seed(
+        InboxStagingEntry(
+          entryId: 'entry-timed',
+          ownerPeerId: 'self-peer',
+          senderPeerId: 'remote-peer',
+          messageType: 'chat_message',
+          relayTimestamp: '2026-04-01T00:00:00.000Z',
+          envelope: jsonEncode({
+            'type': 'chat_message',
+            'version': '1',
+            'payload': {
+              'id': 'msg-timed',
+              'text': 'hello',
+              'senderPeerId': 'remote-peer',
+              'senderUsername': 'Alice',
+              'timestamp': '2026-04-01T00:00:00.000Z',
+            },
           }),
-        );
-        bridge.whenCommand(
-          'inbox:retrieve_pending',
-          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
-        );
+          stagedAt: '2026-04-01T00:00:01.000Z',
+        ),
+      );
 
-        service = P2PServiceImpl(
-          bridge: bridge,
-          inboxStagingRepository: repo,
-          replayRecoveredInboxChatMessage:
-              (message, {String? stagedEntryId}) async => (
-                disposition: RecoveredInboxChatDisposition.committed,
-                reasonCode: 'stored',
-                reasonDetail: null,
-              ),
-        );
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'self-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': [],
+          'connections': [],
+        }),
+      );
+      bridge.whenCommand(
+        'inbox:retrieve_pending',
+        (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+      );
 
-        final events = await _captureFlowEvents(() async {
-          await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
-          await service.drainOfflineInbox();
-        });
+      service = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: repo,
+        replayRecoveredInboxChatMessage:
+            (message, {String? stagedEntryId}) async => (
+              disposition: RecoveredInboxChatDisposition.committed,
+              reasonCode: 'stored',
+              reasonDetail: null,
+            ),
+      );
 
-        final drainSuccess = events.firstWhere(
-          (e) => e['event'] == 'P2P_SERVICE_INBOX_STAGED_DRAIN_SUCCESS',
-          orElse: () => <String, dynamic>{},
-        );
-        expect(
-          drainSuccess,
-          isNotEmpty,
-          reason: 'a staged+replayed drain should emit STAGED_DRAIN_SUCCESS',
-        );
-        final details = drainSuccess['details'] as Map<String, dynamic>;
-        // Existing fields preserved (additive change).
-        expect(details['staged'], isA<int>());
-        expect(details['replayed'], isA<int>());
-        expect(details['note'], isNotNull);
-        // New per-segment durations.
-        expect(details['retrieveMs'], isA<int>());
-        expect(details['retrieveMs'], greaterThanOrEqualTo(0));
-        expect(details['ackMs'], isA<int>());
-        expect(details['ackMs'], greaterThanOrEqualTo(0));
-        expect(details['replayMs'], isA<int>());
-        expect(details['replayMs'], greaterThanOrEqualTo(0));
-      },
-    );
+      final events = await _captureFlowEvents(() async {
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+        await service.drainOfflineInbox();
+      });
+
+      final drainSuccess = events.firstWhere(
+        (e) => e['event'] == 'P2P_SERVICE_INBOX_STAGED_DRAIN_SUCCESS',
+        orElse: () => <String, dynamic>{},
+      );
+      expect(
+        drainSuccess,
+        isNotEmpty,
+        reason: 'a staged+replayed drain should emit STAGED_DRAIN_SUCCESS',
+      );
+      final details = drainSuccess['details'] as Map<String, dynamic>;
+      // Existing fields preserved (additive change).
+      expect(details['staged'], isA<int>());
+      expect(details['replayed'], isA<int>());
+      expect(details['note'], isNotNull);
+      // New per-segment durations.
+      expect(details['retrieveMs'], isA<int>());
+      expect(details['retrieveMs'], greaterThanOrEqualTo(0));
+      expect(details['ackMs'], isA<int>());
+      expect(details['ackMs'], greaterThanOrEqualTo(0));
+      expect(details['replayMs'], isA<int>());
+      expect(details['replayMs'], greaterThanOrEqualTo(0));
+    });
 
     test(
       'quarantined disposition keeps entry, marks quarantined, does not delete',
@@ -3150,7 +3232,8 @@ void main() {
 
           await _waitForCondition(
             () => replayedStagedIds.contains('entry-reaction-1'),
-            reason: 'reaction replay callback should be invoked with the '
+            reason:
+                'reaction replay callback should be invoked with the '
                 'staged entry id',
           );
 
@@ -3159,7 +3242,8 @@ void main() {
           expect(
             repo.deletedEntryIds,
             isNot(contains('entry-reaction-1')),
-            reason: 'the reaction row must survive until the replay commits — '
+            reason:
+                'the reaction row must survive until the replay commits — '
                 'deleting before commit loses the reaction on a kill',
           );
           expect(repo.entry('entry-reaction-1'), isNotNull);
@@ -5008,6 +5092,218 @@ void main() {
     );
   });
 
+  group('FDC-14b directReady producer', () {
+    test('directReady is set when a non-circuit connection is held', () async {
+      await startNodeForDirectReadyProducer(
+        relayState: 'online',
+        circuitAddresses: const ['/p2p-circuit/relay1'],
+      );
+
+      connectPeerForDirectReadyProducer(
+        peerId: 'direct-peer',
+        multiaddrs: const ['/ip4/192.168.1.10/udp/45000/quic-v1'],
+      );
+
+      expect(service.currentState.directReady, isTrue);
+      expect(
+        service.currentState.badgeReadinessState,
+        BadgeReadinessState.onlineDirect,
+      );
+    });
+
+    test('directReady stays false for a circuit-only connection', () async {
+      await startNodeForDirectReadyProducer(
+        relayState: 'online',
+        circuitAddresses: const ['/p2p-circuit/relay1'],
+      );
+
+      expect(service.currentState.connections, isEmpty);
+      expect(service.currentState.directReady, isFalse);
+      expect(
+        service.currentState.badgeReadinessState,
+        BadgeReadinessState.onlineDotted,
+      );
+
+      connectPeerForDirectReadyProducer(
+        peerId: 'relay-path-peer',
+        multiaddrs: const [
+          '/dns4/relay.example/tcp/4001/p2p/relay-peer/p2p-circuit',
+        ],
+      );
+
+      expect(service.currentState.directReady, isFalse);
+      expect(
+        service.currentState.badgeReadinessState,
+        BadgeReadinessState.onlineDotted,
+      );
+    });
+
+    test('directReady stays false for a relay-server connection', () async {
+      await startNodeForDirectReadyProducer(
+        relayState: 'online',
+        circuitAddresses: const ['/p2p-circuit/relay1'],
+      );
+
+      connectPeerForDirectReadyProducer(
+        peerId: 'relay-server-peer',
+        multiaddrs: const ['/dns4/relay.example/tcp/4001'],
+        isRelay: true,
+      );
+
+      expect(service.currentState.directReady, isFalse);
+      expect(
+        service.currentState.badgeReadinessState,
+        BadgeReadinessState.onlineDotted,
+      );
+    });
+
+    test(
+      'directReady for a connection holding both a circuit and a direct multiaddr',
+      () async {
+        await startNodeForDirectReadyProducer(
+          relayState: 'online',
+          circuitAddresses: const ['/p2p-circuit/relay1'],
+        );
+
+        connectPeerForDirectReadyProducer(
+          peerId: 'mixed-peer',
+          multiaddrs: const [
+            '/ip4/192.168.1.10/udp/45000/quic-v1',
+            '/dns4/relay.example/tcp/4001/p2p/relay-peer/p2p-circuit',
+          ],
+        );
+
+        expect(service.currentState.directReady, isTrue);
+        expect(
+          service.currentState.badgeReadinessState,
+          BadgeReadinessState.onlineDirect,
+        );
+      },
+    );
+
+    test(
+      'directReady reverts to false when the direct connection disconnects',
+      () async {
+        await startNodeForDirectReadyProducer(
+          relayState: 'online',
+          circuitAddresses: const ['/p2p-circuit/relay1'],
+        );
+
+        connectPeerForDirectReadyProducer(
+          peerId: 'direct-peer',
+          multiaddrs: const ['/ip4/192.168.1.10/udp/45000/quic-v1'],
+        );
+        expect(service.currentState.directReady, isTrue);
+
+        disconnectPeerForDirectReadyProducer('direct-peer');
+
+        expect(service.currentState.directReady, isFalse);
+        expect(
+          service.currentState.badgeReadinessState,
+          BadgeReadinessState.onlineDotted,
+        );
+      },
+    );
+
+    test(
+      'directReady true with capability not ready stays connecting',
+      () async {
+        await startNodeForDirectReadyProducer(
+          relayState: 'online',
+          circuitAddresses: const ['/p2p-circuit/relay1'],
+          proveReadiness: false,
+        );
+
+        connectPeerForDirectReadyProducer(
+          peerId: 'direct-peer',
+          multiaddrs: const ['/ip4/192.168.1.10/udp/45000/quic-v1'],
+        );
+
+        expect(service.currentState.directReady, isTrue);
+        expect(service.currentState.usabilityReady, isFalse);
+        expect(
+          service.currentState.badgeReadinessState,
+          BadgeReadinessState.connecting,
+        );
+      },
+    );
+
+    test(
+      'reaching onlineDirect via a direct connection emits TIME_TO_ONLINE_BADGE exactly once',
+      () async {
+        await startNodeForDirectReadyProducer(relayState: 'degraded');
+        expect(
+          service.currentState.badgeReadinessState,
+          BadgeReadinessState.online,
+        );
+
+        final events = await _captureFlowEvents(() async {
+          connectPeerForDirectReadyProducer(
+            peerId: 'direct-peer',
+            multiaddrs: const ['/ip4/192.168.1.10/udp/45000/quic-v1'],
+          );
+        });
+
+        expect(
+          service.currentState.badgeReadinessState,
+          BadgeReadinessState.onlineDirect,
+        );
+        expect(
+          events.where((e) => e['event'] == 'TIME_TO_ONLINE_BADGE'),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'reshuffle from onlineDotted to onlineDirect does not re-emit '
+      'TIME_TO_ONLINE_BADGE (P-5 case 2: ready->ready emits zero)',
+      () async {
+        await startNodeForDirectReadyProducer(relayState: 'online');
+        expect(
+          service.currentState.badgeReadinessState,
+          BadgeReadinessState.onlineDotted,
+        );
+
+        final events = await _captureFlowEvents(() async {
+          connectPeerForDirectReadyProducer(
+            peerId: 'direct-peer',
+            multiaddrs: const ['/ip4/192.168.1.10/udp/45000/quic-v1'],
+          );
+        });
+
+        expect(
+          service.currentState.badgeReadinessState,
+          BadgeReadinessState.onlineDirect,
+        );
+        expect(
+          events.where((e) => e['event'] == 'TIME_TO_ONLINE_BADGE'),
+          isEmpty,
+        );
+      },
+    );
+
+    test('onlineDirect does not emit TIME_TO_RELAY_READY_BADGE', () async {
+      await startNodeForDirectReadyProducer(relayState: 'degraded');
+
+      final events = await _captureFlowEvents(() async {
+        connectPeerForDirectReadyProducer(
+          peerId: 'direct-peer',
+          multiaddrs: const ['/ip4/192.168.1.10/udp/45000/quic-v1'],
+        );
+      });
+
+      expect(
+        service.currentState.badgeReadinessState,
+        BadgeReadinessState.onlineDirect,
+      );
+      expect(
+        events.where((e) => e['event'] == 'TIME_TO_RELAY_READY_BADGE'),
+        isEmpty,
+      );
+    });
+  });
+
   group('§24 TIME_TO_ONLINE_BADGE', () {
     test(
       'cold start emits TIME_TO_ONLINE_BADGE after first online state via relay push',
@@ -5272,164 +5568,159 @@ void main() {
   // on the next stopped->started transition — so the just-arrived 1:1 message
   // surfaces promptly on open instead of only on the next ~30s health tick.
   group('141 notif-open deferred startup drain', () {
-    test(
-      'drainOfflineInbox defers when node not started and fires on '
-      'started transition',
-      () async {
-        var retrievePendingCount = 0;
-        bridge.whenCommand('inbox:retrieve_pending', (_) {
-          retrievePendingCount++;
-          return jsonEncode({'ok': true, 'messages': [], 'hasMore': false});
-        });
-        bridge.whenCommand(
-          'node:start',
-          (_) => jsonEncode({
-            'ok': true,
-            'peerId': 'self-peer',
-            'isStarted': true,
-            'listenAddresses': [],
-            'circuitAddresses': [],
-            'connections': [],
-          }),
-        );
+    test('drainOfflineInbox defers when node not started and fires on '
+        'started transition', () async {
+      var retrievePendingCount = 0;
+      bridge.whenCommand('inbox:retrieve_pending', (_) {
+        retrievePendingCount++;
+        return jsonEncode({'ok': true, 'messages': [], 'hasMore': false});
+      });
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'self-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': [],
+          'connections': [],
+        }),
+      );
 
-        // Phase 1 — node not started: the opportunistic drain must be
-        // DEFERRED (scheduled), neither run nor silently dropped.
-        final scheduledEvents = await _captureFlowEvents(() async {
-          await service.drainOfflineInbox();
-        });
-        expect(
-          retrievePendingCount,
-          0,
-          reason:
-              'no inbox retrieve may be issued while the node is not started',
-        );
-        expect(
-          scheduledEvents.where(
-            (e) => e['event'] == 'P2P_SERVICE_DRAIN_OFFLINE_INBOX_BEGIN',
-          ),
-          isEmpty,
-          reason: 'the drain must not begin while the node is not started',
-        );
-        expect(
-          scheduledEvents.where(
-            (e) => e['event'] == 'P2P_SERVICE_PENDING_STARTUP_DRAIN_SCHEDULED',
-          ),
-          isNotEmpty,
-          reason: 'an opportunistic drain requested before the node starts '
-              'must be deferred (scheduled), not dropped',
-        );
+      // Phase 1 — node not started: the opportunistic drain must be
+      // DEFERRED (scheduled), neither run nor silently dropped.
+      final scheduledEvents = await _captureFlowEvents(() async {
+        await service.drainOfflineInbox();
+      });
+      expect(
+        retrievePendingCount,
+        0,
+        reason: 'no inbox retrieve may be issued while the node is not started',
+      );
+      expect(
+        scheduledEvents.where(
+          (e) => e['event'] == 'P2P_SERVICE_DRAIN_OFFLINE_INBOX_BEGIN',
+        ),
+        isEmpty,
+        reason: 'the drain must not begin while the node is not started',
+      );
+      expect(
+        scheduledEvents.where(
+          (e) => e['event'] == 'P2P_SERVICE_PENDING_STARTUP_DRAIN_SCHEDULED',
+        ),
+        isNotEmpty,
+        reason:
+            'an opportunistic drain requested before the node starts '
+            'must be deferred (scheduled), not dropped',
+      );
 
-        // Phase 2 — drive the stopped->started transition. The deferred drain
-        // must fire exactly once, AFTER the transition (never while stopped).
-        final firedEvents = await _captureFlowEvents(() async {
-          await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
-          await _waitForCondition(
-            () => retrievePendingCount >= 1,
-            reason: 'the deferred drain should issue an inbox retrieve once '
-                'the node reaches started',
-          );
-        });
-        final fired = firedEvents
-            .where(
-              (e) => e['event'] == 'P2P_SERVICE_PENDING_STARTUP_DRAIN_FIRED',
-            )
-            .toList();
-        expect(
-          fired,
-          hasLength(1),
-          reason: 'the deferred drain fires exactly once on the '
-              'stopped->started transition',
-        );
-        expect(
-          retrievePendingCount,
-          greaterThanOrEqualTo(1),
-          reason: 'the inbox retrieve is issued only after the node started',
-        );
-      },
-    );
-
-    test(
-      'drainOfflineInbox runs immediately when already started '
-      '(no deferral, single fire)',
-      () async {
-        var retrievePendingCount = 0;
-        bridge.whenCommand('inbox:retrieve_pending', (_) {
-          retrievePendingCount++;
-          return jsonEncode({'ok': true, 'messages': [], 'hasMore': false});
-        });
-        bridge.whenCommand(
-          'node:start',
-          (_) => jsonEncode({
-            'ok': true,
-            'peerId': 'self-peer',
-            'isStarted': true,
-            'listenAddresses': [],
-            'circuitAddresses': [],
-            'connections': [],
-          }),
-        );
-        bridge.whenCommand(
-          'node:status',
-          (_) => jsonEncode({
-            'ok': true,
-            'peerId': 'self-peer',
-            'isStarted': true,
-            'listenAddresses': [],
-            'circuitAddresses': [],
-            'connections': [],
-          }),
-        );
-        bridge.whenCommand('node:stop', (_) => jsonEncode({'ok': true}));
-
+      // Phase 2 — drive the stopped->started transition. The deferred drain
+      // must fire exactly once, AFTER the transition (never while stopped).
+      final firedEvents = await _captureFlowEvents(() async {
         await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
-        // Ignore any startup-driven retrieves; measure only the explicit drain.
-        retrievePendingCount = 0;
+        await _waitForCondition(
+          () => retrievePendingCount >= 1,
+          reason:
+              'the deferred drain should issue an inbox retrieve once '
+              'the node reaches started',
+        );
+      });
+      final fired = firedEvents
+          .where((e) => e['event'] == 'P2P_SERVICE_PENDING_STARTUP_DRAIN_FIRED')
+          .toList();
+      expect(
+        fired,
+        hasLength(1),
+        reason:
+            'the deferred drain fires exactly once on the '
+            'stopped->started transition',
+      );
+      expect(
+        retrievePendingCount,
+        greaterThanOrEqualTo(1),
+        reason: 'the inbox retrieve is issued only after the node started',
+      );
+    });
 
-        final events = await _captureFlowEvents(() async {
-          await service.drainOfflineInbox();
-        });
-        expect(
-          retrievePendingCount,
-          1,
-          reason: 'the started-path drain runs immediately and exactly once',
-        );
-        expect(
-          events.where(
-            (e) => e['event'] == 'P2P_SERVICE_DRAIN_OFFLINE_INBOX_BEGIN',
-          ),
-          isNotEmpty,
-          reason: 'the started-path drain begins immediately',
-        );
-        expect(
-          events.where(
-            (e) => e['event'] == 'P2P_SERVICE_PENDING_STARTUP_DRAIN_SCHEDULED',
-          ),
-          isEmpty,
-          reason: 'no deferral is scheduled when the node is already started',
-        );
+    test('drainOfflineInbox runs immediately when already started '
+        '(no deferral, single fire)', () async {
+      var retrievePendingCount = 0;
+      bridge.whenCommand('inbox:retrieve_pending', (_) {
+        retrievePendingCount++;
+        return jsonEncode({'ok': true, 'messages': [], 'hasMore': false});
+      });
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'self-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': [],
+          'connections': [],
+        }),
+      );
+      bridge.whenCommand(
+        'node:status',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'self-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': [],
+          'connections': [],
+        }),
+      );
+      bridge.whenCommand('node:stop', (_) => jsonEncode({'ok': true}));
 
-        // The started-path drain must NOT arm the deferral latch. Prove it with
-        // a REAL stop->start cycle (the only thing that drives a
-        // stopped->started edge): a phantom latch wrongly set on the started
-        // path would fire here. (A weaker check via performImmediateHealthCheck
-        // would not — it never crosses the !started->started edge the fire hook
-        // guards on, so it cannot catch an over-latch regression.)
-        final cycleEvents = await _captureFlowEvents(() async {
-          await service.stopNode();
-          await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
-          await Future<void>.delayed(const Duration(milliseconds: 20));
-        });
-        expect(
-          cycleEvents.where(
-            (e) => e['event'] == 'P2P_SERVICE_PENDING_STARTUP_DRAIN_FIRED',
-          ),
-          isEmpty,
-          reason: 'the started-path drain must not arm the deferral latch — a '
-              'later stop->start cycle must not fire a phantom deferred drain',
-        );
-      },
-    );
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+      // Ignore any startup-driven retrieves; measure only the explicit drain.
+      retrievePendingCount = 0;
+
+      final events = await _captureFlowEvents(() async {
+        await service.drainOfflineInbox();
+      });
+      expect(
+        retrievePendingCount,
+        1,
+        reason: 'the started-path drain runs immediately and exactly once',
+      );
+      expect(
+        events.where(
+          (e) => e['event'] == 'P2P_SERVICE_DRAIN_OFFLINE_INBOX_BEGIN',
+        ),
+        isNotEmpty,
+        reason: 'the started-path drain begins immediately',
+      );
+      expect(
+        events.where(
+          (e) => e['event'] == 'P2P_SERVICE_PENDING_STARTUP_DRAIN_SCHEDULED',
+        ),
+        isEmpty,
+        reason: 'no deferral is scheduled when the node is already started',
+      );
+
+      // The started-path drain must NOT arm the deferral latch. Prove it with
+      // a REAL stop->start cycle (the only thing that drives a
+      // stopped->started edge): a phantom latch wrongly set on the started
+      // path would fire here. (A weaker check via performImmediateHealthCheck
+      // would not — it never crosses the !started->started edge the fire hook
+      // guards on, so it cannot catch an over-latch regression.)
+      final cycleEvents = await _captureFlowEvents(() async {
+        await service.stopNode();
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      });
+      expect(
+        cycleEvents.where(
+          (e) => e['event'] == 'P2P_SERVICE_PENDING_STARTUP_DRAIN_FIRED',
+        ),
+        isEmpty,
+        reason:
+            'the started-path drain must not arm the deferral latch — a '
+            'later stop->start cycle must not fire a phantom deferred drain',
+      );
+    });
   });
 
   // 147: bounded-concurrent decrypt fan-out ahead of the serial commit loop.
@@ -5510,8 +5801,8 @@ void main() {
             inFlight--;
             return 'pt-${envIdOf(message)}';
           },
-          replayRecoveredInboxChatMessage: (message, {String? stagedEntryId}) async =>
-              committed(),
+          replayRecoveredInboxChatMessage:
+              (message, {String? stagedEntryId}) async => committed(),
         );
         await startNode(service);
         stagePending([for (var i = 1; i <= n; i++) 'm$i']);
@@ -5547,8 +5838,8 @@ void main() {
             inFlight--;
             return 'pt-${envIdOf(message)}';
           },
-          replayRecoveredInboxChatMessage: (message, {String? stagedEntryId}) async =>
-              committed(),
+          replayRecoveredInboxChatMessage:
+              (message, {String? stagedEntryId}) async => committed(),
         );
         await startNode(service);
         stagePending([for (var i = 1; i <= n; i++) 'm$i']);
@@ -5592,26 +5883,27 @@ void main() {
             completionLog.add(id);
             return 'pt-$id';
           },
-          replayRecoveredInboxChatMessage: (message, {String? stagedEntryId}) async {
-            commitLog.add(envIdOf(message));
-            return committed();
-          },
+          replayRecoveredInboxChatMessage:
+              (message, {String? stagedEntryId}) async {
+                commitLog.add(envIdOf(message));
+                return committed();
+              },
         );
         await startNode(service);
         stagePending(['m1', 'm2', 'm3']);
 
         await service.drainOfflineInbox().timeout(const Duration(seconds: 5));
 
-        expect(
-          completionLog,
-          ['m3', 'm2', 'm1'],
-          reason: 'decrypts finished out of (reverse) order',
-        );
-        expect(
-          commitLog,
-          ['m1', 'm2', 'm3'],
-          reason: 'commit/persist stayed in arrival order despite that',
-        );
+        expect(completionLog, [
+          'm3',
+          'm2',
+          'm1',
+        ], reason: 'decrypts finished out of (reverse) order');
+        expect(commitLog, [
+          'm1',
+          'm2',
+          'm3',
+        ], reason: 'commit/persist stayed in arrival order despite that');
       },
     );
 
@@ -5632,12 +5924,13 @@ void main() {
             }
             return 'pt-$id';
           },
-          replayRecoveredInboxChatMessage: (message, {String? stagedEntryId}) async {
-            // The handler receives predecryptedText via the message; a failed
-            // prefetch leaves it null → the handler would decrypt itself.
-            received[envIdOf(message)] = message.predecryptedText;
-            return committed();
-          },
+          replayRecoveredInboxChatMessage:
+              (message, {String? stagedEntryId}) async {
+                // The handler receives predecryptedText via the message; a failed
+                // prefetch leaves it null → the handler would decrypt itself.
+                received[envIdOf(message)] = message.predecryptedText;
+                return committed();
+              },
         );
         await startNode(service);
         stagePending(['mX', 'mY']);
@@ -5654,7 +5947,11 @@ void main() {
           isNull,
           reason: 'omitted entry falls back to in-handler decrypt',
         );
-        expect(received['mY'], 'pt-mY', reason: 'the prefetched plaintext flows');
+        expect(
+          received['mY'],
+          'pt-mY',
+          reason: 'the prefetched plaintext flows',
+        );
       },
     );
 
@@ -5677,10 +5974,11 @@ void main() {
             await barrier.future; // a lone serial waiter blocks forever
             return 'pt-${envIdOf(message)}';
           },
-          replayRecoveredInboxChatMessage: (message, {String? stagedEntryId}) async {
-            commitLog.add(envIdOf(message));
-            return committed();
-          },
+          replayRecoveredInboxChatMessage:
+              (message, {String? stagedEntryId}) async {
+                commitLog.add(envIdOf(message));
+                return committed();
+              },
         );
         await startNode(service);
         stagePending([for (var i = 1; i <= n; i++) 'm$i']);

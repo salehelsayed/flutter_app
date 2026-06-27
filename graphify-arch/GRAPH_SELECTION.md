@@ -11,15 +11,15 @@
 ## Metrics
 | Metric | Full | Architecture | Delta |
 | --- | ---: | ---: | ---: |
-| nodes | 104915 | 42459 | -59.53% |
-| edges | 178113 | 66089 | -62.89% |
-| communities | 4381 | 927 | -78.84% |
-| source files | 5518 | 2187 | -60.37% |
-| avg edges per node | 1.6977 | 1.5565 | -8.32% |
-| avg nodes per community | 23.95 | 45.8 | +91.23% |
-| app-owned ratio | 0.442 | 0.961 | +117.42% |
+| nodes | 104915 | 42704 | -59.30% |
+| edges | 178113 | 66596 | -62.61% |
+| communities | 4381 | 920 | -79.00% |
+| source files | 5518 | 2207 | -60.00% |
+| avg edges per node | 1.6977 | 1.5595 | -8.14% |
+| avg nodes per community | 23.95 | 46.42 | +93.82% |
+| app-owned ratio | 0.442 | 0.9611 | +117.44% |
 | noise ratio | 0.2082 | 0.0 | -100.00% |
-| unknown-source ratio | 0.019 | 0.039 | +105.26% |
+| unknown-source ratio | 0.019 | 0.0389 | +104.74% |
 | top-10 hub noise ratio | 0.5 | 0.0 | -100.00% |
 
 ## Top Hubs
@@ -37,11 +37,11 @@ Full graph top hubs:
 
 Architecture graph top hubs:
 - `group_multi_party_device_real_harness.dart` (2029 edges, signal) `integration_test/group_multi_party_device_real_harness.dart`
-- `package:flutter_test/flutter_test.dart` (1021 edges, signal) ``
+- `package:flutter_test/flutter_test.dart` (1029 edges, signal) ``
 - `group_multi_party_device_criteria.dart` (684 edges, signal) `integration_test/scripts/group_multi_party_device_criteria.dart`
 - `main.dart` (585 edges, signal) `lib/main.dart`
 - `package:flutter/material.dart` (423 edges, signal) ``
-- `dart:convert` (410 edges, signal) ``
+- `dart:convert` (416 edges, signal) ``
 - `group_multi_party_device_criteria_test.dart` (398 edges, signal) `test/integration/group_multi_party_device_criteria_test.dart`
 - `group_conversation_wired.dart` (370 edges, signal) `lib/features/groups/presentation/screens/group_conversation_wired.dart`
 - `feed_wired.dart` (352 edges, signal) `lib/features/feed/presentation/screens/feed_wired.dart`

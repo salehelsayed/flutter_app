@@ -23,6 +23,11 @@ const (
 	ChatProtocol                    = "/mknoon/chat/1.0.0"
 	MediaProtocol                   = "/mknoon/media/1.0.0"
 	GroupValidationFeedbackProtocol = "/mknoon/group-validation-feedback/1.0.0"
+	// MediaLANProtocol (FDC-15) is the peer-to-peer LAN media byte stream — a
+	// NEW protocol id, DISTINCT from the relay-CDN MediaProtocol above (which is
+	// node→relay only). 1:1 media ciphertext rides this over a non-circuit
+	// (direct) libp2p conn instead of the plaintext ws://+HTTP-PUT LAN leg.
+	MediaLANProtocol = "/mknoon/media-lan/1.0.0"
 
 	// Timeouts.
 	DialTimeout                         = 15 * time.Second // Relay server connection
@@ -99,6 +104,16 @@ const (
 	// flapping/offline LAN peer cannot tight-loop the swarm into its 5s→5m dial
 	// backoff (proposal §6.1, §10).
 	LANDialWarmCooldown = 5 * time.Second
+
+	// MaxLANMediaBytes (FDC-15) bounds a single libp2p-LAN media transfer so a
+	// malicious framed header cannot drive an unbounded disk write before the
+	// body is streamed. handleIncomingLANMedia rejects an offer whose header
+	// `size` exceeds this BEFORE any io.CopyN runs. It matches the WS
+	// LocalMediaServer.maxFileSize (5 GB) so any media that delivers over the
+	// existing WS LAN leg also delivers over the libp2p-LAN lane. The transfer
+	// streams to a temp file (never buffered in memory) and is additionally
+	// bounded by MediaTimeout / MediaIdleTimeout.
+	MaxLANMediaBytes int64 = 5 * 1024 * 1024 * 1024 // 5 GB, matches LocalMediaServer.maxFileSize
 
 	// UpgradeAbandonTimeout (FDC-12 — opportunistic DCUtR relay->direct upgrade) is
 	// the per-leg budget after which a DCUtR upgrade dial is abandoned back to the

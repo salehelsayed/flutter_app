@@ -90,6 +90,29 @@ class LocalMediaReady {
     this.enc = false,
     this.encScheme,
   });
+
+  /// FDC-15: reconstructs a [LocalMediaReady] from a Go `media:lan_received`
+  /// event payload (the receiver staged the ciphertext to a temp file and emits
+  /// its path as [localPath]). The [enc]/[encScheme] fields MUST round-trip so
+  /// the bytes are staged for decrypt-adopt and never rendered as raw plaintext.
+  factory LocalMediaReady.fromJson(Map<String, dynamic> json) {
+    return LocalMediaReady(
+      id: json['id'] as String,
+      from: json['from'] as String,
+      to: json['to'] as String? ?? '',
+      mime: json['mime'] as String? ?? 'application/octet-stream',
+      size: (json['size'] as num?)?.toInt() ?? 0,
+      localPath: json['localPath'] as String,
+      sha256: json['sha256'] as String? ?? '',
+      durationMs: (json['durationMs'] as num?)?.toInt(),
+      waveform: (json['waveform'] as List<dynamic>?)
+          ?.map((e) => (e as num).toDouble())
+          .toList(),
+      filename: json['filename'] as String?,
+      enc: json['enc'] as bool? ?? false,
+      encScheme: json['encScheme'] as String?,
+    );
+  }
 }
 
 /// Offer from a sender to transfer a media file locally.

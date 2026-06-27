@@ -6,7 +6,7 @@ require (
 	filippo.io/edwards25519 v1.2.0
 	github.com/cloudflare/circl v1.6.3
 	github.com/google/uuid v1.6.0
-	github.com/libp2p/go-libp2p v0.39.1
+	github.com/libp2p/go-libp2p v0.39.1 // FDC-S6 soak verdict pinned to v0.39.1 — re-run libp2p-LAN soak (fdc-s6-measurement/) on any bump
 	github.com/libp2p/go-libp2p-pubsub v0.15.0
 	github.com/libp2p/go-msgio v0.3.0
 	github.com/multiformats/go-multiaddr v0.14.0

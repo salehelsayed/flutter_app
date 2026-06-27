@@ -54,3 +54,63 @@ func HandleLANPeerFound(paramsJSON string) (result string) {
 
 	return okJSON(map[string]interface{}{"ok": true})
 }
+
+// MediaLANSend is the gomobile-bound entrypoint for the media:lan_send command
+// (FDC-15). Dart forwards a 1:1 media ciphertext blob — the SAME
+// EncryptedMediaArtifact it uploads to the relay-CDN — to be streamed over the
+// FDC-11 LAN-direct conn (MediaLANProtocol). The node refuses unless a
+// non-circuit conn exists; the SHA-256 of the ciphertext file is computed
+// node-side and verified by the receiver. This is best-effort acceleration only —
+// the relay-CDN upload stays UNCONDITIONAL on the Dart side.
+//
+// Input JSON:   { "id","to","from","mime","filePath","enc","encScheme","durationMs" }
+// Returns JSON: { "ok": true, "acked": bool, "sha256Verified": bool, "transport": "direct" }
+//
+// Unlike HandleLANPeerFound this runs SYNCHRONOUSLY (Dart awaits the ack via a
+// stall watchdog), mirroring the relay-CDN MediaUpload bridge call.
+func MediaLANSend(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		ID         string `json:"id"`
+		To         string `json:"to"`
+		From       string `json:"from"`
+		Mime       string `json:"mime"`
+		FilePath   string `json:"filePath"`
+		Enc        bool   `json:"enc"`
+		EncScheme  string `json:"encScheme"`
+		DurationMs int    `json:"durationMs"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+	if params.ID == "" || params.To == "" || params.FilePath == "" {
+		return errJSON("INVALID_INPUT", "missing id, to, or filePath")
+	}
+
+	res, err := n.SendLANMediaToPeer(
+		params.To, params.FilePath, params.ID, params.From, params.Mime, params.EncScheme, params.Enc, params.DurationMs,
+	)
+	if err != nil {
+		return errJSON("MEDIA_LAN_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":             true,
+		"acked":          res.Acked,
+		"sha256Verified": res.Sha256Verified,
+		"transport":      res.Transport,
+	})
+}

@@ -5,6 +5,7 @@ class ConnectionState {
   final String direction; // 'inbound' or 'outbound'
   final String status; // 'connected' or 'disconnected'
   final String? connectedAt;
+  final bool isRelay;
 
   const ConnectionState({
     required this.peerId,
@@ -12,6 +13,7 @@ class ConnectionState {
     required this.direction,
     required this.status,
     this.connectedAt,
+    this.isRelay = false,
   });
 
   factory ConnectionState.fromJson(Map<String, dynamic> json) {
@@ -43,6 +45,7 @@ class ConnectionState {
       direction: json['direction']?.toString() ?? 'outbound',
       status: json['status']?.toString() ?? 'connected',
       connectedAt: connectedAt,
+      isRelay: json['isRelay'] == true,
     );
   }
 
@@ -53,6 +56,7 @@ class ConnectionState {
       'direction': direction,
       'status': status,
       if (connectedAt != null) 'connectedAt': connectedAt,
+      'isRelay': isRelay,
     };
   }
 
@@ -62,6 +66,7 @@ class ConnectionState {
     String? direction,
     String? status,
     String? connectedAt,
+    bool? isRelay,
   }) {
     return ConnectionState(
       peerId: peerId ?? this.peerId,
@@ -69,6 +74,7 @@ class ConnectionState {
       direction: direction ?? this.direction,
       status: status ?? this.status,
       connectedAt: connectedAt ?? this.connectedAt,
+      isRelay: isRelay ?? this.isRelay,
     );
   }
 
@@ -86,6 +92,7 @@ class ConnectionState {
 
   @override
   String toString() {
-    return 'ConnectionState(peerId: $peerId, direction: $direction, status: $status)';
+    return 'ConnectionState(peerId: $peerId, direction: $direction, status: $status'
+        '${isRelay ? ', isRelay: true' : ''})';
   }
 }

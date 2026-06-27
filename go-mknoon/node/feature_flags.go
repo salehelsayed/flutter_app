@@ -56,6 +56,16 @@ type FeatureFlags struct {
 	// regardless of this flag — they only correct an already-opened direct conn;
 	// this flag solely controls whether the host is ALLOWED to open one via DCUtR.
 	EnableDcutrUpgrade bool `json:"enableDcutrUpgrade"`
+
+	// EnableLibp2pLANMedia gates the FDC-15 1:1 media byte stream over a
+	// peer-authenticated libp2p LAN-direct conn (MediaLANProtocol). When OFF (the
+	// default) the node registers NO MediaLANProtocol handler and the Dart send
+	// leg never fires, so media rides only the existing ws://+HTTP-PUT LAN leg +
+	// the unconditional relay-CDN upload. Like EnableLibp2pLANDial / EnableDcutrUpgrade
+	// it defaults to FALSE: the lane is additive and fail-safe but streams over
+	// FDC-11's direct conn, which is itself device-unproven, so it stays off until
+	// the D1 two-phone media gate is GREEN.
+	EnableLibp2pLANMedia bool `json:"enableLibp2pLANMedia"`
 }
 
 // DefaultFeatureFlags returns a FeatureFlags with all relay features enabled.
@@ -72,5 +82,6 @@ func DefaultFeatureFlags() FeatureFlags {
 		EnableDeferredDirectAck:      true,
 		EnableLibp2pLANDial:          false, // FDC-11: off until D1 device-proven
 		EnableDcutrUpgrade:           false, // FDC-12: off until DCUtR device campaign is GREEN
+		EnableLibp2pLANMedia:         false, // FDC-15: off until D1 two-phone media gate is GREEN
 	}
 }

@@ -237,6 +237,113 @@ func TestNodeStatus(t *testing.T) {
 	}
 }
 
+func TestStatusConnectionsCarryIsRelayForRelayVsPeer(t *testing.T) {
+	collector := &testEventCollector{}
+	n := New(collector)
+	if _, err := n.Start(NodeConfig{
+		PrivateKeyHex:  generateTestKey(t),
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	}); err != nil {
+		t.Fatalf("Start node under test: %v", err)
+	}
+	defer n.Stop()
+
+	relayLikePeer := NewNode()
+	if _, err := relayLikePeer.Start(NodeConfig{
+		PrivateKeyHex:  generateTestKey(t),
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	}); err != nil {
+		t.Fatalf("Start relay-like peer: %v", err)
+	}
+	defer relayLikePeer.Stop()
+
+	directPeer := NewNode()
+	if _, err := directPeer.Start(NodeConfig{
+		PrivateKeyHex:  generateTestKey(t),
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	}); err != nil {
+		t.Fatalf("Start direct peer: %v", err)
+	}
+	defer directPeer.Stop()
+
+	relayPeerID := relayLikePeer.Host().ID()
+	directPeerID := directPeer.Host().ID()
+
+	n.mu.Lock()
+	n.relayPeerOrder = []peer.ID{relayPeerID}
+	n.mu.Unlock()
+
+	loopbackQUICAddr := func(target *Node) ma.Multiaddr {
+		t.Helper()
+		addrs, err := target.Host().Network().InterfaceListenAddresses()
+		if err != nil {
+			t.Fatalf("interface listen addresses: %v", err)
+		}
+		for _, addr := range addrs {
+			s := addr.String()
+			if strings.Contains(s, "127.0.0.1") && strings.Contains(s, "/quic-v1") {
+				return addr
+			}
+		}
+		t.Fatalf("no loopback quic addr among %v", addrs)
+		return nil
+	}
+
+	connectForTest := func(target *Node) {
+		t.Helper()
+		addr := loopbackQUICAddr(target)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := n.Host().Connect(ctx, peer.AddrInfo{
+			ID:    target.Host().ID(),
+			Addrs: []ma.Multiaddr{addr},
+		}); err != nil {
+			t.Fatalf("connect to %s: %v", target.Host().ID(), err)
+		}
+	}
+
+	connectForTest(relayLikePeer)
+	relayEvent := waitForCollectedEvent(t, collector, "peer:connected", 3*time.Second)
+	if relayEvent["peerId"] != relayPeerID.String() {
+		t.Fatalf("relay peer:connected peerId = %v, want %s; event=%#v", relayEvent["peerId"], relayPeerID, relayEvent)
+	}
+	if relayEvent["isRelay"] != true {
+		t.Fatalf("relay peer:connected isRelay = %v, want true; event=%#v", relayEvent["isRelay"], relayEvent)
+	}
+
+	baseline := len(collector.snapshot())
+	connectForTest(directPeer)
+	directEvent := waitForCollectedEventAfter(t, collector, baseline, "peer:connected", 3*time.Second)
+	if directEvent["peerId"] != directPeerID.String() {
+		t.Fatalf("direct peer:connected peerId = %v, want %s; event=%#v", directEvent["peerId"], directPeerID, directEvent)
+	}
+	if directEvent["isRelay"] != false {
+		t.Fatalf("direct peer:connected isRelay = %v, want false; event=%#v", directEvent["isRelay"], directEvent)
+	}
+
+	status := n.Status()
+	conns, ok := status["connections"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("Status connections has type %T, want []map[string]interface{}", status["connections"])
+	}
+
+	byPeer := map[string]map[string]interface{}{}
+	for _, conn := range conns {
+		peerID, _ := conn["peerId"].(string)
+		byPeer[peerID] = conn
+	}
+
+	if byPeer[relayPeerID.String()]["isRelay"] != true {
+		t.Fatalf("relay connection isRelay = %v, want true: %v", byPeer[relayPeerID.String()]["isRelay"], byPeer[relayPeerID.String()])
+	}
+	if byPeer[directPeerID.String()]["isRelay"] != false {
+		t.Fatalf("direct peer connection isRelay = %v, want false: %v", byPeer[directPeerID.String()]["isRelay"], byPeer[directPeerID.String()])
+	}
+}
+
 func TestNodeStartAlreadyStarted(t *testing.T) {
 	hexKey := generateTestKey(t)
 

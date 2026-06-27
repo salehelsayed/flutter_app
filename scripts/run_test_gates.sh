@@ -102,6 +102,12 @@ readonly ONE_TO_ONE_TESTS=(
   # into the curated 1to1 gate, so these are appended explicitly.
   "test/core/services/p2p_service_transport_upgrade_test.dart"
   "test/core/services/p2p_service_dcutr_flag_test.dart"
+  # FDC-15: 1:1 media over a libp2p LAN stream — send leg + hasNonCircuitDirectConn
+  # predicate (TD1-7) and the go_bridge media:lan_received routing (TD8, which
+  # guards the unknown-event regression). test/core/** is NOT auto-globbed into
+  # the curated 1to1 gate, so these are appended explicitly.
+  "test/core/services/p2p_service_impl_lan_media_test.dart"
+  "test/core/bridge/go_bridge_client_lan_media_test.dart"
 )
 
 readonly FEED_TESTS=(
@@ -183,6 +189,10 @@ readonly GROUP_TESTS=(
   # 159 group display-items memo (hoisted to wired State) + window cap.
   "test/features/groups/presentation/group_display_items_memo_test.dart"
   "test/features/groups/presentation/group_window_cap_test.dart"
+  # FDC-15: group-media scope lock (TD6) — group uploads stay relay-CDN-only and
+  # must NEVER touch the 1:1 libp2p-LAN leg. Added here so the groups gate
+  # actually exercises TD6 (the file is otherwise only in the 1to1/transport arrays).
+  "test/core/services/p2p_service_impl_lan_media_test.dart"
 )
 
 readonly POSTS_TESTS=(
@@ -202,6 +212,10 @@ readonly TRANSPORT_TESTS=(
   # FDC-04 LAN-aware warm-peer overlap smoke (host-green proves label wiring;
   # the real LAN win is device-proof).
   "integration_test/warm_peer_lan_aware_smoke_test.dart"
+  # FDC-15: 1:1 media over a libp2p LAN stream — host-side send-leg/predicate/
+  # routing locks (the live two-phone media transfer is device-only, D1). A
+  # test/** path runs host-side here via run_gate_command's flutter-test split.
+  "test/core/services/p2p_service_impl_lan_media_test.dart"
 )
 
 readonly RUNTIME_TELEMETRY_TESTS=(
@@ -633,7 +647,7 @@ classify_path() {
     return 0
   fi
 
-  if [[ "$path" =~ ^test/features/[^/]+/(application|domain|presentation|improvement|phase[1-5]|regression)/.*_test\.dart$ ]]; then
+  if [[ "$path" =~ ^test/features/[^/]+/(application|domain|infrastructure|presentation|improvement|phase[1-5]|regression)/.*_test\.dart$ ]]; then
     printf 'feature-local direct suite'
     return 0
   fi

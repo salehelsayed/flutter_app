@@ -3184,9 +3184,12 @@ class P2PServiceImpl
     final wasRelayReadyBadge =
         previousState.badgeReadinessState == BadgeReadinessState.onlineDotted;
 
-    _currentState = mergeServiceOwnedReadiness
+    final baseState = mergeServiceOwnedReadiness
         ? _stateWithReadinessProjection(newState)
         : newState;
+    _currentState = baseState.copyWith(
+      directReady: _computeDirectReady(baseState.connections),
+    );
     if (!_stateController.isClosed) {
       _stateController.add(_currentState);
     }
@@ -3291,6 +3294,31 @@ class P2PServiceImpl
       return;
     }
 
+    final wasOnlineDirectBadge =
+        previousState.badgeReadinessState == BadgeReadinessState.onlineDirect;
+    final nowOnlineDirectBadge =
+        _currentState.badgeReadinessState == BadgeReadinessState.onlineDirect;
+    if (nowOnlineDirectBadge &&
+        !wasOnlineDirectBadge &&
+        !_coldStartOnlineEmitted &&
+        _nodeStartRequestedAt != null) {
+      _coldStartOnlineEmitted = true;
+      final totalMs = DateTime.now()
+          .difference(_nodeStartRequestedAt!)
+          .inMilliseconds;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'TIME_TO_ONLINE_BADGE',
+        details: {
+          'totalMs': totalMs,
+          'phase': _isHotRestart ? 'hot_restart' : 'cold_start',
+          'source': source ?? 'unknown',
+        },
+      );
+      _lastWentOfflineAt = null;
+      return;
+    }
+
     // §24: Recovery — was online, went offline, now back online.
     if (nowOnline &&
         !wasOnline &&
@@ -3332,6 +3360,19 @@ class P2PServiceImpl
       return relayState == 'online';
     }
     return state.circuitAddresses.isNotEmpty;
+  }
+
+  static bool _connHasDirectAddr(ConnectionState connection) {
+    return connection.multiaddrs.any(
+      (multiaddr) =>
+          multiaddr.isNotEmpty && !multiaddr.contains('/p2p-circuit'),
+    );
+  }
+
+  static bool _computeDirectReady(List<ConnectionState> connections) {
+    return connections.any(
+      (connection) => !connection.isRelay && _connHasDirectAddr(connection),
+    );
   }
 
   bool _stateNeedsRelayRecovery(NodeState state) {
@@ -3451,7 +3492,8 @@ class P2PServiceImpl
     String? match;
     for (final c in _currentState.connections) {
       if (_shortId(c.peerId) == remotePeerShort) {
-        if (match != null && match != c.peerId) return null; // collision → fail-safe
+        if (match != null && match != c.peerId)
+          return null; // collision → fail-safe
         match = c.peerId;
       }
     }
@@ -4682,6 +4724,32 @@ class P2PServiceImpl
   @override
   bool isLocalPeer(String peerId) => _localP2P?.isLocalPeer(peerId) ?? false;
 
+  /// FDC-15: true iff [peerId] holds at least one NON-`/p2p-circuit` (direct)
+  /// multiaddr. The libp2p-LAN media gate is "has a direct conn", NOT "has no
+  /// circuit conn": a peer can simultaneously hold a relay circuit reservation
+  /// AND a fresh FDC-11 LAN-direct conn (the exact FDC-15 window), and that case
+  /// MUST stream over the direct.
+  ///
+  /// NOTE: this deliberately does NOT reuse [_inferTransportForPeer], which
+  /// short-circuits to `'relay'` on the FIRST `/p2p-circuit` addr and would
+  /// false-negative the coexisting case (TD7 locks this). Host fakes fabricate
+  /// the connections list; whether the live node:status surfaces the direct
+  /// multiaddr (vs a stale circuit addr that libp2p does not re-fire on upgrade)
+  /// is the D1 device-proof.
+  bool hasNonCircuitDirectConn(String peerId) {
+    if (!isConnectedToPeer(peerId)) return false;
+    return _currentState.connections.any(
+      (c) => c.peerId == peerId && _connHasDirectAddr(c),
+    );
+  }
+
+  /// FDC-15: whether the libp2p-LAN media lane is enabled, read back from the
+  /// Go-effective feature flags surfaced on the node state (the SAME
+  /// `enableLibp2pLANMedia` value handed to the bridge at node:start). Off until
+  /// the D1 two-phone media gate is GREEN.
+  bool get _libp2pLanMediaEnabled =>
+      _currentState.featureFlags?['enableLibp2pLANMedia'] ?? false;
+
   @override
   String? lastKnownGoodTransport(String peerId) {
     final e = _learnedTransport[peerId];
@@ -4786,6 +4854,29 @@ class P2PServiceImpl
       return false;
     }
 
+    // FDC-15: additive libp2p-LAN leg — stream the SAME ciphertext over a
+    // peer-authenticated direct conn IN ADDITION to the WS leg, when the lane is
+    // enabled AND a non-circuit direct conn exists. Fire-and-forget (best-effort
+    // acceleration): it must never block the WS leg, gate sendLocalMedia's
+    // result, or head-of-line-block the bridge — the unconditional relay-CDN
+    // upload at the caller remains the durable copy. Fail-closed: the leg fires
+    // ONLY when `enc` (so `filePath` is the ciphertext artifact, never a
+    // plaintext source) — invariant 6, "ciphertext only, never plaintext".
+    if (_libp2pLanMediaEnabled && enc && hasNonCircuitDirectConn(peerId)) {
+      unawaited(
+        _sendLibp2pLanMedia(
+          peerId: peerId,
+          filePath: filePath,
+          mime: mime,
+          mediaId: mediaId,
+          fromPeerId: fromPeerId,
+          enc: enc,
+          encScheme: encScheme,
+          durationMs: durationMs,
+        ),
+      );
+    }
+
     if (_localP2P == null) return false;
     return _localP2P.sendMedia(
       peerId: peerId,
@@ -4799,6 +4890,40 @@ class P2PServiceImpl
       enc: enc,
       encScheme: encScheme,
     );
+  }
+
+  /// FDC-15: invoke the libp2p-LAN media bridge leg. Errors are swallowed
+  /// (logged) — a failed acceleration leg must never affect the WS leg or the
+  /// unconditional relay-CDN upload.
+  Future<void> _sendLibp2pLanMedia({
+    required String peerId,
+    required String filePath,
+    required String mime,
+    required String mediaId,
+    required String fromPeerId,
+    required bool enc,
+    String? encScheme,
+    int? durationMs,
+  }) async {
+    try {
+      await callP2PLanMediaSend(
+        _bridge,
+        id: mediaId,
+        toPeerId: peerId,
+        fromPeerId: fromPeerId,
+        mime: mime,
+        filePath: filePath,
+        enc: enc,
+        encScheme: encScheme,
+        durationMs: durationMs,
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'LIBP2P_LAN_MEDIA_SEND_ERROR',
+        details: {'id': mediaId, 'error': e.toString()},
+      );
+    }
   }
 
   @override

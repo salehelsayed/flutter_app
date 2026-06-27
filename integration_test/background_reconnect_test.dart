@@ -13,7 +13,6 @@
 @Tags(['device'])
 library;
 
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -33,7 +32,8 @@ final _relayPeerId = defaultRendezvousAddress.split('/p2p/').last;
 
 bool _isSendable(NodeState state) {
   return state.badgeReadinessState == BadgeReadinessState.online ||
-      state.badgeReadinessState == BadgeReadinessState.onlineDotted;
+      state.badgeReadinessState == BadgeReadinessState.onlineDotted ||
+      state.badgeReadinessState == BadgeReadinessState.onlineDirect;
 }
 
 bool _isPlainOnline(NodeState state) {

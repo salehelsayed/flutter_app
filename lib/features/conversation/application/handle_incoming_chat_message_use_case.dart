@@ -338,6 +338,24 @@ handleIncomingChatMessage({
       event: 'CHAT_MSG_RECEIVE_DUPLICATE',
       details: {'id': payload.id.substring(0, 8)},
     );
+    // FDC-S6 instrument point 5 (net-new double-delivery counter): a same-id
+    // re-delivery dropped by the messageId dedup is the only place the LAN
+    // double-delivery rate can be measured. Record the transport leg of BOTH
+    // the KEPT copy (the already-stored existingMessage) and the DROPPED copy
+    // (this incoming message's `transport`), so the soak can tally collisions
+    // keyed by the (first-leg, second-leg) pair — e.g. wifi+direct (WS + libp2p
+    // both won), or under FDC-12 relay+direct / inbox+direct. Labels are short,
+    // non-sensitive bucket strings (never a peerId/multiaddr), so they survive
+    // flow_event_emitter redaction. Observation-only; no behaviour change.
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DOUBLE_DELIVERY',
+      details: {
+        'id': payload.id.length > 8 ? payload.id.substring(0, 8) : payload.id,
+        'kept': existingMessage.transport,
+        'dropped': transport,
+      },
+    );
     // Duplicate receive of an already-durable message: re-mint the receipt
     // (the sender may have missed the first one — D-5 repair loop).
     await maybeSendDeliveryReceipt(payload.id);

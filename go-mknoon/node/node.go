@@ -122,6 +122,17 @@ type Node struct {
 	// set, nilled in Stop(). Holds the per-peer warm cooldown + dial. See
 	// lan_dial.go / HandleLANPeerFound.
 	lanDialHandler *lanDialHandler
+
+	// FDC-15: inbound libp2p-LAN media (MediaLANProtocol) dedup set. A media id
+	// is claimed atomically before its body is staged so a duplicate delivery (WS
+	// leg already delivered, or a retransmit / concurrent stream) is rejected
+	// without re-staging or re-emitting. Guarded by lanMediaSeenIdsMu — NOT n.mu —
+	// because handleIncomingLANMedia runs on a fresh per-stream goroutine and must
+	// not contend the node-wide lock across a multi-MB transfer. Lazily created on
+	// first claim; reset to nil in Stop() so a recycled id after a restart is not
+	// falsely suppressed. See media_lan.go.
+	lanMediaSeenIdsMu sync.Mutex
+	lanMediaSeenIds   map[string]bool
 }
 
 type connectionInfo struct {
@@ -129,6 +140,7 @@ type connectionInfo struct {
 	Address   string `json:"address"`
 	Direction string `json:"direction"`
 	Limited   bool   `json:"limited,omitempty"`
+	IsRelay   bool   `json:"isRelay,omitempty"`
 }
 
 // isCircuitAddr returns true if the multiaddr contains a /p2p-circuit component.
@@ -437,6 +449,14 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	h.SetStreamHandler(ChatProtocol, n.handleIncomingMessage)
 	h.SetStreamHandler(GroupValidationFeedbackProtocol, n.handleGroupValidationFeedback)
 
+	// FDC-15: register the peer-direct LAN media handler only when the flag is on
+	// (additive byte lane over FDC-11's direct conn; default-off until D1 device-
+	// proven). When off, the node accepts no MediaLANProtocol stream and the lane
+	// is inert end-to-end (the Dart send leg is gated by the same flag).
+	if flags.EnableLibp2pLANMedia {
+		h.SetStreamHandler(MediaLANProtocol, n.handleIncomingLANMedia)
+	}
+
 	// Subscribe to connection and address events
 	sub, err := h.EventBus().Subscribe([]interface{}{
 		new(event.EvtPeerConnectednessChanged),
@@ -600,6 +620,13 @@ func (n *Node) Stop() error {
 		n.lanDialHandler.mu.Unlock()
 		n.lanDialHandler = nil
 	}
+	// FDC-15: drop the inbound-media dedup set so a media id that delivered before
+	// a Stop/Start can be received again after restart (mirror the lanDialHandler
+	// reset above). A fresh host is built on the next Start, so the handler itself
+	// needs no explicit removal.
+	n.lanMediaSeenIdsMu.Lock()
+	n.lanMediaSeenIds = nil
+	n.lanMediaSeenIdsMu.Unlock()
 	n.groupDialBackoff = make(map[string]groupPeerDialState)
 	n.groupRecoverySem = make(chan struct{}, GroupDiscoveryConcurrency)
 	n.relayReadyOnce = &sync.Once{} // reset so next Start() can use it
@@ -634,6 +661,7 @@ func (n *Node) Status() map[string]interface{} {
 				"peerId":    c.PeerId,
 				"address":   c.Address,
 				"direction": c.Direction,
+				"isRelay":   c.IsRelay,
 			})
 		}
 	}
@@ -1839,6 +1867,7 @@ func (n *Node) watchConnectionEvents(sub event.Subscription) {
 						limited = true
 					}
 				}
+				isRelay := n.isRelayPeer(e.Peer)
 
 				n.mu.Lock()
 				n.connections[pid] = connectionInfo{
@@ -1846,6 +1875,7 @@ func (n *Node) watchConnectionEvents(sub event.Subscription) {
 					Address:   addr,
 					Direction: direction,
 					Limited:   limited,
+					IsRelay:   isRelay,
 				}
 				n.mu.Unlock()
 
@@ -1854,6 +1884,7 @@ func (n *Node) watchConnectionEvents(sub event.Subscription) {
 					"address":   addr,
 					"direction": direction,
 					"limited":   limited,
+					"isRelay":   isRelay,
 				})
 				n.handleRelayConnectednessChanged(e.Peer, e.Connectedness)
 			} else if e.Connectedness == network.NotConnected {

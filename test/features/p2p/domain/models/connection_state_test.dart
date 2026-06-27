@@ -74,6 +74,21 @@ void main() {
         });
         expect(state.multiaddrs, ['/ip4/192.168.1.15/tcp/4001']);
       });
+
+      test('parses isRelay and defaults to false when absent', () {
+        final relayState = ConnectionState.fromJson({
+          'peerId': 'relay-peer',
+          'address': '/dns4/relay.example/tcp/4001',
+          'isRelay': true,
+        });
+        final peerState = ConnectionState.fromJson({
+          'peerId': 'direct-peer',
+          'address': '/ip4/192.168.1.15/tcp/4001',
+        });
+
+        expect(relayState.isRelay, isTrue);
+        expect(peerState.isRelay, isFalse);
+      });
     });
 
     group('toJson', () {
@@ -91,6 +106,11 @@ void main() {
       test('includes connectedAt when present', () {
         final json = baseState.toJson();
         expect(json['connectedAt'], '2026-01-01T00:00:00.000Z');
+      });
+
+      test('includes isRelay', () {
+        final json = baseState.copyWith(isRelay: true).toJson();
+        expect(json['isRelay'], isTrue);
       });
     });
 
@@ -144,6 +164,12 @@ void main() {
         expect(updated.multiaddrs, baseState.multiaddrs);
         expect(updated.direction, baseState.direction);
         expect(updated.connectedAt, baseState.connectedAt);
+        expect(updated.isRelay, baseState.isRelay);
+      });
+
+      test('updates isRelay', () {
+        final updated = baseState.copyWith(isRelay: true);
+        expect(updated.isRelay, isTrue);
       });
     });
 

@@ -38,5 +38,6 @@ func featureFlagsStatusMap(flags FeatureFlags) map[string]bool {
 		"enableResumeGroupRecovery":    flags.EnableResumeGroupRecovery,
 		"enableDeferredDirectAck":      flags.EnableDeferredDirectAck,
 		"enableLibp2pLANDial":          flags.EnableLibp2pLANDial,
+		"enableLibp2pLANMedia":         flags.EnableLibp2pLANMedia,
 	}
 }

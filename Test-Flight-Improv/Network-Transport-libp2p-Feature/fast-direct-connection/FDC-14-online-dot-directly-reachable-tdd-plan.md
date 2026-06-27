@@ -1,6 +1,6 @@
 # FDC-14 — Self "online" dot also expresses "directly reachable" + badge anti-flap  (New Feature)
 
-Status: awaiting-review
+Status: ✅ IMPLEMENTED — host-green, committed in `5f21d790` ("P0 complete — fast-direct-connection epic"). Render + anti-flap landed (39/39 tests, all 10 plan mutations re-redded); the `directReady` producer (**FDC-14b**) is still unwired, so `onlineDirect` is renderable-from-injected-state but **unreachable in production** (by design). See **§Implementation Status (as-built)** and **§Open Issues**.
 Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§6.3 "online-ish never foreground", §6.5 LAN-direct end-state, §7 per-peer/app state machine) + FDC-00 "Known gaps from the design Q&A review" → **GAP — the self "online" green dot** (FDC-00-roadmap.md self-online-dot gap)
 
 > **DRAFT for the signal wiring.** The new-tier *rendering* + *anti-flap* tests are concrete and
@@ -15,6 +15,61 @@ Spec: Network-Arch/Fast-Direct-Connection-Architecture-Proposal.md (§6.3 "onlin
 > has no production producer and the new tier is **unreachable in production but fully renderable from
 > an injected state**. This plan locks the *contract* (a new input + a new tier + a distinct label +
 > the anti-flap invariant); the producer wiring is a follow-on stop-if (Step 9).
+
+---
+
+## Implementation Status (as-built — 2026-06-27)
+
+> **This plan was reviewed (2026-06-26, ~16 edits) and then IMPLEMENTED & committed.** The sections
+> below the line remain the original pre-implementation design record; this block + the marked
+> **POST-IMPL CORRECTION** in §Blind-Spot Sweep + the enriched §Open Issues fold back what the build
+> actually discovered (some of which the original blind-spot sweep undercounted).
+
+**Landed and committed** in `5f21d790`. 5 files, ≈ +430 / −6. Host-green: **39/39** new tests (20 in
+`node_state_test.dart`, 19 in `connection_status_indicator_test.dart`); all **10 plan mutations**
+re-redded then reverted; `flutter analyze` **0-new** (after the integration-test fix called out below);
+`p2p_service_impl_test` green (84 — no exhaustive `switch` there, so the Step-0 arm was NOT needed).
+
+**As-built values (resolving the plan's implementer-pick slots):**
+- **Visible label `'Online ✦'`** — `Online` + U+2726 BLACK FOUR POINTED STAR
+  (`connection_status_indicator.dart:58`). Distinct from BOTH `'Online.'` and plain `'Online'`.
+- **Semantics label `'online, send and inbox ready, directly reachable'`** (`:72-73`) — the **binding**
+  distinctness (T7); contains `'directly reachable'`, not `'relay reservation'`.
+- **Computation is the BARE `if (directReady) return BadgeReadinessState.onlineDirect;`** at
+  `node_state.dart:167`, placed **immediately after** the `if (!usabilityReady) return connecting;`
+  early return (`:163`). So the `usabilityReady` gate is enforced by **control-flow order**, NOT by the
+  compound `if (usabilityReady && directReady)` the plan's INV-1 / Step-4 phrased — behaviourally
+  identical here, but **do not "tidy" it into the compound form without preserving the `:163` early
+  return**: that ordering is load-bearing for INV-1 (T5 list-2 proves `directReady` never bypasses the
+  gate).
+- `toJson` is **Pattern B** (unconditional `result['directReady'] = directReady;` at `:111`); field +
+  FDC-14b doc comment at `node_state.dart:23-28` (ctor default `false` at `:44`).
+
+**Anchor refresh (plan cite → as-built on HEAD; positional drift only — every code site is present and intact):**
+
+| Symbol | Plan cites | As-built on HEAD |
+|---|---|---|
+| `BadgeReadinessState` enum (+`onlineDirect`) | `node_state.dart:3` | `:3` ✓ accurate |
+| `badgeReadinessState` getter / `onlineDirect` arm | `:136-153` | getter `:161-171`, arm `:167` (**drift ~+25**) |
+| `toString` `directReady` fragment | `:155-161` | `:173-180`, fragment `:179` (**drift ~+18**) |
+| `_isReadyBadgeState` / `_legacyHealthForBadgeState` | `:34-46` | `:34-38` / `:40-48` ✓ accurate |
+| `_labelForBadgeState` onlineDirect arm | `:48-66` | `:58` (in range) |
+| `_semanticsLabelForBadgeState` onlineDirect arm | `:48-66` | `:72-73` (**now BELOW the cited range**) |
+| colour switch onlineDirect case | `:147-164` | switch `:157-175`, case `:160` (**drift ~+10**) |
+| `_onState` emit gate | `:100-130` | `:110-140` (**drift ~+10**) |
+
+**Test strengthenings landed (stronger than the plan text — keep them):**
+- **T6** asserts the label `isNot 'Online.'` **AND** `isNot 'Online'` (plan required only `≠ 'Online.'`).
+- **T9** locks BOTH the label **Text** colour **and** the **status-DOT `Container`** colour
+  (`BoxShape.circle` `baseColor == Colors.green`, via a `_dotColor` helper that uniquely selects the
+  circle decoration) — a dot-only colour mutation (dot red / text green) slips past the original
+  text-only T9.
+- **T8 harness gotcha (REQUIRED, was not in the plan).** The indicator is pumped with **no `Key`**, so
+  re-pumping reuses the same `Element`/`State` and `initState` does **not** re-run (it stays subscribed
+  to the prior, now-disposed `StreamController`). The two-sub-case T8 therefore **unmounts between
+  sub-cases** with `await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink())); await tester.pump();`
+  (`connection_status_indicator_test.dart:519-520`) so the `connecting→direct` first-ready emit fires on
+  a **fresh** State. Without it, sub-case B asserts against stale state and the count is wrong.
 
 ---
 
@@ -278,6 +333,12 @@ Each test is written and RED **before** the corresponding production edit.
   load-bearing assertion is the connecting→direct count. Make the connecting→direct sub-case **mandatory**,
   not optional.)
 - Discriminator: separates "ready-tier reshuffle" (no emit) from "first reach ready" (one emit).
+- **As-built harness note (REQUIRED — added post-impl):** the two sub-cases must run on a **fresh widget
+  State**. The indicator is pumped with **no `Key`**, so a second `pumpWidget` reuses the same
+  `Element`/`State` and `initState` does not re-run (stale subscription to the disposed `StreamController`).
+  **Unmount between sub-cases** with `await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink())); await tester.pump();`
+  (landed at `connection_status_indicator_test.dart:519-520`); otherwise the `connecting→direct` emit
+  fires against stale state and the count is wrong.
 
 **T9 — widget: onlineDirect keeps green styling + colour (PS-1 family, belt)**
 - file::name: `connection_status_indicator_test.dart::onlineDirect keeps the green ready styling`
@@ -333,15 +394,33 @@ Each test is written and RED **before** the corresponding production edit.
   `onlineDirect` arm is a dead path. `healthFromState` (`:26-32`) does not read the badge enum at all. ⇒
   PS-5 for `onlineDirect` is locked by **compiler (arm must exist) + convention (map it alongside
   `online`/`onlineDotted` → `ConnectionHealth.online`)**, NOT by a runtime assert.
-- **Exhaustiveness compile-guard**: **FOUR** sites become compile errors on the new enum value — the three
-  switch *expressions* (`_labelForBadgeState`, `_semanticsLabelForBadgeState`, `_legacyHealthForBadgeState`)
+- **Exhaustiveness compile-guard**: in `lib/`, **FOUR** sites become compile errors on the new enum value —
+  the three switch *expressions* (`_labelForBadgeState`, `_semanticsLabelForBadgeState`, `_legacyHealthForBadgeState`)
   and the colour switch *statement* (its `final baseColor`/`textColor` go unassigned → a definite-assignment
   compile error, not a non-exhaustive-statement warning). **`_isReadyBadgeState` (`:34-37`) is NOT
   compiler-guarded** — it is a boolean `==` expression (`state == online || state == onlineDotted`), so
   adding `onlineDirect` **silently compiles** and treats it as **not-ready** (the exact bug T8 catches).
-  That one helper is the lone *silent* gap: the implementer must extend it by hand (Step 5) and only T8
-  proves it was done. So: 4 compiler-caught sites + 1 test-caught (`_isReadyBadgeState` via T8) = the full
-  five the implementer must extend.
+  That one helper is the lone *silent* gap in `lib/p2p`: the implementer must extend it by hand (Step 5)
+  and only T8 proves it was done.
+- **POST-IMPL CORRECTION (verified 2026-06-27) — this sweep UNDERCOUNTED by 9 sites; it scoped only
+  `lib/`/`lib/p2p`.** The true badge-enum surface is:
+  1. **A 5th exhaustive `switch` lives OUTSIDE `lib/`** — `integration_test/background_reconnect_test.dart:48-56`
+     (`_badgeLabel`). Adding `onlineDirect` made it `non_exhaustive_switch_expression` — a **compile error**
+     that broke the full-project `flutter analyze` (it fires regardless of the out-of-scope producer). The
+     fix was a one-line arm `onlineDirect => 'Online ✦'` (now present at `:55`). **Lesson: when adding an
+     enum value, grep the WHOLE repo incl. `integration_test/` and run a FULL `flutter analyze`, not a
+     changed-files-only analyze** — Step 8's "anywhere in lib/" catch-all was too narrow.
+  2. **A class of bare `==` comparisons silently compiles** (they do NOT break compile, so no guard catches
+     them): **2 in `lib/`** (`p2p_service_impl.dart:3185`, `:3219`) **+ 6 in `integration_test/`**
+     (`_support/node_readiness.dart:51-52,:56,:60`; `background_reconnect_test.dart:35-36,:40,:44`). The
+     undercount itself is real (the sweep scoped only `lib/`). **But re-grounding (2026-06-27) refuted the
+     "all 8 are hazards to fix" reading:** only the `isSendable*` predicate (×2) is a genuine fix; the
+     relay-ready / plain-online predicates and the `p2p_service_impl` `TIME_TO_RELAY_READY_BADGE` gate are
+     **correct as-is** (onlineDirect ≠ relay-ready). See the corrected breakdown in **§Open Issues → FDC-14b
+     PRE-WORK** and the dedicated `FDC-14b-directready-producer-tdd-plan.md`.
+  So the real tally: **5 compiler-caught switches (4 in `lib/` + 1 in `integration_test/`) + 1 test-caught
+  `lib/` `==` helper (`_isReadyBadgeState`, T8) + 8 silent `==` hazards (2 `lib/`, 6 `integration_test/`)
+  deferred to FDC-14b.**
 - **p2p_service_impl_test exhaustive-switch risk**: Step-0 read confirms whether that ONE_TO_ONE test
   switches over `BadgeReadinessState`; if so add the arm (one line). Row justified by Step 0.
 
@@ -415,13 +494,13 @@ Each test is written and RED **before** the corresponding production edit.
 
 ## Acceptance Gates (LITERAL cmds + expected counts as TODO)
 
-- [ ] `flutter test test/features/p2p/domain/models/node_state_test.dart` — expected: existing count + T1–T5,T10 (TODO: capture baseline before RED).
-- [ ] `flutter test test/features/p2p/presentation/widgets/connection_status_indicator_test.dart` — expected: existing + T6–T9 (TODO).
-- [ ] `./scripts/run_host_test_gates.sh feature-host-all` — 0 fail (both files AUTO-glob here). (0 fail (files auto-glob into 1to1/feed/groups; full feature-host sweep deferred).)
-- [ ] `./scripts/run_test_gates.sh 1to1` — regression floor incl. `p2p_service_impl_test.dart`; expected unchanged (1226 baseline, FDC-S0).
-- [ ] `./scripts/run_host_test_gates.sh core-host-all` — 0 fail (covers `p2p_service_impl_test` host run).
-- [ ] `flutter analyze` — 0 new.
-- [ ] `git diff --check` — clean.
+> **As-built results (2026-06-27, committed `5f21d790`)** annotated inline below.
+- [x] `flutter test test/features/p2p/domain/models/node_state_test.dart` — **GREEN**, +T1–T5,T10 (20 tests in this file).
+- [x] `flutter test test/features/p2p/presentation/widgets/connection_status_indicator_test.dart` — **GREEN**, +T6–T9 (19 tests). Combined FDC-14 = **39/39**.
+- [x] `flutter analyze` — **0-new** (after the `integration_test/background_reconnect_test.dart` 5th-switch arm; a changed-files-only analyze MISSED it — see §Blind-Spot Sweep POST-IMPL CORRECTION).
+- [x] `./scripts/run_test_gates.sh 1to1` — `p2p_service_impl_test.dart` **GREEN (84)**; no exhaustive `switch` there ⇒ the Step-0 arm was not needed.
+- [~] `./scripts/run_host_test_gates.sh core-host-all` — **120 PASS / 1 FAIL**, where the 1 FAIL is the **KNOWN pre-existing `transport_metrics_privacy_test` (FDC-S0 `sinceProcessStartMs` allowlist), NOT FDC-14**. ⚠ Run host gates ONE AT A TIME — concurrent `core-host-all` + `feature-host-all` race on `build/native_assets/macos/objective_c.dylib` (spurious `install_name_tool` FAIL).
+- [x] `git diff --check` — clean.
 
 ## Known-Failure Interpretation
 
@@ -433,6 +512,10 @@ Each test is written and RED **before** the corresponding production edit.
   (Step 9 stop-if) — not a failure of this plan.
 
 ## Done Criteria (checkbox)
+
+> **✅ All criteria met as-built and committed in `5f21d790` (2026-06-27)** — except the Step-9 producer
+> stop-if, which remains correctly UNMET by design (producer = FDC-14b, unwired). The boxes below stay
+> unchecked as the original design record; treat this banner as the verdict.
 
 - [ ] `BadgeReadinessState.onlineDirect` exists, ranked above `onlineDotted`.
 - [ ] `NodeState.directReady` (default false) plumbed through ctor/json/copyWith/toString.
@@ -459,7 +542,9 @@ Each test is written and RED **before** the corresponding production edit.
   contract + render + anti-flap are locked now, the signal is wired later (DRAFT).
 - Visible label choice (`'Online··'` vs another distinct string) is the implementer's pick provided it
   is **not equal** to `'Online.'`; the test asserts inequality, not a literal, to avoid bikeshedding the
-  glyph while still locking distinctness.
+  glyph while still locking distinctness. **As-built (2026-06-27): resolved to `'Online ✦'` (U+2726 BLACK
+  FOUR POINTED STAR)** — a non-linear star cue rather than a third stacked punctuation dot (per the Axis
+  note above), distinct from BOTH `'Online.'` and plain `'Online'` (T6 locks both).
 - **Axis note (design):** "directly reachable" is a *partially-orthogonal* axis, NOT a strict rank above
   relay-reservation — per **T2 case (b)**, `onlineDirect` can hold with the **relay NOT ready**. So a
   sighted-user encoding that implies a linear "more dots = more connected" ladder (`'Online'` → `'Online.'`
@@ -481,6 +566,25 @@ Each test is written and RED **before** the corresponding production edit.
   `NodeState.directReady` producer that derives the field from FDC-02's ranked-race live-LAN/direct
   outcome and/or FDC-11's bonsoir-fed libp2p LAN address. Until it lands, `onlineDirect` is renderable
   from injected state but unreachable in production. Track FDC-14b in `FDC-00-roadmap.md`.
+- **FDC-14b PRE-WORK — the real picture (re-grounded 2026-06-27 via verify→refute; CORRECTS an earlier
+  overstatement that called all 8 `==` sites "hazards to fix").** Of the badge-enum `==` sites, only **ONE
+  predicate (×2 surfaces) genuinely needs changing**; the rest are **correct as-is**. Full plan:
+  `FDC-14b-directready-producer-tdd-plan.md`.
+  - **FIX (load-bearing): `isSendableBadgeState` (`integration_test/_support/node_readiness.dart:51-52`) +
+    its private twin `_isSendable` (`integration_test/background_reconnect_test.dart:35-36`)** — `onlineDirect`
+    IS sendable, so these must add `|| == onlineDirect`, else `waitForSendableBadge()` hangs once a producer
+    flips `directReady` (FDC-14b F-1).
+  - **CORRECT AS-IS — do NOT add onlineDirect:** the relay-ready (`isRelayReadyBadgeState` `:60` /
+    `_isRelayReady` `:44`, `== onlineDotted`) and plain-online (`isPlainOnlineBadgeState` `:56` /
+    `_isPlainOnline` `:40`, `== online`) predicates SHOULD exclude `onlineDirect` — it is direct-ready, not
+    relay-ready or plain. Adding it would be a bug (FDC-14b F-2 guards this).
+  - **CORRECT AS-IS (prod): `p2p_service_impl.dart:3185/:3219`** gating `TIME_TO_RELAY_READY_BADGE`
+    (`:3248-3252`). `onlineDirect` correctly does NOT fire the relay-ready telemetry (FDC-14b P-6 locks this).
+    The earlier "the telemetry never fires (bug)" framing was an **overstatement**. The one genuine subtlety
+    is *both-ready lossiness*: when relay AND direct are both ready the badge collapses to `onlineDirect`, so a
+    badge-based relay-ready read is lossy — an **Accepted Difference** in FDC-14b, not a required fix.
+  - **Blind-spot value retained:** the original point — that these sites exist and the FDC-14 sweep's "all in
+    `lib/`" was too narrow — stands; only the *fix-everything* prescription was wrong.
 
 ## Dependency Impact
 

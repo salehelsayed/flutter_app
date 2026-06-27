@@ -539,6 +539,60 @@ void main() {
     });
 
     test(
+      'FDC-S6: a same-id double-delivery emits CHAT_MSG_DOUBLE_DELIVERY with the '
+      'kept+dropped transport legs (instrument point 5)',
+      () async {
+        final flow = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flow.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+        // KEPT copy already durable — it won FIRST over the WS LAN leg ('wifi').
+        const existing = ConversationMessage(
+          id: 'msg-uuid-001',
+          contactPeerId: senderPeerId,
+          senderPeerId: senderPeerId,
+          text: 'Hello from sender!',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-09T15:30:01.000Z',
+          transport: 'wifi',
+        );
+        messageRepo = FakeMessageRepository(
+          existingMessages: {'msg-uuid-001': existing},
+        );
+        // The SAME id arrives a second time over the libp2p-LAN leg ('direct');
+        // the messageId dedup drops it. The soak must see the collision keyed by
+        // the (kept=wifi, dropped=direct) leg pair — the only place the LAN
+        // double-delivery rate is observable.
+        final message = buildP2PMessage(buildValidChatJson());
+
+        final (result, msg, _) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          transport: 'direct',
+        );
+
+        expect(result, HandleChatMessageResult.duplicate);
+        expect(msg, isNull);
+        expect(messageRepo.saved, isEmpty);
+        final dd = flow.firstWhere(
+          (e) => e['event'] == 'CHAT_MSG_DOUBLE_DELIVERY',
+          orElse: () => <String, dynamic>{},
+        );
+        expect(
+          dd,
+          isNotEmpty,
+          reason: 'CHAT_MSG_DOUBLE_DELIVERY must fire on a same-id collision',
+        );
+        final details = dd['details'] as Map<String, dynamic>;
+        expect(details['kept'], 'wifi');
+        expect(details['dropped'], 'direct');
+        expect(details['id'], 'msg-uuid'); // 8-char prefix of 'msg-uuid-001'
+      },
+    );
+
+    test(
       'returns duplicate when SAME content arrives under a DIFFERENT id (F8 content dedup)',
       () async {
         // An already-durable incoming message under id 'msg-uuid-001'.

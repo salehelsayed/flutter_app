@@ -2425,6 +2425,22 @@ void main() async {
     });
   }
 
+  // FDC-15: inbound libp2p-LAN media (the Go `media:lan_received` event) feeds
+  // the SAME attachment-link → `<canonical>.enc` → decrypt-adopt pipeline as the
+  // WS leg. The Go node already staged the ciphertext to media.localPath, so
+  // persistMedia hands that path straight back. Independent of the WS media
+  // server — the libp2p lane has its own transport + its own default-off flag.
+  if (bridge is GoBridgeClient) {
+    bridge.onLocalMediaReceived = (media) async {
+      await linkIncomingLocalMedia(
+        media: media,
+        mediaAttachmentRepo: mediaAttachmentRepository,
+        persistMedia: (mediaId, fromPeerId) async => media.localPath,
+        mediaFileManager: mediaFileManager,
+      );
+    };
+  }
+
   final postListener = PostListener(
     postCreateStream: messageRouter.postCreateStream,
     postRepo: postRepository,

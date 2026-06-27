@@ -49,7 +49,8 @@ Future<bool> waitForOnline(
 
 bool isSendableBadgeState(NodeState state) {
   return state.badgeReadinessState == BadgeReadinessState.online ||
-      state.badgeReadinessState == BadgeReadinessState.onlineDotted;
+      state.badgeReadinessState == BadgeReadinessState.onlineDotted ||
+      state.badgeReadinessState == BadgeReadinessState.onlineDirect;
 }
 
 bool isPlainOnlineBadgeState(NodeState state) {
