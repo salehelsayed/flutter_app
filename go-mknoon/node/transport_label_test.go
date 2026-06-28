@@ -196,6 +196,30 @@ func ackPayloadFromStream(t *testing.T, stream *stubTransportStream) string {
 	return string(reply)
 }
 
+// contactRequestEnvelopeForTest builds a minimal type=="contact_request" v2
+// envelope. The Go node never decrypts it — shouldDeferDirectAck inspects only
+// the envelope "type" — so the encrypted body is a deliberate stub; this
+// exercises the defer/ack-wait wire behaviour, not Dart-side decryption.
+func contactRequestEnvelopeForTest(t *testing.T, msgId string) []byte {
+	t.Helper()
+	envelope := map[string]interface{}{
+		"type":    "contact_request",
+		"version": "2",
+		"msgId":   msgId,
+		"ts":      time.Now().UTC().Format(time.RFC3339Nano),
+		"encrypted": map[string]interface{}{
+			"ephemeralPublicKey": "stub",
+			"ciphertext":         "stub",
+			"nonce":              "stub",
+		},
+	}
+	raw, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("json.Marshal(contactRequestEnvelope): %v", err)
+	}
+	return raw
+}
+
 func TestHandleIncomingMessage_EmitsDirectTransportForNonCircuitStream(t *testing.T) {
 	collector := &testEventCollector{}
 	n := New(collector)
@@ -496,13 +520,74 @@ func TestShouldDeferDirectAck_ReactionAndDeletion(t *testing.T) {
 		{"message_reaction", true}, // F7: must now defer
 		{"message_deletion", true}, // F7: must now defer
 		{"introduction", false},    // legitimately fire-and-forget
-		{"contact_request", false}, // legitimately fire-and-forget
+		{"contact_request", true},  // 171 TC-01: now deferred (cold-receiver durability)
 	}
 	for _, tc := range cases {
 		got := n.shouldDeferDirectAck(envelopeOfType(tc.typ))
 		if got != tc.want {
 			t.Errorf("shouldDeferDirectAck(type=%q) = %v, want %v", tc.typ, got, tc.want)
 		}
+	}
+}
+
+// TestHandleIncomingMessage_ContactRequest_AttachesConfirmNonce (171 TC-02)
+// pins that a direct contact_request rides the SAME deferred-ack wire contract
+// as chat_message: with EnableDeferredDirectAck=true (default), Go attaches a
+// non-empty "confirmNonce" to the "message:received" event and does NOT write
+// {"ack":true} until Dart resolves the confirm. On HEAD this fails because
+// shouldDeferDirectAck excludes contact_request -> immediate ack, no nonce.
+func TestHandleIncomingMessage_ContactRequest_AttachesConfirmNonce(t *testing.T) {
+	if !DefaultFeatureFlags().EnableDeferredDirectAck {
+		t.Fatal("EnableDeferredDirectAck must default to true for the contact_request deferred-ack contract")
+	}
+
+	// (a) deferred path: plain collector (no confirm) + short timeout. The
+	// message:received event must carry a non-empty confirmNonce, and because
+	// no confirm is resolved the ack must NOT be written (deferred until commit).
+	collector := &testEventCollector{}
+	n := newDeferredAckTestNode(t, collector, 50*time.Millisecond)
+
+	stream := newStubTransportStream(
+		t,
+		contactRequestEnvelopeForTest(t, "cr-nonce"),
+		generatePeerIDStr(t),
+		"/ip4/192.168.1.55/tcp/4001",
+	)
+
+	n.handleIncomingMessage(stream)
+
+	data := waitForCollectedEvent(t, collector, "message:received", time.Second)
+	raw, present := data["confirmNonce"]
+	if !present {
+		t.Fatalf("expected contact_request message:received to carry a confirmNonce (deferred-ack contract); event data: %v", data)
+	}
+	nonce, ok := raw.(string)
+	if !ok || nonce == "" {
+		t.Fatalf("expected confirmNonce to be a non-empty string, got %T %v", raw, raw)
+	}
+	if stream.output.Len() != 0 {
+		t.Fatalf("expected NO ack bytes before confirm for a deferred contact_request, got %d", stream.output.Len())
+	}
+
+	// (b) confirmed path: a real confirm releases the ack frame.
+	cb := &directConfirmCallback{confirmResults: []bool{true}}
+	n2 := newDeferredAckTestNode(t, cb, 50*time.Millisecond)
+	cb.node = n2
+
+	stream2 := newStubTransportStream(
+		t,
+		contactRequestEnvelopeForTest(t, "cr-confirm"),
+		generatePeerIDStr(t),
+		"/ip4/192.168.1.55/tcp/4001",
+	)
+
+	n2.handleIncomingMessage(stream2)
+
+	if got := ackPayloadFromStream(t, stream2); got != `{"ack":true}` {
+		t.Fatalf("expected ack payload after confirm, got %q", got)
+	}
+	if stream2.resetCount != 0 {
+		t.Fatalf("expected no stream reset on confirmed contact_request ack, got %d", stream2.resetCount)
 	}
 }
 

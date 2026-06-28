@@ -149,6 +149,27 @@ void main() {
       expect(bridge.sendCallCount, 0);
     });
 
+    // 171 TC-16 Shape A (INV-7): a QR-scanned contact has mlKemPublicKey==null
+    // (the QR omits ML-KEM), so it IS the durable outbound queue — eligible for
+    // re-send on resume/periodic retry. This is what makes the offline one-scan
+    // case eventually consistent. Mutation-first guard lock: PASSES on HEAD;
+    // the mutation "give the QR contact a non-null ML-KEM" excludes it -> 0.
+    test('a QR contact (null ML-KEM) is eligible for retry re-send', () async {
+      contactRepo.seed([
+        _makeContact('qr-scanned-peer-12345', mlKemPublicKey: null),
+      ]);
+
+      final result = await retryIncompleteKeyExchanges(
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+        p2pService: p2pService,
+        bridge: bridge,
+      );
+
+      expect(result, equals(1));
+      expect(bridge.sendCallCount, greaterThan(0));
+    });
+
     test('skips blocked contacts', () async {
       contactRepo.seed([
         _makeContact('blocked-peer-1234567890', isBlocked: true),

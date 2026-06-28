@@ -2011,6 +2011,10 @@ void main() async {
   );
   late final ChatMessageListener chatMessageListener;
   late final IntroductionListener introductionListener;
+  // 171: forward-declared so the p2pService inbox-replay closure (below) can
+  // route a cold-receiver contact_request through the listener; assigned after
+  // p2pService, called only at drain time (mirrors introductionListener).
+  late final ContactRequestListener contactRequestListener;
 
   // NET-REL-04: session-scoped, aggregate-only transport diagnostics.
   final transportMetrics = TransportMetrics();
@@ -2246,6 +2250,28 @@ void main() async {
           );
       }
     },
+    // 171: relay-inbox replay of a cold-receiver contact_request runs the SAME
+    // listener processing (auto-add + reciprocal + confirm) as the live
+    // broadcast — the dominant-bug fix for a freshly-installed B whose listener
+    // wasn't subscribed when A's request arrived. Any returned result is
+    // terminal (committed -> delete the staged row); only a thrown error
+    // retries (so a transient failure re-stages instead of being lost).
+    replayRecoveredInboxContactRequest: (message) async {
+      try {
+        await contactRequestListener.processIncomingMessage(message);
+        return (
+          disposition: RecoveredInboxChatDisposition.committed,
+          reasonCode: 'contact_request_processed',
+          reasonDetail: null,
+        );
+      } catch (e) {
+        return (
+          disposition: RecoveredInboxChatDisposition.retryable,
+          reasonCode: 'contact_request_processing_error',
+          reasonDetail: e.toString(),
+        );
+      }
+    },
     // F7: stage-before-ack/commit durability for reactions/deletions across all
     // 3 receive paths (relay-inbox, live-direct, LAN).
     replayRecoveredInboxReaction: (message, {String? stagedEntryId}) =>
@@ -2304,7 +2330,7 @@ void main() async {
   // Create contact request listener
   // The getOwnPeerId function gets the peerId from the P2P service's current state.
   // This is populated when the node starts, so it will be empty before that.
-  final contactRequestListener = ContactRequestListener(
+  contactRequestListener = ContactRequestListener(
     contactRequestStream: messageRouter.contactRequestStream,
     requestRepo: contactRequestRepository,
     contactRepo: contactRepository,
@@ -2324,6 +2350,19 @@ void main() async {
         introductionListener.emitIntroStatusChanged(intro),
     shouldSuppressPresentationForPeerId:
         contactRequestPresentationGate.shouldSuppress,
+    // 171 follow-up (user decision): the scanned user is notified via the
+    // EXISTING Accept/Decline ContactRequestDialog (the pre-171 wiring:
+    // requestStream → FTE/Orbit `_onContactRequest` → showDialog), NOT a silent
+    // tap-free auto-add. Leaving `autoAcceptAndReciprocate` null makes the
+    // listener route every incoming request to that dialog via its existing
+    // dialog fallback (ContactRequestListener._routeAutoAdd). The user taps
+    // Accept to add + reciprocate (the dialog's onAccept calls
+    // acceptAndReciprocateContactRequest in FTE/Orbit). The 171 DELIVERY fixes
+    // (Go deferred-ack + Dart confirm + staged inbox replay) still apply, so the
+    // request now reliably reaches a cold/just-online receiver under go-libp2p.
+    // (kE2ETestMode already used null here — the smoke-runner's auto_accept poll
+    // owns acceptance — so this is unchanged for E2E.)
+    autoAcceptAndReciprocate: null,
   );
 
   // Create notification service and conversation trackers
@@ -3159,6 +3198,13 @@ void main() async {
     // Forward ML-KEM key updates from reciprocal contact requests so
     // ConversationWired/FeedWired pick up the new encryption key.
     contactRequestListener.contactKeyUpdatedStream.listen((contact) {
+      chatMessageListener.emitContactUpdate(contact);
+    });
+
+    // 171: a one-scan tap-free auto-add — refresh the UI so the new mutual
+    // contact appears immediately (same path as a key update; feed/orbit
+    // surfaces listening to contact changes render the non-modal update).
+    contactRequestListener.autoAddedStream.listen((contact) {
       chatMessageListener.emitContactUpdate(contact);
     });
     StartupTiming.instance.mark('runtime_services_ready');

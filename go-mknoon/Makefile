@@ -3,6 +3,13 @@
 MODULE := github.com/mknoon/go-mknoon
 BIND_PKG := $(MODULE)/bridge
 
+# Pin the Go toolchain for EVERY recipe (ios/macos/android/test/lint). go1.26.x's
+# crypto/tls panics with quic-go v0.49.0 ("where's my session ticket?") on the
+# server side of a QUIC handshake -> SIGABRTs the receiver of a direct QUIC dial.
+# `:=` overrides any inherited GOTOOLCHAIN (incl. a stray "local"); a deliberate
+# `GOTOOLCHAIN=... make <t>` on the command line still wins when you need it.
+export GOTOOLCHAIN := go1.25.0
+
 # Output paths relative to the Flutter project
 IOS_OUT := ../ios/Runner/GoMknoon.xcframework
 MACOS_OUT := ../macos/Runner/GoMknoon.xcframework

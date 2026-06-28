@@ -2,6 +2,14 @@ module github.com/mknoon/go-mknoon
 
 go 1.25.0
 
+// BUILD TOOLCHAIN: pin to go1.25.0 via GOTOOLCHAIN=go1.25.0 (set in the Makefile
+// and scripts/ensure_go_*_bindings.sh), NOT a go.mod `toolchain` directive — that
+// directive can only switch UP from the local default, so on a go1.26 machine it
+// can't force the downgrade. go1.26.x's crypto/tls is incompatible with quic-go
+// v0.49.0 ("crypto/tls bug: where's my session ticket?") and panics on the SERVER
+// side of a QUIC handshake → SIGABRTs the receiver of any direct peer-to-peer
+// QUIC connection (e.g. the QR contact-add dial). See feedback_go126_quicgo_*.
+
 require (
 	filippo.io/edwards25519 v1.2.0
 	github.com/cloudflare/circl v1.6.3
@@ -19,7 +27,7 @@ require (
 // gosigar uses libproc.h which is macOS-only (not in iOS SDK).
 // Replace with a stub that returns zero-value memory stats.
 replace github.com/elastic/gosigar => ./stub/gosigar
-replace github.com/libp2p/go-libp2p-pubsub => ./third_party/go-libp2p-pubsub
+
 replace github.com/libp2p/go-libp2p-pubsub => ./third_party/go-libp2p-pubsub
 
 require (

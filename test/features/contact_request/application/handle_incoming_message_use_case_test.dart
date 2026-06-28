@@ -838,7 +838,10 @@ void main() {
         ownPrivateKey: 'ownPrivKeyBase64',
       );
 
-      expect(result, equals(HandleMessageResult.contactRequest));
+      // 171: a NEW v2 (recipient-bound) request is now auto-add-eligible
+      // (contactAutoAdded), not the manual-dialog contactRequest. It is still
+      // decrypted + stored pending (asserted below).
+      expect(result, equals(HandleMessageResult.contactAutoAdded));
       expect(request, isNotNull);
       expect(request!.peerId, equals(_senderPeerId));
     });
@@ -1118,6 +1121,128 @@ void main() {
       );
 
       expect(result, equals(HandleMessageResult.invalidMessage));
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 171: one-scan mutual auto-add (v2 recipient-bound requests add tap-free)
+  // -------------------------------------------------------------------------
+  group('171 one-scan auto-add', () {
+    String v2Msg(Map<String, dynamic> payload, {String? msgId, String? ts}) {
+      final id = msgId ?? 'auto-msg-${DateTime.now().microsecondsSinceEpoch}';
+      final timestamp = ts ?? DateTime.now().toUtc().toIso8601String();
+      return jsonEncode({
+        'type': 'contact_request',
+        'version': '2',
+        'msgId': id,
+        'ts': timestamp,
+        'encrypted': {
+          'ephemeralPublicKey': 'ephPubBase64',
+          'ciphertext': 'ctBase64',
+          'nonce': 'nonceBase64',
+        },
+      });
+    }
+
+    // TC-05: a NEW v2 verified request returns contactAutoAdded (Expected-RED
+    // on HEAD — HEAD returns contactRequest) and stores the request pending.
+    test('v2 new request returns contactAutoAdded', () async {
+      final payload = _validPayload();
+      bridge.decryptResponse = {'ok': true, 'plaintext': jsonEncode(payload)};
+
+      final (result, request, _) = await handleIncomingMessage(
+        message: _makeChatMessage(v2Msg(payload)),
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        ownPrivateKey: 'ownPrivKeyBase64',
+      );
+
+      expect(result, equals(HandleMessageResult.contactAutoAdded));
+      // Request stored pending (audit) so the listener can accept+reciprocate.
+      final stored = await requestRepo.getRequest(_senderPeerId);
+      expect(stored, isNotNull);
+      expect(stored!.status, equals(ContactRequestStatus.pending));
+      expect(request, isNotNull);
+    });
+
+    // TC-07: a NEW v1 plaintext request stays on the manual dialog path (no
+    // recipient binding → never auto-add). Mutation-first guard lock: PASSES
+    // on HEAD; the mutation "drop the version=='2' gate" makes v1 auto-add and
+    // reds this. v2-only is the INV-2 security gate.
+    test('v1 plaintext new request stays on dialog (not auto-added)', () async {
+      final (result, _, _) = await handleIncomingMessage(
+        message: _makeChatMessage(_contactRequestMessage(_validPayload())),
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+      );
+
+      expect(result, equals(HandleMessageResult.contactRequest));
+      expect(result, isNot(equals(HandleMessageResult.contactAutoAdded)));
+    });
+
+    // TC-09: a previously-declined peer is NOT resurrected by auto-add.
+    // Mutation-first guard lock: PASSES on pristine HEAD (a declined peer falls
+    // to contactRequest/dialog); the mutation "auto-add WITHOUT the
+    // status==declined guard" lets it through and reds this.
+    test('declined request is NOT resurrected by auto-add', () async {
+      final declined = ContactRequestModel.fromP2PPayload(
+        _validPayload(),
+      ).copyWith(status: ContactRequestStatus.declined);
+      await requestRepo.addRequest(declined);
+
+      final payload = _validPayload();
+      bridge.decryptResponse = {'ok': true, 'plaintext': jsonEncode(payload)};
+
+      final (result, _, _) = await handleIncomingMessage(
+        message: _makeChatMessage(v2Msg(payload)),
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        ownPrivateKey: 'ownPrivKeyBase64',
+      );
+
+      expect(result, isNot(equals(HandleMessageResult.contactAutoAdded)));
+      expect(result, equals(HandleMessageResult.contactRequest));
+      // No contact row created for a declined peer.
+      expect(await contactRepo.contactExists(_senderPeerId), isFalse);
+    });
+
+    // TC-10: a blocked existing contact is short-circuited by step-8
+    // (alreadyContact), never auto-added. Mutation-first: the COMPOUND mutation
+    // "move auto-add ahead of step-8 AND remove the in-branch isBlocked guard"
+    // reds this. Step-8 is the primary catch; the guard is defense-in-depth.
+    test('blocked peer is NOT auto-added', () async {
+      await contactRepo.addContact(
+        ContactModel(
+          peerId: _senderPeerId,
+          publicKey: 'senderPublicKey',
+          rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
+          username: 'Alice',
+          signature: 'sig',
+          scannedAt: DateTime.now().toUtc().toIso8601String(),
+          isBlocked: true,
+        ),
+      );
+
+      final payload = _validPayload();
+      bridge.decryptResponse = {'ok': true, 'plaintext': jsonEncode(payload)};
+
+      final (result, _, _) = await handleIncomingMessage(
+        message: _makeChatMessage(v2Msg(payload)),
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        ownPrivateKey: 'ownPrivKeyBase64',
+      );
+
+      expect(result, equals(HandleMessageResult.alreadyContact));
+      expect(result, isNot(equals(HandleMessageResult.contactAutoAdded)));
     });
   });
 }

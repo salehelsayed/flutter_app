@@ -1623,12 +1623,19 @@ func messageEnvelopeType(msgBytes []byte) string {
 }
 
 func (n *Node) shouldDeferDirectAck(msgBytes []byte) bool {
-	// F7: defer the wire ack until Dart durably commits, for every envelope
-	// type whose receiver-side handling is durable (chat_message + reactions +
-	// deletions). Other types (introductions, contact requests, …) are
-	// legitimately fire-and-forget and ack immediately.
+	// F7 + 171: defer the wire ack until Dart durably commits, for every
+	// envelope type whose receiver-side handling is durable (chat_message +
+	// reactions + deletions) OR must survive a cold-receiver listener-subscribe
+	// race (contact_request). A freshly-installed receiver is still cold-starting
+	// when the scanner's contact_request arrives, so its ContactRequestListener
+	// may not be subscribed to the unbuffered broadcast yet; an immediate ack
+	// masks that drop and the sender's success short-circuit skips the durable
+	// relay inbox. Deferring the ack forces a cold receiver to time out -> the
+	// sender falls back to the inbox -> the request is durably delivered + auto-
+	// added on replay. Other types (introductions, …) are legitimately
+	// fire-and-forget and ack immediately.
 	switch messageEnvelopeType(msgBytes) {
-	case "chat_message", "message_reaction", "message_deletion":
+	case "chat_message", "message_reaction", "message_deletion", "contact_request":
 	default:
 		return false
 	}

@@ -14,6 +14,12 @@ enum HandleMessageResult {
   /// New contact request received and stored.
   contactRequest,
 
+  /// 171: New v2 (recipient-bound) request from a non-declined, non-blocked
+  /// peer — stored pending (audit) and eligible for tap-free auto-add +
+  /// reciprocal by the listener. v1 / declined / blocked stay on
+  /// [contactRequest] (manual dialog).
+  contactAutoAdded,
+
   /// Request from this peer is already pending.
   duplicateRequest,
 
@@ -384,19 +390,13 @@ handleIncomingMessage({
     return (HandleMessageResult.duplicateRequest, null, null);
   }
 
-  // 10. Create and store the request
+  // 10. Create and store the request (pending — the audit trail for BOTH the
+  //     manual-dialog path and the 171 tap-free auto-add path; the listener
+  //     loads this pending row to accept + reciprocate).
   final request = ContactRequestModel.fromP2PPayload(payload);
 
   try {
     await requestRepo.addRequest(request);
-
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CONTACT_REQUEST_STORED',
-      details: {'peerId': peerIdPrefix, 'username': request.username},
-    );
-
-    return (HandleMessageResult.contactRequest, request, null);
   } catch (e) {
     emitFlowEvent(
       layer: 'FL',
@@ -405,4 +405,32 @@ handleIncomingMessage({
     );
     return (HandleMessageResult.invalidMessage, null, null);
   }
+
+  // 11 (171). One-scan auto-add eligibility. A NEW, recipient-bound (v2)
+  // verified request from a non-declined, non-blocked peer is added tap-free
+  // (the listener performs the add + reciprocal). v1 plaintext requests (no
+  // recipient binding) and any previously-declined peer stay on the manual
+  // dialog (INV-2 / INV-3). step-8 (contactExists) already short-circuited
+  // existing — and therefore blocked — contacts to alreadyContact; the
+  // isBlocked guard here is defense-in-depth against a future reorder.
+  final priorWasDeclined =
+      existingRequest != null &&
+      existingRequest.status == ContactRequestStatus.declined;
+  final blockedGuard =
+      (await contactRepo.getContact(peerId))?.isBlocked == true;
+  if (version == '2' && !priorWasDeclined && !blockedGuard) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONTACT_REQUEST_AUTO_ADD_ELIGIBLE',
+      details: {'peerId': peerIdPrefix, 'username': request.username},
+    );
+    return (HandleMessageResult.contactAutoAdded, request, null);
+  }
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'CONTACT_REQUEST_STORED',
+    details: {'peerId': peerIdPrefix, 'username': request.username},
+  );
+  return (HandleMessageResult.contactRequest, request, null);
 }

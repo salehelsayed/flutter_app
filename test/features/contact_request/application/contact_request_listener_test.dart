@@ -5,7 +5,10 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
+import 'package:flutter_app/features/contact_request/application/contact_auto_add_rate_limiter.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
+import 'package:flutter_app/features/contact_request/application/handle_incoming_message_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/recover_intro_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
@@ -15,6 +18,7 @@ import 'package:flutter_app/features/introduction/domain/models/introduction_mod
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 
+import '../../../shared/fakes/in_memory_contact_request_repository.dart';
 import '../../../shared/fakes/in_memory_introduction_repository.dart';
 import '../../../shared/fakes/in_memory_message_repository.dart';
 
@@ -28,6 +32,16 @@ class _MockBridge extends Bridge {
   Map<String, dynamic> nextResponse = {'ok': true, 'valid': true};
   Map<String, dynamic>? decryptResponse;
   bool shouldThrow = false;
+
+  /// 171: every decoded request sent through this bridge, in order — lets
+  /// confirm-path tests assert a `message:confirm` was issued with the right
+  /// nonce/ok. [onSend] is an ordering hook (e.g. record relative to an
+  /// auto-accept call).
+  final List<Map<String, dynamic>> sentRequests = [];
+  void Function(Map<String, dynamic> request)? onSend;
+
+  List<Map<String, dynamic>> get confirmRequests =>
+      sentRequests.where((r) => r['cmd'] == 'message:confirm').toList();
 
   @override
   bool get isInitialized => true;
@@ -44,6 +58,8 @@ class _MockBridge extends Bridge {
   Future<String> send(String message) async {
     if (shouldThrow) throw Exception('bridge error');
     final req = jsonDecode(message) as Map<String, dynamic>;
+    sentRequests.add(req);
+    onSend?.call(req);
     if (req['cmd'] == 'contactrequest.decrypt' && decryptResponse != null) {
       return jsonEncode(decryptResponse!);
     }
@@ -1117,6 +1133,241 @@ void main() {
       final ids = cache.ids;
       expect(ids, containsAll(['a', 'b', 'c']));
       expect(ids.length, equals(3));
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 171: tap-free auto-add + deferred-ack confirm
+  // -------------------------------------------------------------------------
+  group('171 auto-add + confirm', () {
+    ChatMessage makeV2({
+      String peerId = _testPeerId,
+      String? msgId,
+      String? confirmNonce,
+    }) {
+      final payload = SplayTreeMap<String, dynamic>.from({
+        'ns': peerId,
+        'pk': _testPublicKey,
+        'rv': '/dns4/rendezvous.example.com/tcp/4001/p2p/$peerId',
+        'sig': 'fakeSigBase64ForTesting',
+        'ts': '2024-06-15T12:00:00Z',
+        'un': 'TestUser',
+      });
+      bridge.decryptResponse = {'ok': true, 'plaintext': jsonEncode(payload)};
+      return ChatMessage(
+        from: peerId,
+        to: _testOwnPeerId,
+        content: jsonEncode({
+          'type': 'contact_request',
+          'version': '2',
+          'msgId': msgId ?? 'v2-${DateTime.now().microsecondsSinceEpoch}',
+          'ts': DateTime.now().toUtc().toIso8601String(),
+          'encrypted': {
+            'ephemeralPublicKey': 'e',
+            'ciphertext': 'c',
+            'nonce': 'n',
+          },
+        }),
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        isIncoming: true,
+        confirmNonce: confirmNonce,
+      );
+    }
+
+    ContactRequestListener makeListener({
+      Future<AcceptContactRequestResult> Function(String peerId)? autoAccept,
+      ContactAutoAddRateLimiter? limiter,
+    }) {
+      return ContactRequestListener(
+        contactRequestStream: streamController.stream,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        getOwnPeerId: () => _testOwnPeerId,
+        getOwnPrivateKey: () async => 'ownPrivKeyBase64',
+        autoAcceptAndReciprocate: autoAccept,
+        autoAddRateLimiter: limiter,
+      );
+    }
+
+    // TC-03: live deferred contact_request confirms ok:true after commit.
+    test('confirms deferred contact_request with ok:true after commit', () async {
+      final l = makeListener(
+        autoAccept: (_) async => AcceptContactRequestResult.success,
+      );
+      addTearDown(l.dispose);
+
+      await l.processIncomingMessage(makeV2(confirmNonce: 'nonce-abc'));
+
+      final confirms = bridge.confirmRequests;
+      expect(confirms, hasLength(1));
+      expect(confirms.single['payload']['nonce'], equals('nonce-abc'));
+      expect(confirms.single['payload']['ok'], isTrue);
+    });
+
+    // TC-03: a message with no confirmNonce must NOT trigger a confirm.
+    test('does not confirm when confirmNonce is null', () async {
+      final l = makeListener(
+        autoAccept: (_) async => AcceptContactRequestResult.success,
+      );
+      addTearDown(l.dispose);
+
+      await l.processIncomingMessage(makeV2(confirmNonce: null));
+
+      expect(bridge.confirmRequests, isEmpty);
+    });
+
+    // TC-03: a thrown error during processing confirms ok:false (so the
+    // sender's node withholds the ack -> the request inboxes -> retried).
+    test('confirms ok:false when processing throws', () async {
+      final l = makeListener(
+        autoAccept: (_) async => throw Exception('accept boom'),
+      );
+      addTearDown(l.dispose);
+
+      await expectLater(
+        l.processIncomingMessage(makeV2(confirmNonce: 'nonce-fail')),
+        throwsA(isA<Exception>()),
+      );
+
+      final confirms = bridge.confirmRequests;
+      expect(confirms, hasLength(1));
+      expect(confirms.single['payload']['nonce'], equals('nonce-fail'));
+      expect(confirms.single['payload']['ok'], isFalse);
+    });
+
+    // TC-06: contactAutoAdded auto-accepts + reciprocates + confirms in order,
+    // emits the notice, and does NOT show a dialog.
+    test(
+      'contactAutoAdded auto-accepts + confirms in order, notice, no dialog',
+      () async {
+        final order = <String>[];
+        final l = makeListener(
+          autoAccept: (peerId) async {
+            order.add('accept:$peerId');
+            return AcceptContactRequestResult.success;
+          },
+        );
+        addTearDown(l.dispose);
+        bridge.onSend = (req) {
+          if (req['cmd'] == 'message:confirm') order.add('confirm');
+        };
+        final dialogs = <ContactRequestModel>[];
+        l.requestStream.listen(dialogs.add);
+
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        final result = await l.processIncomingMessage(makeV2(confirmNonce: 'n6'));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+
+        expect(result, equals(HandleMessageResult.contactAutoAdded));
+        // (a) accept fires, THEN (b) confirm — in order, exactly once each.
+        expect(order, equals(['accept:$_testPeerId', 'confirm']));
+        expect(
+          events.where((e) => e['event'] == 'CONTACT_AUTO_ADDED').length,
+          equals(1),
+        );
+        // No request-dialog emission.
+        expect(dialogs, isEmpty);
+      },
+    );
+
+    // TC-11: the global flood cap caps auto-adds; the overflow falls back to
+    // the manual dialog (not a silent drop).
+    test('auto-add rate-limit caps then falls back to dialog', () async {
+      final accepts = <String>[];
+      final l = makeListener(
+        autoAccept: (peerId) async {
+          accepts.add(peerId);
+          return AcceptContactRequestResult.success;
+        },
+        limiter: ContactAutoAddRateLimiter(
+          maxPerWindow: 2,
+          clock: () => DateTime.utc(2026, 1, 1, 12),
+        ),
+      );
+      addTearDown(l.dispose);
+      final dialogs = <ContactRequestModel>[];
+      l.requestStream.listen(dialogs.add);
+
+      for (var i = 0; i < 3; i++) {
+        await l.processIncomingMessage(
+          makeV2(peerId: '12D3KooWDistinctPeer${i}xxxxxxxxxx', msgId: 'rl-$i'),
+        );
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(accepts, hasLength(2));
+      expect(dialogs, hasLength(1));
+    });
+
+    // TC-12: the same v2 msgId delivered twice auto-accepts EXACTLY once
+    // (INV-6) — the contactAutoAdded result must enter the replay cache.
+    //
+    // Uses a WORKING request repo so the first auto-accept flips the request to
+    // `accepted` (mimics acceptAndReciprocate). That makes step-9's
+    // pending-request dedup INERT on the 2nd delivery, so the replay cache is
+    // the SOLE dedup — exactly what the OR-list entry must provide. (Omitting
+    // contactAutoAdded from the replay-cache OR-list re-runs the 2nd delivery.)
+    test('same-msgId v2 delivered twice → exactly one auto-accept', () async {
+      final reqRepo = InMemoryContactRequestRepository();
+      final accepts = <String>[];
+      final l = ContactRequestListener(
+        contactRequestStream: streamController.stream,
+        requestRepo: reqRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        getOwnPeerId: () => _testOwnPeerId,
+        getOwnPrivateKey: () async => 'ownPrivKeyBase64',
+        autoAcceptAndReciprocate: (peerId) async {
+          accepts.add(peerId);
+          await reqRepo.updateStatus(peerId, ContactRequestStatus.accepted);
+          return AcceptContactRequestResult.success;
+        },
+      );
+      addTearDown(l.dispose);
+
+      await l.processIncomingMessage(makeV2(msgId: 'dup-msg-1'));
+      await l.processIncomingMessage(makeV2(msgId: 'dup-msg-1'));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(accepts, hasLength(1));
+    });
+
+    // Review fix: if the local accept fails (e.g. a transient DB write error),
+    // the request is NOT silently lost (committed-and-deleted with no contact)
+    // — it falls back to the manual dialog (it is already durably pending).
+    test('auto-add accept failure falls back to dialog (no silent loss)', () async {
+      final dialogs = <ContactRequestModel>[];
+      final l = makeListener(
+        autoAccept: (_) async => AcceptContactRequestResult.addContactError,
+      );
+      addTearDown(l.dispose);
+      l.requestStream.listen(dialogs.add);
+
+      final events = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(events.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      final result = await l.processIncomingMessage(makeV2());
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      // Result is still contactAutoAdded (the use-case eligibility), but the
+      // listener surfaced it on the dialog rather than losing it.
+      expect(result, equals(HandleMessageResult.contactAutoAdded));
+      expect(dialogs, hasLength(1));
+      expect(
+        events
+            .where(
+              (e) =>
+                  e['event'] ==
+                  'CONTACT_AUTO_ADD_ACCEPT_FAILED_DIALOG_FALLBACK',
+            )
+            .length,
+        equals(1),
+      );
     });
   });
 }

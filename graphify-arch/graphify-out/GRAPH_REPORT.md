@@ -1,15 +1,15 @@
-# Graph Report - graphify-arch  (2026-06-27)
+# Graph Report - graphify-arch  (2026-06-28)
 
 ## Corpus Check
 - cluster-only mode — file stats not available
 
 ## Summary
-- 42704 nodes · 66596 edges · 920 communities (872 shown, 48 thin omitted)
-- Extraction: 96% EXTRACTED · 4% INFERRED · 0% AMBIGUOUS · INFERRED: 2563 edges (avg confidence: 0.8)
+- 42841 nodes · 66801 edges · 933 communities (886 shown, 47 thin omitted)
+- Extraction: 96% EXTRACTED · 4% INFERRED · 0% AMBIGUOUS · INFERRED: 2575 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `017a95db`
+- Built from commit: `5d54c028`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -527,7 +527,6 @@
 - [[_COMMUNITY_Community 510|Community 510]]
 - [[_COMMUNITY_Community 511|Community 511]]
 - [[_COMMUNITY_Community 512|Community 512]]
-- [[_COMMUNITY_Community 513|Community 513]]
 - [[_COMMUNITY_Community 514|Community 514]]
 - [[_COMMUNITY_Community 515|Community 515]]
 - [[_COMMUNITY_Community 516|Community 516]]
@@ -551,7 +550,6 @@
 - [[_COMMUNITY_Community 534|Community 534]]
 - [[_COMMUNITY_Community 535|Community 535]]
 - [[_COMMUNITY_Community 536|Community 536]]
-- [[_COMMUNITY_Community 537|Community 537]]
 - [[_COMMUNITY_Community 538|Community 538]]
 - [[_COMMUNITY_Community 539|Community 539]]
 - [[_COMMUNITY_Community 540|Community 540]]
@@ -744,6 +742,7 @@
 - [[_COMMUNITY_Community 727|Community 727]]
 - [[_COMMUNITY_Community 728|Community 728]]
 - [[_COMMUNITY_Community 729|Community 729]]
+- [[_COMMUNITY_Community 730|Community 730]]
 - [[_COMMUNITY_Community 731|Community 731]]
 - [[_COMMUNITY_Community 732|Community 732]]
 - [[_COMMUNITY_Community 733|Community 733]]
@@ -756,7 +755,6 @@
 - [[_COMMUNITY_Community 740|Community 740]]
 - [[_COMMUNITY_Community 741|Community 741]]
 - [[_COMMUNITY_Community 742|Community 742]]
-- [[_COMMUNITY_Community 743|Community 743]]
 - [[_COMMUNITY_Community 744|Community 744]]
 - [[_COMMUNITY_Community 745|Community 745]]
 - [[_COMMUNITY_Community 746|Community 746]]
@@ -847,6 +845,7 @@
 - [[_COMMUNITY_Community 831|Community 831]]
 - [[_COMMUNITY_Community 832|Community 832]]
 - [[_COMMUNITY_Community 833|Community 833]]
+- [[_COMMUNITY_Community 834|Community 834]]
 - [[_COMMUNITY_Community 835|Community 835]]
 - [[_COMMUNITY_Community 836|Community 836]]
 - [[_COMMUNITY_Community 837|Community 837]]
@@ -864,7 +863,6 @@
 - [[_COMMUNITY_Community 849|Community 849]]
 - [[_COMMUNITY_Community 850|Community 850]]
 - [[_COMMUNITY_Community 851|Community 851]]
-- [[_COMMUNITY_Community 852|Community 852]]
 - [[_COMMUNITY_Community 853|Community 853]]
 - [[_COMMUNITY_Community 854|Community 854]]
 - [[_COMMUNITY_Community 855|Community 855]]
@@ -886,6 +884,7 @@
 - [[_COMMUNITY_Community 871|Community 871]]
 - [[_COMMUNITY_Community 872|Community 872]]
 - [[_COMMUNITY_Community 873|Community 873]]
+- [[_COMMUNITY_Community 874|Community 874]]
 - [[_COMMUNITY_Community 875|Community 875]]
 - [[_COMMUNITY_Community 876|Community 876]]
 - [[_COMMUNITY_Community 877|Community 877]]
@@ -916,6 +915,9 @@
 - [[_COMMUNITY_Community 903|Community 903]]
 - [[_COMMUNITY_Community 904|Community 904]]
 - [[_COMMUNITY_Community 905|Community 905]]
+- [[_COMMUNITY_Community 906|Community 906]]
+- [[_COMMUNITY_Community 907|Community 907]]
+- [[_COMMUNITY_Community 909|Community 909]]
 - [[_COMMUNITY_Community 910|Community 910]]
 - [[_COMMUNITY_Community 911|Community 911]]
 - [[_COMMUNITY_Community 912|Community 912]]
@@ -926,14 +928,25 @@
 - [[_COMMUNITY_Community 917|Community 917]]
 - [[_COMMUNITY_Community 918|Community 918]]
 - [[_COMMUNITY_Community 919|Community 919]]
+- [[_COMMUNITY_Community 920|Community 920]]
+- [[_COMMUNITY_Community 921|Community 921]]
+- [[_COMMUNITY_Community 926|Community 926]]
+- [[_COMMUNITY_Community 927|Community 927]]
+- [[_COMMUNITY_Community 928|Community 928]]
+- [[_COMMUNITY_Community 929|Community 929]]
+- [[_COMMUNITY_Community 930|Community 930]]
+- [[_COMMUNITY_Community 931|Community 931]]
+- [[_COMMUNITY_Community 932|Community 932]]
+- [[_COMMUNITY_Community 933|Community 933]]
+- [[_COMMUNITY_Community 934|Community 934]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `generateEd25519KeyPair()` - 213 edges
 2. `parseJSON()` - 185 edges
-3. `NewNode()` - 163 edges
-4. `startLocalNodeForMultiRelayTest()` - 158 edges
-5. `generateTestKey()` - 155 edges
-6. `New()` - 136 edges
+3. `NewNode()` - 164 edges
+4. `startLocalNodeForMultiRelayTest()` - 160 edges
+5. `generateTestKey()` - 156 edges
+6. `New()` - 139 edges
 7. `assertNotOk()` - 129 edges
 8. `startLocalNodeForMultiRelayTestWithCollector()` - 103 edges
 9. `buildTestEnvelope()` - 86 edges
@@ -954,7 +967,7 @@
 ## Import Cycles
 - None detected.
 
-## Communities (920 total, 48 thin omitted)
+## Communities (933 total, 47 thin omitted)
 
 ### Community 0 - "Community 0"
 Cohesion: 0.00
@@ -966,7 +979,7 @@ Nodes (683): activeAvatarHashes, activeMemberPeerIds, activePeerIds, activeState
 
 ### Community 2 - "Community 2"
 Cohesion: 0.01
-Nodes (313): AlertDialog, AnimatedContainer, AnnotatedRegion, main, BoxDecoration, CircularProgressIndicator, DateSeparator, DecoratedBox (+305 more)
+Nodes (318): AlertDialog, Align, AnimatedContainer, showGroupMissingNotificationFeedback, CircularProgressIndicator, ClipRRect, ConstrainedBox, DateSeparator (+310 more)
 
 ### Community 3 - "Community 3"
 Cohesion: 0.01
@@ -974,247 +987,247 @@ Nodes (395): activeBobDevices, activeKeyPackageIds, activeMembers, activeProof, 
 
 ### Community 4 - "Community 4"
 Cohesion: 0.01
-Nodes (355): ../../application/orbit3_archetype_data.dart, ../../application/orbit3_dimension_preferences_use_cases.dart, build, ../../application/orbit3_mock_data.dart, _groups, _member, _names, Orbit3MockData (+347 more)
+Nodes (264): dart:ui, LanAvailabilitySnapshot, IconData, Key, MemberRole, _ConversationLoadingBubble, _ConversationLoadingShell, _EditModeBanner (+256 more)
 
 ### Community 5 - "Community 5"
 Cohesion: 0.01
-Nodes (263): absoluteDurablePath, _activeAttachmentUpload, _activeGroupConversationKey, _activeQuoteMessageId, _allowPopDuringActiveUpload, _amplitudeBuffer, _amplitudeSub, _applyMessageUpdate (+255 more)
+Nodes (279): blurb, build, _connector, ../../application/orbit3_archetype_data.dart, _h, _item, label, _loud (+271 more)
 
 ### Community 6 - "Community 6"
 Cohesion: 0.01
-Nodes (232): addGroup, announceCalls, announceSpy, bridge, groupRepo, identity, main, run (+224 more)
+Nodes (281): announce, announced, announceRestoredDeviceToGroups, AnnounceRestoredDeviceToGroupsFn, groups, maybeAnnounceRestoredDeviceOnStartup, multiDeviceSyncEnabled, now (+273 more)
 
 ### Community 7 - "Community 7"
 Cohesion: 0.01
-Nodes (229): @immutable, appShellController, build, createState, dispose, feedUnreadCountListenable, _headerNotifier, initState (+221 more)
+Nodes (267): AnimatedOpacity, main, _pendingRequest, requestRepo, GateableMediaAttachmentRepository, encPendingAttachment, main, detailsFor (+259 more)
 
 ### Community 8 - "Community 8"
 Cohesion: 0.01
-Nodes (238): _ActiveAttachmentUpload, _ComposerSnapshot, conversation_screen.dart, PrepareEncryptedMediaArtifactFn, absoluteDurablePath, _ActiveAttachmentUpload, _activeQuoteMessageId, _allowPopDuringActiveUpload (+230 more)
+Nodes (263): absoluteDurablePath, _activeAttachmentUpload, _activeGroupConversationKey, _activeQuoteMessageId, _allowPopDuringActiveUpload, _amplitudeBuffer, _amplitudeSub, _applyMessageUpdate (+255 more)
 
 ### Community 9 - "Community 9"
 Cohesion: 0.01
-Nodes (228): ContactRequestNotificationMaterializer, buildRepo, main, GroupPendingKeyRepairBackoffTimer, GroupPendingKeyRepairRunner, db, main, db (+220 more)
+Nodes (133): AnimatedBuilder, Animation, CustomPaint, package:flutter_app/core/theme/glassmorphism.dart, package:flutter_app/features/contact_profile/presentation/screens/contact_profile_screen.dart, package:flutter_app/features/home/presentation/widgets/empty_circle_state.dart, package:flutter_app/features/home/presentation/widgets/scan_friend_card.dart, package:flutter/services.dart (+125 more)
 
 ### Community 10 - "Community 10"
-Cohesion: 0.02
-Nodes (184): DatabaseException, db, main, makeRequestRow, db, main, makeContactRow, db (+176 more)
+Cohesion: 0.01
+Nodes (238): _ActiveAttachmentUpload, _ComposerSnapshot, conversation_screen.dart, PrepareEncryptedMediaArtifactFn, absoluteDurablePath, _ActiveAttachmentUpload, _activeQuoteMessageId, _allowPopDuringActiveUpload (+230 more)
 
 ### Community 11 - "Community 11"
 Cohesion: 0.01
-Nodes (211): Animation, AccountMigrationProductionBundleSource, _ReceiverStageTracker, AccountMigrationLocalTransferRuntime, GroupPendingKeyRepairRunner, PostDeliveryRunner, FlowEvent, _NotificationBenchmarkApp (+203 more)
+Nodes (226): ContactRequestNotificationMaterializer, buildRepo, main, GroupPendingKeyRepairBackoffTimer, GroupPendingKeyRepairRunner, db, main, IosApnsNotificationOpenBridge (+218 more)
 
 ### Community 12 - "Community 12"
 Cohesion: 0.01
-Nodes (156): dbDeleteExpiredGroupWelcomeKeyPackageTombstones, dbLoadGroupWelcomeKeyPackageTombstone, dbUpsertGroupWelcomeKeyPackageTombstone, packageId, dbDeletePendingIntroductionResponse, dbLoadPendingIntroductionResponses, dbUpsertPendingIntroductionResponse, responseKey (+148 more)
+Nodes (214): @immutable, appShellController, build, createState, dispose, feedUnreadCountListenable, _headerNotifier, initState (+206 more)
 
 ### Community 13 - "Community 13"
 Cohesion: 0.01
-Nodes (225): active, activePeerIds, activeUsers, addOrReadd, alice, _attempts, baseTime, blockedSaveIds (+217 more)
+Nodes (156): dbDeleteExpiredGroupWelcomeKeyPackageTombstones, dbLoadGroupWelcomeKeyPackageTombstone, dbUpsertGroupWelcomeKeyPackageTombstone, packageId, dbDeletePendingIntroductionResponse, dbLoadPendingIntroductionResponses, dbUpsertPendingIntroductionResponse, responseKey (+148 more)
 
 ### Community 14 - "Community 14"
 Cohesion: 0.01
-Nodes (221): ../bridge/bridge.dart, ../bridge/p2p_bridge_client.dart, ../debug/transport_metrics.dart, ../../features/account_migration/application/account_migration_runtime_network_gate.dart, ../../features/push/domain/push_token_store.dart, ../inbox/inbox_staging_entry.dart, ../inbox/inbox_staging_repository.dart, inbox_store_outcome.dart (+213 more)
+Nodes (175): AccountMigrationBundleAssemblyException, AccountMigrationBundleImportException, _MigrationPostException, accountKey, admit, drainSpy, groupId, main (+167 more)
 
 ### Community 15 - "Community 15"
 Cohesion: 0.01
-Nodes (211): DeleteMessageForEveryoneFn, DeleteMessageForMeFn, EditChatMessageFn, feed_screen.dart, FeedStore, _acceptRequest, accountMigrationRunTransfer, accountMigrationSizeGate (+203 more)
+Nodes (225): ../bridge/bridge.dart, ../bridge/p2p_bridge_client.dart, ../debug/transport_metrics.dart, ../../features/account_migration/application/account_migration_runtime_network_gate.dart, ../../features/push/domain/push_token_store.dart, ../inbox/inbox_staging_entry.dart, ../inbox/inbox_staging_repository.dart, inbox_store_outcome.dart (+217 more)
 
 ### Community 16 - "Community 16"
 Cohesion: 0.01
-Nodes (191): archiveGroup, adminCount, bridge, broadcastVoluntaryLeaveAndRotateKey, callGroupPublish, didBroadcast, identity, leaveTimelineMessage (+183 more)
+Nodes (225): active, activePeerIds, activeUsers, addOrReadd, alice, _attempts, baseTime, blockedSaveIds (+217 more)
 
 ### Community 17 - "Community 17"
 Cohesion: 0.01
-Nodes (187): ../../../conversation/domain/repositories/fake_reaction_repository.dart, DecryptionFailureDiagnostic, fake_group_reaction_replay_outbox_repository.dart, FakeGroupPubSubNetwork, addMember, bridge, broadcastMemberAdded, create (+179 more)
+Nodes (199): aliceContact, bridge, configWithReceiverKeys, contactRepo, deleteRepair, expectNoAcceptedState, expectRejected, expectRejectedAccept (+191 more)
 
 ### Community 18 - "Community 18"
 Cohesion: 0.01
-Nodes (183): CustomPainter, dart:math, Orbit3ConstellationGeometry, AmplitudeBars, _AmplitudeBarsPainter, _barGap, _barWidth, build (+175 more)
+Nodes (202): baseGroup, bridge, groupRepo, main, msgRepo, now, publishedDissolveAuditActor, ../../../conversation/domain/repositories/fake_reaction_repository.dart (+194 more)
 
 ### Community 19 - "Community 19"
-Cohesion: 0.01
-Nodes (183): aliceContact, bridge, configWithReceiverKeys, contactRepo, deleteRepair, expectNoAcceptedState, expectRejected, expectRejectedAccept (+175 more)
+Cohesion: 0.02
+Nodes (184): DatabaseException, db, main, makeRequestRow, db, main, makeContactRow, db (+176 more)
 
 ### Community 20 - "Community 20"
-Cohesion: 0.02
-Nodes (94): client, lastCall, main, GoBridgeClient, event, main, client, closeMockGoBridgeEventChannel (+86 more)
+Cohesion: 0.01
+Nodes (200): adminGroup, b5NewMember, _BlockingUpdateConfigBridge, bridge, charlie, device, expectBlocked, expectOverflowRejected (+192 more)
 
 ### Community 21 - "Community 21"
 Cohesion: 0.01
-Nodes (195): clearCleared, FeedClearedRepositoryImpl, markCleared, clearCleared, InMemoryFeedClearedRepository, markCleared, feed_cleared_repository.dart, FeedClearedRepository (+187 more)
+Nodes (213): DeleteMessageForEveryoneFn, DeleteMessageForMeFn, EditChatMessageFn, feed_screen.dart, FeedStore, _acceptRequest, accountMigrationRunTransfer, accountMigrationSizeGate (+205 more)
 
 ### Community 22 - "Community 22"
-Cohesion: 0.03
-Nodes (183): NewEventDispatcher(), fakeHostWithAddrs, TestNodeStatus_DisablesReservationAwareHealthWhenFlagFalse(), TestReconnectRelays_DisablesInPlaceRecoveryWhenFlagFalse(), TestStartNode_DisablesMultiRelayRoutingWhenFlagFalse(), disableGroupInboxRecoveryForFakeRelayTest(), TestGroupInboxRetrieveCursor_DefaultsLimitWhenZero(), TestGroupInboxRetrieveCursor_NegativeLimitDefaultsTo50() (+175 more)
+Cohesion: 0.01
+Nodes (165): AnnotatedRegion, _activeTab, AppShellChangeKind, _backgroundPreference, _lastChangeKind, setBackgroundPreference, switchTo, main (+157 more)
 
 ### Community 23 - "Community 23"
-Cohesion: 0.01
-Nodes (172): main, bridge, contactRepo, identityRepo, main, p2pService, retrier, main (+164 more)
+Cohesion: 0.03
+Nodes (189): NewEventDispatcher(), fakeHostWithAddrs, TestReconnectRelays_DisablesInPlaceRecoveryWhenFlagFalse(), TestStartNode_DisablesMultiRelayRoutingWhenFlagFalse(), disableGroupInboxRecoveryForFakeRelayTest(), TestGroupInboxRetrieveCursor_DefaultsLimitWhenZero(), TestGroupInboxRetrieveCursor_NegativeLimitDefaultsTo50(), TestGroupInboxRetrieveCursor_NoDuplicateOnContinuation() (+181 more)
 
 ### Community 24 - "Community 24"
-Cohesion: 0.03
-Nodes (167): BuildGroupSignatureData(), ParseGroupEnvelope(), buildGroupKeyInfoWithGrace(), TestMutateGroupEnvelope_RewritesEncryptedFieldsWithoutChangingRoutingMetadata(), decryptGroupEnvelopePayload(), filterDiscoveredGroupMembers(), filterDiscoveredPeers(), isAllowedWriter() (+159 more)
+Cohesion: 0.01
+Nodes (192): main, messageRepo, ../../conversation/domain/repositories/fake_message_repository.dart, orbit_screen.dart, package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart, _acceptPendingInviteWithRecoveryRetry, _acceptRecoveryRetryCount, _acceptRecoveryRetryDelay (+184 more)
 
 ### Community 25 - "Community 25"
-Cohesion: 0.03
-Nodes (136): GroupMessagePayload, builtGroupMessageEnvelope, groupMemberDialTarget, groupMemberDialTargetSummary, groupPeerConnectResult, groupPeerDialState, GroupReliableSendResult, groupSenderDeviceBinding (+128 more)
+Cohesion: 0.02
+Nodes (155): AccountMigrationProductionBundleSource, _ReceiverStageTracker, AccountMigrationLocalTransferRuntime, ContactRequestListener, GroupPendingKeyRepairRunner, PostDeliveryRunner, FlowEvent, _NotificationBenchmarkApp (+147 more)
 
 ### Community 26 - "Community 26"
 Cohesion: 0.01
-Nodes (165): _acceptedSignedTransitionAuditHashesBySourceId, _accountMigrationNetworkGate, _allowsInboundAccountSideEffects, _allowsSnapshotBackedSystemSender, _appendGroupEventLogEntry, appendSystemEventLog, _applyAuthoritativeGroupConfigSnapshot, _autoDownloadMedia (+157 more)
+Nodes (169): _incoming, main, isDeleted, isIncoming, main, _msg, FileImage, GestureDetector (+161 more)
 
 ### Community 27 - "Community 27"
 Cohesion: 0.01
-Nodes (160): addMember, addPage, _addRelayStoredMessagePage, addRepairResponse, admin, attachment, bridgePayloads, ciphertext (+152 more)
+Nodes (164): client, lastCall, main, GoBridgeClient, event, main, GroupDiagnosticEvent, _badgeLabel (+156 more)
 
 ### Community 28 - "Community 28"
-Cohesion: 0.01
-Nodes (159): absolutePath, acceptChunk, acceptManifest, acceptOldBlockProof, acceptSegment, acceptTranscript, _AccountMigrationBundleMetadata, activeDatabaseImporter (+151 more)
+Cohesion: 0.02
+Nodes (148): db, main, makeKeyRow, db, main, makeMemberRow, db, main (+140 more)
 
 ### Community 29 - "Community 29"
 Cohesion: 0.01
-Nodes (148): basePath, file, flowEvents, _ImportedDocsFileManager, localPathForAttachment, main, resolveStoredPath, writeAsString (+140 more)
+Nodes (167): _diagnostic, _expected, keyEpoch, main, messageId, recipientPeerId, addMember, addPage (+159 more)
 
 ### Community 30 - "Community 30"
 Cohesion: 0.01
-Nodes (146): InMemoryPostRepository, bridge, contact, _createdAt, deliver, inboxEnvelope, keyedAttachment, keylessLegacyAttachment (+138 more)
+Nodes (165): _acceptedSignedTransitionAuditHashesBySourceId, _accountMigrationNetworkGate, _allowsInboundAccountSideEffects, _allowsSnapshotBackedSystemSender, _appendGroupEventLogEntry, appendSystemEventLog, _applyAuthoritativeGroupConfigSnapshot, _autoDownloadMedia (+157 more)
 
 ### Community 31 - "Community 31"
-Cohesion: 0.01
-Nodes (146): _FakeContactRepository, _FakeContactRepository, FakeContactRepository, DeliveryReceiptListener, dispose, messageRepo, receiptStream, start (+138 more)
+Cohesion: 0.02
+Nodes (152): NearbyDevicePosition, addContact, author, bridge, _contact, contactRepo, create, deadline (+144 more)
 
 ### Community 32 - "Community 32"
-Cohesion: 0.01
-Nodes (159): _incoming, main, isDeleted, isIncoming, main, _msg, FileImage, GestureDetector (+151 more)
+Cohesion: 0.02
+Nodes (111): AccountMigrationNetworkGate, basePath, file, flowEvents, _ImportedDocsFileManager, localPathForAttachment, main, resolveStoredPath (+103 more)
 
 ### Community 33 - "Community 33"
 Cohesion: 0.01
-Nodes (151): _CursorInboxBridge, _FailDecryptBridge, _DelayedGroupLeaveBridge, _DelayedMediaDownloadBridge, SequencedUpdateConfigBridge, _aliceContact, allowedDevices, assignedRole (+143 more)
+Nodes (159): absolutePath, acceptChunk, acceptManifest, acceptOldBlockProof, acceptSegment, acceptTranscript, _AccountMigrationBundleMetadata, activeDatabaseImporter (+151 more)
 
 ### Community 34 - "Community 34"
-Cohesion: 0.01
-Nodes (152): acceptedGroup, acceptedInboxDrainMaxAttempts, acceptedInboxDrainRetryDelay, acceptResult, actualSha, addGroupMember, addingAdmin, addMember (+144 more)
+Cohesion: 0.03
+Nodes (119): GroupMessagePayload, builtGroupMessageEnvelope, groupMemberDialTarget, groupMemberDialTargetSummary, groupPeerConnectResult, groupPeerDialState, GroupReliableSendResult, groupSenderDeviceBinding (+111 more)
 
 ### Community 35 - "Community 35"
-Cohesion: 0.02
-Nodes (123): db, main, makePassRow, openWithMigrations, db, main, makeRecipientRow, openWithMigrations (+115 more)
+Cohesion: 0.01
+Nodes (151): FakeReactionRepository, loadReactionsForConversation, result, AudioRecorderService, compressed,, FakeGroupReactionReplayOutboxRepository, GroupMessageListener, GroupMessageRepository (+143 more)
 
 ### Community 36 - "Community 36"
 Cohesion: 0.02
-Nodes (129): alice, bob, main, network, _originalText, FakeP2PNetwork, ChaosP2PNetwork, ../../features/conversation/integration/two_user_message_exchange_test.dart (+121 more)
+Nodes (126): db, main, makePassRow, openWithMigrations, db, main, makeRecipientRow, openWithMigrations (+118 more)
 
 ### Community 37 - "Community 37"
-Cohesion: 0.01
-Nodes (145): GroupMembershipUpdateListener, db, distributionRow, main, bridge, bridgeExchanges, _buildCliJoinFixture, buildGroupFixture (+137 more)
+Cohesion: 0.04
+Nodes (142): BuildGroupSignatureData(), ParseGroupEnvelope(), buildGroupKeyInfoWithGrace(), TestMutateGroupEnvelope_RewritesEncryptedFieldsWithoutChangingRoutingMetadata(), decryptGroupEnvelopePayload(), filterDiscoveredGroupMembers(), filterDiscoveredPeers(), assertGK019DirectJumpKeyInfo() (+134 more)
 
 ### Community 38 - "Community 38"
 Cohesion: 0.01
-Nodes (147): a4Proof, a6Proof, _adb, _adbPath, allowPhysicalDevice, _androidDeviceId, _appFileExists, _appPackage (+139 more)
+Nodes (152): acceptedGroup, acceptedInboxDrainMaxAttempts, acceptedInboxDrainRetryDelay, acceptResult, actualSha, addGroupMember, addingAdmin, addMember (+144 more)
 
 ### Community 39 - "Community 39"
 Cohesion: 0.01
-Nodes (151): _activeTab, AppShellChangeKind, _backgroundPreference, _lastChangeKind, setBackgroundPreference, switchTo, ../../application/orbit2_mock_data.dart, Orbit2ChatLine (+143 more)
+Nodes (145): GroupMembershipUpdateListener, db, distributionRow, main, bridge, bridgeExchanges, _buildCliJoinFixture, buildGroupFixture (+137 more)
 
 ### Community 40 - "Community 40"
 Cohesion: 0.02
-Nodes (133): c, calculateNearbyDistanceM, capturedAt, contact, contacts, currentTime, deltaLat, deltaLng (+125 more)
+Nodes (143): _aPeerId, _bPeerId, checkHealth, dispose, incomingPayload, initialize, isInitialized, main (+135 more)
 
 ### Community 41 - "Community 41"
-Cohesion: 0.07
-Nodes (138): buildGroupEnvelopeWithPlaintext(), connectLocalGroupNodes(), mutateGroupEnvelope(), publishRawGroupEnvelope(), waitForCollectedEvent(), TestHolePunchNegativeControl_RelayOnly_NoUpgradeNoThrash(), lp013GroupHarness, TestGA002NonMemberCannotPublishValidEnvelope() (+130 more)
+Cohesion: 0.01
+Nodes (147): a4Proof, a6Proof, _adb, _adbPath, allowPhysicalDevice, _androidDeviceId, _appFileExists, _appPackage (+139 more)
 
 ### Community 42 - "Community 42"
-Cohesion: 0.02
-Nodes (80): absolutePath, downloadPath, downloadPostMedia, hasKeyMaterial, updatePostMediaDownloadStatus, _attachMedia, ids, loadConversation (+72 more)
+Cohesion: 0.06
+Nodes (142): buildGroupEnvelopeWithPlaintext(), connectLocalGroupNodes(), mutateAndResignGroupEnvelope(), mutateGroupEnvelope(), publishRawGroupEnvelope(), waitForCollectedEvent(), TestHolePunchNegativeControl_RelayOnly_NoUpgradeNoThrash(), lp013GroupHarness (+134 more)
 
 ### Community 43 - "Community 43"
 Cohesion: 0.01
-Nodes (146): dart:ui, LanAvailabilitySnapshot, Key, detectTextDirection, _isLtrChar, _isRtlChar, main, VoidCallback (+138 more)
+Nodes (106): channel, log, main, main, main, _makeSettings, status, main (+98 more)
 
 ### Community 44 - "Community 44"
 Cohesion: 0.02
-Nodes (91): deliveredWritePatterns, main, scanDeliveredWrites, AspectRatio, File, delay, _expectReport89RowsVisible, _expectVideoViewerCanOpen (+83 more)
+Nodes (79): MobileScannerController, kOrbit2PrototypeEnabled, kOrbit3PrototypeEnabled, package:flutter/foundation.dart, package:mobile_scanner/mobile_scanner.dart, build, _buildCloseButton, _buildFlashButton (+71 more)
 
 ### Community 45 - "Community 45"
 Cohesion: 0.02
-Nodes (128): EncryptedMediaTestBridge, RelayMediaStore, ImagePicker, bridge, _createdAt, encTempsUnder, imageProcessor, main (+120 more)
+Nodes (127): FakeP2PNetwork, FakeP2PService, _ControlledP2PService, _PolicyFakeP2PService, _ControlledP2PService, _ControlledP2PService, dialAttempts, _dialedPeers (+119 more)
 
 ### Community 46 - "Community 46"
 Cohesion: 0.01
-Nodes (112): _diagnostic, _expected, keyEpoch, main, messageId, recipientPeerId, clearOrbit3DimensionPreferences, delete (+104 more)
-
-### Community 47 - "Community 47"
-Cohesion: 0.01
 Nodes (135): action, captureFlowEvents, capturePrintedLines, circuitOnlyState, clearResumeStarted, conditionalTransitionStatus, _currentState, decodeWirePayload (+127 more)
 
-### Community 48 - "Community 48"
+### Community 47 - "Community 47"
 Cohesion: 0.02
-Nodes (129): AppendGroupEventLogEntry, announce, announced, announceRestoredDeviceToGroups, AnnounceRestoredDeviceToGroupsFn, groups, maybeAnnounceRestoredDeviceOnStartup, multiDeviceSyncEnabled (+121 more)
+Nodes (125): main, tempDir, EncryptedMediaTestBridge, RelayMediaStore, ImagePicker, bridge, _createdAt, encTempsUnder (+117 more)
 
-### Community 49 - "Community 49"
+### Community 48 - "Community 48"
 Cohesion: 0.01
 Nodes (133): InkWell, addContact, archiveContact, blockContact, callOrder, conditionalTransitionStatus, contactExists, copyCalls (+125 more)
 
-### Community 50 - "Community 50"
+### Community 49 - "Community 49"
 Cohesion: 0.02
 Nodes (132): allowDeletedGroupUnknownSender, anyFirstPageStopped, appliedMessageIds, _applyRepairedHistoryMessages, authorizedPeerIds, canonical, ciphertext, computedHash (+124 more)
 
+### Community 50 - "Community 50"
+Cohesion: 0.02
+Nodes (127): core_fake_p2p.FakeP2PService, GroupTestUser, addPage, addSignedInboxPage, admin, create, _CursorInboxBridge, dispose (+119 more)
+
 ### Community 51 - "Community 51"
-Cohesion: 0.02
-Nodes (123): NearbyDevicePosition, addContact, bridge, contactRepo, create, dispose, drainOfflineInbox, p2pService (+115 more)
-
-### Community 52 - "Community 52"
-Cohesion: 0.02
-Nodes (99): addContact, AddContactResult, archiveContact, addContact, archiveContact, archivedPeerIds, blockContact, contactExists (+91 more)
-
-### Community 53 - "Community 53"
-Cohesion: 0.02
-Nodes (125): addedMembers, _addMemberFailures, allMembers, buildCreateWarningMessage, byPeerId, CreateGroupMemberAddFailure, createGroupWithMembers, CreateGroupWithMembersResult (+117 more)
-
-### Community 54 - "Community 54"
 Cohesion: 0.02
 Nodes (129): AccountMigrationProductionBundleReceiver, acceptChunk, acceptedSegmentIndexes, acceptManifest, acceptOldBlockProof, acceptSegment, acceptTranscript, AccountMigrationChunkAcceptCode (+121 more)
 
-### Community 55 - "Community 55"
+### Community 52 - "Community 52"
+Cohesion: 0.02
+Nodes (119): handleShareIntent, ShareIntentRouteBuilder, build, _HandleShareHarness, homeLabel, intent, main, onRouteBuilt (+111 more)
+
+### Community 53 - "Community 53"
 Cohesion: 0.02
 Nodes (128): ackKind, acknowledged, action, actualTransport, attachments, best, bridge, completer (+120 more)
 
-### Community 56 - "Community 56"
+### Community 54 - "Community 54"
 Cohesion: 0.02
 Nodes (127): Route, acceptedUpdates, acceptGate, allGroupsGate, alphaGroup, archivedContactsGate, bridge, buildOrbitWired (+119 more)
 
-### Community 57 - "Community 57"
+### Community 55 - "Community 55"
+Cohesion: 0.01
+Nodes (140): addGroupMember, addGroupMemberElevatedTargetBlockedMessage, addGroupMemberGroupMismatchMessage, _addMemberOperationId, _bridgeErrorCode, _diagnosticPrefix, groupMembershipMutationDissolvedMessage, _isIdenticalDuplicateMemberAdd (+132 more)
+
+### Community 56 - "Community 56"
 Cohesion: 0.02
-Nodes (122): AccountMigrationReceiverEvents, AccountMigrationSizeGate, AccountMigrationMoveSizeEstimate, calls, _F, fileLength, filesByRoot, lengthsByAbsolutePath (+114 more)
+Nodes (126): activeQuoteText, alignment, allowEditAction, amplitudeValues, backgroundPreference, bannerContactUsername, build, _buildComposerSection (+118 more)
+
+### Community 57 - "Community 57"
+Cohesion: 0.01
+Nodes (203): CustomPainter, dart:math, Orbit3ConstellationGeometry, AmplitudeBars, _AmplitudeBarsPainter, _barGap, _barWidth, build (+195 more)
 
 ### Community 58 - "Community 58"
 Cohesion: 0.02
-Nodes (124): package:flutter_app/features/conversation/presentation/widgets/blocked_banner.dart, activeQuoteText, alignment, allowEditAction, amplitudeValues, backgroundPreference, bannerContactUsername, build (+116 more)
+Nodes (113): _InstrumentedBridge, _DelayRevocationDecryptBridge, append, bridge, controller, _DelayedUpdateKeyBridge, entries, errorCode (+105 more)
 
 ### Community 59 - "Community 59"
 Cohesion: 0.02
-Nodes (106): _FakeIdentityRepo, _FakeIdentityRepo, identity, loadIdentity, main, repo, saveIdentity, _testIdentity (+98 more)
-
-### Community 60 - "Community 60"
-Cohesion: 0.02
 Nodes (120): AmplitudeTick, DurationTick, action, _amplitudeController, amplitudeStream, audioRecorderService, binding, bridge (+112 more)
 
-### Community 61 - "Community 61"
+### Community 60 - "Community 60"
 Cohesion: 0.05
 Nodes (120): assertGroupPublishMediaOnlyAcceptsEmptyText(), assertNotOk(), parseJSON(), ptrString(), TestConfirmDirectMessage_InvalidJSON(), TestConfirmDirectMessage_MissingNonce(), TestConfirmDirectMessage_NotInitialized(), TestDecryptContactRequest_InvalidJSON() (+112 more)
 
-### Community 62 - "Community 62"
+### Community 61 - "Community 61"
 Cohesion: 0.02
 Nodes (120): addContact, archiveContact, bgBeginResponse, blockContact, callLog, chatListener, checkHealth, conditionalTransitionStatus (+112 more)
 
-### Community 63 - "Community 63"
+### Community 62 - "Community 62"
 Cohesion: 0.02
 Nodes (117): main, member, GroupModel, _contactFor, _dm, main, pump, MapEntry (+109 more)
 
+### Community 63 - "Community 63"
+Cohesion: 0.02
+Nodes (104): activePins, dismissedPostIds, hydratePostSurfaceItems, loadPinnedPosts, mediaFileManager, orderedPostIds, postRepo, posts (+96 more)
+
 ### Community 64 - "Community 64"
 Cohesion: 0.02
-Nodes (96): package:flutter_app/core/utils/text_direction_utils.dart, package:flutter_app/features/feed/presentation/widgets/quote_preview_bar.dart, package:flutter_app/features/feed/presentation/widgets/unread_count_badge.dart, package:flutter_app/features/groups/presentation/widgets/group_dissolved_badge.dart, package:flutter_app/features/groups/presentation/widgets/group_type_badge.dart, buildTestWidget, main, build (+88 more)
+Nodes (118): _DownloadWritingBridge, _FailingDownloadBridge, _FailOncePartialDownloadBridge, _activeDevice, addContact, _attachImageFromLibrary, base64Decode, binding (+110 more)
 
 ### Community 65 - "Community 65"
 Cohesion: 0.02
@@ -1222,811 +1235,811 @@ Nodes (117): addRecipient, candidate, _canReuseOutgoingMessageId, _classifyGroup
 
 ### Community 66 - "Community 66"
 Cohesion: 0.02
-Nodes (146): db, main, makeKeyRow, db, main, makeMemberRow, db, main (+138 more)
+Nodes (116): acceptDevice, acceptFor, addPage, attempts, bobMessageCount, charlieDeviceSet, charlieIncomingWith, charlieMember (+108 more)
 
 ### Community 67 - "Community 67"
 Cohesion: 0.02
-Nodes (116): acceptDevice, acceptFor, addPage, attempts, bobMessageCount, charlieDeviceSet, charlieIncomingWith, charlieMember (+108 more)
+Nodes (113): main, _makeAttachment, mime, package:flutter_app/core/utils/format_day_separator_label.dart, package:flutter_app/core/widgets/quiet_confirm.dart, package:flutter_app/shared/widgets/media/media_preview_text.dart, bannerText, emptySubtitle (+105 more)
 
 ### Community 68 - "Community 68"
 Cohesion: 0.02
-Nodes (116): main, _makeAttachment, mime, package:flutter_app/core/utils/format_day_separator_label.dart, package:flutter_app/core/widgets/quiet_confirm.dart, package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart, package:flutter_app/shared/widgets/media/media_preview_text.dart, bannerText (+108 more)
+Nodes (99): alice, bob, main, network, _originalText, ChaosP2PNetwork, ../../features/conversation/integration/two_user_message_exchange_test.dart, alice (+91 more)
 
 ### Community 69 - "Community 69"
 Cohesion: 0.02
-Nodes (114): actionButton, attempts, beginRecoveryOnNextLoad, bridge, button, ciphertext, command, confirmDeleteLocalGroupDialog (+106 more)
+Nodes (106): contactRepo, main, requestRepo, testRequest, main, bridge, buildMigrationQRData, buildValidQRData (+98 more)
 
 ### Community 70 - "Community 70"
 Cohesion: 0.02
-Nodes (103): AccountMigrationNetworkGate, byMessage, loadLatestMediaDescriptors, repo, result, loadReactionsForConversation, result, accountMigrationNetworkGate (+95 more)
+Nodes (104): AccountMigrationStreamingEntry, _DeterministicSegmentCrypto, build, chunkSize, entryId, _FileAccountMigrationStreamingEntry, filePath, fileReader (+96 more)
 
 ### Community 71 - "Community 71"
 Cohesion: 0.02
-Nodes (106): acceptAndReciprocateContactRequest, downloadProfilePictureFn, result, addResult, contact, downloadProfilePictureFn, handleScannedQR, HandleScannedQRResult (+98 more)
+Nodes (114): actionButton, attempts, beginRecoveryOnNextLoad, bridge, button, ciphertext, command, confirmDeleteLocalGroupDialog (+106 more)
 
 ### Community 72 - "Community 72"
 Cohesion: 0.02
-Nodes (113): appendGroupEventLogEntry, bridge, contactRepo, _defaultNow, deliveryRepo, dispose, downloadGroupAvatarFn, _enqueueMessage (+105 more)
+Nodes (106): candidate, contactRepo, copyWith, current, envelope, existingById, existingMedia, existingPost (+98 more)
 
 ### Community 73 - "Community 73"
-Cohesion: 0.02
-Nodes (98): addGroupMember, addGroupMemberElevatedTargetBlockedMessage, addGroupMemberGroupMismatchMessage, _addMemberOperationId, _bridgeErrorCode, _diagnosticPrefix, groupMembershipMutationDissolvedMessage, _isIdenticalDuplicateMemberAdd (+90 more)
+Cohesion: 0.03
+Nodes (59): Material, package:flutter_app/core/theme/app_colors.dart, package:flutter_app/features/identity/presentation/widgets/startup_loading_gate.dart, package:flutter_app/features/qr_code/presentation/widgets/scan_overlay.dart, user_avatar.dart, BrandHeader, build, build (+51 more)
 
 ### Community 74 - "Community 74"
 Cohesion: 0.02
-Nodes (110): _activeDevice, addContact, _attachImageFromLibrary, base64Decode, binding, bridge, build, _buildConversation (+102 more)
+Nodes (103): app_colors.dart, background_readable_colors.dart, Brightness, BuildContext, Color, EdgeInsetsGeometry, feed_tokens.dart, accentColor (+95 more)
 
 ### Community 75 - "Community 75"
-Cohesion: 0.01
-Nodes (126): app_colors.dart, showGroupMissingNotificationFeedback, background_readable_colors.dart, EdgeInsetsGeometry, feed_tokens.dart, Material, Offset, package:flutter_app/core/theme/app_colors.dart (+118 more)
+Cohesion: 0.02
+Nodes (107): NearbyLocationServiceImpl, refreshNearbyOnStartup, build, createState, initState, main, _SettleHarness, _SettleHarnessState (+99 more)
 
 ### Community 76 - "Community 76"
 Cohesion: 0.02
-Nodes (100): introsBannerDismissed, isArchived, isBlocked, main, _makeContact, username, contactRepo, introsBannerDismissed (+92 more)
+Nodes (106): CountingGroupMessageRepository, durationMs, height, path, VideoProcessResult, width, _attempts, buildRecordingWidget (+98 more)
 
 ### Community 77 - "Community 77"
-Cohesion: 0.02
-Nodes (105): addContact, _BaselineUser, bridge, commentListener, _connectTriangle, contactRepo, create, deadline (+97 more)
-
-### Community 78 - "Community 78"
-Cohesion: 0.02
-Nodes (97): buildBridgeMigrationCutoverLeaseCleanup, benchmark_helpers.dart, runAckBenchmark, details, events, _findRecoveredOutage, firstEventDetails, firstInbox (+89 more)
-
-### Community 79 - "Community 79"
-Cohesion: 0.02
-Nodes (80): activeChunks, decapsulateSession, decryptChunk, encapsulateSession, encryptChunk, files, length, main (+72 more)
-
-### Community 80 - "Community 80"
 Cohesion: 0.06
 Nodes (76): containsPeer(), handleMediaDelete(), handleMediaDownload(), handleMediaList(), HandleMediaStream(), handleMediaUpload(), NewMediaStore(), downloadMedia() (+68 more)
 
-### Community 81 - "Community 81"
+### Community 78 - "Community 78"
 Cohesion: 0.02
 Nodes (107): group_multi_party_device_criteria.dart, group_multi_party_runtime_config.dart, activeProcessLabelByRole, args, buildHarnessLaunchSpec, configFile, contains, continueOnFailure (+99 more)
 
-### Community 82 - "Community 82"
+### Community 79 - "Community 79"
 Cohesion: 0.02
 Nodes (106): addContact, addRequest, archiveContact, blockContact, conditionalTransitionStatus, contactExists, countPendingIntroductions, deleteAttachmentsForContact (+98 more)
 
+### Community 80 - "Community 80"
+Cohesion: 0.04
+Nodes (90): TestBenchmark_DirectAck_FastConfirm(), TestBenchmark_DirectAck_MultipleMessages(), TestBenchmark_EventQueue_BurstDelivery(), TestBenchmark_EventQueue_IdleDelivery(), TestBenchmark_EventQueue_NoDropUnderLoad(), TestBenchmark_InboxRetrieve_ReturnsEmpty(), TestBenchmark_InboxStore_RequiresConnection(), TestBenchmark_MediaUpload_ProgressEvents() (+82 more)
+
+### Community 81 - "Community 81"
+Cohesion: 0.02
+Nodes (104): addDeleteEvent, adminMember, append, attempts, baseAdmin, baseSender, blockedIds, bridge (+96 more)
+
+### Community 82 - "Community 82"
+Cohesion: 0.02
+Nodes (104): action, bridge, contactRepo, listener, main, _makeV2ReactionMessage, messageRepo, reactionRepo (+96 more)
+
 ### Community 83 - "Community 83"
 Cohesion: 0.02
-Nodes (127): _GuardedEntryFileReader, IoMigrationEntryFileReader, MigrationEntryFileReader, _RecordingEntryReader, orbital_avatar.dart, orbital_ring_painter.dart, overflow_badge.dart, package:flutter_app/features/home/presentation/widgets/editable_username_widget.dart (+119 more)
+Nodes (91): main, bridge, contactRepo, identityRepo, main, p2pService, retrier, main (+83 more)
 
 ### Community 84 - "Community 84"
 Cohesion: 0.02
-Nodes (103): core_fake_p2p.FakeP2PService, addPage, _addSignedInboxPage, attempts, _CursorInboxBridge, _groupPublishPayloads, _InboxPage, messages (+95 more)
-
-### Community 85 - "Community 85"
-Cohesion: 0.03
-Nodes (63): _FakeBridge, _FakeDecryptBridge, _ThrowingBridge, _FakeBridge, _ThrowingBridge, FakeDecryptBridge, _HangingBridge, _AuditBridge (+55 more)
-
-### Community 86 - "Community 86"
-Cohesion: 0.03
-Nodes (63): GateableMediaAttachmentRepository, FakeMediaFileManager, InMemoryMediaAttachmentRepository, _ScopedMediaFileManager, _ScopedMediaFileManager, _Section10TempMediaFileManager, _TrackingDurableMediaFileManager, _TrackingDurableMediaFileManager (+55 more)
-
-### Community 87 - "Community 87"
-Cohesion: 0.02
-Nodes (103): CountingGroupMessageRepository, main, package:flutter_app/core/media/video_process_result.dart, _attempts, buildRecordingWidget, buildWidget, copyCalls, copyToDurableStorage (+95 more)
-
-### Community 88 - "Community 88"
-Cohesion: 0.02
 Nodes (104): _activeGroupId, _activePeerId, _backgroundPreOpenFixture, _backgroundUpdatedFixture, build, buildChatMessageListener, _buildConversation, _buildEventSummary (+96 more)
 
-### Community 89 - "Community 89"
-Cohesion: 0.04
-Nodes (89): TestBenchmark_DirectAck_FastConfirm(), TestBenchmark_DirectAck_MultipleMessages(), TestBenchmark_EventQueue_BurstDelivery(), TestBenchmark_EventQueue_IdleDelivery(), TestBenchmark_EventQueue_NoDropUnderLoad(), TestBenchmark_InboxRetrieve_ReturnsEmpty(), TestBenchmark_InboxStore_RequiresConnection(), TestBenchmark_MediaUpload_ProgressEvents() (+81 more)
-
-### Community 90 - "Community 90"
+### Community 85 - "Community 85"
 Cohesion: 0.02
-Nodes (98): bridge, command, _expectNoPublicRouteFields, expectRejected, _gl005ForbiddenPublicRouteKeys, groupRepo, main, send (+90 more)
+Nodes (106): _InMemoryGroupHistoryGapRepairRepository, activeRetrieves, addDelay, addFailOnce, addPage, addRepairResponse, addTimeout, bridge (+98 more)
 
-### Community 91 - "Community 91"
-Cohesion: 0.02
-Nodes (100): _TrackingInviteDeliveryAttemptRepository, _SpyDeliveryRepo, _TrackingInviteDeliveryAttemptRepository, bobContact, bridge, declinedByPeerId, deliveryRepo, envelope (+92 more)
-
-### Community 92 - "Community 92"
-Cohesion: 0.02
-Nodes (101): activeRetrieves, addDelay, addFailOnce, addPage, addRepairResponse, addTimeout, bridge, buildReplayMap (+93 more)
-
-### Community 93 - "Community 93"
+### Community 86 - "Community 86"
 Cohesion: 0.02
 Nodes (102): addContact, addTestContact, alice, archiveContact, blockContact, bob, bobRowCount, bridge (+94 more)
 
-### Community 94 - "Community 94"
-Cohesion: 0.02
-Nodes (100): addDeleteEvent, adminMember, append, attempts, baseAdmin, baseSender, blockedIds, bridge (+92 more)
+### Community 87 - "Community 87"
+Cohesion: 0.07
+Nodes (91): newMemoryInboxBackend(), failingStoreInboxBackend, TestGIRD004MemoryGroupInboxConflictingSameMessageIDRejected(), TestGIRD004MemoryGroupInboxDistinctMessageIDsPreserveOrder(), TestGIRD004MemoryGroupInboxDuplicateExpandedRecipientACLMerges(), TestGIRD004MemoryGroupInboxMalformedAndUnkeyedMessagesStoreTwice(), TestGroupInboxNonEvictedCursorReportsNoGap(), TestMemoryGroupInboxCapEvictionIncrementsCounter() (+83 more)
 
-### Community 95 - "Community 95"
-Cohesion: 0.02
-Nodes (90): activePins, dismissedPostIds, hydratePostSurfaceItems, loadPinnedPosts, mediaFileManager, orderedPostIds, postRepo, posts (+82 more)
-
-### Community 96 - "Community 96"
-Cohesion: 0.04
-Nodes (52): package:flutter_app/features/settings/presentation/screens/settings_wired.dart, checkHealth, currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox (+44 more)
-
-### Community 97 - "Community 97"
-Cohesion: 0.02
-Nodes (79): Database, fake_secure_key_store.dart, GroupEventLogTamperException, db, main, db, main, db (+71 more)
-
-### Community 98 - "Community 98"
+### Community 88 - "Community 88"
 Cohesion: 0.02
 Nodes (98): group_invite_policy.dart, group_welcome_key_package.dart, buildEncryptedEnvelope, canonicalInviteSignedPayload, currentTimeValidationFailure, _decodeSignedPayload, expiresAt, failure (+90 more)
 
-### Community 99 - "Community 99"
-Cohesion: 0.02
-Nodes (84): AccountMigrationAuthorityRepository, clearAuthority, loadAuthority, saveAuthority, _secureKeyStore, SecureKeyStoreAccountMigrationAuthorityRepository, storageKey, storageKeyPrefix (+76 more)
-
-### Community 100 - "Community 100"
+### Community 89 - "Community 89"
 Cohesion: 0.02
 Nodes (97): _accountSignedUnboundTransportDevice, activeOnly, allowLegacyFallback, any, bridge, buildGroupOfflineReplayEnvelope, buildGroupOfflineReplayInboxRetryPayload, _buildReplaySignedPayload (+89 more)
 
-### Community 101 - "Community 101"
+### Community 90 - "Community 90"
 Cohesion: 0.02
 Nodes (97): _changes, clearPinDismissal, commentExists, _commentReactionsByCommentId, _commentReactionsById, _commentsById, _commentsByPostId, _decoratePost (+89 more)
 
-### Community 102 - "Community 102"
+### Community 91 - "Community 91"
 Cohesion: 0.02
-Nodes (92): accuracyM, _availabilityForSettings, canOpenSettings, capturedAt, checkPermissionState, GeolocatorNearbyLocationPlatformAdapter, getCurrentPosition, handleSharingDisabled (+84 more)
+Nodes (89): applyContactFeedSnapshot, applyGroupFeedSnapshot, nextItems, connectionItem, contact, ContactFeedSnapshot, loadContactFeedSnapshot, messages (+81 more)
 
-### Community 103 - "Community 103"
-Cohesion: 0.02
-Nodes (90): main, buildIdentity, main, tempDir, main, package:flutter_app/core/debug/transport_metrics.dart, package:flutter_app/features/home/application/identity_avatar_resolver.dart, package:flutter_app/features/settings/application/background_preference_use_cases.dart (+82 more)
-
-### Community 104 - "Community 104"
+### Community 92 - "Community 92"
 Cohesion: 0.05
-Nodes (44): connectionInfo, EventDispatcher, EventTracer, groupPeerDialState, lanDialHandler, EventCallback, isRetryableChatStreamOpenError(), messageEnvelopeType() (+36 more)
+Nodes (45): connectionInfo, EventDispatcher, EventTracer, groupPeerDialState, lanDialHandler, EventCallback, isRetryableChatStreamOpenError(), messageEnvelopeType() (+37 more)
 
-### Community 105 - "Community 105"
+### Community 93 - "Community 93"
 Cohesion: 0.02
-Nodes (94): _EventRecorder, _applyWideSurface, appShellController, backingSecureKeyStore, baseIdentityRepo, binding, bridge, buildApp (+86 more)
+Nodes (88): AccountMigrationAuthorityRepository, clearAuthority, loadAuthority, saveAuthority, _secureKeyStore, SecureKeyStoreAccountMigrationAuthorityRepository, storageKey, storageKeyPrefix (+80 more)
 
-### Community 106 - "Community 106"
-Cohesion: 0.07
-Nodes (85): newMemoryInboxBackend(), failingStoreInboxBackend, requireInboxStoreResult(), TestInboxStoreDedup(), TestInboxStoreDedup_DifferentMessageIds(), TestInboxStoreDedup_IntroductionEncryptedDifferentActionMessageIDs(), TestInboxStoreDedup_IntroductionEncryptedEnvelopeWithMessageID(), TestInboxStoreDedup_IntroductionPlaintextDifferentActionMessageIDs() (+77 more)
+### Community 94 - "Community 94"
+Cohesion: 0.02
+Nodes (89): _FakeIdentityRepo, _FakeIdentityRepo, identity, loadIdentity, main, repo, saveIdentity, _testIdentity (+81 more)
 
-### Community 107 - "Community 107"
+### Community 95 - "Community 95"
+Cohesion: 0.02
+Nodes (89): contactRepo, dispose, incomingPresenceStream, _onMessage, PostPresenceListener, postPresenceStream, _presenceController, snapshotRepo (+81 more)
+
+### Community 96 - "Community 96"
+Cohesion: 0.02
+Nodes (88): _RecordingStagedDatabaseOpener, _ThrowingStagedDatabaseOpener, _FfiStagedDatabaseOpener, computeDatabaseChecksumForTesting, database, DefaultMigrationStagedDatabaseOpener, manifest, message (+80 more)
+
+### Community 97 - "Community 97"
 Cohesion: 0.02
 Nodes (93): attachmentsByMessage, candidateIds, candidates, _canReconcileOutgoingSelfEchoStatus, contentHash, deliverySource, details, device (+85 more)
 
-### Community 108 - "Community 108"
+### Community 98 - "Community 98"
 Cohesion: 0.02
-Nodes (89): DiscoveredPeer, fake_p2p_service.dart, FakeP2PService, _ControlledP2PService, _PolicyFakeP2PService, _ControlledP2PService, _ControlledP2PService, _PerRecipientInviteP2PService (+81 more)
+Nodes (89): _changes, dispose, load, loadAll, save, snapshotChanges, _snapshots, addContact (+81 more)
 
-### Community 109 - "Community 109"
+### Community 99 - "Community 99"
 Cohesion: 0.02
 Nodes (93): attempts, blocking, code, committedKeys, consumedAt, createdAt, cursor, deviceId (+85 more)
 
-### Community 110 - "Community 110"
+### Community 100 - "Community 100"
 Cohesion: 0.02
-Nodes (77): logOnlyToken, main, mainPath, nsePath, readSource, routerPath, senderToken, main (+69 more)
+Nodes (92): _EventRecorder, _HarnessEnvironment, audioRecorderService, binding, bridge, build, _callback, _canUseVmServiceTimeline (+84 more)
 
-### Community 111 - "Community 111"
-Cohesion: 0.02
-Nodes (89): comments, loadPostComments, wait, _assertAllRecipientsStarted, _assertBoundedStart, _contact, contacts, _createControlledService (+81 more)
-
-### Community 112 - "Community 112"
+### Community 101 - "Community 101"
 Cohesion: 0.02
 Nodes (92): clearResumeStarted, clearResumeStartedCallCount, _currentState, dialPeer, dialPeerCallCount, dialPeerResult, discoverLocalPeer, discoverPeer (+84 more)
 
-### Community 113 - "Community 113"
+### Community 102 - "Community 102"
 Cohesion: 0.02
-Nodes (87): avatarBase64, avatarBlob, candidate, contactRepo, current, currentLocalPassCount, currentLocalSharedToCount, currentPassRecipientCount (+79 more)
+Nodes (79): AdmitSiblingDeviceFn, admitSiblingDeviceIfTrusted, alreadyPresent, deviceId, EnqueueDeferredGroupKeyDistributionFn, existingById, existingByTransport, latestKey (+71 more)
 
-### Community 114 - "Community 114"
+### Community 103 - "Community 103"
+Cohesion: 0.03
+Nodes (75): Database, fake_secure_key_store.dart, db, main, db, main, makeAttachmentRow, makeMessageRow (+67 more)
+
+### Community 104 - "Community 104"
 Cohesion: 0.02
-Nodes (90): PostModel, build, comment, comments, _commentsScrollController, CommentsSheet, _CommentsSheetState, _CommentTile (+82 more)
+Nodes (87): acceptAll, _activeChunks, activeDatabase, buildBundle, buildReceiver, _bundleFileRelativePaths, bytes, captureCipherMetadata (+79 more)
 
-### Community 115 - "Community 115"
+### Community 105 - "Community 105"
 Cohesion: 0.02
-Nodes (85): _badgeLabel, containsKey, env, _isPlainOnline, _isRelayReady, _isSendable, main, _relayPeerId (+77 more)
+Nodes (81): byId, deleteContactAndMessages, _deleteIntroductionsForPeer, _deleteLocalMediaArtifacts, deleteMediaForContact, introductions, introLists, _loadCandidateMessagesForCleanup (+73 more)
 
-### Community 116 - "Community 116"
+### Community 106 - "Community 106"
 Cohesion: 0.02
 Nodes (89): activeDevices, actor, actorPublicKey, buildGroupConfigPayload, buildGroupConfigStateHash, buildGroupMetadataActorEventPayload, buildSignedGroupMetadataActorEventEnvelope, candidateJoinedAt (+81 more)
 
-### Community 117 - "Community 117"
+### Community 107 - "Community 107"
 Cohesion: 0.02
-Nodes (89): _HarnessEnvironment, audioRecorderService, binding, bridge, build, _callback, _canUseVmServiceTimeline, _captureScenario (+81 more)
+Nodes (85): buildIdentity, main, tempDir, _changes, dispose, load, save, setSharingEnabled (+77 more)
 
-### Community 118 - "Community 118"
+### Community 108 - "Community 108"
 Cohesion: 0.02
-Nodes (88): package:flutter_app/features/feed/domain/models/feed_session_reply.dart, package:flutter_app/features/feed/presentation/widgets/feed_header.dart, activeTab, backgroundPreference, bottomInset, build, _buildComposer, _buildFeedContent (+80 more)
+Nodes (88): failureEvent, GroupMembershipUpdateListener, GroupMessageListener, bridge, buildSignedGroupKeyRepairRequestEnvelope, call, candidates, canonicalGroupKeyRepairRequestSignedPayload (+80 more)
 
-### Community 119 - "Community 119"
+### Community 109 - "Community 109"
 Cohesion: 0.02
 Nodes (88): addContact, archiveContact, blockContact, _captureDebugPrintedLines, checkHealth, conditionalTransitionStatus, contactExists, _contacts (+80 more)
 
-### Community 120 - "Community 120"
+### Community 110 - "Community 110"
+Cohesion: 0.08
+Nodes (23): black, glowInnerOpacity, glowInnerRadiusRatio, glowLuminance, glowMiddleOpacity, glowMiddleRadiusRatio, glowOuterOpacity, glowOuterRadiusRatio (+15 more)
+
+### Community 111 - "Community 111"
 Cohesion: 0.02
 Nodes (88): addContact, addRequest, appShellController, archiveContact, bgBeginResponse, blockContact, buildFeedWiredWithBridge, callLog (+80 more)
 
-### Community 121 - "Community 121"
+### Community 112 - "Community 112"
+Cohesion: 0.04
+Nodes (44): fromPreview, handleDeliveryReceipt, messageIds, AppPausedResult, bridge, callBgEnd, candidates, capped (+36 more)
+
+### Community 113 - "Community 113"
 Cohesion: 0.02
 Nodes (87): _acceptedMemberJoinedAt, acceptedMembershipWatermarkAt, authResult, avatarBlobId, avatarMime, bridge, code, config (+79 more)
 
-### Community 122 - "Community 122"
-Cohesion: 0.02
-Nodes (82): IntroductionListener, build, createState, initState, main, _SettleHarness, _SettleHarnessState, shareIntentService (+74 more)
-
-### Community 123 - "Community 123"
+### Community 114 - "Community 114"
 Cohesion: 0.03
 Nodes (75): DatabaseExecutor, db, insertOutgoing, main, row, assertOutgoingTransition, db, main (+67 more)
 
-### Community 124 - "Community 124"
-Cohesion: 0.02
-Nodes (94): package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart, package:flutter_app/features/posts/presentation/widgets/pass_post_along_sheet.dart, dispose, load, save, setSharingEnabled, settingsChanges, _settingsChangesController (+86 more)
+### Community 115 - "Community 115"
+Cohesion: 0.01
+Nodes (144): ../../application/orbit2_mock_data.dart, Orbit2ChatLine, Orbit2InboxEntry, AppLocalizations, ../domain/models/orbit2_friend.dart, ../domain/models/orbit2_group.dart, ../../domain/models/orbit2_layout_template.dart, ../../domain/models/orbit2_view_mode.dart (+136 more)
 
-### Community 125 - "Community 125"
+### Community 116 - "Community 116"
 Cohesion: 0.02
-Nodes (82): adminGroup, b5NewMember, _BlockingUpdateConfigBridge, bridge, charlie, device, expectBlocked, expectOverflowRejected (+74 more)
+Nodes (86): package:flutter_app/features/feed/domain/models/feed_session_reply.dart, package:flutter_app/features/feed/presentation/widgets/feed_header.dart, activeTab, backgroundPreference, bottomInset, build, _buildComposer, _buildFeedContent (+78 more)
 
-### Community 126 - "Community 126"
-Cohesion: 0.02
-Nodes (82): candidate, contactRepo, copyWith, current, envelope, existingById, existingMedia, existingPost (+74 more)
-
-### Community 127 - "Community 127"
+### Community 117 - "Community 117"
 Cohesion: 0.02
 Nodes (86): IOSink, _adb, _adbPath, _androidDeviceId, _appFileExists, _appPackage, _appReadFile, appWriteDir (+78 more)
 
-### Community 128 - "Community 128"
+### Community 118 - "Community 118"
 Cohesion: 0.02
 Nodes (85): aad, acceptedManifest, acceptManifest, acceptOldBlockProof, acceptSegment, acceptTranscript, advertisedPeerId, bundleId (+77 more)
 
-### Community 129 - "Community 129"
+### Community 119 - "Community 119"
 Cohesion: 0.02
-Nodes (78): accountMigrationNetworkGate, _allowsInboundAccountSideEffects, _autoDownloadMedia, backgroundNotificationDuplicateGuardDelay, bridge, ChatMessageProcessOutcome, ChatMessageProcessState, chatMessageStream (+70 more)
+Nodes (84): IntroductionListener, bridge, captureFlowEvents, contactRepo, introRepo, listener, main, makeContact (+76 more)
 
-### Community 130 - "Community 130"
+### Community 120 - "Community 120"
+Cohesion: 0.03
+Nodes (69): _GuardedEntryFileReader, IoMigrationEntryFileReader, MigrationEntryFileReader, _RecordingEntryReader, BorderRadius, orbital_avatar.dart, orbital_ring_painter.dart, overflow_badge.dart (+61 more)
+
+### Community 121 - "Community 121"
+Cohesion: 0.03
+Nodes (78): main, appShellController, _armTimers, _cancelTimers, dispose, expiryBudget, _expiryTimer, _fallbackTimer (+70 more)
+
+### Community 122 - "Community 122"
 Cohesion: 0.02
-Nodes (83): bridge, buildSignedGroupKeyRepairRequestEnvelope, call, candidates, canonicalGroupKeyRepairRequestSignedPayload, _confirmedGroupReplayCryptoFailureReasons, contains, _defaultGroupRepairNowUtc (+75 more)
+Nodes (83): addContact, addTestContact, archiveContact, blockContact, buildChatJsonWithMedia, buildP2PMessage, buildV2EncryptedEnvelopeJson, buildValidChatJson (+75 more)
 
-### Community 131 - "Community 131"
+### Community 123 - "Community 123"
+Cohesion: 0.02
+Nodes (128): AspectRatio, delay, _expectReport89RowsVisible, _expectVideoViewerCanOpen, _expectVoiceCanPlay, _fixtureEncryptionKeyBase64, _fixtureEncryptionNonce, group (+120 more)
+
+### Community 124 - "Community 124"
 Cohesion: 0.02
 Nodes (82): active,, activeDevices, activeDevicesWithLegacyFallback, allows, candidateIdentityKey, copyWith, _defaultForRole, deleteMessages (+74 more)
 
-### Community 132 - "Community 132"
+### Community 125 - "Community 125"
 Cohesion: 0.03
-Nodes (76): handleShareIntent, ShareIntentRouteBuilder, build, _HandleShareHarness, homeLabel, intent, main, onRouteBuilt (+68 more)
+Nodes (75): AccountMigrationImportPreconditionResult, AccountMigrationImportPreconditionStatus, activeAccountExists, allowed, authority, canStartImport, cleanupRequired, evaluateAccountMigrationImportPrecondition (+67 more)
 
-### Community 133 - "Community 133"
-Cohesion: 0.03
-Nodes (71): cancelledImportCleanup, _deleteArtifacts, failedImportCleanup, failedSecureStorageCleanup, MigrationDatabaseImportCleanup, MigrationFailedSecureStorageCleanup, _sqliteSidecars, successfulImportCleanup (+63 more)
-
-### Community 134 - "Community 134"
-Cohesion: 0.03
-Nodes (76): main, _MemoryCutoverRepository, _MemoryCutoverRepository, _MemoryCutoverRepository, _authorityRepository, _baseRecord, clearLocalStalePushToken, commitNewActive (+68 more)
-
-### Community 135 - "Community 135"
-Cohesion: 0.03
-Nodes (72): copyWith, hiddenAt, isOutgoingDeletedTombstone, normalizeOutgoingDeleteTombstoneVisibility, main, makeAttachment, makeMessage, mediaAttachmentRepo (+64 more)
-
-### Community 136 - "Community 136"
+### Community 126 - "Community 126"
 Cohesion: 0.02
-Nodes (80): addContact, addTestContact, archiveContact, blockContact, buildChatJsonWithMedia, buildP2PMessage, buildV2EncryptedEnvelopeJson, buildValidChatJson (+72 more)
+Nodes (79): calls, _F, fileLength, filesByRoot, lengthsByAbsolutePath, listFilesRecursively, main, name (+71 more)
 
-### Community 137 - "Community 137"
-Cohesion: 0.06
-Nodes (52): chatPushMetadata, groupInboxHistoryGap, groupInboxMessage, GroupInboxStore, addChatEncryptedPushData(), addGroupEncryptedPushData(), addJSONScalarData(), addTrimmedData() (+44 more)
-
-### Community 138 - "Community 138"
+### Community 127 - "Community 127"
 Cohesion: 0.03
-Nodes (82): AnimatedOpacity, appShellController, _armTimers, _cancelTimers, dispose, expiryBudget, _expiryTimer, _fallbackTimer (+74 more)
+Nodes (79): ContactRequestListener, ContactRequestPresentationGate, ../features/contact_request/domain/repositories/fake_contact_request_repository.dart, bridge, contactRepository, contactRequestStream, _flushMicrotasks, listener (+71 more)
 
-### Community 139 - "Community 139"
+### Community 128 - "Community 128"
+Cohesion: 0.03
+Nodes (76): InMemoryPostRepository, _BlockingWritePostRepository, buildJson, contacts, content, _createdAt, _encryptedMediaPostMessage, innerPayload (+68 more)
+
+### Community 129 - "Community 129"
+Cohesion: 0.06
+Nodes (53): chatPushMetadata, groupInboxHistoryGap, groupInboxMessage, GroupInboxStore, addChatEncryptedPushData(), addGroupEncryptedPushData(), addJSONScalarData(), addTrimmedData() (+45 more)
+
+### Community 130 - "Community 130"
 Cohesion: 0.07
 Nodes (76): BlobDecrypt(), BlobEncrypt(), BlobKeygen(), bridgeGroupMemberDeviceHasDistributionMaterial(), bridgeGroupMemberDeviceIsActive(), bridgeGroupMemberHasLegacyDistributionMaterial(), bridgeGroupMemberHasUsableActiveDevice(), ConfirmDirectMessage() (+68 more)
 
-### Community 140 - "Community 140"
+### Community 131 - "Community 131"
 Cohesion: 0.05
 Nodes (44): AggregateRelayState, testRelayCircuitAddr(), TestRelaySessionRuntimeSync_EndsReservationWhenCircuitAddressDisappears(), TestRelaySessionRuntimeSync_IgnoresStaleCircuitAddressWithoutConnectedRelay(), TestRelaySessionRuntimeSync_OpensReservationAndEmitsRelayState(), recoveryPromise, RecoveryResult, NewRelaySessionManager() (+36 more)
 
-### Community 141 - "Community 141"
+### Community 132 - "Community 132"
 Cohesion: 0.03
-Nodes (73): Color, accentColor, availableFriends, build, friend, _FriendPickerRow, FriendPickerScreen, isDisabled (+65 more)
+Nodes (77): _attempts, bridge, _bridgeCommandIndex, captureFlowEvents, ciphertext, _decodedGroupInboxReplayPayload, delay, deleteAttempt (+69 more)
 
-### Community 142 - "Community 142"
+### Community 133 - "Community 133"
 Cohesion: 0.03
 Nodes (77): audioAttachment, bob, BobTestHarness, clearNotifications, conversationTracker, currentState, dialPeer, discoverLocalPeer (+69 more)
 
-### Community 143 - "Community 143"
+### Community 134 - "Community 134"
+Cohesion: 0.03
+Nodes (64): asGroupMemberDeviceSnapshotRepository, compare, multiDeviceSyncEnabled, resolveGroupMemberDeviceSafety, savedDevices, deletePendingSiblingDevice, holdPendingSiblingDevice, HoldPendingSiblingDeviceFn (+56 more)
+
+### Community 135 - "Community 135"
+Cohesion: 0.03
+Nodes (76): ChatMessageListener, ChatMessageListener, ContactUpdate, first_time_experience_screen.dart, ImageSource, _TrackingChatMessageListener, _TrackingChatMessageListener, _FakeIncomingConversationListener (+68 more)
+
+### Community 136 - "Community 136"
+Cohesion: 0.03
+Nodes (68): copyWith, hiddenAt, isOutgoingDeletedTombstone, normalizeOutgoingDeleteTombstoneVisibility, fake_message_repository.dart, conditionalTransitionStatus, getSendingOutgoingMessages, main (+60 more)
+
+### Community 137 - "Community 137"
 Cohesion: 0.03
 Nodes (76): activeContacts, addContact, archiveContact, blockContact, bridge, checkHealth, contactExists, contactRepo (+68 more)
 
-### Community 144 - "Community 144"
+### Community 138 - "Community 138"
 Cohesion: 0.03
-Nodes (62): domain/repositories/fake_identity_repository.dart, commitAvatar, _imageProcessor, normalizeAvatar, prepareAvatar, _random, _uniqueSuffix, appShellController (+54 more)
+Nodes (65): _dbKey, fixedKey, main, errors, hasError, isAccepted, MigrationDatabaseImportError, MigrationDatabaseImportResidual (+57 more)
 
-### Community 145 - "Community 145"
-Cohesion: 0.03
-Nodes (69): Column, EdgeInsets, nav_bar_button.dart, nav_bar_theme.dart, main, suppressAssetErrors, wrap, package:flutter_app/features/conversation/presentation/widgets/compact_origin_marker.dart (+61 more)
-
-### Community 146 - "Community 146"
-Cohesion: 0.02
-Nodes (82): captured, eventsNamed, line, main, thread, avatarPath, _contact, contactPeerId (+74 more)
-
-### Community 147 - "Community 147"
-Cohesion: 0.03
-Nodes (68): applyChange, clearMessageIds, dispose, FeedReactionStore, listenableForMessage, _notifierFor, _notifiers, reactionsForMessage (+60 more)
-
-### Community 148 - "Community 148"
-Cohesion: 0.03
-Nodes (71): encPendingAttachment, main, detailsFor, eventNames, events, main, mediaReady, pendingAttachment (+63 more)
-
-### Community 149 - "Community 149"
+### Community 139 - "Community 139"
 Cohesion: 0.03
 Nodes (74): acceptedGroup, acceptedGroupAdvanced, _acceptedGroupAdvancedBeyondInviteMetadata, acceptedGroupId, acceptedInboxDrainMaxAttempts, acceptedInboxDrainRetryDelay, acceptedInboxPageSize, acceptedMetadataUpdatedAt (+66 more)
 
-### Community 150 - "Community 150"
+### Community 140 - "Community 140"
+Cohesion: 0.03
+Nodes (52): main, cleanupSessionArtifacts, MigrationFileImportCleanup, stagingRootPath, main, dart:io, main, flutter_secure_key_store.dart (+44 more)
+
+### Community 141 - "Community 141"
 Cohesion: 0.03
 Nodes (74): aggregate, aggregatePostDeliveryStatusFromDeliveries, allRecipientPeerIds, applyRecipientCompletion, bridge, buildEncryptedEnvelope, _buildPostPassWireEnvelope, _buildRecipientScopedPostPassInnerJson (+66 more)
 
-### Community 151 - "Community 151"
-Cohesion: 0.03
-Nodes (69): Canvas, avatarByIndex, enterManage, innerMembers, innerWorkKey, main, manageToggle, openMessages (+61 more)
-
-### Community 152 - "Community 152"
+### Community 142 - "Community 142"
 Cohesion: 0.03
 Nodes (74): addresses, attempts, bridge, chatListener, clear, cliMlKemPublicKey, cliPeer, cliPeerId (+66 more)
 
-### Community 153 - "Community 153"
+### Community 143 - "Community 143"
 Cohesion: 0.04
-Nodes (43): NearbyLocationServiceImpl, refreshNearbyOnStartup, NearbyLocationService, package:flutter_app/features/posts/application/nearby_location_service.dart, package:flutter_app/features/posts/application/refresh_nearby_on_startup_use_case.dart, _FakeNearbyLocationService, handleSharingDisabled, handleSharingDisabledCallCount (+35 more)
+Nodes (46): package:flutter_app/features/conversation/domain/models/media_preview_descriptor.dart, package:flutter_app/features/feed/domain/utils/format_message_time.dart, package:flutter_app/features/feed/presentation/widgets/unread_count_badge.dart, package:flutter_app/features/orbit/presentation/widgets/friend_row.dart, package:flutter_app/features/orbit/presentation/widgets/orbit_media_preview_label.dart, package:flutter_app/l10n/app_localizations_en.dart, main, build (+38 more)
 
-### Community 154 - "Community 154"
-Cohesion: 0.03
-Nodes (71): ContactRequestListener, ContactRequestPresentationGate, alice, alicePeerId, bob, bobPeerId, bridge, _buildBridge (+63 more)
-
-### Community 155 - "Community 155"
+### Community 144 - "Community 144"
 Cohesion: 0.03
 Nodes (73): floating_avatar.dart, orbit2_inner_circle.dart, package:flutter/semantics.dart, Size, add, build, _buildCarriedOut, _buildNode (+65 more)
 
-### Community 156 - "Community 156"
+### Community 145 - "Community 145"
+Cohesion: 0.03
+Nodes (70): chatGroup, conversationApp, fortyMessages, localAfternoon, main, messageAt, pumpFrames, rectWithin (+62 more)
+
+### Community 146 - "Community 146"
 Cohesion: 0.03
 Nodes (73): addRelayBase, addresses, buildResult, cliReceived, cliSentCount, command, commandOk, commandWithRetry (+65 more)
 
-### Community 157 - "Community 157"
-Cohesion: 0.01
-Nodes (159): AnimatedBuilder, CustomPaint, package:flutter_app/core/theme/feed_colors.dart, package:flutter_app/features/contact_profile/presentation/screens/contact_profile_screen.dart, package:flutter_app/features/home/presentation/widgets/empty_circle_state.dart, package:flutter_app/features/home/presentation/widgets/scan_friend_card.dart, buildContact, main (+151 more)
-
-### Community 158 - "Community 158"
+### Community 147 - "Community 147"
 Cohesion: 0.03
-Nodes (68): blurb, build, _connector, _h, _item, label, _loud, _name (+60 more)
+Nodes (67): avatarSnapshots, hydratePostSurfaceItems, mediaMap, postList, repostHeartBaselines, viewerSharedToCounts, wait, created (+59 more)
 
-### Community 159 - "Community 159"
-Cohesion: 0.04
-Nodes (51): package:flutter_app/features/groups/presentation/widgets/pending_group_invite_card.dart, backgroundPreference, build, _buildContent, _buildEmptyState, _buildGroupCard, _buildHeader, _buildInviteOutcomeRow (+43 more)
-
-### Community 160 - "Community 160"
+### Community 148 - "Community 148"
 Cohesion: 0.03
 Nodes (71): _android_app_package.dart, _adb, _adbPath, _androidDeviceId, _appPackage, bundleId, _cleanupAndroidAppWriteDir, _cleanupAndroidTempDir (+63 more)
 
-### Community 161 - "Community 161"
+### Community 149 - "Community 149"
 Cohesion: 0.03
-Nodes (67): adminPeerId, adminTransport, bridge, buildSender, groupId, groupRepo, main, requesterDeviceId (+59 more)
+Nodes (69): avatarPath, _contact, contactPeerId, contactRepo, _group, groupId, _groupMessage, groupMessageRepo (+61 more)
 
-### Community 162 - "Community 162"
+### Community 150 - "Community 150"
 Cohesion: 0.03
-Nodes (65): main, RecordingSecureKeyStore, _FakeIdentityRepo, identityRepository, lastRestoreInput, loadIdentity, main, mlKemCallCount (+57 more)
+Nodes (69): acknowledged, actualTransport, attachments, _bestEffortCleanup, budgetMs, buildDeletedMessageTombstone, buildDeletionWireEnvelope, buildEncryptedEnvelope (+61 more)
 
-### Community 163 - "Community 163"
-Cohesion: 0.04
-Nodes (60): main, sendMessage, startedState, _ThrowingSendFakeP2PService, ../bridge/fake_bridge.dart, all, at, bgBeginCount (+52 more)
+### Community 151 - "Community 151"
+Cohesion: 0.03
+Nodes (65): deliveryResult, EditPinnedPostResult, _editPinnedPostResultForSettlement, envelope, existingState, media, now, pinState (+57 more)
 
-### Community 164 - "Community 164"
+### Community 152 - "Community 152"
+Cohesion: 0.03
+Nodes (65): MigrationFileManifestBuilder, file, main, writeAsString, _writeRelative, _builder, MigrationFileManifestValidator, file (+57 more)
+
+### Community 153 - "Community 153"
 Cohesion: 0.03
 Nodes (70): actedOn, chatMessages, _collectSnapshot, config, _configFile, contacts, conversationPeerIds, decoded (+62 more)
 
-### Community 165 - "Community 165"
+### Community 154 - "Community 154"
 Cohesion: 0.03
 Nodes (70): clearPinDismissal, commentExists, deletePendingChildEvent, deletePostCascade, dispose, getCommentReaction, getFollowOnOutboxEvent, getPost (+62 more)
 
-### Community 166 - "Community 166"
+### Community 155 - "Community 155"
 Cohesion: 0.03
 Nodes (70): clearPinDismissal, commentExists, deletePendingChildEvent, deletePostCascade, dispose, getCommentReaction, getFollowOnOutboxEvent, getPost (+62 more)
 
-### Community 167 - "Community 167"
+### Community 156 - "Community 156"
 Cohesion: 0.03
-Nodes (69): acceptAll, _activeChunks, activeDatabase, buildBundle, buildReceiver, _bundleFileRelativePaths, bytes, captureCipherMetadata (+61 more)
+Nodes (66): _aggregatePostPassFollowOnSettlement, deliveries, _deliverPostPassFollowOnRecipients, envelope, eventId, eventType, isPostPassFollowOnEventType, _loadPersistedPostPassFollowOnResult (+58 more)
 
-### Community 168 - "Community 168"
+### Community 157 - "Community 157"
 Cohesion: 0.11
 Nodes (69): TestGroupGenerateNextKey_DoesNotMutateStoredKeyState(), TestGroupGenerateNextKey_GroupKeyGraceActiveRejectsSecondNativeRotation(), TestGroupGenerateNextKey_InvalidJSON(), TestGroupGenerateNextKey_KE002UsesLatestCommittedEpochWithoutMutating(), TestGroupGenerateNextKey_KE013BlocksWhenGroupKeyStateMissing(), TestGroupGenerateNextKey_KE013UsesRestoredEpochAfterRestartMemoryLoss(), TestGroupGenerateNextKey_MissingGroupId(), TestGroupGenerateNextKey_NodeNotInitialized() (+61 more)
 
-### Community 169 - "Community 169"
+### Community 158 - "Community 158"
+Cohesion: 0.03
+Nodes (69): Alignment, Column, nav_bar_button.dart, nav_bar_theme.dart, main, suppressAssetErrors, wrap, package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart (+61 more)
+
+### Community 159 - "Community 159"
+Cohesion: 0.03
+Nodes (65): addContact, author, condition, contactRepo, create, deadline, dispose, main (+57 more)
+
+### Community 160 - "Community 160"
 Cohesion: 0.03
 Nodes (68): @Deprecated, callGroupAcknowledgeRecovery, callGroupCreate, callGroupDecrypt, callGroupEncrypt, callGroupGenerateNextKey, callGroupHistoryRepairRange, callGroupInboxRetrieve (+60 more)
 
-### Community 170 - "Community 170"
-Cohesion: 0.04
-Nodes (48): acceptManifest, acceptSegment, acceptTranscript, advertisedPeerId, captureCipherMetadata, clearAuthority, clearCutover, complete (+40 more)
-
-### Community 171 - "Community 171"
-Cohesion: 0.04
-Nodes (50): _absoluteForRelativePath, acceptSizeDivergence, _addBestPathFailureIssue, addCandidate, _addChatMedia, _addPathBackedItem, _addPathCandidateIfUsable, _addPendingPostMedia (+42 more)
-
-### Community 172 - "Community 172"
+### Community 161 - "Community 161"
 Cohesion: 0.03
-Nodes (65): main, tempDir, _dbName, main, rejoinGroupTopic, _role, _runAlice, _runBob (+57 more)
+Nodes (61): introsBannerDismissed, isArchived, isBlocked, main, _makeContact, username, contactRepo, introsBannerDismissed (+53 more)
 
-### Community 173 - "Community 173"
+### Community 162 - "Community 162"
 Cohesion: 0.03
-Nodes (68): JoinedGroup, PendingInvite, appShellController, bridge, buildFeedWired, contactRepo, contactRequestRepo, _contactUpdateController (+60 more)
+Nodes (67): _FakeMediaAttachmentRepo, _FakeMediaFileManager, FakeMediaAttachmentRepository, FakeMediaFileManager, _FakeMediaAttachmentRepo, _FakeMediaFileManager, _FakeMediaAttachmentRepository, FakeMediaAttachmentRepository (+59 more)
 
-### Community 174 - "Community 174"
+### Community 163 - "Community 163"
+Cohesion: 0.03
+Nodes (62): main, makeAttachment, makeMessage, mediaAttachmentRepo, mediaFileManager, messageRepo, reactionRepo, recipientMlKemPublicKey (+54 more)
+
+### Community 164 - "Community 164"
+Cohesion: 0.02
+Nodes (84): Canvas, avatarByIndex, enterManage, innerMembers, innerWorkKey, main, manageToggle, openMessages (+76 more)
+
+### Community 165 - "Community 165"
 Cohesion: 0.03
 Nodes (67): aliceService, _AvatarProcessingProbe, _avatarSnapshotBytes, bobService, bridge, builder, _captureFlowEvents, caraService (+59 more)
 
-### Community 175 - "Community 175"
+### Community 166 - "Community 166"
 Cohesion: 0.03
-Nodes (60): bridge, contactRepo, _CrashAfterNthOutboxSaveIntroductionRepository, crashOnSaveNumber, introRepo, main, network, now (+52 more)
+Nodes (66): advertisedPeerId, captureCipherMetadata, clearAuthority, clearCutover, consumed, consumeSession, _controller, createdAt (+58 more)
 
-### Community 176 - "Community 176"
-Cohesion: 0.02
-Nodes (108): advertisedPeerId, captureCipherMetadata, clearAuthority, clearCutover, consumed, consumeSession, _controller, createdAt (+100 more)
+### Community 167 - "Community 167"
+Cohesion: 0.04
+Nodes (53): bridge, checkHealth, dispose, _FakeBridge, initialize, isInitialized, main, _otherPeerId (+45 more)
 
-### Community 177 - "Community 177"
-Cohesion: 0.03
-Nodes (66): acknowledged, actualTransport, attachments, _bestEffortCleanup, budgetMs, buildDeletedMessageTombstone, buildDeletionWireEnvelope, buildEncryptedEnvelope (+58 more)
-
-### Community 178 - "Community 178"
-Cohesion: 0.06
-Nodes (56): DiscoverResponse, newMemoryRendezvousBackend(), Discover, MessageType, skipField(), UnmarshalDiscover(), UnmarshalRegister(), UnmarshalRegistration() (+48 more)
-
-### Community 179 - "Community 179"
+### Community 168 - "Community 168"
 Cohesion: 0.03
 Nodes (66): checkHealth, conditionalTransitionStatus, _contactB, _contactC, currentState, deleteMessage, deleteMessagesForContact, dialPeer (+58 more)
 
-### Community 180 - "Community 180"
-Cohesion: 0.03
-Nodes (64): PendingSiblingDevice, package:flutter_app/features/groups/domain/models/pending_sibling_device.dart, package:flutter_app/features/groups/presentation/widgets/group_member_row.dart, package:flutter_app/features/groups/presentation/widgets/pending_sibling_device_prompt.dart, _amberAccent, backgroundPreference, _blueAccent, build (+56 more)
+### Community 169 - "Community 169"
+Cohesion: 0.02
+Nodes (80): PendingSiblingDevice, package:flutter_app/features/groups/domain/models/pending_sibling_device.dart, package:flutter_app/features/groups/presentation/widgets/group_dissolved_badge.dart, package:flutter_app/features/groups/presentation/widgets/group_member_row.dart, package:flutter_app/features/groups/presentation/widgets/group_type_badge.dart, package:flutter_app/features/groups/presentation/widgets/pending_sibling_device_prompt.dart, buildTestWidget, main (+72 more)
 
-### Community 181 - "Community 181"
-Cohesion: 0.03
-Nodes (65): _RealisticKemSizedStreamCrypto, _DeterministicSegmentCrypto, _NeverUsedStreamCrypto, _assertSessionMatches, associatedDataSha256, base64Encode, bridge, BridgeMigrationSegmentCrypto (+57 more)
-
-### Community 182 - "Community 182"
+### Community 170 - "Community 170"
 Cohesion: 0.03
 Nodes (65): AccountMigrationLocalTransferBundle, MigrationDatabaseImportStaging, add, advertisedPeerId, _BenchmarkBundleArtifacts, _BenchmarkDatabaseImportStaging, _benchmarkFileRelativePath, _benchMb (+57 more)
 
-### Community 183 - "Community 183"
+### Community 171 - "Community 171"
+Cohesion: 0.03
+Nodes (63): _FakeBridge, _FakeDecryptBridge, _ThrowingBridge, _MockBridge, _FakeBridge, _ThrowingBridge, FakeDecryptBridge, _FakeBridge (+55 more)
+
+### Community 172 - "Community 172"
 Cohesion: 0.03
 Nodes (65): _attachmentsByMessage, basePath, bridge, captureFlowEvents, checkHealth, commandLog, copyWith, decryptResponse (+57 more)
 
-### Community 184 - "Community 184"
-Cohesion: 0.03
-Nodes (63): main, _TrackingReactionListener, _TrackingReactionListener, main, ReactionChange, package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart, package:flutter_app/features/settings/domain/models/image_quality_preference.dart, Reaction (+55 more)
-
-### Community 185 - "Community 185"
-Cohesion: 0.06
-Nodes (55): DecryptGroupMessage(), EncryptGroupMessage(), TestBuildGroupSignatureData_Deterministic(), TestBuildGroupSignatureData_Format(), TestDecryptGroupMessage_InvalidBase64(), TestEncryptGroupMessage_InvalidKey(), TestEncryptGroupMessage_WrongKeyLength(), TestGK002EncryptDecryptRoundTripForTextPayload() (+47 more)
-
-### Community 186 - "Community 186"
+### Community 173 - "Community 173"
 Cohesion: 0.03
 Nodes (65): addressesPushFired, bridgeUnhealthy, checkHealth, _consecutiveRefreshFailures, dispose, eventChannelDead, _fireAddressesUpdated, _fireRecoveryOnlinePushes (+57 more)
 
-### Community 187 - "Community 187"
+### Community 174 - "Community 174"
 Cohesion: 0.03
 Nodes (62): amplitudeValues, build, elapsed, _formatDuration, onCancel, RecordingOverlay, package:flutter_app/features/conversation/presentation/widgets/recording_overlay.dart, package:flutter_app/features/conversation/presentation/widgets/voice_record_button.dart (+54 more)
 
-### Community 188 - "Community 188"
+### Community 175 - "Community 175"
+Cohesion: 0.03
+Nodes (61): FakeIntroductionRepository, main, main, IntroductionRepository, main, package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart, package:flutter_app/features/settings/domain/models/image_quality_preference.dart, IntroductionRepositoryImpl (+53 more)
+
+### Community 176 - "Community 176"
+Cohesion: 0.03
+Nodes (61): avatarBase64, avatarBlob, candidate, contactRepo, current, currentLocalPassCount, currentLocalSharedToCount, currentPassRecipientCount (+53 more)
+
+### Community 177 - "Community 177"
+Cohesion: 0.03
+Nodes (60): main, payload, main, payload, main, resultFor, acceptManifest, acceptSegment (+52 more)
+
+### Community 178 - "Community 178"
+Cohesion: 0.03
+Nodes (60): AudioRecorder, driver, main, UploadWakeLockDriver, WakelockPlusUploadWakeLockDriver, disable, disableCalls, enable (+52 more)
+
+### Community 179 - "Community 179"
 Cohesion: 0.03
 Nodes (64): calls, clearResumeStarted, conditionalTransitionStatus, connected, currentState, deleteMessage, deleteMessagesForContact, dialPeer (+56 more)
 
-### Community 189 - "Community 189"
+### Community 180 - "Community 180"
 Cohesion: 0.03
-Nodes (58): AdmitSiblingDeviceFn, admitSiblingDeviceIfTrusted, alreadyPresent, deviceId, EnqueueDeferredGroupKeyDistributionFn, existingById, existingByTransport, latestKey (+50 more)
+Nodes (57): _TrackingInviteDeliveryAttemptRepository, appendGroupEventLogEntry, bridge, contactRepo, _defaultNow, deliveryRepo, dispose, downloadGroupAvatarFn (+49 more)
 
-### Community 190 - "Community 190"
-Cohesion: 0.05
-Nodes (38): _buildTestWidget, chatListener, conditionalTransitionStatus, _contact, _contactPeerId, _delayedSuccessSend, deleteMessage, deleteMessagesForContact (+30 more)
-
-### Community 191 - "Community 191"
-Cohesion: 0.03
-Nodes (59): deleteGroupAndMessages, deleteLocallyIfDissolved, bridge, command, fullGroupConfig, groupRepo, main, send (+51 more)
-
-### Community 192 - "Community 192"
-Cohesion: 0.03
-Nodes (61): addPage, bridge, buildSignedReplay, _Clock, contains, endedAt, getGroup, getKeyByGeneration (+53 more)
-
-### Community 193 - "Community 193"
-Cohesion: 0.03
-Nodes (63): additionalCount, avatarCacheBustKey, avatarPath, canReact, canWrite, CardThreadFeedItem, collapsedPreviewMessage, connectedVia (+55 more)
-
-### Community 194 - "Community 194"
+### Community 181 - "Community 181"
 Cohesion: 0.03
 Nodes (63): addContact, archiveContact, blockContact, checkHealth, contactExists, currentState, deleteContact, dialPeer (+55 more)
 
-### Community 195 - "Community 195"
+### Community 182 - "Community 182"
 Cohesion: 0.03
-Nodes (60): actor, actorEnvelope, actorPeerId, actorUsername, ApplyGroupConfigResponseResult, applyOnJoinGroupConfigResponse, config, decodedSigned (+52 more)
+Nodes (62): AccountMigrationReceiverEvents, AccountMigrationSizeGate, AccountMigrationExportAuthorizeFn, AccountMigrationQrBuildFn, AccountMigrationQrScanFn, _activeReceiverSessionId, _authorizationErrorText, _authorizedTranscript (+54 more)
 
-### Community 196 - "Community 196"
-Cohesion: 0.04
-Nodes (55): contactRepo, main, messageRepo, mutualIntro, introduced, introducer, main, network (+47 more)
-
-### Community 197 - "Community 197"
+### Community 183 - "Community 183"
 Cohesion: 0.03
-Nodes (78): activeDatabase, importedRows, importedTables, importVerifiedStagedDatabase, message, MigrationDatabaseActiveImportException, MigrationDatabaseActiveImportResult, _runQuickCheck (+70 more)
+Nodes (77): AppendGroupEventLogEntry, _InMemoryGroupPendingKeyRepairRepository, _InMemoryGroupPendingKeyRepairRepository, _acceptedSignedTransitionAuditHashesBySourceId, _appendGroupEventLogEntry, _bridge, dispose, _enqueueMessage (+69 more)
 
-### Community 198 - "Community 198"
+### Community 184 - "Community 184"
+Cohesion: 0.03
+Nodes (55): fromStorageString, loadBackgroundPreference, saveBackgroundPreference, value, write, clearGroupDeviceAnnounceMarker, delete, kGroupDeviceAnnouncePendingKey (+47 more)
+
+### Community 185 - "Community 185"
+Cohesion: 0.03
+Nodes (58): main, events, handleMissingRouteTarget, handleRouteTarget, main, missingRouteTargetCalls, prepare, _PushOpenHarness (+50 more)
+
+### Community 186 - "Community 186"
 Cohesion: 0.04
-Nodes (54): mapChatReplayOutcomeToDisposition, DetailedInboxStore, LifecycleBridge, bridge, main, service, bridge, main (+46 more)
+Nodes (55): introsBannerDismissed, isArchived, isBlocked, main, _makeContact, username, introduced, introducer (+47 more)
 
-### Community 199 - "Community 199"
+### Community 187 - "Community 187"
+Cohesion: 0.03
+Nodes (59): bytesToWrite, captureCipherMetadata, commands, _createSeededAccountDb, execute, exportDestinationKey, exportDestinationPath, exportSqlCipherDatabase (+51 more)
+
+### Community 188 - "Community 188"
+Cohesion: 0.03
+Nodes (62): ageMs, armStallTimer, autoRegister, callP2PConfirmDirectMessage, callP2PInboxAck, callP2PInboxRegisterToken, callP2PInboxRetrieve, callP2PInboxRetrievePending (+54 more)
+
+### Community 189 - "Community 189"
 Cohesion: 0.03
 Nodes (62): group_message_local_deletions_db_helpers.dart, args, contains, dbClearGroupMessageRetryBackoff, dbCountGroupMessages, dbCountTotalUnreadGroupMessages, dbCountUnreadGroupMessages, dbDeleteGroupMessage (+54 more)
 
-### Community 200 - "Community 200"
+### Community 190 - "Community 190"
 Cohesion: 0.03
-Nodes (58): build, main, _openConversation, _openGroup, _handleNotificationRouteTarget, MaterialPageRoute, main, main (+50 more)
+Nodes (61): _RealisticKemSizedStreamCrypto, _NeverUsedStreamCrypto, _assertSessionMatches, associatedDataSha256, base64Encode, bridge, BridgeMigrationStreamCrypto, bundleId (+53 more)
 
-### Community 201 - "Community 201"
+### Community 191 - "Community 191"
 Cohesion: 0.03
-Nodes (53): events, handleMissingRouteTarget, handleRouteTarget, main, missingRouteTargetCalls, prepare, _PushOpenHarness, routedTargets (+45 more)
+Nodes (61): _AuditBridge, callLog, _changes, checkHealth, conditionalTransitionStatus, currentState, deleteMessage, deleteMessagesForContact (+53 more)
 
-### Community 202 - "Community 202"
-Cohesion: 0.03
-Nodes (61): ageMs, armStallTimer, autoRegister, callP2PConfirmDirectMessage, callP2PInboxAck, callP2PInboxRegisterToken, callP2PInboxRetrieve, callP2PInboxRetrievePending (+53 more)
-
-### Community 203 - "Community 203"
+### Community 192 - "Community 192"
 Cohesion: 0.03
 Nodes (61): _AliceConversationDeps, _AliceHarnessApp, at, bridge, build, chatListener, clearDeliveredNotifications, consumeInitialPayload (+53 more)
 
-### Community 204 - "Community 204"
+### Community 193 - "Community 193"
 Cohesion: 0.03
 Nodes (61): _audioMedia, avatarOutsideBubble, _bubbleBorderRadius, bubbleLayout, build, _buildBodyChildren, _buildBubble, _buildFailedMessageAction (+53 more)
 
-### Community 205 - "Community 205"
-Cohesion: 0.03
-Nodes (57): AmplitudeBuffer, main, main, package:flutter_app/core/media/amplitude_buffer.dart, package:flutter_app/core/media/downsample_waveform.dart, package:flutter_app/shared/widgets/media/recording_overlay.dart, activePinCount, _amplitudeBuffer (+49 more)
-
-### Community 206 - "Community 206"
+### Community 194 - "Community 194"
 Cohesion: 0.03
 Nodes (60): addContact, archiveContact, blockContact, conditionalTransitionStatus, contactExists, contactPeerId, contacts, deleteContact (+52 more)
 
-### Community 207 - "Community 207"
+### Community 195 - "Community 195"
 Cohesion: 0.03
 Nodes (60): attemptCount, _awaitLateDeliveryResult, candidates, _deferredGroupKeyDistributionReopenSink, _deferredGroupKeyDistributionSink, deferredPeerIds, _deliverableDevicesForRotation, deliverableGroupKeyDevices (+52 more)
 
-### Community 208 - "Community 208"
+### Community 196 - "Community 196"
 Cohesion: 0.03
-Nodes (60): callLog, _changes, checkHealth, conditionalTransitionStatus, currentState, deleteMessage, deleteMessagesForContact, dialPeer (+52 more)
+Nodes (60): DurableLanFakeP2PService, DurableLanSender, connectedPeers, currentState, dialAlwaysFails, dialDelay, dialPeer, discoverAlwaysFails (+52 more)
 
-### Community 209 - "Community 209"
+### Community 197 - "Community 197"
 Cohesion: 0.03
 Nodes (60): callLog, checkHealth, conditionalTransitionStatus, _ctrl, currentState, deleteMessage, deleteMessagesForContact, dialPeer (+52 more)
 
-### Community 210 - "Community 210"
+### Community 198 - "Community 198"
 Cohesion: 0.03
-Nodes (59): AudioPlayerPlatform, dispose, disposeAllPlayers, _disposed, disposePlayer, _emitPlayback, _FakeAudioPlayer, FakeJustAudioPlatform (+51 more)
+Nodes (60): additionalCount, avatarCacheBustKey, avatarPath, canReact, canWrite, collapsedPreviewMessage, connectedVia, ConnectionFeedItem (+52 more)
 
-### Community 211 - "Community 211"
+### Community 199 - "Community 199"
+Cohesion: 0.04
+Nodes (54): bridge, contactRepo, _CrashAfterNthOutboxSaveIntroductionRepository, crashOnSaveNumber, introRepo, main, network, now (+46 more)
+
+### Community 200 - "Community 200"
 Cohesion: 0.03
-Nodes (58): _InMemoryGroupPendingKeyRepairRepository, _InMemoryGroupPendingKeyRepairRepository, attemptCount, _bridge, buildGroupMembershipUpdateDirectEnvelope, deliveryPeerId, dispose, _enqueueMessage (+50 more)
+Nodes (51): benchmark_1_1_send_harness.dart, benchmark_ack_harness.dart, benchmark_background_resume_harness.dart, benchmark_bridge_crossing_harness.dart, benchmark_connection_reuse_harness.dart, benchmark_encryption_harness.dart, benchmark_event_queue_harness.dart, benchmark_group_publish_harness.dart (+43 more)
 
-### Community 212 - "Community 212"
+### Community 201 - "Community 201"
+Cohesion: 0.05
+Nodes (49): ../bridge/fake_bridge.dart, ../../../integration_test/_support/node_readiness.dart, bridge, main, _makeContact, _makeIdentity, mlKemPublicKey, p2pService (+41 more)
+
+### Community 202 - "Community 202"
+Cohesion: 0.09
+Nodes (34): decodeGroupInboxEntries(), encodeRedisComponent(), encodeRedisGroupInboxRecord(), encodeRedisGroupInboxRecords(), filterInboxEntries(), minInt(), newRedisClientFromURL(), newRedisPushTokenBackend() (+26 more)
+
+### Community 203 - "Community 203"
 Cohesion: 0.03
-Nodes (69): fromStorageString, loadBackgroundPreference, saveBackgroundPreference, value, write, clearGroupDeviceAnnounceMarker, delete, kGroupDeviceAnnouncePendingKey (+61 more)
+Nodes (57): addPage, bridge, buildSignedReplay, _Clock, contains, endedAt, getGroup, getKeyByGeneration (+49 more)
 
-### Community 213 - "Community 213"
+### Community 204 - "Community 204"
+Cohesion: 0.04
+Nodes (55): bridge, contactPeerId, contactRepo, _contactWithMlKem, _doneAttachment, durationMs, fakeUploadFn, id (+47 more)
+
+### Community 205 - "Community 205"
 Cohesion: 0.03
 Nodes (58): actorPayload, actorPeerId, actorPublicKey, actorUsername, _aliceContact, _bobIdentity, bridge, buildConfigRequestListener (+50 more)
 
-### Community 214 - "Community 214"
+### Community 206 - "Community 206"
+Cohesion: 0.03
+Nodes (56): attempts, bridge, createdAt, envelope, groupRepo, keyEpoch, keyInfo, main (+48 more)
+
+### Community 207 - "Community 207"
 Cohesion: 0.03
 Nodes (58): attempts, _buildWelcomeKeyPackage, canonicalInvitePayload, currentFreshnessState, _deriveCanInviteOthers, _deriveInvitePolicy, describeFailures, devices (+50 more)
 
-### Community 215 - "Community 215"
-Cohesion: 0.06
-Nodes (34): Alignment, package:flutter_app/features/feed/presentation/widgets/feed_swipe_card.dart, animatedOpacityDurations, animatedSizeDurations, buildFeedScreen, buildThreadItem, items, main (+26 more)
+### Community 208 - "Community 208"
+Cohesion: 0.04
+Nodes (58): _badgeFrames, binding, build, _callback, _canUseVmServiceTimeline, _captureScenario, _closeFrames, closeOrbit (+50 more)
 
-### Community 216 - "Community 216"
+### Community 209 - "Community 209"
 Cohesion: 0.03
 Nodes (57): _SharedFakeDiscovery, _SharedFakeDiscovery, aad, acceptedSegmentIndexes, acceptManifest, acceptSegment, acceptTranscript, advertisedPeerId (+49 more)
 
-### Community 217 - "Community 217"
-Cohesion: 0.04
-Nodes (42): addContact, archiveContact, blockContact, contactExists, deleteContact, dismissIntroBanner, existsResult, _FakeContactRepository (+34 more)
-
-### Community 218 - "Community 218"
-Cohesion: 0.04
-Nodes (53): deliveryResult, EditPinnedPostResult, _editPinnedPostResultForSettlement, envelope, existingState, media, now, pinState (+45 more)
-
-### Community 219 - "Community 219"
+### Community 210 - "Community 210"
 Cohesion: 0.03
-Nodes (57): connectedPeers, currentState, dialAlwaysFails, dialDelay, dialPeer, discoverAlwaysFails, discoverDelay, discoverLocalPeer (+49 more)
+Nodes (57): addContact, addRequest, addTestContact, archiveContact, blockContact, bridge, checkHealth, confirmRequests (+49 more)
 
-### Community 220 - "Community 220"
+### Community 211 - "Community 211"
 Cohesion: 0.04
-Nodes (51): GetInitialRemoteMessageFn, handleInitialRemoteMessage, message, OnInitialRemoteMessageFn, sync, cooldown, _inFlight, KeyExchangeRetryCoordinator (+43 more)
+Nodes (54): _addChatMediaUpload, _addGroupInboxStoreRetry, _addGroupMessageRetry, _addGroupPendingKeyRepair, _addGroupPendingMembership, _addGroupReactionReplay, _addIntroductionOutbox, _addIssue (+46 more)
 
-### Community 221 - "Community 221"
+### Community 212 - "Community 212"
+Cohesion: 0.04
+Nodes (57): InMemoryInboxStagingRepository, _DeleteSpyStagingRepo, _ThrowingInboxStagingRepository, RecoveredInboxReplayOutcome, action, bridge, buildSweepService, calledCommands (+49 more)
+
+### Community 213 - "Community 213"
 Cohesion: 0.04
 Nodes (56): acknowledged, actualTransport, allowInboxFallback, alreadyConnected, _buildRawEnvelope, completer, createIntroductionOutboxDelivery, deliveredCount (+48 more)
 
-### Community 222 - "Community 222"
+### Community 214 - "Community 214"
 Cohesion: 0.04
 Nodes (56): actor, audit, auditHash, buildGroupKeyUpdateTransitionSubject, buildGroupSystemTransitionSubject, buildGroupTransitionOutputHash, buildGroupTransitionStateHash, _canonicalEquals (+48 more)
 
-### Community 223 - "Community 223"
-Cohesion: 0.04
-Nodes (49): benchmark_1_1_send_harness.dart, benchmark_ack_harness.dart, benchmark_background_resume_harness.dart, benchmark_bridge_crossing_harness.dart, benchmark_connection_reuse_harness.dart, benchmark_encryption_harness.dart, benchmark_event_queue_harness.dart, benchmark_group_publish_harness.dart (+41 more)
-
-### Community 224 - "Community 224"
-Cohesion: 0.04
-Nodes (54): addContact, author, condition, contactRepo, create, deadline, dispose, main (+46 more)
-
-### Community 225 - "Community 225"
+### Community 215 - "Community 215"
 Cohesion: 0.04
 Nodes (56): algorithm, bundleId, _canonicalize, chunkCount, chunkSize, ciphertextSha256, compatibility, convert (+48 more)
 
-### Community 226 - "Community 226"
+### Community 216 - "Community 216"
+Cohesion: 0.04
+Nodes (53): expectDbAndLatestConfig, expectDbMembers, joinedAt, main, _member, _payloadsFor, peerId, username (+45 more)
+
+### Community 217 - "Community 217"
 Cohesion: 0.04
 Nodes (55): absolutePath, _buildHiddenIncomingEditPlaceholder, compareTo, confirmatoryDirectLanEnabled, contact, conversationMessage, copyWith, current (+47 more)
 
-### Community 227 - "Community 227"
+### Community 218 - "Community 218"
 Cohesion: 0.04
 Nodes (55): allRecipientPeerIds, attachments, avatarBase64, avatarByteLength, created, CreatedLocalPostPass, createResult, currentLocalPassCount (+47 more)
 
-### Community 228 - "Community 228"
+### Community 219 - "Community 219"
 Cohesion: 0.04
 Nodes (55): bridge, checkHealth, currentState, dialPeer, dialResult, discoveredPeer, discoverLocalPeer, discoverPeer (+47 more)
 
-### Community 229 - "Community 229"
-Cohesion: 0.10
-Nodes (31): decodeGroupInboxEntries(), encodeRedisComponent(), encodeRedisGroupInboxRecord(), encodeRedisGroupInboxRecords(), filterInboxEntries(), minInt(), newRedisClientFromURL(), newRedisPushTokenBackend() (+23 more)
+### Community 220 - "Community 220"
+Cohesion: 0.02
+Nodes (112): package:flutter_app/core/theme/feed_colors.dart, package:flutter_app/core/utils/text_direction_utils.dart, package:url_launcher/url_launcher.dart, TextOverflow, main, main, build, ContactRequestDialog (+104 more)
 
-### Community 230 - "Community 230"
+### Community 221 - "Community 221"
 Cohesion: 0.04
 Nodes (55): bgBeginResponse, ciphertext, commandDelays, commandGates, controller, _decodeReplayPayload, effectiveGroup, effectiveGroupRepo (+47 more)
 
-### Community 231 - "Community 231"
+### Community 222 - "Community 222"
+Cohesion: 0.04
+Nodes (53): AmplitudeBuffer, package:flutter_app/shared/widgets/media/recording_overlay.dart, activePinCount, _amplitudeBuffer, _amplitudeSubscription, _attachMedia, _attachVoice, audience (+45 more)
+
+### Community 223 - "Community 223"
 Cohesion: 0.04
 Nodes (54): _bobPeerId, bridge, checkHealth, commandLog, contactRepo, currentState, dialPeer, discoverLocalPeer (+46 more)
 
-### Community 232 - "Community 232"
+### Community 224 - "Community 224"
 Cohesion: 0.04
-Nodes (54): addContact, addRequest, addTestContact, archiveContact, blockContact, bridge, checkHealth, contactExists (+46 more)
+Nodes (50): applyChange, clearMessageIds, dispose, FeedReactionStore, listenableForMessage, _notifierFor, _notifiers, reactionsForMessage (+42 more)
 
-### Community 233 - "Community 233"
+### Community 225 - "Community 225"
 Cohesion: 0.04
-Nodes (53): contactRepo, deletionStreamController, listener, main, _makeDeletionMessage, mediaAttachmentRepo, mediaFileManager, messageId (+45 more)
+Nodes (51): main, main, package:flutter_app/core/debug/transport_metrics.dart, _buildTestWidget, callCount, chatListener, completeLast, conditionalTransitionStatus (+43 more)
 
-### Community 234 - "Community 234"
-Cohesion: 0.04
-Nodes (53): bridge, contactRepository, DefaultShareBatchDeliveryCoordinator, deliver, detail, ext, failedTargetKeys, failureCount (+45 more)
-
-### Community 235 - "Community 235"
-Cohesion: 0.04
-Nodes (54): InMemoryInboxStagingRepository, _ThrowingInboxStagingRepository, RecoveredInboxReplayOutcome, action, bridge, buildSweepService, calledCommands, _captureFlowEvents (+46 more)
-
-### Community 236 - "Community 236"
+### Community 226 - "Community 226"
 Cohesion: 0.04
 Nodes (54): group_repository.dart, ../models/group_key_retention_policy.dart, pending_sibling_device_repository.dart, archiveGroup, clearGroupRejoinState, clearPendingKeyRotation, clearPendingKeyRotations, deleteGroup (+46 more)
 
-### Community 237 - "Community 237"
-Cohesion: 0.04
-Nodes (54): _badgeFrames, binding, build, _callback, _canUseVmServiceTimeline, _captureScenario, _closeFrames, closeOrbit (+46 more)
-
-### Community 238 - "Community 238"
+### Community 227 - "Community 227"
 Cohesion: 0.07
 Nodes (36): MediaMeta, idleTimeoutReader, copyMediaDownloadToFile(), mediaDownloadResultFromStream(), mediaEventDetails(), newIdleTimeoutReader(), relayMediaTelemetryFields(), sendMediaRequest() (+28 more)
 
-### Community 239 - "Community 239"
-Cohesion: 0.10
-Nodes (49): directConfirmCallback, lp002LogBuffer, generatePeerIDStr(), assertGA026DiagnosticHash(), assertGA026DiagnosticKeys(), assertGA026DiagnosticsOmitSensitive(), assertGO005ValidationRejectTotals(), assertLP002LogsOmitSensitive() (+41 more)
-
-### Community 240 - "Community 240"
+### Community 228 - "Community 228"
 Cohesion: 0.04
-Nodes (51): contactRepo, main, requestRepo, testRequest, main, _pendingRequest, requestRepo, ../../contact_request/domain/repositories/fake_contact_request_repository.dart (+43 more)
+Nodes (53): package:flutter_app/features/groups/presentation/screens/contact_picker_wired.dart, contactAlice, contactBob, contactCharlie, FakeIdentityRepository, identity, loadIdentity, main (+45 more)
 
-### Community 241 - "Community 241"
+### Community 229 - "Community 229"
 Cohesion: 0.04
-Nodes (50): acceptIntroduction, acceptPayload, bridge, contact, contactMlKemPublicKey, createIntroductionOutboxDelivery, _createPayloadDeliveryForContact, deliverStagedIntroductionDelivery (+42 more)
+Nodes (51): DiscoveredPeer, fake_p2p_service.dart, _contact, contacts, _ControlledP2PService, _dialedPeers, dialPeer, discoverPeer (+43 more)
 
-### Community 242 - "Community 242"
+### Community 230 - "Community 230"
 Cohesion: 0.04
-Nodes (48): main, bridge, buildHost, buildMaterializer, contactRepository, identityRepository, main, _makeContact (+40 more)
+Nodes (52): addContact, author, bridge, condition, contactRepo, create, deadline, _decodeEncryptedPassPayload (+44 more)
 
-### Community 243 - "Community 243"
-Cohesion: 0.04
-Nodes (52): _contact, contacts, _ControlledP2PService, _dialedPeers, dialPeer, discoverPeer, dispose, _inFlightSends (+44 more)
-
-### Community 244 - "Community 244"
+### Community 231 - "Community 231"
 Cohesion: 0.04
 Nodes (53): ackStream, _ackTimeout, _boundPort, broadcast, _classifyAckFrame, commitBudget, _committedAckFrame, configureInboundChatCommitHandler (+45 more)
 
-### Community 245 - "Community 245"
+### Community 232 - "Community 232"
 Cohesion: 0.04
 Nodes (53): _Args, bin, _buildTestPeerIfNeeded, cold, command, commandOk, commandWithRetry, condition (+45 more)
 
-### Community 246 - "Community 246"
+### Community 233 - "Community 233"
 Cohesion: 0.12
 Nodes (33): Any, AnyHashable, Int, AppGroupPushDedupeStore, bridgePlaintext(), BridgePushDecryptor, capPreview(), decodeJSONObject() (+25 more)
 
-### Community 247 - "Community 247"
+### Community 234 - "Community 234"
+Cohesion: 0.04
+Nodes (49): acceptAndReciprocateContactRequest, downloadProfilePictureFn, result, contactRepo, createdAt, introRepo, main, makeIntro (+41 more)
+
+### Community 235 - "Community 235"
+Cohesion: 0.04
+Nodes (49): bridge, buildHost, buildMaterializer, contactRepository, identityRepository, main, _makeContact, _makeRequest (+41 more)
+
+### Community 236 - "Community 236"
 Cohesion: 0.04
 Nodes (52): ackRelayBlobDeletion, adoptCanonicalFileIfAvailable, adoptCompletePartFileIfAvailable, attachmentId, bridge, candidates, _collectLocalMediaCandidateDiagnostics, completedLocalAttachment (+44 more)
 
-### Community 248 - "Community 248"
+### Community 237 - "Community 237"
+Cohesion: 0.04
+Nodes (47): buildReceipt, captureFlowEvents, contactPeerId, from, id, isIncoming, main, makeInboxedOutgoing (+39 more)
+
+### Community 238 - "Community 238"
 Cohesion: 0.04
 Nodes (52): addContact, archiveContact, attachment, blockContact, conditionalTransitionStatus, contactExists, contacts, deleteContact (+44 more)
 
-### Community 249 - "Community 249"
-Cohesion: 0.04
-Nodes (45): main, ../application/send_chat_message_use_case_test.dart, main, main, ../domain/repositories/fake_media_attachment_repository.dart, fake_media_attachment_repository.dart, helpers/fake_upload_media_fn.dart, circuitMultiaddr (+37 more)
-
-### Community 250 - "Community 250"
-Cohesion: 0.06
-Nodes (32): MigrationFileManifestBuilder, file, main, writeAsString, _writeRelative, _builder, MigrationFileManifestValidator, file (+24 more)
-
-### Community 251 - "Community 251"
+### Community 239 - "Community 239"
 Cohesion: 0.04
 Nodes (52): _acceptRemoteSide, action, contact, contactKeyUpdated, contactKeyWasMissing, _contactNeedsRecoveryMerge, continueAsContactRequest, convergedIntro (+44 more)
 
-### Community 252 - "Community 252"
+### Community 240 - "Community 240"
 Cohesion: 0.04
 Nodes (52): clearRetryBackoff, count, deleteMessage, deleteMessageForMembershipRepair, deleteMessagesForGroup, _emitOutgoingRowsChangedIfNeeded, _emitOutgoingStatusChangeIfNeeded, existsByContent (+44 more)
 
-### Community 253 - "Community 253"
+### Community 241 - "Community 241"
 Cohesion: 0.04
-Nodes (51): package:flutter_app/features/groups/presentation/screens/contact_picker_wired.dart, contactAlice, contactBob, contactCharlie, FakeIdentityRepository, identity, loadIdentity, main (+43 more)
+Nodes (51): ContactModel, backgroundPreference, _blueAccent, build, _buildCaptionField, _buildContactRow, _buildGroupRow, _buildHeader (+43 more)
 
-### Community 254 - "Community 254"
+### Community 242 - "Community 242"
 Cohesion: 0.04
 Nodes (52): package:flutter_app/features/groups/presentation/screens/group_list_wired.dart, actorPayload, aliceContact, buildWidget, canonicalPayload, createdAt, effectiveReceivedAt, envelope (+44 more)
 
-### Community 255 - "Community 255"
+### Community 243 - "Community 243"
+Cohesion: 0.04
+Nodes (51): package:flutter_app/features/groups/presentation/widgets/pending_group_invite_card.dart, backgroundPreference, build, _buildContent, _buildEmptyState, _buildGroupCard, _buildHeader, _buildInviteOutcomeRow (+43 more)
+
+### Community 244 - "Community 244"
+Cohesion: 0.04
+Nodes (52): package:flutter_app/features/settings/presentation/screens/settings_wired.dart, checkHealth, currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox (+44 more)
+
+### Community 245 - "Community 245"
+Cohesion: 0.04
+Nodes (48): main, _MemoryCutoverRepository, _ThrowingCommitCoordinator, _MemoryCutoverRepository, _MemoryCutoverRepository, _authorityRepository, _baseRecord, clearLocalStalePushToken (+40 more)
+
+### Community 246 - "Community 246"
 Cohesion: 0.04
 Nodes (51): addContact, archiveContact, blockContact, conditionalTransitionStatus, contactExists, _contacts, deleteAttachmentsForContact, deleteAttachmentsForMessage (+43 more)
 
-### Community 256 - "Community 256"
+### Community 247 - "Community 247"
 Cohesion: 0.04
 Nodes (48): build, _buildCommittedKeyItem, _buildGroup, _buildInboxCursors, _buildMembers, _buildPendingKeyItem, _buildPendingKeyRepairs, _buildPendingMembershipMessages (+40 more)
 
-### Community 257 - "Community 257"
+### Community 248 - "Community 248"
 Cohesion: 0.04
-Nodes (49): bridge, _expectSignedReactionReplayEnvelope, groupRepo, jsonDecode, main, payload, reactionReplayOutboxRepo, reactionRepo (+41 more)
+Nodes (50): addContact, _aliceContact, archiveContact, attemptedSecrets, blockContact, _chatPlaintext, checkHealth, contactExists (+42 more)
 
-### Community 258 - "Community 258"
+### Community 249 - "Community 249"
+Cohesion: 0.06
+Nodes (44): main, map, DetailedInboxStore, LifecycleBridge, bridge, main, service, bridge (+36 more)
+
+### Community 250 - "Community 250"
+Cohesion: 0.04
+Nodes (50): bytes, committedFile, contentHash, _copyToOwnedMediaPath, debugGroupMediaUploadPostCommitProbeDelays, deleteAppOwnedMediaFileIfExists, deleteSourceWhenDone, _DurableMediaCopyResult (+42 more)
+
+### Community 251 - "Community 251"
 Cohesion: 0.04
 Nodes (51): clearWriteLog, close, _contact, contacts, _ControlledEncryptBridge, created, _createLocalPost, deliveryWriteGates (+43 more)
 
-### Community 259 - "Community 259"
+### Community 252 - "Community 252"
 Cohesion: 0.04
 Nodes (51): activeHeartPeerIds, audience, authorPeerId, authorUsername, blobId, buildEncryptedEnvelope, buildJson, _buildPayloadJson (+43 more)
 
-### Community 260 - "Community 260"
+### Community 253 - "Community 253"
 Cohesion: 0.04
 Nodes (51): addContact, archiveContact, blockContact, contactExists, count, currentState, deleteContact, deleteIdentity (+43 more)
 
-### Community 261 - "Community 261"
+### Community 254 - "Community 254"
 Cohesion: 0.04
-Nodes (46): candidate, canonicalMembershipEventId, current, gate, group, _groupMembershipMutationLocks, isStaleGroupMembershipEvent, last (+38 more)
+Nodes (48): appendGroupEventLogEntry, _appendSignedCreateEvent, canonicalPayload, createGroup, deleteGroup, group, groupId, groupKey (+40 more)
 
-### Community 262 - "Community 262"
+### Community 255 - "Community 255"
 Cohesion: 0.04
 Nodes (48): allowStaging, authorUsername, comment, envelope, handleIncomingPostComment, HandleIncomingPostCommentResult, parent, persistRepostEngagementParticipantIfNeeded (+40 more)
 
-### Community 263 - "Community 263"
+### Community 256 - "Community 256"
 Cohesion: 0.04
-Nodes (49): accountMigrationNetworkGate, allowed, _allowsPostRetrierNetworkSideEffects, bridge, contactRepo, _debounceTimer, dispose, _firstMissingLocalFile (+41 more)
+Nodes (47): bridge, introRepo, main, p2pService, payload, probeRelay, probeRelayCallCount, _RelayProbeFakeP2PService (+39 more)
 
-### Community 264 - "Community 264"
-Cohesion: 0.05
-Nodes (49): ChatMessageListener, ChatMessageListener, ContactUpdate, _TrackingChatMessageListener, _TrackingChatMessageListener, MobileScanner, package:flutter_app/features/qr_code/presentation/screens/qr_scanner_wired.dart, _FakeIncomingConversationListener (+41 more)
+### Community 257 - "Community 257"
+Cohesion: 0.03
+Nodes (71): _attemptRemoveReactionInboxStore, bridge, canonical, _deterministicRemoveReactionId, digest, entry, group, groupId (+63 more)
 
-### Community 265 - "Community 265"
+### Community 258 - "Community 258"
+Cohesion: 0.04
+Nodes (50): _absoluteForRelativePath, acceptSizeDivergence, _addBestPathFailureIssue, addCandidate, _addChatMedia, _addPathBackedItem, _addPathCandidateIfUsable, _addPendingPostMedia (+42 more)
+
+### Community 259 - "Community 259"
+Cohesion: 0.04
+Nodes (50): _attempts, bridge, _buildFixture, configuredRole, configuredRunId, configuredSharedDir, contactRepo, deleteAttempt (+42 more)
+
+### Community 260 - "Community 260"
+Cohesion: 0.03
+Nodes (54): count, emitRetryTiming, retryStopwatch, retryUnackedMessages, unacked, ../application/send_chat_message_use_case_test.dart, confirmatoryDirectLanEnabled, DeliveryReceiptMintDecision (+46 more)
+
+### Community 261 - "Community 261"
+Cohesion: 0.04
+Nodes (48): _FakeContactRepository, _FakeContactRepository, FakeContactRepository, _FakeContactRepository, _FakeContactRepository, FakeContactRepository, _FakeContactRepo, FakeContactRepository (+40 more)
+
+### Community 262 - "Community 262"
 Cohesion: 0.04
 Nodes (49): _applyResponseToExistingIntroduction, bridge, byIntroduced, byIntroducedCounterpart, byRecipient, byRecipientCounterpart, contactRepo, derived (+41 more)
 
-### Community 266 - "Community 266"
+### Community 263 - "Community 263"
 Cohesion: 0.04
 Nodes (47): addContact, avatarPath, contact, dlFn, existingContact, handleMutualAcceptance, isIntroduced, isRecipient (+39 more)
 
-### Community 267 - "Community 267"
+### Community 264 - "Community 264"
+Cohesion: 0.07
+Nodes (42): backendConfig, controlPlaneStores, DefaultServerLimits(), envIntOrDefault(), loadServerLimitsFromEnv(), relayResourcesFromServerLimits(), TestFiniteLimits_RejectExcessGroupMessages(), TestRelayService_EnforcesPerPeerConnectionCap() (+34 more)
+
+### Community 265 - "Community 265"
 Cohesion: 0.04
 Nodes (49): action, badgeHonestyGapMs, BenchmarkNode, bridge, captureFlowEvents, captureFlowEventsUntil, createBenchmarkNode, dispose (+41 more)
+
+### Community 266 - "Community 266"
+Cohesion: 0.08
+Nodes (29): TestParseInboxStoreResponse_InboxFullTyped(), TestParseInboxStoreResponse_NewRelayFields(), TestParseInboxStoreResponse_OldRelayDefaults(), parseInboxStoreResponse(), parsePresenceResponse(), parsePresenceSetResponse(), InboxMessage, inboxRequest (+21 more)
+
+### Community 267 - "Community 267"
+Cohesion: 0.04
+Nodes (45): _MemoryPairingSessionRepository, _MemoryPairingSessionRepository, consumedSessions, consumeSession, empty, failClosed, isSessionConsumed, loadConsumedSession (+37 more)
 
 ### Community 268 - "Community 268"
 Cohesion: 0.04
@@ -2038,175 +2051,175 @@ Nodes (48): attachments, baseMs, bridge, canRetryWithPersistedAttachments, capMs
 
 ### Community 270 - "Community 270"
 Cohesion: 0.04
-Nodes (48): _delay, deliveryDelay, deliveryFails, _deliveryRecords, _deliveryRouteKind, _deviceControllers, _deviceDiagnosticControllers, _devicePeerIds (+40 more)
+Nodes (45): absolutePath, age, doneCount, emitRetryTiming, _isFreshOutgoingGroupSend, kFreshGroupUploadRetrySendingThreshold, _lateGroupSendAbortReason, pendingAttachment (+37 more)
 
 ### Community 271 - "Community 271"
-Cohesion: 0.07
-Nodes (41): backendConfig, controlPlaneStores, DefaultServerLimits(), envIntOrDefault(), loadServerLimitsFromEnv(), relayResourcesFromServerLimits(), TestRelayService_EnforcesPerPeerConnectionCap(), TestRelayService_RejectsExcessReservationsPredictably() (+33 more)
+Cohesion: 0.04
+Nodes (48): _delay, deliveryDelay, deliveryFails, _deliveryRecords, _deliveryRouteKind, _deviceControllers, _deviceDiagnosticControllers, _devicePeerIds (+40 more)
 
 ### Community 272 - "Community 272"
-Cohesion: 0.09
-Nodes (29): TestParseInboxStoreResponse_InboxFullTyped(), TestParseInboxStoreResponse_NewRelayFields(), TestParseInboxStoreResponse_OldRelayDefaults(), parseInboxStoreResponse(), parsePresenceResponse(), parsePresenceSetResponse(), InboxMessage, inboxRequest (+21 more)
+Cohesion: 0.08
+Nodes (40): newMemoryRendezvousBackend(), peerRegistration, handleDiscover(), handleRegister(), handleRendezvousRequest(), HandleRendezvousStream(), handleUnregister(), NewRendezvousStore() (+32 more)
 
 ### Community 273 - "Community 273"
-Cohesion: 0.04
-Nodes (58): Align, ClipRRect, ConstrainedBox, main, wrapApp, wrapScrollable, package:flutter_app/features/conversation/presentation/widgets/letter_card.dart, package:flutter_app/features/conversation/presentation/widgets/reaction_display.dart (+50 more)
-
-### Community 274 - "Community 274"
-Cohesion: 0.05
-Nodes (42): channel, log, main, main, main, apnsToken, build, deadline (+34 more)
-
-### Community 275 - "Community 275"
-Cohesion: 0.03
-Nodes (65): _FakeMediaAttachmentRepo, _FakeMediaFileManager, FakeMediaAttachmentRepository, FakeMediaFileManager, _FakeMediaAttachmentRepo, _FakeMediaFileManager, _FakeMediaAttachmentRepository, FakeMediaAttachmentRepository (+57 more)
-
-### Community 276 - "Community 276"
 Cohesion: 0.05
 Nodes (47): ciphertextSha256, clear, _entriesByBundle, entryOffsets, entryState, FileMigrationTransferCheckpointStore, FileMigrationTransferLedgerStore, filePath (+39 more)
 
-### Community 277 - "Community 277"
+### Community 274 - "Community 274"
 Cohesion: 0.04
 Nodes (47): group_message_repository.dart, group_thread_preview_repository.dart, group_thread_summary_repository.dart, ../models/group_multi_device_policy.dart, clearRetryBackoff, dbRunGroupInboxPageTransactionFn, deleteMessage, deleteMessageForMembershipRepair (+39 more)
 
-### Community 278 - "Community 278"
-Cohesion: 0.04
-Nodes (47): _buildTestWidget, callCount, chatListener, completeLast, conditionalTransitionStatus, _contact, _contactPeerId, deleteMessage (+39 more)
-
-### Community 279 - "Community 279"
+### Community 275 - "Community 275"
 Cohesion: 0.04
 Nodes (47): args, cliFixturePath, command, commandOk, _defaultPrimaryDevice, _defaultSiblingDevice, devices, generateIdentity (+39 more)
 
-### Community 280 - "Community 280"
-Cohesion: 0.04
-Nodes (46): archiveGroup, clearGroupRejoinState, clearPendingKeyRotation, clearPendingKeyRotations, deleteGroup, deletePendingSiblingDevice, _deviceSnapshots, forceGroupRejoinEligible (+38 more)
-
-### Community 281 - "Community 281"
+### Community 276 - "Community 276"
 Cohesion: 0.04
 Nodes (46): ../../features/p2p/domain/models/discovered_peer.dart, ../../features/p2p/domain/models/node_state.dart, ../../features/p2p/domain/models/send_message_result.dart, ../local_discovery/lan_ack.dart, clearResumeStarted, currentState, dialPeer, discoverLocalPeer (+38 more)
 
-### Community 282 - "Community 282"
+### Community 277 - "Community 277"
+Cohesion: 0.04
+Nodes (45): bridge, contact, _createdAt, deliver, inboxEnvelope, keyedAttachment, keylessLegacyAttachment, main (+37 more)
+
+### Community 278 - "Community 278"
 Cohesion: 0.04
 Nodes (46): _chatMessageController, chatMessageStream, _contactRequestController, contactRequestStream, _deliveryReceiptController, deliveryReceiptStream, dispose, _groupInviteController (+38 more)
 
-### Community 283 - "Community 283"
+### Community 279 - "Community 279"
+Cohesion: 0.04
+Nodes (45): AppColors, background, glassBackground, glassBorder, greenGlow, primaryAccent, redGlow, secondaryAccent (+37 more)
+
+### Community 280 - "Community 280"
 Cohesion: 0.05
 Nodes (45): @pragma, @visibleForTesting, accountNetworkAllowed, allowCurrentMember, allowsAccountNetworkSideEffects, _allowsBackgroundAccountNotificationDisplay, _backgroundAccountMigrationNetworkGate, _backgroundDbEncryptionKey (+37 more)
 
-### Community 284 - "Community 284"
+### Community 281 - "Community 281"
 Cohesion: 0.04
 Nodes (45): accountMigrationBundleSourceFailedSafeMessage, accountMigrationBundleSourceFailureReason, accountMigrationFinalHandoffStalledSafeMessage, accountMigrationLocalTransferStalledSafeMessage, AccountMigrationReceiverEvent, AccountMigrationReceiverEvents, AccountMigrationReceiverEventType, AccountMigrationReceiverStartFailureCode (+37 more)
 
-### Community 285 - "Community 285"
-Cohesion: 0.04
-Nodes (43): main, map, main, package:flutter_app/features/conversation/application/chat_message_listener.dart, package:flutter_app/features/conversation/application/recovered_inbox_chat_disposition.dart, appShellController, bridge, buildRouterApp (+35 more)
+### Community 282 - "Community 282"
+Cohesion: 0.05
+Nodes (42): contactRepo, main, messageRepo, mutualIntro, byId, expireOldIntroductions, introducedRows, _loadMutualAcceptedIntroductions (+34 more)
 
-### Community 286 - "Community 286"
+### Community 283 - "Community 283"
+Cohesion: 0.04
+Nodes (45): addContact, addRequest, archiveContact, blockContact, bridge, checkHealth, contactExists, contactRepo (+37 more)
+
+### Community 284 - "Community 284"
+Cohesion: 0.04
+Nodes (43): allowStaging, commentExists, comments, compareTo, envelope, existing, handleIncomingPostCommentReaction, HandleIncomingPostCommentReactionResult (+35 more)
+
+### Community 285 - "Community 285"
 Cohesion: 0.04
 Nodes (44): commentExists, createdAt, deliveryResult, envelope, maxConcurrentRecipients, persistRepostEngagementParticipantIfNeeded, post, postId (+36 more)
 
-### Community 287 - "Community 287"
+### Community 286 - "Community 286"
 Cohesion: 0.04
 Nodes (45): allowedKeys, Bridge, callBgBegin, callBgEnd, callBgGrantProbe, callBgTimeRemaining, callBlobDecrypt, callBlobKeygen (+37 more)
 
-### Community 288 - "Community 288"
+### Community 287 - "Community 287"
 Cohesion: 0.04
 Nodes (45): alpha, avDiam, box, byId, cMax, cMin, color, computeOrbit3Constellation (+37 more)
 
-### Community 289 - "Community 289"
-Cohesion: 0.08
-Nodes (22): pruneExpiredInboxMessages(), ensureInboxMessageID(), extractMessageId(), mergePeerIds(), stringSlicesEqual(), memoryGroupInboxBackend, memoryInboxBackend, memoryRendezvousBackend (+14 more)
-
-### Community 290 - "Community 290"
+### Community 288 - "Community 288"
 Cohesion: 0.04
 Nodes (45): buildEncryptedEnvelope, canonicalRevocationSignedPayload, _decodeSignedPayload, expiresAt, expiresAtDateTime, failure, fromInnerJson, fromJson (+37 more)
 
-### Community 291 - "Community 291"
-Cohesion: 0.10
-Nodes (18): db, main, repairRow, columns, db, main, db, indexExists (+10 more)
-
-### Community 292 - "Community 292"
+### Community 289 - "Community 289"
 Cohesion: 0.05
-Nodes (45): backgroundPreference, _blueAccent, build, _buildCaptionField, _buildContactRow, _buildGroupRow, _buildHeader, _buildPreviewStrip (+37 more)
+Nodes (44): PostModel, build, comment, comments, _commentsScrollController, CommentsSheet, _CommentsSheetState, _CommentTile (+36 more)
 
-### Community 293 - "Community 293"
+### Community 290 - "Community 290"
 Cohesion: 0.04
 Nodes (45): build, _byId, center, count, createState, didUpdateWidget, _Dot, _firstDiff (+37 more)
 
-### Community 294 - "Community 294"
-Cohesion: 0.10
-Nodes (20): FakeReactionRepository, bridge, contactRepo, dispose, incomingReactionChangeStream, incomingReactionStream, messageRepo, _onMessage (+12 more)
+### Community 291 - "Community 291"
+Cohesion: 0.04
+Nodes (39): addContact, AddContactResult, archiveContact, activeContacts, otherFriends, shouldShowIntroBanner, addContact, archiveContact (+31 more)
 
-### Community 295 - "Community 295"
+### Community 292 - "Community 292"
 Cohesion: 0.04
 Nodes (44): allow, backgroundPushDefaultBody, backgroundPushDefaultTitle, backgroundPushFallbackDedupeKey, BackgroundPushNotificationFallback, body, buildBackgroundPushFallbackNotification, collapseKey (+36 more)
 
-### Community 296 - "Community 296"
+### Community 293 - "Community 293"
+Cohesion: 0.06
+Nodes (33): controller, currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, _FakeP2PService (+25 more)
+
+### Community 294 - "Community 294"
 Cohesion: 0.04
-Nodes (44): addContact, addRequest, archiveContact, blockContact, bridge, checkHealth, contactExists, contactRepo (+36 more)
+Nodes (46): main, actualTransport, allUploaded, bridge, contact, contactRepo, deriveRetryAction, effectiveUploadFn (+38 more)
 
-### Community 297 - "Community 297"
-Cohesion: 0.04
-Nodes (44): actualTransport, allUploaded, bridge, contact, contactRepo, deriveRetryAction, effectiveUploadFn, _emitDeleteTombstoneStillFailed (+36 more)
-
-### Community 298 - "Community 298"
-Cohesion: 0.05
-Nodes (40): bridge, createRecording, deleteAttachmentsForContact, deleteAttachmentsForMessage, getAttachmentsForMessage, getAttachmentsForMessages, getPendingDownloads, getUploadPendingAttachments (+32 more)
-
-### Community 299 - "Community 299"
+### Community 295 - "Community 295"
 Cohesion: 0.04
 Nodes (44): bridge.dart, allowRawStringResponse, checkHealth, _cmdMap, _CmdSpec, debugMalformedPushEventCountForTest, debugUnknownPushEventCountForTest, _diagnosticDetails (+36 more)
 
-### Community 300 - "Community 300"
+### Community 296 - "Community 296"
+Cohesion: 0.04
+Nodes (44): ../../../conversation/domain/repositories/fake_media_attachment_repository.dart, currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, incomingLocalMediaStream (+36 more)
+
+### Community 297 - "Community 297"
 Cohesion: 0.04
 Nodes (42): ../db_write_transaction.dart, ../../../features/groups/domain/models/group_message_receipt.dart, args, dbApplyGroupInboxPageTransaction, dbLoadGroupInboxCursor, dbLoadGroupMessageReceipts, dbUpsertGroupInboxCursor, dbUpsertGroupMessageReceipt (+34 more)
 
-### Community 301 - "Community 301"
+### Community 298 - "Community 298"
 Cohesion: 0.04
 Nodes (43): ../../../features/groups/domain/models/group_pending_key_distribution.dart, ../../../features/groups/domain/models/group_pending_key_repair.dart, args, attempts, current, dbFinalizeGroupPendingKeyDistribution, dbLoadGroupPendingKeyDistribution, dbLoadPendingGroupKeyDistributionsForGroup (+35 more)
 
-### Community 302 - "Community 302"
+### Community 299 - "Community 299"
+Cohesion: 0.05
+Nodes (41): db, main, makeRow, InboxStagingRepositoryImpl, db, main, makeEntry, repo (+33 more)
+
+### Community 300 - "Community 300"
 Cohesion: 0.04
 Nodes (44): conditionalTransitionCallCount, conditionalTransitionStatus, deleteMessage, deleteMessagesCallCount, deleteMessagesForContact, existsByContent, existsByDedupKey, failedOutgoingOverride (+36 more)
 
-### Community 303 - "Community 303"
+### Community 301 - "Community 301"
 Cohesion: 0.05
 Nodes (43): _bestDiagnosticFor, buildGroupMissedMessageTelemetryReport, causeCounts, coveredCauseClasses, _deliveryKey, details, diagnosticList, direct (+35 more)
 
-### Community 304 - "Community 304"
+### Community 302 - "Community 302"
 Cohesion: 0.05
-Nodes (43): _addChatMediaUpload, _addGroupInboxStoreRetry, _addGroupMessageRetry, _addGroupPendingKeyRepair, _addGroupPendingMembership, _addGroupReactionReplay, _addIntroductionOutbox, _addIssue (+35 more)
+Nodes (42): _assertAllRecipientsStarted, _assertBoundedStart, _contact, contacts, _createControlledService, _dialedPeers, dialPeer, discoverPeer (+34 more)
 
-### Community 305 - "Community 305"
+### Community 303 - "Community 303"
 Cohesion: 0.05
 Nodes (43): ../models/group_message_receipt.dart, buildGroupRemovalCutoffMessageId, clearRetryBackoff, deleteMessage, deleteMessageForMembershipRepair, deleteMessagesForGroup, existsByContent, existsByMessageId (+35 more)
 
-### Community 306 - "Community 306"
-Cohesion: 0.05
-Nodes (40): Rect, anchorRect, backdropKey, build, _clampToViewport, color, _ContextMenuAction, _ContextMenuCard (+32 more)
-
-### Community 307 - "Community 307"
-Cohesion: 0.05
-Nodes (43): currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, incomingLocalMediaStream, isConnectedToPeer (+35 more)
-
-### Community 308 - "Community 308"
+### Community 304 - "Community 304"
 Cohesion: 0.05
 Nodes (43): _acknowledgeGroupRecoveryIfEligible, bridge, contactRepo, _debounceTimer, defaultGroupContinuitySweepInterval, defaultPeriodicRetryInterval, defaultRetryDebounce, dispose (+35 more)
 
-### Community 309 - "Community 309"
+### Community 305 - "Community 305"
 Cohesion: 0.13
 Nodes (43): cmdBlobDecrypt(), cmdBlobEncrypt(), cmdBlobKeygen(), cmdClearMessages(), cmdDial(), cmdDisconnect(), cmdDiscover(), cmdGenerateIdentity() (+35 more)
 
-### Community 310 - "Community 310"
+### Community 306 - "Community 306"
+Cohesion: 0.05
+Nodes (38): acceptContactRequest, AcceptContactRequestResult, contact, peerIdPrefix, request, declineContactRequest, DeclineContactRequestResult, peerIdPrefix (+30 more)
+
+### Community 307 - "Community 307"
+Cohesion: 0.05
+Nodes (40): deliveredWritePatterns, main, scanDeliveredWrites, block, contentHashValidation, copyWith, _emitGroupFeedMediaVerifyEvent, file (+32 more)
+
+### Community 308 - "Community 308"
 Cohesion: 0.05
 Nodes (42): addContact, archiveContact, avatarNormalizer, blockContact, bridge, checkHealth, contactExists, contactRepo (+34 more)
 
-### Community 311 - "Community 311"
-Cohesion: 0.02
-Nodes (83): AppLocalizations, buildTestApp, main, setPhoneViewport, chatGroup, conversationApp, fortyMessages, localAfternoon (+75 more)
+### Community 309 - "Community 309"
+Cohesion: 0.05
+Nodes (37): contact, currentReaction, currentTime, encrypted, envelopeSenderPeerId, handleIncomingReaction, HandleReactionResult, incomingTime (+29 more)
 
-### Community 312 - "Community 312"
+### Community 310 - "Community 310"
+Cohesion: 0.04
+Nodes (57): AccountMigrationJourneyScreen, AccountMigrationProgressWakeLock, _AccountMigrationProgressWakeLockState, actionLabel, active, backgroundPreference, body, build (+49 more)
+
+### Community 311 - "Community 311"
 Cohesion: 0.05
 Nodes (42): _attemptCounts, _attemptFailureCounts, baselineReport, _canonicalRung, _canonicalTransport, discoveredPeerCount, discoveryActive, empty (+34 more)
+
+### Community 312 - "Community 312"
+Cohesion: 0.10
+Nodes (35): Listener, TestConcurrentSendDialNoSerialize(), TestStartEmitsColdStartLockWindow(), waitForStartupPhase(), deadDialListener, directConfirmCallback, DefaultFeatureFlags(), TestFeatureFlags_FdcTransportFlagsShipDarkUntilDeviceProof() (+27 more)
 
 ### Community 313 - "Community 313"
 Cohesion: 0.05
@@ -2218,163 +2231,163 @@ Nodes (42): buildEncryptedEnvelope, canonicalDeclineAckSignedPayload, declinedAt
 
 ### Community 315 - "Community 315"
 Cohesion: 0.05
-Nodes (42): active, build, carriedOutId, carryActive, count, _DropChip, dropLabel, expanded (+34 more)
+Nodes (40): _DigestSink, Digest, _DigestSink, add, _CallbackSink, close, complete, _computeSha256 (+32 more)
 
 ### Community 316 - "Community 316"
 Cohesion: 0.05
-Nodes (40): _DigestSink, Digest, _DigestSink, add, _CallbackSink, close, complete, _computeSha256 (+32 more)
+Nodes (41): allowMemberSnapshotBootstrap, _bootstrapInviterPublicKey, buildGroupInviteRevokerAuthorizationSnapshot, buildProof, computedStateHash, contact, _findMember, _findSenderMember (+33 more)
 
 ### Community 317 - "Community 317"
-Cohesion: 0.10
-Nodes (20): AccountMigrationStreamingEntry, build, chunkSize, entryId, _FileAccountMigrationStreamingEntry, filePath, fileReader, kind (+12 more)
+Cohesion: 0.05
+Nodes (40): AppLifecycleState, ../../core/local_discovery/fake_local_p2p_service.dart, fake_notification_service.dart, bridge, contactRepo, conversationTracker, create, DirectMessageRouter (+32 more)
 
 ### Community 318 - "Community 318"
 Cohesion: 0.05
-Nodes (41): allowMemberSnapshotBootstrap, _bootstrapInviterPublicKey, buildGroupInviteRevokerAuthorizationSnapshot, buildProof, computedStateHash, contact, _findMember, _findSenderMember (+33 more)
-
-### Community 319 - "Community 319"
-Cohesion: 0.05
-Nodes (40): call, callIndex, calls, captureFlowEvents, contactPeerId, fixedNow, id, main (+32 more)
-
-### Community 320 - "Community 320"
-Cohesion: 0.05
-Nodes (41): AudioRecorderService, FakeGroupReactionReplayOutboxRepository, GroupReactionReplayOutboxRepository, RecordAudioRecorderService, package:flutter_app/features/feed/domain/models/feed_route_changes.dart, GroupReactionReplayOutboxRepositoryImpl, audioRecorderService, backgroundPreference (+33 more)
-
-### Community 321 - "Community 321"
-Cohesion: 0.06
-Nodes (31): benchmark_harness.dart, BenchmarkHarness, main, main, makeNodeState, testPeerId, package:flutter_app/core/utils/notification_tap_timing.dart, package:flutter_app/features/p2p/domain/models/connection_state.dart (+23 more)
-
-### Community 322 - "Community 322"
-Cohesion: 0.05
 Nodes (40): conversation_thread_summary_repository.dart, message_repository.dart, ../models/conversation_thread_summary.dart, getConversationThreadSummaries, getConversationThreadSummary, conditionalTransitionStatus, deleteMessage, deleteMessagesForContact (+32 more)
 
-### Community 323 - "Community 323"
+### Community 319 - "Community 319"
 Cohesion: 0.08
 Nodes (34): EvtPeerConnectednessChanged, FileMode, logPeerConnected(), logStatsPeriodically(), main(), shortPeerId(), NewPresenceStore(), recordConnectednessPresence() (+26 more)
 
-### Community 324 - "Community 324"
+### Community 320 - "Community 320"
 Cohesion: 0.06
 Nodes (36): fake_local_discovery_service.dart, main, peerA, peerB, ../local_discovery/fake_local_discovery_service.dart, LanSendAck, _createTestFile, main (+28 more)
 
-### Community 325 - "Community 325"
+### Community 321 - "Community 321"
 Cohesion: 0.05
 Nodes (39): capabilities, dbCountPostPasses, dbLoadPassAvatarSnapshot, dbLoadPassAvatarSnapshotsForPosts, dbLoadPostPass, dbLoadPostPassCounts, dbLoadPostPasses, dbLoadRetryableOutgoingPostPasses (+31 more)
 
-### Community 326 - "Community 326"
+### Community 322 - "Community 322"
 Cohesion: 0.05
-Nodes (41): _assertBackgroundScrollDoesNotRegress, _assertThresholds, average, backgroundP99, backgroundPreference, baselineP99, build, buildTimesMs (+33 more)
+Nodes (41): addContact, _AvatarProcessingProbe, avatarsDir, _avatarSnapshotBytes, bridge, builder, contactRepo, create (+33 more)
 
-### Community 327 - "Community 327"
+### Community 323 - "Community 323"
 Cohesion: 0.05
 Nodes (41): accountPeerId, copyWith, createdAt, currentVersion, devicePeerId, deviceRole, failClosed, failureCode (+33 more)
 
-### Community 328 - "Community 328"
+### Community 324 - "Community 324"
 Cohesion: 0.05
-Nodes (34): debugSetMigrationBreadcrumbSink, fields, kAccountMigrationTelemetry, line, migrationBreadcrumb, MigrationBreadcrumbSink, sink, _testSink (+26 more)
+Nodes (39): ContactAutoAddRateLimiter, maxPerWindow, _recent, tryAcquire, window, add, attemptSilentIntroRecovery, _autoAddedController (+31 more)
 
-### Community 329 - "Community 329"
+### Community 325 - "Community 325"
+Cohesion: 0.05
+Nodes (36): downloadProfilePicture, DownloadProfilePictureFn, now, token, _uniqueSuffix, buildBridgeMigrationCutoverLeaseCleanup, _notifyProfileUpdateContact, recovered (+28 more)
+
+### Community 326 - "Community 326"
+Cohesion: 0.05
+Nodes (39): adminPeerId, bridge, controller, groupId, groupRepo, incoming, listener, main (+31 more)
+
+### Community 327 - "Community 327"
 Cohesion: 0.05
 Nodes (39): activeKey, clearPromotionJournal, deleteStagingValues, fromJson, _loadPromotedEntries, MigrationSecureStoragePromotionResult, primaryStore, promote (+31 more)
 
-### Community 330 - "Community 330"
+### Community 328 - "Community 328"
+Cohesion: 0.05
+Nodes (39): bridge, contactRepo, dispose, incomingPostPassStream, _onMessage, _postController, PostPassListener, postPassStream (+31 more)
+
+### Community 329 - "Community 329"
 Cohesion: 0.11
 Nodes (38): EncryptedContactRequest, buildAAD(), DecryptContactRequest(), deriveAESKey(), EdPrivateKeyToX25519(), EdPublicKeyToX25519(), EncryptContactRequest(), bytesEqual() (+30 more)
 
+### Community 330 - "Community 330"
+Cohesion: 0.05
+Nodes (40): Rect, anchorRect, backdropKey, build, _clampToViewport, color, _ContextMenuAction, _ContextMenuCard (+32 more)
+
 ### Community 331 - "Community 331"
 Cohesion: 0.05
-Nodes (40): AppPausedResult, bridge, callBgEnd, candidates, capped, ceilingMs, delayedSec, deposited (+32 more)
+Nodes (38): DeliveryReceiptListener, dispose, messageRepo, receiptStream, start, stop, _subscription, _benchmarkKey (+30 more)
 
 ### Community 332 - "Community 332"
 Cohesion: 0.05
-Nodes (37): media_attachment.dart, count, fromAttachments, isGif, isMixed, MediaPreviewDescriptor, type, avatarPath (+29 more)
+Nodes (39): basePath, conditionalTransitionStatus, deleteAttachmentsForContact, deleteAttachmentsForMessage, deleteMessage, deleteMessagesForContact, existsByContent, existsByDedupKey (+31 more)
 
 ### Community 333 - "Community 333"
 Cohesion: 0.05
-Nodes (38): bridge, captureFlowEvents, contactRepo, introRepo, listener, main, makeContact, messageRepo (+30 more)
+Nodes (39): acceptedCurrentViewerDecisionIntroIds, aCreatedAt, bCreatedAt, byIntroducer, _cleanDisplayName, cleanedPeerId, cleanedValue, _compareIntroductionsNewestFirst (+31 more)
 
 ### Community 334 - "Community 334"
 Cohesion: 0.05
-Nodes (39): basePath, conditionalTransitionStatus, deleteAttachmentsForContact, deleteAttachmentsForMessage, deleteMessage, deleteMessagesForContact, existsByContent, existsByDedupKey (+31 more)
+Nodes (38): AudioPlayer, attachment, build, _buildUnavailableAudio, _canRetryUnavailableMedia, createState, didUpdateWidget, dispose (+30 more)
 
 ### Community 335 - "Community 335"
 Cohesion: 0.05
-Nodes (39): acceptedCurrentViewerDecisionIntroIds, aCreatedAt, bCreatedAt, byIntroducer, _cleanDisplayName, cleanedPeerId, cleanedValue, _compareIntroductionsNewestFirst (+31 more)
+Nodes (39): DeliveryReceiptListener, addContact, bridge, chatListener, contactRepo, create, deleteMessageForEveryone, deliveryReceiptListener (+31 more)
 
 ### Community 336 - "Community 336"
 Cohesion: 0.05
-Nodes (36): FlutterLocalNotificationsPlugin, clearDeliveredNotifications, consumeInitialPayload, _dismissNotificationById, dispose, initialize, _initialNotificationId, _initialPayload (+28 more)
+Nodes (39): _HarnessScreen, build, buildChatMessageListener, _buildMessage, _captureFlowEvents, contact, contactRepo, createState (+31 more)
 
 ### Community 337 - "Community 337"
 Cohesion: 0.10
-Nodes (29): newMemoryGroupInboxBackend(), assertGroupInboxCapEvictionSurfacesRepairableGap(), opaqueGroupReplayEnvelope(), TestGI017GroupInboxStoreAuthorizedCursorPaginationReturns120MessagesExactlyOnce(), TestGI035GroupInboxStorePersistsEncryptedEnvelopeWithoutPlaintext(), TestGIRD004MemoryGroupInboxConflictingSameMessageIDRejected(), TestGIRD004MemoryGroupInboxDistinctMessageIDsPreserveOrder(), TestGIRD004MemoryGroupInboxDuplicateExpandedRecipientACLMerges() (+21 more)
+Nodes (39): activeGroupMemberDialTargets(), activeGroupMemberDialTargetSet(), cloneGroupConfig(), countRemoteGroupMembers(), groupRendezvousNamespace(), assertGM030DiscoveryEventTotals(), assertGP012NumericField(), assertGP014KnownMemberTopicMissingRelayFallback() (+31 more)
 
 ### Community 338 - "Community 338"
 Cohesion: 0.05
-Nodes (39): _HarnessScreen, build, buildChatMessageListener, _buildMessage, _captureFlowEvents, contact, contactRepo, createState (+31 more)
-
-### Community 339 - "Community 339"
-Cohesion: 0.07
-Nodes (36): bridge, cmListener, crListener, gmListener, imageProcessor, main, mediaFileManager, orbit (+28 more)
-
-### Community 340 - "Community 340"
-Cohesion: 0.05
-Nodes (38): ContactRequestStatus, copyWith, fromMap, fromP2PPayload, hashCode, mlKemPublicKey, operator, peerId (+30 more)
-
-### Community 341 - "Community 341"
-Cohesion: 0.05
 Nodes (39): _benchmarkKey, cliFixturePath, command, commandOk, _defaultDevice, deviceId, generateIdentity, _handleStdout (+31 more)
 
-### Community 342 - "Community 342"
+### Community 339 - "Community 339"
 Cohesion: 0.05
 Nodes (38): AND, cutoff, dbConditionalTransitionStatus, dbCountMessagesForContact, dbCountTotalUnread, dbCountTotalUnreadExcludingArchived, dbCountUnreadForContact, dbDeleteMessage (+30 more)
 
+### Community 340 - "Community 340"
+Cohesion: 0.05
+Nodes (38): accuracyM, _availabilityForSettings, canOpenSettings, capturedAt, checkPermissionState, GeolocatorNearbyLocationPlatformAdapter, getCurrentPosition, handleSharingDisabled (+30 more)
+
+### Community 341 - "Community 341"
+Cohesion: 0.05
+Nodes (38): activeBlockedSends, _blockedSendCompleters, blockedSendCount, bridge, completedBlockedTargets, contactB, contactC, contactD (+30 more)
+
+### Community 342 - "Community 342"
+Cohesion: 0.06
+Nodes (33): benchmark_helpers.dart, runAckBenchmark, runInboxBenchmark, dispose, fixture, node, profileNode, profileTmpDir (+25 more)
+
 ### Community 343 - "Community 343"
-Cohesion: 0.05
-Nodes (37): _canonicalize, fromDatabase, fromTables, hasColumn, MigrationDatabaseSchemaInventory, _quoteIdentifier, tableNames, tables (+29 more)
-
-### Community 344 - "Community 344"
-Cohesion: 0.05
-Nodes (38): addContact, _aliceContact, archiveContact, attemptedSecrets, blockContact, _chatPlaintext, checkHealth, contactExists (+30 more)
-
-### Community 345 - "Community 345"
-Cohesion: 0.05
-Nodes (37): avatarSnapshots, hydratePostSurfaceItems, mediaMap, postList, repostHeartBaselines, viewerSharedToCounts, wait, created (+29 more)
-
-### Community 346 - "Community 346"
 Cohesion: 0.05
 Nodes (38): _AckDropP2PService, _ConnectedAckDropP2PService, connectedPeerId, currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose (+30 more)
 
-### Community 347 - "Community 347"
+### Community 344 - "Community 344"
 Cohesion: 0.05
 Nodes (38): _alicePeerId, _bobPeerId, _bobUsername, _buildMessageJson, conditionalTransitionStatus, count, deleteMessage, deleteMessagesForContact (+30 more)
 
-### Community 348 - "Community 348"
+### Community 345 - "Community 345"
+Cohesion: 0.05
+Nodes (38): _buildTestWidget, chatListener, conditionalTransitionStatus, _contact, _contactPeerId, _delayedSuccessSend, deleteMessage, deleteMessagesForContact (+30 more)
+
+### Community 346 - "Community 346"
 Cohesion: 0.05
 Nodes (38): _captureFlowEvents, currentState, dialPeer, discoverLocalPeer, _DiscoverMissProbeConnectedP2PService, discoverPeer, dispose, drainOfflineInbox (+30 more)
 
-### Community 349 - "Community 349"
+### Community 347 - "Community 347"
 Cohesion: 0.10
 Nodes (37): handleCommand(), TestCommandResponseFormat(), TestHandleCommandBlobRoundTrip(), TestHandleCommandClearMessages(), TestHandleCommandDisconnectMissingPeerId(), TestHandleCommandDisconnectNotStarted(), TestHandleCommandGenerateIdentity(), TestHandleCommandGetMessagesEmpty() (+29 more)
 
-### Community 350 - "Community 350"
+### Community 348 - "Community 348"
 Cohesion: 0.05
 Nodes (37): admin,, archivedAt, avatarBlobId, avatarMime, avatarPath, copyWith, createdAt, createdBy (+29 more)
 
-### Community 351 - "Community 351"
+### Community 349 - "Community 349"
 Cohesion: 0.05
-Nodes (37): activeBlockedSends, _blockedSendCompleters, blockedSendCount, bridge, completedBlockedTargets, contactB, contactC, contactD (+29 more)
+Nodes (37): accountMigrationNetworkGate, allowed, _allowsPostRetrierNetworkSideEffects, bridge, contactRepo, _debounceTimer, dispose, _firstMissingLocalFile (+29 more)
+
+### Community 350 - "Community 350"
+Cohesion: 0.05
+Nodes (34): bridge, createRecording, deleteAttachmentsForContact, deleteAttachmentsForMessage, getAttachmentsForMessage, getAttachmentsForMessages, getPendingDownloads, getUploadPendingAttachments (+26 more)
+
+### Community 351 - "Community 351"
+Cohesion: 0.09
+Nodes (29): DecryptGroupMessage(), EncryptGroupMessage(), TestBuildGroupSignatureData_Deterministic(), TestBuildGroupSignatureData_Format(), TestDecryptGroupMessage_InvalidBase64(), TestEncryptGroupMessage_InvalidKey(), TestEncryptGroupMessage_WrongKeyLength(), TestGK002EncryptDecryptRoundTripForTextPayload() (+21 more)
 
 ### Community 352 - "Community 352"
-Cohesion: 0.05
-Nodes (36): allSameType, backgroundDuplicateGuardDelay, ConsumeRecentRemoteNotificationAnnouncement, conversationKey, firstType, isViewingConversation, lifecycleState, MarkRecentRemoteNotificationAnnouncement (+28 more)
-
-### Community 353 - "Community 353"
 Cohesion: 0.11
 Nodes (30): Event, newNodeHolePunchTracer(), sanitizeTracerErr(), shortPeerID(), hasEventWithStep(), newTracerTestNode(), TestHolePunchTracer_AttemptThenSuccess_CountsAndEmits(), TestHolePunchTracer_FailureAndNoEnd_NoSuccessEmitted() (+22 more)
 
-### Community 354 - "Community 354"
+### Community 353 - "Community 353"
 Cohesion: 0.05
 Nodes (37): conditionalTransitionStatus, count, debugEmitMessageChange, deleteMessage, deleteMessagesForContact, existsByContent, existsByDedupKey, getConversationThreadSummaries (+29 more)
+
+### Community 354 - "Community 354"
+Cohesion: 0.05
+Nodes (37): _armSuspectedDenialProbe, BonsoirBroadcastFactory, BonsoirDiscoveryFactory, _broadcast, _buildLibp2pAddresses, _createBroadcast, _createDiscovery, _denialProbeTimer (+29 more)
 
 ### Community 355 - "Community 355"
 Cohesion: 0.05
@@ -2394,559 +2407,559 @@ Nodes (37): audience, authorPeerId, authorUsername, commentCount, copyWith, crea
 
 ### Community 359 - "Community 359"
 Cohesion: 0.05
-Nodes (36): _attachments, bridge, contactPeerId, contactRepo, deleteAttachmentsForContact, deleteAttachmentsForMessage, getAttachmentsForMessage, getAttachmentsForMessageCallCount (+28 more)
+Nodes (36): accountMigrationNetworkGate, _allowsInboundAccountSideEffects, _autoDownloadMedia, backgroundNotificationDuplicateGuardDelay, bridge, ChatMessageProcessOutcome, ChatMessageProcessState, chatMessageStream (+28 more)
 
 ### Community 360 - "Community 360"
-Cohesion: 0.07
-Nodes (14): ConnectionState, ConnScope, ConnStats, stubStreamConn, stubTransportStream, PubKey, Stats, StreamScope (+6 more)
+Cohesion: 0.05
+Nodes (35): captured, eventsNamed, line, main, thread, _buildItems, clearClearedLocally, _clearedWatermarks (+27 more)
 
 ### Community 361 - "Community 361"
 Cohesion: 0.05
-Nodes (36): AppendGroupEventLogEntry, canonicalizeGroupEventLogPayload, _canonicalizeValue, canonicalPayload, _computeEntryHash, convert, createdAtIso, currentGroupId (+28 more)
+Nodes (32): main, fake_media_attachment_repository.dart, hasMedia, LetterLine, media, messageId, text, main (+24 more)
 
 ### Community 362 - "Community 362"
-Cohesion: 0.19
-Nodes (33): eventCollector, extractRelayPeerID(), generatePrivateKeyHex(), randomNamespace(), relayAddr(), requireRelay(), startNode(), startNodeWithCallback() (+25 more)
+Cohesion: 0.05
+Nodes (36): _attachments, bridge, contactPeerId, contactRepo, deleteAttachmentsForContact, deleteAttachmentsForMessage, getAttachmentsForMessage, getAttachmentsForMessageCallCount (+28 more)
 
 ### Community 363 - "Community 363"
-Cohesion: 0.05
-Nodes (34): copyWith, createdAt, emoji, fromJson, fromMap, hashCode, id, isRemoved (+26 more)
+Cohesion: 0.07
+Nodes (14): ConnectionState, ConnScope, ConnStats, stubStreamConn, stubTransportStream, PubKey, Stats, StreamScope (+6 more)
 
 ### Community 364 - "Community 364"
-Cohesion: 0.05
-Nodes (35): main, package:flutter_app/features/p2p/domain/models/send_message_result.dart, controller, currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose (+27 more)
+Cohesion: 0.06
+Nodes (36): CountingSecureKeyStore, _MemorySecureKeyStore, _TrackingSecureKeyStore, _FakeSecureKeyStore, _InMemorySecureKeyStore, backingSecureKeyStore, containsKey, containsKeyCount (+28 more)
 
 ### Community 365 - "Community 365"
-Cohesion: 0.06
-Nodes (34): allGroupMessages, allMessages, base, connectionItems, contactBlocked, contacts, contactUsernames, floor (+26 more)
+Cohesion: 0.05
+Nodes (36): AppendGroupEventLogEntry, canonicalizeGroupEventLogPayload, _canonicalizeValue, canonicalPayload, _computeEntryHash, convert, createdAtIso, currentGroupId (+28 more)
 
 ### Community 366 - "Community 366"
 Cohesion: 0.06
-Nodes (35): addContact, archiveContact, blockContact, bridge, checkHealth, contactExists, contactRepo, _contacts (+27 more)
+Nodes (32): db, main, row, contactPeerId, createdAt, db, emoji, id (+24 more)
 
 ### Community 367 - "Community 367"
-Cohesion: 0.06
-Nodes (35): currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, incomingLocalMediaStream, isConnectedToPeer (+27 more)
+Cohesion: 0.19
+Nodes (33): eventCollector, extractRelayPeerID(), generatePrivateKeyHex(), randomNamespace(), relayAddr(), requireRelay(), startNode(), startNodeWithCallback() (+25 more)
 
 ### Community 368 - "Community 368"
-Cohesion: 0.06
-Nodes (35): bytes, committedFile, contentHash, _copyToOwnedMediaPath, debugGroupMediaUploadPostCommitProbeDelays, deleteAppOwnedMediaFileIfExists, deleteSourceWhenDone, _DurableMediaCopyResult (+27 more)
+Cohesion: 0.05
+Nodes (34): copyWith, createdAt, emoji, fromJson, fromMap, hashCode, id, isRemoved (+26 more)
 
 ### Community 369 - "Community 369"
 Cohesion: 0.06
-Nodes (33): EncryptedMediaArtifact, call, _callCount, _defaultResult, FakeUploadMediaFn, _lastAllowedPeers, _lastBlobId, _lastDeleteSourceWhenDone (+25 more)
+Nodes (33): controller, currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, _FakeP2PService (+25 more)
 
 ### Community 370 - "Community 370"
-Cohesion: 0.06
-Nodes (35): acquaintanceOrder, ageT, byId, closeness, coral, daysKnown, displayName, drivers (+27 more)
+Cohesion: 0.05
+Nodes (39): main, package:flutter_app/features/identity/presentation/navigation/startup_route_transition.dart, package:flutter_app/features/identity/presentation/screens/identity_progress_screen.dart, package:flutter_app/features/identity/presentation/widgets/choice_card.dart, backgroundPreference, build, _card1FadeAnimation, _card1SlideAnimation (+31 more)
 
 ### Community 371 - "Community 371"
 Cohesion: 0.06
-Nodes (33): FlutterSecureStorage, secret_storage_references.dart, secure_key_store.dart, appleAccessGroup, containsKey, delete, FlutterSecureKeyStore, mknoonSharedAppleAccessGroup (+25 more)
+Nodes (32): _drain, drainAll, drainForGroup, GroupPendingBroadcastRunner, repository, _safeId, all, _b (+24 more)
 
 ### Community 372 - "Community 372"
-Cohesion: 0.06
-Nodes (32): db, main, row, contactPeerId, createdAt, db, emoji, id (+24 more)
+Cohesion: 0.04
+Nodes (44): dialPeer, discoverPeer, main, startedState, _ThrowingDialFakeP2PService, _ThrowingDiscoverFakeP2PService, currentState, dialPeer (+36 more)
 
 ### Community 373 - "Community 373"
 Cohesion: 0.06
-Nodes (33): Incoming, package:flutter_app/core/permissions/mic_permission_gateway.dart, package:flutter_app/core/permissions/mic_permission_prompt.dart, package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart, showMicPermissionDeniedPrompt, main, openPrompt, ConversationScreen (+25 more)
+Nodes (35): acquaintanceOrder, ageT, byId, closeness, coral, daysKnown, displayName, drivers (+27 more)
 
 ### Community 374 - "Community 374"
-Cohesion: 0.11
-Nodes (28): marshalDiscoverResponseMessage(), marshalRegisterResponseMessage(), marshalRegistration(), readLocalRelayFrame(), remotePeerNamespace(), unmarshalTestDiscover(), unmarshalTestRegister(), unmarshalTestRzMessage() (+20 more)
+Cohesion: 0.06
+Nodes (34): addContact, bridge, contactRepo, create, dispose, drainOfflineInbox, p2pService, peerId (+26 more)
 
 ### Community 375 - "Community 375"
 Cohesion: 0.06
-Nodes (35): addLocalPeer, configureInboundChatCommitHandler, content, discoveredPeers, discoveredPeersStream, discoverLocalPeer, discoverLocalPeerCallCount, dispose (+27 more)
+Nodes (33): FlutterSecureStorage, secret_storage_references.dart, secure_key_store.dart, appleAccessGroup, containsKey, delete, FlutterSecureKeyStore, mknoonSharedAppleAccessGroup (+25 more)
 
 ### Community 376 - "Community 376"
-Cohesion: 0.06
-Nodes (35): LocalMediaReady, MediaOffer, acceptOffer, add, allowedMimePrefixes, _artifactExtension, _cleanupExpired, cleanupMedia (+27 more)
+Cohesion: 0.11
+Nodes (28): marshalDiscoverResponseMessage(), marshalRegisterResponseMessage(), marshalRegistration(), readLocalRelayFrame(), remotePeerNamespace(), unmarshalTestDiscover(), unmarshalTestRegister(), unmarshalTestRzMessage() (+20 more)
 
 ### Community 377 - "Community 377"
 Cohesion: 0.06
-Nodes (34): compressAndGetFile, _compressFile, CompressFileFn, _compressVideo, CompressVideoFn, _defaultCompress, _defaultVideoCompress, ImageProcessor (+26 more)
+Nodes (35): addLocalPeer, configureInboundChatCommitHandler, content, discoveredPeers, discoveredPeersStream, discoverLocalPeer, discoverLocalPeerCallCount, dispose (+27 more)
 
 ### Community 378 - "Community 378"
 Cohesion: 0.06
-Nodes (35): contentHash, copyWith, createdAt, downloadRetryCount, downloadStatus, durationMs, encryptionKeyBase64, encryptionNonce (+27 more)
+Nodes (35): LocalMediaReady, MediaOffer, acceptOffer, add, allowedMimePrefixes, _artifactExtension, _cleanupExpired, cleanupMedia (+27 more)
 
 ### Community 379 - "Community 379"
 Cohesion: 0.06
-Nodes (34): package:flutter_app/features/groups/presentation/widgets/group_name_panel.dart, backgroundPreference, build, _buildContactList, _buildEmptyState, _buildHeader, _buildLoadErrorState, _buildLoadingState (+26 more)
+Nodes (35): contentHash, copyWith, createdAt, downloadRetryCount, downloadStatus, durationMs, encryptionKeyBase64, encryptionNonce (+27 more)
 
 ### Community 380 - "Community 380"
 Cohesion: 0.06
-Nodes (35): currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, _FakeP2PService, incomingLocalMediaStream (+27 more)
+Nodes (34): package:flutter_app/features/groups/presentation/widgets/group_name_panel.dart, backgroundPreference, build, _buildContactList, _buildEmptyState, _buildHeader, _buildLoadErrorState, _buildLoadingState (+26 more)
 
 ### Community 381 - "Community 381"
 Cohesion: 0.06
-Nodes (33): lines, main, _BundleDatabases, _bundleSource, captureCipherMetadata, close, _createGroupMessagesTable, _createIdentityTable (+25 more)
+Nodes (35): currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, _FakeP2PService, incomingLocalMediaStream (+27 more)
 
 ### Community 382 - "Community 382"
-Cohesion: 0.02
-Nodes (90): AccountMigrationBundleAssemblyException, AccountMigrationBundleImportException, _RecordingSnapshotExportAdapter, _RecordingStagedDatabaseOpener, _ThrowingStagedDatabaseOpener, _FfiSnapshotExportAdapter, _FfiStagedDatabaseOpener, _MigrationPostException (+82 more)
+Cohesion: 0.06
+Nodes (35): currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, FakeP2PService, incomingLocalMediaStream (+27 more)
 
 ### Community 383 - "Community 383"
 Cohesion: 0.06
-Nodes (34): allowedPeers, attachments, attachPostMedia, AttachPostMediaResult, blobId, _draftFromRecoveryItem, _draftMime, drafts (+26 more)
+Nodes (33): lines, main, _BundleDatabases, _bundleSource, captureCipherMetadata, close, _createGroupMessagesTable, _createIdentityTable (+25 more)
 
 ### Community 384 - "Community 384"
 Cohesion: 0.06
-Nodes (32): _bestEffortIncomingCleanup, blockedSenderOwnsStoredMessage, contact, envelopeSenderPeerId, handleIncomingMessageDeletion, HandleMessageDeletionResult, maybeSendDeliveryReceipt, mediaAttachmentRepo (+24 more)
+Nodes (34): _RecordingSnapshotExportAdapter, _FfiSnapshotExportAdapter, adapter, _applyCipherPragmas, captureCipherMetadata, cipherVersion, closeExportedDatabaseAfterValidation, computeFileChecksum (+26 more)
 
 ### Community 385 - "Community 385"
 Cohesion: 0.06
-Nodes (34): absolutePath, AccountMigrationAccountSizeEstimator, accountMigrationDisplayMegabytes, accountMigrationMaxAccountBytes, accountMigrationReceiverStorageInsufficientMessage, accountMigrationReceiverStorageUnavailableMessage, accountMigrationSizeCapBlockedMessage, accountMigrationSizeEstimateLabel (+26 more)
+Nodes (33): addContact, archiveContact, blockContact, contactExists, deleteContact, dismissIntroBanner, existsResult, _FakeContactRepository (+25 more)
 
 ### Community 386 - "Community 386"
 Cohesion: 0.06
-Nodes (33): criticality, _item, main, path, size, transferManifest, blocking, code (+25 more)
+Nodes (34): allowedPeers, attachments, attachPostMedia, AttachPostMediaResult, blobId, _draftFromRecoveryItem, _draftMime, drafts (+26 more)
 
 ### Community 387 - "Community 387"
 Cohesion: 0.06
-Nodes (31): DateTime, createdAt, cursor, fromMap, groupId, GroupInboxCursor, toMap, updatedAt (+23 more)
+Nodes (32): _bestEffortIncomingCleanup, blockedSenderOwnsStoredMessage, contact, envelopeSenderPeerId, handleIncomingMessageDeletion, HandleMessageDeletionResult, maybeSendDeliveryReceipt, mediaAttachmentRepo (+24 more)
 
 ### Community 388 - "Community 388"
 Cohesion: 0.06
-Nodes (32): driver, main, UploadWakeLockDriver, WakelockPlusUploadWakeLockDriver, disable, disableCalls, enable, enableCalls (+24 more)
+Nodes (34): absolutePath, AccountMigrationAccountSizeEstimator, accountMigrationDisplayMegabytes, accountMigrationMaxAccountBytes, accountMigrationReceiverStorageInsufficientMessage, accountMigrationReceiverStorageUnavailableMessage, accountMigrationSizeCapBlockedMessage, accountMigrationSizeEstimateLabel (+26 more)
 
 ### Community 389 - "Community 389"
 Cohesion: 0.06
-Nodes (34): _FakeNearbyLocationService, activeContactsDelay, availability, bridge, buildWidget, composeRefreshResult, contactRepository, getActiveContacts (+26 more)
+Nodes (34): addContact, archiveContact, blockContact, bridge, checkHealth, contactExists, contactRepo, _contacts (+26 more)
 
 ### Community 390 - "Community 390"
-Cohesion: 0.10
-Nodes (31): scanPushMessage(), TestForbiddenFieldClassifier_MessagePushesDoNotExposePreviewCanaries(), apnsCustomDataFromPushData(), buildCiphertextOnlyPushMessage(), buildGroupPushMessage(), buildOversizedFallbackPushMessage(), buildPushMessage(), pushDataSize() (+23 more)
-
-### Community 391 - "Community 391"
 Cohesion: 0.11
 Nodes (22): activeGroupInboxRecipientsForConfig(), deriveActiveGroupInboxRecipients(), inclusiveGroupInboxSinceTimestamp(), NormalizeGroupHistoryRepairRangeRequest(), normalizeGroupInboxRecipientPeerIds(), parseGroupInboxSyntheticSinceCursor(), TestGI027GroupHistoryRepairRangeValidatesRequiredFieldsAndTrimsWhitespace(), TestGI028GroupHistoryRepairRangeDefaultsNonPositiveLimitTo50() (+14 more)
 
-### Community 392 - "Community 392"
-Cohesion: 0.06
-Nodes (34): connectedPeerId, currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, _failsRemaining (+26 more)
+### Community 391 - "Community 391"
+Cohesion: 0.03
+Nodes (64): _FakeP2PService, _FakeP2PService, _FakeP2PService, RelayLiveSendObserver, FakeP2PService, _FlakyDiscoverP2PService, _SlowLocalFastDirectP2PService, _ThrowOnInboxP2PService (+56 more)
 
-### Community 393 - "Community 393"
+### Community 392 - "Community 392"
 Cohesion: 0.06
 Nodes (34): alice, aliceDevice, aliceLog, args, audibleConfirmed, bob, bobDevice, bobLog (+26 more)
 
-### Community 394 - "Community 394"
+### Community 393 - "Community 393"
 Cohesion: 0.06
 Nodes (34): currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, FakeP2PService, incomingLocalMediaStream (+26 more)
 
+### Community 394 - "Community 394"
+Cohesion: 0.06
+Nodes (33): acceptIntroduction, acceptPayload, bridge, contact, contactMlKemPublicKey, createIntroductionOutboxDelivery, _createPayloadDeliveryForContact, deliverStagedIntroductionDelivery (+25 more)
+
 ### Community 395 - "Community 395"
-Cohesion: 0.06
-Nodes (34): currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, incomingLocalMediaStream, inject (+26 more)
-
-### Community 396 - "Community 396"
-Cohesion: 0.06
-Nodes (34): _FakeP2PService, _FakeP2PService, _FakeP2PService, RelayLiveSendObserver, DurableLanFakeP2PService, FakeP2PService, _FlakyDiscoverP2PService, _SlowLocalFastDirectP2PService (+26 more)
-
-### Community 397 - "Community 397"
-Cohesion: 0.06
-Nodes (30): ClearedWatermarks, feedItemMatchesThreadId, feedThreadKindConnection, feedThreadKindContact, feedThreadKindGroup, isPendingFeedItem, kept, projectPendingFeed (+22 more)
-
-### Community 398 - "Community 398"
 Cohesion: 0.06
 Nodes (33): addFriend, addGroup, build, _buildGroups, canvas, _canvasNames, _clockLabel, friend (+25 more)
 
-### Community 399 - "Community 399"
-Cohesion: 0.06
-Nodes (33): AudioPlayer, attachment, AudioPlayerWidget, _AudioPlayerWidgetState, build, _buildUnavailableAudio, _canRetryUnavailableMedia, createState (+25 more)
-
-### Community 400 - "Community 400"
+### Community 396 - "Community 396"
 Cohesion: 0.06
 Nodes (33): FakeNotificationService, _RecordingNotificationService, at, buildVerdict, clearDeliveredNotifications, consumeInitialPayload, contactPeerId, _dbName (+25 more)
 
-### Community 401 - "Community 401"
+### Community 397 - "Community 397"
+Cohesion: 0.10
+Nodes (30): scanPushMessage(), TestForbiddenFieldClassifier_MessagePushesDoNotExposePreviewCanaries(), apnsCustomDataFromPushData(), buildCiphertextOnlyPushMessage(), buildGroupPushMessage(), buildOversizedFallbackPushMessage(), buildPushMessage(), pushDataSize() (+22 more)
+
+### Community 398 - "Community 398"
+Cohesion: 0.06
+Nodes (31): Incoming, package:flutter_app/core/permissions/mic_permission_gateway.dart, package:flutter_app/core/permissions/mic_permission_prompt.dart, package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart, showMicPermissionDeniedPrompt, main, openPrompt, buildWidget (+23 more)
+
+### Community 399 - "Community 399"
 Cohesion: 0.06
 Nodes (33): bobPeerId, buildProfileUpdateMessage, checkHealth, _compressToBytes, dispose, docsPath, envelope, Fake (+25 more)
 
-### Community 402 - "Community 402"
+### Community 400 - "Community 400"
 Cohesion: 0.06
-Nodes (33): audience, authorPeerId, authorUsername, buildEncryptedEnvelope, createdAt, _deriveMediaKeysFromAttachments, eventId, expiresAt (+25 more)
+Nodes (32): ../local_discovery/fake_local_p2p_service.dart, bridge, _captureFlowEvents, checkHealth, dispose, _FakeBridge, inboxStagingRepository, initialize (+24 more)
 
-### Community 403 - "Community 403"
+### Community 401 - "Community 401"
 Cohesion: 0.06
 Nodes (33): clear, _coerceTimestamp, consumeIfRecentAnnouncement, consumeIfRecentPayload, _consumeSidecarMarker, _defaultRecentRemoteGateLoadError, _doResolveFilePath, _doResolveSidecarDir (+25 more)
 
-### Community 404 - "Community 404"
+### Community 402 - "Community 402"
 Cohesion: 0.06
 Nodes (33): routing_smoke_group_criteria.dart, alice, aliceDevice, _aliceHarness, aliceLog, args, bob, bobDevice (+25 more)
 
-### Community 405 - "Community 405"
-Cohesion: 0.06
-Nodes (33): controller, currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, _FakeP2PService (+25 more)
+### Community 403 - "Community 403"
+Cohesion: 0.05
+Nodes (35): main, package:flutter_app/features/p2p/domain/models/send_message_result.dart, controller, currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose (+27 more)
 
-### Community 406 - "Community 406"
-Cohesion: 0.06
-Nodes (33): controller, currentState, dialPeer, discoverLocalPeer, discoverPeer, dispose, drainOfflineInbox, _FakeP2PService (+25 more)
-
-### Community 407 - "Community 407"
-Cohesion: 0.07
-Nodes (29): acceptContactRequest, AcceptContactRequestResult, contact, peerIdPrefix, request, declineContactRequest, DeclineContactRequestResult, peerIdPrefix (+21 more)
-
-### Community 408 - "Community 408"
+### Community 404 - "Community 404"
 Cohesion: 0.06
 Nodes (30): buildQRPayload, BuildQRPayloadResult, dataToSign, finalJson, identity, _redactedPeerId, signature, signedPayload (+22 more)
 
-### Community 409 - "Community 409"
-Cohesion: 0.06
-Nodes (30): _AvatarDownloadBridge, checkHealth, commandLog, dispose, docsPath, downloadBytes, Fake, getApplicationDocumentsPath (+22 more)
-
-### Community 410 - "Community 410"
+### Community 405 - "Community 405"
 Cohesion: 0.06
 Nodes (32): _aggregatePostEngagementFollowOnSettlement, commentId, createdAt, defaultPostCommentDeliveryConcurrency, deliveries, _deliverPostEngagementFollowOnRecipients, deliverQueuedPostEngagementFollowOn, envelope (+24 more)
 
-### Community 411 - "Community 411"
+### Community 406 - "Community 406"
 Cohesion: 0.06
 Nodes (32): _aggregatePostFollowOnResult, attemptedAt, defaultPostFollowOnDeliveryConcurrency, _deliverPostFollowOnEnvelope, deliveryPath, deliveryStatus, _dialDiscoveredPostRecipient, dialed (+24 more)
 
-### Community 412 - "Community 412"
-Cohesion: 0.06
-Nodes (31): allowCurrentMember, drainOfflineInbox, existingGroup, existingPendingInvite, existingResolution, group, GroupMessageNotificationDisplayEligibility, GroupNotificationRouteResolution (+23 more)
-
-### Community 413 - "Community 413"
+### Community 407 - "Community 407"
 Cohesion: 0.06
 Nodes (32): captureFlowEvents, contactPeerId, decodeWirePayload, encrypted, envelope, gate, _GatedInboxP2PService, id (+24 more)
 
-### Community 414 - "Community 414"
+### Community 408 - "Community 408"
 Cohesion: 0.06
 Nodes (31): contact_repository.dart, ../models/contact_model.dart, addContact, archiveContact, blockContact, contactExists, ContactRepository, deleteContact (+23 more)
 
-### Community 415 - "Community 415"
+### Community 409 - "Community 409"
+Cohesion: 0.06
+Nodes (31): allOutboxDeliveries, clear, countPendingIntroductions, deleteIntroduction, deleteOutboxDeliveriesForIntroduction, deleteOutboxDelivery, deletePendingResponse, getIntroduction (+23 more)
+
+### Community 410 - "Community 410"
+Cohesion: 0.12
+Nodes (22): newMemoryGroupInboxBackend(), assertGroupInboxCapEvictionSurfacesRepairableGap(), TestGI017GroupInboxStoreAuthorizedCursorPaginationReturns120MessagesExactlyOnce(), TestGI035GroupInboxStorePersistsEncryptedEnvelopeWithoutPlaintext(), TestGIRD004MemoryGroupInboxDuplicateMessageIDStoresOneRow(), TestGroupInboxStore_CursorPaginationExactOnceAcrossPages(), TestGroupInboxStore_CursorPaginationStableAcrossInstances(), TestGroupInboxStore_FailoverDoesNotDuplicateMessages() (+14 more)
+
+### Community 411 - "Community 411"
 Cohesion: 0.06
 Nodes (32): action, createdAt, createdTime, dbDeleteIntroductionOutboxDeliveriesForIntroduction, dbDeleteIntroductionOutboxDelivery, dbLoadIntroductionOutboxDeliveriesForIntroduction, dbLoadRetryableIntroductionOutboxDeliveries, dbReplaceIntroductionWithPendingResponseMigration (+24 more)
 
-### Community 416 - "Community 416"
-Cohesion: 0.06
-Nodes (32): BonsoirBroadcastFactory, BonsoirDiscoveryFactory, _broadcast, _buildLibp2pAddresses, _createBroadcast, _createDiscovery, discoveredPeers, discoveredPeersStream (+24 more)
-
-### Community 417 - "Community 417"
+### Community 412 - "Community 412"
 Cohesion: 0.06
 Nodes (32): accountPeerId, blocking, code, currentStatus, eventId, field, groupId, hasIssue (+24 more)
 
-### Community 418 - "Community 418"
+### Community 413 - "Community 413"
 Cohesion: 0.06
 Nodes (32): args, deadline, devices, exitCode, failures, file, _harnessPath, _HarnessRole (+24 more)
 
-### Community 419 - "Community 419"
+### Community 414 - "Community 414"
+Cohesion: 0.06
+Nodes (32): addContact, addContactCount, addRequest, _aPeerId, bridge, callLog, checkHealth, commandLog (+24 more)
+
+### Community 415 - "Community 415"
 Cohesion: 0.06
 Nodes (32): any, contains, emitFlowEvent, flowEventLoggingEnabled, FlowEventSink, _flowEventTestSink, _isPeerIdKey, _isSensitiveKey (+24 more)
 
-### Community 420 - "Community 420"
-Cohesion: 0.06
-Nodes (31): blockingUpload, bridge, captureFlowEvents, _doneAttachment, file, groupMsgRepo, groupRepo, identityRepo (+23 more)
+### Community 416 - "Community 416"
+Cohesion: 0.02
+Nodes (132): _InstrumentedGroupMessageRepository, _InstrumentedGroupMessageRepository, _ContendedGroupMessageRepository, _LiveReplayRaceGroupMessageRepository, actorPeerId, bridge, groupId, groupRepo (+124 more)
 
-### Community 421 - "Community 421"
-Cohesion: 0.06
-Nodes (31): clearWriteLog, _contact, contacts, created, _createLocalPost, dialAttempts, _dialedPeers, dialPeer (+23 more)
+### Community 417 - "Community 417"
+Cohesion: 0.16
+Nodes (31): newRedisGroupInboxBackend(), newRedisInboxBackend(), newTestRedisClient(), requireRedisInboxStoreResult(), TestGIRD004RedisGroupInboxConflictingSameMessageIDRejected(), TestGIRD004RedisGroupInboxDistinctMessageIDsPreserveOrder(), TestGIRD004RedisGroupInboxDuplicateExpandedRecipientACLMerges(), TestGIRD004RedisGroupInboxDuplicateMessageIDStoresOneRowAcrossClients() (+23 more)
 
-### Community 422 - "Community 422"
+### Community 418 - "Community 418"
 Cohesion: 0.06
 Nodes (31): attachment, borderRadius, build, _buildContent, _buildGifBadge, _buildLoadingPlaceholder, _buildOverlayCount, _buildUnavailablePlaceholder (+23 more)
 
-### Community 423 - "Community 423"
+### Community 419 - "Community 419"
 Cohesion: 0.06
 Nodes (31): contactPeerId, ConversationMessage, copyWith, createdAt, custodyCheckedAt, dedupKey, deletedAt, deletedByPeerId (+23 more)
 
-### Community 424 - "Community 424"
+### Community 420 - "Community 420"
 Cohesion: 0.06
 Nodes (30): package:clock/clock.dart, ageMs, bridge, checkHealth, _CountingBridge, dispose, initialize, isInitialized (+22 more)
 
-### Community 425 - "Community 425"
+### Community 421 - "Community 421"
 Cohesion: 0.06
 Nodes (31): ring_avatar_spec.dart, accentColorForPeerId, _cacheCapacity, _calculateRingRadii, color, dashGap, dashLength, djb2Hash (+23 more)
 
-### Community 426 - "Community 426"
+### Community 422 - "Community 422"
 Cohesion: 0.07
-Nodes (27): block, contentHashValidation, copyWith, _emitGroupFeedMediaVerifyEvent, file, fileBytes, fileExists, _idPrefix (+19 more)
+Nodes (27): dismissedAt, dismissPin, savePinDismissal, comments, loadPostComments, wait, _commentController, contactRepo (+19 more)
 
-### Community 427 - "Community 427"
+### Community 423 - "Community 423"
 Cohesion: 0.06
-Nodes (30): _aggregatePostPinFollowOnSettlement, defaultPostPinDeliveryConcurrency, deliveries, _deliverPostPinFollowOnRecipients, envelope, eventId, eventType, fanoutPostFollowOnEnvelope (+22 more)
+Nodes (30): attachment, basePath, bytes, checkHealth, delay, deleteAttachmentsForContact, deleteAttachmentsForMessage, dispose (+22 more)
 
-### Community 428 - "Community 428"
+### Community 424 - "Community 424"
+Cohesion: 0.06
+Nodes (29): bridge, contactRepo, dispose, incomingPostStream, notificationService, _onMessage, _postController, postCreateStream (+21 more)
+
+### Community 425 - "Community 425"
 Cohesion: 0.06
 Nodes (30): activePeerIds, contains, hasRepostThreadState, _isRepostOrigin, isTrustedRepostThreadParticipant, loadLocalRepostSharedToCount, loadPersistedRepostParticipantPeerIds, loadProjectedActiveHeartPeerIds (+22 more)
 
-### Community 429 - "Community 429"
+### Community 426 - "Community 426"
 Cohesion: 0.06
 Nodes (30): _capPreview, ciphertext, data, decoded, DecryptGroupPush, DecryptOneToOnePush, displayName, fallback (+22 more)
 
-### Community 430 - "Community 430"
+### Community 427 - "Community 427"
 Cohesion: 0.06
-Nodes (30): completed, deliverStagedIntroductionDelivery, deliveryForIntroduced, deliveryForRecipient, deliveryRows, duplicates, effectiveRecipientMlKemPublicKey, existing (+22 more)
+Nodes (30): basePath, bridge, captureFlowEvents, checkHealth, commandLog, dispose, encryptResponse, _extFromMime (+22 more)
 
-### Community 431 - "Community 431"
-Cohesion: 0.06
-Nodes (30): _blobKeygenCount, checkHealth, checkHealthCallCount, checkHealthResult, commandLog, consumeUploadMediaResult, dispose, FakeBridge (+22 more)
+### Community 428 - "Community 428"
+Cohesion: 0.07
+Nodes (30): BonsoirBroadcast, BonsoirDiscovery, BonsoirDiscoveryEvent, BonsoirService, build, _controller, emit, eventStream (+22 more)
 
-### Community 432 - "Community 432"
+### Community 429 - "Community 429"
 Cohesion: 0.06
 Nodes (30): avatarSizes, boxSize, centerSize, computeOrbit3RingLayout, counts, fills, hasHidden, hiddenCount (+22 more)
 
-### Community 433 - "Community 433"
-Cohesion: 0.07
-Nodes (28): ElevatedButton, _buildWidget, _contact, contactRepository, _CountingPostRepository, _delivery, identityRepository, loadFeed (+20 more)
-
-### Community 434 - "Community 434"
+### Community 430 - "Community 430"
 Cohesion: 0.06
 Nodes (30): _amplitudeController, amplitudeStream, cancel, cancelCallCount, _currentOutputPath, deletedPaths, dispose, _durationController (+22 more)
 
-### Community 435 - "Community 435"
+### Community 431 - "Community 431"
 Cohesion: 0.07
 Nodes (28): countQuarantinedEntries, deleteEntry, _entries, entry, getEntry, getRecoverableEntries, getRecoverableEntriesByIds, markQuarantined (+20 more)
 
-### Community 436 - "Community 436"
-Cohesion: 0.16
-Nodes (30): newRedisGroupInboxBackend(), newRedisInboxBackend(), newTestRedisClient(), requireRedisInboxStoreResult(), TestGIRD004RedisGroupInboxConflictingSameMessageIDRejected(), TestGIRD004RedisGroupInboxDistinctMessageIDsPreserveOrder(), TestGIRD004RedisGroupInboxDuplicateExpandedRecipientACLMerges(), TestGIRD004RedisGroupInboxDuplicateMessageIDStoresOneRowAcrossClients() (+22 more)
+### Community 432 - "Community 432"
+Cohesion: 0.12
+Nodes (14): pruneExpiredInboxMessages(), ensureInboxMessageID(), memoryGroupInboxBackend, memoryInboxBackend, memoryRendezvousBackend, peerRegistration, Duration, groupInboxHistoryGap (+6 more)
 
-### Community 437 - "Community 437"
+### Community 433 - "Community 433"
+Cohesion: 0.06
+Nodes (30): addContact, author, bridge, condition, _contact, contactRepo, create, deadline (+22 more)
+
+### Community 434 - "Community 434"
 Cohesion: 0.06
 Nodes (30): copyWith, createdAt, fromMap, groupId, GroupMessage, hashCode, id, inboxRetryPayload (+22 more)
 
-### Community 438 - "Community 438"
+### Community 435 - "Community 435"
 Cohesion: 0.06
 Nodes (30): blobId, contentHash, copyWith, createdAt, _decodeWaveform, deriveMediaKind, downloadStatus, durationMs (+22 more)
 
-### Community 439 - "Community 439"
-Cohesion: 0.06
-Nodes (30): _benchmarkKey, command, commandOk, _defaultDevice, deviceId, _handleStdout, harness, _harnessPath (+22 more)
-
-### Community 440 - "Community 440"
-Cohesion: 0.06
-Nodes (30): activeIconColor, activePillGradient, activeTextColor, activeWeight, animationCurve, animationDuration, badgeGradientColors, badgeShadowColor (+22 more)
-
-### Community 441 - "Community 441"
-Cohesion: 0.07
-Nodes (27): accountKey, admit, drainSpy, groupId, main, member, memberPeerId, reopenSpy (+19 more)
-
-### Community 442 - "Community 442"
-Cohesion: 0.07
-Nodes (27): dialPeer, discoverPeer, main, startedState, _ThrowingDialFakeP2PService, _ThrowingDiscoverFakeP2PService, main, package:flutter_app/features/p2p/application/discover_peer_use_case.dart (+19 more)
-
-### Community 443 - "Community 443"
-Cohesion: 0.07
-Nodes (29): _buildItems, clearClearedLocally, _clearedWatermarks, connectionForContact, _connectionsByContactId, contactMessageIds, containsMessageId, dispose (+21 more)
-
-### Community 444 - "Community 444"
+### Community 436 - "Community 436"
 Cohesion: 0.07
 Nodes (29): appDir, canonicalPath, commitPreparedGroupAvatar, committedPath, deleteGroupAvatar, downloadGroupAvatar, DownloadGroupAvatarFn, effectiveBlobId (+21 more)
 
-### Community 445 - "Community 445"
+### Community 437 - "Community 437"
 Cohesion: 0.07
-Nodes (27): _drain, drainAll, drainForGroup, GroupPendingBroadcastRunner, repository, _safeId, all, _b (+19 more)
+Nodes (28): _AvatarDownloadBridge, checkHealth, commandLog, dispose, docsPath, downloadBytes, Fake, getApplicationDocumentsPath (+20 more)
 
-### Community 446 - "Community 446"
+### Community 438 - "Community 438"
+Cohesion: 0.07
+Nodes (26): DrainGroupOfflineInboxForGroupFn, DrainOfflineInboxFn, _emitMissingGroupId, _emitUnroutable, ForegroundRemoteMessageResult, handleForegroundRemoteMessage, routeTarget, cooldown (+18 more)
+
+### Community 439 - "Community 439"
 Cohesion: 0.07
 Nodes (28): accountMigrationNetworkGate, deadline, effectiveDelay, effectiveGetApnsToken, effectiveGetPlatform, effectiveGetToken, effectiveGetTokenWithTimeout, effectiveIsIOS (+20 more)
 
-### Community 447 - "Community 447"
+### Community 440 - "Community 440"
 Cohesion: 0.07
-Nodes (28): AudioRecorder, main, _acquireWakeLock, _amplitudeBridgeSub, _amplitudeController, amplitudeStream, cancel, _currentOutputPath (+20 more)
+Nodes (29): _blobKeygenCount, checkHealth, checkHealthCallCount, checkHealthResult, commandLog, consumeUploadMediaResult, dispose, initialize (+21 more)
 
-### Community 448 - "Community 448"
-Cohesion: 0.07
-Nodes (29): Brightness, border, copyWith, dark, disabledForeground, disabledSurface, divider, glassBorder (+21 more)
-
-### Community 449 - "Community 449"
-Cohesion: 0.07
-Nodes (29): InboxStagingRepositoryImpl, InboxStagingRepository, _chatEnvelope, close, db, _DbHarness, decoded, _deleteDbPath (+21 more)
-
-### Community 450 - "Community 450"
+### Community 441 - "Community 441"
 Cohesion: 0.07
 Nodes (29): bridge, calledCommands, checkHealth, contactRepo, conversationTracker, directMessage, dispose, _FakeBridge (+21 more)
 
-### Community 451 - "Community 451"
+### Community 442 - "Community 442"
 Cohesion: 0.07
 Nodes (27): media_display_helpers.dart, media_grid_cell.dart, build, _buildFourPlus, _buildLayout, _buildSingle, _buildThree, _buildTwo (+19 more)
 
-### Community 452 - "Community 452"
+### Community 443 - "Community 443"
 Cohesion: 0.07
 Nodes (29): create, defaultGroupWelcomeKeyPackageIdForDevice, expiresAt, fromJson, groupId, GroupWelcomeKeyPackage, groupWelcomeKeyPackageIdPrefix, groupWelcomeKeyPackageMinPublicMaterialLength (+21 more)
 
-### Community 453 - "Community 453"
+### Community 444 - "Community 444"
 Cohesion: 0.07
 Nodes (29): aIdx, bIdx, bottom, cx, d, exclusionCenter, exclusionRadius, h (+21 more)
 
-### Community 454 - "Community 454"
+### Community 445 - "Community 445"
+Cohesion: 0.18
+Nodes (27): lp002LogBuffer, assertGA026DiagnosticHash(), assertGA026DiagnosticKeys(), assertGA026DiagnosticsOmitSensitive(), assertGO005ValidationRejectTotals(), assertLP002LogsOmitSensitive(), assertLP002NoAcceptedGroupEvents(), captureLP002ValidatorLogs() (+19 more)
+
+### Community 446 - "Community 446"
 Cohesion: 0.09
 Nodes (27): APP_DEFAULT_RELAY_ADDRESSES, array_contains(), BASELINE_TESTS, classify_path(), FEED_TESTS, GROUP_LIFECYCLE_SIM_HARNESS, GROUP_LIFECYCLE_SIM_SCENARIOS, GROUP_TESTS (+19 more)
 
-### Community 455 - "Community 455"
-Cohesion: 0.11
-Nodes (17): AccountMigrationRuntimeNetworkPolicy, AccountMigrationAuthorityState, accountPeerId, allowsNormalStartup, blocksNormalStartup, currentVersion, failClosed, fromPersistedJson (+9 more)
+### Community 447 - "Community 447"
+Cohesion: 0.09
+Nodes (29): _FakeMessageRepository, FakeMessageRepository, _FakeMessageRepository, FakeMessageRepository, FakeMessageRepository, FakeMessageRepository, FakeMessageRepository, _FakeMessageRepo (+21 more)
 
-### Community 456 - "Community 456"
+### Community 448 - "Community 448"
 Cohesion: 0.07
-Nodes (28): add, attemptSilentIntroRecovery, bridge, _contactKeyUpdatedController, contactKeyUpdatedStream, contactRepo, ContactRequestListener, contactRequestStream (+20 more)
+Nodes (25): GetInitialRemoteMessageFn, handleInitialRemoteMessage, message, OnInitialRemoteMessageFn, sync, main, main, ../../../core/notifications/notification_route_target.dart (+17 more)
 
-### Community 457 - "Community 457"
-Cohesion: 0.07
-Nodes (27): connectionItem, contact, ContactFeedSnapshot, loadContactFeedSnapshot, messages, summary, threadItem, _buildOrbitFriend (+19 more)
-
-### Community 458 - "Community 458"
+### Community 449 - "Community 449"
 Cohesion: 0.07
 Nodes (28): bridge, contact, contactMlKemPublicKey, contactRepo, deliverIntroductionPayloadReliably, didUpdate, effectiveMlKemKey, finalIntro (+20 more)
 
-### Community 459 - "Community 459"
+### Community 450 - "Community 450"
 Cohesion: 0.07
-Nodes (28): bridge, captureFlowEvents, contactPeerId, contactRepo, _contactWithMlKem, _doneAttachment, durationMs, fakeUploadFn (+20 more)
+Nodes (26): DateTime, createdAt, cursor, fromMap, groupId, GroupInboxCursor, toMap, updatedAt (+18 more)
 
-### Community 460 - "Community 460"
-Cohesion: 0.07
-Nodes (28): AppLifecycleState, ../../core/local_discovery/fake_local_p2p_service.dart, fake_notification_service.dart, bridge, contactRepo, conversationTracker, create, DirectMessageRouter (+20 more)
-
-### Community 461 - "Community 461"
-Cohesion: 0.07
-Nodes (28): BonsoirBroadcast, BonsoirDiscovery, BonsoirDiscoveryEvent, BonsoirService, _controller, emit, eventStream, _FakeBonsoirBroadcast (+20 more)
-
-### Community 462 - "Community 462"
-Cohesion: 0.07
-Nodes (27): bridge, checkHealth, dispose, initialize, isInitialized, lastParsedRequest, lastRawRequest, main (+19 more)
-
-### Community 463 - "Community 463"
+### Community 451 - "Community 451"
 Cohesion: 0.07
 Nodes (26): deletePendingMessage, deletePendingMessageByGroupAndMessageId, getPendingMessages, getPendingMessagesForGroupAndSenders, InMemoryGroupPendingMembershipMessageRepository, _messages, pruneGroup, savePendingMessage (+18 more)
 
-### Community 464 - "Community 464"
+### Community 452 - "Community 452"
 Cohesion: 0.07
-Nodes (28): allOutboxDeliveries, clear, countPendingIntroductions, deleteIntroduction, deleteOutboxDeliveriesForIntroduction, deleteOutboxDelivery, deletePendingResponse, getIntroduction (+20 more)
+Nodes (26): ../models/message_reaction.dart, package:flutter_app/features/conversation/domain/repositories/reaction_repository_impl.dart, reaction_repository.dart, deleteReactionsForContact, deleteReactionsForMessage, getReactionForSenderIncludingRemoved, getReactionsForMessage, getReactionsForMessages (+18 more)
 
-### Community 465 - "Community 465"
-Cohesion: 0.07
-Nodes (25): package:flutter_app/features/feed/domain/utils/format_message_time.dart, package:flutter_app/features/groups/domain/utils/group_message_ordering.dart, main, aboveDivider, belowDivider, byGroup, _compareGroupThreadFeedItemsDescending, groupGroupMessagesIntoThreads (+17 more)
-
-### Community 466 - "Community 466"
+### Community 453 - "Community 453"
 Cohesion: 0.07
 Nodes (28): aliceService, archived, authorPeerId, authorUsername, blocked, bridge, buildWidget, _captureFlowEvents (+20 more)
 
-### Community 467 - "Community 467"
+### Community 454 - "Community 454"
 Cohesion: 0.07
 Nodes (27): _bufferPendingReaction, currentReaction, currentTime, deleteExpired, device, dissolvedAt, group, HandleGroupReactionResult (+19 more)
 
-### Community 468 - "Community 468"
+### Community 455 - "Community 455"
 Cohesion: 0.07
-Nodes (26): accuracyM, _buildActiveSnapshot, _buildInactiveSnapshot, capturedAt, _compareIso, existing, handleIncomingPostPresence, HandleIncomingPostPresenceResult (+18 more)
+Nodes (26): blockedGuard, dataToVerify, existingRequest, handleIncomingMessage, HandleMessageResult, isContact, isValid, json (+18 more)
 
-### Community 469 - "Community 469"
+### Community 456 - "Community 456"
 Cohesion: 0.07
-Nodes (26): _aggregatePostPassFollowOnSettlement, deliveries, _deliverPostPassFollowOnRecipients, envelope, eventId, eventType, isPostPassFollowOnEventType, _loadPersistedPostPassFollowOnResult (+18 more)
+Nodes (25): concurrentInbox, delivered, jsonString, payload, reactionId, removeReaction, RemoveReactionResult, timestamp (+17 more)
 
-### Community 470 - "Community 470"
-Cohesion: 0.03
-Nodes (61): bridge, contactRepo, declinedAtUtc, declinePendingGroupInvite, DeclinePendingGroupInviteResult, declinerPeerId, declinerPrivateKey, deletePendingInvite (+53 more)
-
-### Community 471 - "Community 471"
+### Community 457 - "Community 457"
 Cohesion: 0.07
-Nodes (27): captureFlowEvents, _FailFirstPublishBridge, _Gfr001GatedPublishBridge, id, main, _makeAttachment, _makeFailedGroupMessage, _makeGroup (+19 more)
+Nodes (27): bridge, contactPeerId, contactRepo, downloadStatus, durationMs, fakeUploadFn, id, identityRepo (+19 more)
 
-### Community 472 - "Community 472"
+### Community 458 - "Community 458"
+Cohesion: 0.07
+Nodes (26): bridge, _callCount, contactRepo, failOnCall, _FailOnNthBridge, identityRepo, isArchived, isBlocked (+18 more)
+
+### Community 459 - "Community 459"
 Cohesion: 0.07
 Nodes (27): Expando, _capabilityCache, columns, hasPassDeliveryStatus, hasPassInnerPayloadJson, hasPassRecipientCount, hasPostsAudienceRadiusM, hasPostsLastEngagementAt (+19 more)
 
-### Community 473 - "Community 473"
+### Community 460 - "Community 460"
+Cohesion: 0.07
+Nodes (27): _FakeNearbyLocationPlatformAdapter, accuracyM, capturedAt, checkedPermissionState, checkPermissionCallCount, checkPermissionState, currentPosition, getCurrentPosition (+19 more)
+
+### Community 461 - "Community 461"
+Cohesion: 0.07
+Nodes (27): acceptIntro, addContact, bridge, chatListener, contactRepo, create, dispose, drainOfflineInbox (+19 more)
+
+### Community 462 - "Community 462"
 Cohesion: 0.08
 Nodes (27): allPaths, build, _buildErrorState, _controller, _createController, createState, _currentPage, didUpdateWidget (+19 more)
 
-### Community 474 - "Community 474"
-Cohesion: 0.07
-Nodes (26): canDisplayVerifiedGroupMedia, computeFileSha256Hex, GroupMediaIntegrityPolicy, hasRequiredVerificationMetadata, hasValidContentHash, isQuarantinedGroupMedia, isRetryableDownloadFailure, isUnavailableMedia (+18 more)
-
-### Community 475 - "Community 475"
+### Community 463 - "Community 463"
 Cohesion: 0.07
 Nodes (27): action, copyWith, createdAt, delivered, deliveryId, deliveryPath, deliveryStatus, direct (+19 more)
 
-### Community 476 - "Community 476"
+### Community 464 - "Community 464"
 Cohesion: 0.07
 Nodes (27): audience, authorPeerId, authorUsername, buildJson, createdAt, effectiveAt, eventId, expiresAt (+19 more)
 
-### Community 477 - "Community 477"
+### Community 465 - "Community 465"
+Cohesion: 0.07
+Nodes (25): consumeInitialPayload, data, isNotificationRouteTargetAlreadyActive, NotificationOpenSideEffect, onBeforeOpen, onBeforeRouteTarget, onMissingGroupRouteId, onMissingRouteTarget (+17 more)
+
+### Community 466 - "Community 466"
+Cohesion: 0.07
+Nodes (27): backgroundPreference, build, _buildConfirmButton, _buildContactList, _buildEmptyState, _buildHeader, _buildLoadErrorState, _buildLoadingState (+19 more)
+
+### Community 467 - "Community 467"
+Cohesion: 0.07
+Nodes (27): _buildScreen, dispose, disposeAllPlayers, _disposed, disposePlayer, _emitPlayback, _firstUri, init (+19 more)
+
+### Community 468 - "Community 468"
 Cohesion: 0.07
 Nodes (27): aliceTimeline, bobTimeline, bothReceived, count, detail, e2eMs, evaluateG2, evaluateG4 (+19 more)
 
-### Community 478 - "Community 478"
-Cohesion: 0.10
-Nodes (27): _FakeMessageRepository, FakeMessageRepository, _FakeMessageRepository, FakeMessageRepository, FakeMessageRepository, FakeMessageRepository, FakeMessageRepository, _FakeMessageRepo (+19 more)
+### Community 469 - "Community 469"
+Cohesion: 0.08
+Nodes (23): main, _attemptRegistration, dispose, _disposed, ensureStarted, _inFlightAttempt, _permissionState, _PushPermissionState (+15 more)
 
-### Community 479 - "Community 479"
-Cohesion: 0.11
-Nodes (18): _bridge, dispose, DistributeGroupKeyAtEpochToPeer, _emitUnauthorized, _enqueue, GroupKeyRepairResponderListener, _groupRepo, _handle (+10 more)
+### Community 470 - "Community 470"
+Cohesion: 0.08
+Nodes (26): AccountMigrationMoveSizeEstimate, AccountMigrationOldPhonePresentationState, AccountMigrationOldPhoneStatus, AccountMigrationProgressStage, AccountMigrationProgressStageStatus, AccountMigrationQrPresentationState, AccountMigrationQrPresentationStatus, AccountMigrationRole (+18 more)
 
-### Community 480 - "Community 480"
+### Community 471 - "Community 471"
 Cohesion: 0.07
 Nodes (26): buildMigrationQrPayload, BuildMigrationQrPayloadResult, bytes, createdAt, currentTime, decoded, deriveMigrationPairingConfirmationCode, expiresAt (+18 more)
 
-### Community 481 - "Community 481"
+### Community 472 - "Community 472"
+Cohesion: 0.07
+Nodes (26): c, calculateNearbyDistanceM, capturedAt, contact, contacts, currentTime, deltaLat, deltaLng (+18 more)
+
+### Community 473 - "Community 473"
+Cohesion: 0.05
+Nodes (40): swipe_action_buttons.dart, _actionCount, _actionWidth, addButton, build, _buildActionButtons, child, createState (+32 more)
+
+### Community 474 - "Community 474"
 Cohesion: 0.07
 Nodes (26): _applyOutcome, checked, checkedAt, current, difference, expiresAtMs, _isOldRelayZombie, _isStaleUnreceipted (+18 more)
 
-### Community 482 - "Community 482"
+### Community 475 - "Community 475"
 Cohesion: 0.08
 Nodes (25): BoxFit, build, _buildImage, cacheHeight, cacheWidth, _configureThumbnailFuture, createState, didUpdateWidget (+17 more)
 
-### Community 483 - "Community 483"
+### Community 476 - "Community 476"
+Cohesion: 0.07
+Nodes (24): contact_request_repository.dart, ../models/contact_request_model.dart, package:flutter_app/features/contact_request/domain/repositories/contact_request_repository_impl.dart, addRequest, ContactRequestRepository, deleteRequest, getPendingRequests, getRequest (+16 more)
+
+### Community 477 - "Community 477"
 Cohesion: 0.07
 Nodes (26): allowedPeersByBlobId, baseDir, blobIds, ciphertextByBlobId, deletedBlobIds, deriveTestBlobKey, deriveTestBlobNonce, failBlobDecrypt (+18 more)
 
-### Community 484 - "Community 484"
+### Community 478 - "Community 478"
+Cohesion: 0.08
+Nodes (24): OneToOneTestUser, consumeCalls, consumeIfRecentAnnouncement, markAnnouncement, markCalls, messageId, payload, RecentNotificationGateCall (+16 more)
+
+### Community 479 - "Community 479"
+Cohesion: 0.08
+Nodes (24): FlutterLocalNotificationsPlugin, clearDeliveredNotifications, consumeInitialPayload, _dismissNotificationById, dispose, initialize, _initialNotificationId, _initialPayload (+16 more)
+
+### Community 480 - "Community 480"
 Cohesion: 0.07
 Nodes (26): description, editable, __elements, fiscalYearStartMonth, graphTooltip, id, __inputs, links (+18 more)
 
-### Community 485 - "Community 485"
+### Community 481 - "Community 481"
 Cohesion: 0.07
 Nodes (26): description, editable, __elements, fiscalYearStartMonth, graphTooltip, id, __inputs, links (+18 more)
 
-### Community 486 - "Community 486"
+### Community 482 - "Community 482"
 Cohesion: 0.07
 Nodes (26): description, editable, __elements, fiscalYearStartMonth, graphTooltip, id, __inputs, links (+18 more)
 
-### Community 487 - "Community 487"
+### Community 483 - "Community 483"
 Cohesion: 0.07
 Nodes (25): group_pending_key_repair_repository.dart, ../models/group_pending_key_repair.dart, GroupPendingKeyRepair, created, deleteRepair, finalizeRepaired, finalizeUndecryptable, getAllPendingRepairs (+17 more)
 
-### Community 488 - "Community 488"
+### Community 484 - "Community 484"
 Cohesion: 0.07
 Nodes (26): columns, dbDeletePostCascade, dbInsertPost, dbLoadExpiredPosts, dbLoadPost, dbLoadPostsByIds, dbLoadPostsFeed, dbLoadRetryableOutgoingPosts (+18 more)
 
-### Community 489 - "Community 489"
+### Community 485 - "Community 485"
+Cohesion: 0.13
+Nodes (25): IsGroupEnvelope(), MarshalGroupEnvelope(), MarshalGroupPayload(), ParseGroupPayload(), requiredGroupPayloadString(), TestGK010ParseGroupEnvelopeRejectsMissingGroupID(), TestGK014IsGroupEnvelopeAcceptsOnlyV3GroupMessageAndReaction(), TestGK029ParseGroupPayloadAcceptsPresentEmptyTextWithTimestamp() (+17 more)
+
+### Community 486 - "Community 486"
 Cohesion: 0.07
 Nodes (26): ../models/conversation_message.dart, conditionalTransitionStatus, deleteMessage, deleteMessagesForContact, existsByContent, existsByDedupKey, getFailedOutgoingMessages, getLatestMessageForContact (+18 more)
 
-### Community 490 - "Community 490"
+### Community 487 - "Community 487"
 Cohesion: 0.07
 Nodes (26): attemptedSourcePeerIds, candidateSourcePeerIds, copyWith, createdAt, _decodeStringList, expectedHeadMessageId, expectedRangeHash, failedAt (+18 more)
 
-### Community 491 - "Community 491"
+### Community 488 - "Community 488"
 Cohesion: 0.07
 Nodes (26): ../models/introduction_outbox_delivery.dart, ../models/pending_introduction_response.dart, countPendingIntroductions, deleteIntroduction, deleteOutboxDeliveriesForIntroduction, deleteOutboxDelivery, deletePendingResponse, getIntroduction (+18 more)
 
-### Community 492 - "Community 492"
+### Community 489 - "Community 489"
 Cohesion: 0.07
 Nodes (26): avatarBlobId, avatarMime, createdAt, createdBy, expiresAt, fromMap, fromPayload, groupDescription (+18 more)
 
-### Community 493 - "Community 493"
-Cohesion: 0.07
-Nodes (26): Process, args, _defaultPrimaryDevice, _defaultSiblingDevice, devices, _harnessPath, _isIosDeviceId, _log (+18 more)
-
-### Community 494 - "Community 494"
+### Community 490 - "Community 490"
 Cohesion: 0.07
 Nodes (26): _boolValue, dbName, groupMultiPartyDbNameKey, groupMultiPartyModeKey, groupMultiPartyRestoreIdentityPathKey, groupMultiPartyRestoreMnemonicKey, groupMultiPartyReuseExistingIdentityKey, groupMultiPartyRoleKey (+18 more)
 
-### Community 495 - "Community 495"
+### Community 491 - "Community 491"
+Cohesion: 0.08
+Nodes (25): alice, aliceDevice, aliceLog, args, bob, bobDevice, bobLog, _detectBootedSimulators (+17 more)
+
+### Community 492 - "Community 492"
 Cohesion: 0.07
 Nodes (26): args, deadline, _defaultPrimaryDevice, _defaultRelayAddresses, _defaultSiblingDevice, devices, env, _harnessPath (+18 more)
 
+### Community 493 - "Community 493"
+Cohesion: 0.09
+Nodes (21): EdgeInsets, package:flutter_app/features/groups/presentation/widgets/glow_fab.dart, anchor, build, _buildMenuItem, _close, _controller, createState (+13 more)
+
+### Community 494 - "Community 494"
+Cohesion: 0.08
+Nodes (23): _defaultMintToken, issueForContacts, IssueWakeTokensUseCase, clear, events, eventsNamed, _InMemoryWakeTokenStore, main (+15 more)
+
+### Community 495 - "Community 495"
+Cohesion: 0.08
+Nodes (25): accountMigrationNetworkGate, allowed, _allowsPostDeliveryNetworkSideEffects, bridge, contactRepo, _debounceTimer, dispose, _isOnline (+17 more)
+
 ### Community 496 - "Community 496"
 Cohesion: 0.08
-Nodes (25): addPage, _fixedDateFixtureRetentionNow, getLatestRepairForGroup, getRepair, getVisibleRepairsForGroup, _historyGaps, inboxRetrieveCount, _InMemoryGroupHistoryGapRepairRepository (+17 more)
+Nodes (21): main, run, cases, _DrainExpectation, label, main, remoteData, _RouteContractCase (+13 more)
 
 ### Community 497 - "Community 497"
 Cohesion: 0.08
-Nodes (23): _defaultMintToken, issueForContacts, IssueWakeTokensUseCase, clear, events, eventsNamed, _InMemoryWakeTokenStore, main (+15 more)
+Nodes (25): alice, alicePeerId, bob, bobPeerId, bridge, _buildBridge, chatListener, contactRepo (+17 more)
 
 ### Community 498 - "Community 498"
 Cohesion: 0.08
@@ -2954,35 +2967,35 @@ Nodes (24): group_history_gap_repair_repository.dart, ../models/group_history_ga
 
 ### Community 499 - "Community 499"
 Cohesion: 0.08
-Nodes (24): events, h, main, missing, missingCalls, _NotificationSmokeHarness, prepare, reset (+16 more)
+Nodes (25): introduction_repository.dart, ../models/introduction_model.dart, countPendingIntroductions, deleteIntroduction, deleteOutboxDeliveriesForIntroduction, deleteOutboxDelivery, deletePendingResponse, getIntroduction (+17 more)
 
 ### Community 500 - "Community 500"
 Cohesion: 0.08
-Nodes (25): introduction_repository.dart, ../models/introduction_model.dart, countPendingIntroductions, deleteIntroduction, deleteOutboxDeliveriesForIntroduction, deleteOutboxDelivery, deletePendingResponse, getIntroduction (+17 more)
+Nodes (25): archivedAt, avatarPath, avatarVersion, blockedAt, copyWith, fromMap, fromQRPayload, hashCode (+17 more)
 
 ### Community 501 - "Community 501"
 Cohesion: 0.08
-Nodes (25): MobileScannerController, package:mobile_scanner/mobile_scanner.dart, build, _buildCloseButton, _buildFlashButton, contactDefaults, _controller, copy (+17 more)
+Nodes (24): contact, device, main, member, package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart, compactEncryptionLabel, compactReviewLabel, encryptionLabel (+16 more)
 
 ### Community 502 - "Community 502"
 Cohesion: 0.08
-Nodes (25): archivedAt, avatarPath, avatarVersion, blockedAt, copyWith, fromMap, fromQRPayload, hashCode (+17 more)
+Nodes (25): addContact, addContactCallCount, archiveContact, blockContact, contactExists, _contacts, deleteContact, deleteContactCallCount (+17 more)
 
 ### Community 503 - "Community 503"
-Cohesion: 0.08
-Nodes (24): contact, device, main, member, package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart, compactEncryptionLabel, compactReviewLabel, encryptionLabel (+16 more)
+Cohesion: 0.07
+Nodes (26): Process, args, _defaultPrimaryDevice, _defaultSiblingDevice, devices, _harnessPath, _isIosDeviceId, _log (+18 more)
 
 ### Community 504 - "Community 504"
 Cohesion: 0.08
-Nodes (25): addContact, addContactCallCount, archiveContact, blockContact, contactExists, _contacts, deleteContact, deleteContactCallCount (+17 more)
+Nodes (25): allBenchmarks, args, _benchmarkHarness, command, dartDefines, deviceId, _extractBenchmarkLines, fixtureDir (+17 more)
 
 ### Community 505 - "Community 505"
 Cohesion: 0.08
-Nodes (25): allBenchmarks, args, _benchmarkHarness, command, dartDefines, deviceId, _extractBenchmarkLines, fixtureDir (+17 more)
+Nodes (25): androidVisible, decoded, devices, _DeviceTarget, exitCode, failures, filteredByPlatform, flutterArgs (+17 more)
 
 ### Community 506 - "Community 506"
-Cohesion: 0.08
-Nodes (25): androidVisible, decoded, devices, _DeviceTarget, exitCode, failures, filteredByPlatform, flutterArgs (+17 more)
+Cohesion: 0.07
+Nodes (24): checkHealth, dispose, _FakeBridge, inboxResponse, initialize, isInitialized, main, reinitialize (+16 more)
 
 ### Community 507 - "Community 507"
 Cohesion: 0.08
@@ -3002,167 +3015,159 @@ Nodes (24): allowStaging, clearPinDismissal, compareTo, envelope, existingByMedi
 
 ### Community 511 - "Community 511"
 Cohesion: 0.08
-Nodes (24): acceptedText, base, connectedText, _displayName, fallbackResponder, formatIncomingIntroductionMessage, formatIntroducerAcceptanceProgressSystemMessage, formatIntroducerIntroductionSystemMessage (+16 more)
+Nodes (24): accuracyM, _buildActiveSnapshot, _buildInactiveSnapshot, capturedAt, _compareIso, existing, handleIncomingPostPresence, HandleIncomingPostPresenceResult (+16 more)
 
 ### Community 512 - "Community 512"
 Cohesion: 0.08
-Nodes (24): _aggregateDeliveryStatus, alreadyMigrated, columns, delete, _ensurePostPassDeliveryStatus, eventRows, execute, failureCount (+16 more)
-
-### Community 513 - "Community 513"
-Cohesion: 0.14
-Nodes (21): assert_log_contains(), assert_log_not_contains(), assert_scenario_markers(), discover_booted_devices(), install_app_on_device(), is_booted_ios_device(), launch_warm_app_for_host_push(), main() (+13 more)
+Nodes (24): acceptedText, base, connectedText, _displayName, fallbackResponder, formatIncomingIntroductionMessage, formatIntroducerAcceptanceProgressSystemMessage, formatIntroducerIntroductionSystemMessage (+16 more)
 
 ### Community 514 - "Community 514"
 Cohesion: 0.08
-Nodes (24): androidVisible, decoded, devices, _DeviceTarget, exitCode, failures, filteredByPlatform, id (+16 more)
+Nodes (24): dispose, disposeAllPlayers, _disposed, disposePlayer, _emitPlayback, init, installFakeJustAudioPlatform, load (+16 more)
 
 ### Community 515 - "Community 515"
 Cohesion: 0.08
-Nodes (23): ../../application/build_qr_payload_use_case.dart, ../../../../core/bridge/bridge.dart, qr_display_screen.dart, backgroundPreference, bridgeClient, build, _buildErrorScreen, _buildPayload (+15 more)
+Nodes (24): _aggregateDeliveryStatus, alreadyMigrated, columns, delete, _ensurePostPassDeliveryStatus, eventRows, execute, failureCount (+16 more)
 
 ### Community 516 - "Community 516"
-Cohesion: 0.08
-Nodes (23): _FakeContactRequestRepository, acceptRequest, bridge, contactRepository, ContactRequestNotificationMaterializer, declineRequest, _defaultShowError, handleRoute (+15 more)
+Cohesion: 0.19
+Nodes (20): classify_path(), emit_failures_if_any(), expand_1to1_device_real(), expand_dart_test_declarations(), expand_group_multi_party_device_real(), expand_intro_smoke(), expand_ios_notification_tap(), expand_notification_sound() (+12 more)
 
 ### Community 517 - "Community 517"
-Cohesion: 0.08
-Nodes (23): appendGroupEventLogEntry, _appendSignedCreateEvent, canonicalPayload, createGroup, deleteGroup, group, groupId, groupKey (+15 more)
+Cohesion: 0.14
+Nodes (21): assert_log_contains(), assert_log_not_contains(), assert_scenario_markers(), discover_booted_devices(), install_app_on_device(), is_booted_ios_device(), launch_warm_app_for_host_push(), main() (+13 more)
 
 ### Community 518 - "Community 518"
 Cohesion: 0.08
-Nodes (23): FakeIntroductionRepository, IntroductionRepository, IntroductionRepositoryImpl, _availableFriends, backgroundPreference, bridge, build, contactRepo (+15 more)
+Nodes (24): androidVisible, decoded, devices, _DeviceTarget, exitCode, failures, filteredByPlatform, id (+16 more)
 
 ### Community 519 - "Community 519"
 Cohesion: 0.08
-Nodes (23): bridge, contactPeerId, contactRepo, _contactWithMlKem, _doneAttachment, durationMs, fakeUploadFn, id (+15 more)
+Nodes (23): ../../application/build_qr_payload_use_case.dart, ../../../../core/bridge/bridge.dart, qr_display_screen.dart, backgroundPreference, bridgeClient, build, _buildErrorScreen, _buildPayload (+15 more)
 
 ### Community 520 - "Community 520"
-Cohesion: 0.09
-Nodes (21): _activeDepth, _activeDepthListenable, begin, end, GroupRecoveryGate, groupRecoveryPendingError, isActive, isGroupRecoveryInProgress (+13 more)
-
-### Community 521 - "Community 521"
 Cohesion: 0.08
 Nodes (23): fake_p2p_network.dart, ChaosConfig, config, content, deliver, deliveredCount, _deliverWithDuplicate, droppedMessages (+15 more)
 
-### Community 522 - "Community 522"
+### Community 521 - "Community 521"
 Cohesion: 0.08
 Nodes (23): consumedCount, _consumptions, count, deleteExpiredConsumedInvites, deleteExpiredPendingInvites, deleteExpiredRevokedInvites, deleteExpiredWelcomeKeyPackageTombstones, deletePendingInvite (+15 more)
 
-### Community 523 - "Community 523"
-Cohesion: 0.08
-Nodes (22): OneToOneTestUser, consumeCalls, consumeIfRecentAnnouncement, markAnnouncement, markCalls, messageId, payload, RecentNotificationGateCall (+14 more)
-
-### Community 524 - "Community 524"
+### Community 522 - "Community 522"
 Cohesion: 0.08
 Nodes (23): description, editable, __elements, graphTooltip, id, __inputs, panels, refresh (+15 more)
 
-### Community 525 - "Community 525"
+### Community 523 - "Community 523"
 Cohesion: 0.23
 Nodes (23): genDisconnectedPeerID(), newPresenceTestEnv(), rawKeys(), sendPresenceGet(), sendPresenceSet(), TestConnectednessHandlerSeedsLastSeen(), TestPresenceGet_ConnectedPeerReportsFreshAgeDespiteStaleLastSeen(), TestPresenceGet_ReturnsReachableForConnectedPeer() (+15 more)
 
-### Community 526 - "Community 526"
+### Community 524 - "Community 524"
 Cohesion: 0.08
 Nodes (22): HttpServer, accepted, committed, isAccepted, isCommitted, isRejected, _kind, LanInboundChatCommitHandler (+14 more)
 
-### Community 527 - "Community 527"
-Cohesion: 0.08
-Nodes (23): _ControlledP2PService, dialAttempts, _dialedPeers, dialPeer, discoverAttempts, discoverPeer, _drainMicrotasks, inboxAttempts (+15 more)
-
-### Community 528 - "Community 528"
+### Community 525 - "Community 525"
 Cohesion: 0.08
 Nodes (23): FakeLocalP2PService, LocalMessage, LocalP2PService, _RecordingBridge, bridge, calledCommands, checkHealth, dispose (+15 more)
 
-### Community 529 - "Community 529"
+### Community 526 - "Community 526"
 Cohesion: 0.08
 Nodes (22): groupMediaPerTypeLimitBytes, GroupMediaSizePolicy, kGroupMediaAudioLimitBytes, kGroupMediaFileLimitBytes, kGroupMediaImageLimitBytes, kGroupMediaPerAttachmentLimitBytes, kGroupMediaTotalMessageLimitBytes, kGroupMediaVideoLimitBytes (+14 more)
 
-### Community 530 - "Community 530"
+### Community 527 - "Community 527"
 Cohesion: 0.08
 Nodes (22): _cachedDocumentsDir, cacheDocumentsDir, copyToDurableStorage, debugResetDocumentsDirCache, deleteFile, deleteMediaForContact, deleteMediaForPost, deleteOwnedPendingUploadFilesForMessage (+14 more)
 
-### Community 531 - "Community 531"
+### Community 528 - "Community 528"
 Cohesion: 0.08
 Nodes (23): attempts, copyWith, createdAt, finalizedAt, fromMap, groupId, groupPendingKeyRepairPlaceholderText, groupPendingKeyRepairStatusPendingKey (+15 more)
 
-### Community 532 - "Community 532"
+### Community 529 - "Community 529"
 Cohesion: 0.08
 Nodes (23): action, buildEncryptedEnvelope, buildEnvelopeMessageId, ensureEnvelopeMessageId, fromInnerJson, fromJson, introducedId, introducedMlKemPublicKey (+15 more)
 
-### Community 533 - "Community 533"
+### Community 530 - "Community 530"
 Cohesion: 0.12
 Nodes (13): BackgroundTimeouts(), InteractiveTimeouts(), RelayAddress(), TestForegroundRelayProbeIsNotRequiredForActiveSendPath(), TestInteractiveAndBackgroundTimeoutProfilesRemainDistinct(), NodeConfig, NodeState, TestOutboundStreams_ApplyDeadlineAcrossChatInboxRendezvousGroupInboxAndMedia() (+5 more)
 
-### Community 534 - "Community 534"
+### Community 531 - "Community 531"
 Cohesion: 0.08
 Nodes (23): completed, completedTtl, createdAt, _DedupeEntry, dedupeKeyFor, _DedupeState, _entries, finish (+15 more)
 
-### Community 535 - "Community 535"
+### Community 532 - "Community 532"
 Cohesion: 0.08
 Nodes (23): ack, _AckGatedRelay, base, calledCommands, checkHealth, dispose, _entries, _entryIdByMessage (+15 more)
 
-### Community 536 - "Community 536"
-Cohesion: 0.20
-Nodes (19): classify_path(), emit_failures_if_any(), expand_dart_test_declarations(), expand_group_multi_party_device_real(), expand_intro_smoke(), expand_ios_notification_tap(), expand_notification_sound(), expand_push_decrypt() (+11 more)
+### Community 533 - "Community 533"
+Cohesion: 0.08
+Nodes (23): alice, aliceDevice, aliceLog, args, bob, bobDevice, bobLog, devices (+15 more)
 
-### Community 537 - "Community 537"
+### Community 534 - "Community 534"
 Cohesion: 0.08
 Nodes (23): decoded, devices, _DeviceTarget, exitCode, failures, filteredByPlatform, id, isMobile (+15 more)
 
-### Community 538 - "Community 538"
+### Community 535 - "Community 535"
 Cohesion: 0.14
 Nodes (17): all_group_multi_party_scenarios(), device_arg_for_path(), extract_runner_targets(), four_device_ids(), group_multi_party_only_scenario(), ios_notification_tap_devices(), is_group_multi_party_scenario(), multi_device_ids() (+9 more)
 
+### Community 536 - "Community 536"
+Cohesion: 0.09
+Nodes (22): _FakeContactRequestRepository, acceptRequest, bridge, contactRepository, ContactRequestNotificationMaterializer, declineRequest, _defaultShowError, handleRoute (+14 more)
+
+### Community 538 - "Community 538"
+Cohesion: 0.09
+Nodes (22): accountMigrationNetworkGate, allowed, _allowsPostFollowOnNetworkSideEffects, _debounceTimer, dispose, _isOnline, _isRetrying, jobs (+14 more)
+
 ### Community 539 - "Community 539"
-Cohesion: 0.08
-Nodes (23): black, glowInnerOpacity, glowInnerRadiusRatio, glowLuminance, glowMiddleOpacity, glowMiddleRadiusRatio, glowOuterOpacity, glowOuterRadiusRatio (+15 more)
-
-### Community 540 - "Community 540"
-Cohesion: 0.09
-Nodes (22): allowStaging, commentExists, comments, compareTo, envelope, existing, handleIncomingPostCommentReaction, HandleIncomingPostCommentReactionResult (+14 more)
-
-### Community 541 - "Community 541"
-Cohesion: 0.09
-Nodes (21): intros, _otherPeerIdFor, _ownSideAccepted, resolveUnknownInboxSender, sawRetryableIntroduction, UnknownInboxSenderResolution, config, configFile (+13 more)
-
-### Community 542 - "Community 542"
-Cohesion: 0.09
-Nodes (22): bridge, createRecording, deleteAttachmentsForContact, deleteAttachmentsForMessage, _FakeMediaAttachmentRepository, getAttachmentsForMessage, getAttachmentsForMessages, getPendingDownloads (+14 more)
-
-### Community 543 - "Community 543"
 Cohesion: 0.09
 Nodes (22): connection_state.dart, circuitAddresses, connections, copyWith, directReady, featureFlags, fromJson, healthyRelayCount (+14 more)
 
-### Community 544 - "Community 544"
+### Community 540 - "Community 540"
 Cohesion: 0.09
 Nodes (22): avatar, cap, computeOrbit3ArchArcs, computeOrbit3ArcRow, dip, kOrbit3ArchPerRow, kOrbit3ArchRowAvatar, kOrbit3InnerSeats (+14 more)
 
-### Community 545 - "Community 545"
+### Community 541 - "Community 541"
 Cohesion: 0.09
 Nodes (22): dbDeleteGroupPendingMembershipMessage, dbDeleteGroupPendingMembershipMessageByGroupAndMessageId, dbLoadGroupPendingMembershipMessages, dbLoadGroupPendingMembershipMessagesForSenders, dbPruneGroupPendingMembershipMessages, dbUpsertGroupPendingMembershipMessage, delete, existing (+14 more)
 
-### Community 546 - "Community 546"
+### Community 542 - "Community 542"
 Cohesion: 0.09
 Nodes (22): configureInboundChatCommitHandler, discoveredPeers, discoveredPeersStream, discoverLocalPeer, _discovery, dispose, isLocalPeer, localMessageStream (+14 more)
 
-### Community 547 - "Community 547"
+### Community 543 - "Community 543"
 Cohesion: 0.14
 Nodes (12): featureFlagsStatusMap(), limitRelayAddresses(), ForEachWithResult(), relayInfoAttemptCandidates(), RelayInfo, RelaySelector, FeatureFlags, Node (+4 more)
 
-### Community 548 - "Community 548"
+### Community 544 - "Community 544"
+Cohesion: 0.18
+Nodes (22): TestHandleLANPeerFound_ConnectsDirect_IdentifyCompletes(), s2Budget(), s2BuildHost(), s2Iters(), s2Max(), s2Pctl(), s2PickListenAddr(), s2Reach() (+14 more)
+
+### Community 545 - "Community 545"
 Cohesion: 0.26
 Nodes (21): dialDirect(), hostHasProtocol(), lanLoopbackQUICAddr(), lanMediaNodeConfig(), sha256Hex(), startLANMediaNode(), TestHandleIncomingLANMedia_ConcurrentDuplicateId_RaceClean(), TestHandleIncomingLANMedia_DedupesDuplicateId() (+13 more)
 
-### Community 549 - "Community 549"
+### Community 546 - "Community 546"
 Cohesion: 0.09
 Nodes (22): commentId, contactRequest, conversation, fromPayload, fromRemoteMessageData, group, groupId, groupIdFromRemoteMessageData (+14 more)
 
-### Community 550 - "Community 550"
+### Community 547 - "Community 547"
+Cohesion: 0.09
+Nodes (22): bufferIntent, captureInitialIntent, consumePendingIntent, _convertMediaList, dispose, _getCacheDirectory, GetCacheDirectoryFn, getInitialIntent (+14 more)
+
+### Community 548 - "Community 548"
 Cohesion: 0.09
 Nodes (22): _buildMessage, delete, dir, exists, flat, forDirectory, kSignalPollInterval, lastError (+14 more)
 
-### Community 551 - "Community 551"
+### Community 549 - "Community 549"
+Cohesion: 0.09
+Nodes (22): build, buildGroupReactionParticipantEntries, displayName, emoji, filtered, GroupReactionDetailsSheet, groupReactionDisplayName, GroupReactionParticipantEntry (+14 more)
+
+### Community 550 - "Community 550"
 Cohesion: 0.09
 Nodes (21): authenticatedChannelBinding, AuthenticatedMigrationChannelTranscript, authorizationNonce, authorizedAt, authorizeMigrationExport, authorizes, bytes, consumeResult (+13 more)
+
+### Community 551 - "Community 551"
+Cohesion: 0.09
+Nodes (21): allowCurrentMember, drainOfflineInbox, existingGroup, existingPendingInvite, existingResolution, group, GroupMessageNotificationDisplayEligibility, GroupNotificationRouteResolution (+13 more)
 
 ### Community 552 - "Community 552"
 Cohesion: 0.09
@@ -3170,1267 +3175,1331 @@ Nodes (20): _methodChannel, _channel, channelName, consumeInitialNotificationOpe
 
 ### Community 553 - "Community 553"
 Cohesion: 0.09
-Nodes (21): authorPeerId, authorUsername, buildWidget, _contact, contactRepository, _identity, identityRepository, main (+13 more)
+Nodes (20): dart:developer, flow_event_emitter.dart, startup_timing.dart, ColdStartNotifAnchor, _emitted, instance, _maybeEmit, _nodeReady (+12 more)
 
 ### Community 554 - "Community 554"
-Cohesion: 0.22
-Nodes (21): startLocalRelayPairWithRegistrationTTL(), startNodeWithRelayConfig(), startNodeWithRelays(), startPersonalNodeWithExplicitInitialRegister(), startPersonalNodeWithExplicitInitialRegisterAndFlags(), TestPersonalNamespaceRecovery_ReRegistersAfterInPlaceRefresh(), TestPersonalNamespaceRefresh_AutoRegisterMakesNodeDiscoverableAfterCircuitReady(), TestPersonalNamespaceRefresh_KeepsDiscoverablePastShortTTL() (+13 more)
+Cohesion: 0.09
+Nodes (21): fake_p2p_service_integration.dart, ackDelay, deliver, deliverCallCount, deliveryDelay, deliveryFails, duplicateOnDeliver, FakeP2PNetwork (+13 more)
 
 ### Community 555 - "Community 555"
 Cohesion: 0.09
-Nodes (21): addPeer, advertisedPeerId, advertisedPort, advertisedQuicPort, advertisedTcpPort, discoveredPeers, discoveredPeersStream, dispose (+13 more)
+Nodes (21): authorPeerId, authorUsername, buildWidget, _contact, contactRepository, _identity, identityRepository, main (+13 more)
 
 ### Community 556 - "Community 556"
+Cohesion: 0.22
+Nodes (21): startLocalRelayPairWithRegistrationTTL(), startNodeWithRelayConfig(), startNodeWithRelays(), startPersonalNodeWithExplicitInitialRegister(), startPersonalNodeWithExplicitInitialRegisterAndFlags(), TestPersonalNamespaceRecovery_ReRegistersAfterInPlaceRefresh(), TestPersonalNamespaceRefresh_AutoRegisterMakesNodeDiscoverableAfterCircuitReady(), TestPersonalNamespaceRefresh_KeepsDiscoverablePastShortTTL() (+13 more)
+
+### Community 557 - "Community 557"
+Cohesion: 0.09
+Nodes (21): aliceBridge, aliceMediaRepo, _alicePeerId, basePath, bobBridge, bobContacts, bobFileManager, bobMediaRepo (+13 more)
+
+### Community 558 - "Community 558"
+Cohesion: 0.09
+Nodes (21): actual, checkHealth, configured, _configuredRunId, _configuredSharedDir, deadline, dispose, _expectedGoTimeoutMessages (+13 more)
+
+### Community 559 - "Community 559"
+Cohesion: 0.09
+Nodes (21): addPeer, advertisedPeerId, advertisedPort, advertisedQuicPort, advertisedTcpPort, discoveredPeers, discoveredPeersStream, dispose (+13 more)
+
+### Community 560 - "Community 560"
 Cohesion: 0.09
 Nodes (21): action, actionEdit, actionSend, buildEncryptedEnvelope, dedupKey, editedAt, fromDecryptedJson, fromJson (+13 more)
 
-### Community 557 - "Community 557"
-Cohesion: 0.25
-Nodes (21): mutateAndResignGroupEnvelope(), waitForCollectedEventContaining(), assertBB009NoPostLeaveTopicEventsAfter(), assertGL008NoPostLeaveGroupActivity(), assertLP003GroupPubSubStateRemoved(), assertLP003NoExitedGroupEventsAfter(), gl008DiscoveryStepRepresentsWork(), go010GroupRuntimeGoroutineSnapshot() (+13 more)
-
-### Community 558 - "Community 558"
-Cohesion: 0.18
-Nodes (21): s2Budget(), s2BuildHost(), s2Iters(), s2Max(), s2Pctl(), s2PickListenAddr(), s2Reach(), s2RunM1Iter() (+13 more)
-
-### Community 559 - "Community 559"
-Cohesion: 0.10
-Nodes (20): attemptCap, bridge, drainAllPending, _drainOne, drainPendingForGroup, drainPendingForPeer, existingDevices, groupMemberRegainedDeliverableKey (+12 more)
-
-### Community 560 - "Community 560"
-Cohesion: 0.10
-Nodes (20): blocksRelease, blockThreshold, calculatePushPreviewDegradeRate, denominator, _denominatorEvents, event, excludedReasons, fromFlowPayload (+12 more)
-
 ### Community 561 - "Community 561"
-Cohesion: 0.10
-Nodes (19): canonicalPayload, deletePendingInvite, envelopeJson, invite, payload, revokedAt, revokePendingGroupInvite, RevokePendingGroupInviteResult (+11 more)
+Cohesion: 0.17
+Nodes (9): addCriticalEventIdentifiers(), cloneEventData(), EventDispatcher, eventItem, EventCallback, Mutex, Once, Time (+1 more)
 
 ### Community 562 - "Community 562"
 Cohesion: 0.10
-Nodes (20): BorderRadius, avatarBytes, avatarPath, borderRadius, build, _buildFallback, cacheBustKey, createState (+12 more)
+Nodes (20): attemptCap, bridge, drainAllPending, _drainOne, drainPendingForGroup, drainPendingForPeer, existingDevices, groupMemberRegainedDeliverableKey (+12 more)
 
 ### Community 563 - "Community 563"
 Cohesion: 0.10
-Nodes (19): clearCallCount, clearToken, FakePushTokenStore, hasToken, readCallCount, simulateRestart, _storedPlatform, _storedToken (+11 more)
+Nodes (20): blocksRelease, blockThreshold, calculatePushPreviewDegradeRate, denominator, _denominatorEvents, event, excludedReasons, fromFlowPayload (+12 more)
 
 ### Community 564 - "Community 564"
-Cohesion: 0.19
-Nodes (20): IP, classifyStreamTransportConn(), firstDirectConn(), firstDirectTCPConn(), reserveLocalRelay(), startNW002RelayNodeWithTracer(), TestFeasibility_DirectUpgrade_TcpLane(), TestHolePunchFeasibility_LoopbackUpgradeObservable() (+12 more)
+Cohesion: 0.10
+Nodes (20): bridge, createRecording, deleteAttachmentsForContact, deleteAttachmentsForMessage, _FakeMediaAttachmentRepository, getAttachmentsForMessage, getAttachmentsForMessages, getPendingDownloads (+12 more)
 
 ### Community 565 - "Community 565"
 Cohesion: 0.10
-Nodes (20): attempts, copyWith, createdAt, deviceId, finalizedAt, fromMap, groupId, groupPendingKeyDistributionId (+12 more)
+Nodes (20): body, clearDeliveredNotifications, clearedDeliveredNotificationsCount, consumeInitialPayload, contactPeerId, dispose, FakeGenericNotification, FakeNotification (+12 more)
 
 ### Community 566 - "Community 566"
 Cohesion: 0.10
-Nodes (20): action, copyWith, createdAt, deliveryStatus, emoji, failed, fromMap, groupId (+12 more)
+Nodes (19): clearCallCount, clearToken, FakePushTokenStore, hasToken, readCallCount, simulateRestart, _storedPlatform, _storedToken (+11 more)
 
 ### Community 567 - "Community 567"
-Cohesion: 0.18
-Nodes (8): addCriticalEventIdentifiers(), cloneEventData(), EventDispatcher, eventItem, Mutex, Once, Time, WaitGroup
+Cohesion: 0.10
+Nodes (19): media_attachment.dart, count, fromAttachments, isGif, isMixed, MediaPreviewDescriptor, type, copyWith (+11 more)
 
 ### Community 568 - "Community 568"
-Cohesion: 0.20
-Nodes (19): DefaultFeatureFlags(), FeatureFlags, drainLANEvents(), newFakeLANPeer(), startLANDialTestNode(), TestHandleLANPeerFound_ConcurrentDistinctPeers_NoRace(), TestHandleLANPeerFound_DebouncesRepeatedFinds_WithinCooldown(), TestHandleLANPeerFound_IgnoresSelf() (+11 more)
+Cohesion: 0.10
+Nodes (20): attempts, copyWith, createdAt, deviceId, finalizedAt, fromMap, groupId, groupPendingKeyDistributionId (+12 more)
 
 ### Community 569 - "Community 569"
 Cohesion: 0.10
-Nodes (20): buildWidget, _contact, contactRepository, _identity, identityRepository, isIncoming, main, p2pService (+12 more)
+Nodes (20): action, copyWith, createdAt, deliveryStatus, emoji, failed, fromMap, groupId (+12 more)
 
 ### Community 570 - "Community 570"
-Cohesion: 0.10
-Nodes (20): bridge, checkHealth, _circuitAddr, commandsSent, connect, _directQuicAddr, dispose, _FakeBridge (+12 more)
+Cohesion: 0.16
+Nodes (14): lanMediaAck, lanMediaDecision, lanMediaHeader, LANMediaSendResult, fileSha256AndSize(), firstNonCircuitConn(), writeLANMediaAck(), writeLANMediaDecision() (+6 more)
 
 ### Community 571 - "Community 571"
 Cohesion: 0.10
-Nodes (19): addContact, archiveContact, blockContact, blockedPeerIds, contactExists, deleteContact, dismissIntroBanner, FakeContactRepository (+11 more)
+Nodes (20): _availableFriends, backgroundPreference, bridge, build, contactRepo, createState, identityRepo, initState (+12 more)
 
 ### Community 572 - "Community 572"
 Cohesion: 0.10
-Nodes (19): acceptFoldedIntroduction, appliedResults, _applyFoldedIntroductionAction, currentViewerStatus, failedResults, foldedIntroduction, FoldedIntroductionActionBatchResult, FoldedIntroductionActionOutcome (+11 more)
+Nodes (20): bridge, checkHealth, _circuitAddr, commandsSent, connect, _directQuicAddr, dispose, _FakeBridge (+12 more)
 
 ### Community 573 - "Community 573"
 Cohesion: 0.10
-Nodes (18): contactRepo, createdAt, introRepo, main, makeIntro, makeRequest, messageRepo, otherPeerId (+10 more)
+Nodes (19): addContact, archiveContact, archivedPeerIds, blockContact, contactExists, deleteContact, dismissIntroBanner, FakeContactRepository (+11 more)
 
 ### Community 574 - "Community 574"
 Cohesion: 0.10
-Nodes (19): eventAt, fieldNames, member, parseTrustedPrivateMemberSystemEvent, parseTrustedPrivateMessageDeleteEvent, _parseUtc, raw, _readString (+11 more)
+Nodes (19): addContact, archiveContact, blockContact, blockedPeerIds, contactExists, deleteContact, dismissIntroBanner, FakeContactRepository (+11 more)
 
 ### Community 575 - "Community 575"
 Cohesion: 0.10
-Nodes (19): addContact, archiveContact, blockContact, contactExists, deleteContact, dismissIntroBanner, FakeContactRepository, getActiveContacts (+11 more)
+Nodes (19): eventAt, fieldNames, member, parseTrustedPrivateMemberSystemEvent, parseTrustedPrivateMessageDeleteEvent, _parseUtc, raw, _readString (+11 more)
 
 ### Community 576 - "Community 576"
 Cohesion: 0.10
-Nodes (19): bytes, close, db, dbPath, deleteDatabase, encryptedDb, encryptedPath, _encryptExistingDatabase (+11 more)
+Nodes (19): addContact, archiveContact, blockContact, contactExists, deleteContact, dismissIntroBanner, FakeContactRepository, getActiveContacts (+11 more)
 
 ### Community 577 - "Community 577"
 Cohesion: 0.10
-Nodes (19): avatarScale, curveScale, defaults, fromStorageString, hashCode, maxAvatarScale, maxCurveScale, maxPerRow (+11 more)
+Nodes (19): addContact, archiveContact, blockContact, contactExists, deleteContact, dismissIntroBanner, FakeContactRepository, getActiveContacts (+11 more)
 
 ### Community 578 - "Community 578"
 Cohesion: 0.10
-Nodes (19): _callback, _fakeIdentityJson, _FakeIdentityRepo, _fakeMlKemResponse, _FrameTimingCollector, hasData, loadIdentity, printSummary (+11 more)
+Nodes (19): call, callIndex, calls, captureFlowEvents, contactPeerId, fixedNow, id, main (+11 more)
 
 ### Community 579 - "Community 579"
-Cohesion: 0.12
-Nodes (19): canWrite, contactPeerId, displayName, FeedLetter, fromConnection, fromThread, groupId, GroupLetter (+11 more)
+Cohesion: 0.10
+Nodes (18): avatar_tier.dart, AvatarTier, diameter, fromMessageCount, idleGlowAlpha, idleGlowBlur, isHigh, kFloatingAvatarDiameter (+10 more)
 
 ### Community 580 - "Community 580"
 Cohesion: 0.10
-Nodes (19): ../models/group_invite_consumption.dart, ../models/group_invite_revocation.dart, ../models/group_welcome_key_package_tombstone.dart, ../models/pending_group_invite.dart, deleteExpiredConsumedInvites, deleteExpiredPendingInvites, deleteExpiredRevokedInvites, deleteExpiredWelcomeKeyPackageTombstones (+11 more)
+Nodes (19): bytes, close, db, dbPath, deleteDatabase, encryptedDb, encryptedPath, _encryptExistingDatabase (+11 more)
 
 ### Community 581 - "Community 581"
 Cohesion: 0.10
-Nodes (19): accountMigrationPairingQrKind, channelNonce, consumedAt, createdAt, currentAccountMigrationPairingQrVersion, expiresAt, fromJson, MigrationConsumedPairingSession (+11 more)
+Nodes (19): avatarScale, curveScale, defaults, fromStorageString, hashCode, maxAvatarScale, maxCurveScale, maxPerRow (+11 more)
 
 ### Community 582 - "Community 582"
-Cohesion: 0.17
-Nodes (12): Network, startDeadDialListener(), TestDcutrFlagOff_ForcesPrivate_ZeroPunches(), TestDcutrFlagOn_SelectsUpgradeReachability(), dcutrReachabilityMode(), newPeerSessionNotifiee(), selectBestConnAddr(), peerSessionNotifiee (+4 more)
+Cohesion: 0.10
+Nodes (19): _callback, _fakeIdentityJson, _FakeIdentityRepo, _fakeMlKemResponse, _FrameTimingCollector, hasData, loadIdentity, printSummary (+11 more)
 
 ### Community 583 - "Community 583"
-Cohesion: 0.10
-Nodes (19): clear, _coerceTimestamp, debugResetRecentBackgroundNotificationGate, debugSetRecentBackgroundNotificationGate, _defaultRecentBackgroundGateLoadError, _doResolveFilePath, _explicitFilePath, filePath (+11 more)
+Cohesion: 0.19
+Nodes (19): IP, classifyStreamTransportConn(), firstDirectConn(), firstDirectTCPConn(), reserveLocalRelay(), startNW002RelayNodeWithTracer(), TestFeasibility_DirectUpgrade_TcpLane(), TestHolePunchFeasibility_LoopbackUpgradeObservable() (+11 more)
 
 ### Community 584 - "Community 584"
 Cohesion: 0.10
-Nodes (19): decoded, _detectAndroidEmulator, detected, _detectIosSimulator, deviceId, devices, devicesByRuntime, exitCode (+11 more)
+Nodes (19): allowedMimeToMediaType, _DetectedSignature, _detectKnownSignature, fileMatchesDeclaredMime, GroupMediaMimePolicy, GroupMediaValidationResult, invalid, isAllowedMime (+11 more)
 
 ### Community 585 - "Community 585"
-Cohesion: 0.14
-Nodes (13): cmdInboxStoreRaw(), cmdInboxStoreV1(), cmdInboxStoreV2(), inboxStoreErrorResult(), inboxStoreOutcomeResult(), TestInboxStoreOutcomeResultExposesDetailedFields(), buildV1Envelope(), buildV2Envelope() (+5 more)
+Cohesion: 0.10
+Nodes (19): ContactRequestStatus, copyWith, fromMap, fromP2PPayload, hashCode, mlKemPublicKey, operator, peerId (+11 more)
 
 ### Community 586 - "Community 586"
-Cohesion: 0.10
-Nodes (19): blurLetter, blurNav, borderSoft, canvas, copyWith, dark, green500, greenFill15 (+11 more)
+Cohesion: 0.12
+Nodes (19): canWrite, contactPeerId, displayName, FeedLetter, fromConnection, fromThread, groupId, GroupLetter (+11 more)
 
 ### Community 587 - "Community 587"
 Cohesion: 0.10
-Nodes (19): _captureFlowEvents, containers, _currentState, dispose, _dotColor, _FakeP2PService, fakeService, _labelTextWidget (+11 more)
+Nodes (19): ../models/group_invite_consumption.dart, ../models/group_invite_revocation.dart, ../models/group_welcome_key_package_tombstone.dart, ../models/pending_group_invite.dart, deleteExpiredConsumedInvites, deleteExpiredPendingInvites, deleteExpiredRevokedInvites, deleteExpiredWelcomeKeyPackageTombstones (+11 more)
 
 ### Community 588 - "Community 588"
+Cohesion: 0.10
+Nodes (19): accountMigrationPairingQrKind, channelNonce, consumedAt, createdAt, currentAccountMigrationPairingQrVersion, expiresAt, fromJson, MigrationConsumedPairingSession (+11 more)
+
+### Community 589 - "Community 589"
+Cohesion: 0.17
+Nodes (12): Network, startDeadDialListener(), TestDcutrFlagOff_ForcesPrivate_ZeroPunches(), TestDcutrFlagOn_SelectsUpgradeReachability(), dcutrReachabilityMode(), newPeerSessionNotifiee(), selectBestConnAddr(), peerSessionNotifiee (+4 more)
+
+### Community 590 - "Community 590"
+Cohesion: 0.10
+Nodes (19): clear, _coerceTimestamp, debugResetRecentBackgroundNotificationGate, debugSetRecentBackgroundNotificationGate, _defaultRecentBackgroundGateLoadError, _doResolveFilePath, _explicitFilePath, filePath (+11 more)
+
+### Community 591 - "Community 591"
+Cohesion: 0.10
+Nodes (19): addRequest, addRequestCallCount, deleteRequest, deleteRequestCallCount, getPendingRequests, getPendingRequestsCallCount, getRequest, getRequestCallCount (+11 more)
+
+### Community 592 - "Community 592"
+Cohesion: 0.10
+Nodes (19): decoded, _detectAndroidEmulator, detected, _detectIosSimulator, deviceId, devices, devicesByRuntime, exitCode (+11 more)
+
+### Community 593 - "Community 593"
+Cohesion: 0.14
+Nodes (13): cmdInboxStoreRaw(), cmdInboxStoreV1(), cmdInboxStoreV2(), inboxStoreErrorResult(), inboxStoreOutcomeResult(), TestInboxStoreOutcomeResultExposesDetailedFields(), buildV1Envelope(), buildV2Envelope() (+5 more)
+
+### Community 594 - "Community 594"
 Cohesion: 0.12
 Nodes (15): ../../account_migration/application/account_migration_runtime_network_gate.dart, dialP2PPeer, discoverP2PPeer, DiscoverPeerResult, SendMessageResult, sendP2PMessage, accountMigrationNetworkGate, StartNodeResult (+7 more)
 
-### Community 589 - "Community 589"
-Cohesion: 0.11
-Nodes (17): addContact, addTestContact, archiveContact, blockContact, contactExists, _contacts, deleteContact, dismissIntroBanner (+9 more)
-
-### Community 590 - "Community 590"
-Cohesion: 0.11
-Nodes (17): encrypted, envelope, envelopeSenderPeerId, HandleGroupInviteDeclineAckResult, handleIncomingGroupInviteDeclineAck, payload, verifyOutcome, canonicalPayload (+9 more)
-
-### Community 591 - "Community 591"
-Cohesion: 0.11
-Nodes (18): dataToVerify, existingRequest, handleIncomingMessage, HandleMessageResult, isContact, isValid, json, payload (+10 more)
-
-### Community 592 - "Community 592"
-Cohesion: 0.11
-Nodes (17): contact, contactKey, group, groupKey, key, kind, label, requireContact (+9 more)
-
-### Community 593 - "Community 593"
-Cohesion: 0.20
-Nodes (19): buildGroupPublishOpts(), GroupJoinTopic(), GroupPublish(), GroupSendReliable(), generateTestIdentityMaterial(), TestBuildGroupPublishOpts_EmptyReturnsNil(), TestBuildGroupPublishOpts_IncludesQuotedMessageId(), TestGroupJoinTopic_BB007RoundTripsFullConfigAndAcceptsPublish() (+11 more)
-
-### Community 594 - "Community 594"
-Cohesion: 0.11
-Nodes (17): contact_request_repository.dart, ../models/contact_request_model.dart, addRequest, ContactRequestRepository, deleteRequest, getPendingRequests, getRequest, addRequest (+9 more)
-
 ### Community 595 - "Community 595"
 Cohesion: 0.11
-Nodes (18): ../../domain/models/node_state.dart, BadgeReadinessState, build, _connectionCount, ConnectionHealth, createState, _displayedBadgeState, dispose (+10 more)
+Nodes (18): bridge, contactRepo, declinedAtUtc, declinePendingGroupInvite, DeclinePendingGroupInviteResult, declinerPeerId, declinerPrivateKey, deletePendingInvite (+10 more)
 
 ### Community 596 - "Community 596"
-Cohesion: 0.13
-Nodes (18): fixtureVersion, kind, messageId, plaintext, media, senderId, senderUsername, text (+10 more)
+Cohesion: 0.11
+Nodes (18): _bridge, dispose, DistributeGroupKeyAtEpochToPeer, _emitUnauthorized, _enqueue, GroupKeyRepairResponderListener, _groupRepo, _handle (+10 more)
 
 ### Community 597 - "Community 597"
-Cohesion: 0.13
-Nodes (18): fixtureVersion, kind, messageId, plaintext, groupName, senderId, senderUsername, text (+10 more)
+Cohesion: 0.11
+Nodes (18): activeDevices, byDeviceId, bySigningKey, byTransport, device, deviceId, devicePublicKey, GroupSenderDeviceBinding (+10 more)
 
 ### Community 598 - "Community 598"
 Cohesion: 0.11
-Nodes (18): fixtureVersion, kind, messageId, plaintext, id, media, senderPeerId, senderUsername (+10 more)
+Nodes (17): encrypted, envelope, envelopeSenderPeerId, HandleGroupInviteDeclineAckResult, handleIncomingGroupInviteDeclineAck, payload, verifyOutcome, canonicalPayload (+9 more)
 
 ### Community 599 - "Community 599"
 Cohesion: 0.11
-Nodes (15): main, main, appGroup, main, support, markAnnouncement, markRemoteNotificationOpenAsRecentAnnouncement, remoteNotificationMessageIdFromData (+7 more)
+Nodes (17): _legacyV1Envelope, main, messageRepo, p2pService, _testTs, _validV2Envelope, contactPeerId, id (+9 more)
 
 ### Community 600 - "Community 600"
-Cohesion: 0.16
-Nodes (12): lanMediaAck, lanMediaHeader, LANMediaSendResult, fileSha256AndSize(), firstNonCircuitConn(), writeLANMediaAck(), classifyStreamTransport(), TestClassifyStreamTransport_CircuitToNonCircuitFlipsRelayToDirect() (+4 more)
+Cohesion: 0.20
+Nodes (19): buildGroupPublishOpts(), GroupJoinTopic(), GroupPublish(), GroupSendReliable(), generateTestIdentityMaterial(), TestBuildGroupPublishOpts_EmptyReturnsNil(), TestBuildGroupPublishOpts_IncludesQuotedMessageId(), TestGroupJoinTopic_BB007RoundTripsFullConfigAndAcceptsPublish() (+11 more)
 
 ### Community 601 - "Community 601"
 Cohesion: 0.11
-Nodes (18): data, getInitialMessage, handleInitialRemoteMessage, MissingGroupNotificationRouteIdHandler, MissingNotificationRouteTargetHandler, NotificationRouteTargetHandler, onBeforeRouteTarget, onMissingGroupRouteId (+10 more)
+Nodes (18): ../../domain/models/node_state.dart, BadgeReadinessState, build, _connectionCount, ConnectionHealth, createState, _displayedBadgeState, dispose (+10 more)
 
 ### Community 602 - "Community 602"
-Cohesion: 0.11
-Nodes (17): package:flutter_app/features/conversation/domain/repositories/reaction_repository_impl.dart, reaction_repository.dart, deleteReactionsForContact, deleteReactionsForMessage, getReactionForSenderIncludingRemoved, getReactionsForMessage, getReactionsForMessages, ReactionRepositoryImpl (+9 more)
+Cohesion: 0.13
+Nodes (18): fixtureVersion, kind, messageId, plaintext, media, senderId, senderUsername, text (+10 more)
 
 ### Community 603 - "Community 603"
-Cohesion: 0.11
-Nodes (18): allSavedAttachments, _attachments, deleteAttachmentsForContact, deleteAttachmentsForMessage, FakeMediaAttachmentRepository, getAttachmentsForMessage, getAttachmentsForMessageCallCount, getAttachmentsForMessages (+10 more)
+Cohesion: 0.13
+Nodes (18): fixtureVersion, kind, messageId, plaintext, groupName, senderId, senderUsername, text (+10 more)
 
 ### Community 604 - "Community 604"
 Cohesion: 0.11
-Nodes (17): attachment, _canLinkLocalMedia, deadline, decision, effectiveInterval, _findAttachmentById, hasLocalPath, kDefaultLocalMediaMetadataGrace (+9 more)
+Nodes (18): fixtureVersion, kind, messageId, plaintext, id, media, senderPeerId, senderUsername (+10 more)
 
 ### Community 605 - "Community 605"
 Cohesion: 0.11
-Nodes (17): _buildOrbitGroup, descriptors, group, ids, includeArchived, latestMessage, _latestMessageIds, _loadGroupThreadSummaries (+9 more)
+Nodes (18): details, events, _findRecoveredOutage, firstEventDetails, firstInbox, firstSend, honestyGap, matches (+10 more)
 
 ### Community 606 - "Community 606"
-Cohesion: 0.16
-Nodes (10): Cond, incomingGroupMessage, int64Val(), strVal(), emitAsyncEvent(), main(), writeResponse(), messageCollector (+2 more)
+Cohesion: 0.29
+Nodes (18): assertBB009NoPostLeaveTopicEventsAfter(), assertGL008NoPostLeaveGroupActivity(), assertLP003GroupPubSubStateRemoved(), assertLP003NoExitedGroupEventsAfter(), gl008DiscoveryStepRepresentsWork(), go010GroupRuntimeGoroutineSnapshot(), startLocalNodeForUnsubscribeExitPathWithCollector(), TestBB009LeaveRemovesTopicSubscriptionForValidatorsAndPubSub() (+10 more)
 
 ### Community 607 - "Community 607"
-Cohesion: 0.29
-Nodes (17): eventCollector, startLocalRelayPair(), waitForNodeStatus(), assertNoRelayUpgradeEvents(), statusBool(), statusConnectionCount(), statusInt(), statusString() (+9 more)
+Cohesion: 0.11
+Nodes (18): data, getInitialMessage, handleInitialRemoteMessage, MissingGroupNotificationRouteIdHandler, MissingNotificationRouteTargetHandler, NotificationRouteTargetHandler, onBeforeRouteTarget, onMissingGroupRouteId (+10 more)
 
 ### Community 608 - "Community 608"
-Cohesion: 0.14
-Nodes (13): group_invite_delivery_attempt_repository.dart, deleteAttempt, deleteAttemptsForGroup, getAttempt, getAttemptsForGroup, getStatusesForGroupMembers, getStatusForMember, markDeclined (+5 more)
+Cohesion: 0.11
+Nodes (17): attachment, _canLinkLocalMedia, deadline, decision, effectiveInterval, _findAttachmentById, hasLocalPath, kDefaultLocalMediaMetadataGrace (+9 more)
 
 ### Community 609 - "Community 609"
 Cohesion: 0.11
-Nodes (17): ../../../features/groups/domain/models/group_history_gap_repair.dart, current, currentStatus, dbLoadGroupHistoryGapRepair, dbLoadLatestGroupHistoryGapRepair, dbLoadVisibleGroupHistoryGapRepairs, dbSaveGroupHistoryGapRepair, dbUpsertGroupHistoryGapRepair (+9 more)
+Nodes (17): _CountingGroupMessageRepository, getGroupThreadSummaries, getGroupThreadSummariesCallCount, getGroupThreadSummary, getGroupThreadSummaryCallCount, groupId, id, isArchived (+9 more)
 
 ### Community 610 - "Community 610"
-Cohesion: 0.11
-Nodes (17): fixtureVersion, kind, messageId, plaintext, id, senderPeerId, senderUsername, text (+9 more)
+Cohesion: 0.16
+Nodes (10): Cond, incomingGroupMessage, int64Val(), strVal(), emitAsyncEvent(), main(), writeResponse(), messageCollector (+2 more)
 
 ### Community 611 - "Community 611"
-Cohesion: 0.14
-Nodes (17): fixtureVersion, kind, messageId, plaintext, senderId, senderUsername, text, timestamp (+9 more)
+Cohesion: 0.30
+Nodes (16): DiscoverResponse, Discover, MessageType, skipField(), UnmarshalDiscover(), UnmarshalRegister(), UnmarshalRegistration(), UnmarshalRzMessage() (+8 more)
 
 ### Community 612 - "Community 612"
-Cohesion: 0.11
-Nodes (17): fixtureVersion, kind, messageId, plaintext, id, senderPeerId, senderUsername, text (+9 more)
+Cohesion: 0.29
+Nodes (17): eventCollector, startLocalRelayPair(), waitForNodeStatus(), assertNoRelayUpgradeEvents(), statusBool(), statusConnectionCount(), statusInt(), statusString() (+9 more)
 
 ### Community 613 - "Community 613"
 Cohesion: 0.11
-Nodes (17): fixtureVersion, kind, messageId, plaintext, id, senderPeerId, senderUsername, text (+9 more)
+Nodes (17): copyToDurableStorage, deletedContactIds, deletedFilePaths, deletedPostIds, deleteFile, deleteMediaForContact, deleteMediaForPost, deletePendingUploadDir (+9 more)
 
 ### Community 614 - "Community 614"
 Cohesion: 0.11
-Nodes (17): dbDeleteExpiredGroupPendingReactions, dbDeleteGroupPendingReaction, dbLoadGroupPendingReactions, dbLoadGroupPendingReactionsForMessage, dbPruneGroupPendingReactions, dbUpsertGroupPendingReaction, delete, existing (+9 more)
+Nodes (17): addContact, addTestContact, archiveContact, blockContact, contactExists, _contacts, deleteContact, dismissIntroBanner (+9 more)
 
 ### Community 615 - "Community 615"
 Cohesion: 0.11
-Nodes (17): config, configFile, _configFileName, dbName, documentsDir, main, marker, markerFile (+9 more)
+Nodes (17): ../../../features/groups/domain/models/group_history_gap_repair.dart, current, currentStatus, dbLoadGroupHistoryGapRepair, dbLoadLatestGroupHistoryGapRepair, dbLoadVisibleGroupHistoryGapRepairs, dbSaveGroupHistoryGapRepair, dbUpsertGroupHistoryGapRepair (+9 more)
 
 ### Community 616 - "Community 616"
 Cohesion: 0.11
-Nodes (17): appOwnedMediaPathKind, baseDetails, bytesBefore, caller, count, deleteAppOwnedMediaDirectoryIfExists, deleteAppOwnedMediaFileIfExists, _deleteAppOwnedMediaTargetIfExists (+9 more)
+Nodes (17): fixtureVersion, kind, messageId, plaintext, id, senderPeerId, senderUsername, text (+9 more)
 
 ### Community 617 - "Community 617"
-Cohesion: 0.11
-Nodes (17): avatar_blob, avatar_path, created_at, id, identity, identity_old, ml_kem_public_key, ml_kem_secret_key (+9 more)
+Cohesion: 0.14
+Nodes (17): fixtureVersion, kind, messageId, plaintext, senderId, senderUsername, text, timestamp (+9 more)
 
 ### Community 618 - "Community 618"
 Cohesion: 0.11
-Nodes (17): allowedDevices, assignedRole, canInviteOthers, expiresAt, fromJson, GroupInvitePolicy, GroupInviteReusePolicy, inlineGroupKeyKind (+9 more)
+Nodes (17): fixtureVersion, kind, messageId, plaintext, id, senderPeerId, senderUsername, text (+9 more)
 
 ### Community 619 - "Community 619"
 Cohesion: 0.11
-Nodes (16): collectPendingMediaSizeRejections, hashCode, index, MediaRejection, normalizeMediaRejectionReason, operator, pendingMediaTotalSizeOverflow, reason (+8 more)
+Nodes (17): fixtureVersion, kind, messageId, plaintext, id, senderPeerId, senderUsername, text (+9 more)
 
 ### Community 620 - "Community 620"
 Cohesion: 0.11
-Nodes (17): copyWith, createdAt, deliveryOwnerId, deliveryOwnerKind, deliveryPath, deliveryStatus, fromMap, lastAttemptAt (+9 more)
+Nodes (17): dbDeleteExpiredGroupPendingReactions, dbDeleteGroupPendingReaction, dbLoadGroupPendingReactions, dbLoadGroupPendingReactionsForMessage, dbPruneGroupPendingReactions, dbUpsertGroupPendingReaction, delete, existing (+9 more)
 
 ### Community 621 - "Community 621"
-Cohesion: 0.12
-Nodes (17): copyWith, fromMap, fromWireValue, hasFreshSnapshotAt, lastLocalAccuracyM, lastLocalCapturedAt, lastLocalLatE3, lastLocalLngE3 (+9 more)
+Cohesion: 0.11
+Nodes (17): appOwnedMediaPathKind, baseDetails, bytesBefore, caller, count, deleteAppOwnedMediaDirectoryIfExists, deleteAppOwnedMediaFileIfExists, _deleteAppOwnedMediaTargetIfExists (+9 more)
 
 ### Community 622 - "Community 622"
-Cohesion: 0.22
-Nodes (11): hasNonCircuitAddr(), newLANDialHandler(), lanDialHandler, AddrInfo, Context, Host, ID, Multiaddr (+3 more)
+Cohesion: 0.11
+Nodes (17): compressAndGetFile, _compressFile, CompressFileFn, _compressVideo, CompressVideoFn, _defaultCompress, _defaultVideoCompress, ImageProcessor (+9 more)
 
 ### Community 623 - "Community 623"
 Cohesion: 0.11
-Nodes (17): bridge, checkHealth, connectViaCircuit, dispose, _FakeBridge, inboundTransport, inboxStagingRepository, initialize (+9 more)
+Nodes (17): baseName, contains, debugSetVideoThumbnailGenerator, _defaultThumbnailGenerator, derivedVideoThumbnailPath, dotIndex, ext, _generate (+9 more)
 
 ### Community 624 - "Community 624"
 Cohesion: 0.11
-Nodes (17): accentPurple, accentTeal, backgroundBottom, backgroundTop, cardBg, cardBorder, chevronColor, FeedColors (+9 more)
+Nodes (17): avatar_blob, avatar_path, created_at, id, identity, identity_old, ml_kem_public_key, ml_kem_secret_key (+9 more)
 
 ### Community 625 - "Community 625"
-Cohesion: 0.12
-Nodes (16): createTimer, dispose, GroupPendingKeyRepairBackoffTimer, GroupPendingKeyRepairSweep, GroupPendingKeyRepairTimerFactory, isRunning, _onTick, _running (+8 more)
+Cohesion: 0.11
+Nodes (17): allowedDevices, assignedRole, canInviteOthers, expiresAt, fromJson, GroupInvitePolicy, GroupInviteReusePolicy, inlineGroupKeyKind (+9 more)
 
 ### Community 626 - "Community 626"
-Cohesion: 0.12
-Nodes (16): discoverLocalPeer, discoverPeer, _emphasis, _has, inboxDelay, lookupRelayPresence, main, _markLive (+8 more)
+Cohesion: 0.11
+Nodes (16): collectPendingMediaSizeRejections, hashCode, index, MediaRejection, normalizeMediaRejectionReason, operator, pendingMediaTotalSizeOverflow, reason (+8 more)
 
 ### Community 627 - "Community 627"
-Cohesion: 0.12
-Nodes (16): dispose, _heartbeat, _heartbeatInterval, isHeartbeatActive, kPresenceForegroundHeartbeat, kPresenceSelfTtl, onBackgrounded, onForegrounded (+8 more)
+Cohesion: 0.11
+Nodes (17): copyWith, createdAt, deliveryOwnerId, deliveryOwnerKind, deliveryPath, deliveryStatus, fromMap, lastAttemptAt (+9 more)
 
 ### Community 628 - "Community 628"
-Cohesion: 0.13
-Nodes (15): avatar_tier.dart, AvatarTier, friend, Orbit2Friend, peerId, tier, username, OrbitGroup (+7 more)
+Cohesion: 0.12
+Nodes (17): copyWith, fromMap, fromWireValue, hasFreshSnapshotAt, lastLocalAccuracyM, lastLocalCapturedAt, lastLocalLatE3, lastLocalLngE3 (+9 more)
 
 ### Community 629 - "Community 629"
-Cohesion: 0.12
-Nodes (16): _bridgeResponses, _canonicalize, canonicalJson, _diagnostics, _failure, _operations, recordBridgeResponse, recordDiagnostic (+8 more)
+Cohesion: 0.22
+Nodes (11): hasNonCircuitAddr(), newLANDialHandler(), lanDialHandler, AddrInfo, Context, Host, ID, Multiaddr (+3 more)
 
 ### Community 630 - "Community 630"
-Cohesion: 0.12
-Nodes (15): group_pending_reaction_repository.dart, ../models/group_pending_reaction.dart, deleteExpired, deletePendingReaction, getPendingReactions, getPendingReactionsForMessage, GroupPendingReactionRepository, deleteExpired (+7 more)
+Cohesion: 0.11
+Nodes (17): cv, devices, id, listScenarios, main, match, mode, _parseDevices (+9 more)
 
 ### Community 631 - "Community 631"
-Cohesion: 0.12
-Nodes (16): attemptedAt, dbCountQuarantinedInboxStagingEntries, dbDeleteInboxStagingEntry, dbInsertInboxStagingEntry, dbLoadInboxStagingEntry, dbLoadRecoverableInboxStagingEntries, dbMarkInboxStagingEntryQuarantined, dbMarkInboxStagingEntryRejected (+8 more)
+Cohesion: 0.11
+Nodes (17): bridge, checkHealth, connectViaCircuit, dispose, _FakeBridge, inboundTransport, inboxStagingRepository, initialize (+9 more)
 
 ### Community 632 - "Community 632"
-Cohesion: 0.12
-Nodes (16): attemptCount, copyWith, entryId, envelope, fromMap, lastAttemptedAt, messageType, ownerPeerId (+8 more)
+Cohesion: 0.11
+Nodes (17): accentPurple, accentTeal, backgroundBottom, backgroundTop, cardBg, cardBorder, chevronColor, FeedColors (+9 more)
 
 ### Community 633 - "Community 633"
 Cohesion: 0.12
-Nodes (16): budgetBytes, durationMs, file, formatPendingComposerBudgetBytes, gb, height, kb, kGeneralMediaAttachmentBudgetBytes (+8 more)
+Nodes (16): createTimer, dispose, GroupPendingKeyRepairBackoffTimer, GroupPendingKeyRepairSweep, GroupPendingKeyRepairTimerFactory, isRunning, _onTick, _running (+8 more)
 
 ### Community 634 - "Community 634"
 Cohesion: 0.12
-Nodes (16): attemptedAt, copyWith, fromMap, fromValue, groupId, GroupInviteDeliveryAttempt, GroupInviteDeliveryStatus, inviteId (+8 more)
+Nodes (16): accountMigrationNetworkGate, _allowsKeyExchangeRetry, bridge, contactRepo, _coordinator, _debounceTimer, dispose, identityRepo (+8 more)
 
 ### Community 635 - "Community 635"
 Cohesion: 0.12
-Nodes (16): copyWith, createdAt, fromMap, groupId, GroupPendingMembershipMessage, groupPendingMembershipMessageId, id, messageId (+8 more)
+Nodes (16): _buildOrbitGroup, descriptors, group, ids, includeArchived, latestMessage, _latestMessageIds, _loadGroupThreadSummaries (+8 more)
 
 ### Community 636 - "Community 636"
 Cohesion: 0.12
-Nodes (16): copyWith, createdAt, fromMap, groupId, GroupPendingReaction, id, messageId, reactionJson (+8 more)
+Nodes (16): discoverLocalPeer, discoverPeer, _emphasis, _has, inboxDelay, lookupRelayPresence, main, _markLive (+8 more)
 
 ### Community 637 - "Community 637"
 Cohesion: 0.12
-Nodes (16): copyWith, createdAt, deliveryStatus, eventId, fromMap, innerPayloadJson, isIncoming, passedAt (+8 more)
+Nodes (16): dispose, _heartbeat, _heartbeatInterval, isHeartbeatActive, kPresenceForegroundHeartbeat, kPresenceSelfTtl, onBackgrounded, onForegrounded (+8 more)
 
 ### Community 638 - "Community 638"
 Cohesion: 0.12
-Nodes (16): buildCommentReactionJson, buildPostReactionJson, commentId, createdAt, eventId, fromJson, isActive, isCommentReaction (+8 more)
+Nodes (16): _bridgeResponses, _canonicalize, canonicalJson, _diagnostics, _failure, _operations, recordBridgeResponse, recordDiagnostic (+8 more)
 
 ### Community 639 - "Community 639"
 Cohesion: 0.12
-Nodes (14): contactRepo, hook, main, makeAttachment, makeContact, makeMessage, mediaAttachmentRepo, mediaFileManager (+6 more)
+Nodes (15): group_pending_reaction_repository.dart, ../models/group_pending_reaction.dart, deleteExpired, deletePendingReaction, getPendingReactions, getPendingReactionsForMessage, GroupPendingReactionRepository, deleteExpired (+7 more)
 
 ### Community 640 - "Community 640"
 Cohesion: 0.12
-Nodes (15): checkHealth, _circuitMultiaddr, dispose, _FakeBridge, _flatten, initialize, _initialized, isInitialized (+7 more)
+Nodes (16): attemptedAt, dbCountQuarantinedInboxStagingEntries, dbDeleteInboxStagingEntry, dbInsertInboxStagingEntry, dbLoadInboxStagingEntry, dbLoadRecoverableInboxStagingEntries, dbMarkInboxStagingEntryQuarantined, dbMarkInboxStagingEntryRejected (+8 more)
 
 ### Community 641 - "Community 641"
-Cohesion: 0.13
-Nodes (14): FakeMicPermissionGateway, openAppSettings, openAppSettingsCallCount, openAppSettingsReturn, request, requestCallCount, statusToReturn, MicPermissionGateway (+6 more)
+Cohesion: 0.12
+Nodes (16): attemptCount, copyWith, entryId, envelope, fromMap, lastAttemptedAt, messageType, ownerPeerId (+8 more)
 
 ### Community 642 - "Community 642"
-Cohesion: 0.20
-Nodes (8): newBusinessMetrics(), newHLLRegister(), businessMetrics, hllRegister, Month, Sketch, Int64, Mutex
+Cohesion: 0.12
+Nodes (16): budgetBytes, durationMs, file, formatPendingComposerBudgetBytes, gb, height, kb, kGeneralMediaAttachmentBudgetBytes (+8 more)
 
 ### Community 643 - "Community 643"
-Cohesion: 0.13
-Nodes (14): group_message.dart, GroupMessage, groupId, GroupThreadPreview, hasSent, lastOutgoingAt, latestMessage, messageCount (+6 more)
+Cohesion: 0.12
+Nodes (16): attemptedAt, copyWith, fromMap, fromValue, groupId, GroupInviteDeliveryAttempt, GroupInviteDeliveryStatus, inviteId (+8 more)
 
 ### Community 644 - "Community 644"
 Cohesion: 0.12
-Nodes (15): dbArchiveContact, dbBlockContact, dbContactExists, dbDeleteContact, dbDismissIntroBanner, dbGetContactCount, dbLoadActiveContacts, dbLoadAllContacts (+7 more)
+Nodes (16): copyWith, createdAt, fromMap, groupId, GroupPendingMembershipMessage, groupPendingMembershipMessageId, id, messageId (+8 more)
 
 ### Community 645 - "Community 645"
-Cohesion: 0.22
-Nodes (11): TestDialPeerViaRelayMultiAddrFailover(), TestDualStackNodeWithIPv4Relay(), newLocalRelayServer(), newLocalRelaySharedState(), reserveLocalTCPPort(), startLocalRelayPairWithSharedState(), startLocalRelayWithInboxCapacity(), localRelayServer (+3 more)
+Cohesion: 0.12
+Nodes (16): copyWith, createdAt, fromMap, groupId, GroupPendingReaction, id, messageId, reactionJson (+8 more)
 
 ### Community 646 - "Community 646"
 Cohesion: 0.12
-Nodes (15): _alicePeerId, _bobPeerId, _buildContactRequestEnvelope, _buildContactRequestMessage, deadline, description, jsonEncode, main (+7 more)
+Nodes (16): copyWith, createdAt, deliveryStatus, eventId, fromMap, innerPayloadJson, isIncoming, passedAt (+8 more)
 
 ### Community 647 - "Community 647"
 Cohesion: 0.12
-Nodes (15): message_reaction.dart, action, buildEncryptedEnvelope, emoji, fromDecryptedJson, fromJson, id, messageId (+7 more)
+Nodes (16): buildCommentReactionJson, buildPostReactionJson, commentId, createdAt, eventId, fromJson, isActive, isCommentReaction (+8 more)
 
 ### Community 648 - "Community 648"
-Cohesion: 0.12
-Nodes (15): ChatMessage, confirmNonce, content, copyWith, from, fromJson, hashCode, isIncoming (+7 more)
+Cohesion: 0.27
+Nodes (16): drainLANEvents(), newFakeLANPeer(), startLANDialTestNode(), TestHandleLANPeerFound_ConcurrentDistinctPeers_NoRace(), TestHandleLANPeerFound_DebouncesRepeatedFinds_WithinCooldown(), TestHandleLANPeerFound_IgnoresSelf(), TestHandleLANPeerFound_SeedsPeerstore_PrivateAddr(), TestHandleLANPeerFound_UpgradesRelayConnToDirect() (+8 more)
 
 ### Community 649 - "Community 649"
-Cohesion: 0.13
-Nodes (15): accuracyM, capturedAt, ContactPresenceSnapshot, ContactPresenceSnapshotStatus, ContactPresenceSnapshotStatusWireValue, copyWith, fromMap, fromWireValue (+7 more)
+Cohesion: 0.12
+Nodes (16): handleSharingDisabled, handleSharingDisabledCallCount, loadComposeAvailability, loadComposeAvailabilityCallCount, main, openAppSettings, refreshInteractivelyFromCompose, refreshInteractivelyFromComposeCallCount (+8 more)
 
 ### Community 650 - "Community 650"
 Cohesion: 0.12
-Nodes (15): avatarBlob, avatarVersion, createdAt, fromJson, mlKemPublicKey, mlKemSecretKey, mnemonic12, operator (+7 more)
+Nodes (16): accepted, capacity, DetailedInboxStore, errorCode, errorMessage, expiresAtMs, fromBridgeResponse, InboxStoreOutcome (+8 more)
 
 ### Community 651 - "Community 651"
 Cohesion: 0.12
-Nodes (14): id, members, name, Orbit2Group, displayName, friend, group, hashCode (+6 more)
+Nodes (15): checkHealth, _circuitMultiaddr, dispose, _FakeBridge, _flatten, initialize, _initialized, isInitialized (+7 more)
 
 ### Community 652 - "Community 652"
-Cohesion: 0.12
-Nodes (15): AppColors, background, glassBackground, glassBorder, greenGlow, primaryAccent, redGlow, secondaryAccent (+7 more)
+Cohesion: 0.13
+Nodes (14): FakeMicPermissionGateway, openAppSettings, openAppSettingsCallCount, openAppSettingsReturn, request, requestCallCount, statusToReturn, MicPermissionGateway (+6 more)
 
 ### Community 653 - "Community 653"
-Cohesion: 0.13
-Nodes (13): AppShellController, clear, PendingPostTargetStore, setTarget, showStatus, _statusMessage, _target, ChangeNotifier (+5 more)
+Cohesion: 0.20
+Nodes (8): newBusinessMetrics(), newHLLRegister(), businessMetrics, hllRegister, Month, Sketch, Int64, Mutex
 
 ### Community 654 - "Community 654"
-Cohesion: 0.21
-Nodes (11): TestGK009SignatureDataIsDeterministicAndEpochBound(), generateTestKeyPair(), TestSignAndVerify(), TestSignPayloadFormat(), TestVerifyWrongData(), TestVerifyWrongKey(), TestSignVerify_RoundTrip(), TestVerify_InvalidSignatureLength() (+3 more)
+Cohesion: 0.13
+Nodes (14): group_message.dart, GroupMessage, groupId, GroupThreadPreview, hasSent, lastOutgoingAt, latestMessage, messageCount (+6 more)
 
 ### Community 655 - "Community 655"
-Cohesion: 0.13
-Nodes (14): FakeMediaPicker, imageResult, multipleMediaResult, pickImage, pickImageCalls, pickMultipleMedia, pickMultipleMediaCalls, pickVideo (+6 more)
+Cohesion: 0.12
+Nodes (14): group_reaction_replay_outbox_repository.dart, ../models/group_reaction_replay_outbox_entry.dart, deleteEntry, getEntry, GroupReactionReplayOutboxRepository, deleteEntry, getEntry, GroupReactionReplayOutboxRepositoryImpl (+6 more)
 
 ### Community 656 - "Community 656"
-Cohesion: 0.13
-Nodes (14): deleteExpired, deletePendingReaction, deletePendingReactionCallCount, getPendingReactions, getPendingReactionsForMessage, InMemoryGroupPendingReactionRepository, pruneGroup, _reactions (+6 more)
+Cohesion: 0.12
+Nodes (15): dbArchiveContact, dbBlockContact, dbContactExists, dbDeleteContact, dbDismissIntroBanner, dbGetContactCount, dbLoadActiveContacts, dbLoadAllContacts (+7 more)
 
 ### Community 657 - "Community 657"
-Cohesion: 0.13
-Nodes (14): fixtureVersion, kind, messageId, plaintext, expectedFallback, routeData, ciphertext, envelope_version (+6 more)
+Cohesion: 0.22
+Nodes (11): TestDialPeerViaRelayMultiAddrFailover(), TestDualStackNodeWithIPv4Relay(), newLocalRelayServer(), newLocalRelaySharedState(), reserveLocalTCPPort(), startLocalRelayPairWithSharedState(), startLocalRelayWithInboxCapacity(), localRelayServer (+3 more)
 
 ### Community 658 - "Community 658"
-Cohesion: 0.13
-Nodes (14): fixtureVersion, kind, messageId, plaintext, expectedFallback, routeData, ciphertext, envelope_kind (+6 more)
+Cohesion: 0.12
+Nodes (15): apnsToken, build, deadline, encoded, fcmToken, initial, main, prefix (+7 more)
 
 ### Community 659 - "Community 659"
-Cohesion: 0.13
-Nodes (13): group_reaction_replay_outbox_repository.dart, ../models/group_reaction_replay_outbox_entry.dart, deleteEntry, getEntry, GroupReactionReplayOutboxRepository, deleteEntry, getEntry, loadRetryableEntries (+5 more)
+Cohesion: 0.12
+Nodes (15): message_reaction.dart, action, buildEncryptedEnvelope, emoji, fromDecryptedJson, fromJson, id, messageId (+7 more)
 
 ### Community 660 - "Community 660"
-Cohesion: 0.13
-Nodes (14): dbCountGroupMembers, dbDeleteAllGroupMembers, dbDeleteGroupMember, dbInsertGroupMember, dbInsertRemovedGroupMemberSnapshot, dbLoadAllGroupMembers, dbLoadGroupMember, dbLoadGroupMemberDeviceSnapshot (+6 more)
+Cohesion: 0.12
+Nodes (15): ChatMessage, confirmNonce, content, copyWith, from, fromJson, hashCode, isIncoming (+7 more)
 
 ### Community 661 - "Community 661"
-Cohesion: 0.17
-Nodes (10): db, main, repairRow, repo, db, main, package:flutter_app/core/database/helpers/group_history_gap_repairs_db_helpers.dart, package:flutter_app/core/database/migrations/065_group_history_gap_repairs.dart (+2 more)
+Cohesion: 0.13
+Nodes (15): accuracyM, capturedAt, ContactPresenceSnapshot, ContactPresenceSnapshotStatus, ContactPresenceSnapshotStatusWireValue, copyWith, fromMap, fromWireValue (+7 more)
 
 ### Community 662 - "Community 662"
-Cohesion: 0.13
-Nodes (14): introduction_payload.dart, action, buildResponseKey, createdAt, fromMap, fromPayload, introductionId, PendingIntroductionResponse (+6 more)
+Cohesion: 0.12
+Nodes (15): avatarBlob, avatarVersion, createdAt, fromJson, mlKemPublicKey, mlKemSecretKey, mnemonic12, operator (+7 more)
 
 ### Community 663 - "Community 663"
-Cohesion: 0.13
-Nodes (14): _allowedLiteral, _dartFiles, exactAllowed, file, _firstCapture, _lineNumber, _loadArb, main (+6 more)
+Cohesion: 0.12
+Nodes (14): id, members, name, Orbit2Group, displayName, friend, group, hashCode (+6 more)
 
 ### Community 664 - "Community 664"
-Cohesion: 0.13
-Nodes (14): avatar_path, created_at, id, identity, identity_old, ml_kem_public_key, ml_kem_secret_key, mnemonic12 (+6 more)
+Cohesion: 0.12
+Nodes (15): package:flutter_app/features/identity/presentation/screens/identity_choice_wired.dart, didPush, _fakeIdentityJson, _FakeIdentityRepo, _fakeMlKemResponse, findChoiceCardOpacity, loadIdentity, main (+7 more)
 
 ### Community 665 - "Community 665"
 Cohesion: 0.13
-Nodes (14): build, fromInnerJson, GroupConfigRequestBody, groupConfigRequestType, groupConfigResponseType, GroupConfigResyncEnvelope, groupConfigResyncEnvelopeVersion, groupId (+6 more)
+Nodes (13): AppShellController, clear, PendingPostTargetStore, setTarget, showStatus, _statusMessage, _target, ChangeNotifier (+5 more)
 
 ### Community 666 - "Community 666"
 Cohesion: 0.13
-Nodes (14): createdAt, fromMap, groupId, GroupMessageReceipt, groupMessageReceiptTypeDelivered, groupMessageReceiptTypeRead, memberPeerId, messageId (+6 more)
+Nodes (14): candidate, canonicalMembershipEventId, current, gate, group, _groupMembershipMutationLocks, isStaleGroupMembershipEvent, last (+6 more)
 
 ### Community 667 - "Community 667"
 Cohesion: 0.13
-Nodes (14): action, actionAdd, actionRemove, emoji, fromDecryptedJson, GroupReactionPayload, id, messageId (+6 more)
+Nodes (14): canonicalPayload, deletePendingInvite, envelopeJson, invite, payload, revokedAt, revokePendingGroupInvite, RevokePendingGroupInviteResult (+6 more)
 
 ### Community 668 - "Community 668"
-Cohesion: 0.13
-Nodes (14): authorUsername, body, commentedAt, copyWith, eventId, fromMap, heartCount, id (+6 more)
+Cohesion: 0.21
+Nodes (11): TestGK009SignatureDataIsDeterministicAndEpochBound(), generateTestKeyPair(), TestSignAndVerify(), TestSignPayloadFormat(), TestVerifyWrongData(), TestVerifyWrongKey(), TestSignVerify_RoundTrip(), TestVerify_InvalidSignatureLength() (+3 more)
 
 ### Community 669 - "Community 669"
 Cohesion: 0.13
-Nodes (14): createdAt, _decodeWaveform, durationMs, fromMap, height, kind, localFilePath, mime (+6 more)
+Nodes (14): config, configFile, delayed, delete, dir, exportIdentityForSmokeTest, file, friends (+6 more)
 
 ### Community 670 - "Community 670"
 Cohesion: 0.13
-Nodes (14): buildUnsignedPayload, fromJson, mlkem, ns, operator, pk, QRPayloadModel, rv (+6 more)
+Nodes (14): FakeMediaPicker, imageResult, multipleMediaResult, pickImage, pickImageCalls, pickMultipleMedia, pickMultipleMediaCalls, pickVideo (+6 more)
 
 ### Community 671 - "Community 671"
-Cohesion: 0.15
-Nodes (11): MigrationPendingWorkManifestBuilder, isIncoming, main, _messageRow, builder, MigrationPendingWorkManifestValidator, main, validateRows (+3 more)
+Cohesion: 0.13
+Nodes (14): deleteExpired, deletePendingReaction, deletePendingReactionCallCount, getPendingReactions, getPendingReactionsForMessage, InMemoryGroupPendingReactionRepository, pruneGroup, _reactions (+6 more)
 
 ### Community 672 - "Community 672"
+Cohesion: 0.13
+Nodes (14): fixtureVersion, kind, messageId, plaintext, expectedFallback, routeData, ciphertext, envelope_version (+6 more)
+
+### Community 673 - "Community 673"
+Cohesion: 0.13
+Nodes (14): fixtureVersion, kind, messageId, plaintext, expectedFallback, routeData, ciphertext, envelope_kind (+6 more)
+
+### Community 674 - "Community 674"
+Cohesion: 0.13
+Nodes (14): dbCountGroupMembers, dbDeleteAllGroupMembers, dbDeleteGroupMember, dbInsertGroupMember, dbInsertRemovedGroupMemberSnapshot, dbLoadAllGroupMembers, dbLoadGroupMember, dbLoadGroupMemberDeviceSnapshot (+6 more)
+
+### Community 675 - "Community 675"
+Cohesion: 0.13
+Nodes (14): introduction_payload.dart, action, buildResponseKey, createdAt, fromMap, fromPayload, introductionId, PendingIntroductionResponse (+6 more)
+
+### Community 676 - "Community 676"
+Cohesion: 0.13
+Nodes (14): _allowedLiteral, _dartFiles, exactAllowed, file, _firstCapture, _lineNumber, _loadArb, main (+6 more)
+
+### Community 677 - "Community 677"
+Cohesion: 0.13
+Nodes (14): avatar_path, created_at, id, identity, identity_old, ml_kem_public_key, ml_kem_secret_key, mnemonic12 (+6 more)
+
+### Community 678 - "Community 678"
+Cohesion: 0.13
+Nodes (14): build, fromInnerJson, GroupConfigRequestBody, groupConfigRequestType, groupConfigResponseType, GroupConfigResyncEnvelope, groupConfigResyncEnvelopeVersion, groupId (+6 more)
+
+### Community 679 - "Community 679"
+Cohesion: 0.13
+Nodes (14): createdAt, fromMap, groupId, GroupMessageReceipt, groupMessageReceiptTypeDelivered, groupMessageReceiptTypeRead, memberPeerId, messageId (+6 more)
+
+### Community 680 - "Community 680"
+Cohesion: 0.13
+Nodes (14): action, actionAdd, actionRemove, emoji, fromDecryptedJson, GroupReactionPayload, id, messageId (+6 more)
+
+### Community 681 - "Community 681"
+Cohesion: 0.13
+Nodes (14): avatarPath, contact, isArchived, isBlocked, isLatestDeleted, lastActivity, lastMessageTimestamp, latestMedia (+6 more)
+
+### Community 682 - "Community 682"
+Cohesion: 0.13
+Nodes (14): authorUsername, body, commentedAt, copyWith, eventId, fromMap, heartCount, id (+6 more)
+
+### Community 683 - "Community 683"
+Cohesion: 0.13
+Nodes (14): createdAt, _decodeWaveform, durationMs, fromMap, height, kind, localFilePath, mime (+6 more)
+
+### Community 684 - "Community 684"
+Cohesion: 0.13
+Nodes (14): createdAt, effectiveAt, eventId, fromMap, isActive, pinEventId, pinnedAt, postId (+6 more)
+
+### Community 685 - "Community 685"
+Cohesion: 0.13
+Nodes (14): buildUnsignedPayload, fromJson, mlkem, ns, operator, pk, QRPayloadModel, rv (+6 more)
+
+### Community 686 - "Community 686"
+Cohesion: 0.14
+Nodes (13): _activeDepth, _activeDepthListenable, begin, end, GroupRecoveryGate, groupRecoveryPendingError, isActive, isGroupRecoveryInProgress (+5 more)
+
+### Community 687 - "Community 687"
+Cohesion: 0.14
+Nodes (11): clearOrbit3DimensionPreferences, delete, fromStorageString, loadOrbit3DimensionPreferences, saveOrbit3DimensionPreferences, value, write, main (+3 more)
+
+### Community 688 - "Community 688"
 Cohesion: 0.14
 Nodes (13): contact, dataToVerify, isValid, json, maxAge, parseQRPayload, ParseQRResult, peerId (+5 more)
 
-### Community 673 - "Community 673"
+### Community 689 - "Community 689"
 Cohesion: 0.14
 Nodes (13): _attachments, count, deleteAttachmentsForContact, deleteAttachmentsForMessage, getAttachmentById, getAttachmentsForMessage, getAttachmentsForMessages, getPendingDownloads (+5 more)
 
-### Community 674 - "Community 674"
+### Community 690 - "Community 690"
 Cohesion: 0.14
 Nodes (13): fixtureVersion, kind, messageId, plaintext, expectedFallback, routeData, ciphertext, envelope_version (+5 more)
 
-### Community 675 - "Community 675"
+### Community 691 - "Community 691"
 Cohesion: 0.14
 Nodes (13): dbCountPendingIntroductions, dbDeleteIntroduction, dbInsertIntroduction, dbLoadIntroduction, dbLoadIntroductionsByIntroduced, dbLoadIntroductionsByIntroducer, dbLoadIntroductionsByRecipient, dbLoadIntroductionsForRecipientAndIntroducer (+5 more)
 
-### Community 676 - "Community 676"
+### Community 692 - "Community 692"
 Cohesion: 0.14
 Nodes (13): dbDeleteMediaForContact, dbDeleteMediaForMessage, dbInsertMediaAttachment, dbLoadMediaById, dbLoadMediaForMessage, dbLoadMediaForMessages, dbLoadPendingMediaDownloads, dbLoadUploadPendingAttachments (+5 more)
 
-### Community 677 - "Community 677"
+### Community 693 - "Community 693"
 Cohesion: 0.14
 Nodes (13): dbCountPendingGroupBroadcastsForGroup, dbDeletePendingGroupBroadcast, dbInsertPendingGroupBroadcast, dbLoadAllPendingGroupBroadcasts, dbLoadPendingGroupBroadcastsForGroup, delete, groupId, insert (+5 more)
 
-### Community 678 - "Community 678"
+### Community 694 - "Community 694"
 Cohesion: 0.14
-Nodes (13): ../local_discovery/fake_local_p2p_service.dart, bridge, checkHealth, dispose, expectLan, _FakeBridge, initialize, isInitialized (+5 more)
+Nodes (13): _dbName, main, rejoinGroupTopic, _role, _runAlice, _runBob, _runId, sendGroup (+5 more)
 
-### Community 679 - "Community 679"
+### Community 695 - "Community 695"
+Cohesion: 0.14
+Nodes (13): connectedAt, ConnectionState, copyWith, direction, fromJson, hashCode, isRelay, multiaddrs (+5 more)
+
+### Community 696 - "Community 696"
 Cohesion: 0.14
 Nodes (13): ../models/group_invite_delivery_attempt.dart, deleteAttempt, deleteAttemptsForGroup, getAttempt, getAttemptsForGroup, getStatusesForGroupMembers, getStatusForMember, GroupInviteDeliveryAttemptRepository (+5 more)
 
-### Community 680 - "Community 680"
+### Community 697 - "Community 697"
 Cohesion: 0.14
 Nodes (13): currentMemberCount, ensureWithinGroupMembershipLimit, exceedsGroupMembershipLimit, groupMembershipLimit, groupMembershipOverflowCount, groupMembershipRemainingSlots, maxMembers, overflow (+5 more)
 
-### Community 681 - "Community 681"
+### Community 698 - "Community 698"
 Cohesion: 0.14
 Nodes (13): GroupPendingKeyDistribution, created, distribution, enqueue, finalizeDistributed, finalizeUnreachable, getDistribution, getPendingForGroup (+5 more)
 
-### Community 682 - "Community 682"
+### Community 699 - "Community 699"
 Cohesion: 0.15
 Nodes (13): allFriends, fromMap, kind, peopleNearby, pickPeople, PostAudience, PostAudienceKind, PostAudienceKindWireValue (+5 more)
 
-### Community 683 - "Community 683"
+### Community 700 - "Community 700"
 Cohesion: 0.14
 Nodes (13): copyWith, createdAt, deliveryPath, deliveryStatus, eventId, fromMap, isSettled, lastAttemptAt (+5 more)
 
-### Community 684 - "Community 684"
+### Community 701 - "Community 701"
 Cohesion: 0.26
 Nodes (13): arg(), base64url(), buildData(), buildMessage(), crypto, fs, https, main() (+5 more)
 
-### Community 685 - "Community 685"
+### Community 702 - "Community 702"
 Cohesion: 0.14
 Nodes (13): attemptPart, buildTextPreview, idPart, logChatIncoming, logChatOutgoing, logChatTransportIncoming, logChatWireEnvelope, normalized (+5 more)
 
-### Community 686 - "Community 686"
-Cohesion: 0.15
-Nodes (11): downloadProfilePicture, DownloadProfilePictureFn, now, token, _uniqueSuffix, configureRecentRemoteNotificationGateForIos, persistAppGroupContainerPathForGate, _persistedAppGroupPathFileName (+3 more)
-
-### Community 687 - "Community 687"
-Cohesion: 0.15
-Nodes (11): main, appWith, chatScreen, edgeDrag, logicalSize, main, seedMessages, settleFrames (+3 more)
-
-### Community 688 - "Community 688"
-Cohesion: 0.15
-Nodes (12): db, execute, group_members, group_messages, group_pending_key_repairs, group_sync_receipts, group_welcome_key_package_tombstones, identity (+4 more)
-
-### Community 689 - "Community 689"
+### Community 703 - "Community 703"
 Cohesion: 0.15
 Nodes (12): acquire, activeHolds, _channel, _channelInvoke, channelName, _holds, _invoke, MigrationKeepAliveInvoker (+4 more)
 
-### Community 690 - "Community 690"
-Cohesion: 0.15
-Nodes (12): contacts, createdAt, defaultPostPresenceDeliveryConcurrency, envelope, fanoutPostFollowOnEnvelope, maxConcurrentRecipients, p2pService, _postPresenceInteractiveBudget (+4 more)
-
-### Community 691 - "Community 691"
-Cohesion: 0.15
-Nodes (12): calledCommands, checkHealth, dispose, initialize, _initialized, isInitialized, payloadsByCommand, payloadsFor (+4 more)
-
-### Community 692 - "Community 692"
+### Community 704 - "Community 704"
 Cohesion: 0.15
 Nodes (12): dbDeleteAllGroupKeys, dbDeleteGroupKeysBeforeGeneration, dbDeletePendingGroupKeyRotation, dbDeletePendingGroupKeyRotations, dbInsertGroupKey, dbLoadAllGroupKeys, dbLoadGroupKeyByGeneration, dbLoadLatestGroupKey (+4 more)
 
-### Community 693 - "Community 693"
+### Community 705 - "Community 705"
 Cohesion: 0.15
 Nodes (12): _createGroupInboxCursorsSql, _createGroupMessageReceiptsMemberIndexSql, _createGroupMessageReceiptsMessageIndexSql, _createGroupMessageReceiptsSql, group_id, group_message_receipts, member_peer_id, message_id (+4 more)
 
-### Community 694 - "Community 694"
-Cohesion: 0.15
-Nodes (12): connectedAt, ConnectionState, copyWith, direction, fromJson, hashCode, multiaddrs, operator (+4 more)
-
-### Community 695 - "Community 695"
+### Community 706 - "Community 706"
 Cohesion: 0.15
 Nodes (12): createdAt, eventAt, fromMap, groupId, GroupPendingBroadcast, id, kind, recipientPeerIds (+4 more)
 
-### Community 696 - "Community 696"
+### Community 707 - "Community 707"
 Cohesion: 0.15
 Nodes (11): ../models/group_thread_preview.dart, ../models/group_thread_summary.dart, GroupMembershipRepairDeletionRepository, GroupOutgoingLocalMessageChangeSource, GroupMessageRepositoryImpl, getGroupThreadPreview, getGroupThreadPreviews, GroupThreadPreviewRepository (+3 more)
 
-### Community 697 - "Community 697"
+### Community 708 - "Community 708"
 Cohesion: 0.15
 Nodes (12): consumedAt, copyWith, expiresAt, fromMap, groupId, GroupWelcomeKeyPackageTombstone, inviteId, isActiveAt (+4 more)
 
-### Community 698 - "Community 698"
+### Community 709 - "Community 709"
 Cohesion: 0.15
 Nodes (12): announcedAt, deviceId, deviceSigningPublicKey, fromMap, groupId, id, keyPackageId, memberPeerId (+4 more)
 
-### Community 699 - "Community 699"
+### Community 710 - "Community 710"
 Cohesion: 0.15
 Nodes (12): body, commentedAt, commentId, createdAt, eventId, fromJson, _isValidCreatedAt, _maxFutureClockSkew (+4 more)
 
-### Community 700 - "Community 700"
+### Community 711 - "Community 711"
+Cohesion: 0.15
+Nodes (12): _AppRootNotificationHarness, clear, events, main, missing, missingCalls, missingGroupId, missingGroupIdCalls (+4 more)
+
+### Community 712 - "Community 712"
+Cohesion: 0.15
+Nodes (12): android, ensureMknoonNotificationChannel, mknoonMessagesChannel, mknoonMessagesChannelDescription, mknoonMessagesChannelId, mknoonMessagesChannelName, mknoonMessagesNotificationDetails, mknoonMessagesSilentChannel (+4 more)
+
+### Community 713 - "Community 713"
 Cohesion: 0.15
 Nodes (12): assertBudget, BenchmarkHarness, captureFlowEvents, captureFlowEventsUntil, dispose, extractElapsedMs, filterEvents, firstEventDetails (+4 more)
 
-### Community 701 - "Community 701"
-Cohesion: 0.15
-Nodes (12): checkHealth, dispose, _FakeBridge, inboxResponse, initialize, isInitialized, main, reinitialize (+4 more)
-
-### Community 702 - "Community 702"
-Cohesion: 0.15
-Nodes (12): groupId, id, isIncoming, main, _makeGroup, _makeMsg, quotedMessageId, readAt (+4 more)
-
-### Community 703 - "Community 703"
-Cohesion: 0.17
-Nodes (10): db, main, pendingRow, columns, db, main, package:flutter_app/core/database/helpers/group_pending_membership_messages_db_helpers.dart, package:flutter_app/core/database/migrations/072_group_pending_membership_messages.dart (+2 more)
-
-### Community 704 - "Community 704"
+### Community 714 - "Community 714"
 Cohesion: 0.17
 Nodes (11): broadcast, enqueueGroupPendingBroadcast, groupId, groupPendingBroadcastCount, hasGroupPendingBroadcastEnqueueSink, setGroupPendingBroadcastCountSink, setGroupPendingBroadcastDrainSinks, setGroupPendingBroadcastEnqueueSink (+3 more)
 
-### Community 705 - "Community 705"
-Cohesion: 0.17
-Nodes (11): avatar_path, _createContactRequestsTableSql, _createContactsTableSql, _createIdentityTableSql, IdentityTableMigration, migrationName, NULL, run (+3 more)
-
-### Community 706 - "Community 706"
-Cohesion: 0.17
-Nodes (11): acquire, _activeHolds, debugActiveHolds, debugReset, debugSetDriver, disable, _driver, enable (+3 more)
-
-### Community 707 - "Community 707"
-Cohesion: 0.17
-Nodes (11): ageOffset, base, contactPeerId, createdAt, id, makeAliceIdentity, makeBobContact, makeFailedMessageWithEnvelope (+3 more)
-
-### Community 708 - "Community 708"
-Cohesion: 0.17
-Nodes (11): rolloutState, routeData, ciphertext, envelope_version, groupId, keyEpoch, kind, message_id (+3 more)
-
-### Community 709 - "Community 709"
-Cohesion: 0.26
-Nodes (11): newRelayPair(), TestTwoRelayServers_SharedGroupCursorContinuation(), TestTwoRelayServers_SharedGroupInboxBackend(), TestTwoRelayServers_SharedInboxBackend(), TestTwoRelayServers_SharedInboxPaginationContinuation(), TestTwoRelayServers_SharedRendezvousBackend(), relayPair, GroupInboxStore (+3 more)
-
-### Community 710 - "Community 710"
-Cohesion: 0.17
-Nodes (11): dbLoadPostFollowOnOutboxEvent, dbLoadPostFollowOnOutboxRecipientDeliveries, dbLoadRetryablePostFollowOnOutboxEvents, dbLoadRetryablePostFollowOnOutboxRecipientDeliveries, dbUpsertPostFollowOnOutboxEvent, dbUpsertPostFollowOnOutboxRecipientDelivery, insert, placeholders (+3 more)
-
-### Community 711 - "Community 711"
-Cohesion: 0.17
-Nodes (11): countQuarantinedEntries, deleteEntry, getEntry, getRecoverableEntries, getRecoverableEntriesByIds, InboxStagingRepository, markQuarantined, markRejected (+3 more)
-
-### Community 712 - "Community 712"
-Cohesion: 0.23
-Nodes (9): Listener, TestConcurrentSendDialNoSerialize(), TestStartEmitsColdStartLockWindow(), waitForStartupPhase(), deadDialListener, Conn, Duration, Mutex (+1 more)
-
-### Community 713 - "Community 713"
-Cohesion: 0.17
-Nodes (11): _createGroupHistoryGapRepairsRangeIndexSql, _createGroupHistoryGapRepairsStatusIndexSql, _createGroupHistoryGapRepairsTableSql, gap_id, group_history_gap_repairs, group_id, missing_after_message_id, missing_before_message_id (+3 more)
-
-### Community 714 - "Community 714"
-Cohesion: 0.17
-Nodes (11): _createGroupPendingMembershipMessagesGroupIndexSql, _createGroupPendingMembershipMessagesMessageIndexSql, _createGroupPendingMembershipMessagesSenderIndexSql, _createGroupPendingMembershipMessagesTableSql, group_id, group_pending_membership_messages, message_id, NULL (+3 more)
-
 ### Community 715 - "Community 715"
 Cohesion: 0.17
-Nodes (11): diameter, fromMessageCount, idleGlowAlpha, idleGlowBlur, isHigh, kFloatingAvatarDiameter, kSizeAThreshold, labelMaxWidth (+3 more)
+Nodes (11): contact, contactKey, group, groupKey, key, kind, label, requireContact (+3 more)
 
 ### Community 716 - "Community 716"
 Cohesion: 0.17
-Nodes (10): main, compare, currentSafetyNumber, _fingerprints, GroupMemberIdentitySafety, identityChanged, _normalize, _sameFingerprints (+2 more)
+Nodes (11): avatar_path, _createContactRequestsTableSql, _createContactsTableSql, _createIdentityTableSql, IdentityTableMigration, migrationName, NULL, run (+3 more)
 
 ### Community 717 - "Community 717"
 Cohesion: 0.17
-Nodes (11): startup_timing.dart, ColdStartNotifAnchor, _emitted, instance, _maybeEmit, _nodeReady, _notifTapSeen, _pushId (+3 more)
+Nodes (11): acquire, _activeHolds, debugActiveHolds, debugReset, debugSetDriver, disable, _driver, enable (+3 more)
 
 ### Community 718 - "Community 718"
 Cohesion: 0.17
-Nodes (11): contactPeerId, id, isIncoming, main, _msg, quotedMessageId, readAt, status (+3 more)
+Nodes (11): ageOffset, base, contactPeerId, createdAt, id, makeAliceIdentity, makeBobContact, makeFailedMessageWithEnvelope (+3 more)
 
 ### Community 719 - "Community 719"
 Cohesion: 0.17
-Nodes (11): difference, gapThreshold, kMessageRunGapThreshold, kMessageRunTightSpacing, messageRunBottomSpacing, MessageRunChrome, messageRunStartsNewRun, MessageRunSurface (+3 more)
+Nodes (11): rolloutState, routeData, ciphertext, envelope_version, groupId, keyEpoch, kind, message_id (+3 more)
 
 ### Community 720 - "Community 720"
+Cohesion: 0.26
+Nodes (11): newRelayPair(), TestTwoRelayServers_SharedGroupCursorContinuation(), TestTwoRelayServers_SharedGroupInboxBackend(), TestTwoRelayServers_SharedInboxBackend(), TestTwoRelayServers_SharedInboxPaginationContinuation(), TestTwoRelayServers_SharedRendezvousBackend(), relayPair, GroupInboxStore (+3 more)
+
+### Community 721 - "Community 721"
+Cohesion: 0.17
+Nodes (10): db, main, repairRow, repo, db, main, package:flutter_app/core/database/helpers/group_history_gap_repairs_db_helpers.dart, package:flutter_app/core/database/migrations/065_group_history_gap_repairs.dart (+2 more)
+
+### Community 722 - "Community 722"
+Cohesion: 0.17
+Nodes (10): db, main, pendingRow, columns, db, main, package:flutter_app/core/database/helpers/group_pending_membership_messages_db_helpers.dart, package:flutter_app/core/database/migrations/072_group_pending_membership_messages.dart (+2 more)
+
+### Community 723 - "Community 723"
+Cohesion: 0.17
+Nodes (11): dbLoadPostFollowOnOutboxEvent, dbLoadPostFollowOnOutboxRecipientDeliveries, dbLoadRetryablePostFollowOnOutboxEvents, dbLoadRetryablePostFollowOnOutboxRecipientDeliveries, dbUpsertPostFollowOnOutboxEvent, dbUpsertPostFollowOnOutboxRecipientDelivery, insert, placeholders (+3 more)
+
+### Community 724 - "Community 724"
+Cohesion: 0.17
+Nodes (11): countQuarantinedEntries, deleteEntry, getEntry, getRecoverableEntries, getRecoverableEntriesByIds, InboxStagingRepository, markQuarantined, markRejected (+3 more)
+
+### Community 725 - "Community 725"
+Cohesion: 0.17
+Nodes (11): details, firstInbox, firstSend, honestyGap, _printPhase6Metrics, relayGap, relayPeerId, relayReady (+3 more)
+
+### Community 726 - "Community 726"
+Cohesion: 0.17
+Nodes (11): details, firstInbox, firstSend, honestyGap, _printPhase6Metrics, relayGap, relayPeerId, relayReady (+3 more)
+
+### Community 727 - "Community 727"
+Cohesion: 0.17
+Nodes (11): _createGroupHistoryGapRepairsRangeIndexSql, _createGroupHistoryGapRepairsStatusIndexSql, _createGroupHistoryGapRepairsTableSql, gap_id, group_history_gap_repairs, group_id, missing_after_message_id, missing_before_message_id (+3 more)
+
+### Community 728 - "Community 728"
+Cohesion: 0.17
+Nodes (11): _createGroupPendingMembershipMessagesGroupIndexSql, _createGroupPendingMembershipMessagesMessageIndexSql, _createGroupPendingMembershipMessagesSenderIndexSql, _createGroupPendingMembershipMessagesTableSql, group_id, group_pending_membership_messages, message_id, NULL (+3 more)
+
+### Community 729 - "Community 729"
+Cohesion: 0.17
+Nodes (10): main, compare, currentSafetyNumber, _fingerprints, GroupMemberIdentitySafety, identityChanged, _normalize, _sameFingerprints (+2 more)
+
+### Community 730 - "Community 730"
+Cohesion: 0.17
+Nodes (11): contactPeerId, id, isIncoming, main, _msg, quotedMessageId, readAt, status (+3 more)
+
+### Community 731 - "Community 731"
+Cohesion: 0.17
+Nodes (11): difference, gapThreshold, kMessageRunGapThreshold, kMessageRunTightSpacing, messageRunBottomSpacing, MessageRunChrome, messageRunStartsNewRun, MessageRunSurface (+3 more)
+
+### Community 732 - "Community 732"
 Cohesion: 0.17
 Nodes (11): _bidiPattern, isMessageTooLong, isValidUsername, maxMessageLength, maxUsernameLength, replaceAll, sanitizeMessageText, sanitizeUsername (+3 more)
 
-### Community 721 - "Community 721"
+### Community 733 - "Community 733"
 Cohesion: 0.18
 Nodes (10): _cleanDisplayName, groupPeerFallbackLabel, memberName, preferMemberName, resolveGroupSenderDisplayName, sanitized, senderPeerId, shortPeerId (+2 more)
 
-### Community 722 - "Community 722"
+### Community 734 - "Community 734"
 Cohesion: 0.18
 Nodes (10): contactRequestData, data, groupId, groupInviteData, groupMessageData, introsData, messageId, newMessageData (+2 more)
 
-### Community 723 - "Community 723"
+### Community 735 - "Community 735"
+Cohesion: 0.18
+Nodes (10): consumedInvites, cutoff, empty, GroupInviteSweepResult, pendingInvites, revokedInvites, sweepExpiredGroupInvites, total (+2 more)
+
+### Community 736 - "Community 736"
 Cohesion: 0.24
 Nodes (8): backendConfig, setBackendDurabilityGauge(), histogramSampleCount(), metricValue(), TestRelayBackendDurableGauge(), TestRelayMetricsDeltas(), Metric, Observer
 
-### Community 724 - "Community 724"
+### Community 737 - "Community 737"
 Cohesion: 0.27
 Nodes (8): assertGroupMessageEvent(), TestBB001InitializeUpdatesExistingCallbackForFutureGroupEvents(), TestNodeCallbackAdapter_ForwardsRelayStateEventUntouched(), TestNodeCallbackAdapter_SetCallbackSwapsAndDropsNil(), waitForBridgeEventCount(), noopCallback, recordingBridgeCallback, Mutex
 
-### Community 725 - "Community 725"
+### Community 738 - "Community 738"
 Cohesion: 0.25
 Nodes (5): interopVectors, encryptionVectors, identityVectors, migrationVectors, signatureVectors
 
-### Community 726 - "Community 726"
+### Community 739 - "Community 739"
 Cohesion: 0.18
 Nodes (10): enqueue, finalizeDistributed, finalizeUnreachable, getDistribution, getPendingForGroup, getPendingForPeer, recordAttempt, reopenForRedelivery (+2 more)
 
-### Community 727 - "Community 727"
+### Community 740 - "Community 740"
 Cohesion: 0.22
 Nodes (5): memoryWakeTokenStore, newMemoryWakeTokenStore(), TestWakeTokenStore_FailOpenUntilRegisteredThenMemberOnly(), TestWakeTokenStore_RaceClean(), RWMutex
 
-### Community 728 - "Community 728"
+### Community 741 - "Community 741"
 Cohesion: 0.18
 Nodes (10): group_pending_key_distribution_repository.dart, ../models/group_pending_key_distribution.dart, enqueue, finalizeDistributed, finalizeUnreachable, getDistribution, getPendingForGroup, getPendingForPeer (+2 more)
 
-### Community 729 - "Community 729"
+### Community 742 - "Community 742"
 Cohesion: 0.18
 Nodes (10): dbArchiveGroup, dbCountGroups, dbDeleteGroup, dbInsertGroup, dbLoadActiveGroups, dbLoadAllGroups, dbLoadGroup, dbUnarchiveGroup (+2 more)
 
-### Community 731 - "Community 731"
+### Community 744 - "Community 744"
+Cohesion: 0.18
+Nodes (10): a, b, _isPrivateIpv4, _isPrivateIpv6, lower, multiaddrIsPrivateIp, multiaddrsContainPrivateIp, octets (+2 more)
+
+### Community 745 - "Community 745"
 Cohesion: 0.18
 Nodes (10): created_at, _createGroupPendingKeyRepairsEpochIndexSql, _createGroupPendingKeyRepairsMessageIndexSql, _createGroupPendingKeyRepairsTableSql, group_id, group_pending_key_repairs, key_epoch, message_id (+2 more)
 
-### Community 732 - "Community 732"
-Cohesion: 0.18
-Nodes (10): createdAt, encryptedKey, fromMap, groupId, GroupKeyInfo, hashCode, keyGeneration, operator (+2 more)
-
-### Community 733 - "Community 733"
+### Community 746 - "Community 746"
 Cohesion: 0.18
 Nodes (10): ../models/pending_sibling_device.dart, GroupKeyRotationDraftRepository, GroupMemberDeviceSnapshotRepository, GroupRepositoryImpl, RemovedGroupMemberSnapshotRepository, deletePendingSiblingDevice, getPendingSiblingDevice, getPendingSiblingDevicesForGroup (+2 more)
 
-### Community 734 - "Community 734"
+### Community 747 - "Community 747"
 Cohesion: 0.18
 Nodes (10): commentId, eventId, fromMap, isActive, PostCommentReactionModel, postId, reactedAt, reactionId (+2 more)
 
-### Community 735 - "Community 735"
-Cohesion: 0.18
-Nodes (10): commentId, createdAt, eventId, eventType, fromMap, PostFollowOnOutboxEvent, postId, rawEnvelope (+2 more)
-
-### Community 736 - "Community 736"
+### Community 748 - "Community 748"
 Cohesion: 0.18
 Nodes (10): fromMap, originKind, passCreatedAt, passerPeerId, passerUsername, passId, postId, PostOriginKind (+2 more)
 
-### Community 737 - "Community 737"
+### Community 749 - "Community 749"
 Cohesion: 0.31
 Nodes (9): GO_BRIDGE_CONNECTED_PEER_TEST, GO_NODE_KEYROTATION_TEST, is_go_bridge_connected_peer_test(), is_go_node_keyrotation_test(), ONE_TO_ONE_HOST_TESTS, print_command_for_path(), run_path(), usage() (+1 more)
 
-### Community 738 - "Community 738"
+### Community 750 - "Community 750"
 Cohesion: 0.31
 Nodes (9): ANDROID_SCENARIOS, IOS_SCENARIOS, list_scenario_entries(), run_android_scenario(), run_injection(), run_ios_scenario(), usage(), verify_inventory() (+1 more)
 
-### Community 739 - "Community 739"
+### Community 751 - "Community 751"
 Cohesion: 0.25
 Nodes (5): check_android(), check_ios(), check_macos(), usage(), verify_gomobile_bindings.sh script
 
-### Community 740 - "Community 740"
+### Community 752 - "Community 752"
 Cohesion: 0.18
 Nodes (10): checkHealth, dispose, initialize, _initialized, isInitialized, lastNodeStartPayload, main, _PayloadCapturingBridge (+2 more)
 
-### Community 741 - "Community 741"
+### Community 753 - "Community 753"
 Cohesion: 0.18
 Nodes (10): copyWith, filePaths, hasFiles, hasText, _resolveType, ShareIntent, _shareIntentTextUnchanged, ShareIntentType (+2 more)
 
-### Community 742 - "Community 742"
+### Community 754 - "Community 754"
+Cohesion: 0.18
+Nodes (10): aboveDivider, belowDivider, byGroup, _compareGroupThreadFeedItemsDescending, groupGroupMessagesIntoThreads, groupMap, lastOutgoingAtByGroup, timestampCompare (+2 more)
+
+### Community 755 - "Community 755"
 Cohesion: 0.33
 Nodes (9): AEAD, MigrationChunkDecrypt(), MigrationChunkEncrypt(), migrationChunkGCM(), migrationDeriveSessionKey(), MigrationSessionDecap(), MigrationSessionEncap(), migrationSessionInfo() (+1 more)
 
-### Community 743 - "Community 743"
-Cohesion: 0.20
-Nodes (9): _CapturedFlowEvent, _captureFlowEvents, details, event, events, main, originalDebugPrint, previousLogging (+1 more)
-
-### Community 744 - "Community 744"
-Cohesion: 0.20
-Nodes (9): _cache, _cacheKey, _generation, IdentityAvatarDocumentsDirLoader, IdentityAvatarResolver, _inFlight, invalidatePeer, _loadFromDisk (+1 more)
-
-### Community 745 - "Community 745"
-Cohesion: 0.47
-Nodes (8): DecryptFile(), EncryptFile(), GenerateSymmetricKey(), TestDecryptCorruptedCiphertextFails(), TestDecryptWithWrongKeyFails(), TestEncryptDecryptFileRoundTrip(), TestGenerateSymmetricKey(), TestLargeFileRoundTrip()
-
-### Community 746 - "Community 746"
-Cohesion: 0.38
-Nodes (9): migrationNonce(), migrationTestSession(), TestMigrationChunkDecryptRejectsTampering(), TestMigrationChunkEncryptRejectsBadNonceAndKey(), TestMigrationChunkRoundTripWithRealAAD(), TestMigrationSessionKeyBindsSessionBundleAndDirection(), TestMigrationSessionKeyMatchesAcrossEncapDecap(), MigrationSession (+1 more)
-
-### Community 747 - "Community 747"
-Cohesion: 0.20
-Nodes (9): dart:developer, flow_event_emitter.dart, details, line, logPushDiagnostic, prefix, sanitizedDetails, suffix (+1 more)
-
-### Community 748 - "Community 748"
-Cohesion: 0.20
-Nodes (9): rolloutState, routeData, ciphertext, envelope_version, kem, message_id, nonce, sender_id (+1 more)
-
-### Community 749 - "Community 749"
-Cohesion: 0.20
-Nodes (9): dbDeleteGroupInviteDeliveryAttempt, dbDeleteGroupInviteDeliveryAttemptsForGroup, dbLoadGroupInviteDeliveryAttempt, dbLoadGroupInviteDeliveryAttemptsForGroup, dbUpdateGroupInviteDeliveryAttemptStatus, dbUpsertGroupInviteDeliveryAttempt, groupId, peerId (+1 more)
-
-### Community 750 - "Community 750"
-Cohesion: 0.20
-Nodes (9): dbDeleteReaction, dbDeleteReactionsForContact, dbDeleteReactionsForMessage, dbInsertReaction, dbLoadActiveOrTombstonedReactionForSender, dbLoadReactionsForMessage, dbLoadReactionsForMessages, id (+1 more)
-
-### Community 751 - "Community 751"
-Cohesion: 0.20
-Nodes (9): avatarBase64, avatarByteLength, maxBytes, normalizer, PreparedRepostAvatarSnapshot, prepareRepostAvatarSnapshot, sourceFile, tempDir (+1 more)
-
-### Community 752 - "Community 752"
-Cohesion: 0.20
-Nodes (9): _createContactIndexSql, _createMessagesTableSql, _createTimestampIndexSql, MessagesTableMigration, migrationName, NULL, run, runMessagesTableMigration (+1 more)
-
-### Community 753 - "Community 753"
-Cohesion: 0.20
-Nodes (9): created_at, _createGroupPendingKeyDistributionsGroupStatusIndexSql, _createGroupPendingKeyDistributionsPeerStatusIndexSql, _createGroupPendingKeyDistributionsTableSql, group_id, group_pending_key_distributions, peer_id, runGroupPendingKeyDistributionsMigration (+1 more)
-
-### Community 754 - "Community 754"
-Cohesion: 0.20
-Nodes (9): _createGroupPendingReactionsGroupMessageIndexSql, _createGroupPendingReactionsGroupReceivedIndexSql, _createGroupPendingReactionsTableSql, group_id, group_pending_reactions, message_id, NULL, received_at (+1 more)
-
-### Community 755 - "Community 755"
-Cohesion: 0.20
-Nodes (9): created_at, _createPendingGroupBroadcastsDedupIndexSql, _createPendingGroupBroadcastsGroupIndexSql, _createPendingGroupBroadcastsTableSql, group_id, NULL, pending_group_broadcasts, runPendingGroupBroadcastsMigration (+1 more)
-
 ### Community 756 - "Community 756"
 Cohesion: 0.20
-Nodes (9): main, makeRequest, testMlKem, testPeerId, testPublicKey, testReceivedAt, testRendezvous, testSignature (+1 more)
+Nodes (9): ClearedWatermarks, feedItemMatchesThreadId, feedThreadKindConnection, feedThreadKindContact, feedThreadKindGroup, isPendingFeedItem, kept, projectPendingFeed (+1 more)
 
 ### Community 757 - "Community 757"
 Cohesion: 0.20
-Nodes (9): ../models/group_message.dart, byId, compareGroupMessagesAscending, compareGroupMessagesDescending, ordered, orderGroupMessagesForTimeline, placed, sorted (+1 more)
+Nodes (9): _cache, _cacheKey, _generation, IdentityAvatarDocumentsDirLoader, IdentityAvatarResolver, _inFlight, invalidatePeer, _loadFromDisk (+1 more)
 
 ### Community 758 - "Community 758"
-Cohesion: 0.20
-Nodes (9): extra, fromJson, GroupMessagePayload, quotedMessageId, text, timestamp, toJson, toString (+1 more)
+Cohesion: 0.47
+Nodes (8): DecryptFile(), EncryptFile(), GenerateSymmetricKey(), TestDecryptCorruptedCiphertextFails(), TestDecryptWithWrongKeyFails(), TestEncryptDecryptFileRoundTrip(), TestGenerateSymmetricKey(), TestLargeFileRoundTrip()
 
 ### Community 759 - "Community 759"
-Cohesion: 0.20
-Nodes (9): ../models/message_reaction.dart, deleteReactionsForContact, deleteReactionsForMessage, getReactionForSenderIncludingRemoved, getReactionsForMessage, getReactionsForMessages, ReactionRepository, removeReaction (+1 more)
+Cohesion: 0.38
+Nodes (9): migrationNonce(), migrationTestSession(), TestMigrationChunkDecryptRejectsTampering(), TestMigrationChunkEncryptRejectsBadNonceAndKey(), TestMigrationChunkRoundTripWithRealAAD(), TestMigrationSessionKeyBindsSessionBundleAndDirection(), TestMigrationSessionKeyMatchesAcrossEncapDecap(), MigrationSession (+1 more)
 
 ### Community 760 - "Community 760"
 Cohesion: 0.20
-Nodes (9): createdAt, eventId, eventType, fromMap, postId, PostPendingChildEvent, rawEnvelope, senderPeerId (+1 more)
+Nodes (9): rolloutState, routeData, ciphertext, envelope_version, kem, message_id, nonce, sender_id (+1 more)
 
 ### Community 761 - "Community 761"
-Cohesion: 0.20
-Nodes (9): eventId, fromMap, isActive, postId, PostReactionModel, reactedAt, reactionId, senderPeerId (+1 more)
+Cohesion: 0.24
+Nodes (4): memoryInboxBackendLimited, inboxMessage, InboxStoreResult, memoryInboxBackend
 
 ### Community 762 - "Community 762"
 Cohesion: 0.20
-Nodes (9): main, makePayload, testMlkem, testNs, testPk, testRv, testSig, testTs (+1 more)
+Nodes (9): dbDeleteGroupInviteDeliveryAttempt, dbDeleteGroupInviteDeliveryAttemptsForGroup, dbLoadGroupInviteDeliveryAttempt, dbLoadGroupInviteDeliveryAttemptsForGroup, dbUpdateGroupInviteDeliveryAttemptStatus, dbUpsertGroupInviteDeliveryAttempt, groupId, peerId (+1 more)
 
 ### Community 763 - "Community 763"
 Cohesion: 0.20
-Nodes (9): acked, acknowledged, ackWaitMs, reply, SendMessageResult, sent, streamOpenMs, transport (+1 more)
+Nodes (9): dbDeleteReaction, dbDeleteReactionsForContact, dbDeleteReactionsForMessage, dbInsertReaction, dbLoadActiveOrTombstonedReactionForSender, dbLoadReactionsForMessage, dbLoadReactionsForMessages, id (+1 more)
 
 ### Community 764 - "Community 764"
 Cohesion: 0.20
-Nodes (9): clear, hasReply, justNow, _replies, SessionReply, SessionReplyTracker, text, time (+1 more)
+Nodes (9): _createContactIndexSql, _createMessagesTableSql, _createTimestampIndexSql, MessagesTableMigration, migrationName, NULL, run, runMessagesTableMigration (+1 more)
 
 ### Community 765 - "Community 765"
-Cohesion: 0.33
-Nodes (3): Duration, Node, RecoveryResult
+Cohesion: 0.20
+Nodes (9): created_at, _createGroupPendingKeyDistributionsGroupStatusIndexSql, _createGroupPendingKeyDistributionsPeerStatusIndexSql, _createGroupPendingKeyDistributionsTableSql, group_id, group_pending_key_distributions, peer_id, runGroupPendingKeyDistributionsMigration (+1 more)
 
 ### Community 766 - "Community 766"
 Cohesion: 0.20
-Nodes (9): count, hasCount, isActive, isAuthorView, isPassedAlongReceiver, isPassiveReceiver, none, PostRepostVisualState (+1 more)
+Nodes (9): _createGroupPendingReactionsGroupMessageIndexSql, _createGroupPendingReactionsGroupReceivedIndexSql, _createGroupPendingReactionsTableSql, group_id, group_pending_reactions, message_id, NULL, received_at (+1 more)
 
 ### Community 767 - "Community 767"
+Cohesion: 0.20
+Nodes (9): created_at, _createPendingGroupBroadcastsDedupIndexSql, _createPendingGroupBroadcastsGroupIndexSql, _createPendingGroupBroadcastsTableSql, group_id, NULL, pending_group_broadcasts, runPendingGroupBroadcastsMigration (+1 more)
+
+### Community 768 - "Community 768"
+Cohesion: 0.20
+Nodes (9): expiresAt, fromMap, groupId, GroupInviteRevocation, inviteId, isActiveAt, revokedAt, revokedBy (+1 more)
+
+### Community 769 - "Community 769"
+Cohesion: 0.20
+Nodes (9): ../models/group_message.dart, byId, compareGroupMessagesAscending, compareGroupMessagesDescending, ordered, orderGroupMessagesForTimeline, placed, sorted (+1 more)
+
+### Community 770 - "Community 770"
+Cohesion: 0.20
+Nodes (9): extra, fromJson, GroupMessagePayload, quotedMessageId, text, timestamp, toJson, toString (+1 more)
+
+### Community 771 - "Community 771"
+Cohesion: 0.20
+Nodes (9): createdAt, eventId, eventType, fromMap, postId, PostPendingChildEvent, rawEnvelope, senderPeerId (+1 more)
+
+### Community 772 - "Community 772"
+Cohesion: 0.20
+Nodes (9): eventId, fromMap, isActive, postId, PostReactionModel, reactedAt, reactionId, senderPeerId (+1 more)
+
+### Community 773 - "Community 773"
+Cohesion: 0.20
+Nodes (9): main, makePayload, testMlkem, testNs, testPk, testRv, testSig, testTs (+1 more)
+
+### Community 774 - "Community 774"
+Cohesion: 0.20
+Nodes (9): acked, acknowledged, ackWaitMs, reply, SendMessageResult, sent, streamOpenMs, transport (+1 more)
+
+### Community 775 - "Community 775"
+Cohesion: 0.20
+Nodes (9): clear, hasReply, justNow, _replies, SessionReply, SessionReplyTracker, text, time (+1 more)
+
+### Community 776 - "Community 776"
+Cohesion: 0.33
+Nodes (3): Duration, Node, RecoveryResult
+
+### Community 777 - "Community 777"
+Cohesion: 0.20
+Nodes (9): ChatMessage, content, from, fromEventData, fromLocal, isIncoming, timestamp, to (+1 more)
+
+### Community 778 - "Community 778"
+Cohesion: 0.20
+Nodes (9): aboveDivider, belowDivider, byContact, contactBlocked, filteredMessages, groupMessagesIntoThreads, lastOutgoingAtByContact, totalMessageCounts (+1 more)
+
+### Community 779 - "Community 779"
 Cohesion: 0.50
 Nodes (9): _FakePathProvider, _FakePathProvider, _FakePathProvider, Fake, _FakePathProvider, _FakePathProvider, MockPlatformInterfaceMixin, PathProviderPlatform (+1 more)
 
-### Community 768 - "Community 768"
-Cohesion: 0.22
-Nodes (8): conversation_message.dart, ConversationMessage, contactPeerId, ConversationThreadSummary, lastOutgoingAt, latestMessage, messageCount, unreadCount
-
-### Community 769 - "Community 769"
-Cohesion: 0.25
-Nodes (3): memoryPushTokenStore, RWMutex, tokenEntry
-
-### Community 770 - "Community 770"
-Cohesion: 0.22
-Nodes (8): dbDeleteRequest, dbLoadPendingRequests, dbLoadRequest, dbRequestExists, dbUpdateRequestStatus, dbUpsertRequest, peerId, peerIdPrefix
-
-### Community 771 - "Community 771"
-Cohesion: 0.22
-Nodes (8): dbDeleteGroupReactionReplayOutboxEntry, dbLoadGroupReactionReplayOutboxEntry, dbLoadRetryableGroupReactionReplayOutboxEntries, dbUpdateGroupReactionReplayOutboxEntryStatus, dbUpsertGroupReactionReplayOutboxEntry, limit, reactionId, rows
-
-### Community 772 - "Community 772"
-Cohesion: 0.22
-Nodes (8): dbClearGroupRejoinState, dbForceGroupRejoinEligible, dbLoadGroupRejoinStates, dbRecordGroupRejoinFailure, delete, query, rawInsert, update
-
-### Community 773 - "Community 773"
-Cohesion: 0.22
-Nodes (8): dbDeletePendingSiblingDevice, dbLoadPendingSiblingDevice, dbLoadPendingSiblingDevicesForGroup, dbUpsertPendingSiblingDevice, delete, insert, query, rows
-
-### Community 774 - "Community 774"
-Cohesion: 0.31
-Nodes (5): ParseV1Envelope(), ParseV2Envelope(), V1Envelope, V2Encrypted, V2Envelope
-
-### Community 775 - "Community 775"
-Cohesion: 0.22
-Nodes (8): _createGroupKeysTableSql, _createGroupMessagesGroupIndexSql, _createGroupMessagesTableSql, _createGroupMessagesTimestampIndexSql, group_id, key_generation, NULL, runGroupMessagesTablesMigration
-
-### Community 776 - "Community 776"
-Cohesion: 0.22
-Nodes (8): _createGroupInviteRevocationsExpiresAtIndexSql, _createGroupInviteRevocationsGroupIdIndexSql, _createGroupInviteRevocationsTableSql, expires_at, group_id, group_invite_revocations, runGroupInviteRevocationsMigration, TEXT
-
-### Community 777 - "Community 777"
-Cohesion: 0.22
-Nodes (8): _createGroupInviteConsumptionsExpiresAtIndexSql, _createGroupInviteConsumptionsGroupIdIndexSql, _createGroupInviteConsumptionsTableSql, expires_at, group_id, group_invite_consumptions, NULL, runGroupInviteConsumptionsMigration
-
-### Community 778 - "Community 778"
-Cohesion: 0.22
-Nodes (8): _createGroupWelcomeKeyPackageTombstonesExpiresAtIndexSql, _createGroupWelcomeKeyPackageTombstonesTableSql, expires_at, group_id, group_welcome_key_package_tombstones, package_id, recipient_device_id, runGroupWelcomeKeyPackageTombstonesMigration
-
-### Community 779 - "Community 779"
-Cohesion: 0.22
-Nodes (8): _createGroupInviteDeliveryAttemptsGroupStatusIndexSql, _createGroupInviteDeliveryAttemptsPeerIndexSql, _createGroupInviteDeliveryAttemptsSql, group_id, group_invite_delivery_attempts, peer_id, runGroupInviteDeliveryAttemptsMigration, status
-
 ### Community 780 - "Community 780"
 Cohesion: 0.22
-Nodes (8): AudioRecording, durationMs, filePath, hashCode, mime, operator, sizeBytes, toString
+Nodes (8): debugSetMigrationBreadcrumbSink, fields, kAccountMigrationTelemetry, line, migrationBreadcrumb, MigrationBreadcrumbSink, sink, _testSink
 
 ### Community 781 - "Community 781"
 Cohesion: 0.22
-Nodes (8): addresses, DiscoveredPeer, fromJson, hashCode, id, operator, toJson, toString
+Nodes (8): cancelledImportCleanup, _deleteArtifacts, failedImportCleanup, failedSecureStorageCleanup, MigrationDatabaseImportCleanup, MigrationFailedSecureStorageCleanup, _sqliteSidecars, successfulImportCleanup
 
 ### Community 782 - "Community 782"
 Cohesion: 0.22
-Nodes (8): changedContactPeerIds, changedGroupIds, FeedRouteChanges, hasChanges, merge, refreshPendingIntroductions, reloadAllContacts, reloadAllGroups
+Nodes (8): conversation_message.dart, ConversationMessage, contactPeerId, ConversationThreadSummary, lastOutgoingAt, latestMessage, messageCount, unreadCount
 
 ### Community 783 - "Community 783"
-Cohesion: 0.22
-Nodes (8): consumedAt, expiresAt, fromMap, groupId, GroupInviteConsumption, inviteId, isActiveAt, toMap
+Cohesion: 0.25
+Nodes (3): memoryPushTokenStore, RWMutex, tokenEntry
 
 ### Community 784 - "Community 784"
 Cohesion: 0.22
-Nodes (8): GroupMultiDeviceFacet, groupMultiDeviceImplemented, GroupMultiDeviceScope, groupMultiDeviceScopeFor, groupMultiDeviceScopes, isGroupMultiDeviceDeviceLocal, isGroupMultiDeviceImplemented, isGroupMultiDeviceShared
+Nodes (8): dbDeleteRequest, dbLoadPendingRequests, dbLoadRequest, dbRequestExists, dbUpdateRequestStatus, dbUpsertRequest, peerId, peerIdPrefix
 
 ### Community 785 - "Community 785"
-Cohesion: 0.36
-Nodes (8): GroupConfig, GroupEpochKey, GroupKeyInfo, GroupMember, GroupMemberDevice, GroupRole, GroupType, Time
+Cohesion: 0.22
+Nodes (8): dbDeleteGroupReactionReplayOutboxEntry, dbLoadGroupReactionReplayOutboxEntry, dbLoadRetryableGroupReactionReplayOutboxEntries, dbUpdateGroupReactionReplayOutboxEntryStatus, dbUpsertGroupReactionReplayOutboxEntry, limit, reactionId, rows
 
 ### Community 786 - "Community 786"
-Cohesion: 0.28
-Nodes (6): NotificationService, UNMutableNotificationContent, UNNotificationContent, UNNotificationRequest, UNNotificationServiceExtension, Void
+Cohesion: 0.22
+Nodes (8): dbClearGroupRejoinState, dbForceGroupRejoinEligible, dbLoadGroupRejoinStates, dbRecordGroupRejoinFailure, delete, query, rawInsert, update
 
 ### Community 787 - "Community 787"
 Cohesion: 0.22
-Nodes (8): isUrl, lastEnd, parseUrls, segments, text, TextSegment, _trailingPunctuation, _urlPattern
+Nodes (8): dbDeletePendingSiblingDevice, dbLoadPendingSiblingDevice, dbLoadPendingSiblingDevicesForGroup, dbUpsertPendingSiblingDevice, delete, insert, query, rows
 
 ### Community 788 - "Community 788"
+Cohesion: 0.22
+Nodes (8): avatarBase64, avatarByteLength, maxBytes, normalizer, PreparedRepostAvatarSnapshot, prepareRepostAvatarSnapshot, sourceFile, tempDir
+
+### Community 789 - "Community 789"
+Cohesion: 0.31
+Nodes (5): ParseV1Envelope(), ParseV2Envelope(), V1Envelope, V2Encrypted, V2Envelope
+
+### Community 790 - "Community 790"
+Cohesion: 0.22
+Nodes (8): _createGroupKeysTableSql, _createGroupMessagesGroupIndexSql, _createGroupMessagesTableSql, _createGroupMessagesTimestampIndexSql, group_id, key_generation, NULL, runGroupMessagesTablesMigration
+
+### Community 791 - "Community 791"
+Cohesion: 0.22
+Nodes (8): _createGroupInviteRevocationsExpiresAtIndexSql, _createGroupInviteRevocationsGroupIdIndexSql, _createGroupInviteRevocationsTableSql, expires_at, group_id, group_invite_revocations, runGroupInviteRevocationsMigration, TEXT
+
+### Community 792 - "Community 792"
+Cohesion: 0.22
+Nodes (8): _createGroupInviteConsumptionsExpiresAtIndexSql, _createGroupInviteConsumptionsGroupIdIndexSql, _createGroupInviteConsumptionsTableSql, expires_at, group_id, group_invite_consumptions, NULL, runGroupInviteConsumptionsMigration
+
+### Community 793 - "Community 793"
+Cohesion: 0.22
+Nodes (8): _createGroupWelcomeKeyPackageTombstonesExpiresAtIndexSql, _createGroupWelcomeKeyPackageTombstonesTableSql, expires_at, group_id, group_welcome_key_package_tombstones, package_id, recipient_device_id, runGroupWelcomeKeyPackageTombstonesMigration
+
+### Community 794 - "Community 794"
+Cohesion: 0.22
+Nodes (8): _createGroupInviteDeliveryAttemptsGroupStatusIndexSql, _createGroupInviteDeliveryAttemptsPeerIndexSql, _createGroupInviteDeliveryAttemptsSql, group_id, group_invite_delivery_attempts, peer_id, runGroupInviteDeliveryAttemptsMigration, status
+
+### Community 795 - "Community 795"
+Cohesion: 0.22
+Nodes (8): AudioRecording, durationMs, filePath, hashCode, mime, operator, sizeBytes, toString
+
+### Community 796 - "Community 796"
+Cohesion: 0.22
+Nodes (8): addresses, DiscoveredPeer, fromJson, hashCode, id, operator, toJson, toString
+
+### Community 797 - "Community 797"
+Cohesion: 0.22
+Nodes (8): changedContactPeerIds, changedGroupIds, FeedRouteChanges, hasChanges, merge, refreshPendingIntroductions, reloadAllContacts, reloadAllGroups
+
+### Community 798 - "Community 798"
+Cohesion: 0.22
+Nodes (8): GroupMultiDeviceFacet, groupMultiDeviceImplemented, GroupMultiDeviceScope, groupMultiDeviceScopeFor, groupMultiDeviceScopes, isGroupMultiDeviceDeviceLocal, isGroupMultiDeviceImplemented, isGroupMultiDeviceShared
+
+### Community 799 - "Community 799"
+Cohesion: 0.28
+Nodes (8): OrbitGroup, friend, group, OrbitFriendItem, OrbitGroupItem, OrbitItem, sortKey, OrbitFriend
+
+### Community 800 - "Community 800"
+Cohesion: 0.36
+Nodes (8): GroupConfig, GroupEpochKey, GroupKeyInfo, GroupMember, GroupMemberDevice, GroupRole, GroupType, Time
+
+### Community 801 - "Community 801"
+Cohesion: 0.28
+Nodes (6): NotificationService, UNMutableNotificationContent, UNNotificationContent, UNNotificationRequest, UNNotificationServiceExtension, Void
+
+### Community 802 - "Community 802"
+Cohesion: 0.22
+Nodes (8): isUrl, lastEnd, parseUrls, segments, text, TextSegment, _trailingPunctuation, _urlPattern
+
+### Community 803 - "Community 803"
 Cohesion: 0.25
 Nodes (7): ContactRequestPresentationGate, release, releaseAll, shouldSuppress, suppress, _suppressAll, _suppressedPeerIds
 
-### Community 789 - "Community 789"
+### Community 804 - "Community 804"
+Cohesion: 0.25
+Nodes (7): logOnlyToken, main, mainPath, nsePath, readSource, routerPath, senderToken
+
+### Community 805 - "Community 805"
+Cohesion: 0.25
+Nodes (7): canonicalGroupKeyUpdateSignedPayload, canonicalizeGroupEventLogPayload, groupId, groupKeyUpdateSignatureAlgorithm, groupKeyUpdateSignatureSchemaVersion, groupKeyUpdateSignedPayloadType, sourcePeerId
+
+### Community 806 - "Community 806"
 Cohesion: 0.25
 Nodes (7): durationMs, height, localFilePath, mime, PostMediaDraft, waveform, width
 
-### Community 790 - "Community 790"
+### Community 807 - "Community 807"
+Cohesion: 0.25
+Nodes (7): DrainGroupOfflineInboxForGroupFn, error, failed, ok, prepareNotificationOpen, PrepareNotificationOpenResult, success
+
+### Community 808 - "Community 808"
 Cohesion: 0.25
 Nodes (7): assertNotInsideDbWriteTransaction, body, commandPreview, _dbWriteTxnZoneKey, isInsideDbWriteTransaction, runZoned, toString
 
-### Community 791 - "Community 791"
+### Community 809 - "Community 809"
+Cohesion: 0.25
+Nodes (7): autoSetupConfigFileName, _compileTimeAutoSetupUsername, fileUsername, _normalizeUsername, _readFileUsername, resolveAutoSetupUsername, trimmed
+
+### Community 810 - "Community 810"
+Cohesion: 0.25
+Nodes (7): _channel, channelName, DiskSpaceChannel, DiskSpacePlatformInvoker, getAvailableBytes, _invokeMethod, invoker
+
+### Community 811 - "Community 811"
 Cohesion: 0.25
 Nodes (7): rolloutState, routeData, body, groupId, message_id, title, type
 
-### Community 792 - "Community 792"
+### Community 812 - "Community 812"
 Cohesion: 0.25
 Nodes (7): dbIsGroupMessageLocallyDeleted, dbLoadGroupMessageLocalDeletion, dbUpsertGroupMessageLocalDeletion, _hasGroupMessageLocalDeletionsTable, insert, now, rows
 
-### Community 793 - "Community 793"
+### Community 813 - "Community 813"
 Cohesion: 0.25
 Nodes (7): AmplitudeBuffer, _data, _full, push, reset, size, _writeIndex
 
-### Community 794 - "Community 794"
+### Community 814 - "Community 814"
 Cohesion: 0.25
 Nodes (7): columns, contact_peer_id, hasReadAt, is_incoming, messages, read_at, runReadAtColumnMigration
 
-### Community 795 - "Community 795"
+### Community 815 - "Community 815"
 Cohesion: 0.25
 Nodes (7): _createGroupMembersIndexSql, _createGroupMembersTableSql, _createGroupsTableSql, group_id, peer_id, runGroupsTablesMigration, TEXT
 
-### Community 796 - "Community 796"
+### Community 816 - "Community 816"
 Cohesion: 0.25
 Nodes (7): _createGroupMessageLocalDeletionsGroupIndexSql, _createGroupMessageLocalDeletionsSql, deleted_at, group_id, group_message_local_deletions, NULL, runGroupMessageLocalDeletionsMigration
 
-### Community 797 - "Community 797"
+### Community 817 - "Community 817"
 Cohesion: 0.25
 Nodes (7): _createGroupKeyRotationDraftsEpochIndexSql, _createGroupKeyRotationDraftsSql, group_id, group_key_rotation_drafts, key_generation, NULL, runGroupKeyRotationDraftsMigration
 
-### Community 798 - "Community 798"
+### Community 818 - "Community 818"
 Cohesion: 0.25
 Nodes (7): AppShellTab, feed, isValid, orbit, orbit2, orbit3, values
 
-### Community 799 - "Community 799"
+### Community 819 - "Community 819"
 Cohesion: 0.25
 Nodes (7): clearDeliveredNotifications, consumeInitialPayload, dispose, initialize, NotificationService, showMessageNotification, showNotification
 
-### Community 800 - "Community 800"
+### Community 820 - "Community 820"
 Cohesion: 0.25
 Nodes (7): formatDaySeparatorLabel, local, messageDay, nowLocal, pattern, today, yesterday
 
-### Community 801 - "Community 801"
+### Community 821 - "Community 821"
 Cohesion: 0.52
 Nodes (6): skipIfNoNetwork(), TestAllTransportsSmokeCompare(), TestQUICSmokeIdentify(), TestQUICSmokeRelayReservation(), TestTCPSmokeIdentify(), TestWSSSmokeIdentify()
 
-### Community 802 - "Community 802"
+### Community 822 - "Community 822"
 Cohesion: 0.29
 Nodes (6): dbClearFeedClearedThread, dbLoadFeedClearedThreads, dbMarkFeedClearedThread, delete, insert, query
 
-### Community 803 - "Community 803"
+### Community 823 - "Community 823"
 Cohesion: 0.29
 Nodes (6): dbDeleteExpiredPendingGroupInvites, dbDeletePendingGroupInvite, dbLoadPendingGroupInvite, dbLoadPendingGroupInvites, dbUpsertPendingGroupInvite, groupId
 
-### Community 804 - "Community 804"
+### Community 824 - "Community 824"
 Cohesion: 0.29
 Nodes (6): dbLoadPostCommentReaction, dbLoadPostCommentReactions, dbUpsertPostCommentReaction, insert, query, rows
 
-### Community 805 - "Community 805"
+### Community 825 - "Community 825"
 Cohesion: 0.29
 Nodes (6): dbLoadAllPostLocationPresence, dbLoadPostLocationPresence, dbUpsertPostLocationPresence, insert, query, rows
 
-### Community 806 - "Community 806"
+### Community 826 - "Community 826"
 Cohesion: 0.29
 Nodes (6): dbDeletePostPinDismissal, dbLoadPostPinDismissals, dbUpsertPostPinDismissal, delete, insert, query
 
-### Community 807 - "Community 807"
+### Community 827 - "Community 827"
 Cohesion: 0.29
 Nodes (6): dbLoadActivePostPinStates, dbLoadPostPinState, dbUpsertPostPinState, insert, query, rows
 
-### Community 808 - "Community 808"
+### Community 828 - "Community 828"
 Cohesion: 0.29
 Nodes (6): dbLoadPostReaction, dbLoadPostReactions, dbUpsertPostReaction, insert, query, rows
 
-### Community 809 - "Community 809"
+### Community 829 - "Community 829"
 Cohesion: 0.48
 Nodes (6): startNodeWithFakeFirstRelay(), TestInboxRetrieveFallsBackToSecondRelay(), TestMediaDownloadFallsBackToSecondRelay(), TestPeerDialFallsBackToSecondRelay(), TestRendezvousDiscoveryFallsBackToSecondRelay(), Node
 
-### Community 810 - "Community 810"
+### Community 830 - "Community 830"
 Cohesion: 0.29
 Nodes (6): accept, _connectWs, _createTestFile, main, _startMockReceiver, package:flutter_app/core/local_discovery/local_media_sender.dart
 
-### Community 811 - "Community 811"
+### Community 831 - "Community 831"
+Cohesion: 0.29
+Nodes (6): main, minHeight, minWidth, _noOpCompress, _noOpVideoCompress, package:flutter_image_compress/flutter_image_compress.dart
+
+### Community 832 - "Community 832"
 Cohesion: 0.29
 Nodes (6): formatDurationMs, mediaGridContainerRadius, mediaGridGap, mediaGridItemRadius, minutes, seconds
 
-### Community 812 - "Community 812"
+### Community 833 - "Community 833"
+Cohesion: 0.29
+Nodes (6): begin, clearAll, end, _inFlight, inFlightCount, isInFlight
+
+### Community 834 - "Community 834"
 Cohesion: 0.29
 Nodes (6): _createIntroducedIndexSql, _createIntroducerIndexSql, _createIntroductionsTableSql, _createRecipientIndexSql, runIntroductionsTableMigration, TEXT
 
-### Community 813 - "Community 813"
+### Community 835 - "Community 835"
 Cohesion: 0.29
 Nodes (6): columnNames, columns, hasInboxRetryPayload, hasInboxStored, hasWireEnvelope, runGroupMessageReliabilityColumnsMigration
 
-### Community 814 - "Community 814"
+### Community 836 - "Community 836"
 Cohesion: 0.29
 Nodes (6): columnNames, columns, hasDeletedAt, hasDeletedByPeerId, hasHiddenAt, runMessagesDeletedStateMigration
 
-### Community 815 - "Community 815"
+### Community 837 - "Community 837"
 Cohesion: 0.29
 Nodes (6): _createPendingGroupInvitesExpiresAtIndexSql, _createPendingGroupInvitesTableSql, expires_at, NULL, pending_group_invites, runPendingGroupInvitesMigration
 
-### Community 816 - "Community 816"
+### Community 838 - "Community 838"
 Cohesion: 0.29
 Nodes (6): _createRemovedGroupMemberSnapshotsIndexSql, _createRemovedGroupMemberSnapshotsSql, group_id, peer_id, removed_group_member_snapshots, runRemovedGroupMemberSnapshotsMigration
 
-### Community 817 - "Community 817"
+### Community 839 - "Community 839"
 Cohesion: 0.29
 Nodes (6): _createGroupMemberDeviceSnapshotsIndexSql, _createGroupMemberDeviceSnapshotsSql, group_id, group_member_device_snapshots, peer_id, runGroupMemberDeviceSnapshotsMigration
 
-### Community 818 - "Community 818"
+### Community 840 - "Community 840"
 Cohesion: 0.29
 Nodes (6): _createGroupMessagesGroupTsIndexSql, group_id, group_messages, id, runGroupMessagesGroupTsIndexMigration, timestamp
 
-### Community 819 - "Community 819"
-Cohesion: 0.04
-Nodes (46): PendingGroupInvite, package:flutter_app/features/introduction/presentation/widgets/intro_group_header.dart, package:flutter_app/features/introduction/presentation/widgets/intro_row.dart, package:flutter_app/features/introduction/presentation/widgets/intros_tab.dart, package:intl/intl.dart, groupInviteCannotSendReason, groupInviteCannotSendSnackBarMessage, groupInviteStatusDetail (+38 more)
+### Community 841 - "Community 841"
+Cohesion: 0.29
+Nodes (6): groupInviteCannotSendReason, groupInviteCannotSendSnackBarMessage, groupInviteStatusDetail, groupInviteStatusLabel, l10n, lastError
 
-### Community 820 - "Community 820"
+### Community 842 - "Community 842"
 Cohesion: 0.48
 Nodes (5): contains_literal(), fail(), pass(), warn(), check_push_release_gate.sh script
 
-### Community 821 - "Community 821"
+### Community 843 - "Community 843"
 Cohesion: 0.29
 Nodes (6): groupKeyMaterialStoreName, isSecureStoreReference, mediaAttachmentEncryptionKeyStoreName, secureStoreKeyFromReference, secureStoreReferenceForKey, secureStoreReferencePrefix
 
-### Community 822 - "Community 822"
+### Community 844 - "Community 844"
 Cohesion: 0.47
 Nodes (4): nodeCallbackAdapter, Initialize(), EventCallback, RWMutex
 
-### Community 823 - "Community 823"
-Cohesion: 0.33
-Nodes (4): main, package:flutter_app/features/conversation/domain/utils/message_window_cap.dart, main, msg
-
-### Community 824 - "Community 824"
-Cohesion: 0.33
-Nodes (5): durationMs, height, path, VideoProcessResult, width
-
-### Community 825 - "Community 825"
+### Community 845 - "Community 845"
 Cohesion: 0.33
 Nodes (5): contact_peer_id, _createMessagesContactTsIndexSql, messages, runMessagesContactTsIndexMigration, timestamp
 
-### Community 826 - "Community 826"
+### Community 846 - "Community 846"
 Cohesion: 0.33
 Nodes (5): BackgroundPreference, daylightLagoon, fromStorageString, storageKey, toStorageString
 
-### Community 827 - "Community 827"
+### Community 847 - "Community 847"
 Cohesion: 0.33
 Nodes (5): copyWith, failed, FeedSessionReply, messageId, text
 
-### Community 828 - "Community 828"
+### Community 848 - "Community 848"
 Cohesion: 0.47
 Nodes (3): timed_build(), wait_for_marker(), run_group_multi_party_phase0_probe.sh script
 
-### Community 829 - "Community 829"
+### Community 849 - "Community 849"
 Cohesion: 0.33
 Nodes (5): containsKey, delete, read, SecureKeyStore, write
 
-### Community 830 - "Community 830"
-Cohesion: 0.40
-Nodes (5): failureEvent, GroupMembershipUpdateListener, GroupMessageListener, GroupKeyRepairRequest, GroupKeyRepairRequestSender
-
-### Community 831 - "Community 831"
+### Community 850 - "Community 850"
 Cohesion: 0.40
 Nodes (5): _InMemoryGroupPendingKeyDistributionRepository, InMemoryGroupPendingKeyDistributionRepository, GroupPendingKeyDistributionRepository, _InMemoryDistributionRepo, GroupPendingKeyDistributionRepositoryImpl
 
-### Community 832 - "Community 832"
+### Community 851 - "Community 851"
 Cohesion: 0.40
-Nodes (4): fromPreview, handleDeliveryReceipt, messageIds, package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart
+Nodes (4): eventsNamed, flowEvents, main, package:flutter_app/features/account_migration/application/migration_transfer_keep_alive.dart
 
-### Community 833 - "Community 833"
-Cohesion: 0.40
-Nodes (4): main, messageRepo, ../../conversation/domain/repositories/fake_message_repository.dart, package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart
-
-### Community 835 - "Community 835"
+### Community 853 - "Community 853"
 Cohesion: 0.40
 Nodes (4): clearCleared, FeedClearedRepository, getClearedWatermarks, markCleared
 
-### Community 836 - "Community 836"
+### Community 854 - "Community 854"
 Cohesion: 0.40
 Nodes (4): clear, readTokens, WakeTokenStore, writeTokens
 
-### Community 837 - "Community 837"
+### Community 855 - "Community 855"
 Cohesion: 0.40
 Nodes (4): dbDeleteExpiredGroupInviteConsumptions, dbLoadGroupInviteConsumption, dbUpsertGroupInviteConsumption, inviteId
 
-### Community 838 - "Community 838"
+### Community 856 - "Community 856"
 Cohesion: 0.40
 Nodes (4): dbDeleteExpiredGroupInviteRevocations, dbLoadGroupInviteRevocation, dbUpsertGroupInviteRevocation, inviteId
 
-### Community 839 - "Community 839"
+### Community 857 - "Community 857"
 Cohesion: 0.60
 Nodes (3): GenerateIdentity(), identityFromMnemonic(), RestoreIdentity()
 
-### Community 840 - "Community 840"
+### Community 858 - "Community 858"
 Cohesion: 0.40
 Nodes (3): main, main, ../../integration_test/scripts/group_multi_party_device_criteria.dart
 
-### Community 841 - "Community 841"
+### Community 859 - "Community 859"
 Cohesion: 0.40
 Nodes (4): TestRelayProfileDownloadNotFound(), TestRelayProfileReplace(), TestRelayProfileSizeLimit(), TestRelayProfileUploadDownload()
 
-### Community 842 - "Community 842"
+### Community 860 - "Community 860"
 Cohesion: 0.40
 Nodes (4): columnNames, columns, missingColumns, runMediaAttachmentEncryptionColumnsMigration
 
-### Community 843 - "Community 843"
+### Community 861 - "Community 861"
 Cohesion: 0.40
 Nodes (3): relayPeerHasCircuitAddress(), ID, Node
 
-### Community 844 - "Community 844"
+### Community 862 - "Community 862"
 Cohesion: 0.40
-Nodes (4): package:flutter_app/features/posts/application/load_post_comments_use_case.dart, package:flutter_app/features/posts/domain/models/post_comment_reaction_model.dart, main, postRepo
+Nodes (4): package:flutter_app/features/groups/domain/utils/group_message_ordering.dart, ids, main, msg
 
-### Community 845 - "Community 845"
+### Community 863 - "Community 863"
 Cohesion: 0.40
 Nodes (4): DART_SUPPRESS_ANALYTICS, FLUTTER_SUPPRESS_ANALYTICS, HOME, posts_phase1_smoke.sh script
 
-### Community 846 - "Community 846"
+### Community 864 - "Community 864"
 Cohesion: 0.40
 Nodes (4): DART_SUPPRESS_ANALYTICS, FLUTTER_SUPPRESS_ANALYTICS, HOME, posts_phase2_smoke.sh script
 
-### Community 847 - "Community 847"
+### Community 865 - "Community 865"
 Cohesion: 0.40
 Nodes (4): DART_SUPPRESS_ANALYTICS, FLUTTER_SUPPRESS_ANALYTICS, HOME, posts_phase3_smoke.sh script
 
-### Community 848 - "Community 848"
+### Community 866 - "Community 866"
 Cohesion: 0.40
 Nodes (4): DART_SUPPRESS_ANALYTICS, FLUTTER_SUPPRESS_ANALYTICS, HOME, posts_phase4_smoke.sh script
 
-### Community 849 - "Community 849"
+### Community 867 - "Community 867"
 Cohesion: 0.40
 Nodes (4): DART_SUPPRESS_ANALYTICS, FLUTTER_SUPPRESS_ANALYTICS, HOME, posts_phase5_smoke.sh script
 
-### Community 853 - "Community 853"
+### Community 871 - "Community 871"
+Cohesion: 0.50
+Nodes (4): AudioPlayerPlatform, _FakeAudioPlayer, _FakeAudioPlayerPlatform, _FakeAudioPlayerPlatform
+
+### Community 872 - "Community 872"
 Cohesion: 0.50
 Nodes (3): kMaxDownloadRetries, kMaxUploadRetries, kReuploadMaxAttachmentsPerMessage
 
-### Community 854 - "Community 854"
+### Community 873 - "Community 873"
 Cohesion: 0.50
 Nodes (3): clearToken, PushTokenStore, writeToken
 
-### Community 855 - "Community 855"
+### Community 874 - "Community 874"
 Cohesion: 0.50
-Nodes (4): _DownloadWritingBridge, _FailingDownloadBridge, _FailOncePartialDownloadBridge, _JourneyGroupBridge
+Nodes (4): FakeJustAudioPlatform, _FakeJustAudioPlatform, JustAudioPlatform, _FakeJustAudioPlatform
 
-### Community 856 - "Community 856"
+### Community 875 - "Community 875"
 Cohesion: 0.50
 Nodes (3): InboxBackend, InboxStoreResult, PushTokenBackend
 
-### Community 858 - "Community 858"
+### Community 877 - "Community 877"
 Cohesion: 0.50
 Nodes (3): dbLoadIdentityRow, dbUpsertIdentityRow, identityId
 
-### Community 859 - "Community 859"
+### Community 878 - "Community 878"
 Cohesion: 0.50
 Nodes (3): TestRelayGroupMediaUploadDownload(), TestRelayGroupMediaVoiceNote(), TestRelayMediaUploadDownload()
 
-### Community 860 - "Community 860"
+### Community 879 - "Community 879"
 Cohesion: 0.50
 Nodes (3): bucketSize, downsampleWaveform, result
 
-### Community 861 - "Community 861"
+### Community 880 - "Community 880"
 Cohesion: 0.50
 Nodes (4): messageCollector, peerState, Identity, Node
 
-### Community 862 - "Community 862"
+### Community 881 - "Community 881"
 Cohesion: 0.50
 Nodes (3): groupBacklogRetentionCutoff, groupBacklogRetentionWindow, groupBacklogRetentionWindowDays
 
-### Community 863 - "Community 863"
+### Community 882 - "Community 882"
 Cohesion: 0.50
 Nodes (3): groupKeyReplayRetentionGenerationCount, minGeneration, minRetainedGroupKeyGeneration
 
-### Community 865 - "Community 865"
+### Community 884 - "Community 884"
 Cohesion: 0.67
 Nodes (3): REPEAT_COUNT, run_iteration(), run_group_fake_flake_budget.sh script
 
-### Community 866 - "Community 866"
+### Community 885 - "Community 885"
 Cohesion: 0.67
 Nodes (4): buildGroupOfflineReplayEnvelope(), canonicalJSON(), canonicalStringList(), hashString()
 
-### Community 867 - "Community 867"
+### Community 886 - "Community 886"
 Cohesion: 0.50
 Nodes (3): cap, kMaxInMemoryMessages, sublist
 
-### Community 868 - "Community 868"
-Cohesion: 0.67
-Nodes (3): _RingFallbackDecryptBridge, ThrowingDecryptBridge, FakeDecryptBridge
-
-### Community 870 - "Community 870"
-Cohesion: 0.67
-Nodes (3): BuildContext, BackgroundReadableColorsContext, FeedTokensContext
-
-### Community 919 - "Community 919"
-Cohesion: 0.25
-Nodes (7): loadArb, main, newFeedKeys, removedFeedKeys, package:flutter_app/l10n/app_localizations_ar.dart, package:flutter_app/l10n/app_localizations_de.dart, package:flutter_app/l10n/app_localizations_en.dart
-
 ## Knowledge Gaps
-- **34424 isolated node(s):** `RWMutex`, `InboxStoreOutcome`, `GroupConfig`, `Identity`, `Writer` (+34419 more)
+- **34531 isolated node(s):** `RWMutex`, `InboxStoreOutcome`, `GroupConfig`, `Identity`, `Writer` (+34526 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **48 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **47 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `incomingMessage` connect `Community 264` to `Community 606`?**
+- **Why does `incomingMessage` connect `Community 135` to `Community 610`?**
   _High betweenness centrality (0.135) - this node is a cross-community bridge._
-- **Why does `newMessageCollector()` connect `Community 349` to `Community 533`, `Community 606`?**
+- **Why does `newMessageCollector()` connect `Community 347` to `Community 530`, `Community 610`?**
   _High betweenness centrality (0.126) - this node is a cross-community bridge._
-- **Why does `New()` connect `Community 89` to `Community 642`, `Community 140`, `Community 533`, `Community 22`, `Community 24`, `Community 25`, `Community 289`, `Community 548`, `Community 168`, `Community 41`, `Community 554`, `Community 557`, `Community 558`, `Community 564`, `Community 822`, `Community 568`, `Community 323`, `Community 712`, `Community 585`, `Community 330`, `Community 80`, `Community 600`, `Community 353`, `Community 742`, `Community 104`, `Community 106`, `Community 362`, `Community 238`, `Community 239`?**
-  _High betweenness centrality (0.123) - this node is a cross-community bridge._
+- **Why does `cmdStart()` connect `Community 530` to `Community 80`, `Community 305`, `Community 347`?**
+  _High betweenness centrality (0.117) - this node is a cross-community bridge._
 - **What connects `RWMutex`, `InboxStoreOutcome`, `GroupConfig` to the rest of the system?**
-  _34424 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _34531 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**
   _Cohesion score 0.0010277492291880781 - nodes in this community are weakly interconnected._
 - **Should `Community 1` be split into smaller, more focused modules?**
   _Cohesion score 0.0029239766081871343 - nodes in this community are weakly interconnected._
 - **Should `Community 2` be split into smaller, more focused modules?**
-  _Cohesion score 0.008460033117567364 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.008191826348860155 - nodes in this community are weakly interconnected._

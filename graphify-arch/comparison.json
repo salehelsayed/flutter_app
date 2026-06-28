@@ -1,32 +1,32 @@
 {
   "full": {
     "graph": "graphify-out/graph.json",
-    "nodes": 104915,
-    "edges": 178113,
-    "communities": 4381,
-    "source_files": 5518,
-    "avg_edges_per_node": 1.6977,
-    "avg_nodes_per_community": 23.95,
-    "app_owned_nodes": 46369,
-    "app_owned_ratio": 0.442,
-    "noise_nodes": 21845,
-    "noise_ratio": 0.2082,
-    "unknown_source_nodes": 1995,
+    "nodes": 105775,
+    "edges": 179549,
+    "communities": 4482,
+    "source_files": 5570,
+    "avg_edges_per_node": 1.6975,
+    "avg_nodes_per_community": 23.6,
+    "app_owned_nodes": 46839,
+    "app_owned_ratio": 0.4428,
+    "noise_nodes": 21846,
+    "noise_ratio": 0.2065,
+    "unknown_source_nodes": 2007,
     "unknown_source_ratio": 0.019,
     "top_hub_noise_count": 5,
     "top_hub_noise_ratio": 0.5,
     "top_source_dirs": [
       [
         "Test-Flight-Improv",
-        30766
+        30970
       ],
       [
         "lib",
-        20681
+        20623
       ],
       [
         "test",
-        14082
+        14371
       ],
       [
         "ios/Pods",
@@ -38,15 +38,15 @@
       ],
       [
         "integration_test",
-        6125
+        6127
       ],
       [
         "go-mknoon",
-        4358
+        4529
       ],
       [
         "go-relay-server",
-        841
+        907
       ],
       [
         "UI-21-POST",
@@ -104,7 +104,7 @@
       {
         "id": "package_flutter_test_flutter_test_dart",
         "label": "package:flutter_test/flutter_test.dart",
-        "degree": 1012,
+        "degree": 1031,
         "source_file": "",
         "noise": false
       },
@@ -140,36 +140,36 @@
   },
   "architecture": {
     "graph": "graphify-arch/graphify-out/graph.json",
-    "nodes": 42704,
-    "edges": 66596,
-    "communities": 920,
-    "source_files": 2207,
-    "avg_edges_per_node": 1.5595,
-    "avg_nodes_per_community": 46.42,
-    "app_owned_nodes": 41041,
+    "nodes": 42841,
+    "edges": 66801,
+    "communities": 933,
+    "source_files": 2216,
+    "avg_edges_per_node": 1.5593,
+    "avg_nodes_per_community": 45.92,
+    "app_owned_nodes": 41174,
     "app_owned_ratio": 0.9611,
     "noise_nodes": 0,
     "noise_ratio": 0.0,
-    "unknown_source_nodes": 1663,
+    "unknown_source_nodes": 1667,
     "unknown_source_ratio": 0.0389,
     "top_hub_noise_count": 0,
     "top_hub_noise_ratio": 0.0,
     "top_source_dirs": [
       [
         "lib",
-        17547
+        17583
       ],
       [
         "test",
-        14208
+        14272
       ],
       [
         "integration_test",
-        5841
+        5862
       ],
       [
         "go-mknoon",
-        2316
+        2327
       ],
       [
         "go-relay-server",
@@ -177,7 +177,7 @@
       ],
       [
         "scripts",
-        214
+        215
       ],
       [
         "ios/NotificationService",
@@ -195,7 +195,7 @@
       {
         "id": "package_flutter_test_flutter_test_dart",
         "label": "package:flutter_test/flutter_test.dart",
-        "degree": 1029,
+        "degree": 1034,
         "source_file": "",
         "noise": false
       },
@@ -209,7 +209,7 @@
       {
         "id": "lib_main",
         "label": "main.dart",
-        "degree": 585,
+        "degree": 586,
         "source_file": "lib/main.dart",
         "noise": false
       },
@@ -223,7 +223,7 @@
       {
         "id": "dart_convert",
         "label": "dart:convert",
-        "degree": 416,
+        "degree": 418,
         "source_file": "",
         "noise": false
       },
@@ -258,10 +258,10 @@
     ]
   },
   "deltas": {
-    "nodes": -0.593,
-    "edges": -0.6261,
-    "communities": -0.79,
-    "app_owned_ratio": 1.1744,
+    "nodes": -0.595,
+    "edges": -0.628,
+    "communities": -0.7918,
+    "app_owned_ratio": 1.1705,
     "noise_ratio": -1.0,
     "top_hub_noise_ratio": -1.0
   }

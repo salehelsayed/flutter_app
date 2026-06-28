@@ -65,6 +65,9 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/contact_request/application/retry_incomplete_key_exchanges_use_case_test.dart"
   "test/features/conversation/application/post_restore_stale_key_recovery_test.dart"
   "test/features/contact_request/application/contact_request_listener_test.dart"
+  # 171: one-scan mutual contact add (auto-add v2 + deferred-ack + staged inbox
+  # replay). Two-party convergence lock (INV-4: A issues zero reciprocals).
+  "test/features/contact_request/integration/contact_request_one_scan_mutual_test.dart"
   "test/features/identity/domain/repositories/identity_repository_impl_test.dart"
   "test/features/conversation/domain/utils/message_run_grouping_test.dart"
   "test/features/conversation/presentation/widgets/letter_card_test.dart"

@@ -25,15 +25,40 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
   BonsoirDiscoveryService({
     BonsoirBroadcastFactory? createBroadcast,
     BonsoirDiscoveryFactory? createDiscovery,
+    // iOS Local Network watchdog mitigation (see the gate notes below). The
+    // probe window mirrors p2p_service's existing suspected-denial heuristic;
+    // the backoff bounds how long the native (re)start stays gated before a
+    // single re-probe.
+    Duration suspectedDenialProbe = const Duration(seconds: 12),
+    Duration suspectedDenialBackoff = const Duration(minutes: 5),
   }) : _createBroadcast =
            createBroadcast ??
            ((service) => BonsoirBroadcast(service: service, printLogs: false)),
        _createDiscovery =
            createDiscovery ??
-           ((type) => BonsoirDiscovery(type: type, printLogs: false));
+           ((type) => BonsoirDiscovery(type: type, printLogs: false)),
+       _suspectedDenialProbe = suspectedDenialProbe,
+       _suspectedDenialBackoff = suspectedDenialBackoff;
 
   final BonsoirBroadcastFactory _createBroadcast;
   final BonsoirDiscoveryFactory _createDiscovery;
+
+  // iOS Local Network main-thread watchdog mitigation.
+  //
+  // The native bonsoir broadcast `start()` runs a SYNCHRONOUS DNS-SD socket
+  // read on the iOS main thread. When the Local Network permission is denied or
+  // its prompt is pending, that read blocks past the 10s scene-update watchdog
+  // and iOS SIGKILLs the app (0x8BADF00D / FRONTBOARD). The crash vector is the
+  // RESTART: restartAdvertising (on resume / address-update) tears down and
+  // re-`start()`s the broadcast, re-blocking. So once we suspect Local Network
+  // is unavailable — advertising stayed active with zero discovered peers for
+  // [_suspectedDenialProbe] — we set a backoff deadline and SKIP the native
+  // (re)start until it lapses (a single re-probe), and clear it the instant a
+  // real peer resolves (Local Network is provably working).
+  final Duration _suspectedDenialProbe;
+  final Duration _suspectedDenialBackoff;
+  DateTime? _suspectedDeniedUntil;
+  Timer? _denialProbeTimer;
 
   BonsoirBroadcast? _broadcast;
   BonsoirDiscovery? _discovery;
@@ -98,6 +123,26 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     _ownPeerId = peerId;
     _stopping = false;
 
+    // iOS Local Network watchdog gate: while Local Network is suspected
+    // unavailable, SKIP the native bonsoir (re)start so a blocking DNS-SD read
+    // can't freeze the main thread past the 10s scene-update watchdog. This
+    // returns early WITHOUT touching the broadcast/discovery objects (they were
+    // already torn down by the restart's stopAdvertising), so discovery stays
+    // dark until a later restart after the backoff lapses.
+    final deniedUntil = _suspectedDeniedUntil;
+    if (deniedUntil != null) {
+      if (DateTime.now().toUtc().isBefore(deniedUntil)) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'LOCAL_MDNS_START_SKIPPED_SUSPECTED_DENIED',
+          details: {'peerId': peerId},
+        );
+        return;
+      }
+      // Backoff lapsed → allow this start to re-probe Local Network.
+      _suspectedDeniedUntil = null;
+    }
+
     // Advertise our service. FDC-11: additively carry the libp2p QUIC (+TCP)
     // listen ports in the TXT so a same-WiFi peer can build the libp2p
     // LAN-direct multiaddr — the `wsPort` advert stays for the WS byte path.
@@ -158,6 +203,31 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
         }
       }
     });
+
+    _armSuspectedDenialProbe();
+  }
+
+  /// (Re)arms the one-shot suspected-Local-Network-denial probe. If advertising
+  /// is still active with ZERO discovered peers when it fires, sets a backoff
+  /// deadline so the NEXT (re)start is skipped before its native DNS-SD read can
+  /// block the main thread past the iOS watchdog. "Suspected" because a user
+  /// genuinely alone on the LAN produces the same zero-peers signal — hence the
+  /// bounded backoff + the immediate clear when a real peer resolves.
+  void _armSuspectedDenialProbe() {
+    _denialProbeTimer?.cancel();
+    _denialProbeTimer = Timer(_suspectedDenialProbe, () {
+      _denialProbeTimer = null;
+      if (!_stopping && _discovery != null && _peers.isEmpty) {
+        _suspectedDeniedUntil = DateTime.now().toUtc().add(
+          _suspectedDenialBackoff,
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'LOCAL_MDNS_SUSPECTED_DENIED_GATE_LATCHED',
+          details: {'backoffMs': _suspectedDenialBackoff.inMilliseconds},
+        );
+      }
+    });
   }
 
   void _handleDiscoveryEvent(BonsoirDiscoveryEvent event) {
@@ -201,6 +271,10 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
         );
         _peers[peerId] = peer;
         _peersController.add(Map.unmodifiable(_peers));
+
+        // A real peer resolved → Local Network is provably working; clear any
+        // suspected-denial gate so a subsequent restart is NOT skipped.
+        _suspectedDeniedUntil = null;
 
         // Wake any discover-on-send resolve waiting for this peer.
         final pending = _pendingResolves.remove(peerId);
@@ -287,6 +361,11 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     _resolvingPeerIds.clear();
     _refreshTimer?.cancel();
     _refreshTimer = null;
+    // Cancel the session-scoped denial probe, but PRESERVE [_suspectedDeniedUntil]
+    // — restartAdvertising calls stopAdvertising() then startAdvertising(), and
+    // the gate must survive that teardown to skip the re-`start()` that blocks.
+    _denialProbeTimer?.cancel();
+    _denialProbeTimer = null;
 
     await _broadcast?.stop();
     _broadcast = null;
@@ -331,6 +410,14 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
   @visibleForTesting
   void debugMarkPeerLost(String peerId) {
     _markPeerLost(peerId);
+  }
+
+  /// True while the iOS Local Network watchdog gate is latched — the next
+  /// native bonsoir (re)start will be skipped until the backoff lapses.
+  @visibleForTesting
+  bool get debugSuspectedLocalNetworkUnavailable {
+    final until = _suspectedDeniedUntil;
+    return until != null && DateTime.now().toUtc().isBefore(until);
   }
 
   @override

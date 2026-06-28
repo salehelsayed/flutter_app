@@ -86,6 +86,9 @@ const List<_Scenario> _scenarios = <_Scenario>[
       '1:1 media flows over /mknoon/media-lan/1.0.0 on a real LAN pair'),
   _Scenario('fdc06_pause_flush_open_send', 'CV-29', 'T8', 'device',
       'an open-send-lock survives pause-flush and delivers (gated plan 170)'),
+  _Scenario('contact_one_scan_mutual_d1', '171', 'TC-13', 'manual-two-phone',
+      'one QR scan mutually adds both (B auto-adds A tap-free + reciprocal '
+      'reaches A); both OS, one contact row each, no duplicate'),
 ];
 
 bool _parseListScenarios(List<String> args) => args.contains('--list-scenarios');

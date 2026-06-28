@@ -53,6 +53,13 @@ typedef ReplayRecoveredInboxChatMessage =
 typedef ReplayRecoveredInboxIntroductionMessage =
     Future<RecoveredInboxReplayOutcome> Function(ChatMessage message);
 
+/// 171: relay-inbox replay of a contact_request runs the IDENTICAL listener
+/// logic as the live broadcast (auto-add + reciprocal + confirm) for a cold
+/// receiver whose ContactRequestListener was not yet subscribed. Same shape as
+/// introduction (no stagedEntryId — the listener does not need it).
+typedef ReplayRecoveredInboxContactRequestMessage =
+    Future<RecoveredInboxReplayOutcome> Function(ChatMessage message);
+
 /// NET-REL-05 P3: a learned per-peer LIVE transport plus the time it was
 /// recorded, for TTL-based expiry. `transport` is one of `'local'`, `'direct'`,
 /// or `'relay'`.
@@ -106,6 +113,13 @@ class P2PServiceImpl
   final ReplayRecoveredInboxChatMessage? _replayLiveDirectChatMessage;
   final ReplayRecoveredInboxIntroductionMessage?
   _replayRecoveredInboxIntroductionMessage;
+  // 171: relay-inbox replay arm for a cold-receiver contact_request — wired in
+  // main.dart to contactRequestListener.processIncomingMessage so the inbox
+  // path reaches the SAME mutual outcome (add + reciprocal) as the live path.
+  // Optional so existing test constructors keep compiling; absent → legacy
+  // fall-through (bare emit + immediate delete, NOT mutual).
+  final ReplayRecoveredInboxContactRequestMessage?
+  _replayRecoveredInboxContactRequest;
   // F7: reactions/deletions get the SAME stage-before-ack/commit durability as
   // chat. Both share the chat replay shape `(ChatMessage, {stagedEntryId})` →
   // a `RecoveredInboxReplayOutcome`. Optional (nullable) so existing test
@@ -337,6 +351,8 @@ class P2PServiceImpl
     ReplayRecoveredInboxChatMessage? replayLiveDirectChatMessage,
     ReplayRecoveredInboxIntroductionMessage?
     replayRecoveredInboxIntroductionMessage,
+    ReplayRecoveredInboxContactRequestMessage?
+    replayRecoveredInboxContactRequest,
     ReplayRecoveredInboxChatMessage? replayRecoveredInboxReaction,
     ReplayRecoveredInboxChatMessage? replayRecoveredInboxMessageDeletion,
     Future<String?> Function(ChatMessage message)? predecryptInboxChatEntry,
@@ -355,6 +371,8 @@ class P2PServiceImpl
        _replayLiveDirectChatMessage = replayLiveDirectChatMessage,
        _replayRecoveredInboxIntroductionMessage =
            replayRecoveredInboxIntroductionMessage,
+       _replayRecoveredInboxContactRequest =
+           replayRecoveredInboxContactRequest,
        _replayRecoveredInboxReaction = replayRecoveredInboxReaction,
        _replayRecoveredInboxMessageDeletion =
            replayRecoveredInboxMessageDeletion,
@@ -1426,6 +1444,46 @@ class P2PServiceImpl
             retryableEvent: 'P2P_SERVICE_INBOX_STAGED_INTRO_RETRYABLE',
             rejectedEvent: 'P2P_SERVICE_INBOX_STAGED_INTRO_REJECTED',
             quarantinedEvent: 'P2P_SERVICE_INBOX_STAGED_INTRO_QUARANTINED',
+          )) {
+            replayed++;
+            entryStopwatch.stop();
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'INBOX_DELIVERY_TIMING',
+              details: {
+                'deliveryMs': entryStopwatch.elapsedMilliseconds,
+                'messageId': entry.entryId.length > 8
+                    ? entry.entryId.substring(0, 8)
+                    : entry.entryId,
+              },
+            );
+          }
+          continue;
+        }
+
+        // 171: relay-inbox replay of a cold-receiver contact_request. Runs the
+        // SAME listener processing (auto-add + reciprocal + confirm) as the
+        // live broadcast — the dominant-bug fix — and the durable contact/
+        // request row is written by the callback BEFORE _applyRecoveredInbox
+        // Outcome deletes the staged entry (INV-1). MUST route through
+        // processIncomingMessage (NOT handleIncomingMessage directly), or a
+        // cold B commits-and-deletes but never becomes mutual.
+        final replayRecoveredInboxContactRequest =
+            _replayRecoveredInboxContactRequest;
+        if (entry.messageType == 'contact_request' &&
+            replayRecoveredInboxContactRequest != null) {
+          final outcome = await replayRecoveredInboxContactRequest(message);
+          if (await _applyRecoveredInboxOutcome(
+            repo: repo,
+            entry: entry,
+            outcome: outcome,
+            committedEvent:
+                'P2P_SERVICE_INBOX_STAGED_CONTACT_REQUEST_COMMITTED',
+            retryableEvent:
+                'P2P_SERVICE_INBOX_STAGED_CONTACT_REQUEST_RETRYABLE',
+            rejectedEvent: 'P2P_SERVICE_INBOX_STAGED_CONTACT_REQUEST_REJECTED',
+            quarantinedEvent:
+                'P2P_SERVICE_INBOX_STAGED_CONTACT_REQUEST_QUARANTINED',
           )) {
             replayed++;
             entryStopwatch.stop();

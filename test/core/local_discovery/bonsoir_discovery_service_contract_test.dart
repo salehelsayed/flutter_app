@@ -13,6 +13,7 @@ import 'dart:async';
 import 'package:bonsoir/bonsoir.dart';
 import 'package:flutter_app/core/local_discovery/bonsoir_discovery_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -340,6 +341,140 @@ void main() {
         isFalse,
         reason: 'must build from quicPort/tcpPort, never the wsPort',
       );
+    });
+  });
+
+  // iOS Local Network watchdog mitigation: the native bonsoir broadcast start
+  // does a synchronous DNS-SD read on the main thread; when Local Network
+  // permission is denied/pending it blocks past the 10s scene-update watchdog
+  // → SIGKILL (0x8BADF00D). The gate skips the native (re)start once advertising
+  // ran the probe window with zero peers (restartAdvertising is the crash
+  // vector), re-probing after a backoff and clearing on a real peer resolve.
+  group('BonsoirDiscoveryService Local Network watchdog gate', () {
+    late List<_FakeBonsoirBroadcast> broadcasts;
+    late List<_FakeBonsoirDiscovery> discoveries;
+    late BonsoirDiscoveryService service;
+
+    BonsoirDiscoveryService build({
+      Duration probe = const Duration(milliseconds: 50),
+      Duration backoff = const Duration(seconds: 10),
+    }) {
+      return BonsoirDiscoveryService(
+        suspectedDenialProbe: probe,
+        suspectedDenialBackoff: backoff,
+        createBroadcast: (s) {
+          final fake = _FakeBonsoirBroadcast(s);
+          broadcasts.add(fake);
+          return fake;
+        },
+        createDiscovery: (type) {
+          final fake = _FakeBonsoirDiscovery(type);
+          discoveries.add(fake);
+          return fake;
+        },
+      );
+    }
+
+    setUp(() {
+      broadcasts = <_FakeBonsoirBroadcast>[];
+      discoveries = <_FakeBonsoirDiscovery>[];
+    });
+
+    tearDown(() async {
+      await service.stopAdvertising();
+      debugSetFlowEventSink(null);
+    });
+
+    // Mirrors LocalP2PService.restartAdvertising (resume / address-update).
+    Future<void> restart() async {
+      await service.stopAdvertising();
+      await service.startAdvertising('me-peer', 54321);
+    }
+
+    test(
+      'zero peers after the probe latches the gate; the restart native start is SKIPPED',
+      () async {
+        service = build(backoff: const Duration(seconds: 10));
+        await service.startAdvertising('me-peer', 54321);
+        expect(broadcasts, hasLength(1));
+        expect(broadcasts.single.startCalls, 1);
+
+        // Advertising stayed active with zero discovered peers across the probe.
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+        expect(service.debugSuspectedLocalNetworkUnavailable, isTrue);
+
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+
+        // The restart's native bonsoir start MUST be skipped (the crash vector).
+        await restart();
+        expect(
+          broadcasts,
+          hasLength(1),
+          reason: 'no new native broadcast created → start() never called',
+        );
+        expect(
+          events.where(
+            (e) => e['event'] == 'LOCAL_MDNS_START_SKIPPED_SUSPECTED_DENIED',
+          ),
+          hasLength(1),
+        );
+      },
+    );
+
+    test('a resolved peer before the probe keeps the gate OPEN (restart starts)',
+        () async {
+      service = build();
+      await service.startAdvertising('me-peer', 54321);
+      // A real peer resolves → Local Network is working.
+      discoveries.single.emit(
+        _resolvedEvent('peer-x', host: '192.168.0.5', port: 1),
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      expect(service.debugSuspectedLocalNetworkUnavailable, isFalse);
+
+      await restart();
+      expect(broadcasts, hasLength(2),
+          reason: 'gate open → the restart starts a fresh broadcast');
+    });
+
+    test('a resolved peer AFTER the gate latches clears it (restart starts)',
+        () async {
+      service = build(backoff: const Duration(seconds: 10));
+      await service.startAdvertising('me-peer', 54321);
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      expect(service.debugSuspectedLocalNetworkUnavailable, isTrue);
+
+      // A peer shows up after the latch → Local Network is provably working.
+      discoveries.single.emit(
+        _resolvedEvent('peer-y', host: '192.168.0.6', port: 2),
+      );
+      // The discovery event is delivered on a microtask — let it be handled.
+      await Future<void>.delayed(Duration.zero);
+      expect(service.debugSuspectedLocalNetworkUnavailable, isFalse);
+
+      await restart();
+      expect(broadcasts, hasLength(2));
+    });
+
+    test('the gate re-opens after the backoff lapses (single re-probe)',
+        () async {
+      service = build(
+        probe: const Duration(milliseconds: 50),
+        backoff: const Duration(milliseconds: 120),
+      );
+      await service.startAdvertising('me-peer', 54321);
+      await Future<void>.delayed(const Duration(milliseconds: 90));
+      expect(service.debugSuspectedLocalNetworkUnavailable, isTrue);
+
+      // After the backoff deadline passes, the gate re-opens on its own.
+      await Future<void>.delayed(const Duration(milliseconds: 160));
+      expect(service.debugSuspectedLocalNetworkUnavailable, isFalse);
+
+      await restart();
+      expect(broadcasts, hasLength(2),
+          reason: 'backoff lapsed → the restart re-probes Local Network');
     });
   });
 }
