@@ -115,12 +115,17 @@ class GoBridge(flutterEngine: FlutterEngine, context: android.content.Context) :
             // Relay
             "relayReconnect" -> runOnBackground({ GoMknoon.relayReconnect() }, result)
             "relayProbe" -> runOnBackground({ GoMknoon.relayProbe(args ?: "") }, result, "relayProbe")
+            // Presence (FDC-08/09) — Dart case names map to Go presenceGet/presenceSet bindings
+            "relayPresenceGet" -> runOnBackground({ GoMknoon.presenceGet(args ?: "") }, result)
+            "relayPresenceSet" -> runOnBackground({ GoMknoon.presenceSet(args ?: "") }, result)
 
             // Peer operations
             "dialPeer" -> runOnBackground({ GoMknoon.dialPeer(args ?: "") }, result, "dialPeer")
             "disconnectPeer" -> runOnBackground({ GoMknoon.disconnectPeer(args ?: "") }, result)
             "sendMessage" -> runOnBackground({ GoMknoon.sendMessage(args ?: "") }, result, "sendMessage")
             "confirmDirectMessage" -> runOnBackground({ GoMknoon.confirmDirectMessage(args ?: "") }, result)
+            // LAN-direct dial (FDC-11)
+            "lanPeerFound" -> runOnBackground({ GoMknoon.handleLANPeerFound(args ?: "") }, result)
 
             // Inbox
             "inboxStore" -> runOnBackground({ GoMknoon.inboxStore(args ?: "") }, result)
@@ -129,6 +134,8 @@ class GoBridge(flutterEngine: FlutterEngine, context: android.content.Context) :
             "inboxAck" -> runOnBackground({ GoMknoon.inboxAck(args ?: "") }, result)
             "inboxRegisterToken" -> runOnBackground({ GoMknoon.inboxRegisterToken(args ?: "") }, result)
             "inboxUnregisterToken" -> runOnBackground({ GoMknoon.inboxUnregisterToken(args ?: "") }, result)
+            // Wake-token registration (FDC-09 §12)
+            "inboxRegisterWakeTokens" -> runOnBackground({ GoMknoon.registerWakeTokens(args ?: "") }, result)
 
             // Media
             "mediaUpload" -> runOnBackground({ GoMknoon.mediaUpload(args ?: "") }, result)
@@ -138,6 +145,8 @@ class GoBridge(flutterEngine: FlutterEngine, context: android.content.Context) :
             "blobKeygen" -> runOnBackground({ GoMknoon.blobKeygen("") }, result)
             "blobEncrypt" -> runOnBackground({ GoMknoon.blobEncrypt(args ?: "") }, result)
             "blobDecrypt" -> runOnBackground({ GoMknoon.blobDecrypt(args ?: "") }, result)
+            // 1:1 media over libp2p LAN (FDC-15) — Dart 'mediaLanSend' maps to Go mediaLANSend
+            "mediaLanSend" -> runOnBackground({ GoMknoon.mediaLANSend(args ?: "") }, result)
 
             // Profile
             "profileUpload" -> runOnBackground({ GoMknoon.profileUpload(args ?: "") }, result)

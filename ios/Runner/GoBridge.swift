@@ -126,6 +126,11 @@ class GoBridge: NSObject {
             runOnBackground({ BridgeRelayReconnect() }, result: result)
         case "relayProbe":
             runOnBackground({ BridgeRelayProbe(args ?? "") }, method: "relayProbe", result: result)
+        // Presence (FDC-08/09)
+        case "relayPresenceGet":
+            runOnBackground({ BridgePresenceGet(args ?? "") }, result: result)
+        case "relayPresenceSet":
+            runOnBackground({ BridgePresenceSet(args ?? "") }, result: result)
 
         // Peer operations
         case "dialPeer":
@@ -136,6 +141,9 @@ class GoBridge: NSObject {
             runOnBackground({ BridgeSendMessage(args ?? "") }, method: "sendMessage", result: result)
         case "confirmDirectMessage":
             runOnBackground({ BridgeConfirmDirectMessage(args ?? "") }, result: result)
+        // LAN-direct dial (FDC-11)
+        case "lanPeerFound":
+            runOnBackground({ BridgeHandleLANPeerFound(args ?? "") }, result: result)
 
         // Inbox
         case "inboxStore":
@@ -150,6 +158,9 @@ class GoBridge: NSObject {
             runOnBackground({ BridgeInboxRegisterToken(args ?? "") }, result: result)
         case "inboxUnregisterToken":
             runOnBackground({ BridgeInboxUnregisterToken(args ?? "") }, result: result)
+        // Wake-token registration (FDC-09 §12)
+        case "inboxRegisterWakeTokens":
+            runOnBackground({ BridgeRegisterWakeTokens(args ?? "") }, result: result)
 
         // Media
         case "mediaUpload":
@@ -166,6 +177,9 @@ class GoBridge: NSObject {
             runOnBackground({ BridgeBlobEncrypt(args ?? "") }, result: result)
         case "blobDecrypt":
             runOnBackground({ BridgeBlobDecrypt(args ?? "") }, result: result)
+        // 1:1 media over libp2p LAN (FDC-15)
+        case "mediaLanSend":
+            runOnBackground({ BridgeMediaLANSend(args ?? "") }, result: result)
 
         // Profile
         case "profileUpload":

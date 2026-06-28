@@ -55,6 +55,14 @@ Map<String, bool> defaultResilienceFeatureFlags() {
       'MKNOON_ENABLE_DEFERRED_DIRECT_ACK',
       defaultValue: true,
     ),
+    // FDC-11: gates the Go-side bonsoir-fed libp2p LAN-direct dial
+    // (HandleLANPeerFound: peerstore-seed + host.Connect + relay->direct upgrade).
+    // Defaults OFF until the two-phone same-WiFi D1 gate (CV-08) is GREEN; flip on
+    // for the device-proof via --dart-define=MKNOON_ENABLE_LIBP2P_LAN_DIAL=true.
+    'enableLibp2pLANDial': const bool.fromEnvironment(
+      'MKNOON_ENABLE_LIBP2P_LAN_DIAL',
+      defaultValue: false,
+    ),
     // FDC-12: gates the Go-side opportunistic DCUtR relay->direct upgrade
     // (ForceReachabilityPublic + active hole punch). Defaults OFF until the
     // DCUtR device campaign is GREEN; flip on for the device-proof via
