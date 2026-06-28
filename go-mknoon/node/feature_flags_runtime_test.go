@@ -31,6 +31,29 @@ func TestFeatureFlags_DefaultsRemainBackwardCompatible(t *testing.T) {
 	}
 }
 
+// FDC-16 (CV-09 / CV-13 / FDC-15) — the Fast-Direct-Connection transport flags
+// ship DARK: they default to false and may flip to true ONLY after their
+// device-proof gate closes (FDC-16 Scope Guard — never flip a prod flag ahead of
+// its device proof). This is the PARKED pre-flip polarity of the staged
+// flag-flip locks: it pins the current dark default so an accidental EARLY flip
+// re-reds here. When a gate closes, the matching CV inverts its assertion:
+//
+//	EnableLibp2pLANDial  -> true after FDC-11 D1 two-phone proof (CV-08 -> CV-09)
+//	EnableDcutrUpgrade   -> true after the FDC-12 DCUtR campaign  (CV-11/12 -> CV-13)
+//	EnableLibp2pLANMedia -> true after FDC-15 D1 LAN-media proof  (CV-34)
+func TestFeatureFlags_FdcTransportFlagsShipDarkUntilDeviceProof(t *testing.T) {
+	flags := DefaultFeatureFlags()
+	if flags.EnableLibp2pLANDial {
+		t.Fatal("EnableLibp2pLANDial must default false (dark) until FDC-11 D1 device-proof closes (CV-08 -> CV-09); do not flip ahead of device proof")
+	}
+	if flags.EnableDcutrUpgrade {
+		t.Fatal("EnableDcutrUpgrade must default false (dark) until the FDC-12 DCUtR device campaign closes (CV-11/12 -> CV-13)")
+	}
+	if flags.EnableLibp2pLANMedia {
+		t.Fatal("EnableLibp2pLANMedia must default false (dark) until FDC-15 D1 LAN-media device-proof closes (CV-34)")
+	}
+}
+
 func TestStartNode_DisablesMultiRelayRoutingWhenFlagFalse(t *testing.T) {
 	addr1 := generateFakeRelayAddr(t, 19011)
 	addr2 := generateFakeRelayAddr(t, 19012)

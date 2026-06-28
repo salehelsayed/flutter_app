@@ -183,6 +183,10 @@ classify_path() {
       record "1to1" "$path" "runner" "1:1 simulator/E2E orchestrator"
       return
       ;;
+    integration_test/scripts/run_1to1_device_real.dart)
+      record "1to1" "$path" "runner" "FDC-16 CV-07 1:1 device-real campaign orchestrator (--list-scenarios)"
+      return
+      ;;
     integration_test/scripts/run_media_stable_id_smoke.dart|\
     integration_test/scripts/run_media_delivery_ui_smoke.dart)
       record "1to1" "$path" "runner" "1:1 media simulator smoke"
@@ -263,6 +267,10 @@ classify_path() {
     integration_test/warm_peer_lan_aware_smoke_test.dart|\
     integration_test/cold_start_sendable_no_user_action_test.dart)
       record "1to1" "$path" "test" "1:1 transport/conversation simulator test"
+      return
+      ;;
+    integration_test/dcutr_upgrade_proof_test.dart)
+      record "1to1" "$path" "test" "FDC-12 DCUtR relay->direct upgrade device proof (CV-11/12, TC-12-12/13)"
       return
       ;;
     integration_test/media_stable_id_smoke_test.dart|\
@@ -703,6 +711,27 @@ expand_group_multi_party_device_real() {
   fi
 }
 
+expand_1to1_device_real() {
+  local category="$1"
+  local path="$2"
+  local note="$3"
+  local scenario
+  local count=0
+
+  while IFS= read -r scenario; do
+    [ -n "$scenario" ] || continue
+    record_check "$category" "$path" "$scenario" "$note; scenario=$scenario"
+    count=$((count + 1))
+  done < <(
+    dart "$path" --scenario all --list-scenarios 2>/dev/null |
+      awk '/^[[:alnum:]_]+$/ { print }'
+  )
+
+  if [ "$count" -eq 0 ]; then
+    record_expansion_error "$path" "could not list 1:1 device-real scenarios"
+  fi
+}
+
 expand_record_to_checks() {
   local category="$1"
   local kind="$2"
@@ -743,6 +772,10 @@ expand_record_to_checks() {
       ;;
     integration_test/scripts/run_group_multi_party_device_real.dart)
       expand_group_multi_party_device_real "$category" "$path" "$note"
+      return
+      ;;
+    integration_test/scripts/run_1to1_device_real.dart)
+      expand_1to1_device_real "$category" "$path" "$note"
       return
       ;;
   esac

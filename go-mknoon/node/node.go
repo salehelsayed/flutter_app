@@ -62,9 +62,10 @@ type Node struct {
 	// processStartEpochMs mirrors NodeConfig.ProcessStartEpochMs (the Dart
 	// process-start wall-clock epoch). FDC-S1 observation-only: read by
 	// sinceProcessStartMs() to stamp cold-start timing emits on Dart's clock.
-	// Written once under n.mu in Start() before any reader goroutine spawns;
-	// 0 => caller predates FDC-S1.
-	processStartEpochMs int64
+	// Atomic (CV-50): a relay-warm goroutine spawned by a prior Start() can
+	// outlive a Stop() and read this concurrently with the re-Start() write on a
+	// reconnect/watchdog/StopStart cycle. 0 => caller predates FDC-S1.
+	processStartEpochMs atomic.Int64
 
 	// Phase 4: Relay session manager and event dispatcher.
 	relaySessionMgr *RelaySessionManager
@@ -265,7 +266,7 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	n.lastConfig = &cfgCopy
 	// FDC-S1 (observation-only): capture the Dart process-start epoch so the
 	// startup_timing / reservation / circuit emits can report sinceProcessStartMs.
-	n.processStartEpochMs = cfg.ProcessStartEpochMs
+	n.processStartEpochMs.Store(cfg.ProcessStartEpochMs)
 	flags := cfg.EffectiveFlags()
 	n.featureFlags = &flags
 
@@ -2014,7 +2015,7 @@ func (n *Node) emitTimeoutFired(name string, configured time.Duration, start tim
 // cold-start timing emits to Dart's clock. Returns -1 when the epoch was not
 // supplied (caller predates FDC-S1). FDC-S1 observation-only; never gates logic.
 func (n *Node) sinceProcessStartMs() int64 {
-	epoch := n.processStartEpochMs
+	epoch := n.processStartEpochMs.Load()
 	if epoch <= 0 {
 		return -1
 	}

@@ -109,6 +109,7 @@ implementation-ready.
 | **FDC-14** | "Online" dot also means directly-reachable + anti-flap | §6.3 / Q7 gap | tdd-plan (DRAFT) | New `BadgeReadinessState.onlineDirect` tier + `NodeState.directReady` input rendered by `ConnectionStatusIndicator`, plus a **badge anti-flap** test. New-tier render + anti-flap host-testable now; **`directReady` signal source gated on FDC-02/FDC-11** (provisional). Anti-flap notes added to FDC-05/06/07. Peer-presence (FDC-08/09) never feeds this dot. |
 | **FDC-15** | 1:1 media over a peer-authenticated libp2p LAN stream | §6.2b / FDC-S6 prereq | tdd-plan (DRAFT) | Stream the same `EncryptedMediaArtifact` ciphertext over a NEW Noise-authenticated libp2p stream (`/mknoon/media-lan/1.0.0`) on the FDC-11 direct LAN conn — replacing the WS path's **TXT-record peerId trust + plaintext `ws://`** with cryptographic peer-AUTH (confidentiality unchanged; media already app-encrypted). Additive behind `EnableLibp2pLanMedia`; WS HTTP-PUT + relay-CDN kept as parallel fallbacks (idempotent by blob-id/SHA-256; relay-CDN stays UNCONDITIONAL — no 112-dangling-attachment regression). **1:1-only** (group media = relay-CDN, untouched). **Gated by FDC-11 + FDC-S2.** Device-only closure. Enables FDC-S6's media-server retire verdict. |
 | **FDC-18** | 1:1 reaction add+remove send reliability | reactions gap | tdd-plan | Mirror **FDC-03's concurrent durable inbox** onto **both** reaction-toggle halves — `send_reaction_use_case.dart` (add) **and** its structural twin `remove_reaction_use_case.dart` (un-react) — so a toggle to a slow/offline peer is durably queued (not dropped/late) and an online peer isn't demoted to inbox-only. **Calibrated:** each path has a **single** transport leg (thin `sendMessage`) → FDC-01/02's race/budget wins are **N/A**; only the concurrent-inbox + online-not-demoted transfer. Receive last-writer-wins tombstone preserved (dedup is **receiver-side**, byte-identical envelopes). **No migration** (table 016, tombstone column 082 exist). **1:1-only** (group reactions = pubsub, disjoint; receipts/delete use the reply-bearing `sendMessageWithReply` → deferred FDC-19 candidate). Lands **after FDC-03** (copies its pattern); **separate files from the send-path spine → parallelizable** (its own mini-track). Adds a per-file flow-capture helper (none exists today). ~17 RED/preservation locks (FDC-18-01..06b + R1..R5 + P2b). |
+| **FDC-16** | Convergence & Close — device campaign + 14-day soak + FDC-S6 verdict + FDC-S0 re-measure | Phase 4 / closure | tdd-plan (closure-orchestration) | **The Phase-4 capstone** ([`FDC-16-convergence-close-tdd-plan.md`](FDC-16-convergence-close-tdd-plan.md), live tracker [`FDC-CONVERGENCE-CHECKLIST.md`](FDC-CONVERGENCE-CHECKLIST.md)). After all Phase-0..3 authoring lands, it discharges every **deferred-not-waived** closure row (**CV-01..49**) across FDC-04/06/07/08/09/10/11/12/13/14/15 + S6 + S0: gomobile rebuild + relay redeploy (NET-REL-07-safe), the device-proof campaign (**FDC-11 D1 = keystone**), the **≥14-day LAN soak**, the FDC-S6 retire verdict (+ conditional WS-removal), the staged reversible prod flag-flips, and the **FDC-S0 before→after scorecard = epic close**. Full RED rigor on the 7 host code-bearing rows; the rest a gated Closure Register. (Internal code; not in top-level `00-INDEX.md`.) |
 
 ---
 
@@ -348,6 +349,13 @@ no top-level numbers are consumed.
 ---
 
 ## Closure strategy
+
+> **Phase-4 driver (the convergence & close work below is decomposed + tracked here):**
+> **[FDC-16-convergence-close-tdd-plan.md](FDC-16-convergence-close-tdd-plan.md)** — 49 closure rows
+> (**CV-01..49**) for the device-proof campaign + 14-day soak + FDC-S6 verdict + FDC-S0 re-measure — with
+> the live check-off tracker **[FDC-CONVERGENCE-CHECKLIST.md](FDC-CONVERGENCE-CHECKLIST.md)**. Keystone =
+> **FDC-11 D1**; wall-clock long pole = the **14-day soak**; done-signal = the **FDC-S0 re-measure scorecard**.
+> Hard prereq: **FDC-10 must land + deploy first** (still `awaiting-review`).
 
 > **Improvement scorecard (`FDC-S0`):** the epic's overall *did-we-actually-make-it-faster* proof is
 > owned by FDC-S0 — capture its baseline **before** FDC-01 and re-measure at **close** (and per wave).

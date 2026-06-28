@@ -34,6 +34,12 @@ type inboxRequest struct {
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 	// FDC-09 §12: the opaque wake-token SET registered via register_wake_tokens.
 	WakeTokens []string `json:"wakeTokens,omitempty"`
+	// FDC-09 §12 (CV-14): the SINGLE opaque wake-token a SENDER presents on a
+	// `store` request — the token the RECIPIENT issued to this sender — so the
+	// relay's access-token wake gate authorizes waking the recipient ("only
+	// contacts can wake you"). omitempty keeps every non-attaching frame
+	// byte-identical to the pre-FDC-09 store frame (NET-REL-07).
+	WakeToken string `json:"wakeToken,omitempty"`
 }
 
 type inboxResponse struct {
@@ -113,11 +119,37 @@ func (n *Node) InboxStore(toPeerId string, message string, timeoutMs int) error 
 }
 
 // InboxStoreDetailed stores a message and returns relay custody metadata when
-// the relay supports the enriched store response.
+// the relay supports the enriched store response. It presents no wake-token —
+// equivalent to InboxStoreDetailedWithWakeToken with an empty token, so the
+// store frame is byte-identical to the pre-FDC-09 frame (NET-REL-07).
 func (n *Node) InboxStoreDetailed(
 	toPeerId string,
 	message string,
 	timeoutMs int,
+) (InboxStoreOutcome, error) {
+	return n.InboxStoreDetailedWithWakeToken(toPeerId, message, timeoutMs, "")
+}
+
+// InboxStoreDetailedWithWakeToken is InboxStoreDetailed plus the FDC-09 §12
+// (CV-14) send-side wake-token attach: it presents on the `store` request the
+// opaque wake-token the RECIPIENT issued to this sender, so the relay's §12
+// access-token gate authorizes waking the recipient. An empty wakeToken keeps
+// the store frame byte-identical to the pre-FDC-09 frame (omitempty), so
+// absent-token recipients and old relays are unaffected (NET-REL-07). The
+// production source of the token (the recipient's issued token, distributed out
+// of band) is wired separately; this method owns only the transport attach.
+//
+// SHIP-ORDER (FDC-09 H1 / INV-2): this attach must land + saturate the sender
+// fleet BEFORE the relay flips wakeTokenGateEnforced ON (CV-19), or enforcing the
+// gate the instant a recipient registers a set would hard-silence every empty-token
+// sender's 1:1 pushes.
+//
+//nolint:funlen // inherited length of the per-relay store retry loop (the former InboxStoreDetailed body verbatim); CV-14's wake-token attach is a 1-line additive change, matching the HandleInboxStream precedent.
+func (n *Node) InboxStoreDetailedWithWakeToken(
+	toPeerId string,
+	message string,
+	timeoutMs int,
+	wakeToken string,
 ) (InboxStoreOutcome, error) {
 	n.mu.RLock()
 	h := n.host
@@ -168,10 +200,11 @@ func (n *Node) InboxStoreDetailed(
 		setStreamDeadline(s, timeout)
 
 		req := inboxRequest{
-			Action:  "store",
-			To:      toPeerId,
-			From:    n.peerId,
-			Message: message,
+			Action:    "store",
+			To:        toPeerId,
+			From:      n.peerId,
+			Message:   message,
+			WakeToken: wakeToken, // FDC-09 §12 (CV-14): present recipient-issued token; empty => omitted (NET-REL-07)
 		}
 
 		reqBytes, err := json.Marshal(req)

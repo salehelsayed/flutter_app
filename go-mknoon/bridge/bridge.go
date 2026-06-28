@@ -1132,6 +1132,13 @@ func InboxStore(paramsJSON string) (result string) {
 		ToPeerId  string `json:"toPeerId"`
 		Message   string `json:"message"`
 		TimeoutMs int    `json:"timeoutMs"`
+		// FDC-09 §12 (CV-14): the opaque wake-token the RECIPIENT issued to this
+		// sender, presented on the store frame so the relay's access-token gate
+		// authorizes waking the recipient. Optional/additive — empty keeps the
+		// pre-FDC-09 store frame byte-identical (NET-REL-07). The Dart source of
+		// this token (the recipient-issued token, distributed out of band) is
+		// wired separately; the bridge only threads it through.
+		WakeToken string `json:"wakeToken"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -1140,7 +1147,7 @@ func InboxStore(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing toPeerId or message")
 	}
 
-	outcome, err := n.InboxStoreDetailed(params.ToPeerId, params.Message, params.TimeoutMs)
+	outcome, err := n.InboxStoreDetailedWithWakeToken(params.ToPeerId, params.Message, params.TimeoutMs, params.WakeToken)
 	return inboxStoreBridgeResponse(outcome, err)
 }
 
