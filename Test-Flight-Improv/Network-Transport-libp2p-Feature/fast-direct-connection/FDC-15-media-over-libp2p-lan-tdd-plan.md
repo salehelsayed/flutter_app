@@ -183,7 +183,7 @@ for all Go gates (quic-go panic under Go 1.26.x).
 - **FDC-S6** (the decision this enables): component 2 "WS/HTTP LAN MEDIA server" is **NOT covered by
   any plan** and "Retiring it **REQUIRES a NEW 'media over libp2p LAN' plan** … (e.g. **FDC-15**)"
   (`FDC-S6:145,212-217,238-244`). FDC-15 is that prerequisite; it does **not** itself retire the WS
-  media server (that is FDC-S6's verdict + a later removal plan after a 14-day soak).
+  media server (that is FDC-S6's verdict + a later removal plan after a soak).
 - **FDC-11** (the gate): proves a same-WiFi peer becomes a **`"direct"` non-circuit libp2p conn** the
   ranker prefers over relay (`FDC-11:61-67,248-262`); explicitly **keeps bonsoir+WS** and carries
   **zero media device-proof** (`FDC-11:73-76,96-107`). FDC-15 mirrors FDC-11's `HandleLANPeerFound`/
@@ -360,7 +360,7 @@ transport. FDC-15's media stream reuses `writeFrame`/`readFrame` framing + `clas
 - DCUtR cross-NAT relay→direct upgrade → **FDC-12** (media still goes inbox/relay-CDN across
   networks).
 - **Retiring** the WS/HTTP LAN media server → **FDC-S6 verdict + a later WS-media-removal plan**
-  (needs the 14-day soak; FDC-15 only makes the lane exist + device-proves it).
+  (needs the soak; FDC-15 only makes the lane exist + device-proves it).
 - Group media over libp2p → **explicitly OUT** (group has no LAN byte path; Scope Guard).
 
 ## Files To Inspect Next
@@ -890,7 +890,7 @@ transport. FDC-15's media stream reuses `writeFrame`/`readFrame` framing + `clas
   transport-label `"direct"`, single-render dedup, relay-CDN copy present, bridge head-of-line timing
   vs a concurrent chat send. **The sim cannot run this** (shares host mDNS/bonsoir → device-only).
   **Relay deploy NOT required** (client-host-only; NET-REL-07 unaffected; relay-CDN `media.go` untouched).
-- **Soak feeds FDC-S6:** D1 is a single pass/fail; the **14-day media win-rate + zero-net-new-failure**
+- **Soak feeds FDC-S6:** D1 is a single pass/fail; the **media win-rate + zero-net-new-failure**
   bar that licenses retiring the WS media server is **FDC-S6's** soak (`FDC-S6:212-217`), not this plan.
 
 ## Acceptance Gates
@@ -970,7 +970,7 @@ git diff --check           # expected: clean
 - [ ] Relay-CDN upload **unconditional**, encrypt-once artifact, WS/HTTP media + bonsoir, account gate,
       `classifyStreamTransport`, group media path all **unchanged** (preserved-sentinel diff review).
 - [ ] D1 device smoke scheduled (two-phone, `DISABLE_LOCAL_DISCOVERY`) — DEFERRED-not-waived; feeds the
-      FDC-S6 14-day media soak.
+      FDC-S6 media soak.
 - [ ] (If C / FDC-11 not landed) plan shelved; WS/HTTP LAN media remains the byte path; doc marked
       superseded; FDC-S6 media verdict = "KEEP".
 
@@ -1033,7 +1033,7 @@ git diff --check           # expected: clean
   **RESOLVED 2026-06-27** (Option A, QUIC, identify budget **750ms**). FDC-11's device-proof is the remaining
   hard precondition.
 - **Enables FDC-S6** — FDC-15 is the named "media-over-libp2p-LAN" prerequisite whose existence +
-  device-proof + 14-day soak lets FDC-S6 issue a "retire the WS media server" verdict
+  device-proof + soak lets FDC-S6 issue a "retire the WS media server" verdict
   (`FDC-S6:145,212-217`). FDC-15 does **not** itself retire anything.
 - **Shares Go-host files** `node.go` / `config.go` / `feature_flags.go` / `feature_flags_runtime.go` /
   **`bridge_lan.go`** (FDC-11 created it) with **FDC-11** (mDNS) and **FDC-12** (DCUtR), and shares

@@ -1,11 +1,11 @@
 # FDC Convergence & Close — Operational Checklist
 
-**Companion to [FDC-16-convergence-close-tdd-plan.md](FDC-16-convergence-close-tdd-plan.md).** This is the live check-off tracker for the epic's Phase-4 closure: device-proof + deploy + 14-day soak + FDC-S6 verdict + FDC-S0 re-measure. All Phase-0..3 authoring is DONE; nothing here is new features. Every row is **deferred-not-waived** until its box is checked.
+**Companion to [FDC-16-convergence-close-tdd-plan.md](FDC-16-convergence-close-tdd-plan.md).** This is the live check-off tracker for the epic's Phase-4 closure: device-proof + deploy + soak + FDC-S6 verdict + FDC-S0 re-measure. All Phase-0..3 authoring is DONE; nothing here is new features. Every row is **deferred-not-waived** until its box is checked.
 
-**Legend** — category: `▢ host` (host-RED/CI) · `⚙ deploy` · `📱 device` · `🛰 live-relay-env` (gitignored/external) · `⏳ soak` (≥14d wall-clock) · `⚖ decision` · `🚩 flag-flip`.
+**Legend** — category: `▢ host` (host-RED/CI) · `⚙ deploy` · `📱 device` · `🛰 live-relay-env` (gitignored/external) · `⏳ soak` · `⚖ decision` · `🚩 flag-flip`.
 **Rule:** all Go gates run under `GOTOOLCHAIN=go1.25.0`; after any Go run, `git checkout -- go-mknoon/testdata/interop_vectors.json` (path is `go-mknoon/testdata/…`, NOT `…/node/…` — the latter silently no-ops). Never flip a prod flag ahead of its device/saturation gate. Never `git checkout`/`stash` shared files (concurrent `new-orbit` tree). `git status --short` before starting.
 
-> ⭐ **KEYSTONE: CV-08 (FDC-11 D1).** Once D1 is green both OS, it unblocks the soak, FDC-15 media, FDC-13 outgoing badge, FDC-14b ✦, and the S0 LAN-win metric. The **14-day soak (CV-36)** is the unavoidable calendar long pole. The whole tail can't start until the **P4.0 prereqs** land.
+> ⭐ **KEYSTONE: CV-08 (FDC-11 D1).** Once D1 is green both OS, it unblocks the soak, FDC-15 media, FDC-13 outgoing badge, FDC-14b ✦, and the S0 LAN-win metric. The **soak (CV-36)** is the unavoidable long pole. The whole tail can't start until the **P4.0 prereqs** land.
 
 ---
 
@@ -24,7 +24,7 @@
 **⛔ Deferred — env-blocked (kept in plan, deferred-not-waived):**
 - **2-phone both-OS rig — ✅ NOW AVAILABLE (2026-06-28):** iPhone 11 (`00008030-001A6D2801BB802E`) + iPhone 13 (`00008110-00184D622289801E`) — both iOS **26.5**, same WiFi — **+ a physical Android**. The device campaign (**CV-08 keystone** + CV-10/11/12/15/16/17/20/23/24/25/26/27/29/30/32/34/37/46) is **RUNNABLE** — no longer env-blocked (still gated on their own prereqs: gomobile rebuild CV-02, relay deploy CV-03 for push/presence, plan 170 for CV-29's burst, one peer on cellular for DCUtR CV-11/12). **iOS-major caveat WAIVED** (decision 2026-06-28: 11+13 are both 26.5 — proceed on what we have; CV-29's "2nd iOS major" dropped).
 - **Touches LIVE PROD — ✅ DEPLOY AUTHORIZED (2026-06-28)** — `.env` (EC2_HOST `13.60.15.36`/Redis/Grafana) + `se.pem` present; the EC2 relay redeploy is now go: CV-03/04/05/06/35 (deploy) + CV-15/16/18/21/22/45 (live-relay) are **RUNNABLE**. ⚠ Deploy **NET-REL-07-safe**: SAME endpoint/peer-ID (old clients are pinned), `wakeTokenGateEnforced=OFF` (CV-14 attach not yet saturated), opaque-routing OUT.
-- **14-day wall clock** — CV-36/38/39/47.
+- **Soak (sample collection)** — CV-36/38/39/47.
 - **Decision (needs soak + device data)** — CV-40 (S6 verdict), CV-49 (S0 scorecard).
 - **Flag-flip GREENs (device-gated)** — CV-09/13/19 (+ `EnableLibp2pLanMedia`).
 - **External plan** — CV-29 gated on plan 170.
@@ -69,9 +69,9 @@
 - [ ] **CV-34** 📱 FDC-15 D1 two-phone LAN media (`/mknoon/media-lan/1.0.0`), both OS *(toggle `EnableLibp2pLanMedia` ON for the rig)*
 - [ ] **CV-29** 📱 FDC-06 T8 open-send-lock delivers on the iPhone 11/13 (iOS 26.5) pair — **2nd-iOS-major WAIVED** (decision 2026-06-28: work with what we have). Single-message T8 runnable now; **N≥3 burst still BLOCKED on plan 170** (+ CV-28 ✅ + CV-07 ✅ + CV-06 durable custody).
 
-## P4.2 — 14-day soak (wall-clock long pole)
+## P4.2 — Win-rate soak
 - [ ] **CV-35** ⚙ Soak+baseline binaries `flutter build (profile) --dart-define=FDC_FLOW_LOG=1`
-- [ ] **CV-36** ⏳ Win-rate soak: libp2p-LAN Wilson-LB ≥95%, ≥385 sends/dir, ≥14d, 3 platform-dirs (A→A / i→i / A↔i). `fdc-s6-measurement/fdc_s6_capture.sh + fdc_s6_parse.py`
+- [ ] **CV-36** ⏳ Win-rate soak: libp2p-LAN Wilson-LB ≥95%, ≥385 sends/dir, 3 platform-dirs (A→A / i→i / A↔i) — duration floor removed by decision 2026-06-29 (no 14-day soak; the ≥385-sample Wilson-LB criterion is the sole gate). `fdc-s6-measurement/fdc_s6_capture.sh + fdc_s6_parse.py`
 - [ ] **CV-37** 📱 bonsoir-fed-dial reliability both OS (Wilson 95% LB ≥95%, ≥385)
 - [ ] **CV-38** ⏳ double-delivery rate by (first,second)-leg pair
 - [ ] **CV-39** ⏳ failure-delta ≤ +1.0pp vs bonsoir+WS baseline (Newcombe CI)

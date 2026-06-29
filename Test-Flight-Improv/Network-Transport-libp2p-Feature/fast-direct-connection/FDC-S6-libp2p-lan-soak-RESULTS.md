@@ -3,8 +3,9 @@
 Status: **instruments + harness landed + host-verified (preconditions ✅); device
 soak PENDING — hard-gated on FDC-11 D1 device-proof (still FDC-11's open closure
 gate).** No verdict yet: the per-component decision cannot be issued until the
-soak runs on real iOS+Android pairs over N ≥ 14 days AND ≥ 385 sends/platform-
-direction. This mirrors FDC-S1/S4 (instrumentation landed; numbers filled by the
+soak runs on real iOS+Android pairs over ≥ 385 sends/platform-
+direction (duration floor removed by decision 2026-06-29 — no 14-day soak; the
+≥ 385-sample Wilson-LB criterion is the sole gate). This mirrors FDC-S1/S4 (instrumentation landed; numbers filled by the
 device campaign).
 
 Parent spike: `FDC-S6-libp2p-lan-soak-ws-retirement-decision.md`. Harness +

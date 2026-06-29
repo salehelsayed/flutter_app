@@ -1,9 +1,9 @@
-# FDC-16 — Convergence & Close (device-proof campaign + 14-day soak + FDC-S6 verdict + FDC-S0 re-measure)  (Modification / Closure-orchestration)
+# FDC-16 — Convergence & Close (device-proof campaign + soak + FDC-S6 verdict + FDC-S0 re-measure)  (Modification / Closure-orchestration)
 
 Status: awaiting-review
 Spec: free-text intent (no formal spec doc) — closure phase of the [FDC epic](FDC-00-roadmap.md); grounded by a 13-reader inventory workflow (2026-06-27). Companion operational tracker: **[FDC-CONVERGENCE-CHECKLIST.md](FDC-CONVERGENCE-CHECKLIST.md)**.
 
-> **What this plan is.** The Phase-0..3 *authoring + host-code + device-independent spike scaffolding* of the FDC epic is DONE. This plan is the **Convergence & Close phase (Phase 4)** — it does NOT add features; it discharges the **deferred-not-waived** closure obligations every sub-plan left behind (device-proof, live-relay-env, deploy, the 14-day soak, the FDC-S6 verdict, staged flag-flips, and the FDC-S0 re-measure scorecard). It applies **full RED→GREEN→mutation rigor only to the genuinely-new host code** (flag-default-flip locks, the send-side wake-token attach, the S0 aggregation, the conditional WS-removal, and the FDC-S1 `processStartEpochMs` `-race` fix — CV-50); everything else is a **gated closure register** with literal acceptance commands, because a device-proof / live-relay / soak / decision row is not a host unit test and cannot be mutation-reverted on HEAD.
+> **What this plan is.** The Phase-0..3 *authoring + host-code + device-independent spike scaffolding* of the FDC epic is DONE. This plan is the **Convergence & Close phase (Phase 4)** — it does NOT add features; it discharges the **deferred-not-waived** closure obligations every sub-plan left behind (device-proof, live-relay-env, deploy, the soak, the FDC-S6 verdict, staged flag-flips, and the FDC-S0 re-measure scorecard). It applies **full RED→GREEN→mutation rigor only to the genuinely-new host code** (flag-default-flip locks, the send-side wake-token attach, the S0 aggregation, the conditional WS-removal, and the FDC-S1 `processStartEpochMs` `-race` fix — CV-50); everything else is a **gated closure register** with literal acceptance commands, because a device-proof / live-relay / soak / decision row is not a host unit test and cannot be mutation-reverted on HEAD.
 
 ## Planning Progress
 | Time | Role | Files inspected | Decision/blocker | Next action |
@@ -18,7 +18,7 @@ Spec: free-text intent (no formal spec doc) — closure phase of the [FDC epic](
 |---|---|---|---|---|---|
 | | P4.0 prereqs (FDC-10 land + gomobile rebuild + relay redeploy) | | | | |
 | | P4.1 device campaign (FDC-11 D1 keystone) | | | | |
-| | P4.2 14-day soak | | | | |
+| | P4.2 win-rate soak | | | | |
 | | P4.3 S6 verdict | | | | |
 | | P4.4 staged flag-flips (interspersed) | | | | |
 | | P4.5 FDC-S0 re-measure scorecard | | | | |
@@ -32,7 +32,7 @@ Spec: free-text intent (no formal spec doc) — closure phase of the [FDC epic](
 - Numbering: epic-internal `FDC-NN` (next-free = **FDC-16**; not a top-level `00-INDEX.md` number per the roadmap's Global-numbering note).
 
 ## Session Classification
-**Mixed: implementation-ready for the host-RED code rows / deploy-gated + device-gated + wall-clock-gated + decision-gated for the rest.** The ~7 host-RED rows can be built now (RED-first). Everything else is blocked on one of: FDC-10 landing, the gomobile rebuild, a relay redeploy, the live-relay-env (gitignored — external), real 2-device hardware, plan 170, token-saturation, or the unavoidable 14-day soak.
+**Mixed: implementation-ready for the host-RED code rows / deploy-gated + device-gated + soak-gated + decision-gated for the rest.** The ~7 host-RED rows can be built now (RED-first). Everything else is blocked on one of: FDC-10 landing, the gomobile rebuild, a relay redeploy, the live-relay-env (gitignored — external), real 2-device hardware, plan 170, token-saturation, or the unavoidable soak.
 
 ## Exact Problem Statement
 The epic's host-testable surface is complete, but **none of the wins that touch a real wire or a real OS transition has been proven on a device, no relay change is deployed, the WS-retirement verdict cannot be issued, and the before→after improvement scorecard is unwritten.** Each sub-plan deliberately deferred these as *deferred-not-waived*. Until they close, the epic is "host-green but unvalidated" — exactly the false-positive class the proposal §9.1 warns about (dedup can mask a dead live path).
@@ -48,7 +48,7 @@ N/A — this is a closure-orchestration plan, not a bug fix. The "verify→refut
 - FDC-09 `presence_set{background}` → reachable — FALSE for §6.3; resolver must map background → unreachable. Do not collapse fg/bg to reachable.
 
 ## Real Scope
-**In scope (FDC-16 owns the orchestration of):** CV-01..49 below — FDC-10 land + deploy, the consolidated gomobile rebuild, the relay redeploy, the device-proof campaign (FDC-04/06/07/08/09/11/12/13/14/15 device rows), the 14-day FDC-S6 soak, the FDC-S6 verdict, the staged prod flag-flips, and the FDC-S0 re-measure scorecard. Genuinely-new host code: the 4 flag-default-flip locks, the FDC-09 send-side wake-token attach, the FDC-S0 M3/M7 aggregation, and the conditional WS-removal repoint.
+**In scope (FDC-16 owns the orchestration of):** CV-01..49 below — FDC-10 land + deploy, the consolidated gomobile rebuild, the relay redeploy, the device-proof campaign (FDC-04/06/07/08/09/11/12/13/14/15 device rows), the FDC-S6 soak, the FDC-S6 verdict, the staged prod flag-flips, and the FDC-S0 re-measure scorecard. Genuinely-new host code: the 4 flag-default-flip locks, the FDC-09 send-side wake-token attach, the FDC-S0 M3/M7 aggregation, and the conditional WS-removal repoint.
 **Out of scope (owning work):**
 - All sub-plan host code / RED catalogs — **already landed** in FDC-04..15 (this plan only re-runs their gates as preservation + discharges their device rows).
 - **plan 170** (send-button frozen-snackbar) — external; gates FDC-06 T8's N≥3 burst (CV-29).
@@ -161,16 +161,16 @@ N/A — this is a closure-orchestration plan, not a bug fix. The "verify→refut
 | CV-33 | FDC-15 | gomobile-rebuild | native `mediaLanSend` + `media:lan_received` emit | n/a (rebuild) | CV-08 + FDC-15 host catalog |
 | CV-34 | FDC-15 | device-proof | D1 two-phone LAN media (`/mknoon/media-lan/1.0.0`) | n/a (manual device; toggle `EnableLibp2pLanMedia` ON) | CV-33 + CV-09 |
 | CV-35 | FDC-S6 | deploy | soak+baseline binaries `--dart-define=FDC_FLOW_LOG=1` | `flutter build (profile) --dart-define=FDC_FLOW_LOG=1` | CV-02 + CV-09 |
-| **CV-36** | **FDC-S6** | **wall-clock-soak** | win-rate ≥95% Wilson-LB, ≥385 sends/dir, ≥14d, 3 platform-dirs | `fdc-s6-measurement/fdc_s6_capture.sh + fdc_s6_parse.py` | CV-08 + CV-09 + CV-35 |
+| **CV-36** | **FDC-S6** | **soak** | win-rate ≥95% Wilson-LB, ≥385 sends/dir, 3 platform-dirs (14-day floor dropped by decision 2026-06-29) | `fdc-s6-measurement/fdc_s6_capture.sh + fdc_s6_parse.py` | CV-08 + CV-09 + CV-35 |
 | CV-37 | FDC-S6 | device-proof | bonsoir-fed-dial reliability both OS | `fdc-s6-measurement/fdc_s6_parse.py` | CV-08 |
-| CV-38 | FDC-S6 | wall-clock-soak | double-delivery by leg-pair | `fdc_s6_parse.py` | CV-36 |
-| CV-39 | FDC-S6 | wall-clock-soak | failure-delta ≤ +1.0pp (Newcombe CI) | `fdc_s6_parse.py` | CV-36 |
+| CV-38 | FDC-S6 | soak | double-delivery by leg-pair | `fdc_s6_parse.py` | CV-36 |
+| CV-39 | FDC-S6 | soak | failure-delta ≤ +1.0pp (Newcombe CI) | `fdc_s6_parse.py` | CV-36 |
 | CV-40 | FDC-S6 | decision-verdict | per-component retire/keep → VERDICT block; Status open→closed | n/a (doc) | CV-39 (+ CV-34 OR relay-CDN-only acceptance for retire-media) |
 | CV-43 | FDC-S0 | host-ci | M1b/M5 Go benchmarks After | `cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node/ -run TestBenchmark -v \| grep BENCHMARK` | CV-23/24 + FDC-S1 final |
 | CV-44 | FDC-S0 | host-ci | M8 reaction-to-offline After (FDC-18) | n/a (FDC-18 gate) + device smoke | FDC-18 (landed) |
 | CV-45 | FDC-S0 | live-relay | M9 inbox durability survives relay restart | `cd go-relay-server && GOTOOLCHAIN=go1.25.0 go test ./...` | CV-01/03/06 |
 | CV-46 | FDC-S0 | device-proof | M1/M2/M4/M5/M7 device scorecard captures | `SELECT transport,COUNT(*)…` + TransportMetrics + ≥10 manual trials | device + relay + CV-08 |
-| CV-47 | FDC-S0 | wall-clock-soak | M6 LAN win-rate (REUSE CV-36 soak) | n/a (read `transportMix()` over ≥14d) | CV-36/CV-40 + CV-09 |
+| CV-47 | FDC-S0 | soak | M6 LAN win-rate (REUSE CV-36 soak) | n/a (read `transportMix()` over the soak) | CV-36/CV-40 + CV-09 |
 | CV-48 | FDC-S0 | host-ci | M10 host-gate floor After | `./scripts/run_test_gates.sh 1to1 ; feed ; transport` | epic close |
 | CV-49 | FDC-S0 | decision-verdict | scorecard Before/After/Delta + frozen-baseline/close hashes | n/a (doc); pull FDC-S1 #5 + FDC-S6 #6 | epic close + soak (LAST) |
 
@@ -185,7 +185,7 @@ N/A — this is a closure-orchestration plan, not a bug fix. The "verify→refut
 - INV-2: `wakeTokenGateEnforced` never flips before send-side token presentation saturates (CV-14 lands+saturates → CV-19); the kill-switch posture at deploy is OFF (NET-REL-07).
 - INV-3: each prod flag default-on is mutation-locked (CV-09/13/19/28 re-red on revert).
 - INV-4: the relay redeploy is additive — old clients keep texting (same endpoint/peer-ID, gate OFF, opaque-routing OUT); group pubsub unchanged after `EnableLibp2pLANDial` (CV-09 + groups preservation).
-- INV-5: the FDC-S6 verdict is issued only on real soak data meeting ≥95% Wilson-LB / ≤+1.0pp failure-delta / ≥14d (CV-36/39/40).
+- INV-5: the FDC-S6 verdict is issued only on real soak data meeting ≥95% Wilson-LB / ≤+1.0pp failure-delta / ≥385 sends/dir (CV-36/39/40) — duration floor removed by decision 2026-06-29 (no 14-day soak; the ≥385-sample Wilson-LB criterion is the sole gate).
 - INV-RED-FIRST + INV-MUTATION-VERIFIED apply to the host-RED rows; device/soak/decision rows close on documented evidence (deferred-not-waived).
 
 ## Step-By-Step Implementation Plan
@@ -201,7 +201,7 @@ N/A — this is a closure-orchestration plan, not a bug fix. The "verify→refut
 5. **FDC-11 D1 (CV-08) — KEYSTONE first.** Then, on D1-GREEN, flip `EnableLibp2pLANDial` + lock (CV-09) and re-run `groups` (INV-4).
 6. Run the rest: CV-10/11/12 (Dcutr → flip CV-13), CV-15/16/17/18/20 (FDC-09; flip CV-19 only after CV-14 saturates), CV-21/22 (FDC-08 LR1), CV-23/24 (FDC-07), CV-25/26/27 (FDC-04), CV-30 (FDC-13), CV-32 (FDC-14 badge), CV-33/34 (FDC-15 media). CV-29 (FDC-06 T8) only after **plan 170** lands.
 
-**P4.2 — 14-day soak (wall-clock):** 7. Build soak binaries `--dart-define=FDC_FLOW_LOG=1` (CV-35); run ≥14d / ≥385 sends/dir (CV-36); parse win-rate/double-delivery/failure-delta (CV-36/38/39) + bonsoir-dial reliability (CV-37).
+**P4.2 — Win-rate soak:** 7. Build soak binaries `--dart-define=FDC_FLOW_LOG=1` (CV-35); run ≥385 sends/dir (CV-36); parse win-rate/double-delivery/failure-delta (CV-36/38/39) + bonsoir-dial reliability (CV-37).
 
 **P4.3 — FDC-S6 verdict:** 8. Fill the VERDICT block per-component; Status open→closed (CV-40). If retire-chat → spawn + run WS-chat-removal (CV-41, full RED). If retire-media → gated on CV-34 or recorded relay-CDN-only acceptance.
 
@@ -221,7 +221,7 @@ N/A — this is a closure-orchestration plan, not a bug fix. The "verify→refut
 - **Host-only closure:** CV-28, CV-14, CV-09/13/19 (flag locks), CV-42, CV-48 (host gates), CV-43 (Go benchmarks), CV-45 (failover).
 - **Requires device (closure gate) — ✅ RIG AVAILABLE 2026-06-28** (iPhone 11 + iPhone 13 @ iOS 26.5 + a physical Android, same WiFi): CV-08 (KEYSTONE), CV-10/11/12/15/16/17/20/23/24/25/26/27/29/30/32/34/37/46 — runnable now (real bridge after the CV-02 gomobile rebuild; real relay/APNs after CV-03; DCUtR CV-11/12 needs one peer on cellular for cross-NAT; CV-29 2nd-iOS-major waived).
 - **Requires live-relay-env (present locally but PROD-GATED — needs explicit authorization):** CV-03/06/15/16/18/21/22/45. (`.env` EC2_HOST/Redis/Grafana + `se.pem` are on this machine but gitignored; connecting/deploying mutates production.)
-- **Wall-clock (≥14d):** CV-36/38/39/47.
+- **Soak:** CV-36/38/39/47.
 - **Decision:** CV-40 (S6 verdict), CV-49 (S0 scorecard).
 - Flip any feature flag ON only AFTER its device evidence. Relay defaults: see `/sims` / `p2p_bridge_client.dart`.
 
@@ -250,7 +250,7 @@ git checkout -- go-mknoon/testdata/interop_vectors.json 2>/dev/null || true     
 curl -s http://<relay-host>:2112/metrics | grep relay_backend_durable   # expect: 1 on every front-end
 
 # soak (CV-36..39) + scorecard (CV-43/49)
-fdc-s6-measurement/fdc_s6_capture.sh   # ≥14d, ≥385 sends/dir ; then fdc_s6_parse.py
+fdc-s6-measurement/fdc_s6_capture.sh   # ≥385 sends/dir ; then fdc_s6_parse.py
 cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node/ -run TestBenchmark -v 2>&1 | grep BENCHMARK   # CV-43
 
 # Hygiene
@@ -275,7 +275,7 @@ git diff --check
 - [ ] FDC-09 send-side wake-token attach landed + saturated (CV-14) → `wakeTokenGateEnforced` flipped (CV-19) → TC-09-23 green (CV-20); CV-15/16/17/18 device/live-relay closed.
 - [ ] FDC-08 LR1 + TTL tune (CV-21/22); FDC-07 (CV-23/24); FDC-04 (CV-25/26/27); FDC-13 outgoing (CV-30); FDC-14 badge (CV-32); FDC-15 media D1 (CV-34).
 - [x] FDC-06 pause-flush default-on — **already shipped by FDC-06 (CV-28)**; [ ] T8 closed after plan 170 (CV-29).
-- [ ] 14-day soak meets ≥95% Wilson-LB / ≤+1.0pp / ≥385 sends-dir (CV-36/38/39); FDC-S6 verdict issued + Status closed (CV-40); conditional WS-removal run if retire (CV-41).
+- [ ] soak meets ≥95% Wilson-LB / ≤+1.0pp / ≥385 sends-dir (CV-36/38/39); FDC-S6 verdict issued + Status closed (CV-40); conditional WS-removal run if retire (CV-41).
 - [ ] FDC-S0 re-measure scorecard populated Before/After/Delta + hashes (CV-42..49); device-only metrics marked deferred-not-waived.
 - [ ] `flutter analyze` 0-new; `git diff --check` clean; no Scope Guard violation.
 
@@ -284,7 +284,7 @@ git diff --check
 - **Do NOT** enforce `wakeTokenGateEnforced` before CV-14 send-side attach saturates (hard-silences pushes).
 - **Do NOT** change the relay endpoint/peer-ID, ship opaque-routing, or enable the wake-gate in this deploy (old-client/NET-REL-07 safety).
 - **Do NOT** edit landed sub-plan host code — re-run their gates as preservation only.
-- **Do NOT** issue the FDC-S6 verdict on partial soak (< 14d / < 385 sends-dir / < both OS).
+- **Do NOT** issue the FDC-S6 verdict on partial soak (< 385 sends-dir / < both OS) — duration floor removed by decision 2026-06-29 (no 14-day soak; the ≥385-sample Wilson-LB criterion is the sole gate).
 - **Do NOT** `git checkout`/`stash`-revert shared files on the concurrent `new-orbit` tree.
 - **Do NOT** author WS-chat/media-removal before the CV-40 retire verdict.
 
@@ -308,4 +308,4 @@ Closure-orchestration plan: host-RED rigor correctly scoped to the 7 code-bearin
 Structural blockers: none for the host-RED rows (implementation-ready now: CV-14, CV-28). Deferred details: every device/soak/deploy/decision row is gated as documented. Accepted differences: live-relay-env + plan 170 + FDC-01/18/S1 rigor are external. **Hand off to execution: start P4.0 (land FDC-10 + author CV-07 harness + CV-14/CV-28 host-RED), then the FDC-11 D1 keystone.**
 
 ## Final Execution Verdict
-Verdict: (pending) | Files changed: — | Tests run (+counts): — | Blocking: FDC-10 land, gomobile rebuild, live-relay-env, 2-device rig, plan 170, 14-day soak | QA verdict: — | Non-blocking follow-ups: WS-removal plan(s) per CV-40 verdict.
+Verdict: (pending) | Files changed: — | Tests run (+counts): — | Blocking: FDC-10 land, gomobile rebuild, live-relay-env, 2-device rig, plan 170, soak | QA verdict: — | Non-blocking follow-ups: WS-removal plan(s) per CV-40 verdict.

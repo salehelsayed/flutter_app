@@ -3,7 +3,7 @@
 Device-only soak that produces the dataset the FDC-S6 **per-component verdict**
 keys on: the libp2p-LAN chat **win-rate**, the **net-new-failure delta** vs the
 bonsoir+WS baseline, **bonsoir-fed-dial reliability**, and the **double-delivery
-rate** — on real iOS+Android pairs, over **N ≥ 14 days AND ≥ 385 sends per
+rate** — on real iOS+Android pairs, over **≥ 385 sends per
 platform-direction**.
 
 Results doc this feeds: `../FDC-S6-libp2p-lan-soak-RESULTS.md`.
@@ -69,9 +69,10 @@ python3 scripts/fdc_s6_parse.py --label "iA->iB" --baseline-file logs/ii_baselin
 2. Start `fdc_s6_capture.sh` on the receiver(s).
 3. Compose-and-send a batch of 1:1 messages **both directions** (sender↔receiver).
 4. Ctrl-C the capture when the batch is acked on both ends.
-5. Repeat across **N ≥ 14 days** to clear both the duration floor AND the
-   **≥ 385 sends/platform-direction** sample floor (the parser flags UNDERPOWERED
-   below it). Cover **Android→Android, iOS→iOS, and the Android↔iOS cross pair**.
+5. Repeat until the **≥ 385 sends/platform-direction** sample floor is cleared
+   (the parser flags UNDERPOWERED below it; duration floor removed by decision
+   2026-06-29 — no 14-day soak, the sample floor is the sole gate). Cover
+   **Android→Android, iOS→iOS, and the Android↔iOS cross pair**.
 6. Run a matched **baseline arm** (LAN-dial gate OFF, same pairs/location/window,
    logging the SAME lines) so the failure-delta has a comparable baseline.
 
@@ -79,6 +80,9 @@ python3 scripts/fdc_s6_parse.py --label "iA->iB" --baseline-file logs/ii_baselin
 - **Retire WS chat** iff, per platform-direction: libp2p-LAN win-rate **Wilson 95%
   LB ≥ 95%** over **n ≥ 385**, bonsoir-fed-dial reliability at the same bar, and
   the **Newcombe 95% CI on [failureRate(ON) − failureRate(baseline)] ≤ +1.0pp**.
+  (Duration floor removed by decision 2026-06-29 — no 14-day soak; the ≥ 385-sample
+  Wilson-LB criterion is the sole gate. Verdict issues once the sample floor + the
+  statistical bars are met, regardless of calendar span.)
 - **Retire WS media**: out of scope here — gated behind FDC-15 device-proof+soak
   OR an explicit relay-CDN-only acceptance.
 - **bonsoir discovery: KEEP ALWAYS** (iOS entitlement — permanent).

@@ -86,7 +86,7 @@ retirement candidate** — iOS raw multicast is entitlement-blocked, so iOS need
 section `:154-177`, iOS entitlement `:165-168`).
 
 The number this spike produces: a **soak dataset** (libp2p-LAN win-rate + LAN-direct delivery
-success/failure deltas vs the bonsoir+WS baseline, on real iOS+Android pairs, over N days) and a
+success/failure deltas vs the bonsoir+WS baseline, on real iOS+Android pairs, over a soak window) and a
 **per-component verdict** keyed to concrete thresholds.
 
 ---
@@ -209,7 +209,7 @@ to isolate a genuine LAN win (see the ⚠ caveat below):
 > on a **private-IP** `RemoteMultiaddr`), and must **exclude** raw `reuse`/`upgraded` sends and any
 > send that fired `transport:upgraded`. This is a **net-new discriminator** — contradicting the "no
 > new measurement primitive needed" claim. (`transportMix()` is also session-scoped + resets each
-> launch + read only by the Settings debug card — it cannot accumulate a 14-day dataset.)
+> launch + read only by the Settings debug card — it cannot accumulate the soak dataset.)
 
 **The canonical false-positive caveat applies to the soak too** (proposal §9.1; `FDC-00` Closure caveat): because the receiver **dedupes by `messageId`** (proposal §10 L397-398), a delivered
 message tagged `'wifi'` proves the WS leg won *that* send, but a green *delivery* can be satisfied
@@ -250,8 +250,8 @@ discriminator and the double-delivery counter does not exist yet; see ⚠ above 
 **Population & window.** Real two-device 1:1 pairs on the **same WiFi**, with FDC-11 host-impl
 committed and its **D1 device-proof GREEN** (hard prerequisite). A LAN dial requires BOTH the Go
 flag **`EnableLibp2pLANDial`** (capital LAN; `feature_flags.go:44`, default false `:83`) AND the
-Dart **`'p2p_lan_dial'`** runtime gate (`p2p_service_impl.dart:888-902`) open. Run **N ≥ 14 days**
-AND clear the minimum sample floor (Decision Criteria) — long enough to catch intermittent
+Dart **`'p2p_lan_dial'`** runtime gate (`p2p_service_impl.dart:888-902`) open. Run until the
+minimum sample floor (Decision Criteria) is cleared — long enough to catch intermittent
 NIC/iOS-throttle behavior the §9 host caveat says is device-only. Cover both platform *directions*:
 Android→Android, iOS→iOS, **and the cross pair** Android↔iOS (sender and receiver each side).
 
@@ -298,9 +298,10 @@ profile/TestFlight); `transportMix()` is session-scoped + display-only. So:
   precedent).
 - Capture per device via `adb logcat -v time` (Android) / `idevicesyslog` (iOS), as
   `fdc-s1-measurement/scripts/fdc_{android,ios}_trials.sh` do.
-- A 14-day **passive** soak can't keep a cable attached, so run it as an **attended multi-session
-  N-trial campaign** (per-trial log files), exactly like FDC-S1 — N ≥ 14 days is the duration floor;
-  the trials supply the sample floor. There is **no durable on-device export** today (the `transport`
+- A **passive** soak can't keep a cable attached, so run it as an **attended multi-session
+  N-trial campaign** (per-trial log files), exactly like FDC-S1 — the trials supply the sample floor
+  (duration floor removed by decision 2026-06-29 — no 14-day soak; the ≥385-sample Wilson-LB
+  criterion is the sole gate). There is **no durable on-device export** today (the `transport`
   column is queryable but un-exported; `transportMix()` is display-only).
 - **Per-platform-direction attribution is NOT in the persisted column** (it has no peer/platform/
   same-WiFi dimension) — pair the ephemeral flow-event trace to the known two-device platform pair
@@ -324,12 +325,15 @@ mDNS-sharing rationale `FDC-11:545,552`) — this is a **manual real-device soak
 **RETIRE the WS CHAT transport (component 1) ONLY iff ALL hold:**
 - **libp2p-LAN chat win-rate clears a confidence bound, not a point estimate:** the **Wilson score
   95% lower bound** of instrument-point-2's win-rate must be **≥ 95%**, computed **per
-  platform-direction** (Android→Android, iOS→iOS, Android↔iOS), sustained over **N ≥ 14 days**. (A
+  platform-direction** (Android→Android, iOS→iOS, Android↔iOS). (A
   bare ≥95% point estimate is NOT sufficient — 95% over 20 sends has a Wilson LB ≈ 75%.)
 - **Minimum sample floor: ≥ 385 successfully-attempted same-WiFi sends per platform-direction**
-  (≈ ±5 pp at 95% conf; clearing a Wilson LB ≥ 95% at this n needs an observed rate ≈ ≥ 97%). The
-  14-day window is a **duration floor, never a substitute for the sample floor** — this
+  (≈ ±5 pp at 95% conf; clearing a Wilson LB ≥ 95% at this n needs an observed rate ≈ ≥ 97%). This
+  **≥385-sample floor is the sole gate** — this
   operationalizes the qualitative "keep when data is thin" fail-safe below into a hard rule.
+  *(Duration floor removed by decision 2026-06-29 — no 14-day soak; the ≥385-sample Wilson-LB
+  criterion is the sole gate. The verdict may be issued once the sample floor + statistical bars
+  are met, regardless of calendar span.)*
 - **No statistically-significant increase in LAN-direct delivery failure rate** vs the bonsoir+WS
   baseline (instrument point 3): the **upper 95% CI (Newcombe/Wilson) of
   [failureRate(libp2p-ON) − failureRate(baseline)] ≤ +1.0 pp** (a non-inferiority margin), per
@@ -382,7 +386,7 @@ The entire dataset rests on the transport labels bucketing correctly, so lock th
 ## Expected Output
 
 1. **A per-component verdict:**
-   - **retire-chat?** (yes/no, with the measured 14-day win-rate + net-new-failure delta per
+   - **retire-chat?** (yes/no, with the measured win-rate + net-new-failure delta per
      platform);
    - **retire-media?** (yes/no — necessarily *no* unless a media-over-libp2p plan or an explicit
      relay-CDN-only acceptance exists);
@@ -427,7 +431,8 @@ The entire dataset rests on the transport labels bucketing correctly, so lock th
 
 - The soak dataset captured (per-platform-direction win-rate Wilson-LB, net-new-failure delta CI,
   bonsoir-fed-dial reliability, double-delivery rate by leg-pair) on real iOS+Android pairs over
-  **N ≥ 14 days AND ≥ 385 sends/platform-direction**, recorded in `FDC-S6-libp2p-lan-soak-RESULTS.md`
+  **≥ 385 sends/platform-direction** (duration floor removed by decision 2026-06-29 — no 14-day
+  soak; the ≥385-sample Wilson-LB criterion is the sole gate), recorded in `FDC-S6-libp2p-lan-soak-RESULTS.md`
   (harness `fdc-s6-measurement/`).
 - The **Soak preconditions** are met (transport_metrics_test.dart green incl. the net-new
   `'upgraded'→'direct'` lock; soak + baseline binaries built `--dart-define=FDC_FLOW_LOG=1`).
