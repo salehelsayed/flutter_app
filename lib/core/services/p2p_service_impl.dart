@@ -5005,7 +5005,8 @@ class P2PServiceImpl
     // upload at the caller remains the durable copy. Fail-closed: the leg fires
     // ONLY when `enc` (so `filePath` is the ciphertext artifact, never a
     // plaintext source) — invariant 6, "ciphertext only, never plaintext".
-    if (_libp2pLanMediaEnabled && enc && hasNonCircuitDirectConn(peerId)) {
+    final hasDirectConn = hasNonCircuitDirectConn(peerId);
+    if (_libp2pLanMediaEnabled && enc && hasDirectConn) {
       unawaited(
         _sendLibp2pLanMedia(
           peerId: peerId,
@@ -5017,6 +5018,21 @@ class P2PServiceImpl
           encScheme: encScheme,
           durationMs: durationMs,
         ),
+      );
+    } else {
+      // FDC-15 / CV-34 diagnostic: the additive LAN-media leg skips SILENTLY when
+      // any gate condition is false, which is indistinguishable from a WS/relay
+      // fallback in the logs. Surface WHICH condition blocked it so the device
+      // proof (and the eventual media soak) can attribute a non-fire.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'LIBP2P_LAN_MEDIA_SEND_SKIPPED',
+        details: {
+          'id': mediaId,
+          'flagEnabled': _libp2pLanMediaEnabled,
+          'enc': enc,
+          'hasDirectConn': hasDirectConn,
+        },
       );
     }
 
