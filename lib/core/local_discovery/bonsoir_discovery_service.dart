@@ -1,7 +1,8 @@
 import 'dart:async';
 
 import 'package:bonsoir/bonsoir.dart';
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, visibleForTesting, TargetPlatform;
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/startup_timing.dart';
@@ -157,55 +158,72 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     _ownPeerId = peerId;
     _stopping = false;
 
-    // iOS Local Network watchdog gate: while Local Network is suspected
-    // unavailable, SKIP the native bonsoir (re)start so a blocking DNS-SD read
-    // can't freeze the main thread past the 10s scene-update watchdog. This
-    // returns early WITHOUT touching the broadcast/discovery objects (they were
-    // already torn down by the restart's stopAdvertising), so discovery stays
-    // dark until a later restart after the backoff lapses.
+    // iOS Local Network watchdog gate — 178: scoped to the BROADCAST ONLY.
+    // While Local Network is suspected unavailable, SKIP the native bonsoir
+    // broadcast (re)start so its synchronous main-thread DNS-SD read can't
+    // freeze the main thread past the 10s scene-update watchdog (0x8BADF00D).
+    //
+    // CRITICAL (178): this gates ONLY the broadcast. The discovery/browse below
+    // ALWAYS runs (it is off-main-safe post-175 + upstream 5.1.3), so the
+    // discoverer keeps browsing and a resolved peer can self-clear the latch
+    // (`:_handleDiscoveryEvent` resolved → `_suspectedDeniedUntil = null`). The
+    // OLD behavior returned early before BOTH legs, killing the browse — and the
+    // only un-latch path needs the browse, so the latch was terminal until the
+    // full backoff (the over-latch this fix removes). The latch itself is armed
+    // only on iOS (see `_armSuspectedDenialProbe`); Android never gates.
+    bool broadcastGated = false;
     final deniedUntil = _suspectedDeniedUntil;
     if (deniedUntil != null) {
       if (DateTime.now().toUtc().isBefore(deniedUntil)) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'LOCAL_MDNS_START_SKIPPED_SUSPECTED_DENIED',
-          details: {'peerId': peerId},
-        );
-        return;
+        broadcastGated = true;
+      } else {
+        // Backoff lapsed → allow this start to re-probe Local Network.
+        _suspectedDeniedUntil = null;
       }
-      // Backoff lapsed → allow this start to re-probe Local Network.
-      _suspectedDeniedUntil = null;
     }
 
-    // Advertise our service. FDC-11: additively carry the libp2p QUIC (+TCP)
-    // listen ports in the TXT so a same-WiFi peer can build the libp2p
-    // LAN-direct multiaddr — the `wsPort` advert stays for the WS byte path.
-    // (FDC-S2 hard requirement: advertise the libp2p QUIC port, NOT wsPort.)
-    final service = BonsoirService(
-      name: _instanceName(peerId),
-      type: _serviceType,
-      port: wsPort,
-      attributes: {
-        'peerId': peerId,
-        if (quicPort != null) 'quicPort': '$quicPort',
-        if (tcpPort != null) 'tcpPort': '$tcpPort',
-      },
-    );
+    if (broadcastGated) {
+      // Only the native broadcast (re)start — the main-thread watchdog vector —
+      // is skipped; the browse below still runs. The distinct event makes the
+      // browse-ran-anyway path observable on device.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'LOCAL_MDNS_ADVERTISE_SKIPPED_SUSPECTED_DENIED',
+        details: {'peerId': peerId},
+      );
+    } else {
+      // Advertise our service. FDC-11: additively carry the libp2p QUIC (+TCP)
+      // listen ports in the TXT so a same-WiFi peer can build the libp2p
+      // LAN-direct multiaddr — the `wsPort` advert stays for the WS byte path.
+      // (FDC-S2 hard requirement: advertise the libp2p QUIC port, NOT wsPort.)
+      final service = BonsoirService(
+        name: _instanceName(peerId),
+        type: _serviceType,
+        port: wsPort,
+        attributes: {
+          'peerId': peerId,
+          if (quicPort != null) 'quicPort': '$quicPort',
+          if (tcpPort != null) 'tcpPort': '$tcpPort',
+        },
+      );
 
-    // Bonsoir's native iOS log formatting can crash while stringifying
-    // resolved service payloads, so plugin-side logging stays disabled in
-    // the default factory.
-    _broadcast = _createBroadcast(service);
-    await _broadcast!.ready;
-    await _broadcast!.start();
+      // Bonsoir's native iOS log formatting can crash while stringifying
+      // resolved service payloads, so plugin-side logging stays disabled in
+      // the default factory.
+      _broadcast = _createBroadcast(service);
+      await _broadcast!.ready;
+      await _broadcast!.start();
 
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'LOCAL_MDNS_ADVERTISE_START',
-      details: {'peerId': peerId, 'port': wsPort},
-    );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'LOCAL_MDNS_ADVERTISE_START',
+        details: {'peerId': peerId, 'port': wsPort},
+      );
+    }
 
-    // Start discovery of other peers.
+    // Start discovery of other peers. 178: this ALWAYS runs — even while the
+    // broadcast is gated — so the discoverer keeps browsing and a resolved peer
+    // can clear the suspected-denial latch.
     _discovery = _createDiscovery(_serviceType);
     await _discovery!.ready;
     _discoverySub?.cancel();
@@ -243,14 +261,23 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
 
   /// (Re)arms the one-shot suspected-Local-Network-denial probe. If advertising
   /// is still active with ZERO discovered peers when it fires, sets a backoff
-  /// deadline so the NEXT (re)start is skipped before its native DNS-SD read can
-  /// block the main thread past the iOS watchdog. "Suspected" because a user
-  /// genuinely alone on the LAN produces the same zero-peers signal — hence the
-  /// bounded backoff + the immediate clear when a real peer resolves.
+  /// deadline so the NEXT broadcast (re)start is skipped before its native
+  /// DNS-SD read can block the main thread past the iOS watchdog. "Suspected"
+  /// because a user genuinely alone on the LAN produces the same zero-peers
+  /// signal — hence the bounded backoff + the immediate clear when a real peer
+  /// resolves.
+  ///
+  /// 178: the latch is gated to iOS via [defaultTargetPlatform] (NOT `dart:io`
+  /// Platform, so host tests can override it). Android has no Local-Network
+  /// main-thread watchdog (the `0x8BADF00D` class is iOS-only; Android's
+  /// `b/155595000` SELinux issue is a separate Go-side problem), and gating the
+  /// broadcast on Android would break the working iPhone→Pixel direction, which
+  /// needs the Pixel's advert. So on Android the gate never latches.
   void _armSuspectedDenialProbe() {
     _denialProbeTimer?.cancel();
     _denialProbeTimer = Timer(_suspectedDenialProbe, () {
       _denialProbeTimer = null;
+      if (defaultTargetPlatform != TargetPlatform.iOS) return;
       if (!_stopping && _discovery != null && _peers.isEmpty) {
         _suspectedDeniedUntil = DateTime.now().toUtc().add(
           _suspectedDenialBackoff,

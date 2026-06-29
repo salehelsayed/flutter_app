@@ -11,6 +11,8 @@
 import 'dart:async';
 
 import 'package:bonsoir/bonsoir.dart';
+import 'package:flutter/foundation.dart'
+    show debugDefaultTargetPlatformOverride, TargetPlatform;
 import 'package:flutter_app/core/local_discovery/bonsoir_discovery_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -442,11 +444,16 @@ void main() {
     setUp(() {
       broadcasts = <_FakeBonsoirBroadcast>[];
       discoveries = <_FakeBonsoirDiscovery>[];
+      // 178: the suspected-denied latch is now iOS-only. This group exercises
+      // the iOS watchdog gate, so pin the platform to iOS (the default host
+      // test platform is android, on which the gate never latches — TC-78-01).
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
     });
 
     tearDown(() async {
       await service.stopAdvertising();
       debugSetFlowEventSink(null);
+      debugDefaultTargetPlatformOverride = null;
     });
 
     // Mirrors LocalP2PService.restartAdvertising (resume / address-update).
@@ -456,7 +463,7 @@ void main() {
     }
 
     test(
-      'zero peers after the probe latches the gate; the restart native start is SKIPPED',
+      'zero peers after the probe latches the gate; the restart broadcast start is SKIPPED',
       () async {
         service = build(backoff: const Duration(seconds: 10));
         await service.startAdvertising('me-peer', 54321);
@@ -470,7 +477,8 @@ void main() {
         final events = <Map<String, dynamic>>[];
         debugSetFlowEventSink(events.add);
 
-        // The restart's native bonsoir start MUST be skipped (the crash vector).
+        // The restart's native bonsoir BROADCAST start MUST be skipped (the
+        // crash vector). 178: the browse still runs — only the broadcast gates.
         await restart();
         expect(
           broadcasts,
@@ -479,7 +487,7 @@ void main() {
         );
         expect(
           events.where(
-            (e) => e['event'] == 'LOCAL_MDNS_START_SKIPPED_SUSPECTED_DENIED',
+            (e) => e['event'] == 'LOCAL_MDNS_ADVERTISE_SKIPPED_SUSPECTED_DENIED',
           ),
           hasLength(1),
         );
@@ -539,6 +547,175 @@ void main() {
       await restart();
       expect(broadcasts, hasLength(2),
           reason: 'backoff lapsed → the restart re-probes Local Network');
+    });
+  });
+
+  // 178: the pure-Dart "suspected-Local-Network-denied" gate over-latched and
+  // self-reinforced — it skipped the WHOLE startAdvertising (killing the
+  // browse), and the only un-latch path needs the browse, so a latch was
+  // terminal until the 5-min backoff. Two coupled fixes:
+  //   (1) platform-gate the latch to iOS — Android has no Local-Network
+  //       main-thread watchdog (the 0x8BADF00D class is iOS-only), and gating
+  //       the broadcast on Android would break the working iPhone→Pixel
+  //       direction (which needs the Pixel's advert).
+  //   (2) on iOS, gate ONLY the broadcast; ALWAYS run the browse (it is
+  //       off-main-safe post-175), so a resolved peer can self-clear the latch.
+  group('BonsoirDiscoveryService suspected-denied gate (178 over-latch fix)', () {
+    late List<_FakeBonsoirBroadcast> broadcasts;
+    late List<_FakeBonsoirDiscovery> discoveries;
+    late BonsoirDiscoveryService service;
+
+    BonsoirDiscoveryService build({
+      Duration probe = const Duration(milliseconds: 50),
+      Duration backoff = const Duration(seconds: 10),
+    }) {
+      return BonsoirDiscoveryService(
+        suspectedDenialProbe: probe,
+        suspectedDenialBackoff: backoff,
+        createBroadcast: (s) {
+          final fake = _FakeBonsoirBroadcast(s);
+          broadcasts.add(fake);
+          return fake;
+        },
+        createDiscovery: (type) {
+          final fake = _FakeBonsoirDiscovery(type);
+          discoveries.add(fake);
+          return fake;
+        },
+      );
+    }
+
+    setUp(() {
+      broadcasts = <_FakeBonsoirBroadcast>[];
+      discoveries = <_FakeBonsoirDiscovery>[];
+    });
+
+    tearDown(() async {
+      await service.stopAdvertising();
+      debugSetFlowEventSink(null);
+      debugDefaultTargetPlatformOverride = null;
+    });
+
+    // TC-78-01 (INV-1): Android must NEVER latch. The probe window lapses with
+    // zero peers — on HEAD the platform-blind `_armSuspectedDenialProbe` latches
+    // regardless of platform; the fix gates the latch to iOS.
+    test('Android never latches the suspected-denied gate', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      final events = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(events.add);
+
+      service = build(probe: const Duration(milliseconds: 50));
+      await service.startAdvertising('me-peer', 54321);
+
+      // Advertising stays active with zero discovered peers across the probe.
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+
+      expect(service.debugSuspectedLocalNetworkUnavailable, isFalse,
+          reason: 'Android has no Local-Network watchdog → never latch');
+      expect(
+        events.where(
+          (e) => e['event'] == 'LOCAL_MDNS_SUSPECTED_DENIED_GATE_LATCHED',
+        ),
+        isEmpty,
+        reason: 'no LATCHED event may fire on Android',
+      );
+
+      // The browse stays up: a peer can still resolve on Android.
+      discoveries.single.emit(
+        _resolvedEvent('peer-x', host: '192.168.0.5', port: 1),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(service.discoveredPeers, hasLength(1),
+          reason: 'browse never gets gated on Android');
+    });
+
+    // TC-78-02 (INV-2): on iOS, a latched gate skips the BROADCAST but the
+    // browse MUST keep running. Discriminator: in the same restart,
+    // DISCOVERY_START present AND ADVERTISE_START absent (proves "browse runs,
+    // broadcast gated", not "both run" nor "both skipped").
+    test('iOS suspected-denied skips the broadcast but KEEPS the browse running',
+        () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      service = build(backoff: const Duration(seconds: 10));
+      await service.startAdvertising('me-peer', 54321);
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      expect(service.debugSuspectedLocalNetworkUnavailable, isTrue);
+
+      final events = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(events.add);
+
+      // restartAdvertising (resume / address-update): broadcast gated, browse on.
+      await service.stopAdvertising();
+      await service.startAdvertising('me-peer', 54321);
+
+      final names = events.map((e) => e['event']).toList();
+      expect(names, contains('LOCAL_MDNS_DISCOVERY_START'),
+          reason: 'the browse ALWAYS runs, even while the broadcast is gated');
+      expect(names, isNot(contains('LOCAL_MDNS_ADVERTISE_START')),
+          reason: 'the broadcast (re)start is gated on a suspected denial');
+      expect(names, contains('LOCAL_MDNS_ADVERTISE_SKIPPED_SUSPECTED_DENIED'),
+          reason: 'the gated-broadcast path is observable as a distinct event');
+      expect(broadcasts, hasLength(1),
+          reason: 'no new native broadcast object while the broadcast is gated');
+      expect(discoveries, hasLength(2),
+          reason: 'a fresh discovery object — the browse restarted');
+    });
+
+    // TC-78-03 (INV-2): the latch SELF-CLEARS on iOS because the browse keeps
+    // running — a peer resolves through the still-up browse and clears
+    // `_suspectedDeniedUntil`, so the next start re-advertises.
+    test('iOS latch self-clears when a peer resolves via the still-running browse',
+        () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      service = build(backoff: const Duration(seconds: 10));
+      await service.startAdvertising('me-peer', 54321);
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      expect(service.debugSuspectedLocalNetworkUnavailable, isTrue);
+
+      // restart: broadcast gated, but the browse runs (a NEW discovery object).
+      await service.stopAdvertising();
+      await service.startAdvertising('me-peer', 54321);
+
+      // A peer resolves through the still-running browse → Local Network proven.
+      discoveries.last.emit(
+        _resolvedEvent('peer-y', host: '192.168.0.6', port: 2),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(service.debugSuspectedLocalNetworkUnavailable, isFalse,
+          reason: 'a resolved peer via the live browse clears the latch');
+
+      // The next start re-advertises (broadcast runs again).
+      await service.stopAdvertising();
+      await service.startAdvertising('me-peer', 54321);
+      expect(broadcasts, hasLength(2),
+          reason: 'latch cleared → the broadcast is no longer skipped');
+    });
+
+    // TC-78-04 (INV-3, watchdog protection — PRESERVE): on iOS, while latched,
+    // the broadcast (re)start MUST still be skipped — this is the 175/0x8BADF00D
+    // main-thread-DNS-SD vector protection. Mutation: remove the broadcast gate
+    // entirely → this goes red (watchdog vector reopened).
+    test('iOS still gates the broadcast on suspected denial (watchdog protection)',
+        () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      service = build(backoff: const Duration(seconds: 10));
+      await service.startAdvertising('me-peer', 54321);
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      expect(service.debugSuspectedLocalNetworkUnavailable, isTrue);
+
+      final events = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(events.add);
+
+      await service.stopAdvertising();
+      await service.startAdvertising('me-peer', 54321);
+
+      final names = events.map((e) => e['event']).toList();
+      expect(names, isNot(contains('LOCAL_MDNS_ADVERTISE_START')),
+          reason: 'no native broadcast (re)start while latched (watchdog vector '
+              'stays closed)');
+      expect(names, contains('LOCAL_MDNS_ADVERTISE_SKIPPED_SUSPECTED_DENIED'));
+      expect(broadcasts, hasLength(1),
+          reason: 'no new native broadcast object created while latched');
     });
   });
 }
