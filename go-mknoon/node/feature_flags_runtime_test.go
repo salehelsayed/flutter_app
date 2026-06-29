@@ -31,20 +31,20 @@ func TestFeatureFlags_DefaultsRemainBackwardCompatible(t *testing.T) {
 	}
 }
 
-// FDC-16 (CV-09 / CV-13 / FDC-15) — the Fast-Direct-Connection transport flags
-// ship DARK: they default to false and may flip to true ONLY after their
-// device-proof gate closes (FDC-16 Scope Guard — never flip a prod flag ahead of
-// its device proof). This is the PARKED pre-flip polarity of the staged
-// flag-flip locks: it pins the current dark default so an accidental EARLY flip
-// re-reds here. When a gate closes, the matching CV inverts its assertion:
+// FDC-16 staged flag-flip locks (CV-09 / CV-13 / FDC-15). The Fast-Direct-
+// Connection transport flags graduate from DARK (default false) to default-true
+// ONLY after their device-proof gate closes (FDC-16 Scope Guard — never flip a
+// prod flag ahead of its device proof). This test pins each flag's CURRENT
+// polarity so an accidental EARLY flip — OR a regression that re-darkens an
+// already-graduated flag — re-reds here:
 //
-//	EnableLibp2pLANDial  -> true after FDC-11 D1 two-phone proof (CV-08 -> CV-09)
-//	EnableDcutrUpgrade   -> true after the FDC-12 DCUtR campaign  (CV-11/12 -> CV-13)
-//	EnableLibp2pLANMedia -> true after FDC-15 D1 LAN-media proof  (CV-34)
+//	EnableLibp2pLANDial  -> TRUE: graduated after FDC-11 D1 two-phone proof (CV-08 -> CV-09)
+//	EnableDcutrUpgrade   -> false (dark) until the FDC-12 DCUtR campaign     (CV-11/12 -> CV-13)
+//	EnableLibp2pLANMedia -> false (dark) until FDC-15 D1 LAN-media proof     (CV-34)
 func TestFeatureFlags_FdcTransportFlagsShipDarkUntilDeviceProof(t *testing.T) {
 	flags := DefaultFeatureFlags()
-	if flags.EnableLibp2pLANDial {
-		t.Fatal("EnableLibp2pLANDial must default false (dark) until FDC-11 D1 device-proof closes (CV-08 -> CV-09); do not flip ahead of device proof")
+	if !flags.EnableLibp2pLANDial {
+		t.Fatal("EnableLibp2pLANDial must default TRUE after FDC-11 D1 two-phone device-proof closed (CV-08 -> CV-09); a regression that re-darkens it breaks LAN-direct for every default install")
 	}
 	if flags.EnableDcutrUpgrade {
 		t.Fatal("EnableDcutrUpgrade must default false (dark) until the FDC-12 DCUtR device campaign closes (CV-11/12 -> CV-13)")

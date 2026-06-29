@@ -5,9 +5,10 @@ package node
 // deployment and quick rollback if needed.
 //
 // All flags default to true (features enabled) via DefaultFeatureFlags(), with
-// the explicit exceptions of the Phase-3 device-gated flags EnableLibp2pLANDial
-// (FDC-11) and EnableDcutrUpgrade (FDC-12), which default to FALSE until their
-// device gates are GREEN (see each field's doc).
+// the explicit exceptions of the Phase-3 device-gated flags EnableDcutrUpgrade
+// (FDC-12) and EnableLibp2pLANMedia (FDC-15), which default to FALSE until their
+// device gates are GREEN (see each field's doc). EnableLibp2pLANDial (FDC-11) was
+// the third such exception until CV-09 graduated it to true (CV-08 D1 proof).
 type FeatureFlags struct {
 	// EnableSharedRelayBackend enables shared state between relay instances
 	// (e.g. Redis-backed inbox, rendezvous, push tokens).
@@ -34,13 +35,16 @@ type FeatureFlags struct {
 	EnableDeferredDirectAck bool `json:"enableDeferredDirectAck"`
 
 	// EnableLibp2pLANDial gates the FDC-11 bonsoir-fed libp2p LAN-direct dial
-	// (HandleLANPeerFound → host.Connect over a same-WiFi QUIC multiaddr). Unlike
-	// the relay flags above it defaults to FALSE: the LAN dial is additive and
-	// fail-safe (peers fall back to the WS LAN leg + relay), but the new
-	// advertise/parse wiring is device-unproven (a wrong port re-triggers the
-	// FDC-S2 QUIC-identify hang as a config bug), so it stays off until the D1
-	// two-phone device gate is GREEN — matching sibling Phase-3 flag discipline
-	// (FDC-12 EnableDcutrUpgrade, FDC-15 EnableLibp2pLANMedia).
+	// (HandleLANPeerFound → host.Connect over a same-WiFi QUIC multiaddr). CV-09
+	// graduated it to default TRUE now that the D1 two-phone device gate closed
+	// (CV-08, commit 121f0551: real Pixel 6 ↔ iPhone 11 reached
+	// MSG_RECEIVED_TRANSPORT:"direct" both directions). The dial stays additive and
+	// fail-safe (peers fall back to the WS LAN leg + relay). NOTE: in production the
+	// load-bearing default is the Dart feature-flags map, which is always sent in
+	// full to node:start and applied wholesale by EffectiveFlags; this Go default is
+	// the nil-map fallback only. The two sibling Phase-3 flags (FDC-12
+	// EnableDcutrUpgrade, FDC-15 EnableLibp2pLANMedia) stay dark until their own
+	// device gates close.
 	EnableLibp2pLANDial bool `json:"enableLibp2pLANDial"`
 
 	// EnableDcutrUpgrade gates the FDC-12 opportunistic DCUtR relay->direct
@@ -69,9 +73,10 @@ type FeatureFlags struct {
 }
 
 // DefaultFeatureFlags returns a FeatureFlags with all relay features enabled.
-// EnableLibp2pLANDial (FDC-11) and EnableDcutrUpgrade (FDC-12) are the
-// exceptions — both default to false until their device gates are GREEN (see the
-// field docs).
+// EnableLibp2pLANDial (FDC-11) graduated to true at CV-09 (CV-08 D1 two-phone
+// proof closed). EnableDcutrUpgrade (FDC-12) and EnableLibp2pLANMedia (FDC-15)
+// remain the exceptions — both default to false until their device gates are
+// GREEN (see the field docs).
 func DefaultFeatureFlags() FeatureFlags {
 	return FeatureFlags{
 		EnableSharedRelayBackend:     true,
@@ -80,7 +85,7 @@ func DefaultFeatureFlags() FeatureFlags {
 		EnableInPlaceRelayRecovery:   true,
 		EnableResumeGroupRecovery:    true,
 		EnableDeferredDirectAck:      true,
-		EnableLibp2pLANDial:          false, // FDC-11: off until D1 device-proven
+		EnableLibp2pLANDial:          true,  // FDC-11: graduated at CV-09 (CV-08 D1 two-phone proof closed)
 		EnableDcutrUpgrade:           false, // FDC-12: off until DCUtR device campaign is GREEN
 		EnableLibp2pLANMedia:         false, // FDC-15: off until D1 two-phone media gate is GREEN
 	}

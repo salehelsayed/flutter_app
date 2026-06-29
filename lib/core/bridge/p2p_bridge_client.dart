@@ -57,11 +57,17 @@ Map<String, bool> defaultResilienceFeatureFlags() {
     ),
     // FDC-11: gates the Go-side bonsoir-fed libp2p LAN-direct dial
     // (HandleLANPeerFound: peerstore-seed + host.Connect + relay->direct upgrade).
-    // Defaults OFF until the two-phone same-WiFi D1 gate (CV-08) is GREEN; flip on
-    // for the device-proof via --dart-define=MKNOON_ENABLE_LIBP2P_LAN_DIAL=true.
+    // CV-09: defaults ON now that the two-phone same-WiFi D1 gate (CV-08) closed
+    // (commit 121f0551 — real Pixel 6 <-> iPhone 11 reached
+    // MSG_RECEIVED_TRANSPORT:"direct" both directions). This Dart default is
+    // LOAD-BEARING: the full flag map is always sent to node:start and Go applies
+    // it wholesale (config.go EffectiveFlags returns the map in its entirety when
+    // non-nil), so THIS value — not the Go feature_flags.go fallback — is the
+    // production default. The dart-define stays an explicit override knob
+    // (=false forces-off for A/B / rollback).
     'enableLibp2pLANDial': const bool.fromEnvironment(
       'MKNOON_ENABLE_LIBP2P_LAN_DIAL',
-      defaultValue: false,
+      defaultValue: true,
     ),
     // FDC-12: gates the Go-side opportunistic DCUtR relay->direct upgrade
     // (ForceReachabilityPublic + active hole punch). Defaults OFF until the
