@@ -1945,6 +1945,26 @@ func splitHostAddresses(h host.Host) (listenAddrs []string, circuitAddrs []strin
 		}
 		listenAddrs = append(listenAddrs, s)
 	}
+	// FDC-11 (Android): when the OS blocks local interface enumeration — Android
+	// SELinux denies the Go runtime's netlink route socket (bug b/155595000) —
+	// h.Addrs()/AddrsFactory report no routable LAN address, so listenAddrs is
+	// empty and the bonsoir advert omits the libp2p port; a same-WiFi peer then
+	// discovers this node but has no quic/tcp port to LAN-dial. The bound listen
+	// sockets still know their PORT even when the host IP cannot be enumerated,
+	// so fall back to them to recover it. These are unspecified (0.0.0.0 / ::)
+	// addrs — deliberately NOT run through isNonRoutableAddr, since the dialing
+	// peer supplies the IP from mDNS and only the port is mined from here (by the
+	// Dart advert's _libp2pListenPort). No-op on platforms where h.Addrs() already
+	// yields a routable LAN address (e.g. iOS), so this only heals the blocked case.
+	if len(listenAddrs) == 0 {
+		for _, addr := range h.Network().ListenAddresses() {
+			s := addr.String()
+			if strings.Contains(s, "/p2p-circuit") {
+				continue
+			}
+			listenAddrs = append(listenAddrs, s)
+		}
+	}
 	return listenAddrs, circuitAddrs
 }
 

@@ -18,6 +18,22 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
   static const String _serviceType = '_mknoon._tcp';
   static const String _serviceName = 'mknoon';
 
+  /// The advertised mDNS instance name. MUST be unique per device: the fixed
+  /// `mknoon` collides whenever 2+ devices share a LAN, and mDNS conflict
+  /// resolution renames the loser to `mknoon (2)` (a space + parentheses), which
+  /// Android NsdManager fails to resolve — the peer is browsed but its resolve
+  /// never completes (`PEER_LOST` without `PEER_FOUND`), so LAN-direct never
+  /// fires in that direction. Suffixing with a slice of the peerId keeps the
+  /// name unique, stable, and DNS-SD-safe (base58 chars only, < 63 bytes). The
+  /// peerId still travels in the TXT record, which is what identifies the peer;
+  /// discovery still browses by `_serviceType`, so this is transparent to peers.
+  static String _instanceName(String peerId) {
+    final suffix = peerId.length > 12
+        ? peerId.substring(peerId.length - 12)
+        : peerId;
+    return '$_serviceName-$suffix';
+  }
+
   /// Factory seams so host tests can drive the discovery contract with fake
   /// bonsoir objects; production defaults construct the real plugin types.
   /// `printLogs: false` is a deliberate iOS-crash mitigation — it stays
@@ -100,15 +116,33 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     String host,
     Map<String, String> attributes,
   ) {
-    final proto = host.contains(':') ? 'ip6' : 'ip4';
+    // iOS bonsoir resolves a peer to its `.local` HOSTNAME (e.g.
+    // "Android_X.local."), NOT a numeric IP — whereas Android's NsdManager
+    // returns a numeric IP. A hostname placed in an /ip4 (or /ip6) multiaddr
+    // fails to parse in libp2p ("failed to parse multiaddr"), so the LAN dial
+    // silently never happens in that direction. Pick the multiaddr protocol from
+    // the host shape: numeric IPv4 → /ip4, contains ':' → /ip6, otherwise it is a
+    // hostname → /dns4 (libp2p's resolver expands it to an IP at dial time; Go's
+    // darwin resolver handles `.local` via mDNSResponder). The trailing dot in a
+    // FQDN ("…local.") is stripped — it is valid DNS but trips the multiaddr
+    // parser.
+    final h = host.endsWith('.') ? host.substring(0, host.length - 1) : host;
+    final String proto;
+    if (h.contains(':')) {
+      proto = 'ip6';
+    } else if (RegExp(r'^\d{1,3}(\.\d{1,3}){3}$').hasMatch(h)) {
+      proto = 'ip4';
+    } else {
+      proto = 'dns4';
+    }
     final addrs = <String>[];
     final quicPort = int.tryParse(attributes['quicPort'] ?? '');
     if (quicPort != null && quicPort > 0) {
-      addrs.add('/$proto/$host/udp/$quicPort/quic-v1');
+      addrs.add('/$proto/$h/udp/$quicPort/quic-v1');
     }
     final tcpPort = int.tryParse(attributes['tcpPort'] ?? '');
     if (tcpPort != null && tcpPort > 0) {
-      addrs.add('/$proto/$host/tcp/$tcpPort');
+      addrs.add('/$proto/$h/tcp/$tcpPort');
     }
     return addrs;
   }
@@ -148,7 +182,7 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     // LAN-direct multiaddr — the `wsPort` advert stays for the WS byte path.
     // (FDC-S2 hard requirement: advertise the libp2p QUIC port, NOT wsPort.)
     final service = BonsoirService(
-      name: _serviceName,
+      name: _instanceName(peerId),
       type: _serviceType,
       port: wsPort,
       attributes: {

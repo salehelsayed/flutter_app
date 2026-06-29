@@ -990,6 +990,195 @@ void main() {
     });
   });
 
+  // ──────────────── FDC-11 (174): LAN advert libp2p-port self-heal ──────────
+  // The FDC-07 cold-start early seam derives the libp2p QUIC/TCP advert ports
+  // from listenAddresses BEFORE the host has surfaced its resolved LAN listen
+  // addrs, so it advertises null. The resolved addrs later arrive via the
+  // addresses:updated push; _handleAddressesUpdated must re-derive and
+  // re-advertise so a same-WiFi peer can build a non-empty libp2pAddresses.
+  //
+  // SAFETY: a re-advertise is a native bonsoir stop+start whose SYNC main-thread
+  // DNS-SD read SIGKILLs iOS when Local Network is denied/pending, and the
+  // suspected-denied gate can't protect a re-start fired inside the cold-start
+  // window. So the publish is DEFERRED until a peer resolves over mDNS
+  // (_localNetworkProven) — provably-safe AND the only moment the ports are
+  // actually needed (a peer exists to dial).
+  group('FDC-11 LAN advert self-heal (174)', () {
+    const quicAddr = '/ip4/192.168.0.5/udp/45000/quic-v1';
+    const tcpAddr = '/ip4/192.168.0.5/tcp/45001';
+    const wsAddr = '/ip4/192.168.0.5/tcp/8080/ws';
+
+    Future<FakeLocalP2PService> startWithListenAddrs(
+      List<String> listenAddresses,
+    ) async {
+      service.dispose();
+      final localP2P = FakeLocalP2PService();
+      service = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: inboxStagingRepository,
+        localP2PService: localP2P,
+      );
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'self-peer',
+          'isStarted': true,
+          'listenAddresses': listenAddresses,
+          'circuitAddresses': <String>[],
+          'connections': <dynamic>[],
+        }),
+      );
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+      // Latch local discovery active so the self-heal arm in
+      // _handleAddressesUpdated runs (mirrors the startNode early seam).
+      await service.startEarlyLocalDiscovery();
+      return localP2P;
+    }
+
+    // A discovered same-WiFi peer (no libp2p addrs → not forwarded to the dial)
+    // proves Local Network works, unblocking the deferred advert publish.
+    void proveLocalNetwork(FakeLocalP2PService localP2P) =>
+        localP2P.addLocalPeer('proof-peer');
+
+    // TC-01: peer-proven → addresses:updated carrying libp2p ports → re-advertise.
+    test('addresses:updated re-advertises once Local Network is proven', () async {
+      final localP2P = await startWithListenAddrs(const <String>[]);
+      // Cold-start early seam derived null (no listen addrs yet).
+      expect(localP2P.startedQuicPort, isNull);
+      expect(localP2P.startedTcpPort, isNull);
+      expect(localP2P.updateLibp2pPortsCallCount, 0);
+
+      proveLocalNetwork(localP2P);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      bridge.onAddressesUpdated?.call(
+        const [quicAddr, tcpAddr, wsAddr],
+        const <String>[],
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(localP2P.updateLibp2pPortsCallCount, 1);
+      expect(localP2P.updatedQuicPort, 45000);
+      expect(localP2P.updatedTcpPort, 45001);
+    });
+
+    // TC-01b: addresses:updated arrives BEFORE any peer → deferred; the
+    // subsequent peer resolve flushes the held ports (either ordering converges).
+    test('addresses:updated defers, then a peer-resolve flushes the ports', () async {
+      final localP2P = await startWithListenAddrs(const <String>[]);
+
+      bridge.onAddressesUpdated?.call(
+        const [quicAddr, tcpAddr],
+        const <String>[],
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(
+        localP2P.updateLibp2pPortsCallCount,
+        0,
+        reason: 'must defer the re-advertise before Local Network is proven',
+      );
+
+      proveLocalNetwork(localP2P);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(localP2P.updateLibp2pPortsCallCount, 1);
+      expect(localP2P.updatedQuicPort, 45000);
+      expect(localP2P.updatedTcpPort, 45001);
+    });
+
+    // TC-06 (iOS watchdog SAFETY lock): addresses:updated with NO peer resolved
+    // yet must NOT fire a native bonsoir re-advertise (the cold-start window
+    // where a SYNC DNS-SD start() can SIGKILL the app on a denied prompt).
+    test('does NOT re-advertise before Local Network is proven', () async {
+      final localP2P = await startWithListenAddrs(const <String>[]);
+      final events = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(events.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      bridge.onAddressesUpdated?.call(
+        const [quicAddr, tcpAddr],
+        const <String>[],
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(
+        localP2P.updateLibp2pPortsCallCount,
+        0,
+        reason: 'no native bonsoir re-advertise may fire in the cold-start window',
+      );
+      final deferred = events.where(
+        (e) => e['event'] == 'FDC_LAN_ADVERT_PORTS_DEFERRED',
+      );
+      expect(
+        deferred,
+        isNotEmpty,
+        reason: 'the deferral must be device-observable',
+      );
+    });
+
+    // TC-04: device-verifiable numeric (un-redacted int) port diagnostic.
+    test('numeric advert-port diagnostic emits ints', () async {
+      final localP2P = await startWithListenAddrs(const <String>[]);
+      proveLocalNetwork(localP2P);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      final events = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(events.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      bridge.onAddressesUpdated?.call(
+        const [quicAddr, tcpAddr],
+        const <String>[],
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      final advert = events.firstWhere(
+        (e) =>
+            e['event'] == 'FDC_LAN_ADVERT_PORTS' &&
+            (e['details'] as Map)['source'] == 'addresses_updated',
+        orElse: () => <String, dynamic>{},
+      );
+      expect(
+        advert,
+        isNotEmpty,
+        reason: 'FDC_LAN_ADVERT_PORTS{source:addresses_updated} must fire',
+      );
+      final details = advert['details'] as Map<String, dynamic>;
+      // Discriminator: explicit ints, NOT a redacted multiaddr string.
+      expect(details['quicPort'], isA<int>());
+      expect(details['quicPort'], 45000);
+      expect(details['tcpPort'], 45001);
+      expect(details['source'], 'addresses_updated');
+    });
+
+    // TC-05 (INV-lock, GREEN on HEAD): _startLocalDiscovery extracts the QUIC
+    // and plain-TCP ports, never the /ws lane. The ws addr is ordered BEFORE the
+    // plain-tcp addr so the /ws exclusion is genuinely exercised (otherwise the
+    // loop would return the first plain-tcp match and never reach the ws lane,
+    // making this lock vacuous).
+    test('_startLocalDiscovery extracts quic/tcp ports, not the ws lane', () async {
+      final localP2P = await startWithListenAddrs(
+        const [quicAddr, wsAddr, tcpAddr],
+      );
+      expect(localP2P.startedQuicPort, 45000);
+      expect(localP2P.startedTcpPort, 45001); // plain tcp, NOT 8080 ws
+    });
+
+    // TC-05c (INV-lock): a ws-only listenAddresses (no plain libp2p tcp) yields
+    // a null tcp advert port — the ws lane is never mistaken for the tcp lane.
+    test('_startLocalDiscovery never picks the ws lane as the tcp port', () async {
+      final localP2P = await startWithListenAddrs(const [quicAddr, wsAddr]);
+      expect(localP2P.startedQuicPort, 45000);
+      expect(localP2P.startedTcpPort, isNull); // 8080 ws is NOT the tcp port
+    });
+
+    // TC-05b (INV-lock): empty listenAddresses → both ports null.
+    test('_startLocalDiscovery derives null from empty listenAddresses', () async {
+      final localP2P = await startWithListenAddrs(const <String>[]);
+      expect(localP2P.startedQuicPort, isNull);
+      expect(localP2P.startedTcpPort, isNull);
+    });
+  });
+
   group('transport inference', () {
     test(
       'account migration gate blocks inbound Go messages before stream emission',

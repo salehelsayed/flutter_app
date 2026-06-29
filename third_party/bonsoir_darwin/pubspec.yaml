@@ -1,0 +1,39 @@
+# VENDORED COPY of bonsoir_darwin 5.1.3 (pub.dev sha256
+# 2d25c70f0d09260be1c2ab583b80dd89cbbfd59997579dadf789c5af00c7b2e4).
+# Pulled in via the root pubspec.yaml `dependency_overrides: bonsoir_darwin {path:}`
+# so the surgical off-main DNS-SD patch in
+# darwin/Classes/Broadcast/BonsoirServiceBroadcast.swift is durable + reviewable.
+# See third_party/bonsoir_darwin/PATCH.md. (Plan: 175-bonsoir-broadcast-off-main-thread.)
+name: bonsoir_darwin
+description: Darwin (iOS & macOS) implementation of the Bonsoir plugin.
+homepage: https://bonsoir.skyost.eu
+repository: https://github.com/Skyost/Bonsoir/tree/master/packages/bonsoir_darwin
+issue_tracker: https://github.com/Skyost/Bonsoir/issues
+version: 5.1.3
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+  flutter: ">=3.7.0"
+
+flutter:
+  plugin:
+    implements: bonsoir
+    platforms:
+      ios:
+        pluginClass: SwiftBonsoirPlugin
+        sharedDarwinSource: true
+      macos:
+        pluginClass: SwiftBonsoirPlugin
+        sharedDarwinSource: true
+
+dependencies:
+  flutter:
+    sdk: flutter
+  bonsoir_platform_interface: ^5.1.3
+
+# NOTE (vendoring): upstream's pubspec carried a monorepo-relative
+# `dependency_overrides: bonsoir_platform_interface {path: ../bonsoir_platform_interface/}`.
+# That path does not exist in this vendored layout, and pub honors
+# dependency_overrides ONLY from the ROOT package — a transitive package's
+# overrides are ignored. Removed here to avoid a dangling path reference; the
+# root pubspec.lock resolves bonsoir_platform_interface ^5.1.3 normally.

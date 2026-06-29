@@ -64,6 +64,38 @@ void main() {
       expect(discovery().startCalls, 1);
     });
 
+    // FDC-11 device fix: the advertised mDNS *instance name* must be unique per
+    // device. A fixed name ('mknoon') collides whenever 2+ devices share a LAN;
+    // mDNS renames the loser to 'mknoon (2)' (space + parens), which Android
+    // NsdManager cannot resolve → the peer is browsed but never resolves
+    // (PEER_LOST without PEER_FOUND), killing LAN-direct that way. The browse
+    // TYPE and the TXT peerId are unchanged, so it stays transparent to peers.
+    test('advertised instance name is unique per device (not the bare name)',
+        () async {
+      const peerId = '12D3KooWFFxjyY1qsYFQYD8SUD26XSZarQASXAamWf31ZieUggcw';
+      await service.startAdvertising(peerId, 54321);
+
+      final name = broadcasts.single.service.name;
+      expect(name, isNot('mknoon'),
+          reason: 'a fixed name collides on a shared LAN → mDNS renames it to '
+              'a space/paren name NsdManager cannot resolve');
+      expect(name, startsWith('mknoon-'));
+      expect(name, endsWith(peerId.substring(peerId.length - 12)));
+      // Identity still travels in the TXT; the browse type is unchanged.
+      expect(broadcasts.single.service.attributes['peerId'], peerId);
+      expect(broadcasts.single.service.type, '_mknoon._tcp');
+    });
+
+    test('distinct peers advertise distinct instance names (no collision)',
+        () async {
+      await service.startAdvertising('peerAAAAAAAAAAAA', 1);
+      final nameA = broadcasts.last.service.name;
+      await service.stopAdvertising();
+      await service.startAdvertising('peerBBBBBBBBBBBB', 2);
+      final nameB = broadcasts.last.service.name;
+      expect(nameA, isNot(nameB));
+    });
+
     test('found event auto-resolves but does not surface a peer yet', () async {
       await service.startAdvertising('me-peer', 54321);
 
@@ -340,6 +372,38 @@ void main() {
         peer.libp2pAddresses.any((a) => a.contains('54321')),
         isFalse,
         reason: 'must build from quicPort/tcpPort, never the wsPort',
+      );
+    });
+
+    // FDC-11 device fix: iOS bonsoir resolves a peer to its `.local` HOSTNAME
+    // (not a numeric IP, as Android's NsdManager does). A hostname placed in an
+    // /ip4 multiaddr fails to parse in libp2p, so the LAN dial never happens —
+    // build /dns4 (trailing dot stripped) and let libp2p resolve it at dial time.
+    test('resolved peer with a .local hostname builds a /dns4 multiaddr',
+        () async {
+      await service.startAdvertising('me-peer', 54321);
+
+      discovery().emit(
+        _resolvedEvent(
+          'peer-h',
+          host: 'Android_9DNYWLJG.local.',
+          port: 54321,
+          quicPort: 45000,
+          tcpPort: 45001,
+        ),
+      );
+      await flush();
+
+      final peer = service.discoveredPeers['peer-h'];
+      expect(peer, isNotNull);
+      expect(peer!.libp2pAddresses,
+          contains('/dns4/Android_9DNYWLJG.local/udp/45000/quic-v1'));
+      expect(peer.libp2pAddresses,
+          contains('/dns4/Android_9DNYWLJG.local/tcp/45001'));
+      expect(
+        peer.libp2pAddresses.any((a) => a.startsWith('/ip4/')),
+        isFalse,
+        reason: 'a hostname must never be placed in an /ip4 multiaddr',
       );
     });
   });

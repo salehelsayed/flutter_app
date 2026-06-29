@@ -211,6 +211,21 @@ class P2PServiceImpl
   /// its per-peer cooldown, so this is a cheap front-line dedup.
   final Set<String> _lanDialForwardedPeerIds = <String>{};
 
+  /// FDC-11 (174): the libp2p QUIC/TCP LAN ports most recently derived from the
+  /// host's listen addresses (`addresses:updated`). The bonsoir advert is
+  /// re-published with these so a same-WiFi peer can build a non-empty
+  /// `libp2pAddresses`, but ONLY once Local Network is proven working — see
+  /// [_maybePublishLibp2pAdvertPorts].
+  int? _resolvedAdvertQuicPort;
+  int? _resolvedAdvertTcpPort;
+
+  /// FDC-11 (174): true once any same-WiFi peer has resolved over mDNS. A
+  /// resolve proves the OS granted Local Network access, so a bonsoir
+  /// re-advertise (native stop+start) can no longer block the iOS main thread
+  /// past the scene-update watchdog. Sticky for the process: permission does not
+  /// get revoked mid-session, and once proven every re-advertise is safe.
+  bool _localNetworkProven = false;
+
   /// P4: one-shot heuristic timer for suspected iOS Local-Network permission
   /// denial. Started on discovery activation; fires after 12s with zero peers
   /// to re-record the snapshot with `suspectedPermissionDenied: true`. Cancelled
@@ -454,6 +469,12 @@ class P2PServiceImpl
       if (peers.isNotEmpty) {
         _lanPermProbeTimer?.cancel();
         _lanPermProbeTimer = null;
+        // FDC-11 (174): a resolved peer proves Local Network works → it is now
+        // safe to (re)publish the libp2p advert ports, and a peer now exists to
+        // dial. Flush any ports that were derived earlier but held back during
+        // the cold-start window (see [_maybePublishLibp2pAdvertPorts]).
+        _localNetworkProven = true;
+        _maybePublishLibp2pAdvertPorts(source: 'peer_resolved');
       }
       _recordLanAvailability(
         discoveryActive: _localDiscoveryActive,
@@ -4163,6 +4184,70 @@ class P2PServiceImpl
       // performImmediateHealthCheck handles coalescing internally.
       unawaited(performImmediateHealthCheck());
     }
+
+    // FDC-11 (174): re-derive the libp2p LAN advert ports once the host surfaces
+    // its resolved listen addresses (the FDC-07 cold-start early seam advertised
+    // null because they were not yet known). Publishing is gated on Local
+    // Network being proven so the re-advertise can never reopen the iOS
+    // main-thread watchdog crash vector — see [_maybePublishLibp2pAdvertPorts].
+    _resolvedAdvertQuicPort = _libp2pListenPort(listenAddresses, quic: true);
+    _resolvedAdvertTcpPort = _libp2pListenPort(listenAddresses, quic: false);
+    _maybePublishLibp2pAdvertPorts(source: 'addresses_updated');
+  }
+
+  /// FDC-11 (174): self-heals the bonsoir advert with the resolved libp2p
+  /// QUIC/TCP LAN ports so a same-WiFi peer can build a non-empty
+  /// `libp2pAddresses` and the Go LAN-direct dial can fire (CV-08).
+  ///
+  /// A re-advertise is a native bonsoir stop+start, whose SYNCHRONOUS
+  /// main-thread DNS-SD read SIGKILLs iOS (0x8BADF00D scene-update watchdog)
+  /// when Local Network is denied or its prompt is pending. The bonsoir
+  /// suspected-denied gate only skips that re-start AFTER a 12s zero-peer probe
+  /// latches, so a re-advertise fired in the cold-start window (the first
+  /// `addresses:updated`, seconds after launch) would be UNGATED and could
+  /// re-block the main thread. We therefore defer publishing until a peer has
+  /// resolved over mDNS ([_localNetworkProven]) — which is simultaneously the
+  /// moment Local Network is provably working (re-advertise is safe) AND the
+  /// only moment the ports are actually needed (a peer exists to dial). If no
+  /// peer is ever discovered we never re-advertise, which is correct (nobody to
+  /// dial) and harmless. Called from both the `addresses:updated` re-derive and
+  /// the peer-resolved flush so either ordering converges. Advert-only: it never
+  /// touches `_localDiscoveryActive` or the suspected-permission-denied probe.
+  void _maybePublishLibp2pAdvertPorts({required String source}) {
+    final localP2P = _localP2P;
+    if (localP2P == null || !_localDiscoveryActive) return;
+    final quicPort = _resolvedAdvertQuicPort;
+    final tcpPort = _resolvedAdvertTcpPort;
+    if (quicPort == null && tcpPort == null) return;
+
+    if (!_localNetworkProven) {
+      // Cold-start window: re-advertising now could block the iOS main thread on
+      // a denied/pending Local Network prompt. Hold the ports; the peer-resolved
+      // flush publishes them once Local Network is provably working.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FDC_LAN_ADVERT_PORTS_DEFERRED',
+        details: {
+          'quicPort': quicPort ?? -1,
+          'tcpPort': tcpPort ?? -1,
+          'source': source,
+        },
+      );
+      return;
+    }
+
+    unawaited(
+      localP2P.updateLibp2pPorts(quicPort: quicPort, tcpPort: tcpPort),
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'FDC_LAN_ADVERT_PORTS',
+      details: {
+        'quicPort': quicPort ?? -1,
+        'tcpPort': tcpPort ?? -1,
+        'source': source,
+      },
+    );
   }
 
   void _handleRelayStateChanged(Map<String, dynamic> data) {

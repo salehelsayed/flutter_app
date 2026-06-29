@@ -36,6 +36,61 @@ void main() {
       expect(fakeDiscovery.advertisedPort, equals(wsServer.port));
     });
 
+    // FDC-11 (174) TC-02: once the host surfaces its resolved libp2p LAN ports
+    // (after the cold-start early seam advertised null), updateLibp2pPorts
+    // re-advertises with the fresh ports and updates the cache so a later
+    // restartAdvertising re-publishes them.
+    test('updateLibp2pPorts re-advertises with fresh libp2p ports', () async {
+      await service.start('peer', quicPort: null, tcpPort: null);
+      expect(fakeDiscovery.advertisedQuicPort, isNull);
+      expect(fakeDiscovery.advertisedTcpPort, isNull);
+      expect(fakeDiscovery.startAdvertisingCallCount, 1);
+
+      await service.updateLibp2pPorts(quicPort: 45000, tcpPort: 45001);
+
+      expect(fakeDiscovery.advertisedQuicPort, 45000);
+      expect(fakeDiscovery.advertisedTcpPort, 45001);
+      expect(
+        fakeDiscovery.startAdvertisingCallCount,
+        2,
+        reason: 're-advertise must re-issue startAdvertising',
+      );
+
+      // Cache updated: a later restartAdvertising re-publishes the fresh ports
+      // (not the stale cold-start null).
+      await service.restartAdvertising();
+      expect(fakeDiscovery.advertisedQuicPort, 45000);
+      expect(fakeDiscovery.advertisedTcpPort, 45001);
+    });
+
+    // FDC-11 (174) TC-02 edge: partial resolution — only the QUIC port is known
+    // — still re-advertises (quic non-null, tcp null).
+    test('updateLibp2pPorts advertises a quic-only subset', () async {
+      await service.start('peer');
+      expect(fakeDiscovery.startAdvertisingCallCount, 1);
+
+      await service.updateLibp2pPorts(quicPort: 45000, tcpPort: null);
+
+      expect(fakeDiscovery.advertisedQuicPort, 45000);
+      expect(fakeDiscovery.advertisedTcpPort, isNull);
+      expect(fakeDiscovery.startAdvertisingCallCount, 2);
+    });
+
+    // FDC-11 (174) TC-03: unchanged ports must NOT churn the advert. The
+    // addresses:updated push can fire many times with the same resolved ports.
+    test('updateLibp2pPorts is a no-op when ports unchanged', () async {
+      await service.start('peer', quicPort: 45000, tcpPort: 45001);
+      expect(fakeDiscovery.startAdvertisingCallCount, 1);
+
+      await service.updateLibp2pPorts(quicPort: 45000, tcpPort: 45001);
+
+      expect(
+        fakeDiscovery.startAdvertisingCallCount,
+        1,
+        reason: 'unchanged ports must not re-advertise',
+      );
+    });
+
     test('stop stops advertising and WS server', () async {
       await service.start('myPeerId');
       await service.stop();

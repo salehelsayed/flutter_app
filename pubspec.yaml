@@ -66,6 +66,12 @@ dependency_overrides:
   # 1.5.0 added startStream + changed hasPermission signature, breaking 0.7.2.
   # Override to 1.3.0 so it compiles (we don't target Linux).
   record_linux: ^1.3.0
+  # 175: vendored fork of bonsoir_darwin 5.1.3 carrying a surgical off-main DNS-SD
+  # patch (the broadcast `start()` ran DNSServiceProcessResult synchronously on the
+  # iOS main thread → 0x8BADF00D scene-update watchdog SIGKILL). Path-pinned so the
+  # patch is durable across `flutter pub upgrade`. See third_party/bonsoir_darwin/PATCH.md.
+  bonsoir_darwin:
+    path: third_party/bonsoir_darwin
 
 dev_dependencies:
   flutter_test:

@@ -14,6 +14,9 @@ class FakeLocalDiscoveryService implements LocalDiscoveryService {
   int? advertisedQuicPort;
   int? advertisedTcpPort;
   bool isAdvertising = false;
+  // FDC-11 (174): counts startAdvertising invocations so a test can assert a
+  // re-advertise actually happened (or did NOT, on the unchanged no-op path).
+  int startAdvertisingCallCount = 0;
 
   /// Simulate discovering a peer on the local network.
   void addPeer(LocalPeer peer) {
@@ -39,6 +42,7 @@ class FakeLocalDiscoveryService implements LocalDiscoveryService {
     advertisedQuicPort = quicPort;
     advertisedTcpPort = tcpPort;
     isAdvertising = true;
+    startAdvertisingCallCount++;
   }
 
   @override

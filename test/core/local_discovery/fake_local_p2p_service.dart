@@ -50,12 +50,25 @@ class FakeLocalP2PService implements LocalP2PService {
   int? startedQuicPort;
   int? startedTcpPort;
 
+  // FDC-11 (174): captures the self-heal re-advertise driven by
+  // _handleAddressesUpdated once the host surfaces its resolved LAN ports.
+  int? updatedQuicPort;
+  int? updatedTcpPort;
+  int updateLibp2pPortsCallCount = 0;
+
   @override
   Future<void> start(String peerId, {int? quicPort, int? tcpPort}) async {
     started = true;
     startedPeerId = peerId;
     startedQuicPort = quicPort;
     startedTcpPort = tcpPort;
+  }
+
+  @override
+  Future<void> updateLibp2pPorts({int? quicPort, int? tcpPort}) async {
+    updateLibp2pPortsCallCount++;
+    updatedQuicPort = quicPort;
+    updatedTcpPort = tcpPort;
   }
 
   @override

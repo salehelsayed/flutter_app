@@ -95,6 +95,43 @@ class LocalP2PService {
     );
   }
 
+  /// FDC-11 (174): re-advertise the bonsoir TXT with freshly-resolved libp2p
+  /// QUIC/TCP LAN ports. The FDC-07 cold-start early seam derives the ports
+  /// from the node's listen addresses before the host has surfaced its resolved
+  /// LAN addrs, so [start] advertises null; once the host reports them (via the
+  /// addresses:updated push), the P2P service calls this to self-heal the
+  /// advert. No-op when the ports are unchanged so repeated pushes do not churn
+  /// advertising. The cache is updated so a later [restartAdvertising]
+  /// re-publishes the fresh ports rather than the stale cold-start null. The
+  /// wsPort advert/WS messaging path is untouched.
+  Future<void> updateLibp2pPorts({int? quicPort, int? tcpPort}) async {
+    if (quicPort == _quicPort && tcpPort == _tcpPort) return;
+    _quicPort = quicPort;
+    _tcpPort = tcpPort;
+
+    final peerId = _peerId;
+    final port = _wsServer.port;
+    if (peerId == null || port == null) return;
+
+    await _discovery.stopAdvertising();
+    await _discovery.startAdvertising(
+      peerId,
+      port,
+      quicPort: _quicPort,
+      tcpPort: _tcpPort,
+    );
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'FDC_LAN_ADVERT_PORTS',
+      details: {
+        'quicPort': quicPort ?? -1,
+        'tcpPort': tcpPort ?? -1,
+        'source': 'update',
+      },
+    );
+  }
+
   /// Stream of messages received from local peers.
   Stream<LocalChatMessage> get localMessageStream => _wsServer.messageStream;
 
