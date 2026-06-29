@@ -119,6 +119,10 @@ void main() {
           multiaddrIsPrivateIp('/dnsaddr/relay.example.org/tcp/4001'),
           isFalse,
         );
+        // A bare `.local`/`..local` is an empty-label mDNS name (RFC 6762
+        // requires a hostname label before `.local`) — NOT valid LAN evidence.
+        expect(multiaddrIsPrivateIp('/dns4/.local/tcp/4001'), isFalse);
+        expect(multiaddrIsPrivateIp('/dns4/..local/tcp/4001'), isFalse);
       },
     );
   });

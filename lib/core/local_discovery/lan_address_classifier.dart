@@ -52,11 +52,19 @@ bool multiaddrsContainPrivateIp(Iterable<String> multiaddrs) =>
 /// insensitive; one trailing dot is tolerated defensively (Fix C strips the
 /// FQDN trailing dot at the multiaddr build, but the host is otherwise
 /// device-name-cased, so normalize both here). A bare `local` and any
-/// `*.local` qualify; every other dns host (a potential WAN domain) does not.
+/// `<label>.local` qualify; an empty-label `.local`/`..local` does NOT (RFC
+/// 6762 requires a hostname label), and every other dns host (a potential WAN
+/// domain) does not either.
 bool _isMdnsLocalHost(String host) {
+  const suffix = '.local';
   var h = host.toLowerCase();
   if (h.endsWith('.')) h = h.substring(0, h.length - 1);
-  return h == 'local' || h.endsWith('.local');
+  if (h == 'local') return true;
+  if (!h.endsWith(suffix)) return false;
+  // Require a non-empty hostname label before `.local` — a bare `.local`
+  // (or `..local`) is not a valid mDNS name.
+  final label = h.substring(0, h.length - suffix.length);
+  return label.isNotEmpty && !label.endsWith('.');
 }
 
 bool _isPrivateIpv4(String addr) {
