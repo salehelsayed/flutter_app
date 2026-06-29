@@ -145,11 +145,11 @@ git diff --check
 - Scope drift (BLOCKING): any change to the 175 vendored bonsoir, the Go side, or a new native permission probe.
 
 ## Done Criteria
-- [ ] RED added first (TC-78-01/02/03), failed for the documented reason.
-- [ ] Mutation-verified (each fix has a re-red revert; TC-78-04 guards the watchdog).
-- [ ] Direct GREEN + local_discovery dir + `core-host-all` green; `flutter analyze` 0-new; `git diff --check` clean.
-- [ ] Device: Pixel discovers the iPhone (no latch); iPhone 0× `0x8BADF00D`.
-- [ ] Post-land: `graphify update .` + `./graphify-arch/refresh_arch_graph.sh`.
+- [x] RED added first (TC-78-01/02/03/04), failed for the documented reason (platform-blind latch; `:174` early-return kills browse; browse-off-never-clears; old event name).
+- [x] Mutation-verified — forcing `broadcastGated = false` (remove the broadcast gate) re-reds TC-78-04 + TC-78-02 (watchdog vector reopened); TC-78-01/02/03 are RED-on-HEAD (HEAD = the reverted state for the platform-blind + coupled-gate mutations).
+- [x] Direct GREEN (23/23) + local_discovery dir (155) + `core-host-all` (264 files) green; `flutter analyze` 0-new; `git diff --check` clean.
+- [ ] Device: Pixel discovers the iPhone (no latch); iPhone 0× `0x8BADF00D`. — **manual two-phone, NOT runnable in this env; remains the closure step.**
+- [x] Post-land: `graphify update .` (full graph) + `./graphify-arch/refresh_arch_graph.sh` (arch graph) — both refreshed ~21:46-21:47 (arch committed as `51f8c216`).
 
 ## Scope Guard (hard "Do not")
 - Do NOT revert / modify the 175 vendored `third_party/bonsoir_darwin` off-main fix.
@@ -170,4 +170,4 @@ Sufficiency: 4 host RED rows (each tier+mutation+literal-gate+AUTO-registration)
 Structural blockers: none. **implementation-ready.** Device closure is manual two-phone (reuses the CV-08 rig).
 
 ## Final Execution Verdict
-Verdict: (pending execution) | Files changed: 1 prod (`bonsoir_discovery_service.dart`) + 1 test | Tests run (+counts): (pending) | Blocking: (pending) | QA verdict: (pending) | Non-blocking follow-ups: relax the iOS heuristic further (multi-window); graphify refresh.
+Verdict: **EXECUTED — host RED→GREEN complete; SHIP-WITH-FOLLOWUPS** (device closure pending, manual). | Files changed: 1 prod (`bonsoir_discovery_service.dart`) + 1 test (`bonsoir_discovery_service_contract_test.dart`) — landed in commit `48c1576f` by a concurrent session on the shared tree (content byte-identical to the tested working tree; no clobber). | Tests run: focused contract 23/23 GREEN (was +19 then +4 new RED-first); `test/core/local_discovery/` 155 GREEN; `core-host-all` 264 files PASS; `flutter analyze` 0 new; `git diff --check` clean. | Blocking: none. | QA verdict: 4-lens adversarial review = SHIP-WITH-FOLLOWUPS — both must-pass invariants HELD (watchdog: `_broadcast.start()` unreachable while latched, TC-78-04; Android-never-latches: only set-to-future of `_suspectedDeniedUntil` is behind the iOS guard, TC-78-01). | Non-blocking follow-ups: (1) on iOS self-clear, the latch ungates the *next* start but does not proactively re-advertise — the alone-then-peer-appears window stays non-advertising until the next resume/port-change (strictly better than HEAD, which also killed the browse; plan-accepted, TC-78-03 codifies "re-advertise on next start"); (2) relax the iOS heuristic further (multi-window/shorter backoff); (3) the manual two-phone device proof (TC-78-05).
