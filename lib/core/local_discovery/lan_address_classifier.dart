@@ -17,9 +17,17 @@
 library;
 
 /// True if [multiaddr] (e.g. `/ip4/192.168.1.5/udp/4001/quic-v1/p2p/12D3Koo...`)
-/// embeds a private / non-routable IPv4 or IPv6 host. A multiaddr with no
-/// `/ip4/` or `/ip6/` host component (e.g. `/dns4/...`, `/p2p-circuit/...`)
-/// returns false — only a literal private IP counts as LAN evidence.
+/// embeds a private / non-routable host. Two host shapes count as LAN evidence:
+///   1. a literal private IPv4/IPv6 host on an `/ip4`/`/ip6` segment, and
+///   2. an mDNS `.local` hostname on a `/dns4`/`/dns6`/`/dnsaddr` segment —
+///      Fix C (plan 175) builds `/dns4/<host>.local` for an iOS-resolved bonsoir
+///      peer (iOS resolves a same-WiFi peer to its `.local` mDNS hostname, not a
+///      numeric IP). A `.local` name is link-local by definition (RFC 6762): it
+///      resolves only on the local link via multicast DNS, so it can never be a
+///      WAN address and IS valid LAN evidence.
+/// A non-`.local` dns host (e.g. `/dns4/example.com`, a relay `/dnsaddr/...`) and
+/// `/p2p-circuit/` / empty still return false — only a private IP or a `.local`
+/// hostname counts.
 bool multiaddrIsPrivateIp(String multiaddr) {
   final segments = multiaddr.split('/');
   for (var i = 0; i + 1 < segments.length; i++) {
@@ -28,6 +36,8 @@ bool multiaddrIsPrivateIp(String multiaddr) {
       if (_isPrivateIpv4(segments[i + 1])) return true;
     } else if (proto == 'ip6') {
       if (_isPrivateIpv6(segments[i + 1])) return true;
+    } else if (proto == 'dns4' || proto == 'dns6' || proto == 'dnsaddr') {
+      if (_isMdnsLocalHost(segments[i + 1])) return true;
     }
   }
   return false;
@@ -37,6 +47,17 @@ bool multiaddrIsPrivateIp(String multiaddr) {
 /// the per-peer discriminator the LAN soak gates a `"direct"` win on.
 bool multiaddrsContainPrivateIp(Iterable<String> multiaddrs) =>
     multiaddrs.any(multiaddrIsPrivateIp);
+
+/// True if [host] is an mDNS `.local` name (RFC 6762 link-local). Case-
+/// insensitive; one trailing dot is tolerated defensively (Fix C strips the
+/// FQDN trailing dot at the multiaddr build, but the host is otherwise
+/// device-name-cased, so normalize both here). A bare `local` and any
+/// `*.local` qualify; every other dns host (a potential WAN domain) does not.
+bool _isMdnsLocalHost(String host) {
+  var h = host.toLowerCase();
+  if (h.endsWith('.')) h = h.substring(0, h.length - 1);
+  return h == 'local' || h.endsWith('.local');
+}
 
 bool _isPrivateIpv4(String addr) {
   final octets = addr.split('.');

@@ -76,6 +76,51 @@ void main() {
       );
       expect(multiaddrIsPrivateIp(''), isFalse);
     });
+
+    // TC-77-01: Fix C (plan 175) builds `/dns4/<host>.local` for iOS-resolved
+    // bonsoir peers (iOS resolves a same-WiFi peer to its mDNS `.local`
+    // hostname, not a numeric IP). An mDNS `.local` name is link-local by
+    // definition (RFC 6762) — it cannot be a WAN address, so it IS LAN evidence.
+    test('mDNS .local hostnames (Fix C /dns4) are LAN evidence', () {
+      expect(
+        multiaddrIsPrivateIp(
+          '/dns4/Android_9DNYWLJG.local/udp/45000/quic-v1/p2p/12D3KooFoo',
+        ),
+        isTrue,
+      ); // exact Fix-C QUIC shape
+      expect(
+        multiaddrIsPrivateIp('/dns4/Android_X.local/tcp/45001'),
+        isTrue,
+      ); // exact Fix-C TCP shape
+      expect(
+        multiaddrIsPrivateIp('/dns6/iphone-host.local/udp/45000/quic-v1'),
+        isTrue,
+      );
+      expect(multiaddrIsPrivateIp('/dnsaddr/host.local/tcp/4001'), isTrue);
+      expect(
+        multiaddrIsPrivateIp('/dns4/HOST.LOCAL/tcp/4001'),
+        isTrue,
+      ); // case-insensitive
+      expect(
+        multiaddrIsPrivateIp('/dns4/host.local./tcp/4001'),
+        isTrue,
+      ); // defensive: unstripped trailing dot
+    });
+
+    // TC-77-02: the anti-over-broaden lock. `.local` is the discriminator — a
+    // bare `/dns4` host could be a WAN domain, so only `.local` counts.
+    test(
+      'non-.local dns hosts stay ambiguous (not LAN) — .local is the discriminator',
+      () {
+        expect(multiaddrIsPrivateIp('/dns4/Android_X.local/tcp/45001'), isTrue);
+        expect(multiaddrIsPrivateIp('/dns4/example.com/tcp/4001'), isFalse);
+        expect(multiaddrIsPrivateIp('/dns4/notlocal/tcp/4001'), isFalse);
+        expect(
+          multiaddrIsPrivateIp('/dnsaddr/relay.example.org/tcp/4001'),
+          isFalse,
+        );
+      },
+    );
   });
 
   group('multiaddrsContainPrivateIp — per-peer aggregate', () {
@@ -101,6 +146,20 @@ void main() {
 
     test('false on empty list', () {
       expect(multiaddrsContainPrivateIp(const []), isFalse);
+    });
+
+    // TC-77-03: the exact per-peer advert set Fix C builds for an
+    // iOS-discovered Android peer — this is the value p2p_bridge_client.dart
+    // emits as `lanPrivateIp`. Before the fix both `/dns4` legs are false →
+    // aggregate false → the soak under-counts every iOS-discoverer LAN win.
+    test('multiaddrsContainPrivateIp true for a .local-only advert set', () {
+      expect(
+        multiaddrsContainPrivateIp([
+          '/dns4/Android_X.local/udp/45000/quic-v1',
+          '/dns4/Android_X.local/tcp/45001',
+        ]),
+        isTrue,
+      );
     });
   });
 }
