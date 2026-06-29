@@ -11,13 +11,13 @@
 ## Metrics
 | Metric | Full | Architecture | Delta |
 | --- | ---: | ---: | ---: |
-| nodes | 106296 | 42872 | -59.67% |
-| edges | 180221 | 66837 | -62.91% |
-| communities | 4493 | 913 | -79.68% |
-| source files | 5597 | 2217 | -60.39% |
-| avg edges per node | 1.6955 | 1.559 | -8.05% |
-| avg nodes per community | 23.66 | 46.96 | +98.48% |
-| app-owned ratio | 0.4436 | 0.9611 | +116.66% |
+| nodes | 106322 | 42872 | -59.68% |
+| edges | 180247 | 66838 | -62.92% |
+| communities | 4495 | 914 | -79.67% |
+| source files | 5598 | 2217 | -60.40% |
+| avg edges per node | 1.6953 | 1.559 | -8.04% |
+| avg nodes per community | 23.65 | 46.91 | +98.35% |
+| app-owned ratio | 0.4435 | 0.9611 | +116.71% |
 | noise ratio | 0.2055 | 0.0 | -100.00% |
 | unknown-source ratio | 0.0189 | 0.0389 | +105.82% |
 | top-10 hub noise ratio | 0.5 | 0.0 | -100.00% |
