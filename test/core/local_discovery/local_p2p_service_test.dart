@@ -91,6 +91,51 @@ void main() {
       );
     });
 
+    // 179 (TC-179-04 / INV-5): when the iOS suspected-denied gate is latched the
+    // broadcast (re)start is skipped — so a port self-heal must NOT tear down the
+    // prior ported advert (the re-register would never happen, leaving the device
+    // advertising nothing). It defers, keeps the working advert, and retries once
+    // the gate clears (a resolved peer un-latches it). Reproduces the CV-34
+    // sub-cause B that strands the iPhone with a portless/torn-down advert.
+    test(
+      'TC-179-04: a gated re-advert retains the prior ported advert and retries '
+      'after the gate clears',
+      () async {
+        await service.start('peer', quicPort: 4001, tcpPort: 4002);
+        expect(fakeDiscovery.startAdvertisingCallCount, 1);
+        expect(fakeDiscovery.stopAdvertisingCallCount, 0);
+        expect(fakeDiscovery.advertisedTcpPort, 4002);
+
+        // Gate latched: the broadcast (re)start would be skipped.
+        fakeDiscovery.isAdvertiseBroadcastGated = true;
+        await service.updateLibp2pPorts(quicPort: 4001, tcpPort: 4003);
+
+        expect(
+          fakeDiscovery.stopAdvertisingCallCount,
+          0,
+          reason: 'a gated re-advert must NOT tear down the prior ported advert',
+        );
+        expect(
+          fakeDiscovery.startAdvertisingCallCount,
+          1,
+          reason: 'no re-register while the broadcast is gated',
+        );
+        expect(
+          fakeDiscovery.advertisedTcpPort,
+          4002,
+          reason: 'the prior advert (tcp 4002) is retained, not replaced',
+        );
+
+        // Gate clears (a peer resolved → Local Network proven) → retry publishes
+        // the fresh ports (the cache was NOT poisoned by the deferred attempt).
+        fakeDiscovery.isAdvertiseBroadcastGated = false;
+        await service.updateLibp2pPorts(quicPort: 4001, tcpPort: 4003);
+
+        expect(fakeDiscovery.startAdvertisingCallCount, 2);
+        expect(fakeDiscovery.advertisedTcpPort, 4003);
+      },
+    );
+
     test('stop stops advertising and WS server', () async {
       await service.start('myPeerId');
       await service.stop();

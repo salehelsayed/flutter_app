@@ -17,6 +17,14 @@ class FakeLocalDiscoveryService implements LocalDiscoveryService {
   // FDC-11 (174): counts startAdvertising invocations so a test can assert a
   // re-advertise actually happened (or did NOT, on the unchanged no-op path).
   int startAdvertisingCallCount = 0;
+  // 179: counts stopAdvertising invocations so a test can assert a gated
+  // re-advert did NOT tear down the prior advert.
+  int stopAdvertisingCallCount = 0;
+  // 179: when true, the broadcast (re)start would be skipped by the iOS
+  // suspected-denied gate. Mirrors BonsoirDiscoveryService.isAdvertiseBroadcastGated
+  // so updateLibp2pPorts can avoid tearing down a working advert it cannot re-register.
+  @override
+  bool isAdvertiseBroadcastGated = false;
 
   /// Simulate discovering a peer on the local network.
   void addPeer(LocalPeer peer) {
@@ -47,6 +55,7 @@ class FakeLocalDiscoveryService implements LocalDiscoveryService {
 
   @override
   Future<void> stopAdvertising() async {
+    stopAdvertisingCallCount++;
     isAdvertising = false;
     _peers.clear();
     _peersController.add(Map.unmodifiable(_peers));

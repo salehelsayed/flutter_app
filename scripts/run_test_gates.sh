@@ -111,6 +111,12 @@ readonly ONE_TO_ONE_TESTS=(
   # the curated 1to1 gate, so these are appended explicitly.
   "test/core/services/p2p_service_impl_lan_media_test.dart"
   "test/core/bridge/go_bridge_client_lan_media_test.dart"
+  # 179: CV-34 Pixel→iPhone LAN-media forward-chain self-heal + observability
+  # (TC-179-01..03/05 — resolved-but-empty skip diagnostic, dedup-clear-on-lost,
+  # bounded re-resolve, advert port-derivation lock). test/core/** is NOT auto-
+  # globbed into the curated 1to1 gate, so it is appended explicitly. (TC-179-04
+  # lives in local_p2p_service_test.dart, which auto-globs into core-host-all.)
+  "test/core/services/p2p_service_lan_forward_test.dart"
 )
 
 readonly FEED_TESTS=(

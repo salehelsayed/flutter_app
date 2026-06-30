@@ -106,6 +106,22 @@ class LocalP2PService {
   /// wsPort advert/WS messaging path is untouched.
   Future<void> updateLibp2pPorts({int? quicPort, int? tcpPort}) async {
     if (quicPort == _quicPort && tcpPort == _tcpPort) return;
+
+    // 179 (CV-34 sub-cause B): a re-advert is a native bonsoir stop+start. While
+    // the iOS suspected-denied gate is latched the broadcast (re)start is SKIPPED
+    // (the 178 watchdog mitigation), so tearing down the prior advert would strand
+    // the device advertising nothing — exactly the portless-iPhone failure. Defer:
+    // keep the working advert and DON'T cache these ports, so the next update
+    // (after a resolved peer un-latches the gate) retries and publishes them.
+    if (_discovery.isAdvertiseBroadcastGated) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FDC_LAN_ADVERT_PORTS_DEFERRED_GATED',
+        details: {'quicPort': quicPort ?? -1, 'tcpPort': tcpPort ?? -1},
+      );
+      return;
+    }
+
     _quicPort = quicPort;
     _tcpPort = tcpPort;
 

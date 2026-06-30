@@ -475,11 +475,15 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
 
   /// True while the iOS Local Network watchdog gate is latched — the next
   /// native bonsoir (re)start will be skipped until the backoff lapses.
-  @visibleForTesting
-  bool get debugSuspectedLocalNetworkUnavailable {
+  @override
+  bool get isAdvertiseBroadcastGated {
     final until = _suspectedDeniedUntil;
     return until != null && DateTime.now().toUtc().isBefore(until);
   }
+
+  /// Test alias for [isAdvertiseBroadcastGated] (kept for the 178 contract tests).
+  @visibleForTesting
+  bool get debugSuspectedLocalNetworkUnavailable => isAdvertiseBroadcastGated;
 
   @override
   LocalPeer? getLocalPeer(String peerId) {

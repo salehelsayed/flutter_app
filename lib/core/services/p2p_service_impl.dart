@@ -211,6 +211,14 @@ class P2PServiceImpl
   /// its per-peer cooldown, so this is a cheap front-line dedup.
   final Set<String> _lanDialForwardedPeerIds = <String>{};
 
+  /// 179 (CV-34): LAN peers currently in an "empty libp2pAddresses" episode —
+  /// resolved over mDNS but advertised a portless TXT, so they were dropped at
+  /// the forward gate. Guards BOTH the resolved-but-empty diagnostic and the
+  /// bounded on-demand re-resolve to once per episode, so the ~20s
+  /// LOST_RETAINED/FOUND flap cannot drive a re-resolve storm. Cleared when the
+  /// peer heals (gains addresses) or drops out of the discovery snapshot.
+  final Set<String> _lanEmptyReResolvedPeerIds = <String>{};
+
   /// FDC-11 (174): the libp2p QUIC/TCP LAN ports most recently derived from the
   /// host's listen addresses (`addresses:updated`). The bonsoir advert is
   /// re-published with these so a same-WiFi peer can build a non-empty
@@ -464,6 +472,14 @@ class P2PServiceImpl
       _incomingLocalMediaController.add(media);
     });
     _localPeersSub = _localP2P?.discoveredPeersStream.listen((peers) {
+      // 179 (CV-34, INV-2): a peer that dropped out of the snapshot must be
+      // re-armed so a later (healed) reappearance re-crosses the LAN-dial
+      // forward. The dedup set was previously never cleared, so once a peer was
+      // forwarded — or once the iPhone finally re-advertised ports after a flap —
+      // the reappearance was silently deduped. Clear departed peers from both the
+      // forward dedup and the empty-resolve guard.
+      _lanDialForwardedPeerIds.removeWhere((id) => !peers.containsKey(id));
+      _lanEmptyReResolvedPeerIds.removeWhere((id) => !peers.containsKey(id));
       // P4: a peer appearing clears any suspected-permission-denied state and
       // stops the heuristic timer (a peer was seen → permission is not denied).
       if (peers.isNotEmpty) {
@@ -864,6 +880,17 @@ class P2PServiceImpl
     return null;
   }
 
+  /// 179: test seam over [_libp2pListenPort] so the advert port-derivation
+  /// (the A′ branch of the CV-34 Pixel→iPhone forward-chain root cause) can be
+  /// characterization-locked directly, without standing up the node-start +
+  /// discovery-active machinery. Behaviour-neutral; production never calls it.
+  @visibleForTesting
+  static int? debugLibp2pListenPort(
+    List<String> listenAddresses, {
+    required bool quic,
+  }) =>
+      _libp2pListenPort(listenAddresses, quic: quic);
+
   void _setLocalDiscoveryActive() {
     _localDiscoveryActive = true;
     _recordLanAvailability(
@@ -932,7 +959,26 @@ class P2PServiceImpl
     Map<String, LocalPeer> peers,
   ) async {
     for (final peer in peers.values) {
-      if (peer.libp2pAddresses.isEmpty) continue;
+      if (peer.libp2pAddresses.isEmpty) {
+        // 179 (CV-34): resolved-but-empty libp2pAddresses — the remote (the
+        // iPhone, in the device repro) advertised a portless TXT, so the Go LAN
+        // dial can't fire. On HEAD this was a SILENT `continue`, indistinguishable
+        // on device from "never resolved". Make it observable AND re-read the
+        // peer's possibly-healed TXT, both bounded to once per empty episode so
+        // the ~20s flap can't storm. The guard resets when the peer heals (below)
+        // or drops from the snapshot (the discovery listener).
+        if (_lanEmptyReResolvedPeerIds.add(peer.peerId)) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'LOCAL_MDNS_PEER_SKIPPED_NO_LIBP2P_ADDR',
+            details: {'peerId': peer.peerId, 'host': peer.host},
+          );
+          unawaited(_reResolveEmptyLanPeer(peer.peerId));
+        }
+        continue;
+      }
+      // Has addresses → it healed; allow a future empty episode to re-fire.
+      _lanEmptyReResolvedPeerIds.remove(peer.peerId);
       if (_lanDialForwardedPeerIds.contains(peer.peerId)) continue;
       if (!await _allowsAccountNetworkSideEffects(
         'p2p_lan_dial',
@@ -958,6 +1004,25 @@ class P2PServiceImpl
           details: {'error': e.toString()},
         );
       }
+    }
+  }
+
+  /// 179 (CV-34): re-read an empty-address LAN peer's TXT on demand so a healed
+  /// advert (the remote re-advertised its libp2p ports) is picked up without
+  /// waiting on the discoverer's retained stale cache. The resolved peer flows
+  /// back through `discoveredPeersStream`, re-driving the forward. RESOLVE/browse
+  /// only — it never advertises, so it cannot reopen the iOS broadcast watchdog
+  /// gate. Bounded by the caller via [_lanEmptyReResolvedPeerIds].
+  Future<void> _reResolveEmptyLanPeer(String peerId) async {
+    final localP2P = _localP2P;
+    if (localP2P == null) return;
+    try {
+      await localP2P.discoverLocalPeer(
+        peerId,
+        timeout: const Duration(seconds: 3),
+      );
+    } catch (_) {
+      // Best-effort: a later snapshot retries once the empty-episode guard resets.
     }
   }
 

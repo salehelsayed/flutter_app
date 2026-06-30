@@ -212,6 +212,13 @@ abstract class LocalDiscoveryService {
   /// Stop advertising and discovery.
   Future<void> stopAdvertising();
 
+  /// 179: true while the iOS Local-Network watchdog gate is latched — the next
+  /// native broadcast (re)start would be SKIPPED (see the suspected-denied gate
+  /// in BonsoirDiscoveryService). Lets the libp2p-advert port self-heal avoid
+  /// tearing down a working advert it cannot immediately re-register. Always
+  /// false on platforms/implementations that never gate the broadcast.
+  bool get isAdvertiseBroadcastGated;
+
   /// Stream that emits the current map of discovered peers whenever it changes.
   Stream<Map<String, LocalPeer>> get discoveredPeersStream;
 

@@ -109,17 +109,25 @@ class FakeLocalP2PService implements LocalP2PService {
     required Duration timeout,
   }) async {
     discoverLocalPeerCallCount++;
-    if (_localPeers.containsKey(peerId)) return true;
+    final existing = _localPeers[peerId];
     final pending = resolvesTo;
-    if (pending == null) return false;
-    resolvesTo = null;
-    final completer = Completer<bool>();
-    Timer(resolveDelay, () {
-      _localPeers[pending.peerId] = pending;
-      _peersController.add(Map.unmodifiable(_localPeers));
-      if (!completer.isCompleted) completer.complete(true);
-    });
-    return completer.future.timeout(timeout, onTimeout: () => false);
+    // 179: a re-resolve of a known-but-empty-address peer can HEAL it (the
+    // remote re-advertised its libp2p ports). resolvesTo overrides an empty
+    // cached peer; an already-populated peer keeps the existing fast-path.
+    if (pending != null &&
+        pending.peerId == peerId &&
+        (existing == null || existing.libp2pAddresses.isEmpty)) {
+      resolvesTo = null;
+      final completer = Completer<bool>();
+      Timer(resolveDelay, () {
+        _localPeers[pending.peerId] = pending;
+        _peersController.add(Map.unmodifiable(_localPeers));
+        if (!completer.isCompleted) completer.complete(true);
+      });
+      return completer.future.timeout(timeout, onTimeout: () => false);
+    }
+    if (existing != null) return true;
+    return false;
   }
 
   @override

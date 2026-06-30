@@ -27,6 +27,9 @@ class DisabledLocalDiscoveryService implements LocalDiscoveryService {
   }
 
   @override
+  bool get isAdvertiseBroadcastGated => false;
+
+  @override
   Stream<Map<String, LocalPeer>> get discoveredPeersStream =>
       _peersController.stream;
 

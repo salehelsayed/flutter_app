@@ -379,7 +379,10 @@ void main() {
         await service.warmPeer('peer-lan');
         await settle();
       });
-      expect(localB.discoverLocalPeerCallCount, 1);
+      // 179: the warm seed (1) discovers peer-lan with EMPTY libp2pAddresses, so
+      // the forward chain fires ONE additional bounded re-resolve (the CV-34
+      // self-heal). warmPeer's own single seed + dial-skip behaviour is unchanged.
+      expect(localB.discoverLocalPeerCallCount, 2);
       expect(dials(), 0);
       expect(
         eventsB.any(
@@ -401,7 +404,10 @@ void main() {
           await service.warmPeer('peer-lan');
           await settle();
         });
-        expect(local.discoverLocalPeerCallCount, 1); // the seed still runs
+        // 179: peer-lan is added with EMPTY libp2pAddresses, so the forward chain
+        // fires one bounded re-resolve (CV-34 self-heal) BEFORE warmPeer's own
+        // seed → 2 total. The warm seed still runs and the dial is still skipped.
+        expect(local.discoverLocalPeerCallCount, 2);
         expect(dials(), 0);
         expect(
           events.any((e) => e['event'] == 'P2P_SERVICE_WARM_PEER_DIAL_SKIPPED'),

@@ -692,6 +692,9 @@ BridgeMigrationStreamCrypto _e2eStreamCrypto() {
 // ---------------------------------------------------------------------------
 
 class _SharedFakeDiscovery implements LocalDiscoveryService {
+  @override
+  bool get isAdvertiseBroadcastGated => false; // 179: host fake never gates
+
   final Map<String, LocalPeer> registry;
   final _controller = StreamController<Map<String, LocalPeer>>.broadcast();
   String? advertisedPeerId;
