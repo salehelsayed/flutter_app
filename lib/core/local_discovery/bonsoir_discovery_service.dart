@@ -4,6 +4,7 @@ import 'package:bonsoir/bonsoir.dart';
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, visibleForTesting, TargetPlatform;
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
+import 'package:flutter_app/core/local_discovery/native_mdns_resolver.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/startup_timing.dart';
 
@@ -48,6 +49,10 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     // single re-probe.
     Duration suspectedDenialProbe = const Duration(seconds: 12),
     Duration suspectedDenialBackoff = const Duration(minutes: 5),
+    // 180: Android-only native mDNS resolver. Injected (non-null) on Android to
+    // resolve iOS `.local` adverts that NsdManager intermittently fails to
+    // complete; null (and never started) on iOS. See [native_mdns_resolver].
+    NativeMdnsResolver? nativeResolver,
   }) : _createBroadcast =
            createBroadcast ??
            ((service) => BonsoirBroadcast(service: service, printLogs: false)),
@@ -55,10 +60,15 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
            createDiscovery ??
            ((type) => BonsoirDiscovery(type: type, printLogs: false)),
        _suspectedDenialProbe = suspectedDenialProbe,
-       _suspectedDenialBackoff = suspectedDenialBackoff;
+       _suspectedDenialBackoff = suspectedDenialBackoff,
+       _nativeResolver = nativeResolver;
 
   final BonsoirBroadcastFactory _createBroadcast;
   final BonsoirDiscoveryFactory _createDiscovery;
+
+  // 180: native resolver (Android-only) + its resolved-peer subscription.
+  final NativeMdnsResolver? _nativeResolver;
+  StreamSubscription<NativeResolvedPeer>? _nativeResolverSub;
 
   // iOS Local Network main-thread watchdog mitigation.
   //
@@ -257,6 +267,23 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     });
 
     _armSuspectedDenialProbe();
+
+    // 180: on Android, ALSO run the native mDNS resolver alongside bonsoir —
+    // NsdManager (upstream bonsoir_android) intermittently never completes an
+    // iOS `.local`-hostname advert, so the native resolver (its own
+    // MulticastSocket with IP_MULTICAST_IF=wlan0) resolves the SRV target's A
+    // itself and feeds the SAME _commitResolvedPeer path (numeric host →
+    // _buildLibp2pAddresses → /ip4 → forward chain). Never started on iOS, so
+    // the bonsoir_darwin path + the 175/178 watchdog gates stay untouched.
+    // Overlap with a bonsoir resolve of the same peerId dedups in _peers.
+    final native = _nativeResolver;
+    if (native != null && defaultTargetPlatform == TargetPlatform.android) {
+      _nativeResolverSub ??= native.resolvedPeers.listen((p) {
+        if (_stopping || p.peerId == _ownPeerId) return;
+        _commitResolvedPeer(p.peerId, p.host, p.attributes, port: p.port);
+      });
+      unawaited(native.start(_serviceType));
+    }
   }
 
   /// (Re)arms the one-shot suspected-Local-Network-denial probe. If advertising
@@ -317,53 +344,12 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
         final host = service.host;
         if (host == null) return;
 
-        // FDC-11: build the remote's libp2p LAN multiaddrs from its advertised
-        // QUIC (+TCP) TXT ports — NEVER from service.port (= wsPort), which would
-        // feed the libp2p dial the wrong port and re-trigger the FDC-S2
-        // QUIC-identify "hang" as a config bug.
-        final libp2pAddresses = _buildLibp2pAddresses(host, service.attributes);
-
-        final peer = LocalPeer(
-          peerId: peerId,
-          host: host,
+        _commitResolvedPeer(
+          peerId,
+          host,
+          service.attributes,
           port: service.port,
-          discoveredAt: DateTime.now().toUtc(),
-          libp2pAddresses: libp2pAddresses,
         );
-        _peers[peerId] = peer;
-        _peersController.add(Map.unmodifiable(_peers));
-
-        // A real peer resolved → Local Network is provably working; clear any
-        // suspected-denial gate so a subsequent restart is NOT skipped.
-        _suspectedDeniedUntil = null;
-
-        // Wake any discover-on-send resolve waiting for this peer.
-        final pending = _pendingResolves.remove(peerId);
-        if (pending != null && !pending.isCompleted) pending.complete(peer);
-
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'LOCAL_MDNS_PEER_FOUND',
-          details: {'peerId': peerId, 'host': host, 'port': service.port},
-        );
-
-        // FDC-S1 (c): process-start → first mDNS resolve of a same-WiFi peer.
-        // Once per distinct peer; the earliest across peers is the global
-        // first-resolve metric (firstResolveOverall). Pair with
-        // LOCAL_MDNS_DISCOVERY_START for the start→resolve delta.
-        if (_fdcTimedResolvePeerIds.add(peerId)) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'FDC_COLDSTART_FIRST_MDNS_RESOLVE_TIMING',
-            details: {
-              'peerId': peerId,
-              'sinceProcessStartMs':
-                  StartupTiming.instance.sinceProcessStartMs() ?? -1,
-              'firstResolveOverall': !_fdcFirstMdnsResolveEmitted,
-            },
-          );
-          _fdcFirstMdnsResolveEmitted = true;
-        }
         break;
       case BonsoirDiscoveryEventType.discoveryServiceLost:
         final service = event.service;
@@ -374,6 +360,63 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
         break;
       default:
         break;
+    }
+  }
+
+  /// 180: shared resolved-peer commit used by BOTH the bonsoir resolve event and
+  /// the Android native mDNS resolver, so a native-resolved peer (numeric host)
+  /// reuses the exact build→dedup→stream→pending-wake→telemetry path. Keying by
+  /// peerId in [_peers] collapses overlap between the two resolvers to one entry.
+  void _commitResolvedPeer(
+    String peerId,
+    String host,
+    Map<String, String> attributes, {
+    required int port,
+  }) {
+    // FDC-11: build the remote's libp2p LAN multiaddrs from its advertised
+    // QUIC (+TCP) TXT ports — NEVER from the wsPort, which would feed the libp2p
+    // dial the wrong port and re-trigger the FDC-S2 QUIC-identify "hang".
+    final libp2pAddresses = _buildLibp2pAddresses(host, attributes);
+
+    final peer = LocalPeer(
+      peerId: peerId,
+      host: host,
+      port: port,
+      discoveredAt: DateTime.now().toUtc(),
+      libp2pAddresses: libp2pAddresses,
+    );
+    _peers[peerId] = peer;
+    _peersController.add(Map.unmodifiable(_peers));
+
+    // A real peer resolved → Local Network is provably working; clear any
+    // suspected-denial gate so a subsequent restart is NOT skipped.
+    _suspectedDeniedUntil = null;
+
+    // Wake any discover-on-send resolve waiting for this peer.
+    final pending = _pendingResolves.remove(peerId);
+    if (pending != null && !pending.isCompleted) pending.complete(peer);
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'LOCAL_MDNS_PEER_FOUND',
+      details: {'peerId': peerId, 'host': host, 'port': port},
+    );
+
+    // FDC-S1 (c): process-start → first mDNS resolve of a same-WiFi peer. Once
+    // per distinct peer; the earliest across peers is the global first-resolve
+    // metric. Pair with LOCAL_MDNS_DISCOVERY_START for the start→resolve delta.
+    if (_fdcTimedResolvePeerIds.add(peerId)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FDC_COLDSTART_FIRST_MDNS_RESOLVE_TIMING',
+        details: {
+          'peerId': peerId,
+          'sinceProcessStartMs':
+              StartupTiming.instance.sinceProcessStartMs() ?? -1,
+          'firstResolveOverall': !_fdcFirstMdnsResolveEmitted,
+        },
+      );
+      _fdcFirstMdnsResolveEmitted = true;
     }
   }
 
@@ -427,6 +470,13 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     // the gate must survive that teardown to skip the re-`start()` that blocks.
     _denialProbeTimer?.cancel();
     _denialProbeTimer = null;
+
+    // 180: tear down the native resolver — cancel the subscription, release the
+    // MulticastLock + close the socket. Nulling the sub lets a later
+    // startAdvertising re-subscribe (restartAdvertising).
+    await _nativeResolverSub?.cancel();
+    _nativeResolverSub = null;
+    await _nativeResolver?.stop();
 
     await _broadcast?.stop();
     _broadcast = null;

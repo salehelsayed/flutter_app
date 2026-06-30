@@ -14,14 +14,14 @@ Spec: `Test-Flight-Improv/180-android-nsdmanager-ios-mdns-completion-spec.md` (v
 ## Execution Progress
 | Time | Phase | Files touched | Command/evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|
-| | contract extraction (git status --short) | | | scope confirmed | |
-| | RED tests added | | (cmd proving they FAIL) | RED for expected reason | |
-| | implementation (Dart wiring) | | | scoped files only | |
-| | implementation (native Kotlin) | | | device-proof only | |
-| | direct GREEN | | (exact cmd) | reds now green | |
-| | preservation GREEN | | (exact cmd) | sentinels green | |
-| | named gates | | (exact cmd + counts) | gate green | |
-| | device-proof | | (manual two-phone) | TC-180-07/08 | |
+| 2026-06-30 | contract extraction (git status --short) | — | baseline: only info.plist + project.pbxproj drift | scope confirmed; plan committed 919578c1 | RED |
+| 2026-06-30 | RED tests added | bonsoir_discovery_native_resolver_test.dart (new), native_mdns_resolver.dart (scaffold), fake_native_mdns_resolver.dart, BonsoirDiscoveryService param | `flutter test …native_resolver_test.dart` → 7 RED (TC-03 fixed from vacuous) | RED for documented reasons | implement |
+| 2026-06-30 | implementation (Dart wiring) | bonsoir_discovery_service.dart (`_commitResolvedPeer` extract + start/subscribe/stop), main.dart (flag-gated Android injection) | shared commit path; ships dark behind MKNOON_ENABLE_NATIVE_MDNS | scoped files only | direct GREEN |
+| 2026-06-30 | implementation (native Kotlin) | (PENDING — device-proof-only; approach TBD: jmDNS vs hand-rolled MulticastSocket) | not host-testable | TC-180-07 closure | — |
+| 2026-06-30 | direct GREEN | (above) | `flutter test …native_resolver_test.dart` → +7 (with contract/eviction/ttl/179 = +48) | reds now green | preservation |
+| 2026-06-30 | preservation GREEN | — | bonsoir contract + eviction + ttl + 179 forward = +48 (the `_commitResolvedPeer` refactor kept bonsoir behavior); `flutter analyze` 0 new; `git diff --check` clean | sentinels green | named gates |
+| in-progress | named gates | scripts/run_test_gates.sh (no array edit — auto-glob) | `run_test_gates.sh core-host-all` (running) | — | device-proof |
+| | device-proof | | (manual two-phone, post native Kotlin) | TC-180-07/08 | |
 | | QA (independent) | | (re-run cmds) | blocking: none/list | verdict |
 
 ## Source Of Truth

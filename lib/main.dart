@@ -267,6 +267,7 @@ import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/local_discovery/local_p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/bonsoir_discovery_service.dart';
 import 'package:flutter_app/core/local_discovery/disabled_local_discovery_service.dart';
+import 'package:flutter_app/core/local_discovery/native_mdns_resolver.dart';
 import 'package:flutter_app/core/local_discovery/local_ws_server.dart';
 import 'package:flutter_app/core/local_discovery/local_media_server.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
@@ -1914,7 +1915,19 @@ void main() async {
   // Create local P2P service for WiFi-first delivery
   final LocalDiscoveryService localDiscovery = kDisableLocalDiscovery
       ? DisabledLocalDiscoveryService()
-      : BonsoirDiscoveryService();
+      // 180: on Android, compose the native mDNS resolver so the Pixel resolves
+      // iOS `.local` adverts that NsdManager intermittently fails to complete.
+      // null on iOS (the bonsoir_darwin path + 175/178 gates stay untouched).
+      // SHIPS DARK behind --dart-define=MKNOON_ENABLE_NATIVE_MDNS=true until the
+      // native MdnsResolver.kt handler lands + the device-proof (TC-180-07)
+      // passes — otherwise start() would hit a MissingPluginException.
+      : BonsoirDiscoveryService(
+          nativeResolver:
+              (Platform.isAndroid &&
+                      const bool.fromEnvironment('MKNOON_ENABLE_NATIVE_MDNS'))
+                  ? PlatformChannelMdnsResolver()
+                  : null,
+        );
   final localWsServer = LocalWsServer();
   // NET-REL-01 P3: wire the receive-side media server in production so inbound
   // local PUT /media/<id> is accepted (token-auth + declared-size + streaming
