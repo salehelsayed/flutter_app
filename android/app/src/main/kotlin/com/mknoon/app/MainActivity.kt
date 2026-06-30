@@ -4,10 +4,13 @@ import android.content.Intent
 import android.os.StatFs
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private var goBridge: GoBridge? = null
+    // 180: native jmDNS resolver for the Android-discovers-iOS `.local` wall.
+    private var mdnsResolver: MdnsResolver? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -55,6 +58,26 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+        // 180: native jmDNS mDNS resolver — MethodChannel start/stop + an
+        // EventChannel streaming resolved peers. Android-only; the Dart side
+        // (BonsoirDiscoveryService) gates it off on iOS and behind the
+        // MKNOON_ENABLE_NATIVE_MDNS flag.
+        val resolver = MdnsResolver(applicationContext)
+        mdnsResolver = resolver
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "mknoon/mdns_resolver",
+        ).setMethodCallHandler { call, result ->
+            resolver.onMethodCall(
+                call.method,
+                call.argument<String>("serviceType"),
+                result,
+            )
+        }
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "mknoon/mdns_resolver/events",
+        ).setStreamHandler(resolver)
     }
 
     /**

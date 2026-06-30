@@ -98,6 +98,10 @@ android {
 dependencies {
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar"))))
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+    // 180: pure-Java mDNS resolver. NsdManager intermittently never completes an
+    // iOS `.local`-hostname _mknoon._tcp service; jmDNS binds to the WiFi
+    // interface + does its own SRV/TXT/A resolution. See MdnsResolver.kt.
+    implementation("org.jmdns:jmdns:3.5.9")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.13")
 }
