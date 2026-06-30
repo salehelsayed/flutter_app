@@ -20,6 +20,7 @@ class _PresenceFake extends FakeP2PService implements RelayPresenceLookup {
   _PresenceFake({
     required this.presence,
     this.inboxDelay = Duration.zero,
+    this.connected = false,
     super.sendMessageResult,
     super.storeInInboxResult,
     super.useNullDiscover,
@@ -27,6 +28,10 @@ class _PresenceFake extends FakeP2PService implements RelayPresenceLookup {
 
   final RelayPresence presence;
   final Duration inboxDelay;
+
+  /// When true, the sender is already connected to the target → `unknownPresence`
+  /// is false → the presence block is skipped entirely (TC-181-50 boundary).
+  final bool connected;
   int presenceLookupCount = 0;
 
   /// Ordered completion/entry markers: 'inbox-call', 'inbox-done', 'live'.
@@ -37,6 +42,9 @@ class _PresenceFake extends FakeP2PService implements RelayPresenceLookup {
     presenceLookupCount++;
     return presence;
   }
+
+  @override
+  bool isConnectedToPeer(String peerId) => connected;
 
   @override
   Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
@@ -177,5 +185,67 @@ void main() {
     expect(p2p.storeInInboxCallCount, greaterThanOrEqualTo(1));
     // And the message is delivered (durable inbox custody), never lost.
     expect(result, SendChatMessageResult.success);
+  });
+
+  // TC-181-32u — `unknown` presence emits EMPHASIS but NOT INBOX_FIRST: only
+  // `unreachable` short-circuits; `unknown` keeps today's fully-concurrent
+  // behavior. Discriminator: EMPHASIS present AND INBOX_FIRST absent (distinguishes
+  // the two same-custody paths by event, not deposit count). Mutation: broaden the
+  // consumer guard to include `unknown` (send_chat_message_use_case.dart:776) →
+  // INBOX_FIRST appears → red.
+  test('unknown presence emits EMPHASIS but not INBOX_FIRST', () async {
+    final p2p = _PresenceFake(
+      presence: RelayPresence.unknown,
+      storeInInboxResult: true,
+    );
+    final repo = FakeMessageRepository();
+
+    final events = await captureFlowEvents(() async {
+      await sendChatMessage(
+        p2pService: p2p,
+        messageRepo: repo,
+        targetPeerId: 'target-peer',
+        text: 'hi',
+        senderPeerId: 'me',
+        senderUsername: 'Me',
+      );
+    });
+
+    expect((_emphasis(events)!['details'] as Map)['presence'], 'unknown');
+    expect(_has(events, 'CHAT_MSG_PRESENCE_INBOX_FIRST'), isFalse);
+    // The durable copy still fires (fully-concurrent behavior unchanged).
+    expect(p2p.storeInInboxCallCount, greaterThanOrEqualTo(1));
+  });
+
+  // TC-181-50 — a peer the sender is already connected to (`unknownPresence==false`)
+  // NEVER enters the presence block: no EMPHASIS, presence never consulted — even
+  // when the relay WOULD say `unreachable`. This is the out-of-scope stale-circuit
+  // boundary (181 Known Limitation): presence wiring does not change connected-peer
+  // sends. Mutation: drop the `!isConnectedToPeer` term from the unknownPresence
+  // definition (send_chat_message_use_case.dart:704-707) → the connected peer
+  // enters the block and emits EMPHASIS → red.
+  test('connected peer (unknownPresence=false) skips the presence block entirely', () async {
+    final p2p = _PresenceFake(
+      presence: RelayPresence.unreachable, // would short-circuit IF the block ran
+      connected: true, // isConnectedToPeer => true → unknownPresence false
+      storeInInboxResult: true,
+    );
+    final repo = FakeMessageRepository();
+
+    final events = await captureFlowEvents(() async {
+      await sendChatMessage(
+        p2pService: p2p,
+        messageRepo: repo,
+        targetPeerId: 'target-peer',
+        text: 'hi',
+        senderPeerId: 'me',
+        senderUsername: 'Me',
+      );
+    });
+
+    // Block skipped: presence never consulted, no emphasis, no short-circuit.
+    expect(_emphasis(events), isNull);
+    expect(p2p.presenceLookupCount, 0);
+    expect(_has(events, 'CHAT_MSG_PRESENCE_INBOX_FIRST'), isFalse);
   });
 }

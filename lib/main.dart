@@ -324,6 +324,7 @@ import 'package:flutter_app/features/push/application/resolve_group_notification
 import 'package:flutter_app/features/push/application/register_push_token_use_case.dart'
     as push_registration;
 import 'package:flutter_app/features/push/application/request_push_permission_use_case.dart';
+import 'package:flutter_app/features/push/application/set_presence_use_case.dart';
 import 'package:flutter_app/features/push/infrastructure/push_token_store_impl.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/application/download_post_media_use_case.dart';
@@ -3633,11 +3634,20 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       NotificationOpenDedupeGate();
   late final Future<void> _initialShareIntentCapture;
   Future<void>? _runtimeServicesReady;
+  // 181: FDC-09 §6.3 presence self-publish lifecycle driver. Announces
+  // `foreground` on resume (+ arms a 60s heartbeat) and `background` on pause so
+  // the relay can report this peer reachable/unreachable to senders — activating
+  // the committed send-side `unreachable` short-circuit. Best-effort, never
+  // load-bearing. Constructed from the concrete P2PServiceImpl (which implements
+  // RelayPresenceSet — kept off the base P2PService interface to spare the ~31
+  // fakes; no cast needed because widget.p2pService is the concrete type).
+  late final SetPresenceUseCase _setPresenceUseCase;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _setPresenceUseCase = SetPresenceUseCase(presenceSetter: widget.p2pService);
     widget.pendingMessageRetrier.setExternalRecoveryInProgressProvider(
       () => _isResuming || isGroupRecoveryInProgress(),
     );
@@ -4352,6 +4362,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.chatMessageListener.dispose();
     widget.contactRequestListener.dispose();
     _postNotificationOpenCoordinator.dispose();
+    _setPresenceUseCase.dispose(); // 181: cancel the 60s presence heartbeat Timer
     widget.pushRegistrationCoordinator?.dispose();
     widget.contactPresenceSnapshotRepository.dispose();
     widget.postRepository.dispose();
@@ -4434,6 +4445,13 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // by --dart-define=FDC_PAUSE_FLUSH=1) and must NOT fire in a normal build —
     // it takes a ~1.5s bg assertion on every pause. Kept until T8 closes on a
     // 2nd iOS major (the device RESULTS parser greps PAUSE_GRANT_PROBE).
+    // 181: announce `background` (best-effort, fire-and-forget) so the relay
+    // reports this peer `unreachable` to senders. The publish is unawaited INSIDE
+    // onBackgrounded() — it must NOT block or widen the bounded FDC-06 pause
+    // window (no new bg assertion); it also cancels the foreground heartbeat so
+    // no timer fires while suspended. A lost publish is acceptable (presence is
+    // non-load-bearing; the entry lapses to `unknown` after the ~180s self-TTL).
+    unawaited(_setPresenceUseCase.onBackgrounded());
     if (kFdcPauseGrantProbeEnabled) {
       unawaited(probePauseBackgroundGrant(widget.bridge));
     }
@@ -4489,6 +4507,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       // device. Fire-and-forget + idempotent — a still-offline retry is retained
       // for the next resume.
       unawaited(triggerGroupPendingBroadcastDrainAll());
+      // 181: announce `foreground` (+ arm the 60s presence heartbeat) on resume.
+      // Unawaited — best-effort hint, must add no latency to the resume path.
+      unawaited(_setPresenceUseCase.onForegrounded());
       await handleAppResumed(
         bridge: widget.bridge,
         p2pService: widget.p2pService,

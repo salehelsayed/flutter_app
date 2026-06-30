@@ -144,4 +144,50 @@ void main() {
       'foreground',
     );
   });
+
+  // TC-181-05 — dispose() cancels the heartbeat: NO further publishes fire after
+  // teardown (the 60 s Timer.periodic would otherwise leak across hot-restart /
+  // node-reinit). Mutation: remove `_stopHeartbeat()` from dispose() → ticks
+  // continue → red.
+  test('TC-181-05: dispose() stops the heartbeat, no further publishes', () {
+    fakeAsync((async) {
+      final setter = _FakePresenceSetter();
+      final useCase = SetPresenceUseCase(
+        presenceSetter: setter,
+        heartbeatInterval: const Duration(seconds: 60),
+      );
+
+      useCase.onForegrounded(); // initial foreground publish + arm heartbeat
+      async.flushMicrotasks();
+      expect(setter.calls, hasLength(1));
+      expect(useCase.isHeartbeatActive, isTrue);
+
+      useCase.dispose();
+      expect(useCase.isHeartbeatActive, isFalse);
+
+      async.elapse(const Duration(seconds: 180)); // 3 would-be ticks
+      async.flushMicrotasks();
+      expect(setter.calls, hasLength(1)); // none fired after dispose
+    });
+  });
+
+  // TC-181-07 — a `blocked` (account-move paused) or `failed` (network drop)
+  // result is non-load-bearing: it never throws and never retries/spams. (The
+  // `unsupported` old-relay case is TC-09-08.) Mutation: make _publish rethrow on
+  // a non-published result → the awaited onForegrounded() throws → red.
+  test('TC-181-07: blocked and failed results never throw, no retry', () async {
+    for (final r in [PresenceSetResult.blocked, PresenceSetResult.failed]) {
+      final setter = _FakePresenceSetter()..result = r;
+      final useCase = SetPresenceUseCase(presenceSetter: setter);
+      addTearDown(useCase.dispose);
+
+      // Neither edge may throw on a non-published result.
+      await useCase.onForegrounded();
+      await useCase.onBackgrounded();
+
+      // One publish per edge — no retry/spam on the degraded result.
+      expect(setter.calls.where((c) => c.state == 'foreground'), hasLength(1));
+      expect(setter.calls.where((c) => c.state == 'background'), hasLength(1));
+    }
+  });
 }

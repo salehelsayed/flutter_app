@@ -117,6 +117,12 @@ readonly ONE_TO_ONE_TESTS=(
   # globbed into the curated 1to1 gate, so it is appended explicitly. (TC-179-04
   # lives in local_p2p_service_test.dart, which auto-globs into core-host-all.)
   "test/core/services/p2p_service_lan_forward_test.dart"
+  # 181: presence lifecycle wiring lock — _MyAppState constructs SetPresenceUseCase
+  # and dispatches onForegrounded/onBackgrounded/dispose on resume/pause/teardown
+  # (the producer that activates the committed unreachable short-circuit). Source-
+  # assertion lock under test/core/**, which is NOT auto-globbed into the curated
+  # 1to1 gate, so it is appended explicitly (it also auto-globs into core-host-all).
+  "test/core/lifecycle/main_presence_lifecycle_wiring_test.dart"
 )
 
 readonly FEED_TESTS=(
