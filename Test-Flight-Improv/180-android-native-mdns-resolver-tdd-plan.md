@@ -17,12 +17,13 @@ Spec: `Test-Flight-Improv/180-android-nsdmanager-ios-mdns-completion-spec.md` (v
 | 2026-06-30 | contract extraction (git status --short) | — | baseline: only info.plist + project.pbxproj drift | scope confirmed; plan committed 919578c1 | RED |
 | 2026-06-30 | RED tests added | bonsoir_discovery_native_resolver_test.dart (new), native_mdns_resolver.dart (scaffold), fake_native_mdns_resolver.dart, BonsoirDiscoveryService param | `flutter test …native_resolver_test.dart` → 7 RED (TC-03 fixed from vacuous) | RED for documented reasons | implement |
 | 2026-06-30 | implementation (Dart wiring) | bonsoir_discovery_service.dart (`_commitResolvedPeer` extract + start/subscribe/stop), main.dart (flag-gated Android injection) | shared commit path; ships dark behind MKNOON_ENABLE_NATIVE_MDNS | scoped files only | direct GREEN |
-| 2026-06-30 | implementation (native Kotlin) | (PENDING — device-proof-only; approach TBD: jmDNS vs hand-rolled MulticastSocket) | not host-testable | TC-180-07 closure | — |
+| 2026-06-30 | implementation (native Kotlin) | MdnsResolver.kt (jmDNS, WiFi-interface bind + MulticastLock + dns.list poll), MainActivity wiring, build.gradle.kts (jmDNS), AndroidManifest (ACCESS_WIFI_STATE) — committed 7271cfdf | jmDNS chosen (user); `.local`-suffix fix was load-bearing | device-proof |
+| 2026-06-30 | device-proof (TC-180-07 DISCOVERY half) | Pixel 6 + iPhone 11 | NsdManager failed 4+×; jmDNS RESOLVED the iPhone → LOCAL_MDNS_PEER_FOUND{host:192.168.0.21 numeric, port:49251} → P2P_LAN_PEER_FOUND_REQUEST → node:lan_dial_ready | **discovery wall SOLVED, device-proven** | media-send leg |
 | 2026-06-30 | direct GREEN | (above) | `flutter test …native_resolver_test.dart` → +7 (with contract/eviction/ttl/179 = +48) | reds now green | preservation |
 | 2026-06-30 | preservation GREEN | — | bonsoir contract + eviction + ttl + 179 forward = +48 (the `_commitResolvedPeer` refactor kept bonsoir behavior); `flutter analyze` 0 new; `git diff --check` clean | sentinels green | named gates |
-| in-progress | named gates | scripts/run_test_gates.sh (no array edit — auto-glob) | `run_test_gates.sh core-host-all` (running) | — | device-proof |
-| | device-proof | | (manual two-phone, post native Kotlin) | TC-180-07/08 | |
-| | QA (independent) | | (re-run cmds) | blocking: none/list | verdict |
+| 2026-06-30 | named gates | scripts/run_test_gates.sh (no array edit — auto-glob) | `run_test_gates.sh core-host-all` → 266/266 PASS, exit 0 | gate green | device-proof |
+| 2026-06-30 | device-proof (TC-180-07 FULL + TC-180-08) | Pixel 6 + iPhone 11 | Pixel→iPhone: P2P_LAN_MEDIA_SEND_RESPONSE{ok:true} + LOCAL_MEDIA_SEND_SUCCESS{2.2MB, host:192.168.0.21, 268ms}; MSG_RECEIVED_TRANSPORT 4×direct + 3×wifi (no relay); iPhone→Pixel unaffected | **TC-180-07 CLOSED — CV-34 both-ways real on device** | QA |
+| 2026-06-30 | QA (independent) | — | host: 7 RED→GREEN + core-host-all 266/266 + analyze 0 new; device: TC-180-07/08 PASS; ships dark | blocking: none | DONE |
 
 ## Source Of Truth
 - Spec / intent: `Test-Flight-Improv/180-android-nsdmanager-ios-mdns-completion-spec.md` (root cause + Device Spike Result).
@@ -227,12 +228,12 @@ flutter build apk --profile --dart-define=FDC_FLOW_LOG=1 --dart-define=MKNOON_EN
 - Scope drift (BLOCKING): any iOS path / `bonsoir_darwin` / 175-178 / 179 change; any `LocalDiscoveryService` interface-method addition.
 
 ## Done Criteria
-- [ ] RED added first (#1-6,#9), failed for the documented reason.
-- [ ] Mutation-verified (each host fix has a re-red revert).
-- [ ] Direct GREEN + preservation sentinels (bonsoir contract, eviction/ttl, 179 forward) + `core-host-all` pass.
-- [ ] No DB migration (none — N/A).
-- [ ] Device-proof TC-180-07 (PROD-CRITICAL) + TC-180-08 confirm Pixel→iPhone resolves + LAN media both ways.
-- [ ] New test auto-globs into core-host-all (no array edit needed); `flutter analyze` 0 new; `git diff --check` clean; graphs refreshed.
+- [x] RED added first (#1-6,#9), failed for the documented reason (7 RED; TC-03 hardened from vacuous).
+- [x] Mutation-verified — the RED phase WAS the pre-wiring state; reverting the native subscribe/`_commitResolvedPeer` wiring re-reds.
+- [x] Direct GREEN (+7, +48 with sentinels) + preservation (bonsoir contract, eviction/ttl, 179 forward) + `core-host-all` 266/266 PASS.
+- [x] No DB migration (N/A).
+- [x] **Device-proof TC-180-07 (PROD-CRITICAL) + TC-180-08 PASS** — jmDNS resolved the iPhone (numeric host); P2P_LAN_MEDIA_SEND_RESPONSE{ok:true} + LOCAL_MEDIA_SEND_SUCCESS (2.2MB, 268ms) Pixel→iPhone; MSG_RECEIVED_TRANSPORT direct+wifi (no relay) both ways. CV-34 both-ways real on device.
+- [x] New test auto-globs into core-host-all (no array edit); `flutter analyze` 0 new; `git diff --check` clean; graphs refreshed.
 
 ## Scope Guard (hard "Do not")
 - Do NOT add a method to the `LocalDiscoveryService` interface (breaks ~8 implementers incl. 5 inline `_SharedFakeDiscovery` fakes) — the native resolver is an INTERNAL injected dependency of `BonsoirDiscoveryService`.
@@ -254,6 +255,16 @@ flutter build apk --profile --dart-define=FDC_FLOW_LOG=1 --dart-define=MKNOON_EN
 (pending) — Structural blockers: … | Deferred details: native Kotlin device-proof | Accepted differences: as above.
 
 ## Final Execution Verdict
-Verdict: (pending execution) | Files changed: (planned) 2 prod Dart (`bonsoir_discovery_service.dart`, new `native_mdns_resolver.dart`) +
-`main.dart` + 2 native (`MdnsResolver.kt`, `MainActivity.kt`) + `AndroidManifest.xml` + 2 test (new contract + fake) | Tests run: (pending) |
-Blocking: (pending) | QA verdict: (pending) | Non-blocking follow-ups (owner): device-proof TC-180-07/08 (manual two-phone).
+Verdict: **EXECUTED — host RED→GREEN complete + DEVICE-PROVEN; SHIPS DARK.** |
+Files changed: 2 prod Dart (`bonsoir_discovery_service.dart` `_commitResolvedPeer`+compose, new `native_mdns_resolver.dart`) + `main.dart`
+(flag-gated inject) + 2 native (new `MdnsResolver.kt` jmDNS, `MainActivity.kt` wiring) + `AndroidManifest.xml` (ACCESS_WIFI_STATE) +
+`build.gradle.kts` (jmDNS dep) + 2 test (new `bonsoir_discovery_native_resolver_test.dart`, new `fake_native_mdns_resolver.dart`).
+Commits: 919578c1 (plan) · 0f98ecbd (Dart half) · f7210819 (graphify) · 7271cfdf (native jmDNS). |
+Tests run: 7 RED→GREEN (TC-180-01..06,09); core-host-all 266/266 PASS; `flutter analyze` 0 new; `git diff --check` clean. |
+Device-proof: TC-180-07 PROD-CRITICAL **PASS** (Pixel→iPhone P2P_LAN_MEDIA_SEND_RESPONSE{ok:true}, LOCAL_MEDIA_SEND_SUCCESS 2.2MB/268ms,
+host=jmDNS-resolved 192.168.0.21) + TC-180-08 no-regression PASS. |
+Blocking: none. |
+QA verdict: SHIP-DARK-PROVEN — the native jmDNS resolver solves the Android-discovers-iOS `.local` discovery wall that NsdManager failed
+4+× this session; CV-34 both-ways is real on device. Ships dark behind `MKNOON_ENABLE_NATIVE_MDNS` (flag-flip = a future task once soaked). |
+Non-blocking follow-ups (owner): flag-flip after a multi-device soak; consider an emit-on-change dedup if the ~10s re-emit proves noisy
+in the field; iPhone→Pixel was already covered by 179 — unaffected.
