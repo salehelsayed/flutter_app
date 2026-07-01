@@ -135,6 +135,9 @@ class GoBridge: NSObject {
         // Peer operations
         case "dialPeer":
             runOnBackground({ BridgeDialPeer(args ?? "") }, method: "dialPeer", result: result)
+        // 183: active-chat keepalive liveness probe (libp2p ping).
+        case "peerPing":
+            runOnBackground({ BridgePeerPing(args ?? "") }, method: "peerPing", result: result)
         case "disconnectPeer":
             runOnBackground({ BridgeDisconnectPeer(args ?? "") }, result: result)
         case "sendMessage":

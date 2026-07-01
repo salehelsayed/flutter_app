@@ -245,6 +245,7 @@ import 'package:flutter_app/features/groups/application/retry_failed_group_messa
 import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/settings/application/profile_update_listener.dart';
+import 'package:flutter_app/core/services/connectivity_signal.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/services/pending_message_retrier.dart';
 import 'package:flutter_app/features/posts/application/pending_post_delivery_retrier.dart';
@@ -325,6 +326,7 @@ import 'package:flutter_app/features/push/application/register_push_token_use_ca
     as push_registration;
 import 'package:flutter_app/features/push/application/request_push_permission_use_case.dart';
 import 'package:flutter_app/features/push/application/set_presence_use_case.dart';
+import 'package:flutter_app/core/services/active_peer_keepalive_use_case.dart';
 import 'package:flutter_app/features/push/infrastructure/push_token_store_impl.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/application/download_post_media_use_case.dart';
@@ -2207,6 +2209,13 @@ void main() async {
     bridge: bridge,
     localP2PService: localP2PService,
     pushTokenStore: pushTokenStore,
+    // 182: wire the OS connectivity source (FDC-04's anticipated "bounded
+    // follow-up") so a foreground connectivity restore drains the offline inbox
+    // immediately — instead of waiting for the next ~30s health-check poll or an
+    // app resume. onNetworkChanged is total/never-throws and self-debounces.
+    // (activePeerId for the peer-scoped re-warm half is a follow-up: the
+    // ActiveConversationTracker is constructed later in this builder.)
+    networkChangeSignal: connectivityRestoredSignal(),
     accountMigrationNetworkGate:
         accountMigrationRuntimeNetworkGate.allowsAccountNetworkSideEffects,
     inboxStagingRepository: inboxStagingRepository,
@@ -3643,11 +3652,27 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   // fakes; no cast needed because widget.p2pService is the concrete type).
   late final SetPresenceUseCase _setPresenceUseCase;
 
+  // 183: active-chat keepalive lifecycle driver. While foreground + in a 1:1
+  // chat it pings the OPEN peer (~8s, under the ~30s QUIC idle) to keep the warm
+  // connection alive and detect a drop in seconds, then REUSES warmPeer +
+  // drainOfflineInbox (never a new re-dial/drain). Armed on resume, cancelled on
+  // pause, disposed on teardown. The probe is the concrete P2PServiceImpl (which
+  // implements PeerLivenessProbe — kept off the base P2PService interface to
+  // spare the ~31 fakes; no cast needed); the active 1:1 peer comes from the
+  // conversation tracker. Best-effort, never load-bearing.
+  late final ActivePeerKeepAliveUseCase _keepAliveUseCase;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _setPresenceUseCase = SetPresenceUseCase(presenceSetter: widget.p2pService);
+    _keepAliveUseCase = ActivePeerKeepAliveUseCase(
+      probe: widget.p2pService,
+      activePeerId: () => widget.conversationTracker.activePeerId,
+      onDropReWarm: widget.p2pService.warmPeer,
+      onDropDrain: widget.p2pService.drainOfflineInbox,
+    );
     widget.pendingMessageRetrier.setExternalRecoveryInProgressProvider(
       () => _isResuming || isGroupRecoveryInProgress(),
     );
@@ -4363,6 +4388,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.contactRequestListener.dispose();
     _postNotificationOpenCoordinator.dispose();
     _setPresenceUseCase.dispose(); // 181: cancel the 60s presence heartbeat Timer
+    _keepAliveUseCase.dispose(); // 183: cancel the ~8s keepalive Timer (no leak)
     widget.pushRegistrationCoordinator?.dispose();
     widget.contactPresenceSnapshotRepository.dispose();
     widget.postRepository.dispose();
@@ -4452,6 +4478,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // no timer fires while suspended. A lost publish is acceptable (presence is
     // non-load-bearing; the entry lapses to `unknown` after the ~180s self-TTL).
     unawaited(_setPresenceUseCase.onBackgrounded());
+    // 183: cancel the active-chat keepalive loop on pause (zero pings while
+    // suspended; resume re-arms it).
+    _keepAliveUseCase.onBackgrounded();
     if (kFdcPauseGrantProbeEnabled) {
       unawaited(probePauseBackgroundGrant(widget.bridge));
     }
@@ -4510,6 +4539,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       // 181: announce `foreground` (+ arm the 60s presence heartbeat) on resume.
       // Unawaited — best-effort hint, must add no latency to the resume path.
       unawaited(_setPresenceUseCase.onForegrounded());
+      // 183: arm the active-chat keepalive loop on resume (foreground-only — it
+      // can never fire while suspended).
+      _keepAliveUseCase.onForegrounded();
       await handleAppResumed(
         bridge: widget.bridge,
         p2pService: widget.p2pService,

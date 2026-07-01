@@ -659,6 +659,319 @@ void main() {
     );
   });
 
+  // ──────────────── 182: connectivity-restore inbox drain ────────────────
+  // When connectivity is restored while the app is foreground (WiFi auto-
+  // reconnect / handoff / router-back), onNetworkChanged must IMMEDIATELY pull
+  // the relay's stored offline inbox — instead of waiting for the next ~30s
+  // health-check poll or an app resume. The drain is roster-wide (fires even
+  // with no active conversation peer), durable (inbox:retrieve_pending, never
+  // the destructive inbox:retrieve — Report 48), debounced (rides the existing
+  // 5s flap floor), migration-gated, and inherits the 141 not-started defer.
+  // The seam is the already-present networkChangeSignal stream, subscribed to
+  // onNetworkChanged in the constructor.
+  group('182 connectivity-restore inbox drain', () {
+    var retrievePendingCount = 0;
+    var destructiveRetrieveCount = 0;
+
+    Future<void> settle() =>
+        Future<void>.delayed(const Duration(milliseconds: 25));
+
+    setUp(() {
+      retrievePendingCount = 0;
+      destructiveRetrieveCount = 0;
+      bridge.whenCommand('inbox:retrieve_pending', (_) {
+        retrievePendingCount++;
+        return jsonEncode({'ok': true, 'messages': [], 'hasMore': false});
+      });
+      // Report 48: the destructive read must NEVER be used by the drain.
+      bridge.whenCommand('inbox:retrieve', (_) {
+        destructiveRetrieveCount++;
+        return jsonEncode({'ok': true, 'messages': [], 'hasMore': false});
+      });
+    });
+
+    // (Re)build `service` wired to a connectivity signal; start unless asked
+    // not to, then let any start-time warm/drain settle and zero the counters
+    // so each test measures ONLY the connectivity-triggered drain.
+    Future<void> build({
+      required Stream<void> networkChangeSignal,
+      String? Function()? activePeerId,
+      Future<bool> Function({String? peerId, required String operation})?
+      accountMigrationNetworkGate,
+      bool start = true,
+    }) async {
+      service.dispose();
+      service = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: inboxStagingRepository,
+        localP2PService: FakeLocalP2PService(),
+        networkChangeSignal: networkChangeSignal,
+        activePeerId: activePeerId,
+        // The constructor's gate is non-nullable (permissive by default); when
+        // a test does not inject one, pass an explicit allow-all gate.
+        accountMigrationNetworkGate:
+            accountMigrationNetworkGate ??
+            ({peerId, required operation}) async => true,
+      );
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'self-peer',
+          'isStarted': true,
+          'listenAddresses': <String>[],
+          'circuitAddresses': <String>[],
+          'connections': <dynamic>[],
+        }),
+      );
+      if (start) {
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+      }
+      await settle();
+      bridge.calledCommands.clear();
+      bridge.payloadsByCommand.clear();
+      retrievePendingCount = 0;
+      destructiveRetrieveCount = 0;
+    }
+
+    // TC-182-01 (PROD-CRITICAL, drain-trigger leg): a connectivity event pulls
+    // the inbox even with NO active peer, and does so WITHOUT the peer-scoped
+    // re-warm (proving the drain sits before the active-peer guard).
+    test(
+      'TC-182-01: connectivity event drains the inbox even with NO active peer',
+      () async {
+        final signal = StreamController<void>();
+        await build(
+          networkChangeSignal: signal.stream,
+          activePeerId: () => null, // no conversation open
+        );
+        final events = await _captureFlowEvents(() async {
+          signal.add(null);
+          await _waitForCondition(
+            () => retrievePendingCount >= 1,
+            reason:
+                'connectivity restore must pull the offline inbox even with '
+                'no active peer (HEAD: onNetworkChanged never drains)',
+          );
+        });
+        expect(retrievePendingCount, greaterThanOrEqualTo(1));
+        // NEW discriminator: the connectivity-triggered drain ran ...
+        expect(
+          events.any(
+            (e) => e['event'] == 'P2P_SERVICE_NETWORK_CHANGE_DRAIN_BEGIN',
+          ),
+          isTrue,
+          reason: 'the connectivity-triggered drain discriminator must fire',
+        );
+        // ... while the peer-scoped re-warm did NOT (no active peer) — proving
+        // the drain is roster-wide / placed BEFORE the active-peer guard.
+        expect(
+          events.any(
+            (e) => e['event'] == 'P2P_SERVICE_WARM_PEER_NETWORK_CHANGE_REWARM',
+          ),
+          isFalse,
+          reason: 'no active peer ⇒ re-warm skipped, yet the drain still fired',
+        );
+        await signal.close();
+      },
+    );
+
+    // TC-182-02: the connectivity drain uses the DURABLE retrieve, never the
+    // destructive inbox:retrieve (Report 48 guardrail).
+    test(
+      'TC-182-02: connectivity drain uses the durable retrieve, never the '
+      'destructive read',
+      () async {
+        final signal = StreamController<void>();
+        await build(
+          networkChangeSignal: signal.stream,
+          activePeerId: () => null,
+        );
+        await _captureFlowEvents(() async {
+          signal.add(null);
+          await _waitForCondition(
+            () => retrievePendingCount >= 1,
+            reason: 'the durable inbox:retrieve_pending must be issued',
+          );
+        });
+        expect(retrievePendingCount, greaterThanOrEqualTo(1));
+        expect(
+          destructiveRetrieveCount,
+          0,
+          reason:
+              'Report 48: the connectivity drain must never call the '
+              'destructive inbox:retrieve',
+        );
+        await signal.close();
+      },
+    );
+
+    // TC-182-03: with an active peer present, BOTH the drain and the existing
+    // FDC-04 re-warm fire (the drain addition must not break the re-warm).
+    test(
+      'TC-182-03: connectivity drain AND re-warm both fire with an active peer',
+      () async {
+        final signal = StreamController<void>();
+        await build(
+          networkChangeSignal: signal.stream,
+          activePeerId: () => 'peer-A',
+        );
+        final events = await _captureFlowEvents(() async {
+          signal.add(null);
+          await _waitForCondition(
+            () => retrievePendingCount >= 1,
+            reason: 'the drain fires alongside the re-warm',
+          );
+          await settle();
+        });
+        expect(
+          events.any(
+            (e) => e['event'] == 'P2P_SERVICE_NETWORK_CHANGE_DRAIN_BEGIN',
+          ),
+          isTrue,
+        );
+        expect(
+          events.any(
+            (e) => e['event'] == 'P2P_SERVICE_WARM_PEER_NETWORK_CHANGE_REWARM',
+          ),
+          isTrue,
+          reason: 'adding the drain must not break the existing re-warm',
+        );
+        await signal.close();
+      },
+    );
+
+    // TC-182-04: a WiFi flap-burst within the 5s floor coalesces to ONE drain
+    // (the drain rides the existing flap debounce because it sits AFTER the
+    // early-return).
+    test(
+      'TC-182-04: flap-burst coalesces to ONE connectivity drain (5s floor)',
+      () async {
+        final now = DateTime.utc(2026, 6, 30, 12);
+        await withClock(Clock(() => now), () async {
+          final signal = StreamController<void>();
+          await build(
+            networkChangeSignal: signal.stream,
+            activePeerId: () => null,
+          );
+          final events = await _captureFlowEvents(() async {
+            // 3 events within the 5s floor (clock NOT advanced).
+            signal.add(null);
+            await _waitForCondition(
+              () => retrievePendingCount >= 1,
+              reason: 'the first restore drains',
+            );
+            signal.add(null);
+            signal.add(null);
+            await settle();
+          });
+          expect(
+            events
+                .where(
+                  (e) =>
+                      e['event'] == 'P2P_SERVICE_NETWORK_CHANGE_DRAIN_BEGIN',
+                )
+                .length,
+            1,
+            reason:
+                'a flap-burst within the 5s floor must coalesce to ONE drain',
+          );
+          await signal.close();
+        });
+      },
+    );
+
+    // TC-182-05 (INV): the connectivity drain re-verifies the account-migration
+    // network gate — a denied gate blocks the network side-effect.
+    test(
+      'TC-182-05: connectivity drain respects the account-migration gate',
+      () async {
+        final signal = StreamController<void>();
+        await build(
+          networkChangeSignal: signal.stream,
+          activePeerId: () => null,
+          accountMigrationNetworkGate: ({peerId, required operation}) async =>
+              operation != 'p2p_drain_offline_inbox',
+        );
+        final events = await _captureFlowEvents(() async {
+          signal.add(null);
+          await settle();
+        });
+        // The connectivity path RAN (discriminator present) ...
+        expect(
+          events.any(
+            (e) => e['event'] == 'P2P_SERVICE_NETWORK_CHANGE_DRAIN_BEGIN',
+          ),
+          isTrue,
+        );
+        // ... but the migration gate blocked the network side-effect.
+        expect(
+          events.any(
+            (e) =>
+                e['event'] == 'P2P_SERVICE_ACCOUNT_MIGRATION_NETWORK_BLOCKED',
+          ),
+          isTrue,
+        );
+        expect(
+          retrievePendingCount,
+          0,
+          reason: 'a denied migration gate must block the connectivity drain',
+        );
+        await signal.close();
+      },
+    );
+
+    // TC-182-06 (lifecycle durability): a connectivity event before the node
+    // starts DEFERS (141), then fires exactly once on the stopped->started
+    // transition — never dropped.
+    test(
+      'TC-182-06: connectivity event before node-start defers, then fires on '
+      'start',
+      () async {
+        final signal = StreamController<void>();
+        await build(
+          networkChangeSignal: signal.stream,
+          activePeerId: () => null,
+          start: false,
+        );
+        final scheduled = await _captureFlowEvents(() async {
+          signal.add(null);
+          await settle();
+        });
+        expect(
+          retrievePendingCount,
+          0,
+          reason: 'no inbox retrieve may be issued while the node is not started',
+        );
+        expect(
+          scheduled.any(
+            (e) => e['event'] == 'P2P_SERVICE_PENDING_STARTUP_DRAIN_SCHEDULED',
+          ),
+          isTrue,
+          reason:
+              'a connectivity drain requested before start must defer, not drop',
+        );
+        // Drive stopped->started: the deferred drain fires once.
+        final fired = await _captureFlowEvents(() async {
+          await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+          await _waitForCondition(
+            () => retrievePendingCount >= 1,
+            reason:
+                'the deferred connectivity drain fires once the node starts',
+          );
+        });
+        expect(retrievePendingCount, greaterThanOrEqualTo(1));
+        expect(
+          fired.any(
+            (e) => e['event'] == 'P2P_SERVICE_PENDING_STARTUP_DRAIN_FIRED',
+          ),
+          isTrue,
+        );
+        await signal.close();
+      },
+    );
+  });
+
   group('account migration runtime gate', () {
     test(
       'blocks bridge and local network side effects before commands',

@@ -99,7 +99,8 @@ class P2PServiceImpl
         P2PFullInboxDrain,
         DurableLanSender,
         RelayPresenceLookup,
-        RelayPresenceSet {
+        RelayPresenceSet,
+        PeerLivenessProbe {
   final Bridge _bridge;
   final LocalP2PService? _localP2P;
   final PushTokenStore? _pushTokenStore;
@@ -2668,6 +2669,24 @@ class P2PServiceImpl
       }
       _lastNetworkRewarmAt = now;
 
+      // 182: connectivity restored → pull the relay's stored offline inbox
+      // IMMEDIATELY, instead of waiting for the next ~30s health-check poll or
+      // an app resume. Placed AFTER the flap floor (so a WiFi flap-burst
+      // coalesces to ONE drain) but BEFORE the active-peer return below: the
+      // inbox drain is roster-wide / account-scoped and must fire even with no
+      // conversation open, whereas the warmPeer re-warm is peer-scoped. The
+      // PUBLIC drainOfflineInbox inherits the 141 not-started defer, the
+      // account-migration network gate, and single-in-flight coalescing, and
+      // uses the durable inbox:retrieve_pending path (never the destructive
+      // read removed in report 48). Fire-and-forget: a drain failure must not
+      // abort the re-warm below (onNetworkChanged is total/never-throws).
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_NETWORK_CHANGE_DRAIN_BEGIN',
+        details: {},
+      );
+      unawaited(drainOfflineInbox().catchError((Object _) {}));
+
       // PS-4: re-warm only the ONE active peer, never _warmAttempts.keys.
       final peerId = _activePeerId?.call();
       if (peerId == null || peerId.isEmpty) return;
@@ -4921,6 +4940,52 @@ class P2PServiceImpl
         details: {'state': state, 'error': e.toString()},
       );
       return PresenceSetResult.failed;
+    }
+  }
+
+  // 183: PeerLivenessProbe — actively ping the active 1:1 peer so the keepalive
+  // can detect a drop in SECONDS. Move-gated FIRST (a migrating device must not
+  // probe); never throws — an old bridge / unreachable peer / any error all
+  // degrade to `false` (a miss), so the keepalive loop never crashes and a failed
+  // probe never throws away a send.
+  @override
+  Future<bool> pingPeer(String peerId, {required int timeoutMs}) async {
+    if (!await _allowsAccountNetworkSideEffects(
+      'p2p_peer_ping',
+      peerId: peerId,
+    )) {
+      return false;
+    }
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_SERVICE_PEER_PING_BEGIN',
+      details: {'peerId': _shortPeer(peerId)},
+    );
+
+    try {
+      final result = await callP2PPeerPing(
+        _bridge,
+        peerId: peerId,
+        timeoutMs: timeoutMs,
+      );
+      final ok = result['ok'] == true;
+      emitFlowEvent(
+        layer: 'FL',
+        event: ok
+            ? 'P2P_SERVICE_PEER_PING_SUCCESS'
+            : 'P2P_SERVICE_PEER_PING_FAILED',
+        details: {'peerId': _shortPeer(peerId), 'ok': ok},
+      );
+      return ok;
+    } catch (e) {
+      // Non-load-bearing: any failure degrades to a miss (never throws).
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_PEER_PING_EXCEPTION',
+        details: {'peerId': _shortPeer(peerId), 'error': e.toString()},
+      );
+      return false;
     }
   }
 

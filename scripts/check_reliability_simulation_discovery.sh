@@ -273,6 +273,10 @@ classify_path() {
       record "1to1" "$path" "test" "FDC-12 DCUtR relay->direct upgrade device proof (CV-11/12, TC-12-12/13)"
       return
       ;;
+    integration_test/connectivity_restore_inbox_drain_proof_test.dart)
+      record "1to1" "$path" "test" "182 connectivity-restore inbox drain device proof (TC-182-08; foreground WiFi toggle, no resume)"
+      return
+      ;;
     integration_test/media_stable_id_smoke_test.dart|\
     integration_test/cold_start_message_render_simulator_test.dart)
       record "1to1" "$path" "test" "1:1 simulator smoke test"

@@ -123,6 +123,13 @@ readonly ONE_TO_ONE_TESTS=(
   # assertion lock under test/core/**, which is NOT auto-globbed into the curated
   # 1to1 gate, so it is appended explicitly (it also auto-globs into core-host-all).
   "test/core/lifecycle/main_presence_lifecycle_wiring_test.dart"
+  # 183: active-chat keepalive wiring lock — _MyAppState constructs
+  # ActivePeerKeepAliveUseCase from the concrete P2PServiceImpl (PeerLivenessProbe)
+  # + the active 1:1 peer, REUSING warmPeer + drainOfflineInbox, and arms/cancels/
+  # disposes it on resume/pause/teardown. Source-assertion lock under test/core/**,
+  # NOT auto-globbed into the curated 1to1 gate, so appended explicitly (it also
+  # auto-globs into core-host-all).
+  "test/core/lifecycle/main_keepalive_wiring_test.dart"
 )
 
 readonly FEED_TESTS=(

@@ -60,6 +60,10 @@ dependencies:
   receive_sharing_intent: ^1.8.1
   sqflite_common_ffi: ^2.3.6
   wakelock_plus: ^1.5.1
+  # 182: OS connectivity source feeding P2PServiceImpl.networkChangeSignal so a
+  # foreground connectivity restore drains the offline inbox immediately (see
+  # lib/core/services/connectivity_signal.dart).
+  connectivity_plus: ^6.1.0
 
 dependency_overrides:
   # record 5.2.1 caps record_linux at <1.0.0, but record_platform_interface

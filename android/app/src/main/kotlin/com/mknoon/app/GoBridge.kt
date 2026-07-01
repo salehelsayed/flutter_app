@@ -121,6 +121,8 @@ class GoBridge(flutterEngine: FlutterEngine, context: android.content.Context) :
 
             // Peer operations
             "dialPeer" -> runOnBackground({ GoMknoon.dialPeer(args ?: "") }, result, "dialPeer")
+            // 183: active-chat keepalive liveness probe (libp2p ping).
+            "peerPing" -> runOnBackground({ GoMknoon.peerPing(args ?: "") }, result, "peerPing")
             "disconnectPeer" -> runOnBackground({ GoMknoon.disconnectPeer(args ?: "") }, result)
             "sendMessage" -> runOnBackground({ GoMknoon.sendMessage(args ?: "") }, result, "sendMessage")
             "confirmDirectMessage" -> runOnBackground({ GoMknoon.confirmDirectMessage(args ?: "") }, result)

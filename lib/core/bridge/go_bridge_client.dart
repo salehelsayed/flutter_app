@@ -134,6 +134,10 @@ class GoBridgeClient extends Bridge {
     // Peer
     'peer:dial': _CmdSpec('dialPeer', true),
     'peer:disconnect': _CmdSpec('disconnectPeer', true),
+    // 183: active-chat keepalive liveness probe (libp2p ping). Native
+    // MethodChannel dispatch ('peerPing' -> Bridge PeerPing) + gomobile framework
+    // rebuild land with the two-phone device-proof (TC-183-50).
+    'peer:ping': _CmdSpec('peerPing', true),
     // FDC-11: bonsoir-discovered same-WiFi peer → libp2p LAN-direct dial. Native
     // MethodChannel dispatch ('lanPeerFound' -> Bridge HandleLANPeerFound) +
     // gomobile framework rebuild land with the D1 device closure.

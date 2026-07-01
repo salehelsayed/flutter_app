@@ -101,6 +101,26 @@ abstract interface class RelayPresenceSet {
   Future<PresenceSetResult> setPresence(String state, int ttlMs);
 }
 
+/// 183: optional capability for services that can actively PROBE the liveness of
+/// a directly-connected 1:1 peer (a libp2p `ping`). It exists so the active-chat
+/// keepalive ([ActivePeerKeepAliveUseCase]) can, while foreground + in a 1:1
+/// chat, keep the warm connection alive and detect a drop in SECONDS rather than
+/// waiting out the ~30 s QUIC idle / 30 s relay-health poll.
+///
+/// Kept OFF the base [P2PService] interface — exactly like [RelayPresenceSet] /
+/// [RelayPresenceLookup] — so the many hand-written `implements P2PService` fakes
+/// do not all have to grow it. Callers consult it via an `is PeerLivenessProbe`
+/// check (or hold the concrete impl) and no-op otherwise. The probe is a
+/// best-effort HINT and NEVER load-bearing: a failed/gated/thrown ping is just a
+/// miss, never an exception and never a dropped send.
+abstract interface class PeerLivenessProbe {
+  /// Pings [peerId] and resolves `true` iff the peer answered within [timeoutMs].
+  /// Move-gated as its FIRST line (returns `false` while a move has paused
+  /// network side-effects — a migrating device must not probe). Never throws —
+  /// any error / old bridge / unreachable peer degrades to `false`.
+  Future<bool> pingPeer(String peerId, {required int timeoutMs});
+}
+
 /// Abstract interface for P2P networking service.
 ///
 /// This service manages the P2P node lifecycle, peer connections,

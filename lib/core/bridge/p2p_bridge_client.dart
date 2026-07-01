@@ -340,6 +340,49 @@ Future<Map<String, dynamic>> callP2PRelayPresenceSet(
   return {'ok': ok, 'unsupported': isUnknownAction};
 }
 
+/// 183: actively PINGS a directly-connected 1:1 [peerId] via the additive
+/// `peer:ping` command (libp2p ping), so the active-chat keepalive can keep the
+/// warm connection alive and detect a drop in seconds.
+///
+/// Returns a map: `ok` (bool — the peer answered within [timeoutMs]) and `rttMs`
+/// (nullable int — round-trip time on success). The probe is best-effort and
+/// NEVER load-bearing: an old bridge that does not know `peer:ping` (an
+/// `UNKNOWN_COMMAND` / "Unknown action" envelope), an unreachable peer, or any
+/// failure all degrade to `{ok:false, rttMs:null}` — never a throw — so the
+/// keepalive treats it as a miss rather than crashing the loop.
+Future<Map<String, dynamic>> callP2PPeerPing(
+  Bridge bridge, {
+  required String peerId,
+  required int timeoutMs,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_PEER_PING_REQUEST',
+    details: {'peerId': peerId, 'timeoutMs': timeoutMs},
+  );
+
+  final request = {
+    'cmd': 'peer:ping',
+    'payload': {'peerId': peerId, 'timeoutMs': timeoutMs},
+  };
+
+  final responseJson = await bridge
+      .send(jsonEncode(request))
+      .timeout(const Duration(seconds: 5));
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  final ok = response['ok'] == true;
+  final rttMs = ok ? response['rttMs'] : null;
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_PEER_PING_RESPONSE',
+    details: {'peerId': peerId, 'ok': ok, 'rttMs': rttMs},
+  );
+
+  return {'ok': ok, 'rttMs': rttMs};
+}
+
 /// Calls the bridge to register the recipient's opaque wake-token SET with the
 /// relay via the additive `register_wake_tokens` action (FDC-09 §12). Returns a
 /// map: `ok` (bool — relay accepted) and `unsupported` (bool — an old relay
