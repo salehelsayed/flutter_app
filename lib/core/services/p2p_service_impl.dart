@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:clock/clock.dart';
 import 'package:flutter/foundation.dart';
 import 'p2p_service.dart';
+import '../notifications/active_conversation_tracker.dart';
 import '../bridge/bridge.dart';
 import '../bridge/p2p_bridge_client.dart';
 import '../debug/transport_metrics.dart';
@@ -100,7 +101,8 @@ class P2PServiceImpl
         DurableLanSender,
         RelayPresenceLookup,
         RelayPresenceSet,
-        PeerLivenessProbe {
+        PeerLivenessProbe,
+        PeerDropSignal {
   final Bridge _bridge;
   final LocalP2PService? _localP2P;
   final PushTokenStore? _pushTokenStore;
@@ -4986,6 +4988,31 @@ class P2PServiceImpl
         details: {'peerId': _shortPeer(peerId), 'error': e.toString()},
       );
       return false;
+    }
+  }
+
+  // 187: PeerDropSignal — the read-only per-peer drop latch the send path
+  // consults to skip the doomed direct dial. The 183 keepalive sets it (true on
+  // its M-miss drop, false on recovery / chat-close / peer-switch / background)
+  // via [setPeerDropSuspected]; `sendChatMessage` reads it via
+  // [isPeerSuspectedDropped]. Keyed by the NORMALIZED active key so the
+  // keepalive's normalized mark meets the send path's raw target — both methods
+  // normalize their arg. Best-effort in-memory hint; nothing here is durable
+  // (an app restart clears it) and nothing here is load-bearing.
+  final Set<String> _suspectedDroppedPeers = {};
+
+  @override
+  bool isPeerSuspectedDropped(String peerId) => _suspectedDroppedPeers.contains(
+    ActiveConversationTracker.normalizeActiveKey(peerId),
+  );
+
+  @override
+  void setPeerDropSuspected(String peerId, bool dropped) {
+    final key = ActiveConversationTracker.normalizeActiveKey(peerId);
+    if (dropped) {
+      _suspectedDroppedPeers.add(key);
+    } else {
+      _suspectedDroppedPeers.remove(key);
     }
   }
 

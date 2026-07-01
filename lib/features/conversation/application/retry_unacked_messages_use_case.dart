@@ -15,6 +15,11 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 Future<int> retryUnackedMessages({
   required MessageRepository messageRepo,
   required P2PService p2pService,
+  // 186 (FU-185-A): the anti-race window. The periodic pass keeps the default
+  // 60s (a genuinely in-flight recent send may still get its ack); the
+  // reconnect pass passes Duration.zero so a freshly-queued offline message
+  // converges as soon as we are back online instead of after the 5-min tick.
+  Duration olderThan = const Duration(seconds: 60),
 }) async {
   final retryStopwatch = Stopwatch()..start();
   void emitRetryTiming({
@@ -41,7 +46,7 @@ Future<int> retryUnackedMessages({
   );
 
   final unacked = await messageRepo.getUnackedOutgoingMessages(
-    olderThan: const Duration(seconds: 60),
+    olderThan: olderThan,
   );
 
   if (unacked.isEmpty) {

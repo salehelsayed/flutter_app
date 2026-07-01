@@ -6,14 +6,16 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 /// Applies an incoming `'delivery_receipt'` envelope: flips matching
-/// outgoing `'inboxed'` (or unconfirmed `'sent'`) rows to `'delivered'` and
-/// clears the retained wire envelope.
+/// outgoing `'inboxed'`, unconfirmed `'sent'`, or (185) `'failed'` rows to
+/// `'delivered'` and clears the retained wire envelope.
 ///
 /// This is G4 allowed minting site (a) — the ONLY place relay-inbox custody
 /// becomes 'delivered'. Every forward transition rides
 /// `conditionalTransitionStatus` (D-6) so a racing custody sweep can never be
-/// downgraded by a stale snapshot and a late receipt can never resurrect a
-/// row that already settled.
+/// downgraded by a stale snapshot. Only `'delivered'` is terminal-settled (the
+/// idempotent early-out below); a receiver-authenticated receipt (guard at
+/// :55) MAY intentionally lift a `'failed'` row — a sender-offline send that
+/// still reached the peer is not "settled", it is a Retry that must clear.
 Future<void> handleDeliveryReceipt({
   required ChatMessage message,
   required MessageRepository messageRepo,
@@ -76,6 +78,20 @@ Future<void> handleDeliveryReceipt({
       flipped = await messageRepo.conditionalTransitionStatus(
         messageId,
         fromStatus: 'sent',
+        toStatus: 'delivered',
+      );
+    }
+    if (flipped == 0) {
+      // 185: a row stamped terminal 'failed' during a sender-offline send whose
+      // envelope still reached the receiver (e.g. delivered on a later
+      // retryUnacked pass, or a relayReady TTL-lag window where the send was
+      // marked failed despite arriving). The receipt is peer-authenticated
+      // (guarded at :55) and receiver-minted, so it is valid confirmation —
+      // lift the row to 'delivered' instead of stranding it with a Retry that
+      // never clears. Belt-and-suspenders for the offline-send truthfulness fix.
+      flipped = await messageRepo.conditionalTransitionStatus(
+        messageId,
+        fromStatus: 'failed',
         toStatus: 'delivered',
       );
     }

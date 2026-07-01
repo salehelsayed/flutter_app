@@ -138,8 +138,9 @@ class PendingMessageRetrier {
         if (clearBackoff != null) {
           unawaited(clearBackoff());
         }
-        // Transition to online — schedule retry with debounce and
-        // keep group continuity catch-up on a shorter cadence.
+        // Transition to online — schedule the debounced retry (186: it drops
+        // the 60s unacked age gate so queued offline messages converge on
+        // reconnect) and keep group continuity catch-up on a shorter cadence.
         _startOnlineTimers();
       } else if (nowOnline &&
           _wasOnline &&
@@ -211,19 +212,33 @@ class PendingMessageRetrier {
     );
   }
 
-  Future<int> _retryUnackedMessagesNow() {
+  Future<int> _retryUnackedMessagesNow({Duration? olderThan}) {
     if (retryUnackedMessagesOverride != null) {
       return retryUnackedMessagesOverride!();
     }
     return retryUnackedMessages(
       messageRepo: messageRepo,
       p2pService: p2pService,
+      // 186: reconnect passes Duration.zero (no age gate); periodic/cold-start
+      // pass null → the use case default (60s anti-race window).
+      olderThan: olderThan ?? const Duration(seconds: 60),
     );
   }
 
   void _startOnlineTimers() {
     _debounceTimer?.cancel();
-    _debounceTimer = Timer(retryDebounce, _retryIfNeeded);
+    // 186 (FU-185-A): the first post-online (reconnect / cold-start / group-
+    // recovery) retry drops the 60s unacked age gate (olderThan: 0) so a
+    // freshly-queued offline message converges on reconnect instead of waiting
+    // out the 5-min periodic. It stays DEBOUNCED (not immediate) so flappy
+    // online/offline transitions still coalesce into a single retry — the debounce
+    // cancel/reset is the relay-stampede guard. The periodic pass below keeps the
+    // 60s anti-race window (a genuinely in-flight recent send may still get its
+    // ack).
+    _debounceTimer = Timer(
+      retryDebounce,
+      () => _retryIfNeeded(unackedOlderThan: Duration.zero),
+    );
 
     _periodicTimer?.cancel();
     _groupContinuityTimer?.cancel();
@@ -391,7 +406,7 @@ class PendingMessageRetrier {
     }
   }
 
-  Future<void> _retryIfNeeded() async {
+  Future<void> _retryIfNeeded({Duration? unackedOlderThan}) async {
     if (_isRetrying) return;
     if (_isExternalRecoveryInProgressFn?.call() == true) {
       emitFlowEvent(
@@ -571,7 +586,9 @@ class PendingMessageRetrier {
       }
 
       // Step 9: Retry unacked messages
-      final unackedCount = await _retryUnackedMessagesNow();
+      final unackedCount = await _retryUnackedMessagesNow(
+        olderThan: unackedOlderThan,
+      );
 
       if (unackedCount > 0) {
         emitFlowEvent(

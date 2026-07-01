@@ -172,4 +172,67 @@ void main() {
       reason: 'the inner catch must record the exception discriminator',
     );
   });
+
+  // ─── 187 — PeerDropSignal: the read-only drop latch the send path consults ──
+
+  // TC-187 purity — isPeerSuspectedDropped/setPeerDropSuspected live on the opt-
+  // in PeerDropSignal capability, NEVER on the base P2PService (Scope Guard hard
+  // "Do not"). Mutation: hoist PeerDropSignal onto base P2PService → this fails
+  // AND the ~31 `implements P2PService` fakes stop compiling (feature-host-all).
+  test('TC-187: PeerDropSignal is off base P2PService (fakes intact)', () async {
+    final src = await File('lib/core/services/p2p_service.dart').readAsString();
+
+    final dropIface =
+        _classBlock(src, 'abstract interface class PeerDropSignal {');
+    expect(
+      dropIface,
+      contains('isPeerSuspectedDropped'),
+      reason: 'the drop signal must live on the PeerDropSignal capability',
+    );
+    expect(
+      dropIface,
+      contains('setPeerDropSuspected'),
+      reason: 'the drop signal setter must live on the PeerDropSignal capability',
+    );
+
+    final baseP2P = _classBlock(src, 'abstract class P2PService {');
+    expect(
+      baseP2P.contains('isPeerSuspectedDropped'),
+      isFalse,
+      reason: 'hoisting the drop signal to base P2PService breaks the ~31 fakes',
+    );
+  });
+
+  // The concrete impl opts into the capability.
+  test('P2PServiceImpl implements PeerDropSignal', () {
+    final service = buildService(allowSideEffects: true);
+    addTearDown(service.dispose);
+    expect(service, isA<PeerDropSignal>());
+  });
+
+  // TC-187-21 (impl leg) — set/get/clear round-trip AND normalized keying: the
+  // keepalive marks the NORMALIZED active key while the send path queries with
+  // the RAW target, so BOTH methods must normalize their arg or the two never
+  // meet. Mutation: drop the normalizeActiveKey in either method → the padded/
+  // group-suffixed mark no longer matches the raw query → red.
+  test('TC-187-21 (impl): set/get/clear normalizes the peer key', () {
+    final service = buildService(allowSideEffects: true);
+    addTearDown(service.dispose);
+
+    expect(service.isPeerSuspectedDropped('peer-abc'), isFalse); // clean start
+
+    // Mark with a padded key (as normalizeActiveKey would trim) and query raw.
+    service.setPeerDropSuspected('  peer-abc  ', true);
+    expect(
+      service.isPeerSuspectedDropped('peer-abc'),
+      isTrue,
+      reason: 'a normalized mark must match the raw send target',
+    );
+    // A different peer is unaffected (keyed, not global).
+    expect(service.isPeerSuspectedDropped('peer-xyz'), isFalse);
+
+    // Recovery clears it.
+    service.setPeerDropSuspected('peer-abc', false);
+    expect(service.isPeerSuspectedDropped('peer-abc'), isFalse);
+  });
 }

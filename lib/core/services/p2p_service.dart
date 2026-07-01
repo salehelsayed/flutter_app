@@ -121,6 +121,31 @@ abstract interface class PeerLivenessProbe {
   Future<bool> pingPeer(String peerId, {required int timeoutMs});
 }
 
+/// 187 — a positive, per-peer "suspected dropped" latch set by the 183 active-
+/// chat keepalive (on its M-miss drop) and cleared on recovery / chat-close /
+/// peer-switch / background. The send path reads it to SKIP the doomed direct
+/// discover/dial WAN leg to a peer the keepalive already knows is down — the
+/// concurrent durable inbox has already secured custody, so the ~1.5 s dial only
+/// spends radio on both devices. It gates ONLY the WAN direct leg: the LAN leg
+/// and the durable inbox are never affected, so a peer that dropped only its WAN
+/// path can still be reached over LAN, and durability is never traded away.
+///
+/// Kept OFF the base [P2PService] interface — exactly like [PeerLivenessProbe] /
+/// [RelayPresenceSet] — so the many hand-written `implements P2PService` fakes
+/// do not all have to grow it. Callers consult it via an `is PeerDropSignal`
+/// check and no-op otherwise. Both methods NORMALIZE [peerId] with
+/// `ActiveConversationTracker.normalizeActiveKey` (the keepalive marks the
+/// normalized active key; the send path queries the raw target — they must meet
+/// in the middle). The signal is a best-effort HINT, never load-bearing.
+abstract interface class PeerDropSignal {
+  /// Whether [peerId] is currently latched as suspected-dropped (normalized).
+  bool isPeerSuspectedDropped(String peerId);
+
+  /// Set/clear [peerId]'s suspected-dropped latch: `true` on the keepalive drop,
+  /// `false` on recovery / chat-close / peer-switch / background (normalized).
+  void setPeerDropSuspected(String peerId, bool dropped);
+}
+
 /// Abstract interface for P2P networking service.
 ///
 /// This service manages the P2P node lifecycle, peer connections,

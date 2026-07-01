@@ -36,6 +36,7 @@ class ActivePeerKeepAliveUseCase {
     required String? Function() activePeerId,
     required Future<void> Function(String peerId) onDropReWarm,
     required Future<void> Function() onDropDrain,
+    void Function(String peerId, bool suspectedDropped)? onLivenessChanged,
     Duration interval = kKeepAliveInterval,
     int missThreshold = kKeepAliveMissThreshold,
     Duration pingTimeout = kKeepAlivePingTimeout,
@@ -43,6 +44,7 @@ class ActivePeerKeepAliveUseCase {
        _activePeerId = activePeerId,
        _onDropReWarm = onDropReWarm,
        _onDropDrain = onDropDrain,
+       _onLivenessChanged = onLivenessChanged,
        _interval = interval,
        _missThreshold = missThreshold,
        _pingTimeout = pingTimeout;
@@ -51,6 +53,12 @@ class ActivePeerKeepAliveUseCase {
   final String? Function() _activePeerId;
   final Future<void> Function(String peerId) _onDropReWarm;
   final Future<void> Function() _onDropDrain;
+
+  /// 187 — fired when this peer's suspected-liveness FLIPS: `(peer, true)` when a
+  /// drop latches, `(peer, false)` when it clears (recovery / chat-close /
+  /// peer-switch / background). Wired to `p2pService.setPeerDropSuspected` so the
+  /// send path can skip the doomed direct dial to a peer known to be down.
+  final void Function(String peerId, bool suspectedDropped)? _onLivenessChanged;
   final Duration _interval;
   final int _missThreshold;
   final Duration _pingTimeout;
@@ -58,6 +66,13 @@ class ActivePeerKeepAliveUseCase {
   Timer? _timer;
   int _consecutiveMisses = 0;
   bool _dropHandled = false;
+
+  /// 187 — the peer for which `(peer, true)` was last emitted and not yet
+  /// cleared. Non-null exactly while a drop signal is outstanding; used to emit
+  /// the matching `(peer, false)` on recovery / chat-close / peer-switch /
+  /// background so a stale "dropped" mark can never survive to wrongly route a
+  /// reachable peer to relay after re-entry.
+  String? _lastSignalledPeer;
 
   /// Cadence ≈ 8 s — comfortably under the ~30 s quic-go idle default so each
   /// tick re-warms the connection before it can lapse (device-tunable on
@@ -97,10 +112,35 @@ class ActivePeerKeepAliveUseCase {
   void _resetLiveness() {
     _consecutiveMisses = 0;
     _dropHandled = false;
+    // 187: recovery / arm / background / null-tick all reset liveness — any
+    // outstanding drop signal is now stale, so clear it (no-op when none).
+    _clearDropSignalIfAny();
+  }
+
+  /// 187 — emit `(peer, true)` and remember it so the matching clear can fire.
+  void _signalDrop(String peer) {
+    _lastSignalledPeer = peer;
+    _onLivenessChanged?.call(peer, true);
+  }
+
+  /// 187 — if a drop signal is outstanding, emit `(peer, false)` and forget it.
+  void _clearDropSignalIfAny() {
+    final prev = _lastSignalledPeer;
+    if (prev != null) {
+      _lastSignalledPeer = null;
+      _onLivenessChanged?.call(prev, false);
+    }
   }
 
   Future<void> _tick() async {
     final peer = _activePeerId();
+    // 187: if the tracked peer changed/cleared since the last drop signal, clear
+    // the OLD peer's stale mark up front (the reset branches below only fire when
+    // the tick returns early; a live SWITCH to another peer would otherwise leave
+    // the previous peer wrongly latched-dropped).
+    if (_lastSignalledPeer != null && _lastSignalledPeer != peer) {
+      _clearDropSignalIfAny();
+    }
     if (peer == null || peer.isEmpty || peer.startsWith('group:')) {
       // No active 1:1 peer (chat closed, roster, or a group): never probe, and
       // reset the streak so a closed-then-reopened chat starts clean.
@@ -134,6 +174,9 @@ class ActivePeerKeepAliveUseCase {
         event: 'KEEPALIVE_PEER_DROP',
         details: {'peerId': peer},
       );
+      // 187: expose the latch to the send path so it can skip the doomed direct
+      // dial to this peer (custody rides the concurrent durable inbox instead).
+      _signalDrop(peer);
       unawaited(_onDropReWarm(peer));
       unawaited(_onDropDrain());
     }

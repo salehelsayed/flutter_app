@@ -66,6 +66,32 @@ void main() {
       expect(count, 0);
     });
 
+    test(
+      'TC-186-01 threads olderThan to getUnackedOutgoingMessages '
+      '(default 60s; reconnect passes Duration.zero)',
+      () async {
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        );
+
+        // Default preserves the 60s anti-race window (all existing callers).
+        await retryUnackedMessages(
+          messageRepo: messageRepo,
+          p2pService: p2pService,
+        );
+        expect(messageRepo.lastUnackedOlderThan, const Duration(seconds: 60));
+
+        // 186: the reconnect pass drops the gate so a freshly-queued offline
+        // message is not skipped.
+        await retryUnackedMessages(
+          messageRepo: messageRepo,
+          p2pService: p2pService,
+          olderThan: Duration.zero,
+        );
+        expect(messageRepo.lastUnackedOlderThan, Duration.zero);
+      },
+    );
+
     test('marks inboxed via inbox and sets transport to inbox', () async {
       final msg = _makeSentMessage();
       messageRepo.seed([msg]);

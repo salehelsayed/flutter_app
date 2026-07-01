@@ -706,6 +706,21 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       !isLocalPeer &&
       !p2pService.isConnectedToPeer(targetPeerId);
 
+  // 187: when the 183 keepalive has latched this ACTIVE peer as dropped, the
+  // direct discover/dial WAN leg to it is doomed — it burns ~1.5 s dialing a
+  // peer that cannot answer while the concurrent durable inbox (fired below) has
+  // already secured custody. Skip ONLY that WAN leg (Option A: the leg stays in
+  // raceFutures[1], short-circuited at its top — LAN leg + inbox untouched).
+  // Gated on [unknownPresence] so a connected/local/reachable peer (which took
+  // the reuse fast path above or has a live conn) is NEVER skipped, keeping the
+  // FDC-01/02 budget ladder intact for every non-dropped peer. Consulted via the
+  // off-base [PeerDropSignal] capability so the ~31 base-P2PService fakes are
+  // untouched; a service that doesn't implement it degrades to "never skip".
+  final directSkipForKeepaliveDrop =
+      unknownPresence &&
+      p2pService is PeerDropSignal &&
+      (p2pService as PeerDropSignal).isPeerSuspectedDropped(targetPeerId);
+
   // Fire the durable inbox copy CONCURRENTLY (fire-and-forget) for unknown-
   // presence sends. This is a parallel durability side-effect, NOT a race
   // participant: it never feeds the transport-label completer and never calls a
@@ -858,6 +873,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       targetPeerId,
       jsonString,
       transportMetrics: transportMetrics,
+      // 187: when set, the direct leg short-circuits BEFORE discover/dial (the
+      // leg stays present so the completer's index/ directLegPending /
+      // pendingCount coupling is undisturbed — Option A).
+      skipForKeepaliveDrop: directSkipForKeepaliveDrop,
     ).timeout(
       // FDC-01: the OUTER cap is the aggregate (serial) ceiling, decoupled from
       // the per-step budget so a slow-but-progressing step can't be starved.
@@ -1720,7 +1739,33 @@ Future<_RaceResult> _tryDirectSend(
   String targetPeerId,
   String jsonString, {
   TransportMetrics? transportMetrics,
+  bool skipForKeepaliveDrop = false,
 }) async {
+  // 187 (Option A): the 183 keepalive has latched this active peer as dropped —
+  // the direct discover/dial leg would burn ~1.5 s on a peer that cannot answer
+  // while the concurrent durable inbox already holds custody. Short-circuit
+  // BEFORE any discover/dial AND before recording a 'direct' attempt (the leg
+  // never actually attempted). The leg stays PRESENT in raceFutures[1], so the
+  // completer's leg-index / directLegPending / pendingCount coupling is
+  // untouched; it simply resolves fast to a NON-eligible failure —
+  // relayProbeEligible:false because a keepalive-dropped peer is durably-
+  // inboxed, not live-relay-recoverable, so this must NOT trigger the live relay
+  // probe. The distinct discriminator event proves the skip fired for the
+  // KEEPALIVE-DROP reason (not presence, not a budget timeout).
+  if (skipForKeepaliveDrop) {
+    final shortTarget = targetPeerId.length > 10
+        ? '${targetPeerId.substring(0, 10)}…'
+        : targetPeerId;
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'SEND_DIRECT_LEG_SKIPPED_KEEPALIVE_DROP',
+      details: {'targetPeerId': shortTarget},
+    );
+    return _RaceResult.failed(
+      'direct_skipped_keepalive_drop',
+      relayProbeEligible: false,
+    );
+  }
   final result = await _tryDirectSendInner(
     p2pService,
     targetPeerId,

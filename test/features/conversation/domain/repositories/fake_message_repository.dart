@@ -191,10 +191,16 @@ class FakeMessageRepository implements MessageRepository {
     return msgs.reversed.toList();
   }
 
+  /// 186: records the `olderThan` last passed to [getUnackedOutgoingMessages]
+  /// so tests can assert the reconnect pass drops the 60s age gate (passes 0)
+  /// while the periodic pass keeps it.
+  Duration? lastUnackedOlderThan;
+
   @override
   Future<List<ConversationMessage>> getUnackedOutgoingMessages({
     required Duration olderThan,
   }) async {
+    lastUnackedOlderThan = olderThan;
     if (unackedOutgoingOverride != null) return unackedOutgoingOverride!;
     return _messages
         .where(

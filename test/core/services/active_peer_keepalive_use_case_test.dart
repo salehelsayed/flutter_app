@@ -40,6 +40,9 @@ void main() {
   late List<String> reWarms;
   late int drains;
   late List<Map<String, dynamic>> events;
+  // 187 — every onLivenessChanged(peer, dropped) callback, in order, so a test
+  // can assert the drop signal latches (peer,true) and clears (peer,false).
+  late List<(String, bool)> livenessChanges;
 
   const interval = Duration(seconds: 8);
   const threshold = 2;
@@ -51,6 +54,7 @@ void main() {
     reWarms = [];
     drains = 0;
     events = [];
+    livenessChanges = [];
     debugSetFlowEventSink((p) => events.add(Map<String, dynamic>.from(p)));
   });
 
@@ -61,6 +65,7 @@ void main() {
     activePeerId: () => activePeer,
     onDropReWarm: (p) async => reWarms.add(p),
     onDropDrain: () async => drains++,
+    onLivenessChanged: (peer, dropped) => livenessChanges.add((peer, dropped)),
     interval: interval,
     missThreshold: threshold,
     pingTimeout: const Duration(seconds: 4),
@@ -300,6 +305,112 @@ void main() {
       async.elapse(interval);
       async.flushMicrotasks();
       expect(probe.pings, hasLength(1));
+    });
+  });
+
+  // ─── 187 — expose the drop latch to the send path via onLivenessChanged ───
+
+  // TC-187-12 — recovery clears the drop signal. Two consecutive misses latch a
+  // drop and fire (peer,true); the next PING_SUCCESS must fire (peer,false) so
+  // the send path resumes running the direct leg (the skip bites ONLY while the
+  // latch is set). Mutation: remove the reset-side callback (don't clear on
+  // _resetLiveness) → (peer,false) never fires → red.
+  test('TC-187-12: recovery (PING_SUCCESS) clears the drop signal', () {
+    fakeAsync((async) {
+      probe.result = false;
+      final useCase = build();
+      addTearDown(useCase.dispose);
+
+      useCase.onForegrounded();
+      async.elapse(interval * threshold); // miss #1 + #2 → drop latches
+      async.flushMicrotasks();
+      expect(livenessChanges, equals([('peerAlice', true)]));
+
+      probe.result = true;
+      async.elapse(interval); // PING_SUCCESS → recovery
+      async.flushMicrotasks();
+      expect(
+        livenessChanges,
+        equals([('peerAlice', true), ('peerAlice', false)]),
+        reason: 'a successful ping must clear the suspected-dropped signal',
+      );
+    });
+  });
+
+  // TC-187-40a — chat close clears the stale drop mark. A closed chat
+  // (activePeer→null) must NOT leave a "dropped" mark that would wrongly skip
+  // the direct leg after re-entry. Mutation: omit the clear on the null-tick
+  // _resetLiveness → the (peerAlice,false) clear never fires → red.
+  // (Blind-spot: derived-state durability.)
+  test('TC-187-40a: chat close (activePeer→null) clears the stale drop signal', () {
+    fakeAsync((async) {
+      probe.result = false;
+      final useCase = build();
+      addTearDown(useCase.dispose);
+
+      useCase.onForegrounded();
+      async.elapse(interval * threshold); // latch drop for peerAlice
+      async.flushMicrotasks();
+      expect(livenessChanges, equals([('peerAlice', true)]));
+
+      activePeer = null; // chat closed
+      async.elapse(interval); // null tick → clear
+      async.flushMicrotasks();
+      expect(
+        livenessChanges.last,
+        equals(('peerAlice', false)),
+        reason: 'a closed chat must not leave a stale dropped mark',
+      );
+    });
+  });
+
+  // TC-187-40b — peer switch clears the previous peer's drop mark. Switching to
+  // a DIFFERENT active peer must clear peerAlice's stale mark on the next tick,
+  // else a later send to a now-reachable peerAlice would be wrongly routed to
+  // relay. Mutation: omit the top-of-tick peer-change clear → peerAlice's mark
+  // persists → red.
+  test('TC-187-40b: peer switch (peerAlice→peerBob) clears the peerAlice mark', () {
+    fakeAsync((async) {
+      probe.result = false;
+      final useCase = build();
+      addTearDown(useCase.dispose);
+
+      useCase.onForegrounded();
+      async.elapse(interval * threshold); // latch drop for peerAlice
+      async.flushMicrotasks();
+      expect(livenessChanges, equals([('peerAlice', true)]));
+
+      activePeer = 'peerBob'; // switched conversation
+      async.elapse(interval); // next tick sees the new peer → clear peerAlice
+      async.flushMicrotasks();
+      expect(
+        livenessChanges,
+        contains(('peerAlice', false)),
+        reason: "switching peers must clear the old peer's dropped mark",
+      );
+    });
+  });
+
+  // TC-187-40c — background clears the drop mark. Suspending (onBackgrounded)
+  // must clear the mark so a resume never inherits a stale "dropped" skip.
+  // Mutation: omit the clear on _stop → the mark survives suspension → red.
+  test('TC-187-40c: background (onBackgrounded) clears the stale drop signal', () {
+    fakeAsync((async) {
+      probe.result = false;
+      final useCase = build();
+      addTearDown(useCase.dispose);
+
+      useCase.onForegrounded();
+      async.elapse(interval * threshold); // latch drop for peerAlice
+      async.flushMicrotasks();
+      expect(livenessChanges, equals([('peerAlice', true)]));
+
+      useCase.onBackgrounded(); // suspend
+      expect(
+        livenessChanges.last,
+        equals(('peerAlice', false)),
+        reason: 'backgrounding must clear the dropped mark (no stale skip on resume)',
+      );
     });
   });
 

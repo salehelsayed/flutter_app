@@ -277,6 +277,10 @@ classify_path() {
       record "1to1" "$path" "test" "182 connectivity-restore inbox drain device proof (TC-182-08; foreground WiFi toggle, no resume)"
       return
       ;;
+    integration_test/keepalive_drop_skip_direct_proof_test.dart)
+      record "1to1" "$path" "test" "187 keepalive-drop skip doomed direct dial device proof (TC-187-32; latched-dropped active peer, no ~1.5s DIAL_PEER_ERROR, custody sub-second, delivers on recovery)"
+      return
+      ;;
     integration_test/media_stable_id_smoke_test.dart|\
     integration_test/cold_start_message_render_simulator_test.dart)
       record "1to1" "$path" "test" "1:1 simulator smoke test"

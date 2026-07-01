@@ -489,8 +489,11 @@ class _ComposeAreaState extends State<ComposeArea>
                                   ? _onSendPressed
                                   : null,
                               child: Container(
-                                width: 36,
-                                height: 36,
+                                // Match the VoiceRecordButton (48x48) so the
+                                // send affordance is the same size as the mic
+                                // and the slot doesn't resize when text is typed.
+                                width: 48,
+                                height: 48,
                                 decoration: BoxDecoration(
                                   color: const Color.fromRGBO(
                                     29,

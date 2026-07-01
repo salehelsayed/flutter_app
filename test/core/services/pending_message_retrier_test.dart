@@ -47,6 +47,58 @@ void main() {
   });
 
   group('PendingMessageRetrier', () {
+    // 186 — reconnect self-heal latency tightening (FU-185-A). The first
+    // post-online retry (debounced, so flappy transitions still coalesce) drops
+    // the 60s unacked age gate so a freshly-queued offline message converges on
+    // reconnect instead of after the 5-min periodic; the periodic pass keeps 60s.
+    test(
+      'TC-186-02 the reconnect (debounced) retry drops the unacked age gate '
+      '(olderThan=0); the periodic pass keeps 60s',
+      () {
+        fakeAsync((async) {
+          // No override -> the real retryUnackedMessages hits the fake repo,
+          // which records the olderThan it was queried with.
+          retrier = PendingMessageRetrier(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+          );
+          retrier.start(); // default FakeP2PService = stopped (offline)
+
+          // Genuine offline -> online reconnect (relay reserved).
+          p2pService.emitState(
+            const NodeState(
+              isStarted: true,
+              peerId: 'my-peer',
+              circuitAddresses: ['/addr'],
+            ),
+          );
+          // The reconnect retry fires after the debounce, with the gate dropped.
+          async.elapse(PendingMessageRetrier.defaultRetryDebounce);
+          async.flushMicrotasks();
+          expect(
+            messageRepo.lastUnackedOlderThan,
+            Duration.zero,
+            reason:
+                'the reconnect pass must not skip freshly-queued offline rows '
+                '(RED on HEAD: hardcoded 60s)',
+          );
+
+          // The periodic pass keeps the 60s anti-race window.
+          messageRepo.lastUnackedOlderThan = null;
+          async.elapse(PendingMessageRetrier.defaultPeriodicRetryInterval);
+          async.flushMicrotasks();
+          expect(
+            messageRepo.lastUnackedOlderThan,
+            const Duration(seconds: 60),
+            reason: 'the periodic pass keeps the anti-race window',
+          );
+        });
+      },
+    );
+
     test('start subscribes to stateStream', () {
       retrier.start();
 

@@ -79,6 +79,7 @@ PASS = cadence ≈ elapsed/8 s in foreground; exactly zero `peer:ping` while bac
 | Date | Tester | TC-183-50 | TC-183-51 | Build SHA | Notes |
 |---|---|---|---|---|---|
 | 2026-07-01 | Saleh (Pixel 6→iPhone 11) | **PASS** | **PASS** | `3fad4333` + gomobile rebuild | see below |
+| 2026-07-01 (re-measure) | Saleh (Pixel 6→iPhone 11) | **PASS** | **PASS** | HEAD `6d7ec800` + 185 working-tree, same gomobile | fuller metrics below |
 
 ### 2026-07-01 device-proof — BOTH cases PASS
 
@@ -103,6 +104,45 @@ iOS xcframework + Android `.aar`), profile builds with `FDC_FLOW_LOG=1` +
 **TC-183-51 (battery) — PASS.** 8 s foreground cadence; **0** `peer:ping` across a
 34 s background window (`onBackgrounded()` cancelled the timer); pings resumed on
 foreground (`onForegrounded()` re-armed).
+
+### 2026-07-01 RE-MEASUREMENT — both cases PASS (fuller metrics, current build)
+
+Re-run on the current working tree (HEAD `6d7ec800` + the 185 offline-send changes,
+same gomobile bindings), `FDC_FLOW_LOG=1` + `MKNOON_ENABLE_NATIVE_MDNS=true`. All
+metrics parsed from each flow event's own ms-precision `ts`. Session: 87 pings ·
+61 SUCCESS · 26 FAILED (all during the deliberate outage) · **1 DROP** · 1 receipt.
+
+**TC-183-51 (cadence + battery) — PASS.**
+- Cadence `BEGIN→BEGIN` p50 **8002 ms** (5-min clean window: min 7927 / p50 7998 /
+  mean 8000 / max 8067). Rock-solid 8 s.
+- RTT — real libp2p `P2P_PEER_PING_RESPONSE.rttMs`, n=61: min 14 / **p50 112** /
+  mean 131 / max 284 ms (warm-window subset p50 ~82 ms).
+- Battery: **0** pings across a **73 s** background window (would have held ~9);
+  `onBackgrounded()` cancels the timer.
+- Scope: the keepalive is correctly ACTIVE-CHAT-SCOPED — during a ~12-min stretch
+  on the Feed (non-1:1 active surface) it was silent (correct: `_activePeerId()`
+  null → `_tick` early-returns, no `PING_BEGIN`), and it resumed within one
+  interval on re-entering the 1:1 chat. (A mid-run "resume didn't re-arm" alarm was
+  a false positive — the app was simply on the Feed, not the chat.)
+
+**TC-183-50 (drop → re-dial → warm → recover) — PASS.**
+- Drop fires on the **2nd consecutive miss** (2×8 s); each dark-peer ping consumed
+  the full 4 s timeout.
+- `KEEPALIVE_PEER_DROP` → `WARM_PEER_BEGIN` **+0 ms**, → `DRAIN_OFFLINE_INBOX_BEGIN`
+  **+137 ms** (reuses warmPeer + drain, once).
+- Latch: **1** drop across ~13 continuous failed pings — zero re-dial spam.
+- Post-drop send (peer dark): press `CONV_FL_SEND_PRESSED` → durable relay custody
+  `CHAT_MSG_SEND_CUSTODY_CONFIRMED` in **178.7 ms** (concurrent inbox, FDC-03),
+  resolved `CHAT_MSG_SEND_SUCCESS`; the doomed direct dial failed fast
+  (`DIAL_PEER_ERROR` ~1.5 s) WITHOUT blocking custody. Not the ~30 s cold-poll lag.
+- Recovery: on Bob's WiFi restore the queued message delivered
+  (`DELIVERY_RECEIPT_APPLIED`) and pings reset to `SUCCESS` (latch reset).
+
+> Non-obvious for future work: the send at drop-time still spent ~1.5 s on the
+> direct dial even though the keepalive had known the peer was dropped for ~87 s —
+> i.e. the 183 liveness signal is NOT (yet) consulted by the send race. Custody was
+> already concurrent at 179 ms, so this is a wasted-background-dial (battery)
+> inefficiency, not a user-visible latency one.
 
 ### Finding + fix: cold-start arming (FIXED same day, device-verified)
 

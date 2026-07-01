@@ -9,6 +9,7 @@ import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/local_discovery/lan_ack.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart'
     hide sendChatMessage, editChatMessage;
@@ -32,7 +33,11 @@ import '../domain/repositories/fake_media_attachment_repository.dart';
 
 // -- Fake P2P Service --
 class FakeP2PService
-    implements P2PService, ReadinessProofRecorder, RelayLiveSendObserver {
+    implements
+        P2PService,
+        ReadinessProofRecorder,
+        RelayLiveSendObserver,
+        PeerDropSignal {
   final NodeState _currentState;
   bool sendMessageResult;
   String? sendMessageReply;
@@ -313,8 +318,33 @@ class FakeP2PService
     return localSendResult;
   }
 
+  /// TC-187-20: lets a test model warmPeer having already reconnected the peer
+  /// (the pre-ping window) so the reuse/connected precedence — never the skip —
+  /// is exercised. Default false preserves every existing test.
+  bool isConnectedToPeerResult = false;
+
   @override
-  bool isConnectedToPeer(String peerId) => false;
+  bool isConnectedToPeer(String peerId) => isConnectedToPeerResult;
+
+  /// 187 (PeerDropSignal) — the keepalive's per-peer suspected-dropped set.
+  /// Keyed by the NORMALIZED active key, mirroring P2PServiceImpl, so a raw send
+  /// target matches a mark made against the tracker's normalized key.
+  final Set<String> suspectedDroppedPeers = {};
+
+  @override
+  bool isPeerSuspectedDropped(String peerId) => suspectedDroppedPeers.contains(
+    ActiveConversationTracker.normalizeActiveKey(peerId),
+  );
+
+  @override
+  void setPeerDropSuspected(String peerId, bool dropped) {
+    final key = ActiveConversationTracker.normalizeActiveKey(peerId);
+    if (dropped) {
+      suspectedDroppedPeers.add(key);
+    } else {
+      suspectedDroppedPeers.remove(key);
+    }
+  }
 
   @override
   Future<RelayProbeResult> probeRelay(String peerId) async {
@@ -4751,6 +4781,289 @@ void main() {
         expect(p2pService.localSendCallCount, 1);
       },
     );
+  });
+
+  // ─── 187 — keepalive-informed send: skip the doomed direct dial ───────────
+  //
+  // When the 183 keepalive has latched the ACTIVE 1:1 peer as dropped, a send to
+  // that peer must NOT burn the direct discover/dial WAN leg — the concurrent
+  // durable inbox has already secured custody. The direct leg stays PRESENT in
+  // raceFutures[1] (Option A: index/directLegPending/pendingCount untouched) but
+  // short-circuits at its top, emitting SEND_DIRECT_LEG_SKIPPED_KEEPALIVE_DROP.
+  // At the unit tier the discover/dial spy counts (discoverCallCount /
+  // dialCallCount) are the leg-ran discriminator (the fake doesn't emit the
+  // native P2P_SERVICE_DISCOVER_PEER_BEGIN / DIAL events — that's the device
+  // tier, TC-187-32).
+  group('187 — skip doomed direct dial for a latched-dropped active peer', () {
+    // A fake for the primary skip path: unknown-presence (not connected/local),
+    // the target latched-dropped, LAN misses (useNullDiscover + no localPeers),
+    // durable inbox secures custody (storeInInboxResult true).
+    FakeP2PService droppedActivePeerFake() =>
+        FakeP2PService(useNullDiscover: true, storeInInboxResult: true)
+          ..setPeerDropSuspected('target-peer', true);
+
+    bool hasEvent(List<Map<String, dynamic>> events, String name) =>
+        events.any((e) => e['event'] == name);
+
+    // TC-187-01 — the direct discover/dial leg is skipped for a latched-dropped
+    // active peer. Mutation: revert the _tryDirectSend short-circuit → discover/
+    // dial fire again (discoverCallCount/dialCallCount 1) → red.
+    test('TC-187-01: latched-dropped active peer → direct discover/dial skipped', () async {
+      p2pService = droppedActivePeerFake();
+
+      SendChatMessageResult? result;
+      ConversationMessage? message;
+      final events = await captureFlowEvents(() async {
+        final r = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'to a dropped peer',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+        result = r.$1;
+        message = r.$2;
+      });
+
+      // The distinct discriminator proves the skip happened for the KEEPALIVE-
+      // DROP reason (not presence, not a budget timeout).
+      expect(hasEvent(events, 'SEND_DIRECT_LEG_SKIPPED_KEEPALIVE_DROP'), isTrue);
+      // The doomed WAN direct leg never discovered or dialed.
+      expect(p2pService.discoverCallCount, 0);
+      expect(p2pService.dialCallCount, 0);
+      expect(p2pService.sendCallCount, 0);
+      // No doomed relay probe either (the skip is not relay-probe-eligible).
+      expect(p2pService.probeRelayCallCount, 0);
+      // Custody still landed via the concurrent durable inbox.
+      expect(result, SendChatMessageResult.success);
+      expect(message!.status, 'inboxed');
+    });
+
+    // TC-187-02 — the skip never trades away durability: the concurrent inbox
+    // still fires and custody is still confirmed. Mutation: make the skip also
+    // suppress the concurrent inbox → CUSTODY_CONFIRMED gone → red.
+    test('TC-187-02: skip still secures concurrent-inbox custody', () async {
+      p2pService = droppedActivePeerFake();
+
+      final events = await captureFlowEvents(() async {
+        await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'custody must survive the skip',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+      });
+
+      expect(hasEvent(events, 'CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN'), isTrue);
+      expect(hasEvent(events, 'CHAT_MSG_SEND_CUSTODY_CONFIRMED'), isTrue);
+      expect(p2pService.storeInInboxCallCount, greaterThanOrEqualTo(1));
+      expect(
+        messageRepo.statusUpdates.any((u) => u.$2 == 'inboxed'),
+        isTrue,
+        reason: 'the mid-send custody bump must still advance the row to inboxed',
+      );
+    });
+
+    // TC-187-03 — a skipped send lands a RETRIABLE 'inboxed' row (the self-
+    // healing lane), never a terminal 'failed' and never a false 'delivered'.
+    // Mutation: skip returns a terminal failed result → row not retriable → red.
+    // (Full on-wire recovery to delivered = the device tier, TC-187-32.)
+    test("TC-187-03: skipped send lands retriable 'inboxed' (not failed/delivered)", () async {
+      p2pService = droppedActivePeerFake();
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'retriable inbox row',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.status, 'inboxed'); // retriable, NOT 'failed', NOT 'delivered'
+      expect(message.transport, 'inbox');
+    });
+
+    // TC-187-10 — no over-reach: a REACHABLE active peer (signal clear) runs the
+    // direct leg with its FULL budget. Mutation: make the skip fire regardless of
+    // the signal → discover/dial skipped → red (over-reach caught).
+    test('TC-187-10: reachable active peer (signal false) → direct leg runs full', () async {
+      p2pService = FakeP2PService(
+        storeInInboxResult: true,
+        sendMessageAcked: true,
+      ); // signal NOT set → isPeerSuspectedDropped false
+
+      SendChatMessageResult? result;
+      ConversationMessage? message;
+      final events = await captureFlowEvents(() async {
+        final r = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'reachable peer',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+        result = r.$1;
+        message = r.$2;
+      });
+
+      expect(hasEvent(events, 'SEND_DIRECT_LEG_SKIPPED_KEEPALIVE_DROP'), isFalse);
+      expect(p2pService.discoverCallCount, 1); // direct leg ran full budget
+      expect(p2pService.dialCallCount, 1);
+      expect(result, SendChatMessageResult.success);
+      expect(message!.transport, 'direct');
+    });
+
+    // TC-187-11 — FDC-01/02 preserved: a peer that was never marked (unknown
+    // liveness) runs the direct leg with the FULL budget, even when a DIFFERENT
+    // peer is latched-dropped. Mutation: signal not keyed by peer → the send
+    // skips → red.
+    test('TC-187-11: unknown / non-active peer → direct leg runs full budget', () async {
+      p2pService = FakeP2PService(
+        storeInInboxResult: true,
+        sendMessageAcked: true,
+      )..setPeerDropSuspected('some-other-peer', true); // a DIFFERENT peer
+
+      final events = await captureFlowEvents(() async {
+        await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer', // never marked
+          text: 'unknown-liveness peer',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+      });
+
+      expect(hasEvent(events, 'SEND_DIRECT_LEG_SKIPPED_KEEPALIVE_DROP'), isFalse);
+      expect(p2pService.discoverCallCount, 1);
+      expect(p2pService.dialCallCount, 1);
+    });
+
+    // TC-187-20 — a reconnected peer is never penalized: even with the drop mark
+    // still set, a peer with a live DIRECT connection takes the reuse fast path
+    // (:527-540) and the skip is never evaluated. Mutation: drop the reuse
+    // precedence → the marked peer would fall into the race and skip → red.
+    test('TC-187-20: reconnected (connected) peer → reuse path, never skip', () async {
+      p2pService = FakeP2PService(
+        currentState: NodeState(
+          isStarted: true,
+          connections: [
+            const p2p.ConnectionState(
+              peerId: 'target-peer',
+              multiaddrs: ['/ip4/127.0.0.1/tcp/4001'], // DIRECT (not circuit)
+              direction: 'outbound',
+              status: 'connected',
+            ),
+          ],
+        ),
+      )..setPeerDropSuspected('target-peer', true); // stale mark still set
+
+      SendChatMessageResult? result;
+      ConversationMessage? message;
+      final events = await captureFlowEvents(() async {
+        final r = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'reconnected — reuse me',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+        result = r.$1;
+        message = r.$2;
+      });
+
+      expect(hasEvent(events, 'CHAT_MSG_SEND_REUSE_CONNECTION'), isTrue);
+      expect(hasEvent(events, 'SEND_DIRECT_LEG_SKIPPED_KEEPALIVE_DROP'), isFalse);
+      expect(p2pService.sendCallCount, 1); // reuse sent
+      expect(p2pService.discoverCallCount, 0); // never discovered (reuse, not skip)
+      expect(p2pService.dialCallCount, 0);
+      expect(result, SendChatMessageResult.success);
+      expect(message!.transport, 'direct');
+    });
+
+    // TC-187-21 — normalized-key match: a mark made against a key carrying
+    // whitespace (as the tracker's normalizeActiveKey would strip) matches the
+    // raw send target. Mutation: raw `==` instead of normalizeActiveKey → the
+    // padded mark no longer matches → no skip → discover runs → red. Locks the
+    // REFUTED naive-`targetPeerId == activePeerId` finding.
+    test('TC-187-21: normalized-key match (raw target normalizes to the marked key)', () async {
+      p2pService = FakeP2PService(useNullDiscover: true, storeInInboxResult: true)
+        ..setPeerDropSuspected('  target-peer  ', true); // padded → normalizes
+
+      final events = await captureFlowEvents(() async {
+        await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer', // raw form matches the normalized mark
+          text: 'normalized match',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+      });
+
+      expect(
+        hasEvent(events, 'SEND_DIRECT_LEG_SKIPPED_KEEPALIVE_DROP'),
+        isTrue,
+        reason: 'a normalized-key match must still skip the doomed direct dial',
+      );
+      expect(p2pService.discoverCallCount, 0);
+      // A genuinely different peer must NOT be considered dropped (keyed match).
+      expect(p2pService.isPeerSuspectedDropped('different-peer'), isFalse);
+    });
+
+    // TC-187-30 — never falsely delivered: the skip relies on the concurrent
+    // inbox + a future receiver receipt; no row is marked 'delivered' without a
+    // receipt. Mutation: skip mints delivered → red.
+    test('TC-187-30: skipped send is never falsely marked delivered', () async {
+      p2pService = droppedActivePeerFake();
+
+      final (_, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'no false delivered',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(message!.status, isNot('delivered'));
+      expect(
+        messageRepo.statusUpdates.any((u) => u.$2 == 'delivered'),
+        isFalse,
+        reason: 'no delivered status may be minted without a receiver receipt',
+      );
+      expect(
+        p2pService.recordSuccessfulTransportCallCount,
+        0,
+        reason: 'a skipped (undelivered) send records no live transport',
+      );
+    });
+
+    // TC-187-31 — one relay write: skipping the direct leg does not cause a
+    // second inbox store (the concurrentInbox tail short-circuit still holds).
+    // Mutation: break the concurrent-inbox tail short-circuit → 2 stores → red.
+    test('TC-187-31: skip does not cause a double relay write', () async {
+      p2pService = droppedActivePeerFake();
+
+      await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'exactly one store',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(p2pService.storeInInboxCallCount, 1);
+    });
   });
 }
 

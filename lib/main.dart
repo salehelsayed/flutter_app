@@ -2204,6 +2204,13 @@ void main() async {
     }
   }
 
+  // CV-26 (FDC-04 DESIGN-3): the 1:1 active-conversation tracker is a
+  // zero-dependency object; construct it HERE (ahead of the P2PServiceImpl
+  // build) so the peer-scoped WiFi<->cellular re-warm can resolve the open
+  // conversation's peer. (Moved up from its former site further down this
+  // builder — nothing between here and there references it.)
+  final conversationTracker = ActiveConversationTracker();
+
   // Create P2P service (uses the same bridge + local P2P)
   p2pService = P2PServiceImpl(
     bridge: bridge,
@@ -2213,9 +2220,11 @@ void main() async {
     // follow-up") so a foreground connectivity restore drains the offline inbox
     // immediately — instead of waiting for the next ~30s health-check poll or an
     // app resume. onNetworkChanged is total/never-throws and self-debounces.
-    // (activePeerId for the peer-scoped re-warm half is a follow-up: the
-    // ActiveConversationTracker is constructed later in this builder.)
+    // CV-26 (FDC-04 DESIGN-3): activePeerId now WIRED — onNetworkChanged
+    // re-warms the ONE open-conversation peer (PS-4, preferQuic); a null return
+    // (no chat open) is a no-op. Branch logic is locked by TC-04-07/08/16.
     networkChangeSignal: connectivityRestoredSignal(),
+    activePeerId: () => conversationTracker.activePeerId,
     accountMigrationNetworkGate:
         accountMigrationRuntimeNetworkGate.allowsAccountNetworkSideEffects,
     inboxStagingRepository: inboxStagingRepository,
@@ -2417,7 +2426,8 @@ void main() async {
           ),
         )
       : null;
-  final conversationTracker = ActiveConversationTracker();
+  // conversationTracker is constructed EARLIER (ahead of P2PServiceImpl) for the
+  // CV-26 FDC-04 re-warm wiring; see the P2PServiceImpl build site above.
   final groupConversationTracker = ActiveConversationTracker();
   // 118 Phase 4: one shared per-conversation tone debounce for BOTH listeners
   // (direct + group keys are disjoint under normalizeActiveKey).
@@ -3672,6 +3682,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       activePeerId: () => widget.conversationTracker.activePeerId,
       onDropReWarm: widget.p2pService.warmPeer,
       onDropDrain: widget.p2pService.drainOfflineInbox,
+      // 187: expose the keepalive drop latch to the send path (P2PServiceImpl
+      // implements PeerDropSignal — no cast needed) so a send to a latched-
+      // dropped active peer skips the doomed direct dial and leans on the
+      // already-concurrent durable inbox.
+      onLivenessChanged: widget.p2pService.setPeerDropSuspected,
     );
     widget.pendingMessageRetrier.setExternalRecoveryInProgressProvider(
       () => _isResuming || isGroupRecoveryInProgress(),

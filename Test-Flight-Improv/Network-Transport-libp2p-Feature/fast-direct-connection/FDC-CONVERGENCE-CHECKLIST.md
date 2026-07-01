@@ -51,29 +51,29 @@
 - [ ] **CV-12** 📱 FDC-12 TC-12-13 symmetric-CGNAT graceful no-upgrade. `/sims 1to1 --only <N>`
 - [ ] **CV-13** ▢🚩 Flip `EnableDcutrUpgrade` default-on + update TC-12-01 lock. `cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node/ ; ./scripts/run_test_gates.sh transport`
 - [ ] **CV-15** 📱🛰 FDC-09 TC-09-20 iOS visible-wake (not silent-throttled)
-- [ ] **CV-16** 📱🛰 FDC-09 TC-09-21 `presence_set{background}` lands pre-suspend
+- [ ] **CV-16** 📱🛰 FDC-09 TC-09-21 `presence_set{background}` lands pre-suspend — ⏳ **ADVANCED 2026-06-30 (181, `14c3683c`):** `_onPaused→onBackgrounded→presence_set{background}` wired into `_MyAppState` + **device-proven to LAND** (runsheet: `PRESENCE_SELF_PUBLISH{state:background}` → `presence_set` success). Only the iOS ~20-trial pre-suspend *success-rate* (FDC-S3 Method 2, ≥50%) is still owed.
 - [ ] **CV-17** 📱 FDC-09 TC-09-22 presence TTL tune (FDC-S3 Method 1) *(shared w/ CV-22)*
 - [ ] **CV-18** 🛰 FDC-09 TC-09-24 old-relay `Unknown action: presence_set` degrade (needs old+new relay)
 - [ ] **CV-14→CV-19** ▢🚩 After CV-14 **saturates**: flip `wakeTokenGateEnforced` ON. `cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./...`
 - [ ] **CV-20** 📱 FDC-09 TC-09-23 non-contact cannot wake (gate e2e) — *requires CV-19*
-- [ ] **CV-21** 🛰 FDC-08 LR1 live relay answers presence w/o circuit dial + NET-REL-07 e2e. `./scripts/run_test_gates.sh transport ; /sims 1to1 --only <N>`
+- [ ] **CV-21** 🛰 FDC-08 LR1 live relay answers presence w/o circuit dial + NET-REL-07 e2e. `./scripts/run_test_gates.sh transport ; /sims 1to1 --only <N>` — ⏳ **ADVANCED 2026-06-30 (181, `14c3683c`):** the live redeployed relay answered `relay:presence_get` in **54ms** (TC-181-33 log, returned `unreachable`) — real-wire exercise of LR1's core. Still owed: the LR1 sim (`relay_presence_get_smoke_test.dart` + TRANSPORT_TESTS/classify_path), an explicit *no-`/p2p-circuit`-dial* assertion, and the NET-REL-07 old-client e2e.
 - [ ] **CV-22** 🛰 FDC-08 presence TTL constants device-tuned (~180s / 10-15s) *(shared w/ CV-17)*
 - [ ] **CV-23** 📱 FDC-07 TC-07-05 cold T_circuit ≤3s + reserve_dispatch anchor
 - [ ] **CV-24** 📱 FDC-07 TC-07-06 early mDNS + LAN opportunistic
-- [ ] **CV-25** 📱 FDC-04 TC-04-15 warm-open send = `local`
-- [ ] **CV-26** 📱 FDC-04 WiFi→cellular re-warm fires
+- [ ] **CV-25** 📱 FDC-04 TC-04-15 warm-open send = `local` — ⏳ **ADVANCED (183, `2d5dbbfa`; CV-08 `121f0551`):** warmPeer fires on conv-open (`conversation_wired.dart:568`) + real direct RTT 189ms device-proven. Only the specific `transport:'local'`-label capture on a warm-open first send is owed.
+- [ ] **CV-26** 📱 FDC-04 WiFi→cellular re-warm fires — ⏳ **ADVANCED 2026-06-30 (182, `2d5dbbfa`):** `networkChangeSignal` is now LIVE in prod (`main.dart:2218` = `connectivityRestoredSignal()`; was `null` since FDC-04). ⚠ BUT the peer-scoped re-warm branch is still **DORMANT** — `P2PServiceImpl` has no `activePeerId` (tracker built after the service at `main.dart:2208`). **HOST WIRING LANDED 2026-07-01 (this session):** `conversationTracker` moved ahead of the `P2PServiceImpl` build in `main.dart` + `activePeerId: () => conversationTracker.activePeerId` now passed → the peer-scoped re-warm branch is **ACTIVE** (branch logic locked by TC-04-07/08/16; `p2p_service_impl_test` +118 green, `flutter analyze` 0-new). Only the on-device WiFi→cellular re-warm capture is now owed.
 - [ ] **CV-27** 📱 FDC-04 TC-04-05 cold notif-tap PS-3 no-op
 - [ ] **CV-30** 📱 FDC-13 real-wire `transport:upgraded`→badge *(needs CV-11/13)*
-- [ ] **CV-32** 📱 FDC-14 badge reaches `onlineDirect` on real LAN pair *(needs FDC-14b producer)*
-- [ ] **CV-33** ⚙ FDC-15 native `mediaLanSend` + `media:lan_received` emit (rebuild)
-- [ ] **CV-34** 📱 FDC-15 D1 two-phone LAN media (`/mknoon/media-lan/1.0.0`), both OS *(toggle `EnableLibp2pLanMedia` ON for the rig)*
-- [ ] **CV-29** 📱 FDC-06 T8 open-send-lock delivers on the iPhone 11/13 (iOS 26.5) pair — **2nd-iOS-major WAIVED** (decision 2026-06-28: work with what we have). Single-message T8 runnable now; **N≥3 burst still BLOCKED on plan 170** (+ CV-28 ✅ + CV-07 ✅ + CV-06 durable custody).
+- [ ] **CV-32** 📱 FDC-14 badge reaches `onlineDirect` on real LAN pair — ⏳ **ADVANCED (FDC-14b producer LANDED host-green `aa15d51b`; RUNNABLE since CV-09 `4cce15c1` made LANDial default-ON).** `NodeState.directReady` producer (`_computeDirectReady`/`_connHasDirectAddr`) is P-1..P-8 + TG-1 green, P-7 mutation-proven. The named blocker (FDC-14b) is **cleared** — only the same-WiFi device capture (badge → `onlineDirect`) is owed.
+- [x] **CV-33** ⚙ FDC-15 native `mediaLanSend` + `media:lan_received` emit (rebuild) — ✅ **CLOSED (work done pre-checklist; box ticked 2026-07-01 after audit).** Native dispatch committed `5d54c028` (`GoBridge.swift` `mediaLanSend`→`BridgeMediaLANSend`; `GoBridge.kt`→`GoMknoon.mediaLANSend`, Dart→Go casing trap honored); gomobile artifacts export the binding; `media:lan_received` rides the generic event channel (no native case). Device-proven end-to-end in **180** (`53b8d6fc`): `P2P_LAN_MEDIA_SEND_RESPONSE{ok:true}` + `LOCAL_MEDIA_SEND_SUCCESS` 2.2MB. Documentation-only tick — no engineering owed.
+- [x] **CV-34** 📱 FDC-15 D1 two-phone LAN media (`/mknoon/media-lan/1.0.0`), both OS — ✅ **CLOSED (device-proven; box ticked 2026-07-01 after audit).** Commit `53b8d6fc` (plan **180**): *"record device-proof closure — TC-180-07/08 PASS, CV-34 both-ways real."* Pixel→iPhone `P2P_LAN_MEDIA_SEND_RESPONSE{ok:true}` + `LOCAL_MEDIA_SEND_SUCCESS` (2.2MB, 268ms, jmDNS-resolved host 192.168.0.21); iPhone→Pixel control was **179** (`208be686`); `MSG_RECEIVED_TRANSPORT` direct+wifi both ways, no relay. ⚠ **Co-dep the row originally omitted:** the Android→iOS direction is unlocked by the **180** native mDNS resolver (`MKNOON_ENABLE_NATIVE_MDNS`, ships DARK) — NOT `EnableLibp2pLanMedia` alone. The prod `EnableLibp2pLanMedia` flip stays deferred to the FDC-S6 media verdict (CV-40 / P4.4 "stays OFF").
+- [ ] **CV-29** 📱 FDC-06 T8 open-send-lock delivers on the iPhone 11/13 (iOS 26.5) pair — **2nd-iOS-major WAIVED** (decision 2026-06-28: work with what we have). ⚠ **STALE BLOCKER CORRECTED 2026-07-01:** the "N≥3 burst BLOCKED on plan 170" note is **stale** — plan 170 (send-button freeze) **shipped host-green 2026-06-27** and is LIVE on HEAD. T8 single-message + N∈{3,8} burst are both runnable now; only the sim-scenario registration (classify_path + dart-define) + the device run are owed. (CV-28 ✅ + CV-07 ✅ + CV-06 durable custody all in.)
 
 ## P4.2 — Win-rate soak
 > **Precondition LANDED 2026-06-29 (plan `177-lan-classifier-dns4-local-private`, commit `fd278a71`):** the FDC-S6 win-rate classifier `lan_address_classifier.dart` now counts `/dns4|/dns6|/dnsaddr/<host>.local` as private/LAN (RFC 6762). It previously returned `lanPrivateIp:false` for **iOS-resolved** peers (Fix C's `/dns4` shape), so CV-36/37 could **never certify** a clean LAN win whenever iOS was the discoverer. **Device-confirmed:** iPhone 11 now emits `P2P_LAN_PEER_FOUND_REQUEST{lanPrivateIp:true}` (was `false`). A **pilot** run is done (A→i 54/54 clean = 100%, Wilson-LB 93.4% — UNDERPOWERED at n=54; i→A showed a real 39-direct/14-`wifi` mix + 23% double-delivery). The full soak campaign (CV-36/37/38/39) **stays OPEN**. Capture-procedure note: launch the iPhone advertiser FIRST, then the Pixel, so the Pixel doesn't latch its suspected-denied mDNS gate before discovery.
-- [ ] **CV-35** ⚙ Soak+baseline binaries `flutter build (profile) --dart-define=FDC_FLOW_LOG=1`
+- [ ] **CV-35** ⚙ Soak+baseline binaries `flutter build (profile) --dart-define=FDC_FLOW_LOG=1` — ⏳ **ADVANCED (179 `b86bc841` / 180 `53b8d6fc`):** the **LAN-ON** soak binary was built + run (6 pilot logs, `fdc-s6-measurement/logs/pilot_*`). Still owed: the **WS-baseline arm** (LAN-dial gate OFF) from the *same pinned HEAD* (Android also `MKNOON_ENABLE_NATIVE_MDNS`) — required for CV-39's Newcombe delta.
 - [ ] **CV-36** ⏳ Win-rate soak: libp2p-LAN Wilson-LB ≥95%, ≥385 sends/dir, 3 platform-dirs (A→A / i→i / A↔i) — duration floor removed by decision 2026-06-29 (no 14-day soak; the ≥385-sample Wilson-LB criterion is the sole gate). `fdc-s6-measurement/fdc_s6_capture.sh + fdc_s6_parse.py`
-- [ ] **CV-37** 📱 bonsoir-fed-dial reliability both OS (Wilson 95% LB ≥95%, ≥385)
+- [ ] **CV-37** 📱 bonsoir-fed-dial reliability both OS (Wilson 95% LB ≥95%, ≥385) — ⏳ **ADVANCED (178 `48c1576f` + 180 `7271cfdf`/`53b8d6fc`):** the Android bonsoir-fed-dial half (the recurring rig blocker) is fixed — suspected-denied over-latch gone + native jmDNS resolver device-proven cross-OS. Still owed: the ≥385/dir certification (same dataset as CV-36).
 - [ ] **CV-38** ⏳ double-delivery rate by (first,second)-leg pair
 - [ ] **CV-39** ⏳ failure-delta ≤ +1.0pp vs bonsoir+WS baseline (Newcombe CI)
 
@@ -96,9 +96,9 @@
 
 ## P4.5 — FDC-S0 re-measure = epic close
 - [x] **CV-42** ▢ M3 online→inbox mis-route After ≈0 — ✅ **RIGOR ALREADY CARRIED BY FDC-01** (confirmed 2026-06-28): the `FDC-01 — direct-timeout misroute + per-step budget` group in `test/features/conversation/application/send_chat_message_use_case_test.dart:4180-4302` locks "slow-but-online peer delivers direct, NOT `transport:'inbox'`" and rides the `1to1` gate. No new host code (per plan: "rigor in FDC-01"). The *After-rate aggregation* number is part of the deferred FDC-S0 scorecard (CV-49). Preserve: `./scripts/run_test_gates.sh 1to1`
-- [ ] **CV-43** ▢ M1b/M5 Go benchmarks After. `cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node/ -run TestBenchmark -v | grep BENCHMARK`
-- [ ] **CV-44** ▢ M8 reaction-to-offline After (FDC-18)
-- [ ] **CV-45** 🛰 M9 inbox durability survives relay restart (FDC-10 failover)
+- [x] **CV-43** ▢ M1b/M5 Go benchmarks After — ✅ **CAPTURED 2026-07-01** (`GOTOOLCHAIN=go1.25.0 go test ./node/ -run TestBenchmark`, `ok 3.110s`, all 30 PASS): M1b direct-ack `direct_send_ms p50=0 p95=0 (n=10)`, `acked=true`; M5 `startup_host_ready_ms=2ms`, `relay_warm_done relayWarmMs=0 relaysAttempted=1`, stop-start cycle OK. Numbers feed CV-49.
+- [x] **CV-44** ▢ M8 reaction-to-offline After (FDC-18) — ✅ **CAPTURED 2026-07-01** (`send_reaction_use_case_test.dart` +13 all pass): reaction-to-offline → `REACTION_SEND_CONCURRENT_INBOX_BEGIN` durable custody, `storeInInbox` EXACTLY once (FDC-18-04), connected-peer skips it (FDC-18-03), both-fail persists nothing (FDC-18-05). Feeds CV-49.
+- [ ] **CV-45** 🛰 M9 inbox durability survives relay restart (FDC-10 failover) — ⏳ **HOST HALF DONE 2026-07-01:** `go-relay-server` `ok 12.609s` + `go-mknoon -tags integration ./integration/...` `ok 99.347s` (miniredis failover: 2nd-relay-available prevents loss) both green under go1.25.0. The 🛰 live closure (bounce the live EC2 relay + confirm a Redis-backed message survives) stays deferred (needs prod auth).
 - [ ] **CV-46** 📱 M1/M2/M4/M5/M7 device scorecard captures (≥10 trials)
 - [ ] **CV-47** ⏳ M6 LAN win-rate same-WiFi (REUSE CV-36 soak)
 - [ ] **CV-48** ▢ M10 host-gate floor After. `./scripts/run_test_gates.sh 1to1 ; feed ; transport`
@@ -110,9 +110,9 @@
 - [ ] **FDC-10 is `awaiting-review`** — the durability deploy chain (CV-03..06) + S0 M9 (CV-45) are blocked until it lands.
 - [ ] **Live-relay-env is gitignored but PRESENT locally** (`.env`: EC2_HOST `13.60.15.36`/Redis/Grafana creds + `se.pem`) — CV-03/06/15/16/18/21/22/45 are reachable *in principle*, but they connect/deploy to **LIVE PROD** → require **explicit authorization**; do not run unprompted.
 - [x] **Device scenario `--only N` ids UNDEFINED** — ✅ **RESOLVED** (2026-06-28, CV-07): `dcutr_upgrade_proof_test.dart` + `run_1to1_device_real.dart` authored; discovery script lists all 16 1:1 device scenarios + both dcutr TC checks (`--only N` = 1-based index in `run_1to1_device_real.dart --scenario all --list-scenarios`). Device *run* still deferred (no 2-phone rig).
-- [ ] **plan 170** (send-button) gates CV-29 (FDC-06 T8 N≥3 burst).
+- [x] **plan 170** (send-button) — ✅ **RESOLVED (no longer a blocker; noted 2026-07-01):** plan 170 shipped host-green 2026-06-27 and is LIVE on HEAD, so it no longer gates CV-29's N≥3 burst — only the sim-scenario registration + the device run remain (see CV-29).
 - [ ] **FDC-13 1to1 pass count printed inconsistently** (+1250 vs +13) → reconcile the true count in CV-48.
-- [ ] **FDC-14b producer** (onlineDirect signal source, Route B) being built this session — CV-32 device-proofs it once it + FDC-11 land.
+- [x] **FDC-14b producer** (onlineDirect signal source, Route B) — ✅ **LANDED host-green (`aa15d51b`):** `NodeState.directReady` producer P-1..P-8 + TG-1 green, P-7 mutation-proven; FDC-11/CV-08 co-prereq closed (`121f0551`). CV-32's named blocker is cleared — only the same-WiFi device capture remains (see CV-32).
 
 ## Epic-close sign-off (all must be ✓)
 - [ ] Every CV-01..49 box checked **or** explicitly recorded deferred-not-waived with reason + owner.

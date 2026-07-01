@@ -2446,22 +2446,51 @@ class _ConversationWiredState extends State<ConversationWired>
         final displayMedia = await _resolveDisplayMedia(uploadedAttachments);
         if (!mounted) return;
 
+        // 185: when a 1:1 send fails ONLY because the SENDER is offline
+        // (relay unreachable) with a connectivity-class result, keep the row in
+        // the retriable self-healing lane — status 'sent', wire envelope
+        // preserved — so `retryUnacked` + the delivery receipt converge it to
+        // 'delivered', instead of dropping it to terminal 'failed' (a red Retry
+        // that never clears even after the peer receives it). peerNotFound /
+        // dialFailed persist their wire envelope before the transport race, so
+        // the kept-'sent' row is getUnackedOutgoingMessages-eligible.
+        // nodeNotRunning is EXCLUDED: it returns before the envelope is
+        // persisted, so its row is not lane-eligible and belongs in the failed /
+        // retryFailedMessages lane.
+        final senderOffline = !widget.p2pService.currentState.relayReady;
+        final keepRetriableOffline =
+            result != SendChatMessageResult.success &&
+            senderOffline &&
+            (result == SendChatMessageResult.peerNotFound ||
+                result == SendChatMessageResult.dialFailed);
+
         if (message != null) {
           final persistedMedia =
               displayMedia ?? uploadedAttachments ?? optimisticMedia;
+          // Override the terminal 'failed' the send use case stamped when the
+          // failure was purely our own offline state (keep it retriable).
+          final effectiveStatus = keepRetriableOffline ? 'sent' : message.status;
           final messageWithMedia = message.copyWith(
             quotedMessageId: quotedMessageId,
             media: persistedMedia ?? message.media,
+            status: effectiveStatus,
           );
           setState(() {
             _upsertMessageById(messageWithMedia);
           });
+          if (keepRetriableOffline) {
+            // Status-only write (preserves the persisted wire envelope) — and it
+            // is the LAST status write, so it wins over the use case's 'failed'.
+            await _persistMessageStatus(message.id, 'sent');
+          }
           _scrollToBottom();
         } else {
-          final fallbackStatus = switch (result) {
-            SendChatMessageResult.success => 'sent',
-            _ => 'failed',
-          };
+          final fallbackStatus = keepRetriableOffline
+              ? 'sent'
+              : switch (result) {
+                  SendChatMessageResult.success => 'sent',
+                  _ => 'failed',
+                };
           final resolvedMedia = displayMedia ?? uploadedAttachments;
           if (resolvedMedia != null && resolvedMedia.isNotEmpty) {
             // Re-point the on-screen optimistic message at the resolved absolute
@@ -2481,29 +2510,52 @@ class _ConversationWiredState extends State<ConversationWired>
         }
 
         if (result != SendChatMessageResult.success) {
+          // 185: name the REAL cause. When WE are offline, a connectivity-class
+          // failure must not blame the contact — say so honestly (and truthfully
+          // promise the queued send). nodeNotRunning is inherently sender-side,
+          // so it always uses this copy; peerNotFound / dialFailed use it only
+          // when the sender is offline (else they are genuine per-contact
+          // failures and keep the contact-facing copy — no over-correction).
+          const senderOfflineCopy =
+              "No internet connection. Message will send when you're back online.";
           final snackText = switch (result) {
-            SendChatMessageResult.nodeNotRunning =>
-              'Network not connected. Message saved.',
-            SendChatMessageResult.peerNotFound =>
-              'Contact appears offline. Message saved.',
-            SendChatMessageResult.dialFailed =>
-              'Could not connect to contact. Message saved.',
+            SendChatMessageResult.nodeNotRunning => senderOfflineCopy,
+            SendChatMessageResult.peerNotFound => senderOffline
+                ? senderOfflineCopy
+                : 'Contact appears offline. Message saved.',
+            SendChatMessageResult.dialFailed => senderOffline
+                ? senderOfflineCopy
+                : 'Could not connect to contact. Message saved.',
             SendChatMessageResult.invalidMessage => 'Message cannot be empty.',
             SendChatMessageResult.encryptionRequired =>
               'Cannot send: contact does not support encryption.',
             _ => 'Failed to send message. Message saved.',
           };
-          await _restoreComposerSnapshot(
-            composerSnapshot,
-            optimisticMessageId: optimisticMessage.id,
-            messenger: messenger,
-            snackText: snackText,
-            showSnackBar: false,
-          );
+          // 185: the sender-offline copy is a benign, self-healing state (the
+          // message is queued and will send on reconnect), NOT a failure — give
+          // it an informational slate tone instead of the error-red reserved for
+          // genuine send failures.
+          final snackColor = snackText == senderOfflineCopy
+              ? Colors.blueGrey[700]
+              : Colors.red[700];
+          // 185: for a kept-retriable offline send the row is safely queued for
+          // the self-healing lane, so DO NOT restore the composer draft or let
+          // _restoreComposerSnapshot re-stamp it 'failed' — that would resurrect
+          // the Retry this fix removes and invite a duplicate send. Just surface
+          // the honest snackbar. Genuine failures still restore + go 'failed'.
+          if (!keepRetriableOffline) {
+            await _restoreComposerSnapshot(
+              composerSnapshot,
+              optimisticMessageId: optimisticMessage.id,
+              messenger: messenger,
+              snackText: snackText,
+              showSnackBar: false,
+            );
+          }
           messenger?.showSnackBar(
             SnackBar(
               content: Text(snackText),
-              backgroundColor: Colors.red[700],
+              backgroundColor: snackColor,
               behavior: SnackBarBehavior.floating,
               margin: _composerClearingSnackBarMargin(),
             ),
@@ -3902,24 +3954,30 @@ class _ConversationWiredState extends State<ConversationWired>
     }
   }
 
-  /// 170-S1: logical-px clearance that lifts a floating failure SnackBar above
-  /// the bottom composer. The host Scaffold has no bottomNavigationBar/FAB, so
-  /// Flutter's `_ScaffoldLayout` never lifts a floating bar above the composer
-  /// (which is plain body content) — without this it lands on the Send button.
-  static const double _kComposerSnackBarBottomClearance = 96.0;
+  /// 170-S1 / UX tweak: a floating failure/offline SnackBar sits RIGHT ON TOP of
+  /// the bottom composer (the "Write something…" field), not floating high above
+  /// it. The composer is plain body content and the host Scaffold has no
+  /// bottomNavigationBar/FAB, so nothing else lifts a floating bar off it —
+  /// without a margin it lands on the Send button. Its height is ~12 top pad +
+  /// 48 button row + 12 base bottom pad (≈72-76 logical px), plus the device
+  /// bottom inset the composer applies itself; so a margin of (that height + a
+  /// small gap) drops the bar's lower edge to just above the composer.
+  static const double _kComposerApproxHeight = 76.0;
+  static const double _kComposerSnackBarGap = 6.0;
 
-  /// 170-S1: bottom margin that keeps a floating failure SnackBar off the
-  /// composer / Send button. Sized from the safe-area inset plus the clearance.
-  /// Guarded for the background send-completion path where the screen may
-  /// already be gone (no MediaQuery lookup off a defunct context).
+  /// Bottom margin that seats a floating failure SnackBar just above the
+  /// composer. Uses `padding.bottom` (0 while the keyboard is open — the common
+  /// send case — and the safe-area inset when closed) to match the composer's
+  /// own bottom inset. Guarded for the background send-completion path where the
+  /// screen may already be gone (no MediaQuery lookup off a defunct context).
   EdgeInsetsGeometry _composerClearingSnackBarMargin() {
     final bottomInset = mounted
-        ? (MediaQuery.maybeOf(context)?.viewPadding.bottom ?? 0.0)
+        ? (MediaQuery.maybeOf(context)?.padding.bottom ?? 0.0)
         : 0.0;
     return EdgeInsets.only(
       left: 8,
       right: 8,
-      bottom: _kComposerSnackBarBottomClearance + bottomInset,
+      bottom: _kComposerApproxHeight + _kComposerSnackBarGap + bottomInset,
     );
   }
 

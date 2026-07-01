@@ -17,6 +17,7 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/services/fake_p2p_service.dart';
@@ -153,7 +154,18 @@ class _FakeMessageRepository
   @override
   Future<List<ConversationMessage>> getUnackedOutgoingMessages({
     required Duration olderThan,
-  }) async => [];
+  }) async =>
+      // Mirror messages_db_helpers.dart:645-666 — the retryUnacked lane picks up
+      // outgoing 'sent' rows that still carry a wire envelope. 185 asserts an
+      // offline send is left in exactly this state (not terminal 'failed').
+      store.values
+          .where(
+            (m) =>
+                m.status == 'sent' &&
+                !m.isIncoming &&
+                (m.wireEnvelope != null && m.wireEnvelope!.isNotEmpty),
+          )
+          .toList();
 
   @override
   Future<ConversationMessage?> getMessage(String id) async => store[id];
@@ -211,13 +223,28 @@ class _FakeContactRepository implements ContactRepository {
 class _GatedSendRecorder {
   int callCount = 0;
   final List<String> sentTexts = [];
+  final List<String?> messageIds = [];
   final List<Completer<(SendChatMessageResult, ConversationMessage?)>>
   _completers = [];
 
   int get pending => _completers.length;
 
+  /// Resolve the last in-flight send as [result] with a NULL message — the
+  /// early-return failure shape (invalidMessage / nodeNotRunning /
+  /// encryptionRequired) the UI handles in its `message == null` branch.
   void completeLast(SendChatMessageResult result) {
     _completers.last.complete((result, null));
+  }
+
+  /// Resolve the last in-flight send as [result] carrying a NON-NULL message —
+  /// the REAL production shape of a terminal peerNotFound/dialFailed/sendFailed
+  /// (send_chat_message_use_case.dart returns `failedMessage` with the wire
+  /// envelope preserved). The UI handles this in its `message != null` branch.
+  void completeLastWithMessage(
+    SendChatMessageResult result,
+    ConversationMessage message,
+  ) {
+    _completers.last.complete((result, message));
   }
 
   SendChatMessageFn get fn => ({
@@ -238,6 +265,7 @@ class _GatedSendRecorder {
   }) {
     callCount++;
     sentTexts.add(text);
+    messageIds.add(messageId);
     final completer =
         Completer<(SendChatMessageResult, ConversationMessage?)>();
     _completers.add(completer);
@@ -266,9 +294,21 @@ final _contact = ContactModel(
   scannedAt: '2026-01-01T00:00:00.000Z',
 );
 
+/// A relay-unreachable node state (isStarted, but no relay/circuit) →
+/// `relayReady == false` → the 185 sender-offline predicate is true.
+final _offlineState = const NodeState(isStarted: true, peerId: 'me');
+
+/// A relay-online node state → `relayReady == true` → sender is online.
+final _onlineState = const NodeState(
+  isStarted: true,
+  peerId: 'me',
+  relayState: 'online',
+);
+
 Widget _buildTestWidget({
   required _FakeMessageRepository messageRepo,
   required SendChatMessageFn sendChatMessageFn,
+  P2PService? p2pService,
 }) {
   final chatListener = ChatMessageListener(
     chatMessageStream: const Stream<ChatMessage>.empty(),
@@ -285,7 +325,7 @@ Widget _buildTestWidget({
       identityRepo: _FakeIdentityRepository(_identity),
       messageRepo: messageRepo,
       chatMessageListener: chatListener,
-      p2pService: FakeP2PService(),
+      p2pService: p2pService ?? FakeP2PService(initialState: _offlineState),
       bridge: FakeBridge(),
       sendChatMessageFn: sendChatMessageFn,
       audioRecorderService: FakeAudioRecorderService(),
@@ -377,13 +417,17 @@ void main() {
         );
         await _settleStartup(tester);
 
-        const offlineSnackText = 'Network not connected. Message saved.';
+        // 185: nodeNotRunning is inherently a sender-offline condition, so it
+        // now shows the honest "no internet" copy (renamed from the old
+        // "Network not connected. Message saved.").
+        const offlineSnackText =
+            "No internet connection. Message will send when you're back online.";
 
         await _typeAndSend(tester, 'offline message');
         expect(recorder.callCount, 1);
 
         // Resolve the in-flight send as the offline failure
-        // (nodeNotRunning -> "Network not connected. Message saved.").
+        // (nodeNotRunning -> the honest sender-offline copy).
         recorder.completeLast(SendChatMessageResult.nodeNotRunning);
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 800)); // slide-in
@@ -392,9 +436,10 @@ void main() {
         expect(snackBarFinder, findsOneWidget);
         final snackBar = tester.widget<SnackBar>(snackBarFinder);
 
-        // Distinct discriminator: pinned to the FAILURE bar, not an unrelated
-        // floating notice.
-        expect(snackBar.backgroundColor, Colors.red[700]);
+        // Distinct discriminator: pinned to the offline-notice bar. 185:
+        // nodeNotRunning is a sender-offline (queued, self-healing) state, so it
+        // uses the informational slate tone, NOT the error-red.
+        expect(snackBar.backgroundColor, Colors.blueGrey[700]);
 
         // S1 core: the failure bar carries a bottom margin that lifts it off
         // the composer. (RED on HEAD: margin == null.)
@@ -513,5 +558,253 @@ void main() {
         expect(find.byIcon(Icons.done_rounded), findsOneWidget);
       },
     );
+  });
+
+  // ---------------------------------------------------------------------------
+  // 185 — offline-send failure truthfulness. When the SENDER is offline
+  // (relayReady == false) a connectivity-class failure must stay in the
+  // retriable self-healing lane ('sent', wire envelope preserved) and the
+  // snackbar must name the sender's connection, not blame the contact.
+  // ---------------------------------------------------------------------------
+  group('ConversationWired — offline-send truthfulness (185)', () {
+    // NOTE (synthetic shape): TC-185-01 drives a NULL-message peerNotFound to
+    // exercise the UI's *defensive* `message == null` else-branch reclassify.
+    // In PRODUCTION peerNotFound/dialFailed are always NON-NULL (the terminal
+    // failure path returns a failedMessage — send_chat_message_use_case.dart
+    // :1305-1345), so the real offline path is the `message != null` branch,
+    // locked by TC-185-01b below. This case guards the else-branch belt-and-
+    // suspenders handling only; it is not the production shape.
+    testWidgets(
+      "TC-185-01 offline send (defensive else-branch) lands retriable 'sent', not 'failed'",
+      (tester) async {
+        final messageRepo = _FakeMessageRepository();
+        final recorder = _GatedSendRecorder();
+
+        await tester.pumpWidget(
+          _buildTestWidget(
+            messageRepo: messageRepo,
+            sendChatMessageFn: recorder.fn,
+            // default = offline (relayReady == false)
+          ),
+        );
+        await _settleStartup(tester);
+
+        await _typeAndSend(tester, 'offline retriable');
+        expect(recorder.callCount, 1);
+
+        // Synthetic null-message resolution -> the UI's else branch.
+        recorder.completeLast(SendChatMessageResult.peerNotFound);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+        await tester.pump();
+
+        final stored = messageRepo.store.values.firstWhere(
+          (m) => m.text == 'offline retriable',
+        );
+        expect(
+          stored.status,
+          'sent',
+          reason:
+              'an offline send must stay retriable (getUnacked-eligible), not '
+              'drop to terminal failed (RED on HEAD: peerNotFound -> failed)',
+        );
+        // No Retry affordance for a purely-offline send.
+        expect(
+          find.byKey(ValueKey('failed-message-retry-${stored.id}')),
+          findsNothing,
+        );
+        expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+        expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+      },
+    );
+
+    // TC-185-01b — the REAL production shape: peerNotFound AND dialFailed both
+    // return a NON-NULL failedMessage (send_chat_message_use_case.dart
+    // :1305-1345), handled by the UI's `message != null` branch. Looping over
+    // both connectivity-class results guards BOTH `||` arms of the
+    // keepRetriableOffline predicate (a revert dropping either arm re-reds).
+    for (final result in const [
+      SendChatMessageResult.peerNotFound,
+      SendChatMessageResult.dialFailed,
+    ]) {
+      testWidgets(
+        'TC-185-01b offline send returning a NON-NULL failedMessage '
+        '(${result == SendChatMessageResult.peerNotFound ? 'peerNotFound' : 'dialFailed'}, '
+        'production shape) is reclassified to retriable and stays in the unacked lane',
+        (tester) async {
+          final messageRepo = _FakeMessageRepository();
+          final recorder = _GatedSendRecorder();
+
+          await tester.pumpWidget(
+            _buildTestWidget(
+              messageRepo: messageRepo,
+              sendChatMessageFn: recorder.fn,
+            ),
+          );
+          await _settleStartup(tester);
+
+          await _typeAndSend(tester, 'offline nonnull');
+          expect(recorder.callCount, 1);
+
+          // Mirror send_chat_message_use_case.dart:1305-1345 — the terminal
+          // failure path SAVES a failedMessage carrying the wire envelope, then
+          // returns it non-null (handled by the UI's message!=null branch).
+          final sentId = recorder.messageIds.last!;
+          final failedMessage = ConversationMessage(
+            id: sentId,
+            contactPeerId: _contactPeerId,
+            senderPeerId: _identity.peerId,
+            text: 'offline nonnull',
+            timestamp: '2026-07-01T10:00:00.000Z',
+            status: 'failed',
+            isIncoming: false,
+            createdAt: '2026-07-01T10:00:00.000Z',
+            wireEnvelope: '{"type":"chat_message","version":"2","encrypted":{}}',
+          );
+          await messageRepo.saveMessage(failedMessage);
+          recorder.completeLastWithMessage(result, failedMessage);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 50));
+          await tester.pump();
+
+          final stored = messageRepo.store[sentId]!;
+          expect(
+            stored.status,
+            'sent',
+            reason: 'the UI must override the use case terminal failed',
+          );
+          expect(
+            stored.wireEnvelope,
+            isNotNull,
+            reason: 'the status-only write must preserve the wire envelope',
+          );
+          // Proof it re-enters the EXISTING retryUnacked convergence lane.
+          final lane = await messageRepo.getUnackedOutgoingMessages(
+            olderThan: Duration.zero,
+          );
+          expect(
+            lane.any((m) => m.id == sentId),
+            isTrue,
+            reason: 'getUnackedOutgoingMessages must pick up the kept-sent row',
+          );
+          expect(
+            find.byKey(ValueKey('failed-message-retry-$sentId')),
+            findsNothing,
+          );
+          expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+        },
+      );
+    }
+
+    testWidgets(
+      'TC-185-02 online peerNotFound still fails (no over-correction)',
+      (tester) async {
+        final messageRepo = _FakeMessageRepository();
+        final recorder = _GatedSendRecorder();
+
+        await tester.pumpWidget(
+          _buildTestWidget(
+            messageRepo: messageRepo,
+            sendChatMessageFn: recorder.fn,
+            p2pService: FakeP2PService(initialState: _onlineState),
+          ),
+        );
+        await _settleStartup(tester);
+
+        await _typeAndSend(tester, 'online fail');
+        expect(recorder.callCount, 1);
+
+        // Sender is ONLINE; peerNotFound is a genuine per-contact failure.
+        recorder.completeLast(SendChatMessageResult.peerNotFound);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 800));
+
+        final stored = messageRepo.store.values.firstWhere(
+          (m) => m.text == 'online fail',
+        );
+        expect(
+          stored.status,
+          'failed',
+          reason:
+              'a genuine failure while WE are online must stay failed — the fix '
+              'must not blanket-reclassify (mutation: ignore relayReady -> red)',
+        );
+        expect(
+          find.byKey(ValueKey('failed-message-retry-${stored.id}')),
+          findsOneWidget,
+        );
+      },
+    );
+
+    // TC-185-20 — offline: BOTH connectivity-class results must show the honest
+    // sender-offline copy, never the contact-blaming copy. Looping guards both
+    // snackbar `switch` arms.
+    const senderOfflineCopy =
+        "No internet connection. Message will send when you're back online.";
+    for (final c in const [
+      (SendChatMessageResult.peerNotFound, 'Contact appears offline. Message saved.'),
+      (SendChatMessageResult.dialFailed, 'Could not connect to contact. Message saved.'),
+    ]) {
+      testWidgets(
+        'TC-185-20 offline failure snackbar names the sender connection '
+        '(${c.$1 == SendChatMessageResult.peerNotFound ? 'peerNotFound' : 'dialFailed'})',
+        (tester) async {
+          final messageRepo = _FakeMessageRepository();
+          final recorder = _GatedSendRecorder();
+
+          await tester.pumpWidget(
+            _buildTestWidget(
+              messageRepo: messageRepo,
+              sendChatMessageFn: recorder.fn,
+            ),
+          );
+          await _settleStartup(tester);
+
+          await _typeAndSend(tester, 'offline snack');
+          recorder.completeLast(c.$1);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 800));
+
+          expect(find.text(senderOfflineCopy), findsOneWidget);
+          expect(find.text(c.$2), findsNothing);
+          // 185: offline-queued uses the informational slate tone, not error-red.
+          expect(
+            tester.widget<SnackBar>(find.byType(SnackBar)).backgroundColor,
+            Colors.blueGrey[700],
+          );
+        },
+      );
+
+      testWidgets(
+        'TC-185-21 online ${c.$1 == SendChatMessageResult.peerNotFound ? 'peerNotFound' : 'dialFailed'} '
+        'snackbar attributes to the contact',
+        (tester) async {
+          final messageRepo = _FakeMessageRepository();
+          final recorder = _GatedSendRecorder();
+
+          await tester.pumpWidget(
+            _buildTestWidget(
+              messageRepo: messageRepo,
+              sendChatMessageFn: recorder.fn,
+              p2pService: FakeP2PService(initialState: _onlineState),
+            ),
+          );
+          await _settleStartup(tester);
+
+          await _typeAndSend(tester, 'online snack');
+          recorder.completeLast(c.$1);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 800));
+
+          expect(find.text(c.$2), findsOneWidget);
+          expect(find.text(senderOfflineCopy), findsNothing);
+          // 185: a genuine online failure keeps the error-red.
+          expect(
+            tester.widget<SnackBar>(find.byType(SnackBar)).backgroundColor,
+            Colors.red[700],
+          );
+        },
+      );
+    }
   });
 }

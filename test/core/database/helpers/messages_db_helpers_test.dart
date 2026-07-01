@@ -1322,4 +1322,102 @@ void main() {
       },
     );
   });
+
+  // 185 — offline-send lane eligibility against the REAL SQL predicate
+  // (status='sent' AND is_incoming=0 AND wire_envelope IS NOT NULL AND
+  // timestamp < olderThan). Locks that a kept-'sent' offline send re-enters the
+  // self-healing retryUnacked lane, and that a 'failed' stamp evicts it — the
+  // exact reason 185 keeps an offline send retriable instead of terminal.
+  group('185 — dbLoadUnackedOutgoingMessages lane eligibility', () {
+    test(
+      "TC-185-03 a kept-'sent' outgoing row with a wire_envelope is picked by "
+      "the unacked lane; marking it 'failed' evicts it",
+      () async {
+        await dbInsertMessage(
+          db,
+          makeMessageRow(
+            id: 'msg-185-kept-sent',
+            status: 'sent',
+            isIncoming: 0,
+            timestamp: '2026-01-01T00:00:00.000Z',
+            wireEnvelope:
+                '{"type":"chat_message","version":"2","encrypted":{}}',
+          ),
+        );
+
+        final eligible = await dbLoadUnackedOutgoingMessages(
+          db,
+          olderThan: DateTime.utc(2026, 6, 1),
+        );
+        expect(
+          eligible.map((r) => r['id']),
+          contains('msg-185-kept-sent'),
+          reason:
+              'INV-1: a kept-sent offline row (wire envelope preserved) must be '
+              'retryUnacked-eligible',
+        );
+
+        // Documented mutation: a 'failed' stamp makes the SAME row invisible to
+        // the self-healing lane — this is precisely why 185 keeps it 'sent'.
+        await dbUpdateMessageStatus(db, 'msg-185-kept-sent', 'failed');
+        final afterFailed = await dbLoadUnackedOutgoingMessages(
+          db,
+          olderThan: DateTime.utc(2026, 6, 1),
+        );
+        expect(
+          afterFailed.map((r) => r['id']),
+          isNot(contains('msg-185-kept-sent')),
+          reason:
+              "a 'failed' row is invisible to the unacked lane (the eviction "
+              '185 fixes by keeping offline sends retriable)',
+        );
+      },
+    );
+
+    // 186 (FU-185-A): the age gate the reconnect pass drops to converge a
+    // freshly-queued offline message immediately instead of after the 5-min
+    // periodic.
+    test(
+      'TC-186-04 a fresh (<60s) sent+envelope row is excluded at olderThan:60s '
+      'but included at olderThan:0',
+      () async {
+        final now = DateTime.now().toUtc();
+        final freshTs = now
+            .subtract(const Duration(seconds: 30))
+            .toIso8601String();
+        await dbInsertMessage(
+          db,
+          makeMessageRow(
+            id: 'msg-186-fresh',
+            status: 'sent',
+            isIncoming: 0,
+            timestamp: freshTs,
+            wireEnvelope:
+                '{"type":"chat_message","version":"2","encrypted":{}}',
+          ),
+        );
+
+        // NB: dbLoadUnackedOutgoingMessages takes a DateTime CUTOFF (rows with
+        // timestamp < cutoff). The repository converts Duration->cutoff; here we
+        // pass the cutoffs directly. 60s gate => cutoff now-60s; reconnect (0) =>
+        // cutoff now.
+        final gated = await dbLoadUnackedOutgoingMessages(
+          db,
+          olderThan: now.subtract(const Duration(seconds: 60)),
+        );
+        expect(
+          gated.map((r) => r['id']),
+          isNot(contains('msg-186-fresh')),
+          reason: 'the 60s anti-race gate excludes a just-sent row',
+        );
+
+        final reconnect = await dbLoadUnackedOutgoingMessages(db, olderThan: now);
+        expect(
+          reconnect.map((r) => r['id']),
+          contains('msg-186-fresh'),
+          reason: 'dropping the gate (the reconnect pass) picks up the fresh row',
+        );
+      },
+    );
+  });
 }

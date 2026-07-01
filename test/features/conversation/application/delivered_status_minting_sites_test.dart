@@ -64,10 +64,12 @@ void main() {
       const expected = <String, int>{
         // (a) the delivery-receipt apply — receiver-confirmed by definition
         // (the receipt is emitted after the receiver's durable persist).
-        // Two conditionalTransitionStatus calls: 'inboxed'→'delivered' and
-        // the lost-ack 'sent'→'delivered' repair.
+        // Three conditionalTransitionStatus calls: 'inboxed'→'delivered', the
+        // lost-ack 'sent'→'delivered' repair, and (185) the defensive
+        // 'failed'→'delivered' arm for a sender-offline send that still reached
+        // the receiver. All three ride the peer-auth guard (:55) + CAS (D-6).
         'lib/features/conversation/application/handle_delivery_receipt_use_case.dart':
-            2,
+            3,
         // (b) the live deferred-ack branch of _persistOutgoingSendResult —
         // Go withholds the wire ack until the receiver durably stages
         // (node.go deferred direct ack), so this IS receiver confirmation.

@@ -7181,6 +7181,13 @@ void main() {
         );
 
         expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
+        // TC-185-30: the Retry AFFORDANCE (not just the error glyph) is present
+        // while failed. This assertion pair is the lock — it must CLEAR when the
+        // row flips to delivered (the delivered bubble must never keep Retry).
+        expect(
+          find.byKey(const ValueKey('failed-message-retry-failed-retry')),
+          findsOneWidget,
+        );
 
         await messageRepo.saveMessage(
           failedReply.copyWith(status: 'delivered'),
@@ -7195,6 +7202,82 @@ void main() {
         // (never the retired two-tick).
         expect(find.byIcon(Icons.done_rounded), findsOneWidget);
         expect(find.byIcon(Icons.done_all_rounded), findsNothing);
+        // TC-185-30: the Retry control is a pure function of persisted status
+        // via messageChanges — it must disappear once delivered.
+        expect(
+          find.byKey(const ValueKey('failed-message-retry-failed-retry')),
+          findsNothing,
+          reason:
+              'a delivered row must not keep the Retry affordance (INV-4)',
+        );
+      },
+    );
+
+    testWidgets(
+      'TC-185-33 a failed->delivered flip is durable across a conversation reopen',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final failedReply = ConversationMessage(
+          id: 'reopen-durable',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeIdentity().peerId,
+          text: 'Durable me',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'failed',
+          isIncoming: false,
+          createdAt: '2026-02-09T15:30:00.000Z',
+        );
+        await messageRepo.saveMessage(failedReply);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+        );
+        expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('failed-message-retry-reopen-durable')),
+          findsOneWidget,
+        );
+
+        // Persist the delivered status (as the receipt arm does), then REOPEN
+        // the conversation from scratch (fresh widget over the durable store).
+        await messageRepo.saveMessage(failedReply.copyWith(status: 'delivered'));
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+        );
+
+        expect(
+          find.byIcon(Icons.error_outline_rounded),
+          findsNothing,
+          reason:
+              'the reopened conversation reconstructs the DURABLE delivered '
+              'status (mutation: flip only in-memory -> reopen shows failed)',
+        );
+        expect(
+          find.byKey(const ValueKey('failed-message-retry-reopen-durable')),
+          findsNothing,
+        );
+
+        // Drain the reopened screen's foreground timers before teardown.
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
       },
     );
 
