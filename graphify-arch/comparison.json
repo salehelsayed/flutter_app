@@ -1,16 +1,16 @@
 {
   "full": {
     "graph": "graphify-out/graph.json",
-    "nodes": 106978,
-    "edges": 180983,
-    "communities": 4524,
-    "source_files": 5637,
-    "avg_edges_per_node": 1.6918,
-    "avg_nodes_per_community": 23.65,
-    "app_owned_nodes": 47396,
-    "app_owned_ratio": 0.443,
+    "nodes": 107016,
+    "edges": 181029,
+    "communities": 4522,
+    "source_files": 5640,
+    "avg_edges_per_node": 1.6916,
+    "avg_nodes_per_community": 23.67,
+    "app_owned_nodes": 47223,
+    "app_owned_ratio": 0.4413,
     "noise_nodes": 21875,
-    "noise_ratio": 0.2045,
+    "noise_ratio": 0.2044,
     "unknown_source_nodes": 2022,
     "unknown_source_ratio": 0.0189,
     "top_hub_noise_count": 5,
@@ -18,11 +18,11 @@
     "top_source_dirs": [
       [
         "Test-Flight-Improv",
-        31586
+        31621
       ],
       [
         "lib",
-        20899
+        20723
       ],
       [
         "test",
@@ -42,7 +42,7 @@
       ],
       [
         "go-mknoon",
-        4547
+        4550
       ],
       [
         "go-relay-server",
@@ -140,13 +140,13 @@
   },
   "architecture": {
     "graph": "graphify-arch/graphify-out/graph.json",
-    "nodes": 43123,
-    "edges": 67173,
-    "communities": 933,
+    "nodes": 43126,
+    "edges": 67186,
+    "communities": 916,
     "source_files": 2234,
-    "avg_edges_per_node": 1.5577,
-    "avg_nodes_per_community": 46.22,
-    "app_owned_nodes": 41447,
+    "avg_edges_per_node": 1.5579,
+    "avg_nodes_per_community": 47.08,
+    "app_owned_nodes": 41450,
     "app_owned_ratio": 0.9611,
     "noise_nodes": 0,
     "noise_ratio": 0.0,
@@ -169,7 +169,7 @@
       ],
       [
         "go-mknoon",
-        2337
+        2340
       ],
       [
         "go-relay-server",
@@ -258,10 +258,10 @@
     ]
   },
   "deltas": {
-    "nodes": -0.5969,
-    "edges": -0.6288,
-    "communities": -0.7938,
-    "app_owned_ratio": 1.1695,
+    "nodes": -0.597,
+    "edges": -0.6289,
+    "communities": -0.7974,
+    "app_owned_ratio": 1.1779,
     "noise_ratio": -1.0,
     "top_hub_noise_ratio": -1.0
   }
