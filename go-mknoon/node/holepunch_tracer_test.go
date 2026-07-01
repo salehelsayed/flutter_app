@@ -277,3 +277,150 @@ func TestTracer_EmitsRttAndElapsed(t *testing.T) {
 		t.Fatalf("transport:upgraded elapsedMs = %v (present=%v), want 42", u["elapsedMs"], ok)
 	}
 }
+
+// 188 TC-188-03 (INV-1, peer-scoped): a punch success for peer B flips ONLY
+// peer B's circuit entry. A co-resident Limited circuit to peer C must stay
+// Limited and receive no transport:upgraded. Guards the 2026-07-01 device
+// artifact where the only observed punch targeted an unrelated relay peer
+// (FDC-CONVERGENCE-CHECKLIST CV-10 verdict).
+func TestHolePunchTracer_SuccessIsPeerScoped_CoResidentCircuitUntouched(t *testing.T) {
+	collector := &testEventCollector{}
+	n := newTracerTestNode(collector)
+	tracer := newNodeHolePunchTracer(n)
+
+	peerB := testRemotePeerID(t)
+	peerC := testRemotePeerID(t)
+
+	n.connections[peerB.String()] = connectionInfo{
+		PeerId:  peerB.String(),
+		Limited: true,
+	}
+	n.connections[peerC.String()] = connectionInfo{
+		PeerId:  peerC.String(),
+		Limited: true,
+	}
+
+	tracer.Trace(&holepunch.Event{
+		Remote: peerB,
+		Type:   holepunch.EndHolePunchEvtT,
+		Evt: &holepunch.EndHolePunchEvt{
+			Success:      true,
+			EllapsedTime: 42 * time.Millisecond,
+		},
+	})
+
+	n.mu.RLock()
+	infoB := n.connections[peerB.String()]
+	infoC := n.connections[peerC.String()]
+	n.mu.RUnlock()
+
+	if infoB.Limited {
+		t.Fatalf("peerB Limited = true after its own punch success, want false: %+v", infoB)
+	}
+	if !infoC.Limited {
+		t.Fatalf("co-resident peerC flipped to direct by peerB's punch, want Limited=true: %+v", infoC)
+	}
+
+	upgrades := collector.collectEvents("transport:upgraded")
+	if len(upgrades) != 1 {
+		t.Fatalf("expected exactly 1 transport:upgraded, got %d: %+v", len(upgrades), upgrades)
+	}
+	if got := upgrades[0]["remotePeerShort"]; got != shortPeerID(peerB.String()) {
+		t.Fatalf("transport:upgraded remotePeerShort = %v, want %s (peerB)", got, shortPeerID(peerB.String()))
+	}
+	if got := upgrades[0]["remotePeerShort"]; got == shortPeerID(peerC.String()) {
+		t.Fatalf("transport:upgraded attributed to co-resident peerC (%v), want peerB", got)
+	}
+}
+
+// 188 TC-188-10 (INV-2, PROD-CRITICAL anti-hack guard): a plain forced direct
+// dial (DirectDialEvt) is NEVER a DCUtR upgrade. On loopback,
+// holepuncher.directConnect short-circuits every punch to this event, so
+// wiring it into markPeerUpgradedToDirect would fake loopback determinism at
+// the cost of reclassifying every plain direct dial in prod as a
+// relay->direct upgrade — the hack refuted by wf_77ef6f8d. DirectDialEvt must
+// stay a non-counted breadcrumb.
+func TestHolePunchTracer_DirectDialEvt_IsBreadcrumbOnly_NoUpgrade(t *testing.T) {
+	collector := &testEventCollector{}
+	n := newTracerTestNode(collector)
+	tracer := newNodeHolePunchTracer(n)
+
+	peerB := testRemotePeerID(t)
+	n.connections[peerB.String()] = connectionInfo{
+		PeerId:  peerB.String(),
+		Limited: true,
+	}
+
+	tracer.Trace(&holepunch.Event{
+		Remote: peerB,
+		Type:   holepunch.DirectDialEvtT,
+		Evt: &holepunch.DirectDialEvt{
+			Success:      true,
+			EllapsedTime: 5 * time.Millisecond,
+		},
+	})
+
+	if got := tracer.Successes(); got != 0 {
+		t.Fatalf("Successes() = %d after DirectDialEvt, want 0 (breadcrumb is not a punch success)", got)
+	}
+	if got := collector.collectEvents("transport:upgraded"); len(got) != 0 {
+		t.Fatalf("DirectDialEvt emitted transport:upgraded, want none (plain direct dial is not a DCUtR upgrade): %+v", got)
+	}
+
+	n.mu.RLock()
+	infoB := n.connections[peerB.String()]
+	n.mu.RUnlock()
+	if !infoB.Limited {
+		t.Fatalf("peerB circuit entry flipped to direct by DirectDialEvt, want Limited=true: %+v", infoB)
+	}
+
+	// The breadcrumb itself is still surfaced (present but non-load-bearing).
+	attempts := collector.collectEvents("holepunch:attempt")
+	if !hasEventWithStep(attempts, "direct_dial") {
+		t.Fatalf("expected holepunch:attempt step=direct_dial breadcrumb, got %+v", attempts)
+	}
+}
+
+// 188 TC-188-11 (INV-3, exactly-once): when the connections entry is already
+// direct (e.g. the FDC-12 session Notifiee re-pointed it first), a punch
+// success still counts and emits holepunch:success telemetry, but
+// markPeerUpgradedToDirect returns false so the tracer does NOT emit a second
+// transport:upgraded — tracer+Notifiee emit the upgrade at most once.
+func TestHolePunchTracer_AlreadyDirect_NoDoubleUpgrade(t *testing.T) {
+	collector := &testEventCollector{}
+	n := newTracerTestNode(collector)
+	tracer := newNodeHolePunchTracer(n)
+
+	peerB := testRemotePeerID(t)
+	n.connections[peerB.String()] = connectionInfo{
+		PeerId:  peerB.String(),
+		Limited: false, // already direct — the Notifiee won the flip
+	}
+
+	tracer.Trace(&holepunch.Event{
+		Remote: peerB,
+		Type:   holepunch.EndHolePunchEvtT,
+		Evt: &holepunch.EndHolePunchEvt{
+			Success:      true,
+			EllapsedTime: 42 * time.Millisecond,
+		},
+	})
+
+	// Success telemetry is not suppressed — only the duplicate upgrade emit.
+	if got := tracer.Successes(); got != 1 {
+		t.Fatalf("Successes() = %d, want 1 (success telemetry still counts)", got)
+	}
+	if got := collector.collectEvents("holepunch:success"); len(got) != 1 {
+		t.Fatalf("expected exactly 1 holepunch:success, got %d: %+v", len(got), got)
+	}
+	if got := collector.collectEvents("transport:upgraded"); len(got) != 0 {
+		t.Fatalf("expected zero transport:upgraded for an already-direct entry, got %+v", got)
+	}
+
+	n.mu.RLock()
+	infoB := n.connections[peerB.String()]
+	n.mu.RUnlock()
+	if infoB.Limited {
+		t.Fatalf("peerB entry regressed to Limited=true: %+v", infoB)
+	}
+}
