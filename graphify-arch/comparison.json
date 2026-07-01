@@ -1,16 +1,16 @@
 {
   "full": {
     "graph": "graphify-out/graph.json",
-    "nodes": 106823,
-    "edges": 180830,
-    "communities": 4505,
-    "source_files": 5628,
-    "avg_edges_per_node": 1.6928,
-    "avg_nodes_per_community": 23.71,
-    "app_owned_nodes": 47367,
-    "app_owned_ratio": 0.4434,
-    "noise_nodes": 21846,
-    "noise_ratio": 0.2045,
+    "nodes": 106855,
+    "edges": 180859,
+    "communities": 4515,
+    "source_files": 5632,
+    "avg_edges_per_node": 1.6926,
+    "avg_nodes_per_community": 23.67,
+    "app_owned_nodes": 47192,
+    "app_owned_ratio": 0.4416,
+    "noise_nodes": 21875,
+    "noise_ratio": 0.2047,
     "unknown_source_nodes": 2021,
     "unknown_source_ratio": 0.0189,
     "top_hub_noise_count": 5,
@@ -18,19 +18,19 @@
     "top_source_dirs": [
       [
         "Test-Flight-Improv",
-        31490
+        31492
       ],
       [
         "lib",
-        20885
+        20709
       ],
       [
         "test",
-        14589
+        14590
       ],
       [
         "ios/Pods",
-        12044
+        12073
       ],
       [
         "macos/Pods",
@@ -140,13 +140,13 @@
   },
   "architecture": {
     "graph": "graphify-arch/graphify-out/graph.json",
-    "nodes": 43094,
-    "edges": 67139,
-    "communities": 935,
+    "nodes": 43095,
+    "edges": 67140,
+    "communities": 908,
     "source_files": 2233,
     "avg_edges_per_node": 1.558,
-    "avg_nodes_per_community": 46.09,
-    "app_owned_nodes": 41419,
+    "avg_nodes_per_community": 47.46,
+    "app_owned_nodes": 41420,
     "app_owned_ratio": 0.9611,
     "noise_nodes": 0,
     "noise_ratio": 0.0,
@@ -161,7 +161,7 @@
       ],
       [
         "test",
-        14433
+        14434
       ],
       [
         "integration_test",
@@ -258,10 +258,10 @@
     ]
   },
   "deltas": {
-    "nodes": -0.5966,
-    "edges": -0.6287,
-    "communities": -0.7925,
-    "app_owned_ratio": 1.1676,
+    "nodes": -0.5967,
+    "edges": -0.6288,
+    "communities": -0.7989,
+    "app_owned_ratio": 1.1764,
     "noise_ratio": -1.0,
     "top_hub_noise_ratio": -1.0
   }
