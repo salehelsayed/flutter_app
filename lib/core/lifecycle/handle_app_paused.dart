@@ -14,9 +14,8 @@ const Duration kPausedGroupSendingRecoveryThreshold = Duration(minutes: 2);
 
 // ── FDC-06: bounded pause-flush (ships ENABLED — productionized from the
 //    FDC-S4 Option-A prototype) ───────────────────────────────────────────
-// Spike that proved it feasible on a real device:
-//   Test-Flight-Improv/Network-Transport-libp2p-Feature/fast-direct-connection/
-//   FDC-S4-ios-pause-flush-feasibility-spike.md
+// Spike that proved it feasible on a real device: the FDC-S4 iOS pause-flush
+// feasibility spike (Network-Transport-libp2p / fast-direct-connection).
 //
 // On pause/hidden the "no network on pause" rule is NARROWED — not deleted —
 // to: "no *unbounded* network and no *connection-holding*; a single bounded,
