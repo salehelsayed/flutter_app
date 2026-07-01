@@ -1,6 +1,10 @@
 # 183 - Active-chat keepalive: proactively probe the live 1:1 peer connection while a chat is open  (New Feature)
 
-Status: IMPLEMENTED (host-green, adversarially clean) — device-proof PENDING (2026-07-01)
+Status: IMPLEMENTED + DEVICE-PROVEN (2026-07-01) — TC-183-50 + TC-183-51 both PASS
+on Pixel 6 → iPhone 11 (real `peer:ping` RTT 189 ms; drop detected at exactly 2×8 s
+→ warmPeer+drain +1 ms, latched; 0 background pings). Cold-start-arming gap found +
+fixed (initState arms keepalive+presence on resumed launch; TC-183-52 host lock) +
+device-re-verified. See `183-keepalive-device-proof-runsheet.md`.
 Spec: `Test-Flight-Improv/183-active-chat-keepalive-foreground-peer-liveness-spec.md`
 
 > **One-line:** add a foreground-only, active-1:1-peer-scoped liveness probe — a `Timer.periodic` (~8 s, well under the ~30 s QUIC idle) modeled verbatim on 181's `SetPresenceUseCase` — that pings the open-chat peer via a NEW `peer:ping` Go command (the node is ping-*responder*-only today), keeps the connection warm, and on M consecutive misses **reuses** the existing `warmPeer` + `drainOfflineInbox`. Host-floor proves the loop with a faked probe; a two-phone device-proof is the PROD-CRITICAL closure for the real ping.

@@ -1,7 +1,8 @@
 # 183 — Active-chat keepalive: two-phone device-proof runsheet
 
-Status: PENDING (PROD-CRITICAL closure — host floor is GREEN; the real `peer:ping`
-leg + drop-detection are only provable on hardware)
+Status: **PASS (2026-07-01)** — both TC-183-50 + TC-183-51 device-proven on
+Pixel 6 → iPhone 11 (see Result log). Cold-start-arming gap found + fixed +
+device-re-verified the same day.
 
 Spec: `Test-Flight-Improv/183-active-chat-keepalive-foreground-peer-liveness-spec.md`
 Plan: `Test-Flight-Improv/183-active-chat-keepalive-foreground-peer-liveness-tdd-plan.md`
@@ -31,9 +32,13 @@ flutter build ios --profile --dart-define=FDC_FLOW_LOG=1 --dart-define=MKNOON_EN
 
 ## Rig
 
-- Pixel 6 (Alice): `adb -s 21071FDF600CSC logcat | grep -E 'FLOW|peer:ping|KEEPALIVE'`
-- iPhone 11 (Bob): `idevicesyslog -u 00008030-001A6D2801BB802E | grep -E 'FLOW|peer_ping|KEEPALIVE'`
+- Pixel 6 (Alice): `adb -s 21071FDF600CSC logcat | grep -E 'FLOW|PEER_PING|KEEPALIVE|WARM_PEER|INBOX_DRAIN'`
+- iPhone 11 (Bob): `idevicesyslog -u 00008030-001A6D2801BB802E | grep -E 'FLOW|PEER_PING|KEEPALIVE|WARM_PEER|INBOX_DRAIN'`
 - Both signed into accounts that are mutual 1:1 contacts; same warmed conversation.
+- Actual per-tick events on the SENDER (grep anchors, verified in code):
+  `P2P_SERVICE_PEER_PING_BEGIN` → `P2P_SERVICE_PEER_PING_SUCCESS` (reachable) /
+  `P2P_SERVICE_PEER_PING_FAILED` (miss) every ≈8 s; on 2 consecutive misses (≈16 s)
+  `KEEPALIVE_PEER_DROP{peerId}` → `P2P_SERVICE_WARM_PEER_*` re-dial → `..._INBOX_DRAIN*`.
 
 ## TC-183-50 (PROD-CRITICAL) — drop detected in seconds → re-dial → next send fast
 
@@ -73,4 +78,40 @@ PASS = cadence ≈ elapsed/8 s in foreground; exactly zero `peer:ping` while bac
 
 | Date | Tester | TC-183-50 | TC-183-51 | Build SHA | Notes |
 |---|---|---|---|---|---|
-| | | | | | |
+| 2026-07-01 | Saleh (Pixel 6→iPhone 11) | **PASS** | **PASS** | `3fad4333` + gomobile rebuild | see below |
+
+### 2026-07-01 device-proof — BOTH cases PASS
+
+Build: HEAD `3fad4333`, gomobile bindings rebuilt (`BridgePeerPing` verified in the
+iOS xcframework + Android `.aar`), profile builds with `FDC_FLOW_LOG=1` +
+`MKNOON_ENABLE_NATIVE_MDNS=true`. Alice = Pixel 6, Bob = iPhone 11.
+
+**TC-183-50 (drop → re-dial → warm) — PASS.** The device-only legs all confirmed:
+- Real `peer:ping` binding resolves; `ping.Ping` round-trips a real peer (first
+  RTT 189 ms). Steady 8 s cadence, 14 consecutive `PEER_PING_SUCCESS` while Bob
+  reachable — **zero false positives**.
+- Bob's WiFi off → after Bob actually went dark, 2 consecutive
+  `PEER_PING_FAILED` → `KEEPALIVE_PEER_DROP{12D3KooWRv}` at exactly the 2×8 s
+  threshold. `WARM_PEER_BEGIN` fired **+1 ms** after the drop, `DRAIN_OFFLINE_INBOX_BEGIN`
+  +121 ms — REUSING warmPeer + drainOfflineInbox, once. The `_dropHandled` latch
+  held (continued misses, NO repeat drop/re-dial — no spam).
+- Post-drop send: press → durable inbox custody in **1.9 s** (`RACE_ALL_FAILED`
+  1.74 s → `INBOX_STORE_SUCCESS`), NOT the ~30 s cold-poll lag. On Bob's WiFi
+  restore, pings recovered to `SUCCESS` (latch reset) and the queued message
+  delivered (`DELIVERY_RECEIPT_APPLIED`).
+
+**TC-183-51 (battery) — PASS.** 8 s foreground cadence; **0** `peer:ping` across a
+34 s background window (`onBackgrounded()` cancelled the timer); pings resumed on
+foreground (`onForegrounded()` re-armed).
+
+### Finding + fix: cold-start arming (FIXED same day, device-verified)
+
+The keepalive (and the 181 presence heartbeat) armed ONLY in `_onResumed()`.
+Flutter delivers no initial `resumed` transition on a cold launch, so after
+tapping the icon and opening a chat the loop stayed **dormant until the first
+background→foreground cycle** — during the proof the first `peer:ping` did not
+fire until Alice was cycled. Fixed by arming both foreground timers from
+`initState` (post-frame, guarded on `lifecycleState == resumed`); locked by
+`main_keepalive_wiring_test.dart` **TC-183-52**. Re-verified on device: a
+force-stopped cold launch + open-chat produced steady 8 s pings with
+**`_onResumed()` count = 0** (no cycle needed).

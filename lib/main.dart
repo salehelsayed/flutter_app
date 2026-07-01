@@ -3740,6 +3740,22 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_flushDeferredNotificationRouteTarget());
     });
+    // 183/181 (cold-start arm): Flutter delivers NO initial `resumed` lifecycle
+    // transition on a fresh launch, so `_onResumed()` never runs and the
+    // foreground-only heartbeats — the 183 active-chat keepalive and the 181
+    // presence heartbeat — would stay DORMANT until the first
+    // background→foreground cycle (device-proven 2026-07-01: no `peer:ping` until
+    // the app was cycled). Arm them once at first frame IF the app launched
+    // already foreground. Cheap timer-arms ONLY, never the full `_onResumed()`
+    // cold-start work (that already runs via main()); idempotent — a later real
+    // resume just re-arms the same timers (`onForegrounded()` cancels first).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (WidgetsBinding.instance.lifecycleState ==
+          AppLifecycleState.resumed) {
+        _keepAliveUseCase.onForegrounded();
+        unawaited(_setPresenceUseCase.onForegrounded());
+      }
+    });
     unawaited(_handleInitialLocalNotificationLaunchWhenReady());
   }
 

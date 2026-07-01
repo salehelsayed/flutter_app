@@ -119,4 +119,39 @@ void main() {
       reason: 'the ~8s keepalive Timer leaks unless dispose() is called on teardown',
     );
   });
+
+  test('TC-183-52: cold start arms the keepalive + presence when launched foreground', () {
+    // Flutter delivers NO initial `resumed` lifecycle transition on a fresh
+    // launch, so `_onResumed()` never runs and the foreground-only heartbeats
+    // would stay dormant until the first background→foreground cycle
+    // (device-proven 2026-07-01: no `peer:ping` fired until the app was cycled).
+    // initState must arm them once, guarded on a foreground (resumed) launch.
+    final initState = _member(myAppState, 'void initState() {');
+    // The arm must be GUARDED on a foreground (resumed) launch...
+    final guardIdx = initState.indexOf('AppLifecycleState.resumed');
+    expect(
+      guardIdx,
+      isNonNegative,
+      reason: 'the cold-start arm must be guarded on a foreground (resumed) launch',
+    );
+    // ...and BOTH heartbeats must be armed AFTER that guard (co-located inside
+    // the resumed block — not merely present somewhere in initState). This
+    // catches a mutation that keeps the arms but weakens/moves the guard, which a
+    // bare `contains` would miss. Within initState both onForegrounded calls
+    // appear ONLY in the cold-start block, so "after the guard" pins them to it.
+    final afterGuard = initState.substring(guardIdx);
+    expect(
+      afterGuard,
+      contains('_keepAliveUseCase.onForegrounded()'),
+      reason: 'initState must arm the 183 keepalive inside the resumed guard '
+          '(else it is dormant until the first background→foreground cycle)',
+    );
+    // The 181 presence heartbeat shares the identical cold-start gap — arm it
+    // from the same guarded seam so a cold-launched foreground app publishes.
+    expect(
+      afterGuard,
+      contains('_setPresenceUseCase.onForegrounded()'),
+      reason: 'initState must also arm the 181 presence heartbeat in the same guard',
+    );
+  });
 }

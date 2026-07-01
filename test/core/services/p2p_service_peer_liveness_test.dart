@@ -22,6 +22,10 @@ import '../../shared/fakes/in_memory_inbox_staging_repository.dart';
 class _MockBridge extends Bridge {
   Map<String, dynamic> nextResponse = {'ok': true};
   final List<String> sentCmds = [];
+  // When set, `send` throws instead of answering — models a bridge-level failure
+  // (channel dead / native exception) that must be swallowed by pingPeer's own
+  // try/catch, NOT just an `{ok:false}` envelope.
+  bool throwOnSend = false;
 
   @override
   bool get isInitialized => true;
@@ -42,6 +46,9 @@ class _MockBridge extends Bridge {
   Future<String> send(String message) async {
     final cmd = (jsonDecode(message) as Map<String, dynamic>)['cmd'] as String?;
     if (cmd != null) sentCmds.add(cmd);
+    if (throwOnSend) {
+      throw Exception('bridge boom');
+    }
     return jsonEncode(nextResponse);
   }
 }
@@ -136,5 +143,33 @@ void main() {
 
     final alive = await service.pingPeer('peer-gone', timeoutMs: 4000);
     expect(alive, isFalse);
+  });
+
+  // TC-183-09b (impl inner-catch leg) — a THROWING bridge (dead channel / native
+  // exception), NOT just an {ok:false} envelope, must still degrade to false via
+  // pingPeer's OWN try/catch, emitting the P2P_SERVICE_PEER_PING_EXCEPTION
+  // discriminator. Mutation: drop that try/catch in P2PServiceImpl.pingPeer → the
+  // thrown bridge error escapes pingPeer (the await below throws) → red. Without
+  // this case the "never throws" contract was only exercised for a well-formed
+  // ok:false response, so a removed inner catch would slip through host tests.
+  test('TC-183-09b: a THROWING bridge degrades to false (never throws) + emits EXCEPTION', () async {
+    final events = <Map<String, dynamic>>[];
+    debugSetFlowEventSink((p) => events.add(Map<String, dynamic>.from(p)));
+    addTearDown(() => debugSetFlowEventSink(null));
+
+    bridge.throwOnSend = true;
+    final service = buildService(allowSideEffects: true);
+    addTearDown(service.dispose);
+
+    // Must complete with false, NOT rethrow the bridge exception.
+    final alive = await service.pingPeer('peer-boom', timeoutMs: 4000);
+    expect(alive, isFalse, reason: 'a thrown bridge error must degrade to a miss');
+
+    final emitted = events.map((e) => e['event']).toList();
+    expect(
+      emitted,
+      contains('P2P_SERVICE_PEER_PING_EXCEPTION'),
+      reason: 'the inner catch must record the exception discriminator',
+    );
   });
 }
