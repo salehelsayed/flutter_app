@@ -714,6 +714,11 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // arrival is discarded by the receiver's messageId dedup. `concurrentInbox`
   // is awaited later (race-failure tail / unacked handoff) to short-circuit the
   // redundant sequential store and avoid a double relay write.
+  // 184 (INV-3): tracks whether the live race has already committed a terminal
+  // 'delivered' (acked). The concurrent-inbox custody bump below must NEVER
+  // regress a live 'delivered' to 'inboxed' — this flag is captured by the
+  // `.then` closure and set at the race-success-acked commit point.
+  var liveDelivered = false;
   Future<bool>? concurrentInbox;
   if (unknownPresence) {
     emitFlowEvent(
@@ -730,8 +735,32 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           jsonString,
           timeoutMs: interactiveInboxBudget.inMilliseconds,
         )
-        .then((ok) {
+        .then((ok) async {
           transportMetrics?.recordAttempt(leg: 'inbox', succeeded: ok);
+          // 184: surface the custody milestone MID-send. On a successful
+          // concurrent-inbox ACK (~110 ms) advance the optimistic row's status to
+          // a non-terminal 'inboxed' so the 1:1 bubble shows two ticks instead of
+          // resting on the single optimistic tick until the live race resolves
+          // (~1.8 s offline). A status-only update (NOT a full saveMessage): it
+          // touches only the existing row's status column and re-renders via the
+          // SAME messageChanges emit the screen gate already admits for
+          // 'inboxed' — no new write path and no second durable row (the terminal
+          // save still writes the full custody row + envelope). Guarded by
+          // [liveDelivered] (INV-3) so a live 'delivered' that already won the
+          // race is never regressed to 'inboxed'; fires only on ok==true (INV-4:
+          // no false two-tick when custody is not secured). Status-surfacing
+          // only — it never feeds the race or a terminal recordMetrics.
+          if (ok && !liveDelivered) {
+            await messageRepo.updateMessageStatus(resolvedMessageId, 'inboxed');
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'CHAT_MSG_SEND_CUSTODY_CONFIRMED',
+              details: {
+                'id': resolvedMessageId.substring(0, 8),
+                'targetPeerId': targetPrefix,
+              },
+            );
+          }
           return ok;
         })
         .catchError((_) => false);
@@ -1054,6 +1083,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   graceTimer?.cancel();
 
   if (raceResult.success) {
+    // 184 (INV-3): a live ACK commits a terminal 'delivered' below — mark it so
+    // a late concurrent-inbox custody bump cannot regress it to 'inboxed'.
+    if (raceResult.acknowledged) liveDelivered = true;
     sendPath = raceResult.via == 'local' ? 'local' : 'direct';
     stepTimings = raceResult.stepTimings;
     recordMetrics(transport: raceResult.via, rung: sendPath);

@@ -1297,9 +1297,10 @@ void main() {
       await tester.pump();
 
       expect(find.text('Hello optimistic'), findsOneWidget);
-      // 155: on 1:1 the inline glyph is transport-aware. In-flight ('sending')
-      // shows the clock; the two-tick done_all is retired.
-      expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+      // 184: on 1:1 the inline glyph is transport-aware. In-flight ('sending')
+      // shows a single tick (clock→tick); the two-tick done_all is the custody
+      // state, never in-flight.
+      expect(find.byIcon(Icons.done_rounded), findsOneWidget);
       expect(find.byIcon(Icons.done_all_rounded), findsNothing);
 
       gate.complete();
@@ -1362,8 +1363,8 @@ void main() {
       await tester.pump();
 
       expect(find.text('Fail me'), findsOneWidget);
-      // 155: in-flight ('sending') shows the clock on 1:1.
-      expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+      // 184: in-flight ('sending') shows a single tick on 1:1 (clock→tick).
+      expect(find.byIcon(Icons.done_rounded), findsOneWidget);
 
       gate.complete();
       await tester.pump(const Duration(milliseconds: 50));
@@ -1639,8 +1640,8 @@ void main() {
       await tester.pump();
 
       expect(find.text('Inbox delivered'), findsOneWidget);
-      // 155: in-flight ('sending') → clock on 1:1.
-      expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+      // 184: in-flight ('sending') → single tick on 1:1 (clock→tick).
+      expect(find.byIcon(Icons.done_rounded), findsOneWidget);
 
       gate.complete();
       await tester.pump(const Duration(milliseconds: 50));
@@ -3036,8 +3037,8 @@ void main() {
       await tester.pump();
 
       expect(find.text('Inbox delivered'), findsOneWidget);
-      // 155: in-flight ('sending') → clock on 1:1.
-      expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+      // 184: in-flight ('sending') → single tick on 1:1 (clock→tick).
+      expect(find.byIcon(Icons.done_rounded), findsOneWidget);
 
       gate.complete();
       await tester.pump(const Duration(milliseconds: 50));
@@ -7755,11 +7756,12 @@ void main() {
       );
 
       expect(messageRepo.store['failed-media-msg']?.status, 'inboxed');
-      // 155: on 1:1 a reached row shows its TRANSPORT glyph. The relay-inbox
-      // re-store stamps transport 'inbox', so the inbox glyph renders (not the
-      // pending clock, not the retired two-tick).
+      // 184: on 1:1, relay CUSTODY ('inboxed') now renders the two-tick done_all
+      // (the honest "the system has it" milestone), not the inbox transport
+      // glyph. The relay-inbox re-store still stamps transport 'inbox' in the row.
       expect(messageRepo.store['failed-media-msg']?.transport, 'inbox');
-      expect(find.byIcon(Icons.inbox), findsOneWidget);
+      expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.inbox), findsNothing);
       expect(find.text('Could not retry media message.'), findsNothing);
     });
 

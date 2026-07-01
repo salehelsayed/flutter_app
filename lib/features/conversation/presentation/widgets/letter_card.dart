@@ -1070,10 +1070,10 @@ class LetterCard extends StatelessWidget {
     if (status == 'failed' || status == 'send_failed') {
       return Icons.error_outline_rounded;
     }
-    // 155: 'pending' is genuinely in-flight — NOT yet in the relay inbox — so
-    // it keeps the amber clock (the pending/inboxed split).
+    // 155: 'pending' is genuinely in-flight — NOT yet in the relay inbox.
+    // (Changed) in-flight now shows a single tick instead of the clock.
     if (status == 'pending') {
-      return Icons.schedule_rounded;
+      return Icons.done_rounded;
     }
     return Icons.done_rounded; // 'sent', 'sending'
   }
@@ -1121,22 +1121,30 @@ class LetterCard extends StatelessWidget {
     return status;
   }
 
-  /// 155: the inline status glyph for OUTGOING messages. When
-  /// [transportStatusGlyph] is set (1:1 only) a reached message shows the
-  /// TRANSPORT it travelled (`_transportIcon`) instead of the v1 inbox glyph;
-  /// in-flight shows the clock, failed shows the error glyph, and a reached
-  /// message with no known transport falls back to the single check. The
-  /// two-tick done_all is never drawn. Group/legacy (flag false) keeps the v1
-  /// [_statusIcon].
+  /// 155/184: the inline status glyph for OUTGOING messages. When
+  /// [transportStatusGlyph] is set (1:1 only): in-flight shows a single tick,
+  /// failed shows the error glyph, a relay-CUSTODY ('inboxed') message shows the
+  /// two-tick done_all (184: the honest mid-send custody milestone), and any
+  /// other reached message shows the TRANSPORT it travelled (`_transportIcon`),
+  /// falling back to the single check when no transport is known. Group/legacy
+  /// (flag false) keeps the v1 [_statusIcon] inbox glyph — done_all is 1:1 only.
   IconData _resolvedStatusIcon(String status) {
     if (!transportStatusGlyph) return _statusIcon(status);
     if (status == 'failed' || status == 'send_failed') {
       return Icons.error_outline_rounded;
     }
     if (status == 'pending' || status == 'sending') {
-      return Icons.schedule_rounded;
+      return Icons.done_rounded; // (Changed) single tick instead of the clock
     }
-    // Reached (sent/delivered/inboxed/queued): show how it travelled.
+    // 184: relay custody confirmed → two ticks (done_all). The honest "the
+    // system has it" milestone (~110 ms inbox ACK), distinct from the optimistic
+    // single tick; an offline peer rests here instead of spinning. 1:1 ONLY
+    // (this path) — group/legacy keeps the v1 inbox glyph. NOT a read receipt:
+    // two ticks = relay custody, not recipient-device receipt.
+    if (status == 'inboxed') {
+      return Icons.done_all_rounded;
+    }
+    // Reached live (sent/delivered/queued): show how it travelled.
     final t = transport;
     if (t != null) return _transportIcon(t);
     return Icons.done_rounded;

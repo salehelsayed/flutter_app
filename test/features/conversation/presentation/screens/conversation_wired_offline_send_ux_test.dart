@@ -355,7 +355,7 @@ void main() {
         expect(find.text('first'), findsOneWidget);
         expect(find.text('second'), findsOneWidget);
         expect(
-          find.byIcon(Icons.schedule_rounded),
+          find.byIcon(Icons.done_rounded),
           findsNWidgets(2),
           reason: 'both messages remain optimistically "sending"',
         );
@@ -449,7 +449,7 @@ void main() {
 
         // Optimistic sending row visible immediately, before resolution.
         expect(recorder.callCount, 1);
-        expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.done_rounded), findsOneWidget);
         expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
 
         // Resolve as a failure -> the bubble must transition sending->failed.
@@ -465,7 +465,7 @@ void main() {
               'the failed status write on the background completion must still '
               'drive the bubble (this is the retry affordance source)',
         );
-        expect(find.byIcon(Icons.schedule_rounded), findsNothing);
+        expect(find.byIcon(Icons.done_rounded), findsNothing);
 
         // The durable "failed" status the retry path re-dispatches from is
         // persisted (retry re-dispatch itself is covered by
@@ -510,7 +510,7 @@ void main() {
           reason: 'two immediate taps must dispatch exactly one message',
         );
         expect(find.text('hi'), findsOneWidget);
-        expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.done_rounded), findsOneWidget);
       },
     );
   });

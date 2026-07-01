@@ -248,4 +248,167 @@ void main() {
     expect(p2p.presenceLookupCount, 0);
     expect(_has(events, 'CHAT_MSG_PRESENCE_INBOX_FIRST'), isFalse);
   });
+
+  // -------------------------------------------------------------------------
+  // 184 — optimistic 2-tick send-status progression: the concurrent-inbox ACK
+  // surfaces a custody milestone MID-send (status:'inboxed' +
+  // CHAT_MSG_SEND_CUSTODY_CONFIRMED) so the 1:1 bubble advances to two ticks at
+  // ~110 ms instead of resting on the optimistic single tick until the race
+  // resolves. INV-3 guards a live 'delivered' from being regressed to 'inboxed';
+  // INV-4 keeps the single tick when custody is not secured.
+  // -------------------------------------------------------------------------
+
+  // TC-184-10 — the concurrent-inbox ACK persists a non-terminal 'inboxed'
+  // mid-send AND emits CHAT_MSG_SEND_CUSTODY_CONFIRMED, distinct from (and
+  // BEFORE) the terminal save. RED on HEAD: the `.then` only records a metric.
+  test('custody-confirmed persists inboxed mid-send + emits CUSTODY_CONFIRMED '
+      'before the terminal', () async {
+    final p2p = _PresenceFake(
+      presence: RelayPresence.unknown,
+      sendMessageResult: false, // live legs fail (offline peer)
+      useNullDiscover: true, // direct discover yields nothing
+      storeInInboxResult: true, // the durable inbox ACKs
+    );
+    final repo = FakeMessageRepository();
+
+    final events = await captureFlowEvents(() async {
+      await sendChatMessage(
+        p2pService: p2p,
+        messageRepo: repo,
+        targetPeerId: 'target-peer',
+        text: 'hi',
+        senderPeerId: 'me',
+        senderUsername: 'Me',
+      );
+    });
+
+    // The mid-send custody milestone fired...
+    expect(_has(events, 'CHAT_MSG_SEND_CUSTODY_CONFIRMED'), isTrue);
+    // ...and a status-only 'inboxed' update was applied to the row at the ACK
+    // (distinct from the full-row terminal saveMessage).
+    expect(
+      repo.statusUpdates.any((u) => u.$2 == 'inboxed'),
+      isTrue,
+    );
+    // Distinct-event discriminator: the custody bump STRICTLY precedes the
+    // terminal timing event, so it is the mid-send milestone, not the terminal
+    // 'inboxed' save (both carry status=='inboxed').
+    final custodyIdx = events.indexWhere(
+      (e) => e['event'] == 'CHAT_MSG_SEND_CUSTODY_CONFIRMED',
+    );
+    final timingIdx = events.indexWhere(
+      (e) => e['event'] == 'CHAT_MSG_SEND_TIMING',
+    );
+    expect(custodyIdx, greaterThanOrEqualTo(0));
+    expect(timingIdx, greaterThanOrEqualTo(0));
+    expect(
+      custodyIdx,
+      lessThan(timingIdx),
+      reason: 'custody-confirmed is the MID-send milestone — it must precede '
+          'the terminal timing event',
+    );
+  });
+
+  // TC-184-12 — a live 'delivered' that wins the race BEFORE the inbox ACK
+  // resolves must NEVER be regressed to 'inboxed' by the late custody bump
+  // (INV-3). Guard lock: passes on HEAD (no mid-send save exists),
+  // mutation-verified by dropping the `!liveDelivered` guard.
+  test('live ack before inbox ack does not regress delivered to inboxed',
+      () async {
+    final p2p =
+        _PresenceFake(
+          presence: RelayPresence.unknown,
+          inboxDelay: const Duration(milliseconds: 60), // ACK lands after race
+          sendMessageResult: true,
+          storeInInboxResult: true,
+        )
+        // The live leg is ACKed → terminal 'delivered' commits first.
+        ..sendMessageAcked = true
+        ..sendMessageTransport = 'direct';
+    final repo = FakeMessageRepository();
+
+    final events = await captureFlowEvents(() async {
+      await sendChatMessage(
+        p2pService: p2p,
+        messageRepo: repo,
+        targetPeerId: 'target-peer',
+        text: 'hi',
+        senderPeerId: 'me',
+        senderUsername: 'Me',
+      );
+      // Let the delayed inbox `.then` fire — it must find liveDelivered=true
+      // and skip the custody bump.
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    });
+
+    // The live delivery is the final persisted state...
+    expect(repo.saved, isNotEmpty);
+    expect(repo.saved.last.status, 'delivered');
+    // ...and the late inbox ACK never advanced the status to 'inboxed' nor fired
+    // the custody milestone (the guard suppressed it).
+    expect(repo.statusUpdates.any((u) => u.$2 == 'inboxed'), isFalse);
+    expect(_has(events, 'CHAT_MSG_SEND_CUSTODY_CONFIRMED'), isFalse);
+  });
+
+  // TC-184-13 — an offline send (live legs fail) RESTS at 'inboxed' custody, and
+  // the custody bump lands MID-send (an ADDITIONAL 'inboxed' write on top of the
+  // terminal persist) so the bubble shows two ticks from ~110 ms, not after the
+  // full race. RED on HEAD: only the single terminal 'inboxed' write exists.
+  test('offline send rests at inboxed with a mid-send custody bump', () async {
+    final p2p = _PresenceFake(
+      presence: RelayPresence.unknown,
+      sendMessageResult: false,
+      useNullDiscover: true,
+      storeInInboxResult: true,
+    );
+    final repo = FakeMessageRepository();
+
+    final events = await captureFlowEvents(() async {
+      await sendChatMessage(
+        p2pService: p2p,
+        messageRepo: repo,
+        targetPeerId: 'target-peer',
+        text: 'hi',
+        senderPeerId: 'me',
+        senderUsername: 'Me',
+      );
+    });
+
+    // The bubble rests at custody (two ticks): the terminal persist writes the
+    // full 'inboxed' custody row...
+    expect(repo.saved.last.status, 'inboxed');
+    // ...AND the mid-send bump advanced the status to 'inboxed' EARLY via a
+    // status-only update (RED on HEAD, where no such update exists — the bubble
+    // would otherwise wait for the terminal persist after the full race).
+    expect(repo.statusUpdates.any((u) => u.$2 == 'inboxed'), isTrue);
+    expect(_has(events, 'CHAT_MSG_SEND_CUSTODY_CONFIRMED'), isTrue);
+  });
+
+  // TC-184-14 — if custody is NOT secured (inbox store returns false) the
+  // mid-send bump must NOT fire: no false two-tick (INV-4). Guard lock: passes
+  // on HEAD; mutation-verified by removing the `ok==true` guard.
+  test('inbox store failure keeps the single tick — no false custody bump',
+      () async {
+    final p2p = _PresenceFake(
+      presence: RelayPresence.unknown,
+      sendMessageResult: false,
+      useNullDiscover: true,
+      storeInInboxResult: false, // custody NOT secured
+    );
+    final repo = FakeMessageRepository();
+
+    final events = await captureFlowEvents(() async {
+      await sendChatMessage(
+        p2pService: p2p,
+        messageRepo: repo,
+        targetPeerId: 'target-peer',
+        text: 'hi',
+        senderPeerId: 'me',
+        senderUsername: 'Me',
+      );
+    });
+
+    expect(_has(events, 'CHAT_MSG_SEND_CUSTODY_CONFIRMED'), isFalse);
+    expect(repo.statusUpdates.any((u) => u.$2 == 'inboxed'), isFalse);
+  });
 }

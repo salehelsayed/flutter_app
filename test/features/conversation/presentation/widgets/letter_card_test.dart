@@ -309,19 +309,21 @@ void main() {
         },
       );
 
-      // 155 TC-05: 'pending' is genuinely in-flight — NOT yet in the relay
-      // inbox — so it keeps the amber clock and must NOT collapse into the
-      // inbox glyph (the pending/inboxed split is the point).
+      // 184 TC-184-20 (clock→tick): 'pending' is genuinely in-flight — NOT yet
+      // in the relay inbox — so it renders a SINGLE tick (the clock→tick change)
+      // in the amber "still waiting" hue, and must NOT collapse into the inbox
+      // glyph or the two-tick done_all (the pending/inboxed split is the point).
       testWidgets(
         'shows pending icon, color, and semantics when status is pending '
-        '(never the inbox glyph or two-tick)',
+        '(single tick, never the inbox glyph or two-tick)',
         (tester) async {
           await tester.pumpWidget(
             buildTestWidget(isIncoming: false, status: 'pending'),
           );
 
-          final iconFinder = find.byIcon(Icons.schedule_rounded);
+          final iconFinder = find.byIcon(Icons.done_rounded);
           expect(iconFinder, findsOneWidget);
+          expect(find.byIcon(Icons.schedule_rounded), findsNothing);
           expect(find.byIcon(Icons.inbox_rounded), findsNothing);
           expect(find.byIcon(Icons.done_all_rounded), findsNothing);
 
@@ -438,8 +440,10 @@ void main() {
           await tester.pumpWidget(
             buildTestWidget(isIncoming: false, status: 'pending'),
           );
+          // 184 (clock→tick): 'pending' renders a single tick, not the clock,
+          // but KEEPS the amber "still waiting" hue (only the glyph changed).
           final pendingIcon = tester.widget<Icon>(
-            find.byIcon(Icons.schedule_rounded),
+            find.byIcon(Icons.done_rounded),
           );
           expect(pendingIcon.color, amber);
         },
@@ -2361,15 +2365,19 @@ void main() {
       expect(find.byIcon(Icons.wifi), findsOneWidget);
     });
 
-    // TC-04
+    // TC-04 / 184 TC-184-02 — a 1:1 'inboxed' (relay custody) now renders TWO
+    // ticks (done_all), the honest "the system has it" milestone, NOT the inbox
+    // glyph. The glyph is a pure function of the persisted status, so a reloaded
+    // 'inboxed' row reconstructs the two-tick on reopen (durability).
     testWidgets(
-      'TC-04 outgoing inbox transport → inbox glyph (not schedule, not '
-      'inbox_rounded)',
+      'TC-184-02 outgoing inboxed (custody) → two ticks done_all (never the '
+      'inbox glyph, schedule, or inbox_rounded)',
       (tester) async {
         await tester.pumpWidget(
           buildTransportGlyph(status: 'inboxed', transport: 'inbox'),
         );
-        expect(find.byIcon(Icons.inbox), findsOneWidget);
+        expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.inbox), findsNothing);
         expect(find.byIcon(Icons.schedule_rounded), findsNothing);
         expect(find.byIcon(Icons.inbox_rounded), findsNothing);
       },
@@ -2388,19 +2396,30 @@ void main() {
       },
     );
 
-    // TC-06
+    // TC-06 / 184 TC-184-01 — in-flight (pending/sending) renders a SINGLE tick
+    // (the clock→tick change), never the transport glyph and never the two-tick.
     testWidgets(
-      'TC-06 outgoing in-flight (pending/sending) → clock, never transport '
-      'glyph',
+      'TC-06 outgoing in-flight (pending/sending) → single tick, never '
+      'transport glyph or two-tick',
       (tester) async {
         for (final status in const ['pending', 'sending']) {
           await tester.pumpWidget(
             buildTransportGlyph(status: status, transport: 'relay'),
           );
           expect(
-            find.byIcon(Icons.schedule_rounded),
+            find.byIcon(Icons.done_rounded),
             findsOneWidget,
-            reason: "status '$status' must show the clock",
+            reason: "status '$status' must show the single tick",
+          );
+          expect(
+            find.byIcon(Icons.schedule_rounded),
+            findsNothing,
+            reason: "status '$status' must NOT show the clock",
+          );
+          expect(
+            find.byIcon(Icons.done_all_rounded),
+            findsNothing,
+            reason: "status '$status' must NOT show the two-tick",
           );
           expect(
             find.byIcon(Icons.cell_tower),
@@ -2425,6 +2444,45 @@ void main() {
             reason: "status '$status' must show the error glyph",
           );
           expect(find.byIcon(Icons.cell_tower), findsNothing);
+        }
+      },
+    );
+
+    // 184 TC-184-21 — the two-tick done_all contract for the 1:1 path: it is the
+    // EXPECTED glyph ONLY for 'inboxed' (relay custody) and must be ABSENT for
+    // every other outgoing status (in-flight, reached-live, failed). The legacy
+    // path (flag false) never renders done_all — locked by the 155 TC-04 sweep.
+    testWidgets(
+      'TC-184-21 done_all renders ONLY for 1:1 inboxed, never for other '
+      'outgoing statuses',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTransportGlyph(status: 'inboxed', transport: 'inbox'),
+        );
+        expect(
+          find.byIcon(Icons.done_all_rounded),
+          findsOneWidget,
+          reason: '1:1 inboxed (custody) IS the two-tick',
+        );
+
+        const others = <(String, String?)>[
+          ('sending', 'relay'),
+          ('sent', 'direct'),
+          ('delivered', 'wifi'),
+          ('delivered', 'direct'),
+          ('delivered', null),
+          ('failed', 'relay'),
+          ('send_failed', 'relay'),
+        ];
+        for (final (status, transport) in others) {
+          await tester.pumpWidget(
+            buildTransportGlyph(status: status, transport: transport),
+          );
+          expect(
+            find.byIcon(Icons.done_all_rounded),
+            findsNothing,
+            reason: "done_all must NOT render for 1:1 status '$status'",
+          );
         }
       },
     );

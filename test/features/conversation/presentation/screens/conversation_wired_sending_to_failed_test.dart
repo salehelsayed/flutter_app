@@ -56,6 +56,15 @@ class _FakeMessageRepository
     _messageChangeController.add(updated);
   }
 
+  /// 184 TC-184-22: emit a FULL message-change (status + transport) on
+  /// messageChanges, mirroring MessageRepositoryImpl.saveMessage's stream emit,
+  /// so a test can drive the sending → inboxed(2-tick) → delivered(transport)
+  /// progression where the terminal carries a real transport label.
+  void emitMessageChange(ConversationMessage updated) {
+    store[updated.id] = updated;
+    _messageChangeController.add(updated);
+  }
+
   @override
   Future<void> saveMessage(ConversationMessage message) async {
     store[message.id] = message;
@@ -338,13 +347,14 @@ void main() {
         await tester.pump(const Duration(seconds: 1)); // ensure fully visible
 
         // ASSERT — the message is currently displayed with status 'sending'.
-        // In the 1:1 transport glyph contract, in-flight sends render the
-        // schedule icon until they reach a terminal transport/status.
+        // In the 1:1 transport glyph contract, in-flight sends render a single
+        // tick (the clock→tick change) until they reach a terminal
+        // transport/status.
         expect(
-          find.byIcon(Icons.schedule_rounded),
+          find.byIcon(Icons.done_rounded),
           findsOneWidget,
           reason:
-              'Before the status change, the card must show the sending clock',
+              'Before the status change, the card must show the sending single tick',
         );
         expect(
           find.byIcon(Icons.error_outline_rounded),
@@ -366,17 +376,17 @@ void main() {
         await tester.pump();
 
         // ASSERT — the UI must now show the failed indicator, not the
-        // in-flight clock.
+        // in-flight single tick.
         expect(
           find.byIcon(Icons.error_outline_rounded),
           findsOneWidget,
           reason: 'The failed status must render error_outline_rounded',
         );
         expect(
-          find.byIcon(Icons.schedule_rounded),
+          find.byIcon(Icons.done_rounded),
           findsNothing,
           reason:
-              'The sending clock must no longer be visible after transition to failed',
+              'The sending single tick must no longer be visible after transition to failed',
         );
       },
     );
@@ -445,8 +455,8 @@ void main() {
         await tester.pump(const Duration(seconds: 1));
         await tester.pump(const Duration(seconds: 1));
 
-        // Before: sending status
-        expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+        // Before: sending status (single tick, clock→tick)
+        expect(find.byIcon(Icons.done_rounded), findsOneWidget);
 
         // ACT — normal send completion path
         messageRepo.emitStatusChange('msg-sending-001', 'sent');
@@ -483,8 +493,8 @@ void main() {
         await tester.pump(const Duration(seconds: 1));
         await tester.pump(const Duration(seconds: 1));
 
-        // Before: sending status
-        expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+        // Before: sending status (single tick, clock→tick)
+        expect(find.byIcon(Icons.done_rounded), findsOneWidget);
 
         // ACT — ACK received, message delivered
         messageRepo.emitStatusChange('msg-sending-001', 'delivered');
@@ -499,6 +509,57 @@ void main() {
           findsOneWidget,
           reason: 'delivered status transition must still refresh the UI',
         );
+      },
+    );
+
+    // 184 TC-184-22 — the full honest progression on the 1:1 surface:
+    // sending (1 tick) → inboxed custody (2 ticks, ~110 ms) → delivered live
+    // (transport glyph). RED on HEAD: 'inboxed' renders the single-check
+    // fallback, not done_all. Pins the mid-send re-render (TC-184-11) too.
+    testWidgets(
+      'sending → inboxed (two ticks) → delivered (transport glyph) progression',
+      (tester) async {
+        final messageRepo = _FakeMessageRepository();
+        final sendingMessage = _makeSendingMessage();
+
+        await messageRepo.saveMessage(sendingMessage);
+
+        await tester.pumpWidget(
+          _buildTestWidget(
+            messageRepo: messageRepo,
+            initialMessages: [sendingMessage],
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 1));
+        await tester.pump(const Duration(seconds: 1));
+
+        // 1 tick — the optimistic 'sending' state.
+        expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.done_all_rounded), findsNothing);
+
+        // ~110 ms custody ACK → 'inboxed' → two ticks (done_all).
+        messageRepo.emitStatusChange('msg-sending-001', 'inboxed');
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 1));
+        await tester.pump();
+        expect(
+          find.byIcon(Icons.done_all_rounded),
+          findsOneWidget,
+          reason: 'custody (inboxed) must render the two-tick on the 1:1 surface',
+        );
+        expect(find.byIcon(Icons.done_rounded), findsNothing);
+
+        // Live delivery → the transport glyph (device_hub for 'direct'),
+        // upgrading off the two-tick.
+        messageRepo.emitMessageChange(
+          sendingMessage.copyWith(status: 'delivered', transport: 'direct'),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 1));
+        await tester.pump();
+        expect(find.byIcon(Icons.device_hub), findsOneWidget);
+        expect(find.byIcon(Icons.done_all_rounded), findsNothing);
       },
     );
   });

@@ -485,8 +485,15 @@ class FakeMessageRepository implements MessageRepository {
     return latestMessageForContact;
   }
 
+  /// 184: records every (id, status) updateMessageStatus call so the mid-send
+  /// custody bump (a status-only 'inboxed' update on the existing optimistic
+  /// row) is observable distinct from the full-row [saved] list above.
+  final List<(String, String)> statusUpdates = [];
+
   @override
-  Future<void> updateMessageStatus(String id, String status) async {}
+  Future<void> updateMessageStatus(String id, String status) async {
+    statusUpdates.add((id, status));
+  }
 
   /// 116 P2: seedable rows for the no-downgrade writer gate's
   /// `getMessage(messageId)` lookup. Empty by default (legacy behavior).
