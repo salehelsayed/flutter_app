@@ -818,6 +818,19 @@ class TrackingLocalMediaP2PService extends FakeP2PService {
 }
 
 class InboxRetryP2PService extends FakeP2PService {
+  InboxRetryP2PService({this.relayOnline = false});
+
+  /// 185×187: with the sender OFFLINE, a terminal-rung sendFailed (non-null
+  /// failedMessage) is now kept in the retriable self-healing lane and never
+  /// restores a failed draft. The restored-failed-draft retry tests exercise a
+  /// GENUINE failure flow, so they must run with the relay online.
+  final bool relayOnline;
+
+  @override
+  NodeState get currentState => relayOnline
+      ? super.currentState.copyWith(relayState: 'online')
+      : super.currentState;
+
   @override
   Future<bool> storeInInbox(
     String toPeerId,
@@ -1384,7 +1397,10 @@ void main() {
           messageRepo: messageRepo,
           contactRepo: contactRepo,
         );
-        final p2pService = InboxRetryP2PService();
+        // 185×187: restored-failed-draft retry is a GENUINE-failure flow — run
+        // it with the relay online, else the offline self-healing lane keeps
+        // the row 'sent' and no draft is ever restored.
+        final p2pService = InboxRetryP2PService(relayOnline: true);
         var sendCalls = 0;
         String? failedMessageId;
 
@@ -1488,7 +1504,10 @@ void main() {
           messageRepo: messageRepo,
           contactRepo: contactRepo,
         );
-        final p2pService = InboxRetryP2PService();
+        // 185×187: restored-failed-draft retry is a GENUINE-failure flow — run
+        // it with the relay online, else the offline self-healing lane keeps
+        // the row 'sent' and no draft is ever restored.
+        final p2pService = InboxRetryP2PService(relayOnline: true);
         var sendCalls = 0;
         String? failedMessageId;
 

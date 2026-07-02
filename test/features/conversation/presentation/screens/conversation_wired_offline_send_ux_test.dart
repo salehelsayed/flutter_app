@@ -618,18 +618,25 @@ void main() {
       },
     );
 
-    // TC-185-01b — the REAL production shape: peerNotFound AND dialFailed both
-    // return a NON-NULL failedMessage (send_chat_message_use_case.dart
-    // :1305-1345), handled by the UI's `message != null` branch. Looping over
-    // both connectivity-class results guards BOTH `||` arms of the
-    // keepRetriableOffline predicate (a revert dropping either arm re-reds).
+    // TC-185-01b — the REAL production shape: peerNotFound, dialFailed AND
+    // sendFailed all return a NON-NULL failedMessage
+    // (send_chat_message_use_case.dart :1305-1345, the terminal rung persists
+    // the wire envelope for every reason string), handled by the UI's
+    // `message != null` branch. Looping over every connectivity-class result
+    // guards ALL `||` arms of the keepRetriableOffline predicate (a revert
+    // dropping any arm re-reds). sendFailed is the 185×187 gap: with the 183
+    // keepalive latched, 187 skips the direct dial and the race fails with
+    // reason 'direct_skipped_keepalive_drop' → _resultForFailureReason →
+    // sendFailed — which used to drop the offline sender to terminal
+    // 'failed' + Retry (field-hit 2026-07-02).
     for (final result in const [
       SendChatMessageResult.peerNotFound,
       SendChatMessageResult.dialFailed,
+      SendChatMessageResult.sendFailed,
     ]) {
       testWidgets(
         'TC-185-01b offline send returning a NON-NULL failedMessage '
-        '(${result == SendChatMessageResult.peerNotFound ? 'peerNotFound' : 'dialFailed'}, '
+        '(${result.name}, '
         'production shape) is reclassified to retriable and stays in the unacked lane',
         (tester) async {
           final messageRepo = _FakeMessageRepository();
@@ -736,18 +743,20 @@ void main() {
       },
     );
 
-    // TC-185-20 — offline: BOTH connectivity-class results must show the honest
-    // sender-offline copy, never the contact-blaming copy. Looping guards both
-    // snackbar `switch` arms.
+    // TC-185-20 — offline: EVERY connectivity-class result must show the honest
+    // sender-offline copy, never the contact-blaming/generic copy. Looping
+    // guards every snackbar arm (sendFailed = the 185×187 keepalive-skip gap:
+    // reason 'direct_skipped_keepalive_drop' maps to sendFailed).
     const senderOfflineCopy =
         "No internet connection. Message will send when you're back online.";
     for (final c in const [
       (SendChatMessageResult.peerNotFound, 'Contact appears offline. Message saved.'),
       (SendChatMessageResult.dialFailed, 'Could not connect to contact. Message saved.'),
+      (SendChatMessageResult.sendFailed, 'Failed to send message. Message saved.'),
     ]) {
       testWidgets(
         'TC-185-20 offline failure snackbar names the sender connection '
-        '(${c.$1 == SendChatMessageResult.peerNotFound ? 'peerNotFound' : 'dialFailed'})',
+        '(${c.$1.name})',
         (tester) async {
           final messageRepo = _FakeMessageRepository();
           final recorder = _GatedSendRecorder();
@@ -761,7 +770,29 @@ void main() {
           await _settleStartup(tester);
 
           await _typeAndSend(tester, 'offline snack');
-          recorder.completeLast(c.$1);
+          if (c.$1 == SendChatMessageResult.sendFailed) {
+            // sendFailed's lane/copy eligibility requires the terminal-rung
+            // production shape (non-null failedMessage with the persisted wire
+            // envelope) — the NULL-shaped sendFailed (encrypt_failed) is NOT
+            // self-healing and keeps the generic red copy by design.
+            final sentId = recorder.messageIds.last!;
+            final failedMessage = ConversationMessage(
+              id: sentId,
+              contactPeerId: _contactPeerId,
+              senderPeerId: _identity.peerId,
+              text: 'offline snack',
+              timestamp: '2026-07-01T10:00:00.000Z',
+              status: 'failed',
+              isIncoming: false,
+              createdAt: '2026-07-01T10:00:00.000Z',
+              wireEnvelope:
+                  '{"type":"chat_message","version":"2","encrypted":{}}',
+            );
+            await messageRepo.saveMessage(failedMessage);
+            recorder.completeLastWithMessage(c.$1, failedMessage);
+          } else {
+            recorder.completeLast(c.$1);
+          }
           await tester.pump();
           await tester.pump(const Duration(milliseconds: 800));
 
@@ -776,8 +807,8 @@ void main() {
       );
 
       testWidgets(
-        'TC-185-21 online ${c.$1 == SendChatMessageResult.peerNotFound ? 'peerNotFound' : 'dialFailed'} '
-        'snackbar attributes to the contact',
+        'TC-185-21 online ${c.$1.name} '
+        'snackbar keeps its non-offline copy (no over-correction)',
         (tester) async {
           final messageRepo = _FakeMessageRepository();
           final recorder = _GatedSendRecorder();

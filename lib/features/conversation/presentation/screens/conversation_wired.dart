@@ -2485,6 +2485,15 @@ class _ConversationWiredState extends State<ConversationWired>
         // that never clears even after the peer receives it). peerNotFound /
         // dialFailed persist their wire envelope before the transport race, so
         // the kept-'sent' row is getUnackedOutgoingMessages-eligible.
+        // 185×187 (field-hit 2026-07-02): sendFailed is ALSO lane-eligible, but
+        // ONLY in its terminal-rung shape (message != null — the use case
+        // persisted the wire envelope). With the 183 keepalive latched, 187
+        // skips the direct dial and the race fails with reason
+        // 'direct_skipped_keepalive_drop' → _resultForFailureReason →
+        // sendFailed; without this arm an offline sender regressed to the
+        // pre-185 terminal 'failed' + Retry. The message != null guard keeps
+        // the NULL-shaped sendFailed returns (encrypt_failed/encrypt_error —
+        // no envelope, NOT self-healing) out of the lane.
         // nodeNotRunning is EXCLUDED: it returns before the envelope is
         // persisted, so its row is not lane-eligible and belongs in the failed /
         // retryFailedMessages lane.
@@ -2493,7 +2502,9 @@ class _ConversationWiredState extends State<ConversationWired>
             result != SendChatMessageResult.success &&
             senderOffline &&
             (result == SendChatMessageResult.peerNotFound ||
-                result == SendChatMessageResult.dialFailed);
+                result == SendChatMessageResult.dialFailed ||
+                (result == SendChatMessageResult.sendFailed &&
+                    message != null));
 
         if (message != null) {
           final persistedMedia =
@@ -2544,24 +2555,31 @@ class _ConversationWiredState extends State<ConversationWired>
           // 185: name the REAL cause. When WE are offline, a connectivity-class
           // failure must not blame the contact — say so honestly (and truthfully
           // promise the queued send). nodeNotRunning is inherently sender-side,
-          // so it always uses this copy; peerNotFound / dialFailed use it only
-          // when the sender is offline (else they are genuine per-contact
-          // failures and keep the contact-facing copy — no over-correction).
+          // so it always uses this copy. For every other shape the honest copy
+          // is tied DIRECTLY to the lane decision (keepRetriableOffline): the
+          // "will send when you're back online" promise is shown exactly when
+          // the row really is queued in the self-healing lane — the old per-arm
+          // `senderOffline ?` ternaries are deleted so a new failure shape can
+          // never again show contact-blaming copy (or a false promise) while
+          // offline (the 185×187 'direct_skipped_keepalive_drop' regression,
+          // field-hit 2026-07-02).
           const senderOfflineCopy =
               "No internet connection. Message will send when you're back online.";
-          final snackText = switch (result) {
-            SendChatMessageResult.nodeNotRunning => senderOfflineCopy,
-            SendChatMessageResult.peerNotFound => senderOffline
-                ? senderOfflineCopy
-                : 'Contact appears offline. Message saved.',
-            SendChatMessageResult.dialFailed => senderOffline
-                ? senderOfflineCopy
-                : 'Could not connect to contact. Message saved.',
-            SendChatMessageResult.invalidMessage => 'Message cannot be empty.',
-            SendChatMessageResult.encryptionRequired =>
-              'Cannot send: contact does not support encryption.',
-            _ => 'Failed to send message. Message saved.',
-          };
+          final snackText =
+              result == SendChatMessageResult.nodeNotRunning ||
+                  keepRetriableOffline
+              ? senderOfflineCopy
+              : switch (result) {
+                  SendChatMessageResult.peerNotFound =>
+                    'Contact appears offline. Message saved.',
+                  SendChatMessageResult.dialFailed =>
+                    'Could not connect to contact. Message saved.',
+                  SendChatMessageResult.invalidMessage =>
+                    'Message cannot be empty.',
+                  SendChatMessageResult.encryptionRequired =>
+                    'Cannot send: contact does not support encryption.',
+                  _ => 'Failed to send message. Message saved.',
+                };
           // 185: the sender-offline copy is a benign, self-healing state (the
           // message is queued and will send on reconnect), NOT a failure — give
           // it an informational slate tone instead of the error-red reserved for
