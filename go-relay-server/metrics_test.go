@@ -86,7 +86,11 @@ func TestRelayMetricsDeltas(t *testing.T) {
 	}
 }
 
-func TestInboxRejectAndTTLPruneTelemetry(t *testing.T) {
+// Plan 173: an at-cap 1:1 store EVICTS the oldest (relay_inbox_capped_total
+// increments per eviction, mirroring the group counter) and no longer rejects
+// (relay_inbox_rejected_full_total goes dead but keeps its scrape name so
+// Grafana panels don't error — see TestRelayMetricsHandlerScrapeContract).
+func TestInboxCappedAndTTLPruneTelemetry(t *testing.T) {
 	beforeRejectedFull := metricValue(t, inboxRejectedFullCounter)
 	beforeCapped := metricValue(t, inboxCappedCounter)
 	beforeExpiredPruned := metricValue(t, inboxExpiredPrunedCounter)
@@ -108,13 +112,13 @@ func TestInboxRejectAndTTLPruneTelemetry(t *testing.T) {
 		From:      "sender",
 		Message:   "overflow",
 		Timestamp: time.Now().UnixMilli(),
-	}, InboxStoreResultRejectedFull)
+	}, InboxStoreResultStored)
 
-	if got := metricValue(t, inboxRejectedFullCounter) - beforeRejectedFull; got != 1 {
-		t.Fatalf("relay_inbox_rejected_full_total delta = %v, want 1", got)
+	if got := metricValue(t, inboxRejectedFullCounter) - beforeRejectedFull; got != 0 {
+		t.Fatalf("relay_inbox_rejected_full_total delta = %v, want 0 (dead after evict-oldest restore)", got)
 	}
 	if got := metricValue(t, inboxCappedCounter) - beforeCapped; got != 1 {
-		t.Fatalf("relay_inbox_capped_total delta = %v, want 1", got)
+		t.Fatalf("relay_inbox_capped_total delta = %v, want 1 (one eviction)", got)
 	}
 
 	requireInboxStoreResult(t, inbox, "peer-expired", inboxMessage{

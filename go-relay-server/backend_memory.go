@@ -127,8 +127,16 @@ func (b *memoryInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSt
 		}
 	}
 
+	// At cap: evict the OLDEST and store the newest (build-106 contract,
+	// NET-REL-07 — shipped clients hard-fail any non-OK store, so rejecting
+	// the new message silently drops it sender-side). Each eviction is
+	// surfaced via inboxCappedCounter (relay_inbox_capped_total), mirroring
+	// the group backend's groupInboxCappedCounter.
 	if len(messages) >= maxMessagesPerPeer {
-		return InboxStoreResultRejectedFull, nil
+		overflow := len(messages) - maxMessagesPerPeer + 1
+		inboxCappedCounter.Add(float64(overflow))
+		messages = messages[overflow:]
+		b.rebuildMessageIds(toPeerId, messages)
 	}
 
 	messages = append(messages, entry)

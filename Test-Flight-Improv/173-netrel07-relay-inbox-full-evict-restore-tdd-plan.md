@@ -1,6 +1,6 @@
 # 173 - NET-REL-07 relay regressions: restore 1:1 inbox evict-oldest (oversized-push = no-op)  (Bug)
 
-Status: awaiting-review
+Status: implemented (host-green 2026-07-02) — relay redeploy (step 10) + TC-07 sim leg still owed
 Spec: free-text intent (no formal spec) — from the 2026-06-28 relay-redeploy audit. Binding rail: `Network-Arch/Transport-Reliability/07-relay-backward-compatibility.md` (NET-REL-07).
 
 > **READ FIRST — recommendation vs the requested approach.** This plan was requested as a *parallel-relay migration* for two NET-REL-07 regressions. A 6-agent verify→refute grounding at HEAD (`5d54c028`) concluded **neither regression warrants a parallel relay**: Regression 1 is a backward-compatible *improvement* (no relay change), and Regression 2's safe fix is an **in-place revert to evict-oldest**, which is backward-compatible *by construction* — the opposite of NET-REL-07 rule 3's trigger (rule 3 governs *adding/keeping a new breaking behavior* on the shared relay, not *reverting* one). The parallel-relay path is therefore **REFUTED** for this work and documented below only as the contingency for a future genuinely-breaking change (the infra already exists and is on by default). The plan implements the in-place fix.
@@ -16,13 +16,13 @@ Spec: free-text intent (no formal spec) — from the 2026-06-28 relay-redeploy a
 ## Execution Progress
 | Time | Phase | Files touched | Command/evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|
-| | contract extraction (git status --short) | | | scope confirmed | |
-| | RED tests added | | (cmd proving they FAIL) | RED for expected reason | |
-| | implementation | | | scoped files only | |
-| | direct GREEN | | (exact cmd) | reds now green | |
-| | preservation GREEN | | (exact cmd) | sentinels green | |
-| | named gates | | (exact cmd + counts) | gate green | |
-| | QA (independent) | | (re-run cmds) | blocking: none/list | verdict |
+| 2026-07-02 | contract extraction (git status --short) | — | pre-existing dirty = another session's 188 doc/test edits + graphify artifacts; none overlap this plan | scope confirmed | RED |
+| 2026-07-02 | RED tests added | protocol_contract_test.go (TC-01), backend_memory_test.go NEW (TC-02), backend_redis_test.go (TC-03 replaces :448), inbox_test.go (TC-04 replaces :2327), limits_test.go (TC-05 replaces :19 + TC-06 lock), metrics_test.go (rename→TestInboxCappedAndTTLPruneTelemetry, capped+1/rejected_full+0) | `GOTOOLCHAIN=go1.25.0 go test . -run 'FullInboxStoreStaysOK\|StoreAtCapEvicts\|EvictOldestWhenInboxFull\|GroupInboxStillEvicts\|InboxCappedAndTTL'` → 5 FAIL exactly on rejected_full/ERROR-at-cap; TestGroupInboxStillEvicts PASS (lock) | RED for expected reason. **The RED baseline IS the mutation proof** (committed reject-at-cap code == the revert mutation for every TC) | implement |
+| 2026-07-02 | implementation | backend_memory.go:130 evict+rebuild+inboxCappedCounter.Add(overflow); backend_redis.go Store evict-in-tx, counter after commit (retry-safe, `pruned` pattern); limits.go:123 evict + inner rebuild + ServerLimits doc fix (:26-27 "rejected"→"evicted") | scoped files only; RejectedFull enum + rejected_full counter + inbox.go dead branch + client INBOX_FULL parser all KEPT (Scope Guard) | none | direct GREEN |
+| 2026-07-02 | direct GREEN | + server_bootstrap_test.go:298 flip (configured-limits test, not in plan inventory — same class) | `cd go-relay-server && GOTOOLCHAIN=go1.25.0 go test ./...` ok 12.3s · `-race ./...` ok 14.5s · `-tags integration ./...` ok 12.7s | reds now green | cross-pkg |
+| 2026-07-02 | preservation GREEN (cross-pkg TC-08) | go-mknoon/integration/local_relay_harness_test.go (harness storeInbox → evict-oldest, mirrors real relay), relay_test.go (TestInboxStoreFull_TypedRejectionAgainstLocalRelay → TestInboxStoreAtCap_EvictsOldestDeliversNewest). bridge_test.go:845 + commands_test.go:212 + node/inbox_parse_test.go KEPT unchanged (synthetic-injection client-tolerance tests — parser preserved per Scope Guard) | `cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./...` ALL ok (node 445s, bridge 197s) · `-tags integration ./integration/...` ok 93s · interop_vectors.json restored | sentinels green | lint |
+| 2026-07-02 | named gates | — | `make lint` (go vet + golangci-lint --new-from-rev=HEAD) → 0 issues · `git diff --check` clean | gate green | record |
+| 2026-07-02 | TC-11 media audit | — | media.go:185-186: per-peer cap DELETES/evicts (`peer_cap` counters) — no OK→ERROR inversion on media; asymmetry N/A | audit clean, no fix needed | — |
 
 ## Source Of Truth
 - Spec / intent: this doc + NET-REL-07 (`Network-Arch/Transport-Reliability/07-relay-backward-compatibility.md`)
@@ -224,4 +224,4 @@ git diff --check
 Structural blockers: … | Deferred details: … | Accepted differences: …
 
 ## Final Execution Verdict
-Verdict: … | Files changed: … | Tests run (+counts): … | Blocking: … | QA verdict: … | Non-blocking follow-ups (owner):
+Verdict: **implemented, host-green** (2026-07-02). | Files changed: go-relay-server/{backend_memory.go, backend_redis.go, limits.go} production; go-relay-server/{backend_memory_test.go NEW, backend_redis_test.go, inbox_test.go, limits_test.go, metrics_test.go, protocol_contract_test.go, server_bootstrap_test.go} + go-mknoon/integration/{local_relay_harness_test.go, relay_test.go} tests. | Tests run: relay `go test ./...` + `-race` + `-tags integration` all ok; go-mknoon full suite ok (node 445s, bridge 197s) + integration ok 93s; golangci-lint 0 issues. | Blocking: none. | QA verdict: RED-first proven (5 TCs failed exactly on the reject-at-cap contract; RED baseline = mutation proof); frozen contract now pins full-inbox→OK (TC-01). | Non-blocking follow-ups (owner): (1) **relay redeploy** — operator step, in-place, backward-compatible by construction, needs explicit prod authorization (this session's user); (2) TC-07 reliability-sim full-inbox→delivered scenario registration + run (deferred-not-waived, sim env); (3) optional TC-09/TC-10 defensive tests (plan marks not load-bearing).

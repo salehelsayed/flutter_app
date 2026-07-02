@@ -16,7 +16,11 @@ import (
 
 // --- Inbox limits ---
 
-func TestFiniteLimits_RejectNewWhenInboxFull(t *testing.T) {
+// TC-05 (plan 173) — a 1:1 store to a full inbox EVICTS THE OLDEST and stores
+// the newest (build-106 contract, NET-REL-07). Rejecting the new message
+// instead was the 2026-06-28 regression: shipped clients have no INBOX_FULL
+// branch, so the newest message was silently dropped sender-side.
+func TestFiniteLimits_EvictOldestWhenInboxFull(t *testing.T) {
 	cfg := DefaultServerLimits()
 	cfg.MaxInboxMessagesPerPeer = 10
 
@@ -38,14 +42,14 @@ func TestFiniteLimits_RejectNewWhenInboxFull(t *testing.T) {
 		t.Errorf("expected %d messages, got %d", cfg.MaxInboxMessagesPerPeer, count)
 	}
 
-	// Store one more — reject the new message instead of evicting an
-	// already-accepted entry. The sender is online now and still holds the
-	// envelope, so it can retry truthfully.
+	// Store one more — the oldest is evicted and the newest is stored
+	// (build-106 contract). The oldest pending copy is the most likely to be
+	// stale/already-delivered; the newest is what the sender just said.
 	requireInboxStoreResult(t, inbox, "peer-1", inboxMessage{
 		From:      "sender",
 		Message:   "overflow-msg",
 		Timestamp: time.Now().UnixMilli(),
-	}, InboxStoreResultRejectedFull)
+	}, InboxStoreResultStored)
 
 	count = inbox.Count("peer-1")
 	if count != cfg.MaxInboxMessagesPerPeer {
@@ -56,13 +60,11 @@ func TestFiniteLimits_RejectNewWhenInboxFull(t *testing.T) {
 	if len(messages) != cfg.MaxInboxMessagesPerPeer {
 		t.Fatalf("expected %d retained messages, got %d", cfg.MaxInboxMessagesPerPeer, len(messages))
 	}
-	if messages[0].Message != "msg-0" {
-		t.Fatalf("oldest accepted message = %q, want msg-0", messages[0].Message)
+	if messages[0].Message != "msg-1" {
+		t.Fatalf("oldest retained message = %q, want msg-1 (msg-0 evicted)", messages[0].Message)
 	}
-	for _, message := range messages {
-		if message.Message == "overflow-msg" {
-			t.Fatal("overflow message must not be stored when inbox is full")
-		}
+	if last := messages[len(messages)-1].Message; last != "overflow-msg" {
+		t.Fatalf("newest message = %q, want overflow-msg (must be stored, not rejected)", last)
 	}
 }
 
@@ -99,6 +101,36 @@ func TestFiniteLimits_RejectExcessGroupMessages(t *testing.T) {
 	if total != cfg.MaxGroupInboxMessages {
 		t.Errorf("expected group inbox to stay at %d after overflow, got %d",
 			cfg.MaxGroupInboxMessages, total)
+	}
+}
+
+// TC-06 (plan 173) — preservation lock: the GROUP inbox store-when-full
+// semantics (evict-oldest, keep newest) must NOT change while the 1:1 path is
+// restored to the same contract. Content-level assertion: the oldest message
+// is the one displaced and the overflow message is retained.
+func TestGroupInboxStillEvicts(t *testing.T) {
+	const capacity = 20
+	backend := newMemoryGroupInboxBackend(capacity, groupMessageTTL)
+	store := NewGroupInboxStoreWithBackend(backend)
+
+	for i := 0; i < capacity; i++ {
+		if err := store.Store("group-evict-lock", "sender", "msg-"+strconv.Itoa(i)); err != nil {
+			t.Fatalf("store %d: unexpected error: %v", i, err)
+		}
+	}
+	if err := store.Store("group-evict-lock", "sender", "overflow-msg"); err != nil {
+		t.Fatalf("overflow store: unexpected error: %v", err)
+	}
+
+	messages := backend.RetrieveSince("group-evict-lock", 0)
+	if len(messages) != capacity {
+		t.Fatalf("expected %d retained group messages, got %d", capacity, len(messages))
+	}
+	if messages[0].Message != "msg-1" {
+		t.Fatalf("oldest retained group message = %q, want msg-1 (msg-0 evicted)", messages[0].Message)
+	}
+	if last := messages[len(messages)-1].Message; last != "overflow-msg" {
+		t.Fatalf("newest group message = %q, want overflow-msg", last)
 	}
 }
 

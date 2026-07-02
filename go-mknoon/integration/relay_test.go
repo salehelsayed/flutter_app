@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math/rand"
 	"net"
@@ -521,7 +520,12 @@ func TestRelayInboxStoreRetrieve(t *testing.T) {
 	}
 }
 
-func TestInboxStoreFull_TypedRejectionAgainstLocalRelay(t *testing.T) {
+// Plan 173 (NET-REL-07): a store to a FULL inbox succeeds — the relay evicts
+// the OLDEST pending message and stores the newest (build-106 contract). The
+// client sees a plain OK/stored outcome (no error, no INBOX_FULL), and the
+// recipient drains the newest messages. The client's INBOX_FULL parser stays
+// as dead-but-tolerant defense (node/inbox_parse_test.go).
+func TestInboxStoreAtCap_EvictsOldestDeliversNewest(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in -short mode")
 	}
@@ -551,20 +555,20 @@ func TestInboxStoreFull_TypedRejectionAgainstLocalRelay(t *testing.T) {
 	}
 
 	outcome, err := nodeA.InboxStoreDetailed(peerIdB, "overflow", 0)
-	if !errors.Is(err, node.ErrInboxFull) {
-		t.Fatalf("overflow err=%v, want ErrInboxFull", err)
+	if err != nil {
+		t.Fatalf("at-cap store err=%v, want nil (evict-oldest, never reject)", err)
 	}
-	if outcome.ErrorCode != "INBOX_FULL" {
-		t.Fatalf("overflow errorCode=%q, want INBOX_FULL", outcome.ErrorCode)
+	if outcome.ErrorCode != "" {
+		t.Fatalf("at-cap errorCode=%q, want empty", outcome.ErrorCode)
 	}
-	if outcome.StoreStatus != "rejected_full" {
-		t.Fatalf("overflow storeStatus=%q, want rejected_full", outcome.StoreStatus)
+	if outcome.StoreStatus != "stored" {
+		t.Fatalf("at-cap storeStatus=%q, want stored", outcome.StoreStatus)
 	}
 	if outcome.Occupancy != 3 {
-		t.Fatalf("overflow occupancy=%d, want 3", outcome.Occupancy)
+		t.Fatalf("at-cap occupancy=%d, want 3 (stays at cap)", outcome.Occupancy)
 	}
 	if outcome.Capacity != 3 {
-		t.Fatalf("overflow capacity=%d, want 3", outcome.Capacity)
+		t.Fatalf("at-cap capacity=%d, want 3", outcome.Capacity)
 	}
 
 	msgs, err := nodeB.InboxRetrieve()
@@ -574,13 +578,14 @@ func TestInboxStoreFull_TypedRejectionAgainstLocalRelay(t *testing.T) {
 	if len(msgs) != 3 {
 		t.Fatalf("retrieved %d messages, want 3", len(msgs))
 	}
+	// "accepted 1" (the oldest) was evicted; the newest ("overflow") arrived.
+	wantContents := []string{"accepted 2", "accepted 3", "overflow"}
 	for i, msg := range msgs {
-		want := fmt.Sprintf("accepted %d", i+1)
 		if msg.From != peerIdA {
 			t.Fatalf("message %d from=%s, want %s", i+1, msg.From, peerIdA)
 		}
-		if msg.Message != want {
-			t.Fatalf("message %d content=%q, want %q", i+1, msg.Message, want)
+		if msg.Message != wantContents[i] {
+			t.Fatalf("message %d content=%q, want %q", i+1, msg.Message, wantContents[i])
 		}
 	}
 }

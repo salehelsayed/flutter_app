@@ -295,9 +295,15 @@ func TestNewControlPlaneStores_UsesConfiguredServerLimits(t *testing.T) {
 	now := time.Now().UnixMilli()
 	requireInboxStoreResult(t, stores.Inbox, "peer-1", inboxMessage{From: "a", Message: "1", Timestamp: now}, InboxStoreResultStored)
 	requireInboxStoreResult(t, stores.Inbox, "peer-1", inboxMessage{From: "a", Message: "2", Timestamp: now}, InboxStoreResultStored)
-	requireInboxStoreResult(t, stores.Inbox, "peer-1", inboxMessage{From: "a", Message: "3", Timestamp: now}, InboxStoreResultRejectedFull)
+	// At cap the configured limit still binds — the oldest is evicted and the
+	// newest stored (plan 173, build-106 contract), keeping the count at cap.
+	requireInboxStoreResult(t, stores.Inbox, "peer-1", inboxMessage{From: "a", Message: "3", Timestamp: now}, InboxStoreResultStored)
 	if count := stores.Inbox.Count("peer-1"); count != 2 {
 		t.Fatalf("expected inbox cap 2, got %d", count)
+	}
+	head, _ := stores.Inbox.RetrievePendingWithMeta("peer-1", 1)
+	if len(head) != 1 || head[0].Message != "2" {
+		t.Fatalf("expected oldest message evicted at cap (head=2), got %#v", head)
 	}
 
 	for i := 0; i < 4; i++ {

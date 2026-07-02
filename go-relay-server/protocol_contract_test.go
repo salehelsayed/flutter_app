@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"sort"
 	"testing"
@@ -199,6 +200,76 @@ func TestStatusValueContract_Frozen(t *testing.T) {
 		t.Fatalf("malformed store status = %q, frozen contract requires %q (NET-REL-07)", resp.Status, "ERROR")
 	}
 	badStream.Close()
+}
+
+// TC-01 (plan 173) — TestStatusValueContract_FullInboxStoreStaysOK freezes the
+// build-106 full-inbox contract over the REAL handler + the PRODUCTION default
+// backend: a 1:1 store to a peer whose inbox is at maxMessagesPerPeer returns
+// Status "OK" (oldest evicted, newest stored). Shipped clients treat any
+// non-"OK" store as a hard failure with NO INBOX_FULL branch, so an OK->ERROR
+// inversion here silently drops the NEWEST message for the whole installed
+// base. This is the exact coverage gap that let the 2026-06-28 regression
+// ship: the frozen contract only ever stored once and never filled an inbox.
+func TestStatusValueContract_FullInboxStoreStaysOK(t *testing.T) {
+	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
+	inbox := NewInboxStore(push) // production default backend + capacity
+	groupInbox := NewGroupInboxStore(500, 7*24*time.Hour)
+	env := setupInboxStreamEnv(t, inbox, groupInbox)
+
+	recipientPeer := env.recipient.ID().String()
+
+	store := func(id string) inboxResponse {
+		t.Helper()
+		stream, err := env.sender.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+		if err != nil {
+			t.Fatalf("open store stream: %v", err)
+		}
+		defer stream.Close()
+		sendInboxReq(t, stream, inboxRequest{
+			Action:  "store",
+			To:      recipientPeer,
+			From:    env.sender.ID().String(),
+			Message: `{"type":"contract_probe","id":"` + id + `"}`,
+		})
+		return recvInboxResp(t, stream)
+	}
+
+	for i := 0; i < maxMessagesPerPeer; i++ {
+		if resp := store(fmt.Sprintf("cf-%d", i)); resp.Status != "OK" {
+			t.Fatalf("fill store %d status = %q, want OK", i, resp.Status)
+		}
+	}
+
+	full := store("cf-overflow")
+	if full.Status != "OK" {
+		t.Fatalf("full-inbox store status = %q, frozen contract requires %q (NET-REL-07: "+
+			"old clients hard-fail any non-OK store; evict oldest instead)", full.Status, "OK")
+	}
+	if full.StoreStatus != string(InboxStoreResultStored) {
+		t.Fatalf("full-inbox storeStatus = %q, want %q", full.StoreStatus, InboxStoreResultStored)
+	}
+	if full.Occupancy != maxMessagesPerPeer {
+		t.Fatalf("full-inbox occupancy = %d, want %d (evict keeps the inbox at cap)",
+			full.Occupancy, maxMessagesPerPeer)
+	}
+	if full.Capacity != maxMessagesPerPeer {
+		t.Fatalf("full-inbox capacity = %d, want %d", full.Capacity, maxMessagesPerPeer)
+	}
+
+	// Oldest evicted, newest present: the FIFO head must now be cf-1.
+	pendingStream, err := env.recipient.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+	if err != nil {
+		t.Fatalf("open retrieve_pending stream: %v", err)
+	}
+	defer pendingStream.Close()
+	sendInboxReq(t, pendingStream, inboxRequest{Action: "retrieve_pending", Limit: 1})
+	head := recvInboxResp(t, pendingStream)
+	if head.Status != "OK" || len(head.Messages) != 1 {
+		t.Fatalf("retrieve_pending head = %#v, want OK with 1 message", head)
+	}
+	if got := extractMessageId(head.Messages[0].Message); got != "cf-1" {
+		t.Fatalf("FIFO head after full-inbox store = %q, want cf-1 (cf-0 evicted, newest kept)", got)
+	}
 }
 
 // TestPresenceGetIsAdditive (FDC-08 / NET-REL-07) proves the new `presence_get`

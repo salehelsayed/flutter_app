@@ -120,12 +120,10 @@ func (s *localRelaySharedState) storeInbox(toPeerID string, message localRelayIn
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	queue := s.inbox[toPeerID]
+	// Mirror the real relay's at-cap contract (plan 173, build-106 /
+	// NET-REL-07): evict the OLDEST and store the newest — never reject.
 	if s.inboxCapacity > 0 && len(queue) >= s.inboxCapacity {
-		return localRelayInboxStoreOutcome{
-			stored:    false,
-			occupancy: len(queue),
-			capacity:  s.inboxCapacity,
-		}
+		queue = append([]localRelayInboxMessage(nil), queue[len(queue)-s.inboxCapacity+1:]...)
 	}
 	queue = append(queue, message)
 	s.inbox[toPeerID] = queue

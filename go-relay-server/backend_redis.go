@@ -272,6 +272,7 @@ func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSto
 	msgID := extractMessageId(entry.Message)
 	var result InboxStoreResult
 	pruned := 0
+	evicted := 0
 
 	err = withRedisWatchRetry(b.client, key, func(tx *redis.Tx) error {
 		rawEntries, err := tx.LRange(context.Background(), key, 0, -1).Result()
@@ -283,6 +284,7 @@ func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSto
 
 		validRaw, validMessages, prunedInTx := normalizeInboxEntries(rawEntries, cutoff)
 		pruned = prunedInTx
+		evicted = 0
 
 		if msgID != "" {
 			for _, message := range validMessages {
@@ -298,14 +300,12 @@ func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSto
 			}
 		}
 
+		// At cap: evict the OLDEST and store the newest (build-106 contract,
+		// NET-REL-07 — shipped clients hard-fail any non-OK store). Counted
+		// after the transaction commits (retry-safe, same pattern as pruned).
 		if len(validRaw) >= b.maxPerPeer {
-			if len(validRaw) != len(rawEntries) {
-				if err := redisReplaceList(tx, key, validRaw); err != nil {
-					return err
-				}
-			}
-			result = InboxStoreResultRejectedFull
-			return nil
+			evicted = len(validRaw) - b.maxPerPeer + 1
+			validRaw = validRaw[evicted:]
 		}
 
 		values := append([]string(nil), validRaw...)
@@ -321,6 +321,9 @@ func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSto
 		return "", fmt.Errorf("store redis inbox message: %w", err)
 	}
 	recordInboxExpiredPruned(pruned)
+	if evicted > 0 {
+		inboxCappedCounter.Add(float64(evicted))
+	}
 	return result, nil
 }
 

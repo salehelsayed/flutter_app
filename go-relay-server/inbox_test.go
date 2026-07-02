@@ -2324,7 +2324,12 @@ func TestHandleInboxStream_StoreDuplicateReturnsOKWithoutSecondPendingMessage(t 
 	}
 }
 
-func TestHandleInboxStream_StoreRejectsWhenFull(t *testing.T) {
+// TC-04 (plan 173) — end-to-end over the REAL inbox stream handler: a store to
+// a FULL 1:1 inbox returns Status "OK", evicts the oldest, and fires the push
+// for the newly stored message (build-106 contract, NET-REL-07). The
+// 2026-06-28 regression returned ERROR/INBOX_FULL and fired no push, silently
+// dropping the newest message for shipped clients.
+func TestHandleInboxStream_StoreAtCapEvictsAndPushes(t *testing.T) {
 	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
 	recorder := newRecordingPushSender()
 	push.sender = recorder.Send
@@ -2356,37 +2361,52 @@ func TestHandleInboxStream_StoreRejectsWhenFull(t *testing.T) {
 		return recvInboxResp(t, stream)
 	}
 
+	waitForPush := func(label string) {
+		t.Helper()
+		select {
+		case <-recorder.sentSignal:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for push after %s", label)
+		}
+	}
+
 	first := storeMessage("msg-full-001")
 	if first.Status != "OK" || first.StoreStatus != string(InboxStoreResultStored) {
 		t.Fatalf("first store response = %#v, want OK/stored", first)
 	}
+	waitForPush("first store")
 
 	second := storeMessage("msg-full-002")
-	if second.Status != "ERROR" {
-		t.Fatalf("overflow status = %q, want ERROR", second.Status)
+	if second.Status != "OK" {
+		t.Fatalf("at-cap store status = %q, want OK (evict-oldest, build-106 contract)", second.Status)
 	}
-	if second.Error != "INBOX_FULL" {
-		t.Fatalf("overflow error = %q, want INBOX_FULL", second.Error)
+	if second.Error != "" {
+		t.Fatalf("at-cap store error = %q, want empty", second.Error)
 	}
-	if second.StoreStatus != string(InboxStoreResultRejectedFull) {
-		t.Fatalf("overflow storeStatus = %q, want rejected_full", second.StoreStatus)
+	if second.StoreStatus != string(InboxStoreResultStored) {
+		t.Fatalf("at-cap storeStatus = %q, want stored", second.StoreStatus)
 	}
 	if second.Occupancy != 1 || second.Capacity != 1 {
-		t.Fatalf("overflow occupancy/capacity = %d/%d, want 1/1", second.Occupancy, second.Capacity)
+		t.Fatalf("at-cap occupancy/capacity = %d/%d, want 1/1", second.Occupancy, second.Capacity)
 	}
-	if second.ExpiresAtMs != 0 {
-		t.Fatalf("overflow expiresAtMs = %d, want 0", second.ExpiresAtMs)
+	if second.ExpiresAtMs == 0 {
+		t.Fatal("at-cap expiresAtMs = 0, want a fresh-store expiry timestamp")
 	}
-	if recorder.SendCallCount() > 1 {
-		t.Fatalf("reject should not fire push; push calls = %d", recorder.SendCallCount())
+	// INV-B: the fresh (evicting) store fires exactly one push of its own.
+	waitForPush("at-cap store")
+	if got := recorder.SendCallCount(); got != 2 {
+		t.Fatalf("push calls after both stores = %d, want 2", got)
 	}
 
 	pending, _ := inbox.RetrievePendingWithMeta(recipientPeer, 10)
 	if len(pending) != 1 {
 		t.Fatalf("pending count = %d, want 1", len(pending))
 	}
-	if !strings.Contains(pending[0].Message, "msg-full-001") {
-		t.Fatalf("oldest accepted message was not retained: %q", pending[0].Message)
+	if !strings.Contains(pending[0].Message, "msg-full-002") {
+		t.Fatalf("newest message was not retained after evict: %q", pending[0].Message)
+	}
+	if strings.Contains(pending[0].Message, "msg-full-001") {
+		t.Fatal("oldest message must be evicted, not the newest rejected")
 	}
 }
 

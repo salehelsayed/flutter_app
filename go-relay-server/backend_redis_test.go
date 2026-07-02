@@ -445,10 +445,16 @@ func TestRedisInboxBackend_RetrievePendingRequiresExplicitAckAcrossClients(t *te
 	}
 }
 
-func TestRedisInboxBackend_StoreRejectsNewWhenFull(t *testing.T) {
+// TC-03 (plan 173) — the DURABLE redis 1:1 inbox backend evicts the OLDEST
+// message at cap and returns Stored (build-106 contract, NET-REL-07), and the
+// post-eviction state is durable: a second backend instance over the same
+// redis sees the evicted list, proving the evict happened in redis rather than
+// only in process memory.
+func TestRedisInbox_StoreAtCapEvictsOldestReturnsStored(t *testing.T) {
 	server := miniredis.RunT(t)
+	client := newTestRedisClient(t, server)
 
-	backend := newRedisInboxBackend(newTestRedisClient(t, server), "phase2:", 2)
+	backend := newRedisInboxBackend(client, "phase2:", 2)
 
 	requireRedisInboxStoreResult(t, backend, "peer-recipient", inboxMessage{
 		From:      "peer-sender",
@@ -464,14 +470,25 @@ func TestRedisInboxBackend_StoreRejectsNewWhenFull(t *testing.T) {
 		From:      "peer-sender",
 		Message:   "overflow-msg",
 		Timestamp: time.Now().UnixMilli(),
-	}, InboxStoreResultRejectedFull)
+	}, InboxStoreResultStored)
 
 	messages, hasMore := backend.RetrievePending("peer-recipient", 10)
 	if hasMore || len(messages) != 2 {
-		t.Fatalf("pending after overflow = %d hasMore=%v, want 2/false", len(messages), hasMore)
+		t.Fatalf("pending after at-cap store = %d hasMore=%v, want 2/false", len(messages), hasMore)
 	}
-	if messages[0].Message != "msg-0" || messages[1].Message != "msg-1" {
-		t.Fatalf("oldest accepted messages not retained: %#v", messages)
+	if messages[0].Message != "msg-1" || messages[1].Message != "overflow-msg" {
+		t.Fatalf("evict-oldest not applied (want [msg-1, overflow-msg]): %#v", messages)
+	}
+
+	// Durability: a fresh backend instance over the same redis sees the same
+	// post-eviction list (the evict is persisted, not process-local).
+	reopened := newRedisInboxBackend(newTestRedisClient(t, server), "phase2:", 2)
+	messages, hasMore = reopened.RetrievePending("peer-recipient", 10)
+	if hasMore || len(messages) != 2 {
+		t.Fatalf("reopened pending = %d hasMore=%v, want 2/false", len(messages), hasMore)
+	}
+	if messages[0].Message != "msg-1" || messages[1].Message != "overflow-msg" {
+		t.Fatalf("reopened backend sees wrong list (evict not durable): %#v", messages)
 	}
 }
 
