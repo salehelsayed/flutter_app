@@ -3068,6 +3068,10 @@ void main() async {
     // Finding 05 Phase 4: reconnect re-arms backed-off failed group rows (local
     // DB op — no network gate needed).
     clearGroupRetryBackoffFn: groupMessageRepository.clearRetryBackoff,
+    // 195: queued offline sends leave on the OS connectivity-restored edge —
+    // the relay inbox store only needs an outbound dial, not the relay
+    // reservation the stateStream online edge waits for (~2s vs ~8s).
+    networkRestoredSignal: connectivityRestoredSignal(),
     // Finding 05 Phase 4 (P1.6): jitter the background retry cadence in prod so
     // reconnecting clients do not stampede the relay in lockstep.
     jitterRandom: Random(),

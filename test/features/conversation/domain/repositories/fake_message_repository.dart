@@ -196,11 +196,16 @@ class FakeMessageRepository implements MessageRepository {
   /// while the periodic pass keeps it.
   Duration? lastUnackedOlderThan;
 
+  /// 195: counts [getUnackedOutgoingMessages] queries so tests can assert the
+  /// network-restored flush coalesces (debounce) to exactly one pass.
+  int unackedQueryCount = 0;
+
   @override
   Future<List<ConversationMessage>> getUnackedOutgoingMessages({
     required Duration olderThan,
   }) async {
     lastUnackedOlderThan = olderThan;
+    unackedQueryCount++;
     if (unackedOutgoingOverride != null) return unackedOutgoingOverride!;
     return _messages
         .where(

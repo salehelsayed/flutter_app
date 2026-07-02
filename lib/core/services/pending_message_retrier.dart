@@ -35,6 +35,13 @@ class PendingMessageRetrier {
     seconds: 30,
   );
 
+  /// 195: the OS-restored trigger fires the retry pass on a SHORTER debounce
+  /// than the node-edge one — the point is to beat node recovery, not wait it
+  /// out. 1s lets the just-restored route settle; the signal already emits
+  /// only on restored edges, and the node online edge remains the backstop
+  /// for anything this early pass could not deliver.
+  static const Duration defaultNetworkRestoredDebounce = Duration(seconds: 1);
+
   final P2PService p2pService;
   final MessageRepository messageRepo;
   final IdentityRepository identityRepo;
@@ -62,7 +69,20 @@ class PendingMessageRetrier {
   final Future<int> Function()? retryFailedMessagesOverride;
   final Future<int> Function()? retryUnackedMessagesOverride;
   final Future<int> Function()? verifyInboxCustodyFn;
+
+  /// 195: OS connectivity-restored edges (the 182 `connectivityRestoredSignal`
+  /// adapter). Each event schedules a [networkRestoredDebounce]-debounced
+  /// retry pass with the unacked age gate dropped (same pass as the node
+  /// online edge) WITHOUT waiting for the node's relay session: storing to
+  /// the relay durable inbox only needs an outbound dial
+  /// (go-mknoon/node/inbox.go — plain h.Connect + h.NewStream, no
+  /// reservation), so queued offline sends can leave as soon as any route to
+  /// the relay exists (~2s) instead of after node recovery + the 5s node-edge
+  /// debounce (~8s, report 192 S3). Null (default) keeps node-edge-only
+  /// behavior.
+  final Stream<void>? networkRestoredSignal;
   final Duration retryDebounce;
+  final Duration networkRestoredDebounce;
   final Duration periodicRetryInterval;
   final Duration groupContinuitySweepInterval;
 
@@ -75,7 +95,9 @@ class PendingMessageRetrier {
   bool Function()? _isExternalRecoveryInProgressFn;
 
   StreamSubscription? _stateSubscription;
+  StreamSubscription? _networkRestoredSubscription;
   Timer? _debounceTimer;
+  Timer? _networkRestoredDebounceTimer;
   Timer? _periodicTimer;
   Timer? _groupContinuityTimer;
   bool _wasOnline = false;
@@ -83,6 +105,7 @@ class PendingMessageRetrier {
   bool _needsGroupRecovery = false;
   bool _isRetrying = false;
   bool _isGroupContinuitySweeping = false;
+  bool _isNetworkRestoredFlushing = false;
 
   PendingMessageRetrier({
     required this.p2pService,
@@ -106,7 +129,9 @@ class PendingMessageRetrier {
     this.retryFailedMessagesOverride,
     this.retryUnackedMessagesOverride,
     this.verifyInboxCustodyFn,
+    this.networkRestoredSignal,
     this.retryDebounce = defaultRetryDebounce,
+    this.networkRestoredDebounce = defaultNetworkRestoredDebounce,
     this.periodicRetryInterval = defaultPeriodicRetryInterval,
     this.groupContinuitySweepInterval = defaultGroupContinuitySweepInterval,
     this.jitterRandom,
@@ -171,6 +196,59 @@ class PendingMessageRetrier {
     // Handles cold-start where the Go node reports already-running.
     if (_wasOnline || _wasGroupRecoveryReady) {
       _startOnlineTimers();
+    }
+
+    // 195: OS restored edge → short-debounced LIGHT flush (1:1 unacked only),
+    // deliberately NOT gated on the node's online state — the whole point is
+    // to flush queued sends before node recovery finishes (inbox store dials
+    // the relay directly). It is NOT the full _retryIfNeeded pass: device
+    // evidence (2026-07-02, Pixel) showed the full pass is guard-skipped
+    // (external recovery / group gate held) in exactly the post-restore
+    // window this trigger exists for, silently deferring the flush to the
+    // node-edge pass. The unacked re-store is recovery-independent — no group
+    // state, no failed-row re-dials, duplicate stores deduped by the receiver
+    // — so it runs under its OWN in-flight guard, ignoring the external-
+    // recovery guard and never blocking (or being blocked by) a full pass.
+    // A spurious restored edge (signal seeds disconnected, so subscription on
+    // an already-online device emits once) is harmless: the flush is cheap
+    // when nothing is queued, and at process start nothing can be in flight.
+    final restoredSignal = networkRestoredSignal;
+    if (restoredSignal != null) {
+      _networkRestoredSubscription = restoredSignal.listen((_) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PENDING_RETRIER_NETWORK_RESTORED_TRIGGER',
+          details: {},
+        );
+        _networkRestoredDebounceTimer?.cancel();
+        _networkRestoredDebounceTimer = Timer(
+          networkRestoredDebounce,
+          () => _flushUnackedOnNetworkRestored(),
+        );
+      });
+    }
+  }
+
+  Future<void> _flushUnackedOnNetworkRestored() async {
+    if (_isNetworkRestoredFlushing) return;
+    _isNetworkRestoredFlushing = true;
+    try {
+      final count = await _retryUnackedMessagesNow(olderThan: Duration.zero);
+      if (count > 0) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PENDING_RETRIER_NETWORK_RESTORED_FLUSHED',
+          details: {'count': count},
+        );
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PENDING_RETRIER_NETWORK_RESTORED_FLUSH_ERROR',
+        details: {'error': e.toString()},
+      );
+    } finally {
+      _isNetworkRestoredFlushing = false;
     }
   }
 
@@ -293,6 +371,11 @@ class PendingMessageRetrier {
   void _stopAllTimers() {
     _debounceTimer?.cancel();
     _debounceTimer = null;
+    // 195: only dispose cancels this — going node-offline must NOT, because
+    // the OS restored edge is expected to fire while the node still reports
+    // offline (that is the trigger's purpose).
+    _networkRestoredDebounceTimer?.cancel();
+    _networkRestoredDebounceTimer = null;
     _stopRecurringOnlineTimers();
   }
 
@@ -653,5 +736,7 @@ class PendingMessageRetrier {
     _stopAllTimers();
     _stateSubscription?.cancel();
     _stateSubscription = null;
+    _networkRestoredSubscription?.cancel();
+    _networkRestoredSubscription = null;
   }
 }

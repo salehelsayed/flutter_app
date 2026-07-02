@@ -1541,4 +1541,187 @@ void main() {
       },
     );
   });
+
+  // ---------------------------------------------------------------------------
+  // 195 — OS connectivity-restored send trigger. Storing to the relay durable
+  // inbox only needs an outbound dial (go-mknoon/node/inbox.go: h.Connect +
+  // h.NewStream — no reservation / relayState=online required), so queued
+  // offline sends must NOT wait for the node's relay session to re-establish
+  // (the stateStream online edge = node recovery + 5s debounce ≈ 8s in the 192
+  // S3 field test). The OS restored edge runs the SAME zero-age-gate pass on
+  // its own shorter debounce; the node online edge remains the backstop.
+  // ---------------------------------------------------------------------------
+  group('PendingMessageRetrier network-restored send trigger (195)', () {
+    test(
+      'TC-195-01 an OS restored edge runs the zero-gate retry pass even while '
+      'the node still reports offline',
+      () {
+        fakeAsync((async) {
+          final restored = StreamController<void>.broadcast(sync: true);
+          retrier = PendingMessageRetrier(
+            p2pService: p2pService, // default FakeP2PService = stopped/offline
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            networkRestoredSignal: restored.stream,
+          );
+          retrier.start();
+          expect(messageRepo.lastUnackedOlderThan, isNull);
+
+          restored.add(null);
+          async.elapse(PendingMessageRetrier.defaultNetworkRestoredDebounce);
+          async.flushMicrotasks();
+
+          expect(
+            messageRepo.lastUnackedOlderThan,
+            Duration.zero,
+            reason:
+                'the OS restored edge must flush queued offline sends without '
+                'waiting for the node relay session (RED on HEAD: no '
+                'networkRestoredSignal trigger exists)',
+          );
+          restored.close();
+        });
+      },
+    );
+
+    test(
+      'TC-195-02 rapid restored edges coalesce into one debounced pass',
+      () {
+        fakeAsync((async) {
+          final restored = StreamController<void>.broadcast(sync: true);
+          retrier = PendingMessageRetrier(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            networkRestoredSignal: restored.stream,
+          );
+          retrier.start();
+
+          restored.add(null);
+          async.elapse(const Duration(milliseconds: 300));
+          restored.add(null);
+          async.elapse(const Duration(milliseconds: 300));
+          restored.add(null);
+          async.elapse(PendingMessageRetrier.defaultNetworkRestoredDebounce);
+          async.flushMicrotasks();
+
+          // Exactly one flush ran (one unacked query) — the flap guard.
+          expect(messageRepo.unackedQueryCount, 1);
+          restored.close();
+        });
+      },
+    );
+
+    test(
+      'TC-195-05 the flush runs INSIDE the post-restore recovery window '
+      '(external recovery in progress) and skips group/failed steps — the '
+      'field-hit gap: the full pass is guard-skipped exactly when the OS edge '
+      'fires',
+      () {
+        fakeAsync((async) {
+          final restored = StreamController<void>.broadcast(sync: true);
+          var rejoinCalled = false;
+          retrier = PendingMessageRetrier(
+            p2pService: p2pService, // node still offline — the normal case
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            rejoinGroupTopicsFn: () async => rejoinCalled = true,
+            networkRestoredSignal: restored.stream,
+            // Device-verified 2026-07-02 (Pixel): at OS-restore time the
+            // recovery machinery holds this guard, and the full pass was
+            // skipped (PENDING_RETRIER_SKIPPED_EXTERNAL_RECOVERY) — the flush
+            // fell back to the node-edge pass (~7.3s). The light flush must
+            // NOT defer to this guard: the unacked inbox re-store touches no
+            // group state and dials the relay directly.
+            isExternalRecoveryInProgressFn: () => true,
+          );
+          retrier.start();
+
+          restored.add(null);
+          async.elapse(PendingMessageRetrier.defaultNetworkRestoredDebounce);
+          async.flushMicrotasks();
+
+          expect(
+            messageRepo.lastUnackedOlderThan,
+            Duration.zero,
+            reason:
+                'the network-restored flush must run inside the recovery '
+                'window (RED on HEAD: full pass -> guard-skipped, no flush)',
+          );
+          // Light pass: no group steps, no failed-row re-dials.
+          expect(rejoinCalled, isFalse);
+          expect(identityRepo.loadIdentityCallCount, 0);
+          restored.close();
+        });
+      },
+    );
+
+    test(
+      'TC-195-03 dispose cancels the network-restored subscription and timer',
+      () {
+        fakeAsync((async) {
+          final restored = StreamController<void>.broadcast(sync: true);
+          retrier = PendingMessageRetrier(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            networkRestoredSignal: restored.stream,
+          );
+          retrier.start();
+          retrier.dispose();
+
+          restored.add(null);
+          async.elapse(
+            PendingMessageRetrier.defaultNetworkRestoredDebounce +
+                const Duration(seconds: 1),
+          );
+          async.flushMicrotasks();
+
+          expect(identityRepo.loadIdentityCallCount, 0);
+          expect(messageRepo.lastUnackedOlderThan, isNull);
+          restored.close();
+        });
+      },
+    );
+
+    test(
+      'TC-195-04 PRESERVE the node online edge still runs its own debounced '
+      'zero-gate pass when the signal is wired',
+      () {
+        fakeAsync((async) {
+          final restored = StreamController<void>.broadcast(sync: true);
+          retrier = PendingMessageRetrier(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            networkRestoredSignal: restored.stream,
+          );
+          retrier.start();
+
+          p2pService.emitState(
+            const NodeState(
+              isStarted: true,
+              peerId: 'my-peer',
+              circuitAddresses: ['/addr'],
+            ),
+          );
+          async.elapse(PendingMessageRetrier.defaultRetryDebounce);
+          async.flushMicrotasks();
+
+          expect(messageRepo.lastUnackedOlderThan, Duration.zero);
+          restored.close();
+        });
+      },
+    );
+  });
 }
