@@ -895,6 +895,15 @@
   "upload_progress_keep_open": "Lass die App geöffnet, bis der Upload abgeschlossen ist",
   "conversation_blocked_contact": "Du hast diesen Kontakt blockiert.",
   "conversation_unblock": "Entsperren",
+  "conversation_undelivered_banner": "{count, plural, =1{1 Nachricht konnte nicht angezeigt werden} other{{count} Nachrichten konnten nicht angezeigt werden}}",
+  "@conversation_undelivered_banner": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "conversation_undelivered_retry": "Erneut versuchen",
   "conversation_empty_first_letter": "Schreib den ersten Brief,\num eure Unterhaltung zu beginnen",
   "media_video_load_failed": "Video konnte nicht geladen werden",
   "conversation_introduce_to_circle": "Deinem Kreis vorstellen",

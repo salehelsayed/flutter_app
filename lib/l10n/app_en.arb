@@ -902,6 +902,15 @@
   "upload_progress_keep_open": "Keep the app open until the upload completes",
   "conversation_blocked_contact": "You blocked this contact.",
   "conversation_unblock": "Unblock",
+  "conversation_undelivered_banner": "{count, plural, =1{Couldn't display 1 message} other{Couldn't display {count} messages}}",
+  "@conversation_undelivered_banner": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "conversation_undelivered_retry": "Retry",
   "conversation_empty_first_letter": "Write the first letter\nto start your conversation",
   "media_video_load_failed": "Could not load video",
   "conversation_introduce_to_circle": "Introduce to your circle",

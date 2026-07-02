@@ -258,6 +258,36 @@ Future<int> dbCountQuarantinedInboxStagingEntries(Database db) async {
   return Sqflite.firstIntValue(rows) ?? 0;
 }
 
+/// 172 TC-07 (INV-2): rows the user must be able to SEE exist — every kept-
+/// but-undisplayed entry that is not an intentional content-safe drop:
+/// - `quarantined` (decryption_failed + attempt_cap_exceeded recoverables);
+/// - historical `rejected` rows whose reason codes belong to the RECOVERABLE
+///   classes the pre-172 code terminally rejected (the pre-fix casualties
+///   still sitting invisible in the table).
+/// Content-safe rejections (blocked_sender / not_chat_message / ignored_edit
+/// / unknown_sender_stranger) are intentional non-displays and never count.
+const _recoverableClassRejectReasonCodes = [
+  'unknown_sender',
+  'duplicate',
+  'edit_missing_original',
+];
+
+Future<int> dbCountNeedsAttentionInboxStagingEntries(Database db) async {
+  final placeholders = List.filled(
+    _recoverableClassRejectReasonCodes.length,
+    '?',
+  ).join(', ');
+  final rows = await db.rawQuery(
+    '''
+    SELECT COUNT(*) AS total FROM inbox_staging_entries
+    WHERE status = 'quarantined'
+       OR (status = 'rejected' AND reject_reason_code IN ($placeholders))
+    ''',
+    _recoverableClassRejectReasonCodes,
+  );
+  return Sqflite.firstIntValue(rows) ?? 0;
+}
+
 Future<int> dbMarkInboxStagingEntryRejected(
   Database db,
   String entryId, {

@@ -61,12 +61,15 @@ void main() {
 
       final mainSource = await File('lib/main.dart').readAsString();
 
-      // Scope to the coordinator construction block.
+      // Scope to the coordinator construction block. Terminator: the next
+      // declaration after the block — `final groupConversationTracker`
+      // (was `final conversationTracker` until the CV-26 FDC-04 re-warm
+      // wiring moved that construction ABOVE the coordinator, be440b1e).
       final start = mainSource.indexOf(
         'final PushRegistrationCoordinator? pushRegistrationCoordinator =',
       );
       expect(start, isNonNegative);
-      final end = mainSource.indexOf('final conversationTracker', start);
+      final end = mainSource.indexOf('final groupConversationTracker', start);
       expect(end, greaterThan(start));
       final coordinatorBlock = mainSource.substring(start, end);
 

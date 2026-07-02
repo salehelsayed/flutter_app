@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_app/core/database/helpers/inbox_staging_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/045_inbox_staging_entries.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -219,6 +221,86 @@ void main() {
       );
 
       expect(await dbCountQuarantinedInboxStagingEntries(db), 2);
+    });
+
+    // 172 TC-07 — the "needs attention" surface behind the couldn't-display
+    // affordance (INV-2: every kept-but-undisplayed entry is user-visibly
+    // surfaced). Counts quarantined rows (incl. attempt-cap-exhausted
+    // recoverables) PLUS historical rejected rows whose reason codes belong
+    // to the recoverable classes the pre-172 code terminally rejected
+    // (unknown_sender / duplicate / edit_missing_original) — those are the
+    // pre-fix casualties still sitting invisible in the table. Content-safe
+    // rejections (blocked_sender / not_chat_message / ignored_edit) are
+    // intentional non-displays and must NOT count.
+    test('172 TC-07: needs-attention surface counts quarantined + '
+        'recoverable-class rejected rows, survives reopen', () async {
+      await dbInsertInboxStagingEntry(db, makeRow(entryId: 'entry-q1'));
+      await dbInsertInboxStagingEntry(db, makeRow(entryId: 'entry-q2'));
+      await dbInsertInboxStagingEntry(db, makeRow(entryId: 'entry-r1'));
+      await dbInsertInboxStagingEntry(db, makeRow(entryId: 'entry-r2'));
+      await dbInsertInboxStagingEntry(db, makeRow(entryId: 'entry-safe'));
+      await dbInsertInboxStagingEntry(db, makeRow(entryId: 'entry-live'));
+
+      await dbMarkInboxStagingEntryQuarantined(
+        db,
+        'entry-q1',
+        reasonCode: 'decryption_failed',
+      );
+      await dbMarkInboxStagingEntryQuarantined(
+        db,
+        'entry-q2',
+        reasonCode: 'attempt_cap_exceeded',
+      );
+      // Historical pre-172 casualties: terminally rejected recoverables.
+      await dbMarkInboxStagingEntryRejected(
+        db,
+        'entry-r1',
+        reasonCode: 'unknown_sender',
+      );
+      await dbMarkInboxStagingEntryRejected(
+        db,
+        'entry-r2',
+        reasonCode: 'edit_missing_original',
+      );
+      // Content-safe rejection: intentional non-display, not loss.
+      await dbMarkInboxStagingEntryRejected(
+        db,
+        'entry-safe',
+        reasonCode: 'blocked_sender',
+      );
+      // entry-live stays pending (recoverable, still being replayed).
+
+      expect(await dbCountNeedsAttentionInboxStagingEntries(db), 4);
+    });
+
+    test('172 TC-07 (reopen): needs-attention count reconstructs from a '
+        'reopened database', () async {
+      final dir = await Directory.systemTemp.createTemp(
+        'inbox_staging_needs_attention',
+      );
+      addTearDown(() => dir.delete(recursive: true));
+      final path = '${dir.path}/staging.db';
+
+      var fileDb = await openDatabase(path, version: 1);
+      await runInboxStagingEntriesMigration(fileDb);
+      await dbInsertInboxStagingEntry(fileDb, makeRow(entryId: 'entry-q1'));
+      await dbMarkInboxStagingEntryQuarantined(
+        fileDb,
+        'entry-q1',
+        reasonCode: 'attempt_cap_exceeded',
+      );
+      await dbInsertInboxStagingEntry(fileDb, makeRow(entryId: 'entry-r1'));
+      await dbMarkInboxStagingEntryRejected(
+        fileDb,
+        'entry-r1',
+        reasonCode: 'duplicate',
+      );
+      await fileDb.close();
+
+      // Process-restart model: a fresh connection must reconstruct the count.
+      fileDb = await openDatabase(path, version: 1);
+      addTearDown(() => fileDb.close());
+      expect(await dbCountNeedsAttentionInboxStagingEntries(fileDb), 2);
     });
   });
 

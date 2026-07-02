@@ -200,6 +200,7 @@ import 'package:flutter_app/features/conversation/application/handle_incoming_ch
 import 'package:flutter_app/features/conversation/application/handle_incoming_message_deletion_use_case.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/application/recovered_inbox_chat_disposition.dart';
+import 'package:flutter_app/features/conversation/application/recovered_inbox_sibling_dispositions.dart';
 import 'package:flutter_app/features/conversation/application/link_incoming_local_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/message_deletion_listener.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
@@ -1082,6 +1083,8 @@ void main() async {
             ),
     dbCountQuarantinedInboxStagingEntries: () =>
         dbCountQuarantinedInboxStagingEntries(db),
+    dbCountNeedsAttentionInboxStagingEntries: () =>
+        dbCountNeedsAttentionInboxStagingEntries(db),
   );
 
   final postRepository = PostRepositoryImpl(
@@ -2077,8 +2080,20 @@ void main() async {
             stagedEntryId: stagedEntryId,
           );
         }
-        if (outcome.state == ChatMessageProcessState.unknownSender &&
-            resolution != UnknownInboxSenderResolution.rejected) {
+        if (outcome.state == ChatMessageProcessState.unknownSender) {
+          // 172: a resolver-CONFIRMED stranger (no introduction in any
+          // recoverable state) stays a terminal content-safe drop; everyone
+          // else stays recoverable. The mapper's own unknownSender default is
+          // now retryable (unknown_sender_recoverable), so the terminal
+          // stranger verdict must be returned explicitly here — the one place
+          // with resolver context.
+          if (resolution == UnknownInboxSenderResolution.rejected) {
+            return (
+              disposition: RecoveredInboxChatDisposition.rejected,
+              reasonCode: 'unknown_sender_stranger',
+              reasonDetail: null,
+            );
+          }
           return (
             disposition: RecoveredInboxChatDisposition.retryable,
             reasonCode: 'unknown_sender_intro_pending',
@@ -2128,32 +2143,9 @@ void main() async {
       getAppLifecycleState: notify?.lifecycle,
       notificationToneTracker: notify?.toneTracker,
     );
-    // OQ-7: targetUnavailable is a TERMINAL drop (commit, not retryable) — the
-    // target message is gone/deleted and will never reappear, so retrying would
-    // only churn toward quarantine.
-    switch (result) {
-      case HandleReactionResult.success:
-      case HandleReactionResult.targetUnavailable:
-        return (
-          disposition: RecoveredInboxChatDisposition.committed,
-          reasonCode: result.name,
-          reasonDetail: null,
-        );
-      case HandleReactionResult.decryptionFailed:
-      case HandleReactionResult.unknownSender:
-        return (
-          disposition: RecoveredInboxChatDisposition.retryable,
-          reasonCode: result.name,
-          reasonDetail: null,
-        );
-      case HandleReactionResult.senderMismatch:
-      case HandleReactionResult.notReaction:
-        return (
-          disposition: RecoveredInboxChatDisposition.rejected,
-          reasonCode: result.name,
-          reasonDetail: null,
-        );
-    }
+    // 172 TC-11: the recoverable-vs-terminal split lives in the extracted,
+    // test-locked sibling mapper (recovered_inbox_sibling_dispositions.dart).
+    return mapReactionReplayResultToDisposition(result);
   }
 
   Future<RecoveredInboxReplayOutcome> replayInboxMessageDeletion(
@@ -2176,32 +2168,9 @@ void main() async {
       ),
       stagedEntryId: stagedEntryId,
     );
-    // OQ-7: ignoredMissingMessage is a TERMINAL drop (commit, not retryable) —
-    // the use case already staged a tombstone for an unseen target, so there is
-    // nothing left to retry.
-    switch (result) {
-      case HandleMessageDeletionResult.success:
-      case HandleMessageDeletionResult.ignoredMissingMessage:
-        return (
-          disposition: RecoveredInboxChatDisposition.committed,
-          reasonCode: result.name,
-          reasonDetail: null,
-        );
-      case HandleMessageDeletionResult.decryptionFailed:
-      case HandleMessageDeletionResult.unknownSender:
-        return (
-          disposition: RecoveredInboxChatDisposition.retryable,
-          reasonCode: result.name,
-          reasonDetail: null,
-        );
-      case HandleMessageDeletionResult.unauthorized:
-      case HandleMessageDeletionResult.notMessageDeletion:
-        return (
-          disposition: RecoveredInboxChatDisposition.rejected,
-          reasonCode: result.name,
-          reasonDetail: null,
-        );
-    }
+    // 172 TC-11: the recoverable-vs-terminal split lives in the extracted,
+    // test-locked sibling mapper (recovered_inbox_sibling_dispositions.dart).
+    return mapMessageDeletionReplayResultToDisposition(result);
   }
 
   // CV-26 (FDC-04 DESIGN-3): the 1:1 active-conversation tracker is a

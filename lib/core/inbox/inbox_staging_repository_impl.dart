@@ -33,6 +33,12 @@ class InboxStagingRepositoryImpl implements InboxStagingRepository {
   dbMarkInboxStagingEntryQuarantined;
   final Future<int> Function() dbCountQuarantinedInboxStagingEntries;
 
+  /// 172: optional so existing construction sites keep compiling; when absent,
+  /// [countNeedsAttentionEntries] degrades to the quarantined-only count (a
+  /// truthful subset — it under-counts historical rejected recoverables, never
+  /// over-counts).
+  final Future<int> Function()? dbCountNeedsAttentionInboxStagingEntries;
+
   InboxStagingRepositoryImpl({
     required this.dbInsertInboxStagingEntry,
     required this.dbLoadRecoverableInboxStagingEntries,
@@ -42,6 +48,7 @@ class InboxStagingRepositoryImpl implements InboxStagingRepository {
     required this.dbMarkInboxStagingEntryRejected,
     required this.dbMarkInboxStagingEntryQuarantined,
     required this.dbCountQuarantinedInboxStagingEntries,
+    this.dbCountNeedsAttentionInboxStagingEntries,
   });
 
   @override
@@ -144,6 +151,15 @@ class InboxStagingRepositoryImpl implements InboxStagingRepository {
 
   @override
   Future<int> countQuarantinedEntries() async {
+    return dbCountQuarantinedInboxStagingEntries();
+  }
+
+  @override
+  Future<int> countNeedsAttentionEntries() async {
+    final needsAttention = dbCountNeedsAttentionInboxStagingEntries;
+    if (needsAttention != null) {
+      return needsAttention();
+    }
     return dbCountQuarantinedInboxStagingEntries();
   }
 }

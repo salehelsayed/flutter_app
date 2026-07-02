@@ -146,6 +146,25 @@ abstract interface class PeerDropSignal {
   void setPeerDropSuspected(String peerId, bool dropped);
 }
 
+/// 172 (INV-2) — surfacing signal for kept-but-undisplayed inbox entries:
+/// staged messages whose relay copy was already ACK-deleted but which could
+/// not be displayed (quarantined — decryption failures + attempt-cap-exhausted
+/// recoverables — plus historical recoverable-class terminal rejections from
+/// pre-172 builds). The conversation UI reads this to show the "couldn't
+/// display N messages" affordance so a silent post-custody loss becomes a
+/// visible, retryable state.
+///
+/// Kept OFF the base [P2PService] interface — exactly like [PeerDropSignal] /
+/// [PeerLivenessProbe] — so the many hand-written `implements P2PService`
+/// fakes do not all have to grow it. Callers consult it via an
+/// `is InboxAttentionSignal` check and hide the affordance otherwise. Never
+/// throws — implementations degrade to 0 on any error.
+abstract interface class InboxAttentionSignal {
+  /// Count of staged inbox entries needing user attention (quarantined +
+  /// recoverable-class rejected). 0 when none or when counting fails.
+  Future<int> countNeedsAttentionInboxEntries();
+}
+
 /// Abstract interface for P2P networking service.
 ///
 /// This service manages the P2P node lifecycle, peer connections,

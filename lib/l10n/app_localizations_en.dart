@@ -1749,6 +1749,20 @@ class AppLocalizationsEn extends AppLocalizations {
   String get conversation_unblock => 'Unblock';
 
   @override
+  String conversation_undelivered_banner(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Couldn\'t display $count messages',
+      one: 'Couldn\'t display 1 message',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get conversation_undelivered_retry => 'Retry';
+
+  @override
   String get conversation_empty_first_letter =>
       'Write the first letter\nto start your conversation';
 

@@ -1766,6 +1766,23 @@ class AppLocalizationsAr extends AppLocalizations {
   String get conversation_unblock => 'إلغاء الحظر';
 
   @override
+  String conversation_undelivered_banner(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'تعذر عرض $count رسالة',
+      many: 'تعذر عرض $count رسالة',
+      few: 'تعذر عرض $count رسائل',
+      two: 'تعذر عرض رسالتين',
+      one: 'تعذر عرض رسالة واحدة',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get conversation_undelivered_retry => 'إعادة المحاولة';
+
+  @override
   String get conversation_empty_first_letter =>
       'اكتب الرسالة الأولى\nلبدء محادثتكما';
 

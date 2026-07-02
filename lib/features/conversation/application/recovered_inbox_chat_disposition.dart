@@ -1,6 +1,23 @@
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 
+const String _fdcInboxReclassifyDisableRaw = String.fromEnvironment(
+  'FDC_INBOX_RECLASSIFY_DISABLE',
+);
+
+/// 172 kill-switch (ships ON, i.e. this const is FALSE in production):
+/// `--dart-define=FDC_INBOX_RECLASSIFY_DISABLE=1` (1/true/yes/on) reverts the
+/// recoverable-class reclassification (unknownSender / editMissingOriginal /
+/// unverified duplicate -> retryable) to the legacy terminal rejections.
+/// Field escape hatch only, mirroring the FDC-06 ship-on-with-disable
+/// pattern (handle_app_paused.dart); the default is locked by the
+/// disposition test.
+const bool kFdcInboxReclassifyDisabled =
+    _fdcInboxReclassifyDisableRaw == '1' ||
+    _fdcInboxReclassifyDisableRaw == 'true' ||
+    _fdcInboxReclassifyDisableRaw == 'yes' ||
+    _fdcInboxReclassifyDisableRaw == 'on';
+
 /// Maps a replayed staged chat message outcome to its staging disposition.
 ///
 /// INV-1: once the receiving side has caused custody transfer (relay copy
@@ -8,11 +25,23 @@ import 'package:flutter_app/features/conversation/application/chat_message_liste
 /// destroy the staged envelope. Failures that never evaluated the content
 /// (transient infrastructure) stay retryable; cryptographic failures are
 /// quarantined — kept with reason metadata, excluded from replay. `rejected`
-/// is reserved for pre-custody or content-safe outcomes (see the matrix test
-/// for the per-state justification).
+/// is reserved for content-safe outcomes only (see the matrix test for the
+/// per-state justification).
 ///
-/// The unknown-sender intro-recovery pre-step stays in the main.dart closure;
-/// this mapper handles the final outcome only.
+/// 172: recoverable/transient causes must NEVER be terminal after custody
+/// transfer (the 2026-06-28 incident: a contact-row race made a real sender
+/// look `unknownSender`, the entry was `markRejected`, and the message —
+/// already ACK-deleted off the relay — vanished with zero signal):
+/// - `unknownSender` -> retryable (default-safe even when the main.dart
+///   intro-recovery pre-step never ran; that pre-step still returns terminal
+///   `rejected` for a resolver-confirmed stranger).
+/// - `editMissingOriginal` -> retryable (the original may arrive in a later
+///   relay page).
+/// - `duplicate` -> rejected ONLY when [ChatMessageProcessOutcome
+///   .duplicatePriorPersisted] confirms the prior copy is durably persisted;
+///   an unverified duplicate claim stays retryable.
+/// Every retryable is bounded by `maxInboxReplayAttempts` -> quarantined
+/// (kept + surfaced), never silently dropped.
 RecoveredInboxReplayOutcome mapChatReplayOutcomeToDisposition(
   ChatMessageProcessOutcome outcome,
 ) {
@@ -66,15 +95,31 @@ RecoveredInboxReplayOutcome mapChatReplayOutcomeToDisposition(
         reasonDetail: null,
       );
     case ChatMessageProcessState.unknownSender:
+      if (kFdcInboxReclassifyDisabled) {
+        return (
+          disposition: RecoveredInboxChatDisposition.rejected,
+          reasonCode: 'unknown_sender',
+          reasonDetail: null,
+        );
+      }
       return (
-        disposition: RecoveredInboxChatDisposition.rejected,
-        reasonCode: 'unknown_sender',
+        disposition: RecoveredInboxChatDisposition.retryable,
+        reasonCode: 'unknown_sender_recoverable',
         reasonDetail: null,
       );
     case ChatMessageProcessState.duplicate:
+      if (outcome.duplicatePriorPersisted || kFdcInboxReclassifyDisabled) {
+        return (
+          disposition: RecoveredInboxChatDisposition.rejected,
+          reasonCode: outcome.duplicatePriorPersisted
+              ? 'duplicate_confirmed_visible'
+              : 'duplicate',
+          reasonDetail: null,
+        );
+      }
       return (
-        disposition: RecoveredInboxChatDisposition.rejected,
-        reasonCode: 'duplicate',
+        disposition: RecoveredInboxChatDisposition.retryable,
+        reasonCode: 'duplicate_unverified_retry',
         reasonDetail: null,
       );
     case ChatMessageProcessState.ignoredEdit:
@@ -84,8 +129,15 @@ RecoveredInboxReplayOutcome mapChatReplayOutcomeToDisposition(
         reasonDetail: null,
       );
     case ChatMessageProcessState.editMissingOriginal:
+      if (kFdcInboxReclassifyDisabled) {
+        return (
+          disposition: RecoveredInboxChatDisposition.rejected,
+          reasonCode: 'edit_missing_original',
+          reasonDetail: null,
+        );
+      }
       return (
-        disposition: RecoveredInboxChatDisposition.rejected,
+        disposition: RecoveredInboxChatDisposition.retryable,
         reasonCode: 'edit_missing_original',
         reasonDetail: null,
       );

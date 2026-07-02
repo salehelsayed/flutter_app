@@ -13,7 +13,9 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/recovered_inbox_chat_disposition.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
     as p2p;
@@ -2213,6 +2215,226 @@ void main() {
           ),
           isEmpty,
           reason: 'the real handler must not throw during replay',
+        );
+      },
+    );
+
+    // 172 TC-06 (PROD-CRITICAL — the 2026-06-28 incident reproduction): a
+    // message ACKed off the relay whose sender momentarily looks unknown
+    // (contact row not yet materialized) must NOT be terminally rejected —
+    // custody already transferred, the staged row is the only copy. Drives the
+    // REAL handler (handleIncomingChatMessage) and the REAL mapper
+    // (mapChatReplayOutcomeToDisposition) through the real drain loop: drain N
+    // keeps the entry recoverable; after the contact materializes, drain N+1
+    // re-drives it to committed and the message is finally persisted.
+    test(
+      '172 TC-06: unknownSender on drain N becomes displayed on drain N+1 '
+      'after the contact materializes',
+      () async {
+        service.dispose();
+
+        const senderPeerId = 'remote-peer';
+        final contactRepo = InMemoryContactRepository(); // no contact yet
+        final msgRepo = InMemoryMessageRepository();
+        final repo = InMemoryInboxStagingRepository();
+
+        service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+          // Mirrors main.dart's replayInboxChatMessage: real handler -> real
+          // mapper (no synthetic dispositions).
+          replayRecoveredInboxChatMessage:
+              (message, {String? stagedEntryId}) async {
+                final (result, _, _) = await handleIncomingChatMessage(
+                  message: message,
+                  messageRepo: msgRepo,
+                  contactRepo: contactRepo,
+                  transport: message.transport,
+                  stagedEntryId: stagedEntryId,
+                );
+                final state = switch (result) {
+                  HandleChatMessageResult.chatMessage =>
+                    ChatMessageProcessState.stored,
+                  HandleChatMessageResult.unknownSender =>
+                    ChatMessageProcessState.unknownSender,
+                  HandleChatMessageResult.duplicate =>
+                    ChatMessageProcessState.duplicate,
+                  _ => throw StateError('unexpected result $result'),
+                };
+                return mapChatReplayOutcomeToDisposition(
+                  ChatMessageProcessOutcome(
+                    state: state,
+                    // Mirror ChatMessageListener: the use case verifies the
+                    // prior row is persisted before returning duplicate.
+                    duplicatePriorPersisted:
+                        result == HandleChatMessageResult.duplicate,
+                  ),
+                );
+              },
+        );
+
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+          }),
+        );
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+        // One-shot page: after drain N's stage+ACK the relay copy is DELETED
+        // (the incident precondition — the staged row is the only copy), so
+        // later drains see an empty relay page and only the recoverable sweep
+        // can save the message.
+        var relayPageServed = false;
+        bridge.whenCommand('inbox:retrieve_pending', (_) {
+          if (relayPageServed) {
+            return jsonEncode({
+              'ok': true,
+              'messages': <Map<String, dynamic>>[],
+              'hasMore': false,
+            });
+          }
+          relayPageServed = true;
+          return jsonEncode({
+            'ok': true,
+            'messages': [
+              _pendingInboxRow(
+                entryId: 'entry-172-incident',
+                from: senderPeerId,
+                message: _chatEnvelope(
+                  id: 'msg-172-0001',
+                  text: 'acked then vanished',
+                  senderPeerId: senderPeerId,
+                ),
+              ),
+            ],
+            'hasMore': false,
+          });
+        });
+
+        // Drain N: custody transfers (stage + ack), sender unknown.
+        await service.drainOfflineInbox();
+        final afterDrainN = repo.entry('entry-172-incident');
+        expect(afterDrainN, isNotNull, reason: 'INV-1: the row must be kept');
+        expect(
+          afterDrainN!.status,
+          'retryable',
+          reason:
+              'a transient unknownSender after custody transfer must stay '
+              'recoverable, never terminal rejected (the incident class)',
+        );
+        expect(await msgRepo.getMessagesForContact(senderPeerId), isEmpty);
+
+        // The contact materializes (intro recovery / contact-row race heals).
+        contactRepo.addTestContact(
+          const ContactModel(
+            peerId: senderPeerId,
+            publicKey: 'pk',
+            rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+            username: 'Alice',
+            signature: 'sig',
+            scannedAt: '2026-04-01T00:00:00.000Z',
+          ),
+        );
+
+        // Drain N+1 re-drives the recoverable entry through the real handler.
+        await service.drainOfflineInbox();
+        final persisted = await msgRepo.getMessagesForContact(senderPeerId);
+        expect(
+          persisted,
+          hasLength(1),
+          reason: 'the once-unknown message must finally be displayed',
+        );
+        expect(persisted.single.id, 'msg-172-0001');
+        expect(
+          repo.entry('entry-172-incident'),
+          isNull,
+          reason: 'committed replay deletes the staged row',
+        );
+      },
+    );
+
+    // 172 TC-05: a recoverable rejection that never heals must converge to
+    // QUARANTINED via the attempt cap — kept + surfaced, never deleted, never
+    // terminal `rejected` (bounded retry, no infinite storm).
+    test(
+      '172 TC-05: recoverable rejection retried past the attempt cap '
+      'transitions to quarantined, never deleted',
+      () async {
+        service.dispose();
+
+        final repo = InMemoryInboxStagingRepository();
+        var replays = 0;
+        service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+          replayRecoveredInboxChatMessage:
+              (message, {String? stagedEntryId}) async {
+                replays++;
+                // The REAL mapper on a persistently-unknown sender (no
+                // resolver context, contact never materializes).
+                return mapChatReplayOutcomeToDisposition(
+                  const ChatMessageProcessOutcome(
+                    state: ChatMessageProcessState.unknownSender,
+                  ),
+                );
+              },
+        );
+
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+          }),
+        );
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+        bridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({
+            'ok': true,
+            'messages': [
+              _pendingInboxRow(
+                entryId: 'entry-172-capped',
+                from: 'remote-peer',
+                message: _chatEnvelope(
+                  id: 'msg-172-0002',
+                  text: 'never heals',
+                  senderPeerId: 'remote-peer',
+                ),
+              ),
+            ],
+            'hasMore': false,
+          }),
+        );
+
+        // Attempts 1..cap mark retryable; the next drain hits the cap gate.
+        for (var i = 0; i <= maxInboxReplayAttempts + 1; i++) {
+          await service.drainOfflineInbox();
+        }
+
+        final entry = repo.entry('entry-172-capped');
+        expect(
+          entry,
+          isNotNull,
+          reason: 'INV-1: the capped entry is KEPT, never deleteEntry-ed',
+        );
+        expect(
+          entry!.status,
+          'quarantined',
+          reason:
+              'an exhausted recoverable entry must quarantine (kept + '
+              'surfaced), not sit terminal rejected or retry forever',
+        );
+        expect(entry.rejectReasonCode, 'attempt_cap_exceeded');
+        expect(
+          replays,
+          lessThanOrEqualTo(maxInboxReplayAttempts + 1),
+          reason: 'the cap bounds the retry storm',
         );
       },
     );

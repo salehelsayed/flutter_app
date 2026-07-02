@@ -45,11 +45,20 @@ class ChatMessageProcessOutcome {
   final ContactModel? updatedContact;
   final String? reasonDetail;
 
+  /// 172 TC-03: true only when a [ChatMessageProcessState.duplicate] outcome
+  /// was produced by the real handler, which verifies a durable prior row
+  /// (same-id / dedupKey / content query) before returning duplicate. The
+  /// disposition mapper keeps `duplicate` terminal ONLY under this flag; an
+  /// unverified duplicate claim (synthetic producers, future drift) stays
+  /// recoverable instead of becoming silent post-ACK loss.
+  final bool duplicatePriorPersisted;
+
   const ChatMessageProcessOutcome({
     required this.state,
     this.conversationMessage,
     this.updatedContact,
     this.reasonDetail,
+    this.duplicatePriorPersisted = false,
   });
 }
 
@@ -497,6 +506,11 @@ class ChatMessageListener {
           ChatMessageProcessOutcome(
             state: ChatMessageProcessState.duplicate,
             updatedContact: updatedContact,
+            // 172 TC-03: every duplicate return in handleIncomingChatMessage
+            // verified a durable prior row (same-id getMessage / dedupKey /
+            // content query) before returning — so this duplicate is safe to
+            // treat as terminal in the disposition mapper.
+            duplicatePriorPersisted: true,
           ),
         );
       }

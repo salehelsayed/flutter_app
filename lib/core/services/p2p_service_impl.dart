@@ -102,7 +102,8 @@ class P2PServiceImpl
         RelayPresenceLookup,
         RelayPresenceSet,
         PeerLivenessProbe,
-        PeerDropSignal {
+        PeerDropSignal,
+        InboxAttentionSignal {
   final Bridge _bridge;
   final LocalP2PService? _localP2P;
   final PushTokenStore? _pushTokenStore;
@@ -5013,6 +5014,24 @@ class P2PServiceImpl
       _suspectedDroppedPeers.add(key);
     } else {
       _suspectedDroppedPeers.remove(key);
+    }
+  }
+
+  // 172: InboxAttentionSignal — the conversation UI's count source for the
+  // "couldn't display N messages" affordance (INV-2: a kept-but-undisplayed
+  // staged entry is never silently invisible). Never throws: any repo/DB error
+  // degrades to 0 (the affordance simply hides).
+  @override
+  Future<int> countNeedsAttentionInboxEntries() async {
+    try {
+      return await _inboxStagingRepository.countNeedsAttentionEntries();
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_INBOX_NEEDS_ATTENTION_COUNT_ERROR',
+        details: {'error': e.toString()},
+      );
+      return 0;
     }
   }
 

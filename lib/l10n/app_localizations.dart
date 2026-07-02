@@ -3020,6 +3020,18 @@ abstract class AppLocalizations {
   /// **'Unblock'**
   String get conversation_unblock;
 
+  /// No description provided for @conversation_undelivered_banner.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Couldn\'t display 1 message} other{Couldn\'t display {count} messages}}'**
+  String conversation_undelivered_banner(int count);
+
+  /// No description provided for @conversation_undelivered_retry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get conversation_undelivered_retry;
+
   /// No description provided for @conversation_empty_first_letter.
   ///
   /// In en, this message translates to:

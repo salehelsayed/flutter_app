@@ -294,6 +294,10 @@ class _ConversationWiredState extends State<ConversationWired>
   late ContactModel _contact;
   List<ConversationMessage> _messages = [];
 
+  // 172 (INV-2): kept-but-undisplayed staged-entry count behind the
+  // "couldn't display N messages" affordance. 0 hides the banner.
+  int _undeliveredAttentionCount = 0;
+
   // 159 (rebuild-storms-2): per-frame coalescer for the two per-event
   // message-apply sinks (messageChanges + incomingMessageStream). A relay-drain
   // burst of M events enqueues M upserts and applies them in ONE batched
@@ -566,6 +570,8 @@ class _ConversationWiredState extends State<ConversationWired>
     // warmPeer is a no-op when the node isn't started (PS-3), never sends or
     // inboxes (PS-1), is debounced per peer, and is total/never-throws.
     unawaited(widget.p2pService.warmPeer(widget.contact.peerId));
+    // 172 (INV-2): surface any kept-but-undisplayed staged entries on open.
+    unawaited(_refreshUndeliveredAttentionCount());
   }
 
   bool _notificationTimingEmitted = false;
@@ -1268,7 +1274,32 @@ class _ConversationWiredState extends State<ConversationWired>
       if (mounted) {
         setState(() => _isSyncingNewMessages = false);
       }
+      // 172 (INV-2): a drain may have quarantined new entries (or committed
+      // previously-stuck ones) — refresh the couldn't-display count either way.
+      unawaited(_refreshUndeliveredAttentionCount());
     }
+  }
+
+  /// 172 (INV-2): reads the kept-but-undisplayed staged-entry count off the
+  /// optional [InboxAttentionSignal] capability (hidden when the service
+  /// doesn't implement it — e.g. simple test fakes). Never throws.
+  Future<void> _refreshUndeliveredAttentionCount() async {
+    final p2pService = widget.p2pService;
+    if (p2pService is! InboxAttentionSignal) return;
+    try {
+      final count = await (p2pService as InboxAttentionSignal)
+          .countNeedsAttentionInboxEntries();
+      if (!mounted || count == _undeliveredAttentionCount) return;
+      setState(() => _undeliveredAttentionCount = count);
+    } catch (_) {
+      // Best-effort surface; a count failure must never break the screen.
+    }
+  }
+
+  /// 172: the banner's retry — re-drives the staged drain (a since-healed
+  /// cause gets its message displayed) and re-reads the count.
+  Future<void> _onRetryUndelivered() async {
+    await _drainAndReloadOnce('undelivered_retry', scrollToLiveEdge: false);
   }
 
   /// Re-reads the latest page and upsert-merges it into the current list without
@@ -4424,6 +4455,8 @@ class _ConversationWiredState extends State<ConversationWired>
           onRetryUnavailableMedia: _onRetryUnavailableMedia,
           showIntroBanner: _showIntroBanner,
           bannerContactUsername: _contact.username,
+          undeliveredCount: _undeliveredAttentionCount,
+          onRetryUndelivered: () => unawaited(_onRetryUndelivered()),
           uploadProgress: _uploadProgressViewState,
           onCancelUpload:
               _activeAttachmentUpload == null ||

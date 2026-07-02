@@ -120,4 +120,21 @@ class InMemoryInboxStagingRepository implements InboxStagingRepository {
         .where((entry) => entry.status == 'quarantined')
         .length;
   }
+
+  @override
+  Future<int> countNeedsAttentionEntries() async {
+    const recoverableClassRejects = {
+      'unknown_sender',
+      'duplicate',
+      'edit_missing_original',
+    };
+    return _entries.values
+        .where(
+          (entry) =>
+              entry.status == 'quarantined' ||
+              (entry.status == 'rejected' &&
+                  recoverableClassRejects.contains(entry.rejectReasonCode)),
+        )
+        .length;
+  }
 }

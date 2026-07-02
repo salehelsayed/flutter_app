@@ -1795,6 +1795,20 @@ class AppLocalizationsDe extends AppLocalizations {
   String get conversation_unblock => 'Entsperren';
 
   @override
+  String conversation_undelivered_banner(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count Nachrichten konnten nicht angezeigt werden',
+      one: '1 Nachricht konnte nicht angezeigt werden',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get conversation_undelivered_retry => 'Erneut versuchen';
+
+  @override
   String get conversation_empty_first_letter =>
       'Schreib den ersten Brief,\num eure Unterhaltung zu beginnen';
 

@@ -56,52 +56,99 @@ void main() {
       expect(outcome.reasonCode, 'decryption_failed');
     });
 
-    // The six rejections below are content-safe or pre-custody:
+    // 172 INV-1: after custody transfer (relay copy ACK-deleted) the staged
+    // row is the ONLY surviving copy, so a RECOVERABLE/TRANSIENT cause must
+    // never be terminal `rejected` — it stays retryable (bounded by the
+    // attempt cap -> quarantined, never silently dropped). Only content-safe
+    // or policy drops stay terminal:
     // - blockedSender: the user explicitly blocked the sender; dropping is
     //   the product intent, not silent loss.
     // - notChatMessage: the envelope is not a chat message; there is no
     //   message content to lose.
-    // - unknownSender: the mapper runs only after the intro-recovery
-    //   pre-step had its chance to resolve the sender (main.dart keeps that
-    //   pre-step and returns retryable while an intro is still pending).
-    // - duplicate: the content is already committed under the same id.
-    // - editMissingOriginal: the use case persists a hidden placeholder for
-    //   the edit before this rejection, so the edit content is stored.
+    // - duplicate (prior persisted): the content is already committed.
     // - ignoredEdit: the receiver already holds an equal-or-newer edit.
-    test('blockedSender rejects', () {
+    test('blockedSender rejects (content-safe policy drop, TC-04 lock)', () {
       final outcome = map(ChatMessageProcessState.blockedSender);
       expect(outcome.disposition, RecoveredInboxChatDisposition.rejected);
       expect(outcome.reasonCode, 'blocked_sender');
     });
 
-    test('notChatMessage rejects', () {
+    test('notChatMessage rejects (content-safe, TC-04 lock)', () {
       final outcome = map(ChatMessageProcessState.notChatMessage);
       expect(outcome.disposition, RecoveredInboxChatDisposition.rejected);
       expect(outcome.reasonCode, 'not_chat_message');
     });
 
-    test('unknownSender rejects', () {
+    // 172 TC-01 — the 2026-06-28 incident class: a contact-row race (or a
+    // resolver that never ran) makes a REAL sender look unknown; terminal
+    // rejection after the ACK is permanent invisible loss. With no resolver
+    // context the mapper must stay recoverable; the main.dart pre-step still
+    // returns terminal `rejected` for a resolver-confirmed stranger.
+    test('172 TC-01: unknownSender maps to retryable (recoverable), '
+        'not rejected', () {
       final outcome = map(ChatMessageProcessState.unknownSender);
-      expect(outcome.disposition, RecoveredInboxChatDisposition.rejected);
-      expect(outcome.reasonCode, 'unknown_sender');
+      expect(outcome.disposition, RecoveredInboxChatDisposition.retryable);
+      expect(outcome.reasonCode, 'unknown_sender_recoverable');
     });
 
-    test('duplicate rejects', () {
-      final outcome = map(ChatMessageProcessState.duplicate);
-      expect(outcome.disposition, RecoveredInboxChatDisposition.rejected);
-      expect(outcome.reasonCode, 'duplicate');
+    // 172 TC-03 — `duplicate` is terminal ONLY when the prior copy is
+    // verifiably persisted (the listener asserts that after the use case's
+    // repo-checked duplicate returns). An UNVERIFIED duplicate claim (any
+    // synthetic producer / future drift) must stay recoverable.
+    test('172 TC-03: duplicate stays rejected only when the prior message '
+        'is actually persisted', () {
+      final confirmed = mapChatReplayOutcomeToDisposition(
+        const ChatMessageProcessOutcome(
+          state: ChatMessageProcessState.duplicate,
+          duplicatePriorPersisted: true,
+        ),
+      );
+      expect(confirmed.disposition, RecoveredInboxChatDisposition.rejected);
+      expect(confirmed.reasonCode, 'duplicate_confirmed_visible');
+
+      final unverified = map(ChatMessageProcessState.duplicate);
+      expect(unverified.disposition, RecoveredInboxChatDisposition.retryable);
+      expect(unverified.reasonCode, 'duplicate_unverified_retry');
     });
 
-    test('editMissingOriginal rejects', () {
+    // 172 TC-02 — the original may arrive in a later relay page; terminal
+    // rejection races the pagination order.
+    test('172 TC-02: editMissingOriginal maps to retryable '
+        '(original may arrive later)', () {
       final outcome = map(ChatMessageProcessState.editMissingOriginal);
-      expect(outcome.disposition, RecoveredInboxChatDisposition.rejected);
+      expect(outcome.disposition, RecoveredInboxChatDisposition.retryable);
       expect(outcome.reasonCode, 'edit_missing_original');
     });
 
-    test('ignoredEdit rejects staged replay with ignored_edit reason', () {
+    test('ignoredEdit rejects staged replay with ignored_edit reason '
+        '(content-safe, TC-04 lock)', () {
       final outcome = map(ChatMessageProcessState.ignoredEdit);
       expect(outcome.disposition, RecoveredInboxChatDisposition.rejected);
       expect(outcome.reasonCode, 'ignored_edit');
+    });
+
+    // 172 TC-04 — preservation lock against over-reclassification: the
+    // content-safe set must stay terminal (no retry storm, INV-3).
+    test('172 TC-04: content-safe drops stay terminal rejected', () {
+      for (final state in [
+        ChatMessageProcessState.blockedSender,
+        ChatMessageProcessState.notChatMessage,
+        ChatMessageProcessState.ignoredEdit,
+      ]) {
+        final outcome = map(state);
+        expect(
+          outcome.disposition,
+          RecoveredInboxChatDisposition.rejected,
+          reason: '$state must stay a terminal content-safe drop',
+        );
+      }
+    });
+
+    // 172: the reclassification SHIPS ON — the kill-switch dart-define must
+    // stay unset in production builds (mirrors the kFdcPauseFlushEnabled
+    // ship-ON lock).
+    test('172 kill-switch lock: reclassification ships enabled', () {
+      expect(kFdcInboxReclassifyDisabled, isFalse);
     });
 
     test('matrix covers every ChatMessageProcessState', () {

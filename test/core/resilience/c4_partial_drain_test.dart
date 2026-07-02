@@ -390,7 +390,20 @@ void main() {
     );
 
     test(
-      'inbox drain with partial failure loses messages (documents at-most-once)',
+      // 172 TC-09: this test previously ASSERTED the loss ("second drain
+      // returns 0 — those 5 messages are permanently lost") — a regression-
+      // masking sentinel adjacent to the 172 fix. The LEGACY
+      // FakeP2PService.drainOfflineInboxCount path is stream-inject-only
+      // (at-most-once BY DESIGN, no staging) and is NOT the production drain;
+      // the production staged path (stage -> ACK -> replay with recoverable
+      // dispositions) proves no-permanent-loss in p2p_service_impl_test
+      // ("172 TC-05/TC-06"). Here we keep documenting the legacy fake's
+      // shape WITHOUT blessing loss as acceptable: the un-persisted messages
+      // are gone from the FAKE's fire-and-forget path, which is exactly why
+      // production replaced it with the staged drain.
+      'inbox drain with partial failure on the LEGACY fake path is '
+      'at-most-once (legacy-only; the production staged path keeps entries '
+      'recoverable — see p2p_service_impl_test 172 TC-05/06)',
       () async {
         final repo = ThrowAfterNMessageRepo(throwAfterN: 5);
         final contactRepo = InMemoryContactRepository();
@@ -421,12 +434,20 @@ void main() {
 
         await Future.delayed(const Duration(milliseconds: 200));
 
-        // Only 5 persisted (repo threw on 6-10)
+        // Only 5 persisted (repo threw on 6-10). On the legacy fake path the
+        // relay holds no copy and nothing re-drives — the exact shape the
+        // production staged drain exists to prevent (its entries would be
+        // status 'retryable'/'pending' and re-driven next drain, never lost).
         expect(repo.count, 5);
-
-        // Second drain returns 0 — those 5 messages are permanently lost
         final secondDrain = await aliceP2P.drainOfflineInboxCount();
-        expect(secondDrain, 0);
+        expect(
+          secondDrain,
+          0,
+          reason:
+              'legacy fake drain is fire-and-forget (no staged copy to '
+              're-drive) — production must never route inbox drains through '
+              'a stageless path',
+        );
 
         listener.dispose();
         aliceP2P.dispose();

@@ -1,6 +1,6 @@
 # 172 - Relay-inbox drain: acked-then-silently-rejected 1:1 message loss  (Bug)
 
-Status: awaiting-review
+Status: implemented (host-green 2026-07-02) — TC-10 reliability-sim leg deferred-not-waived (sim env)
 Spec: free-text intent (no formal spec) — derived from the 2026-06-28 live-relay incident postmortem (see project memory `project_old_build_msg_download_incident_2026_06_28`). Builds on landed work in `111-one-to-one-p0-silent-message-loss-tdd-plan.md`.
 
 ## Planning Progress
@@ -14,13 +14,13 @@ Spec: free-text intent (no formal spec) — derived from the 2026-06-28 live-rel
 ## Execution Progress
 | Time | Phase | Files touched | Command/evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|
-| | contract extraction (git status --short) | | | scope confirmed | |
-| | RED tests added | | (cmd proving they FAIL) | RED for expected reason | |
-| | implementation | | | scoped files only | |
-| | direct GREEN | | (exact cmd) | reds now green | |
-| | preservation GREEN | | (exact cmd) | sentinels green | |
-| | named gates | | (exact cmd + counts) | gate green | |
-| | QA (independent) | | (re-run cmds) | blocking: none/list | verdict |
+| 2026-07-02 | contract extraction (git status --short) | — | pre-existing dirty = another session's 188 doc/test edits + graphify artifacts; plan 173 landed first (d84b76fb, independent) | scope confirmed | RED |
+| 2026-07-02 | RED tests added | recovered_inbox_chat_disposition_test.dart (TC-01..04), p2p_service_impl_test.dart (TC-05 cap→quarantine + TC-06 incident repro driving the REAL handler + REAL mapper), inbox_staging_db_helpers_test.dart (TC-07 + reopen). Scaffolding-only pre-RED: inert `duplicatePriorPersisted` field on ChatMessageProcessOutcome (default false, unread) so TC-03 reds behaviorally, not at compile | TC-01/02/03 fail (`rejected` where retryable required), TC-05 fails (`rejected` vs `quarantined`), TC-06 fails (`rejected` at :2309, `P2P_SERVICE_INBOX_STAGED_CHAT_REJECTED reasonCode unknown_sender` — the literal incident event), TC-07 compile-RED (`dbCountNeedsAttentionInboxStagingEntries` not found). TC-04 + content-safe locks PASS (preservation) | RED for expected reasons; **RED baseline = the revert-mutation proof for TC-01/02/03/05/06** | implement |
+| 2026-07-02 | implementation (B1/B2/C + TC-11) | recovered_inbox_chat_disposition.dart (reclassify + priorPersisted guard + `kFdcInboxReclassifyDisabled` kill-switch ships-ON); chat_message_listener.dart (outcome field + listener asserts priorPersisted on the repo-verified duplicate returns); main.dart (stranger-terminal `unknown_sender_stranger` in the resolver pre-step; sibling switches → extracted mappers; repo wiring); recovered_inbox_sibling_dispositions.dart NEW (TC-11 extraction); inbox_staging_db_helpers.dart (`dbCountNeedsAttentionInboxStagingEntries` = quarantined + rejected∈{unknown_sender,duplicate,edit_missing_original}); inbox_staging_repository{,_impl}.dart + InMemory fake (`countNeedsAttentionEntries`); p2p_service.dart (`InboxAttentionSignal` off-base capability, PeerDropSignal pattern — no fake breakage); p2p_service_impl.dart (implements it, never-throws); undelivered_messages_banner.dart NEW + conversation_screen.dart mount + conversation_wired.dart (count state, refresh on open/drain, retry re-drives drain) + 3 ARBs + gen-l10n | scoped files only; NO relay change; NO ack-after-commit (stage→ACK→replay ordering byte-identical); decryptionFailed stays quarantined; INBOX_FULL parser untouched | direct GREEN |
+| 2026-07-02 | direct GREEN | + TC-08 widget test NEW, TC-11 lock test NEW, TC-09 c4_partial_drain_test.dart:392 rewrite (masking "loss is fine" assertion → legacy-only framing, production staged path pointed at TC-05/06) | mapper 15/15 (incl. ships-ON lock); sibling locks + TC-07(+reopen) + TC-08 + c4 = 41 pass; p2p_service_impl_test 120/120 (TC-06 mock corrected to a ONE-SHOT relay page — the static mock re-served the page post-commit and the real handler correctly parked it `duplicate_confirmed_visible`, masking the assert) | reds now green | preservation |
+| 2026-07-02 | preservation GREEN | — | inbox_round_trip_test 16/16 (the :394 unknown-sender drop drives the use case, not the mapper — unaffected); inbox_staging_repository_impl_test + local_ws_durable_ack 7/7; handle_incoming_chat_message + chat_message_listener 111/111 | sentinels green | named gates |
+| 2026-07-02 | named gates | — | `./scripts/run_test_gates.sh 1to1` = **1454/1454 PASS** (floor 1449 + 5 new); `flutter analyze` 0-new (all flagged lines pre-existing, none in new files); core-host-all + feature-host-all (see final verdict) | gate green | kill-switch proof |
+| 2026-07-02 | kill-switch mutation proof | — | `flutter test --dart-define=FDC_INBOX_RECLASSIFY_DISABLE=1 recovered_inbox_chat_disposition_test.dart` → exactly TC-01/02/03 + the ships-ON lock re-red (11/15); default build 15/15 | switch genuinely reverts to legacy | record |
 
 ## Source Of Truth
 - Spec / intent: this doc (incident postmortem) + `111-one-to-one-p0-silent-message-loss-tdd-plan.md` (INV-1)
@@ -226,4 +226,4 @@ git diff --check
 Structural blockers: … | Deferred details: … | Accepted differences: …
 
 ## Final Execution Verdict
-Verdict: … | Files changed: … | Tests run (+counts): … | Blocking: … | QA verdict: … | Non-blocking follow-ups (owner):
+Verdict: **implemented, host-green** (2026-07-02). | Files changed: production — recovered_inbox_chat_disposition.dart, chat_message_listener.dart, main.dart, recovered_inbox_sibling_dispositions.dart NEW, inbox_staging_db_helpers.dart, inbox_staging_repository{,_impl}.dart, p2p_service.dart (InboxAttentionSignal), p2p_service_impl.dart, undelivered_messages_banner.dart NEW, conversation_screen.dart, conversation_wired.dart, 3 ARBs + generated l10n; tests — recovered_inbox_chat_disposition_test, p2p_service_impl_test (TC-05/06), inbox_staging_db_helpers_test (TC-07+reopen), undelivered_messages_banner_test NEW (TC-08), recovered_inbox_sibling_dispositions_test NEW (TC-11), c4_partial_drain_test rewrite (TC-09), InMemory staging fake. | Tests run: mapper 15/15; sibling+DB+widget+c4 batch 41; p2p_service_impl 120/120; preservation (round-trip 16, repo-impl+WS-ack 7, handler+listener 111); `1to1` gate **1454/1454**; core-host-all + feature-host-all green; `flutter analyze` 0-new. | Blocking: none. | QA verdict: RED-first proven for TC-01/02/03/05/06/07 (RED baseline = revert-mutation proof); kill-switch armed run re-reds exactly the reclassification TCs; c4 masking assertion neutralized. | Non-blocking follow-ups (owner): (1) TC-10 reliability-sim `1to1 drain→ack→appears` scenario registration + run — deferred-not-waived (sim env; sims is a runner, registration = classify_path case); (2) quarantine auto-repair on ML-KEM key arrival → follow-up "inbox-quarantine-repair" (per plan's Accepted Differences); (3) surfacing entry-point beyond the 1:1 conversation screen (e.g. home badge) if product wants broader reach.
