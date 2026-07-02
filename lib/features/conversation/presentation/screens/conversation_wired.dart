@@ -2563,8 +2563,9 @@ class _ConversationWiredState extends State<ConversationWired>
           // never again show contact-blaming copy (or a false promise) while
           // offline (the 185×187 'direct_skipped_keepalive_drop' regression,
           // field-hit 2026-07-02).
-          const senderOfflineCopy =
-              "No internet connection. Message will send when you're back online.";
+          // Short one-liner: the wifi-off glyph carries "no internet", the
+          // text carries the self-healing promise.
+          const senderOfflineCopy = "Will send when you're back online";
           final snackText =
               result == SendChatMessageResult.nodeNotRunning ||
                   keepRetriableOffline
@@ -2601,9 +2602,30 @@ class _ConversationWiredState extends State<ConversationWired>
               showSnackBar: false,
             );
           }
+          // Offline: a wifi-off icon + single-line text (instantly readable as
+          // "no internet, it's handled"); other failures keep the plain text.
+          final snackContent = snackText == senderOfflineCopy
+              ? Row(
+                  children: [
+                    const Icon(
+                      Icons.wifi_off_rounded,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        snackText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                )
+              : Text(snackText);
           messenger?.showSnackBar(
             SnackBar(
-              content: Text(snackText),
+              content: snackContent,
               backgroundColor: snackColor,
               behavior: SnackBarBehavior.floating,
               margin: _composerClearingSnackBarMargin(),

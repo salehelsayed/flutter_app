@@ -418,10 +418,9 @@ void main() {
         await _settleStartup(tester);
 
         // 185: nodeNotRunning is inherently a sender-offline condition, so it
-        // now shows the honest "no internet" copy (renamed from the old
-        // "Network not connected. Message saved.").
-        const offlineSnackText =
-            "No internet connection. Message will send when you're back online.";
+        // shows the honest sender-offline copy — a short one-liner paired with
+        // the wifi-off glyph (the icon carries "no internet").
+        const offlineSnackText = "Will send when you're back online";
 
         await _typeAndSend(tester, 'offline message');
         expect(recorder.callCount, 1);
@@ -747,8 +746,7 @@ void main() {
     // sender-offline copy, never the contact-blaming/generic copy. Looping
     // guards every snackbar arm (sendFailed = the 185×187 keepalive-skip gap:
     // reason 'direct_skipped_keepalive_drop' maps to sendFailed).
-    const senderOfflineCopy =
-        "No internet connection. Message will send when you're back online.";
+    const senderOfflineCopy = "Will send when you're back online";
     for (final c in const [
       (SendChatMessageResult.peerNotFound, 'Contact appears offline. Message saved.'),
       (SendChatMessageResult.dialFailed, 'Could not connect to contact. Message saved.'),
@@ -803,6 +801,22 @@ void main() {
             tester.widget<SnackBar>(find.byType(SnackBar)).backgroundColor,
             Colors.blueGrey[700],
           );
+          // The wifi-off glyph is the "no internet" signal that lets the copy
+          // stay a short one-liner.
+          expect(
+            find.descendant(
+              of: find.byType(SnackBar),
+              matching: find.byIcon(Icons.wifi_off_rounded),
+            ),
+            findsOneWidget,
+          );
+          final offlineText = tester.widget<Text>(
+            find.descendant(
+              of: find.byType(SnackBar),
+              matching: find.text(senderOfflineCopy),
+            ),
+          );
+          expect(offlineText.maxLines, 1);
         },
       );
 
