@@ -160,7 +160,6 @@ import 'package:flutter_app/features/introduction/application/resolve_unknown_in
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
-import 'package:flutter_app/core/secure_storage/dev_keychain_wipe.dart'; // TEMP DEV-ONLY — remove
 import 'package:flutter_app/core/secure_storage/legacy_group_secret_storage_scrub.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -451,11 +450,6 @@ void main() async {
     details: {'seeded': true},
   );
   StartupTiming.instance.mark('documents_dir_ready');
-
-  // ⚠️ TEMP DEV-ONLY — one-shot Keychain wipe for a truly fresh install.
-  // Runs before the DB opens so db_encryption_key is cleared first.
-  // DELETE this line + the import + dev_keychain_wipe.dart when done.
-  await wipeKeychainOnce(appDocDir.path);
 
   // Initialize database based on platform
   if (isDesktop) {
