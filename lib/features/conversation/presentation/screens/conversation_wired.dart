@@ -2497,21 +2497,30 @@ class _ConversationWiredState extends State<ConversationWired>
         // nodeNotRunning is EXCLUDED: it returns before the envelope is
         // persisted, so its row is not lane-eligible and belongs in the failed /
         // retryFailedMessages lane.
+        // 192 (field-hit 2026-07-02): the lane is ALSO open when relayReady
+        // reads TRUE, provided the wire envelope was persisted (message !=
+        // null). Secured inbox custody returns success, so a connectivity-class
+        // failure carrying an envelope can only mean the relay state was STALE
+        // (the network-transition window) — the wire disagreed with the state.
+        // Terminal 'failed' there is a Retry that flashes for ~15 s until the
+        // delivery receipt heals it; the honest state is 'sent' + retryUnacked.
+        // Envelope-less shapes (encrypt_failed, and the null-shaped defensive
+        // arms) are NOT self-healing and stay terminal when online.
         final senderOffline = !widget.p2pService.currentState.relayReady;
-        final keepRetriableOffline =
-            result != SendChatMessageResult.success &&
-            senderOffline &&
+        final keepRetriable =
             (result == SendChatMessageResult.peerNotFound ||
                 result == SendChatMessageResult.dialFailed ||
-                (result == SendChatMessageResult.sendFailed &&
-                    message != null));
+                result == SendChatMessageResult.sendFailed) &&
+            (message != null ||
+                (senderOffline &&
+                    result != SendChatMessageResult.sendFailed));
 
         if (message != null) {
           final persistedMedia =
               displayMedia ?? uploadedAttachments ?? optimisticMedia;
           // Override the terminal 'failed' the send use case stamped when the
           // failure was purely our own offline state (keep it retriable).
-          final effectiveStatus = keepRetriableOffline ? 'sent' : message.status;
+          final effectiveStatus = keepRetriable ? 'sent' : message.status;
           final messageWithMedia = message.copyWith(
             quotedMessageId: quotedMessageId,
             media: persistedMedia ?? message.media,
@@ -2520,14 +2529,14 @@ class _ConversationWiredState extends State<ConversationWired>
           setState(() {
             _upsertMessageById(messageWithMedia);
           });
-          if (keepRetriableOffline) {
+          if (keepRetriable) {
             // Status-only write (preserves the persisted wire envelope) — and it
             // is the LAST status write, so it wins over the use case's 'failed'.
             await _persistMessageStatus(message.id, 'sent');
           }
           _scrollToBottom();
         } else {
-          final fallbackStatus = keepRetriableOffline
+          final fallbackStatus = keepRetriable
               ? 'sent'
               : switch (result) {
                   SendChatMessageResult.success => 'sent',
@@ -2556,7 +2565,7 @@ class _ConversationWiredState extends State<ConversationWired>
           // failure must not blame the contact — say so honestly (and truthfully
           // promise the queued send). nodeNotRunning is inherently sender-side,
           // so it always uses this copy. For every other shape the honest copy
-          // is tied DIRECTLY to the lane decision (keepRetriableOffline): the
+          // is tied DIRECTLY to the lane decision (keepRetriable): the
           // "will send when you're back online" promise is shown exactly when
           // the row really is queued in the self-healing lane — the old per-arm
           // `senderOffline ?` ternaries are deleted so a new failure shape can
@@ -2565,11 +2574,17 @@ class _ConversationWiredState extends State<ConversationWired>
           // field-hit 2026-07-02).
           // Short one-liner: the wifi-off glyph carries "no internet", the
           // text carries the self-healing promise.
+          // 192: when the lane is open but the phone BELIEVES it is online
+          // (stale relay state), "back online" would be dishonest — the queued-
+          // retry copy names what is actually happening.
           const senderOfflineCopy = "Will send when you're back online";
+          const queuedRetryCopy = 'Delivery delayed — retrying automatically';
           final snackText =
               result == SendChatMessageResult.nodeNotRunning ||
-                  keepRetriableOffline
+                  (keepRetriable && senderOffline)
               ? senderOfflineCopy
+              : keepRetriable
+              ? queuedRetryCopy
               : switch (result) {
                   SendChatMessageResult.peerNotFound =>
                     'Contact appears offline. Message saved.',
@@ -2581,19 +2596,21 @@ class _ConversationWiredState extends State<ConversationWired>
                     'Cannot send: contact does not support encryption.',
                   _ => 'Failed to send message. Message saved.',
                 };
-          // 185: the sender-offline copy is a benign, self-healing state (the
-          // message is queued and will send on reconnect), NOT a failure — give
-          // it an informational slate tone instead of the error-red reserved for
+          // 185: the self-healing copies describe a benign, queued state (the
+          // message will send without user action), NOT a failure — give them
+          // an informational slate tone instead of the error-red reserved for
           // genuine send failures.
-          final snackColor = snackText == senderOfflineCopy
+          final selfHealingCopy =
+              snackText == senderOfflineCopy || snackText == queuedRetryCopy;
+          final snackColor = selfHealingCopy
               ? Colors.blueGrey[700]
               : Colors.red[700];
-          // 185: for a kept-retriable offline send the row is safely queued for
-          // the self-healing lane, so DO NOT restore the composer draft or let
+          // 185: for a kept-retriable send the row is safely queued for the
+          // self-healing lane, so DO NOT restore the composer draft or let
           // _restoreComposerSnapshot re-stamp it 'failed' — that would resurrect
           // the Retry this fix removes and invite a duplicate send. Just surface
           // the honest snackbar. Genuine failures still restore + go 'failed'.
-          if (!keepRetriableOffline) {
+          if (!keepRetriable) {
             await _restoreComposerSnapshot(
               composerSnapshot,
               optimisticMessageId: optimisticMessage.id,
@@ -2602,13 +2619,16 @@ class _ConversationWiredState extends State<ConversationWired>
               showSnackBar: false,
             );
           }
-          // Offline: a wifi-off icon + single-line text (instantly readable as
-          // "no internet, it's handled"); other failures keep the plain text.
-          final snackContent = snackText == senderOfflineCopy
+          // Self-healing: an icon + single-line text (wifi-off reads "no
+          // internet, it's handled"; schedule-send reads "queued, retrying");
+          // other failures keep the plain text.
+          final snackContent = selfHealingCopy
               ? Row(
                   children: [
-                    const Icon(
-                      Icons.wifi_off_rounded,
+                    Icon(
+                      snackText == senderOfflineCopy
+                          ? Icons.wifi_off_rounded
+                          : Icons.schedule_send_rounded,
                       color: Colors.white,
                       size: 20,
                     ),

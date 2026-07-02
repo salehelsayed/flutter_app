@@ -622,7 +622,7 @@ void main() {
     // (send_chat_message_use_case.dart :1305-1345, the terminal rung persists
     // the wire envelope for every reason string), handled by the UI's
     // `message != null` branch. Looping over every connectivity-class result
-    // guards ALL `||` arms of the keepRetriableOffline predicate (a revert
+    // guards ALL `||` arms of the keepRetriable predicate (a revert
     // dropping any arm re-reds). sendFailed is the 185×187 gap: with the 183
     // keepalive latched, 187 skips the direct dial and the race fails with
     // reason 'direct_skipped_keepalive_drop' → _resultForFailureReason →
@@ -851,5 +851,202 @@ void main() {
         },
       );
     }
+  });
+
+  // ---------------------------------------------------------------------------
+  // 192 — online-glitch retriable lane. A connectivity-class failure that
+  // reaches the UI with a PERSISTED wire envelope while relayReady reads true
+  // means the relay state was STALE (secured custody returns success, so the
+  // terminal rung is only reachable when the wire disagreed with the state —
+  // the network-transition window field-hit in report 192: the row went
+  // terminal 'failed' + Retry for ~15 s until the delivery receipt healed it).
+  // The envelope-preserved row is getUnackedOutgoingMessages-eligible, so it
+  // must stay in the retriable self-healing lane exactly like the offline
+  // case — no transient Retry flash.
+  // ---------------------------------------------------------------------------
+  group('ConversationWired — online-glitch retriable lane (192)', () {
+    const queuedRetryCopy = 'Delivery delayed — retrying automatically';
+
+    for (final result in const [
+      SendChatMessageResult.peerNotFound,
+      SendChatMessageResult.dialFailed,
+      SendChatMessageResult.sendFailed,
+    ]) {
+      testWidgets(
+        'TC-192-01 ONLINE send returning a NON-NULL failedMessage '
+        '(${result.name}, stale-relayReady shape) stays retriable — no Retry '
+        'flash',
+        (tester) async {
+          final messageRepo = _FakeMessageRepository();
+          final recorder = _GatedSendRecorder();
+
+          await tester.pumpWidget(
+            _buildTestWidget(
+              messageRepo: messageRepo,
+              sendChatMessageFn: recorder.fn,
+              p2pService: FakeP2PService(initialState: _onlineState),
+            ),
+          );
+          await _settleStartup(tester);
+
+          await _typeAndSend(tester, 'online glitch');
+          expect(recorder.callCount, 1);
+
+          // The terminal-rung production shape: failedMessage persisted WITH
+          // the wire envelope (send_chat_message_use_case.dart:1324-1332) —
+          // reachable with relayReady true only when both inbox custody
+          // attempts failed on the wire (stale relay state).
+          final sentId = recorder.messageIds.last!;
+          final failedMessage = ConversationMessage(
+            id: sentId,
+            contactPeerId: _contactPeerId,
+            senderPeerId: _identity.peerId,
+            text: 'online glitch',
+            timestamp: '2026-07-02T10:00:00.000Z',
+            status: 'failed',
+            isIncoming: false,
+            createdAt: '2026-07-02T10:00:00.000Z',
+            wireEnvelope: '{"type":"chat_message","version":"2","encrypted":{}}',
+          );
+          await messageRepo.saveMessage(failedMessage);
+          recorder.completeLastWithMessage(result, failedMessage);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 50));
+          await tester.pump();
+
+          final stored = messageRepo.store[sentId]!;
+          expect(
+            stored.status,
+            'sent',
+            reason:
+                'an envelope-preserved connectivity failure must stay in the '
+                'self-healing lane even when relayReady reads (stale) true '
+                "(RED on HEAD: online -> terminal 'failed' + Retry flash)",
+          );
+          expect(stored.wireEnvelope, isNotNull);
+          final lane = await messageRepo.getUnackedOutgoingMessages(
+            olderThan: Duration.zero,
+          );
+          expect(
+            lane.any((m) => m.id == sentId),
+            isTrue,
+            reason: 'the kept-sent row must be retryUnacked-eligible',
+          );
+          expect(
+            find.byKey(ValueKey('failed-message-retry-$sentId')),
+            findsNothing,
+            reason: 'no transient Retry flash during the self-heal window',
+          );
+          expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+        },
+      );
+    }
+
+    testWidgets(
+      'TC-192-02 online-glitch snackbar is the honest queued-retry one-liner, '
+      'not the offline copy and not error-red',
+      (tester) async {
+        final messageRepo = _FakeMessageRepository();
+        final recorder = _GatedSendRecorder();
+
+        await tester.pumpWidget(
+          _buildTestWidget(
+            messageRepo: messageRepo,
+            sendChatMessageFn: recorder.fn,
+            p2pService: FakeP2PService(initialState: _onlineState),
+          ),
+        );
+        await _settleStartup(tester);
+
+        await _typeAndSend(tester, 'online glitch snack');
+        final sentId = recorder.messageIds.last!;
+        final failedMessage = ConversationMessage(
+          id: sentId,
+          contactPeerId: _contactPeerId,
+          senderPeerId: _identity.peerId,
+          text: 'online glitch snack',
+          timestamp: '2026-07-02T10:00:00.000Z',
+          status: 'failed',
+          isIncoming: false,
+          createdAt: '2026-07-02T10:00:00.000Z',
+          wireEnvelope: '{"type":"chat_message","version":"2","encrypted":{}}',
+        );
+        await messageRepo.saveMessage(failedMessage);
+        recorder.completeLastWithMessage(
+          SendChatMessageResult.sendFailed,
+          failedMessage,
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 800));
+
+        expect(find.text(queuedRetryCopy), findsOneWidget);
+        // The phone believes it is online — the wifi-off "back online" promise
+        // would be dishonest here; so would the contact-blaming/generic red.
+        expect(find.text("Will send when you're back online"), findsNothing);
+        expect(find.text('Failed to send message. Message saved.'), findsNothing);
+        expect(
+          tester.widget<SnackBar>(find.byType(SnackBar)).backgroundColor,
+          Colors.blueGrey[700],
+        );
+        expect(
+          find.descendant(
+            of: find.byType(SnackBar),
+            matching: find.byIcon(Icons.schedule_send_rounded),
+          ),
+          findsOneWidget,
+        );
+        final glitchText = tester.widget<Text>(
+          find.descendant(
+            of: find.byType(SnackBar),
+            matching: find.text(queuedRetryCopy),
+          ),
+        );
+        expect(glitchText.maxLines, 1);
+        // The lane must NOT restore the composer draft (that writer re-stamps
+        // 'failed' and resurrects the Retry).
+        expect(
+          tester.widget<TextField>(find.byType(TextField).first).controller?.text,
+          '',
+        );
+      },
+    );
+
+    testWidgets(
+      'TC-192-03 PRESERVE online NULL-shaped sendFailed (no envelope) stays '
+      'terminal failed with a Retry',
+      (tester) async {
+        final messageRepo = _FakeMessageRepository();
+        final recorder = _GatedSendRecorder();
+
+        await tester.pumpWidget(
+          _buildTestWidget(
+            messageRepo: messageRepo,
+            sendChatMessageFn: recorder.fn,
+            p2pService: FakeP2PService(initialState: _onlineState),
+          ),
+        );
+        await _settleStartup(tester);
+
+        await _typeAndSend(tester, 'online terminal');
+        recorder.completeLast(SendChatMessageResult.sendFailed);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 800));
+
+        final stored = messageRepo.store.values.firstWhere(
+          (m) => m.text == 'online terminal',
+        );
+        expect(
+          stored.status,
+          'failed',
+          reason:
+              'no envelope -> not self-healing -> must stay terminal failed '
+              '(mutation lock: dropping the message != null guard re-reds)',
+        );
+        expect(
+          find.byKey(ValueKey('failed-message-retry-${stored.id}')),
+          findsOneWidget,
+        );
+      },
+    );
   });
 }

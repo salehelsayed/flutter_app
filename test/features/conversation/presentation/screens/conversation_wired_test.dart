@@ -820,10 +820,12 @@ class TrackingLocalMediaP2PService extends FakeP2PService {
 class InboxRetryP2PService extends FakeP2PService {
   InboxRetryP2PService({this.relayOnline = false});
 
-  /// 185×187: with the sender OFFLINE, a terminal-rung sendFailed (non-null
-  /// failedMessage) is now kept in the retriable self-healing lane and never
-  /// restores a failed draft. The restored-failed-draft retry tests exercise a
-  /// GENUINE failure flow, so they must run with the relay online.
+  /// 185×187/192: a terminal-rung connectivity failure carrying an envelope
+  /// (non-null failedMessage) is kept in the retriable self-healing lane —
+  /// offline OR online — and never restores a failed draft. The restored-
+  /// failed-draft retry tests therefore reach failed+restored via the sendFn-
+  /// throws seam (catch handler), with the relay online so the row itself is
+  /// a genuine failure, not the offline lane.
   final bool relayOnline;
 
   @override
@@ -1397,9 +1399,11 @@ void main() {
           messageRepo: messageRepo,
           contactRepo: contactRepo,
         );
-        // 185×187: restored-failed-draft retry is a GENUINE-failure flow — run
-        // it with the relay online, else the offline self-healing lane keeps
-        // the row 'sent' and no draft is ever restored.
+        // 185×187/192: restored-failed-draft retry is a GENUINE-failure flow.
+        // Post-192 a connectivity-class result carrying an envelope is kept
+        // 'sent' (self-healing lane) even when the relay reads online, so the
+        // terminal failed+restored-draft state is reached via the exception
+        // path: the use case persisted the envelope, then the send flow threw.
         final p2pService = InboxRetryP2PService(relayOnline: true);
         var sendCalls = 0;
         String? failedMessageId;
@@ -1438,7 +1442,7 @@ void main() {
                 '{"type":"chat_message","version":"2","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}',
           );
           await messageRepo.saveMessage(failed);
-          return (SendChatMessageResult.sendFailed, failed);
+          throw Exception('send flow threw after envelope persist');
         }
 
         await pumpScreen(
@@ -1504,9 +1508,11 @@ void main() {
           messageRepo: messageRepo,
           contactRepo: contactRepo,
         );
-        // 185×187: restored-failed-draft retry is a GENUINE-failure flow — run
-        // it with the relay online, else the offline self-healing lane keeps
-        // the row 'sent' and no draft is ever restored.
+        // 185×187/192: restored-failed-draft retry is a GENUINE-failure flow.
+        // Post-192 a connectivity-class result carrying an envelope is kept
+        // 'sent' (self-healing lane) even when the relay reads online, so the
+        // terminal failed+restored-draft state is reached via the exception
+        // path: the use case persisted the envelope, then the send flow threw.
         final p2pService = InboxRetryP2PService(relayOnline: true);
         var sendCalls = 0;
         String? failedMessageId;
@@ -1545,7 +1551,7 @@ void main() {
                 '{"type":"chat_message","version":"2","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}',
           );
           await messageRepo.saveMessage(failed);
-          return (SendChatMessageResult.sendFailed, failed);
+          throw Exception('send flow threw after envelope persist');
         }
 
         await pumpScreen(
