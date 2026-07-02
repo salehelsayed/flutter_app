@@ -117,6 +117,12 @@ readonly ONE_TO_ONE_TESTS=(
   # globbed into the curated 1to1 gate, so it is appended explicitly. (TC-179-04
   # lives in local_p2p_service_test.dart, which auto-globs into core-host-all.)
   "test/core/services/p2p_service_lan_forward_test.dart"
+  # 190 (Android netlink addr-visibility, TC-190-05 Dart parity): the advert-port
+  # derivation is IP-agnostic, so the empty(0.0.0.0-mined)→real address rollout
+  # derives identical advert ports (no bonsoir re-advert churn). Standalone file
+  # (kept off the dirty p2p_service_impl_test.dart); auto-globs into core-host-all,
+  # pinned here so the 1to1 gate lists it too.
+  "test/core/services/p2p_service_addr_shape_parity_test.dart"
   # 181: presence lifecycle wiring lock — _MyAppState constructs SetPresenceUseCase
   # and dispatches onForegrounded/onBackgrounded/dispose on resume/pause/teardown
   # (the producer that activates the committed unreachable short-circuit). Source-
@@ -130,6 +136,20 @@ readonly ONE_TO_ONE_TESTS=(
   # NOT auto-globbed into the curated 1to1 gate, so appended explicitly (it also
   # auto-globs into core-host-all).
   "test/core/lifecycle/main_keepalive_wiring_test.dart"
+  # 189: degraded-relay drain starvation + restart-loop locks — every health-check
+  # tick drains (recovery/failed/throwing ticks included), phase=recovered is
+  # truthful (bridge 'success'), failed recoveries back off while drains never do.
+  # Receive-side 1:1 delivery latency (field: store→ack 86s→10+min). test/core/**
+  # is NOT auto-globbed into the curated 1to1 gate, so appended explicitly (it
+  # also auto-globs into core-host-all).
+  "test/core/services/p2p_service_impl_health_drain_test.dart"
+  # 191: iOS foreground-push forwarding hardening — Dart half. FirebaseReadiness
+  # (latch-on-success retry, no more one-failure permanent push deafness) +
+  # PushListenerArmer (observable PUSH_LISTENERS_ARMED, readiness-driven third
+  # arm point). Both auto-glob into feature-host-all; appended here so the
+  # curated 1to1 gate also runs the receive-path (push→drain) arm locks.
+  "test/features/push/application/firebase_readiness_test.dart"
+  "test/features/push/application/push_listener_armer_test.dart"
 )
 
 readonly FEED_TESTS=(

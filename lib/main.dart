@@ -318,7 +318,9 @@ import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
 import 'package:flutter_app/core/notifications/recent_remote_gate_ios_wiring.dart';
+import 'package:flutter_app/features/push/application/firebase_readiness.dart';
 import 'package:flutter_app/features/push/application/group_missing_notification_feedback.dart';
+import 'package:flutter_app/features/push/application/push_listener_armer.dart';
 import 'package:flutter_app/features/push/application/handle_foreground_remote_message_use_case.dart';
 import 'package:flutter_app/features/push/application/push_registration_coordinator.dart';
 import 'package:flutter_app/features/push/application/prepare_notification_route_target_use_case.dart';
@@ -393,14 +395,17 @@ void main() async {
   // Initialize Firebase (mobile only — not available on desktop)
   final bool isDesktop =
       !kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS);
-  var firebaseInitialized = false;
-  Future<void> ensureFirebaseReady() async {
-    if (firebaseInitialized) {
-      return;
-    }
-    firebaseInitialized = true;
-    if (!isDesktop) {
-      try {
+  // 191 (Fix D1): delegate Firebase init to FirebaseReadiness so the readiness
+  // latch is consumed ONLY on a successful init. The pre-191 code latched
+  // `firebaseInitialized = true` BEFORE the try, so ONE transient
+  // Firebase.initializeApp() failure permanently marked Firebase "ready" — no
+  // later call ever retried and the process stayed deaf to push for its whole
+  // lifetime. The unit latches after success (retryable on failure) and, on the
+  // first success, notifies its on-ready listeners once — the event the
+  // push-listener arm rides (the third arm point in _MyAppState).
+  final firebaseReadiness = FirebaseReadiness(
+    initialize: () async {
+      if (!isDesktop) {
         await Firebase.initializeApp();
         FirebaseMessaging.onBackgroundMessage(
           firebaseMessagingBackgroundHandler,
@@ -411,20 +416,20 @@ void main() async {
               badge: false,
               sound: false,
             );
-      } catch (e) {
-        debugPrint('Firebase init skipped: $e');
       }
-    }
 
-    // 04-P0 / SI-5 (iOS): wire the recent-remote gate to also consume the NSE's
-    // app-group sidecar dedupe markers, and persist the app-group container path
-    // so the FCM background isolate can read it too.
-    if (!kIsWeb && Platform.isIOS) {
-      configureRecentRemoteNotificationGateForIos();
-      unawaited(persistAppGroupContainerPathForGate());
-    }
-    StartupTiming.instance.mark('firebase_ready');
-  }
+      // 04-P0 / SI-5 (iOS): wire the recent-remote gate to also consume the NSE's
+      // app-group sidecar dedupe markers, and persist the app-group container path
+      // so the FCM background isolate can read it too.
+      if (!kIsWeb && Platform.isIOS) {
+        configureRecentRemoteNotificationGateForIos();
+        unawaited(persistAppGroupContainerPathForGate());
+      }
+      StartupTiming.instance.mark('firebase_ready');
+    },
+    onError: (error, _) => debugPrint('Firebase init skipped: $error'),
+  );
+  Future<void> ensureFirebaseReady() => firebaseReadiness.ensureReady();
 
   // 164 (cold-start-1): Firebase is no longer initialized eagerly here. It is
   // initialized lazily inside the deferred startLiveServices, leaving the
@@ -3306,6 +3311,7 @@ void main() async {
             .restoreActiveAfterExportInterrupted();
       },
       deferredRuntimeStartup: startLiveServices,
+      firebaseReadiness: firebaseReadiness,
       onAppDetached: () async {
         // Best-effort graceful teardown on app termination. Stopping the node
         // lets libp2p close streams and release its relay reservation / QUIC
@@ -3507,6 +3513,12 @@ class MyApp extends StatefulWidget {
   final Future<bool> Function()? accountMigrationRecoverExportPause;
   final Future<void> Function()? deferredRuntimeStartup;
 
+  /// 191 (Fix D2): the shared Firebase-readiness latch. _MyAppState registers
+  /// its push-listener arm on this (the third arm point) so a retried/late
+  /// Firebase init still arms the foreground-push listeners. Optional so the
+  /// widget-test harnesses (no real Firebase) construct MyApp without it.
+  final FirebaseReadiness? firebaseReadiness;
+
   /// Best-effort teardown invoked on [AppLifecycleState.detached] (app
   /// terminating): stops the libp2p node and closes the encrypted DB so the
   /// next cold start doesn't stall on the splash screen behind a stale
@@ -3590,6 +3602,7 @@ class MyApp extends StatefulWidget {
     this.accountMigrationReceiverEvents,
     this.accountMigrationRecoverExportPause,
     this.deferredRuntimeStartup,
+    this.firebaseReadiness,
     this.onAppDetached,
   });
 
@@ -3640,6 +3653,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   // spare the ~31 fakes; no cast needed); the active 1:1 peer comes from the
   // conversation tracker. Best-effort, never load-bearing.
   late final ActivePeerKeepAliveUseCase _keepAliveUseCase;
+
+  // 191 (Fix D2): observable, retryable, idempotent push-listener arm. Owns the
+  // onMessage/onMessageOpenedApp subscription + the PUSH_LISTENERS_ARMED
+  // telemetry; _setupPushListeners delegates to it.
+  late final PushListenerArmer _pushListenerArmer;
 
   @override
   void initState() {
@@ -3706,6 +3724,38 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                 contact: contact,
               ),
         );
+    // 191 (Fix D2): the foreground-push / open-app subscription + its
+    // PUSH_LISTENERS_ARMED telemetry live in PushListenerArmer so the arm is
+    // observable and unit-locked. _setupPushListeners delegates to arm().
+    _pushListenerArmer = PushListenerArmer(
+      firebaseReady: () => Firebase.apps.isNotEmpty,
+      platform: kIsWeb ? 'web' : Platform.operatingSystem,
+      subscribe: () {
+        FirebaseMessaging.onMessage.listen((message) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PUSH_FOREGROUND_MESSAGE_RECEIVED',
+            details: {
+              'messageId': message.messageId,
+              'dataKeys': message.data.keys.toList(),
+            },
+          );
+          unawaited(_handleForegroundRemotePush(message));
+        });
+
+        FirebaseMessaging.onMessageOpenedApp.listen((message) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PUSH_MESSAGE_OPENED_APP',
+            details: {
+              'messageId': message.messageId,
+              'dataKeys': message.data.keys.toList(),
+            },
+          );
+          unawaited(_routeRemoteNotificationOpen(message.data));
+        });
+      },
+    );
     _setupPushListeners();
     // 164 (cold-start-1 regression #1): Firebase is now initialized lazily inside
     // the deferred startLiveServices, so the _setupPushListeners() call above
@@ -3717,6 +3767,18 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     unawaited(
       _ensureRuntimeServicesReady().then((_) => _setupPushListeners()),
     );
+    // 191 (Fix D2): a THIRD arm point rides Firebase first-success readiness —
+    // the only event that flips Firebase.apps non-empty. If the
+    // _ensureRuntimeServicesReady re-arm above fires while Firebase.apps is
+    // still empty (a retried/late init), it no-ops WITHOUT consuming the
+    // _pushListenersArmed latch; this readiness listener then arms the moment
+    // Firebase actually becomes ready — so a transient init failure can never
+    // leave push permanently disarmed.
+    widget.firebaseReadiness?.addOnReadyListener(() {
+      if (mounted) {
+        _setupPushListeners();
+      }
+    });
     _setupNotificationTapHandler();
     _setupIosApnsNotificationOpenBridge();
     _setupShareIntentHandling();
@@ -4667,38 +4729,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // then the first effective registration; a third call is a no-op.
     if (_pushListenersArmed) return;
     _pushListenersArmed = true;
-
-    try {
-      FirebaseMessaging.onMessage.listen((message) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'PUSH_FOREGROUND_MESSAGE_RECEIVED',
-          details: {
-            'messageId': message.messageId,
-            'dataKeys': message.data.keys.toList(),
-          },
-        );
-        unawaited(_handleForegroundRemotePush(message));
-      });
-
-      FirebaseMessaging.onMessageOpenedApp.listen((message) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'PUSH_MESSAGE_OPENED_APP',
-          details: {
-            'messageId': message.messageId,
-            'dataKeys': message.data.keys.toList(),
-          },
-        );
-        unawaited(_routeRemoteNotificationOpen(message.data));
-      });
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'PUSH_LISTENER_ERROR',
-        details: {'error': e.toString()},
-      );
-    }
+    // 191 (Fix D2): the subscription + PUSH_LISTENERS_ARMED / PUSH_LISTENER_ERROR
+    // telemetry live in the observable, unit-locked PushListenerArmer. The
+    // widget-level guard + _pushListenersArmed latch above preserve the 164
+    // idempotence contract; the armer carries its own latch too.
+    _pushListenerArmer.arm();
   }
 
   Future<void> _handleForegroundRemotePush(RemoteMessage message) async {

@@ -830,6 +830,10 @@ func RelayReconnect() (result string) {
 	// Merge structured recovery fields.
 	if recoveryResult != nil {
 		resp["recoveryMode"] = recoveryResult.RecoveryMode
+		// 189 Fix B2: serialize the Go recovery verdict. "ok" only means the
+		// bridge call did not error; Dart must branch on "success" for
+		// truthful phase=recovered bookkeeping.
+		resp["success"] = recoveryResult.Success
 		resp["relayState"] = recoveryResult.RelayState
 		resp["healthyRelayCount"] = recoveryResult.HealthyRelayCount
 		resp["reusedHost"] = recoveryResult.ReusedHost

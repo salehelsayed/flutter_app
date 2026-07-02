@@ -37,7 +37,14 @@ func (n *Node) syncRelaySessionFromRuntime(reason string, circuitAddrs []string)
 		case connected && hasCircuitAddr:
 			n.relaySessionMgr.OnReservationOpened(relayPeerID)
 		case connected && session != nil && session.State == RelayStateReserved:
-			n.relaySessionMgr.OnReservationEnded(relayPeerID)
+			// 189 reservation-truth: a live manual Reserve hold proves the
+			// relay-side slot exists even though no /p2p-circuit address is
+			// advertised (v0.39.1 publishes only via the relayFinder, and only
+			// for public/DNS relay addrs). Demoting on the missing addr is what
+			// re-armed the restart loop on every sync.
+			if !n.relaySessionMgr.HasActiveManualReservation(relayPeerID) {
+				n.relaySessionMgr.OnReservationEnded(relayPeerID)
+			}
 		case connected:
 			n.relaySessionMgr.OnConnected(relayPeerID)
 		case session != nil:

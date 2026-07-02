@@ -11,6 +11,7 @@ Spec: `Test-Flight-Improv/188-dcutr-1to1-forced-circuit-verification-spec.md` (*
 | 2026-07-01 | Planner | holepunch_tracer.go + holepunch_tracer_test.go (existing) | tracer mapping already deterministically tested; 3 guard gaps remain; no prod fix | emit plan |
 | 2026-07-01 | Reviewer / Arbiter | this plan | see Reviewer Findings / Arbiter | hand off |
 | 2026-07-01 | Executor | holepunch_tracer_test.go (+3 guards), checklist CV-10..13/30/P4.4, spec | all 3 GREEN on HEAD; mutation-verified RED (M1 flip-all → TC-188-03; M2 DirectDialEvt→upgrade hack → TC-188-10; M3 unconditional emit → TC-188-11) in an isolated worktree, mutations discarded with it; vet+gofmt clean | run -race gate + adversarial review |
+| 2026-07-02 | Executor (post-review) | review wf `wf_a99bfe73` (6 agents, 3 confirmed minors, 0 refuted) | F1: TC-188-10 strengthened — Attempts()/Failures() stay 0 + failed-dial leg (pins the full "non-counted" contract; M4 count-DirectDialEvt mutation-verified RED — previously evaded EVERY deterministic suite); F2: stale `feature_flags_runtime_test.go:50` unlock message re-pointed to Option B (was "CV-11/12 → CV-13", now satisfied-on-paper); F3: `node.go:1328`→`:1335` cite fixed in checklist+spec. -race: first FAIL was a PRE-EXISTING flake — clean-HEAD control failed the same class (`pubsub_delivery_test.go:966` dial lands relay under -race load, no DATA RACE), re-run WITH the 188 tests = `ok 472.9s` clean | done |
 
 ## Source Of Truth
 - Spec: `188-…-spec.md` (Path-3-revised). Verdicts: workflows `wf_b0ea0dc5` (store-and-forward) + `wf_77ef6f8d` (no deterministic punch gate).
@@ -123,11 +124,11 @@ Expected: the 3 new tests PASS; `Feasibility` may `SKIP` (documented, not a fail
 - Scope drift (BLOCKING): any change to `holepunch_tracer.go` production behavior (this plan adds tests only).
 
 ## Done Criteria
-- [ ] 3 guard tests added + GREEN on HEAD + each mutation-verified (RED under its documented mutation, reverted).
-- [ ] `go test ./node/` + `-race` green; feasibility skip documented.
-- [ ] spec 188 revised to Path 3; CV-10/11/12 re-scoped in the checklist with the verdict pointers.
-- [ ] `go vet` clean; `interop_vectors.json` reverted; `git diff --check` clean.
-- [ ] NO production code change (SUT `holepunch_tracer.go` untouched).
+- [x] 3 guard tests added + GREEN on HEAD + each mutation-verified (RED under its documented mutation, reverted — M1/M2/M3 in isolated worktrees, discarded; + review-driven M4 for the strengthened TC-188-10).
+- [x] `go test ./node/` + `-race` green (`ok 472.9s` with the 188 tests; the one FAIL seen was a pre-existing HEAD flake, `pubsub_delivery_test.go:966`, reproduced on a clean-HEAD control WITHOUT the 188 tests); feasibility SKIP documented (both probes skipped as expected).
+- [x] spec 188 revised to Path 3 (EXECUTED stamp + TC-numbering note); CV-10/11/12 re-scoped in the checklist with the verdict pointers (+ CV-13 parked-dark, CV-30 unreachable-by-design, P4.4 flag row).
+- [x] `go vet` clean; `interop_vectors.json` reverted; `git diff --check` clean; gofmt clean.
+- [x] NO production code change (SUT `holepunch_tracer.go` byte-identical to pre-188 HEAD — confirmed by the review's plan-compliance agent).
 
 ## Scope Guard (hard "Do not")
 - Do NOT wire `DirectDialEvt` → `markPeerUpgradedToDirect` (the refuted hack — a prod-semantics regression; TC-188-10 guards it).

@@ -351,6 +351,19 @@ class P2PServiceImpl
   /// Phase 5: Threshold for escalating from in-place refresh to watchdog.
   static const int refreshFailureThreshold = 3;
 
+  /// 189 Fix B3: cap for the escalating recovery-backoff schedule, in skipped
+  /// health-check ticks (8 ticks ≈ 4 min at the 30s cadence).
+  static const int recoveryBackoffMaxSkipTicks = 8;
+
+  /// 189 Fix B3: current backoff step (ticks to skip per failed attempt once
+  /// [_consecutiveRefreshFailures] reaches [refreshFailureThreshold]; doubles
+  /// per subsequent failure, capped). 0 = backoff disarmed.
+  int _recoveryBackoffStep = 0;
+
+  /// 189 Fix B3: health-check ticks left to skip before the next recovery
+  /// attempt. Only ever delays recovery ATTEMPTS — never drains (INV-4).
+  int _recoveryBackoffSkipsRemaining = 0;
+
   /// How often the health check polls node:status.
   static const healthCheckInterval = Duration(seconds: 30);
 
@@ -3254,7 +3267,13 @@ class P2PServiceImpl
           (reconnectResponse['coalescedRecoveryRequests'] as num?)?.toInt() ??
           0;
 
-      if (reconnectResponse['ok'] == true) {
+      // 189 Fix B2 (INV-2): 'ok' only means the bridge call did not error —
+      // the Go recovery verdict rides the serialized 'success' field. Tolerate
+      // an ABSENT field (older bridge), but never report success:false as
+      // recovered: that lie reset the failure accounting and kept the 30s
+      // restart loop invisible (spec 189 Defect B bookkeeping).
+      if (reconnectResponse['ok'] == true &&
+          reconnectResponse['success'] != false) {
         final recoveryMode = reconnectResponse['recoveryMode'] as String?;
         final reusedHost =
             reconnectResponse['reusedHost'] as bool? ??
@@ -3314,6 +3333,17 @@ class P2PServiceImpl
       }
 
       _consecutiveRefreshFailures++;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_HEALTH_CHECK_RECOVERY_FAILED',
+        details: {
+          'consecutiveRefreshFailures': _consecutiveRefreshFailures,
+          if (reconnectResponse['errorCode'] != null)
+            'errorCode': reconnectResponse['errorCode'],
+          if (reconnectResponse['recoveryMode'] != null)
+            'recoveryMode': reconnectResponse['recoveryMode'],
+        },
+      );
       if (kDebugMode) {
         debugPrint(
           '[HEALTH] relay:reconnect FAILED '
@@ -3322,6 +3352,14 @@ class P2PServiceImpl
       }
     } catch (e) {
       _consecutiveRefreshFailures++;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_HEALTH_CHECK_RECOVERY_FAILED',
+        details: {
+          'consecutiveRefreshFailures': _consecutiveRefreshFailures,
+          'error': e.toString(),
+        },
+      );
       if (kDebugMode) {
         debugPrint(
           '[HEALTH] relay:reconnect FAILED: $e '
@@ -3743,6 +3781,13 @@ class P2PServiceImpl
       if (_stateHasHealthyRelay(freshState)) {
         _hasEverBeenOnline = true;
         _lastHealthyRelayAt = DateTime.now();
+        // 189 Fix B3: an observed-healthy relay breaks the failure streak even
+        // when nothing on the Dart side recovered it (autorelay self-heal) —
+        // otherwise the NEXT outage would inherit a stale skip budget and
+        // start life backed-off.
+        _consecutiveRefreshFailures = 0;
+        _recoveryBackoffStep = 0;
+        _recoveryBackoffSkipsRemaining = 0;
       }
 
       // Recovery: when reservation-aware relay health says we are degraded,
@@ -3794,73 +3839,125 @@ class P2PServiceImpl
                       ? 'resume_trigger'
                       : 'health_check_poll'));
         _pendingRecoverySource = null;
-        if (!isStartupRelayRecovery) {
-          _beginReadinessProofWindow(
-            phase: _resumeStartedAt != null ? 'background_resume' : 'recovery',
-            trigger: recoverySource,
-            startedAt: _resumeStartedAt ?? DateTime.now(),
-          );
-        }
-        if (kDebugMode) {
-          debugPrint(
-            '[HEALTH] DEGRADED — relay not healthy '
-            '(relayState=${freshState.relayState}, '
-            'circuitAddresses=${freshState.circuitAddresses.length}). '
-            'Attempting recovery via relay:reconnect...',
-          );
-        }
-        await _attemptRelayRecovery(recoverySource: recoverySource);
-        if (_stopped) return;
 
-        // Re-poll status after dialing the relay
-        final retryStatusStart = DateTime.now();
-        final retryResponse = await callP2PNodeStatus(_bridge);
-        if (_stopped) return;
-        final retryStatusMs = DateTime.now()
-            .difference(retryStatusStart)
-            .inMilliseconds;
-        final retryState = NodeState.fromJson(retryResponse);
-        if (_stateHasHealthyRelay(retryState)) {
-          _hasEverBeenOnline = true;
-        }
-        if (kDebugMode) {
-          debugPrint(
-            '[HEALTH] Post-dial status (took ${retryStatusMs}ms) → '
-            'circuitAddresses=${retryState.circuitAddresses.length}, '
-            'connections=${retryState.connections.length}, '
-            'relayState=${retryState.relayState}',
-          );
-        }
-
-        if (!_stateHasHealthyRelay(retryState)) {
-          if (kDebugMode) {
-            debugPrint(
-              '[HEALTH] Relay still not healthy after re-dial. '
-              'Next health check in ${healthCheckInterval.inSeconds}s',
-            );
-          }
-        }
-
-        if (_stateMeaningfullyChanged(_currentState, retryState)) {
-          _emitState(retryState, source: 'health_check_poll');
-
+        // 189 Fix B3 (INV-4): once consecutive recovery failures reach the
+        // threshold, periodic ticks skip the recovery ATTEMPT on an escalating
+        // schedule instead of hard-dialing the relay every 30s forever.
+        // User-visible refreshes keep their own recovery source (resume /
+        // relay_state_push) and bypass the backoff; the drain below runs on
+        // every tick regardless.
+        final skipRecoveryForBackoff =
+            !isStartupRelayRecovery &&
+            recoverySource == 'health_check_poll' &&
+            _recoveryBackoffSkipsRemaining > 0;
+        if (skipRecoveryForBackoff) {
+          _recoveryBackoffSkipsRemaining--;
           emitFlowEvent(
             layer: 'FL',
-            event: 'P2P_HEALTH_CHECK_RECOVERY_RESULT',
+            event: 'RELAY_RECOVERY_BACKOFF_SKIP',
             details: {
-              'isStarted': retryState.isStarted,
-              'circuitAddresses': retryState.circuitAddresses.length,
-              'connections': retryState.connections.length,
+              'backoffStep': _recoveryBackoffStep,
+              'skipsRemaining': _recoveryBackoffSkipsRemaining,
+              'consecutiveRefreshFailures': _consecutiveRefreshFailures,
             },
           );
+          if (_stateMeaningfullyChanged(_currentState, freshState)) {
+            _emitState(freshState, source: 'health_check_poll');
+          }
+        } else {
+          if (!isStartupRelayRecovery) {
+            _beginReadinessProofWindow(
+              phase: _resumeStartedAt != null
+                  ? 'background_resume'
+                  : 'recovery',
+              trigger: recoverySource,
+              startedAt: _resumeStartedAt ?? DateTime.now(),
+            );
+          }
+          if (kDebugMode) {
+            debugPrint(
+              '[HEALTH] DEGRADED — relay not healthy '
+              '(relayState=${freshState.relayState}, '
+              'circuitAddresses=${freshState.circuitAddresses.length}). '
+              'Attempting recovery via relay:reconnect...',
+            );
+          }
+          await _attemptRelayRecovery(recoverySource: recoverySource);
+          if (_stopped) return;
 
-          // Re-register push token after relay reconnection
-          if (_stateHasHealthyRelay(retryState) &&
-              _lastFcmToken != null &&
-              _lastFcmPlatform != null) {
-            unawaited(_reregisterStoredPushTokenIfAvailable());
+          // 189 Fix B3: arm/escalate after a failed attempt, disarm on a
+          // truthful success (which resets the counter inside the attempt).
+          if (_consecutiveRefreshFailures >= refreshFailureThreshold) {
+            final nextStep = _recoveryBackoffStep == 0
+                ? 1
+                : _recoveryBackoffStep * 2;
+            _recoveryBackoffStep = nextStep > recoveryBackoffMaxSkipTicks
+                ? recoveryBackoffMaxSkipTicks
+                : nextStep;
+            _recoveryBackoffSkipsRemaining = _recoveryBackoffStep;
+          } else if (_consecutiveRefreshFailures == 0) {
+            _recoveryBackoffStep = 0;
+            _recoveryBackoffSkipsRemaining = 0;
+          }
+
+          // Re-poll status after dialing the relay
+          final retryStatusStart = DateTime.now();
+          final retryResponse = await callP2PNodeStatus(_bridge);
+          if (_stopped) return;
+          final retryStatusMs = DateTime.now()
+              .difference(retryStatusStart)
+              .inMilliseconds;
+          final retryState = NodeState.fromJson(retryResponse);
+          if (_stateHasHealthyRelay(retryState)) {
+            _hasEverBeenOnline = true;
+          }
+          if (kDebugMode) {
+            debugPrint(
+              '[HEALTH] Post-dial status (took ${retryStatusMs}ms) → '
+              'circuitAddresses=${retryState.circuitAddresses.length}, '
+              'connections=${retryState.connections.length}, '
+              'relayState=${retryState.relayState}',
+            );
+          }
+
+          if (!_stateHasHealthyRelay(retryState)) {
+            if (kDebugMode) {
+              debugPrint(
+                '[HEALTH] Relay still not healthy after re-dial. '
+                'Next health check in ${healthCheckInterval.inSeconds}s',
+              );
+            }
+          }
+
+          if (_stateMeaningfullyChanged(_currentState, retryState)) {
+            _emitState(retryState, source: 'health_check_poll');
+
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'P2P_HEALTH_CHECK_RECOVERY_RESULT',
+              details: {
+                'isStarted': retryState.isStarted,
+                'circuitAddresses': retryState.circuitAddresses.length,
+                'connections': retryState.connections.length,
+              },
+            );
+
+            // Re-register push token after relay reconnection
+            if (_stateHasHealthyRelay(retryState) &&
+                _lastFcmToken != null &&
+                _lastFcmPlatform != null) {
+              unawaited(_reregisterStoredPushTokenIfAvailable());
+            }
           }
         }
+
+        // 189 Fix A (INV-1): the recovery branch must never starve the
+        // periodic drain — a degraded relay session can still serve
+        // retrieve_pending, and for a foreground+idle device this is the ONLY
+        // recurring drain. Runs after the recovery attempt so it rides the
+        // freshly re-dialed session.
+        await _drainOfflineInbox();
+        if (_stopped) return;
 
         final totalMs = DateTime.now().difference(hcStart).inMilliseconds;
         if (kDebugMode) {

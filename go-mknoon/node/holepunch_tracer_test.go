@@ -363,6 +363,15 @@ func TestHolePunchTracer_DirectDialEvt_IsBreadcrumbOnly_NoUpgrade(t *testing.T) 
 	if got := tracer.Successes(); got != 0 {
 		t.Fatalf("Successes() = %d after DirectDialEvt, want 0 (breadcrumb is not a punch success)", got)
 	}
+	// NON-COUNTED means none of the three counters — the negative-control and
+	// flag suites use Attempts()==0 as their zero-punch oracle but never feed a
+	// DirectDialEvt, so a counting regression here would evade them.
+	if got := tracer.Attempts(); got != 0 {
+		t.Fatalf("Attempts() = %d after DirectDialEvt, want 0 (breadcrumb is not a punch attempt)", got)
+	}
+	if got := tracer.Failures(); got != 0 {
+		t.Fatalf("Failures() = %d after DirectDialEvt, want 0", got)
+	}
 	if got := collector.collectEvents("transport:upgraded"); len(got) != 0 {
 		t.Fatalf("DirectDialEvt emitted transport:upgraded, want none (plain direct dial is not a DCUtR upgrade): %+v", got)
 	}
@@ -378,6 +387,26 @@ func TestHolePunchTracer_DirectDialEvt_IsBreadcrumbOnly_NoUpgrade(t *testing.T) 
 	attempts := collector.collectEvents("holepunch:attempt")
 	if !hasEventWithStep(attempts, "direct_dial") {
 		t.Fatalf("expected holepunch:attempt step=direct_dial breadcrumb, got %+v", attempts)
+	}
+
+	// A FAILED direct dial is equally non-counted (pins the failure direction).
+	tracer.Trace(&holepunch.Event{
+		Remote: peerB,
+		Type:   holepunch.DirectDialEvtT,
+		Evt: &holepunch.DirectDialEvt{
+			Success:      false,
+			EllapsedTime: 5 * time.Millisecond,
+			Error:        "dial refused",
+		},
+	})
+	if got := tracer.Failures(); got != 0 {
+		t.Fatalf("Failures() = %d after failed DirectDialEvt, want 0 (breadcrumb is not a punch failure)", got)
+	}
+	if got := tracer.Attempts(); got != 0 {
+		t.Fatalf("Attempts() = %d after failed DirectDialEvt, want 0", got)
+	}
+	if got := collector.collectEvents("holepunch:failure"); len(got) != 0 {
+		t.Fatalf("failed DirectDialEvt emitted holepunch:failure, want none (breadcrumb only): %+v", got)
 	}
 }
 

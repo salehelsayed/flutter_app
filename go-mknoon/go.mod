@@ -30,6 +30,25 @@ replace github.com/elastic/gosigar => ./stub/gosigar
 
 replace github.com/libp2p/go-libp2p-pubsub => ./third_party/go-libp2p-pubsub
 
+// 190 — Android netlink SELinux denial (b/155595000). Same-version (v0.14.0)
+// in-repo fork routing manet.InterfaceMultiaddrs through a provider seam whose
+// Android default is wlynxg/anet (no netlink bind). Frozen at v0.14.0 by this
+// replace: a future go-libp2p bump needing newer manet APIs will fail LOUDLY at
+// compile (matches the go-libp2p v0.39.1 mandatory-soak pin above). See
+// Test-Flight-Improv/190-android-netlink-selinux-addr-visibility-tdd-plan.md.
+replace github.com/multiformats/go-multiaddr => ./third_party/go-multiaddr
+
+// 190 — companion test-only fork of go-netroute v0.2.2 exposing a New() failure
+// hook so a darwin host test can reproduce Android's netlink-denied routing
+// lane (netroute seeds filteredInterfaceAddrs before manet). Behavior identical
+// to upstream in production (hook nil).
+replace github.com/libp2p/go-netroute => ./third_party/go-netroute
+
+require (
+	github.com/ipfs/go-log/v2 v2.5.1
+	github.com/libp2p/go-netroute v0.2.2
+)
+
 require (
 	github.com/benbjohnson/clock v1.3.5 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -52,7 +71,6 @@ require (
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/huin/goupnp v1.3.0 // indirect
 	github.com/ipfs/go-cid v0.5.0 // indirect
-	github.com/ipfs/go-log/v2 v2.5.1 // indirect
 	github.com/jackpal/go-nat-pmp v1.0.2 // indirect
 	github.com/jbenet/go-temp-err-catcher v0.1.0 // indirect
 	github.com/klauspost/compress v1.17.11 // indirect
@@ -62,7 +80,6 @@ require (
 	github.com/libp2p/go-flow-metrics v0.2.0 // indirect
 	github.com/libp2p/go-libp2p-asn-util v0.4.1 // indirect
 	github.com/libp2p/go-nat v0.2.0 // indirect
-	github.com/libp2p/go-netroute v0.2.2 // indirect
 	github.com/libp2p/go-reuseport v0.4.0 // indirect
 	github.com/libp2p/go-yamux/v4 v4.0.2 // indirect
 	github.com/marten-seemann/tcp v0.0.0-20210406111302-dfbc87cc63fd // indirect

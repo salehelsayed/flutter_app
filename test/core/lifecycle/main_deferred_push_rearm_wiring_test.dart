@@ -110,4 +110,97 @@ void main() {
       );
     },
   );
+
+  // 191 (Fix D1): the pre-191 `ensureFirebaseReady` latched
+  // `firebaseInitialized = true` at main.dart:401 BEFORE the try, so a single
+  // thrown `Firebase.initializeApp()` (a transient cold-start failure)
+  // permanently marked Firebase "ready" and no later call ever retried — the
+  // process stayed deaf to push for its whole lifetime. The fix delegates to an
+  // extracted `FirebaseReadiness` unit that latches ONLY on success (retryable).
+  test(
+    '191: ensureFirebaseReady latches on success only '
+    '(FirebaseReadiness delegation present)',
+    () async {
+      expect(app.MyApp.navigatorKey, isNotNull);
+
+      final mainSource = await File('lib/main.dart').readAsString();
+
+      // (1) main() delegates Firebase init to the extracted retryable unit.
+      expect(
+        mainSource,
+        contains('FirebaseReadiness('),
+        reason:
+            'ensureFirebaseReady must delegate to the extracted FirebaseReadiness '
+            'unit (latch-after-success), not inline a latch-before-try',
+      );
+      expect(
+        mainSource,
+        contains('firebaseReadiness.ensureReady()'),
+        reason:
+            'ensureFirebaseReady() must delegate to FirebaseReadiness.ensureReady()',
+      );
+
+      // (2) the latch-before-try bug shape is gone: no eager
+      // `firebaseInitialized = true` consumed before Firebase.initializeApp().
+      expect(
+        mainSource,
+        isNot(contains('firebaseInitialized = true;')),
+        reason:
+            'the pre-191 latch-before-try (firebaseInitialized = true before the '
+            'Firebase.initializeApp() try) permanently deafened push on one '
+            'transient init failure — it must be gone',
+      );
+    },
+  );
+
+  // 191 (Fix D2): the two pre-191 arm points (initState _setupPushListeners()
+  // and the _ensureRuntimeServicesReady().then re-arm) both no-op when
+  // Firebase.apps is empty and the memoized runtime-ready future collapses them
+  // to one effective attempt — so a retried/late Firebase init can leave push
+  // permanently disarmed with no telemetry. The fix delegates the arm to an
+  // observable `PushListenerArmer` (emits PUSH_LISTENERS_ARMED once) and adds a
+  // THIRD arm point that rides Firebase first-success readiness.
+  test(
+    '191: listener arm rides Firebase readiness and emits PUSH_LISTENERS_ARMED',
+    () async {
+      expect(app.MyApp.navigatorKey, isNotNull);
+
+      final mainSource = await File('lib/main.dart').readAsString();
+
+      // (1) the arm is delegated to the observable, unit-locked armer.
+      expect(
+        mainSource,
+        contains('PushListenerArmer('),
+        reason:
+            'the push-listener arm must delegate to the observable '
+            'PushListenerArmer unit (which emits PUSH_LISTENERS_ARMED once)',
+      );
+
+      // (2) a THIRD arm point rides FirebaseReadiness — the only event that
+      // flips Firebase.apps non-empty — so a retried/late init still arms,
+      // independent of the _ensureRuntimeServicesReady timing.
+      expect(
+        mainSource,
+        contains('firebaseReadiness'),
+        reason:
+            'a third arm point must ride the FirebaseReadiness instance passed '
+            'into MyApp so a retried/late Firebase init still arms the listeners',
+      );
+      expect(
+        mainSource,
+        contains('addOnReadyListener'),
+        reason:
+            '_MyAppState must register _setupPushListeners on Firebase readiness '
+            '(the third arm point) via FirebaseReadiness.addOnReadyListener',
+      );
+
+      // The 164 idempotence contract is preserved (belt-and-suspenders with the
+      // armer latch): the widget-level guard + _pushListenersArmed latch stay.
+      expect(
+        mainSource,
+        contains('if (widget.isDesktop || Firebase.apps.isEmpty) return;'),
+        reason: 'the 164 empty-Firebase.apps early-return must be preserved',
+      );
+    },
+  );
 }

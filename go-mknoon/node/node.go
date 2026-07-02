@@ -995,8 +995,9 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 		if warmSucceeded && len(successfulWarmInfos) > 0 {
 			reserveStart := time.Now()
 			type reserveAttempt struct {
-				peerID peer.ID
-				err    error
+				peerID      peer.ID
+				err         error
+				reservation *relayclient.Reservation
 			}
 			reserveAttempts := make(chan reserveAttempt, len(successfulWarmInfos))
 			var reserveWG sync.WaitGroup
@@ -1007,10 +1008,11 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 					defer reserveWG.Done()
 					reserveCtx, cancel := context.WithTimeout(n.ctx, ForegroundRelayReserveTimeout)
 					defer cancel()
-					_, err := n.reserveRelaySlot(reserveCtx, h, info)
+					res, err := n.reserveRelaySlot(reserveCtx, h, info)
 					reserveAttempts <- reserveAttempt{
-						peerID: info.ID,
-						err:    err,
+						peerID:      info.ID,
+						err:         err,
+						reservation: res,
 					}
 				}()
 			}
@@ -1038,6 +1040,16 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 				reserveSucceeded = true
 				reservationPath = "explicit_reserve"
 				reservationWinnerPeer = attempt.peerID.String()
+				// 189 reservation-truth: record the explicit reservation with
+				// its own expiration so the session survives address syncs
+				// that see no advertised /p2p-circuit addr.
+				if mgr != nil {
+					var expiry time.Time
+					if attempt.reservation != nil {
+						expiry = attempt.reservation.Expiration
+					}
+					mgr.OnManualReservationOpened(attempt.peerID, expiry)
+				}
 				log.Printf("[NODE] RefreshRelaySession: reserve %s success", peerLabel)
 				n.emitEvent("relay:reservation_timing", map[string]interface{}{
 					"elapsedMs":           reserveRpcMs,
@@ -1062,6 +1074,19 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 			}
 			if remainingWait > 0 && n.waitForCircuitAddress(remainingWait) {
 				log.Printf("[NODE] RefreshRelaySession: circuit addresses obtained via fallback ✓")
+				refreshErr = nil
+			} else if reserveSucceeded {
+				// 189 reservation-truth (Defect B): the explicit Reserve RPC
+				// succeeded, so the relay holds a live slot and peers can
+				// already dial <relay>/p2p-circuit/p2p/<us> (the dial path
+				// builds that address deterministically without consulting
+				// h.Addrs()). Only autorelay's relayFinder can ADVERTISE the
+				// addr in v0.39.1 and it may never do so (Public reachability,
+				// non-public relay addrs, or the field wedge) — failing here
+				// forced a full restart that purged the reservation and
+				// restarted the loop every 30s.
+				log.Printf("[NODE] RefreshRelaySession: no advertised circuit address, accepting explicit reservation as circuit truth ✓")
+				foregroundRecoveryPath = "reservation_truth"
 				refreshErr = nil
 			} else if !warmSucceeded && lastWarmErr != nil {
 				refreshErr = lastWarmErr
@@ -1216,15 +1241,22 @@ func (n *Node) reconnectRelaysOwned() (*RecoveryResult, error) {
 	waitStart := time.Now()
 	circuitOk := n.waitForCircuitAddress(10 * time.Second)
 	circuitAddressWaitMs := time.Since(waitStart).Milliseconds()
+
+	n.mu.RLock()
+	mgr := n.relaySessionMgr
+	n.mu.RUnlock()
+
+	if !circuitOk && mgr.HasReservation() {
+		// 189 reservation-truth: consult the session manager, not only the
+		// advertised address set (same seam as refreshRelaySessionOwned).
+		log.Printf("[NODE] ReconnectRelays: no advertised circuit address after restart, but a relay reservation is live — accepting reservation truth ✓")
+		circuitOk = true
+	}
 	if circuitOk {
 		log.Printf("[NODE] ReconnectRelays: circuit addresses obtained ✓")
 	} else {
 		log.Printf("[NODE] ReconnectRelays: WARNING — no circuit addresses after 10s")
 	}
-
-	n.mu.RLock()
-	mgr := n.relaySessionMgr
-	n.mu.RUnlock()
 
 	watchdogResult := &RecoveryResult{
 		RecoveryMode:         "watchdog_restart",

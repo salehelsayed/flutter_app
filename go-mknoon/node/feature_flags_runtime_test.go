@@ -39,7 +39,9 @@ func TestFeatureFlags_DefaultsRemainBackwardCompatible(t *testing.T) {
 // already-graduated flag — re-reds here:
 //
 //	EnableLibp2pLANDial  -> TRUE: graduated after FDC-11 D1 two-phone proof (CV-08 -> CV-09)
-//	EnableDcutrUpgrade   -> false (dark) until the FDC-12 DCUtR campaign     (CV-11/12 -> CV-13)
+//	EnableDcutrUpgrade   -> false (dark) PARKED by 188 Path 3: CV-11/12 closed at the
+//	                        host ceiling only; the flip re-opens solely with an Option B
+//	                        live-1:1-circuit decision, NOT on that closure (CV-13)
 //	EnableLibp2pLANMedia -> false (dark) until FDC-15 D1 LAN-media proof     (CV-34)
 func TestFeatureFlags_FdcTransportFlagsShipDarkUntilDeviceProof(t *testing.T) {
 	flags := DefaultFeatureFlags()
@@ -47,7 +49,7 @@ func TestFeatureFlags_FdcTransportFlagsShipDarkUntilDeviceProof(t *testing.T) {
 		t.Fatal("EnableLibp2pLANDial must default TRUE after FDC-11 D1 two-phone device-proof closed (CV-08 -> CV-09); a regression that re-darkens it breaks LAN-direct for every default install")
 	}
 	if flags.EnableDcutrUpgrade {
-		t.Fatal("EnableDcutrUpgrade must default false (dark) until the FDC-12 DCUtR device campaign closes (CV-11/12 -> CV-13)")
+		t.Fatal("EnableDcutrUpgrade must default false (dark) — PARKED by 188 Path 3 (2026-07-01): DCUtR-1:1 is dead machinery under store-and-forward, so the CV-11/12 host-ceiling closure does NOT unlock the flip; only an Option B live-1:1-circuit decision re-opens CV-13")
 	}
 	if flags.EnableLibp2pLANMedia {
 		t.Fatal("EnableLibp2pLANMedia must default false (dark) until FDC-15 D1 LAN-media device-proof closes (CV-34)")

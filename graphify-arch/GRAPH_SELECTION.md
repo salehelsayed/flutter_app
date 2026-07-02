@@ -11,15 +11,15 @@
 ## Metrics
 | Metric | Full | Architecture | Delta |
 | --- | ---: | ---: | ---: |
-| nodes | 107067 | 43164 | -59.69% |
-| edges | 181134 | 67252 | -62.87% |
-| communities | 4517 | 933 | -79.34% |
-| source files | 5645 | 2239 | -60.34% |
-| avg edges per node | 1.6918 | 1.5581 | -7.90% |
-| avg nodes per community | 23.7 | 46.26 | +95.19% |
-| app-owned ratio | 0.4415 | 0.9611 | +117.69% |
-| noise ratio | 0.2043 | 0.0 | -100.00% |
-| unknown-source ratio | 0.0189 | 0.0389 | +105.82% |
+| nodes | 107741 | 43266 | -59.84% |
+| edges | 182256 | 67450 | -62.99% |
+| communities | 4521 | 920 | -79.65% |
+| source files | 5704 | 2248 | -60.59% |
+| avg edges per node | 1.6916 | 1.559 | -7.84% |
+| avg nodes per community | 23.83 | 47.03 | +97.36% |
+| app-owned ratio | 0.4438 | 0.9611 | +116.56% |
+| noise ratio | 0.2073 | 0.0 | -100.00% |
+| unknown-source ratio | 0.0188 | 0.0389 | +106.91% |
 | top-10 hub noise ratio | 0.5 | 0.0 | -100.00% |
 
 ## Top Hubs
@@ -27,7 +27,7 @@ Full graph top hubs:
 - `sqlite3.c` (4359 edges, noise) `ios/Pods/SQLCipher/sqlite3.c`
 - `sqlite3.c` (4359 edges, noise) `macos/Pods/SQLCipher/sqlite3.c`
 - `_` (2064 edges, noise) `integration_test/group_multi_party_device_real_harness.dart`
-- `package:flutter_test/flutter_test.dart` (1047 edges, signal) ``
+- `package:flutter_test/flutter_test.dart` (1049 edges, signal) ``
 - `SQLITE_PRIVATE` (1036 edges, noise) `ios/Pods/SQLCipher/sqlite3.c`
 - `SQLITE_PRIVATE` (1036 edges, noise) `macos/Pods/SQLCipher/sqlite3.c`
 - `app_localizations.dart` (770 edges, signal) `lib/l10n/app_localizations.dart`
@@ -37,15 +37,15 @@ Full graph top hubs:
 
 Architecture graph top hubs:
 - `group_multi_party_device_real_harness.dart` (2029 edges, signal) `integration_test/group_multi_party_device_real_harness.dart`
-- `package:flutter_test/flutter_test.dart` (1047 edges, signal) ``
+- `package:flutter_test/flutter_test.dart` (1051 edges, signal) ``
 - `group_multi_party_device_criteria.dart` (684 edges, signal) `integration_test/scripts/group_multi_party_device_criteria.dart`
-- `main.dart` (594 edges, signal) `lib/main.dart`
+- `main.dart` (599 edges, signal) `lib/main.dart`
 - `package:flutter/material.dart` (425 edges, signal) ``
-- `dart:convert` (422 edges, signal) ``
+- `dart:convert` (423 edges, signal) ``
 - `group_multi_party_device_criteria_test.dart` (398 edges, signal) `test/integration/group_multi_party_device_criteria_test.dart`
 - `group_conversation_wired.dart` (370 edges, signal) `lib/features/groups/presentation/screens/group_conversation_wired.dart`
+- `package:flutter_app/core/utils/flow_event_emitter.dart` (357 edges, signal) ``
 - `conversation_wired.dart` (354 edges, signal) `lib/features/conversation/presentation/screens/conversation_wired.dart`
-- `package:flutter_app/core/utils/flow_event_emitter.dart` (354 edges, signal) ``
 
 ## Method
 - Efficiency means fewer nodes, fewer edges, fewer communities, and lower average traversal breadth for the same app-level question.

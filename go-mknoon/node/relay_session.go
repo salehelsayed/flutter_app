@@ -37,6 +37,14 @@ type RelaySessionState struct {
 	// attempts have failed. Reset to 0 on any successful refresh.
 	// When this reaches WatchdogMaxConsecutiveFailures, the watchdog triggers.
 	ConsecutiveRefreshFailures int `json:"consecutiveRefreshFailures"`
+
+	// ManualReservationExpiry (plan 189 reservation-truth): while set and in
+	// the future, this session's Reserved state was proven by an EXPLICIT
+	// relayclient.Reserve success and must not be demoted just because no
+	// /p2p-circuit address is advertised (in go-libp2p v0.39.1 only autorelay's
+	// relayFinder publishes those, and only for public/DNS relay addrs).
+	// Cleared on relay disconnect — the relay purges the slot with the conn.
+	ManualReservationExpiry time.Time `json:"manualReservationExpiry,omitempty"`
 }
 
 // --- Aggregate Relay Session State ---
@@ -60,6 +68,13 @@ const WatchdogMaxConsecutiveFailures = 5
 // recovery promise before giving up. This prevents permanent hangs when the
 // owning goroutine stalls (panic, deadlock, network hang).
 const RecoveryWaitTimeout = 30 * time.Second
+
+// DefaultManualReservationHold bounds a manual-reservation hold when the
+// Reserve response carries no expiration (plan 189). Conservative fraction of
+// the circuit-v2 default reservation TTL (1h) so a stale hold cannot outlive
+// the relay-side slot by much; a fresh hold is re-established by the next
+// recovery attempt's explicit Reserve.
+const DefaultManualReservationHold = 30 * time.Minute
 
 // RelaySessionManager tracks per-relay reservation state and provides
 // aggregate health without requiring a full host restart.
@@ -216,9 +231,51 @@ func (m *RelaySessionManager) OnReservationEnded(peerID peer.ID) {
 
 	s.State = RelayStateDegraded
 	s.LastErrorAt = time.Now()
+	s.ManualReservationExpiry = time.Time{}
 
 	log.Printf("[RELAY_SESSION] Reservation ended for %s", pidStr[:min(20, len(pidStr))])
 	m.recomputeAggregateLocked()
+}
+
+// OnManualReservationOpened records a successful EXPLICIT relayclient.Reserve
+// (plan 189 reservation-truth). The relay now holds a live slot for this node
+// even if autorelay never advertises a /p2p-circuit address, so the session
+// counts as reserved until the reservation's own expiration.
+func (m *RelaySessionManager) OnManualReservationOpened(peerID peer.ID, expiration time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	pidStr := peerID.String()
+	s, ok := m.sessions[pidStr]
+	if !ok {
+		s = &RelaySessionState{PeerID: peerID, State: RelayStateDisconnected}
+		m.sessions[pidStr] = s
+	}
+
+	if expiration.IsZero() {
+		expiration = time.Now().Add(DefaultManualReservationHold)
+	}
+	s.State = RelayStateReserved
+	s.LastReservedAt = time.Now()
+	s.ManualReservationExpiry = expiration
+	s.FailCount = 0
+	s.LastError = ""
+
+	log.Printf("[RELAY_SESSION] Manual reservation opened for %s (hold until %s)",
+		pidStr[:min(20, len(pidStr))], expiration.Format(time.RFC3339))
+	m.recomputeAggregateLocked()
+}
+
+// HasActiveManualReservation reports whether this relay session is reserved
+// under a live manual-reservation hold (explicit Reserve, not yet expired).
+func (m *RelaySessionManager) HasActiveManualReservation(peerID peer.ID) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	s := m.sessions[peerID.String()]
+	return s != nil && s.State == RelayStateReserved &&
+		!s.ManualReservationExpiry.IsZero() &&
+		time.Now().Before(s.ManualReservationExpiry)
 }
 
 // OnRequestFailed records a reservation request failure without triggering host restart.
@@ -302,6 +359,9 @@ func (m *RelaySessionManager) OnDisconnected(peerID peer.ID) {
 	}
 
 	s.State = RelayStateDegraded
+	// 189: the relay purges its reservation slot with the connection, so a
+	// manual-reservation hold must die here too.
+	s.ManualReservationExpiry = time.Time{}
 	m.recomputeAggregateLocked()
 }
 

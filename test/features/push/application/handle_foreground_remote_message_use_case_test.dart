@@ -322,6 +322,66 @@ void main() {
       expect(events.last.details['error'], contains('boom'));
     });
 
+    test(
+      '191: plugin-canonical APNs data fixture routes to conversation drain',
+      () async {
+        var oneToOneCalls = 0;
+        final drainedGroups = <String>[];
+        late ForegroundRemoteMessageResult result;
+
+        final events = await _captureFlowEvents(() async {
+          result = await handleForegroundRemoteMessage(
+            data: pluginCanonicalNewMessageData(),
+            // gcm.message_id is surfaced as RemoteMessage.messageId by the plugin.
+            messageId: 'msg-apns-1',
+            drainOfflineInbox: () async {
+              oneToOneCalls += 1;
+            },
+            drainGroupOfflineInboxForGroup: (groupId) async {
+              drainedGroups.add(groupId);
+            },
+          );
+        });
+
+        expect(result, ForegroundRemoteMessageResult.drained);
+        expect(oneToOneCalls, 1);
+        expect(drainedGroups, isEmpty);
+        expect(events, hasLength(1));
+        expect(events.single.event, 'PUSH_FOREGROUND_MESSAGE_ROUTED');
+        expect(events.single.details['kind'], 'conversation');
+        expect(events.single.details['hasMessageId'], isTrue);
+      },
+    );
+
+    test(
+      '191: plugin-canonical unroutable data fixture → UNROUTABLE + no drain',
+      () async {
+        var oneToOneCalls = 0;
+        final drainedGroups = <String>[];
+        late ForegroundRemoteMessageResult result;
+
+        final events = await _captureFlowEvents(() async {
+          result = await handleForegroundRemoteMessage(
+            data: pluginCanonicalUnroutableData(),
+            messageId: 'msg-apns-unroutable',
+            drainOfflineInbox: () async {
+              oneToOneCalls += 1;
+            },
+            drainGroupOfflineInboxForGroup: (groupId) async {
+              drainedGroups.add(groupId);
+            },
+          );
+        });
+
+        expect(result, ForegroundRemoteMessageResult.unroutable);
+        expect(oneToOneCalls, 0);
+        expect(drainedGroups, isEmpty);
+        expect(events, hasLength(1));
+        expect(events.single.event, 'PUSH_FOREGROUND_MESSAGE_UNROUTABLE');
+        expect(events.single.details['type'], 'post_create');
+      },
+    );
+
     test('missing or non-string message ids do not block routing', () async {
       final drainedGroups = <String>[];
 

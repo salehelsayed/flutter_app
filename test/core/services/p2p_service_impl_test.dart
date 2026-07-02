@@ -5769,9 +5769,19 @@ void main() {
             'relayState': 'online',
           }),
         );
+        // 189: the resume health check now ALSO drains the offline inbox
+        // (drain-on-every-tick, Fix A). A drain that succeeds is a legitimate
+        // FRESH inbox proof for the new window — so this test's subject
+        // (stale proofs must not be REUSED) needs the degraded relay to fail
+        // retrieve_pending during the resume tick.
+        var retrievePendingFails = false;
         bridge.whenCommand(
           'inbox:retrieve_pending',
-          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+          (_) => jsonEncode(
+            retrievePendingFails
+                ? {'ok': false, 'errorCode': 'RELAY_DEGRADED'}
+                : {'ok': true, 'messages': [], 'hasMore': false},
+          ),
         );
         var inboxStoreCallCount = 0;
         bridge.whenCommand('inbox:store', (_) {
@@ -5800,6 +5810,7 @@ void main() {
           BadgeReadinessState.onlineDotted,
         );
 
+        retrievePendingFails = true;
         service.markResumeStarted();
         final events = await _captureFlowEvents(() async {
           await service.performImmediateHealthCheck();

@@ -52,6 +52,14 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   # 171: one-scan mutual contact add — two-party convergence host lock.
   "test/features/contact_request/integration/contact_request_one_scan_mutual_test.dart"
   "test/features/identity/domain/repositories/identity_repository_impl_test.dart"
+  # 189: degraded-relay drain starvation + restart-loop locks (drain on every
+  # health-check tick, truthful phase=recovered, recovery backoff).
+  "test/core/services/p2p_service_impl_health_drain_test.dart"
+  # 191: iOS foreground-push forwarding hardening — Dart half (FirebaseReadiness
+  # retry latch + PushListenerArmer PUSH_LISTENERS_ARMED / readiness-driven third
+  # arm point). Auto-glob into feature-host-all; pinned here for the 1to1 host gate.
+  "test/features/push/application/firebase_readiness_test.dart"
+  "test/features/push/application/push_listener_armer_test.dart"
 )
 
 readonly GO_BRIDGE_CONNECTED_PEER_TEST="go-mknoon/bridge/bridge_test.go"
@@ -60,6 +68,12 @@ readonly GO_BRIDGE_CONNECTED_PEER_TEST="go-mknoon/bridge/bridge_test.go"
 # below is the plan's mandatory regression catcher (Makefile `test: go test
 # ./...` is manual + pulls vendored third_party, so it does not satisfy this).
 readonly GO_NODE_KEYROTATION_TEST="go-mknoon/node"
+# 190 (Android netlink SELinux addr-visibility): the go-multiaddr/anet fork
+# suite runs in NO Flutter gate (run_test_gates.sh has zero Go). Pin it into
+# host-all as a synthetic path, WITH the GOTOOLCHAIN pin the two Go targets
+# above lack (Go 1.26.x quic-go panic — see go.mod). Fork-module unit tests
+# (third_party/go-multiaddr/net) are a separate module, run via their own gate.
+readonly GO_NODE_ADDR_VISIBILITY_TEST="go-mknoon/node/addr_visibility_denial_test.go"
 
 usage() {
   cat <<'EOF'
@@ -163,6 +177,7 @@ case "$scope" in
       rg --files test -g '*_test.dart' | awk '$0 !~ /^test\/performance\//' | sort
       printf '%s\n' "$GO_BRIDGE_CONNECTED_PEER_TEST"
       printf '%s\n' "$GO_NODE_KEYROTATION_TEST"
+      printf '%s\n' "$GO_NODE_ADDR_VISIBILITY_TEST"
     } >"$plan_file"
     ;;
   feature-host-all)
@@ -237,6 +252,12 @@ is_go_node_keyrotation_test() {
   [ "$1" = "$GO_NODE_KEYROTATION_TEST" ]
 }
 
+is_go_node_addr_visibility_test() {
+  [ "$1" = "$GO_NODE_ADDR_VISIBILITY_TEST" ]
+}
+
+readonly GO_NODE_ADDR_VISIBILITY_RUN='AnnouncedAddrsSurvive|SignedPeerRecord|IdentifyLearnedAddr|InterfaceChangeUpdates|Fdc11PortMining|NoEnumerationErrorSpam|NotSuppressed|HolePunchInputAddrs|DoesNotLeakNonRoutable'
+
 print_command_for_path() {
   local path="$1"
   if is_go_bridge_connected_peer_test "$path"; then
@@ -245,6 +266,10 @@ print_command_for_path() {
   fi
   if is_go_node_keyrotation_test "$path"; then
     printf "(cd go-mknoon && go test ./node -run 'UDME|EmitGroupDecryptionFailed|GroupTopicValidator|HandleGroupSubscription|GroupKey|DecryptGroupEnvelopePayload|KeyRotation' -count=1)"
+    return
+  fi
+  if is_go_node_addr_visibility_test "$path"; then
+    printf "(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node/ -run '%s' -count=1)" "$GO_NODE_ADDR_VISIBILITY_RUN"
     return
   fi
   printf 'flutter test %s' "$(quote_for_display "$path")"
@@ -258,6 +283,10 @@ run_path() {
   fi
   if is_go_node_keyrotation_test "$path"; then
     (cd go-mknoon && go test ./node -run 'UDME|EmitGroupDecryptionFailed|GroupTopicValidator|HandleGroupSubscription|GroupKey|DecryptGroupEnvelopePayload|KeyRotation' -count=1)
+    return
+  fi
+  if is_go_node_addr_visibility_test "$path"; then
+    (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node/ -run "$GO_NODE_ADDR_VISIBILITY_RUN" -count=1)
     return
   fi
   flutter test "$path"

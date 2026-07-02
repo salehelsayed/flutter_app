@@ -27,6 +27,16 @@ import UserNotifications
   private let appGroupPathChannelName = "mknoon/app_group_path"
   private var appGroupPathChannel: FlutterMethodChannel?
 
+  // 191 (Fix N1): the FCM plugin's published UNUserNotificationCenterDelegate,
+  // captured at plugin-registration time (scene-connect). Under UIScene the
+  // plugin's own launch wiring — deferred into a
+  // UIApplicationDidFinishLaunchingNotification observer that never fires — never
+  // registers it into the engine's UN-callback chain, so a foreground push never
+  // reaches Dart's FirebaseMessaging.onMessage. We forward willPresent to this
+  // instance explicitly (see userNotificationCenter(_:willPresent:...)). Nil is
+  // a fail-safe: willPresent falls through to super → the 189 periodic-drain grid.
+  private var fcmMessagingPluginDelegate: UNUserNotificationCenterDelegate?
+
   deinit {
     NotificationCenter.default.removeObserver(self)
   }
@@ -71,9 +81,41 @@ import UserNotifications
     willPresent notification: UNNotification,
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
-    logApnsProviderProbeNotification(
-      context: "willPresent",
-      userInfo: notification.request.content.userInfo
+    let userInfo = notification.request.content.userInfo
+    logApnsProviderProbeNotification(context: "willPresent", userInfo: userInfo)
+
+    // 191 (Fix N1): forward FCM-shaped foreground notifications to the FCM
+    // plugin's published delegate so its willPresent → Messaging#onMessage →
+    // Dart FirebaseMessaging.onMessage runs (the push-triggered inbox drain that
+    // never fired under UIScene). The plugin gates on gcm.message_id, self-
+    // dedupes via _foregroundUniqueIdentifier, and completes EXACTLY ONCE with
+    // the persisted presentation options (0 — no banner). FLN payloads, non-FCM
+    // notifications, and the nil-ref fail-safe all take super — byte-identical
+    // to pre-191 (nil-ref degrades to the 189 periodic-drain grid). didReceive
+    // is deliberately NOT forwarded (that would double-route taps — the 139 bug).
+    let decision = ForegroundPushForwardPolicy.decide(
+      userInfo: userInfo,
+      hasFcmPluginRef: fcmMessagingPluginDelegate != nil
+    )
+    if decision == .forwardToFcmPlugin,
+      let plugin = fcmMessagingPluginDelegate,
+      plugin.responds(
+        to: #selector(
+          UNUserNotificationCenterDelegate.userNotificationCenter(
+            _:willPresent:withCompletionHandler:))) {
+      NSLog("[PUSH_DIAG] willPresent_forward_to_fcm_plugin")
+      plugin.userNotificationCenter?(
+        center,
+        willPresent: notification,
+        withCompletionHandler: completionHandler
+      )
+      return
+    }
+
+    NSLog(
+      "[PUSH_DIAG] willPresent_super_path fcm_plugin_ref=%@ fcm_shaped=%@",
+      fcmMessagingPluginDelegate != nil ? "present" : "nil",
+      ForegroundPushForwardPolicy.isFcmShaped(userInfo) ? "true" : "false"
     )
     super.userNotificationCenter(
       center,
@@ -142,6 +184,7 @@ import UserNotifications
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    captureFcmMessagingPluginDelegate(registry: engineBridge.pluginRegistry)
     installNotificationCenterDelegate(context: "after_implicit_engine_plugin_registration")
     let messenger = engineBridge.applicationRegistrar.messenger()
     setupIosNotificationOpenBridge(messenger: messenger)
@@ -153,6 +196,29 @@ import UserNotifications
     goBridge = GoBridge(messenger: messenger)
     NSLog("[GoBridge] Initialized via applicationRegistrar messenger")
 #endif
+  }
+
+  // 191 (Fix N1): capture the FCM plugin's published UNUserNotificationCenterDelegate.
+  // The plugin publishes its instance (`[registrar publish:instance]`) under the
+  // registrar key GeneratedPluginRegistrant uses
+  // (`registrarForPlugin:@"FLTFirebaseMessagingPlugin"`), so it is retrievable via
+  // the public `valuePublished(byPlugin:)` surface — no pod-header import needed.
+  // If the key ever drifts (plugin upgrade), the ref is nil and willPresent
+  // fails safe to super; the diag below makes that observable on-device.
+  private func captureFcmMessagingPluginDelegate(registry: FlutterPluginRegistry) {
+    let published = registry.valuePublished(byPlugin: "FLTFirebaseMessagingPlugin")
+    if let delegate = published as? UNUserNotificationCenterDelegate {
+      fcmMessagingPluginDelegate = delegate
+      NSLog(
+        "[PUSH_DIAG] fcm_plugin_ref found class=%@",
+        String(describing: type(of: delegate))
+      )
+    } else {
+      NSLog(
+        "[PUSH_DIAG] fcm_plugin_ref nil published=%@",
+        String(describing: published)
+      )
+    }
   }
 
   @objc private func handleDidBecomeActiveNotification() {
