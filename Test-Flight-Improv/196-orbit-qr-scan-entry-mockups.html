@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>196 · QR enters the Orbit — placement alternatives</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --page-bg:#0C0E13;
+    --card-bg:#12151C;
+    --ink:#F2F5F8;
+    --muted:#9AA3B2;
+    --faint:#6B7382;
+    --hairline:rgba(255,255,255,0.08);
+    --green:#1DB954;
+    --ring-teal:rgba(129,230,217,0.25);
+    --ring-purple:rgba(167,139,250,0.20);
+    --display:'Space Grotesk',-apple-system,BlinkMacSystemFont,sans-serif;
+    --body:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    --mono:ui-monospace,'SF Mono',Menlo,monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--page-bg);color:var(--ink);font-family:var(--body);-webkit-font-smoothing:antialiased}
+
+  /* ---------- page chrome ---------- */
+  .wrap{max-width:1280px;margin:0 auto;padding:56px 32px 80px}
+  header.hero{position:relative;padding:24px 0 44px;overflow:visible}
+  .hero-orbit{position:absolute;top:-120px;right:-60px;pointer-events:none;opacity:.9}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:2.5px;color:var(--green);text-transform:uppercase}
+  h1{font-family:var(--display);font-weight:700;font-size:clamp(30px,4vw,44px);letter-spacing:-0.5px;margin:14px 0 16px;max-width:720px}
+  .brief{font-size:15px;line-height:1.65;color:var(--muted);max-width:680px}
+  .brief b{color:var(--ink);font-weight:600}
+
+  /* before-exhibit strip */
+  .before{margin-top:36px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}
+  .before-label{font-family:var(--mono);font-size:11px;letter-spacing:1.5px;color:var(--faint);text-transform:uppercase;white-space:nowrap}
+  .before-strip{flex:0 1 460px;min-width:340px;background:#000;border:1px solid var(--hairline);border-radius:14px;padding:14px 18px;display:flex;align-items:center}
+  .before-strip .title{font-size:16px;font-weight:600;color:#F8FAFC}
+  .before-strip .spacer{flex:1}
+  .before-note{font-size:12.5px;color:var(--faint);max-width:300px;line-height:1.5}
+
+  /* ---------- option grid ---------- */
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-top:12px}
+  @media(max-width:1120px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--card-bg);border:1px solid var(--hairline);border-radius:20px;padding:26px;display:flex;gap:26px;align-items:flex-start}
+  @media(max-width:640px){.card{flex-direction:column;align-items:center}}
+  .notes{flex:1;min-width:0;padding-top:6px}
+  .opt-eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:2px;color:var(--green);text-transform:uppercase;display:flex;align-items:center;gap:10px}
+  .tag{font-family:var(--mono);font-size:9.5px;letter-spacing:1px;padding:3px 8px;border-radius:999px;border:1px solid rgba(29,185,84,0.45);color:var(--green)}
+  .tag.gray{border-color:rgba(255,255,255,0.2);color:var(--muted)}
+  .opt-name{font-family:var(--display);font-size:24px;font-weight:600;margin:10px 0 8px;letter-spacing:-0.3px}
+  .thesis{font-size:14px;line-height:1.6;color:var(--muted);margin-bottom:18px}
+  .nlabel{font-family:var(--mono);font-size:10px;letter-spacing:1.8px;color:var(--faint);text-transform:uppercase;margin:16px 0 8px}
+  .notes ul{list-style:none}
+  .notes li{font-size:13px;line-height:1.55;color:var(--muted);padding-left:16px;position:relative;margin-bottom:7px}
+  .notes li::before{content:'';position:absolute;left:2px;top:8px;width:5px;height:5px;border-radius:50%;background:rgba(129,230,217,0.5)}
+  .notes li.warn::before{background:rgba(255,107,107,0.55)}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:18px}
+  .chip{font-family:var(--mono);font-size:10.5px;color:var(--faint);border:1px solid var(--hairline);border-radius:6px;padding:4px 8px}
+
+  /* ---------- footer ---------- */
+  .verdict{margin-top:44px;border:1px solid rgba(29,185,84,0.3);background:linear-gradient(180deg,rgba(29,185,84,0.06),rgba(29,185,84,0.02));border-radius:20px;padding:28px 30px}
+  .verdict h2{font-family:var(--display);font-size:20px;font-weight:600;margin:8px 0 10px}
+  .verdict p{font-size:14px;line-height:1.65;color:var(--muted);max-width:860px}
+  .shared{margin-top:26px;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
+  .shared .note{border:1px solid var(--hairline);border-radius:14px;padding:16px 18px;font-size:12.5px;line-height:1.6;color:var(--muted)}
+  .shared .note b{color:var(--ink);font-weight:600;display:block;margin-bottom:4px;font-size:12px;font-family:var(--mono);letter-spacing:1px;text-transform:uppercase}
+  .colophon{margin-top:34px;font-family:var(--mono);font-size:10.5px;color:var(--faint);letter-spacing:.5px;line-height:1.8}
+
+  /* ---------- phone frame ---------- */
+  .phone-wrap{flex:0 0 285px;width:285px;height:616px;position:relative}
+  .phone{width:390px;height:844px;transform:scale(0.727);transform-origin:top left;background:#000;border-radius:54px;border:1.5px solid rgba(255,255,255,0.10);overflow:hidden;position:relative;box-shadow:0 30px 70px rgba(0,0,0,0.55)}
+  .island{position:absolute;top:12px;left:50%;transform:translateX(-50%);width:112px;height:32px;background:#000;border:1px solid rgba(255,255,255,0.05);border-radius:20px;z-index:60}
+
+  /* ambient background (ambient_background.dart) */
+  .blob{position:absolute;border-radius:50%;pointer-events:none}
+  .blob.green{width:300px;height:300px;top:-100px;left:-100px;background:radial-gradient(circle,rgba(29,185,84,0.30) 0%,rgba(29,185,84,0) 70%);animation:driftA 8s ease-in-out infinite alternate}
+  .blob.red{width:350px;height:350px;bottom:-100px;right:-100px;background:radial-gradient(circle,rgba(255,50,50,0.25) 0%,rgba(255,50,50,0) 70%);animation:driftB 9s ease-in-out infinite alternate}
+  @keyframes driftA{from{transform:translate(0,0)}to{transform:translate(30px,20px)}}
+  @keyframes driftB{from{transform:translate(0,0)}to{transform:translate(-25px,-30px)}}
+
+  /* status bar */
+  .statusbar{position:absolute;top:0;left:0;right:0;height:54px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 30px 6px;z-index:50}
+  .sb-time{font-size:15px;font-weight:600;color:#fff;font-family:var(--body)}
+  .sb-icons{display:flex;gap:6px;align-items:center}
+
+  /* top chrome: 193 toggle + create fab (orbit_view_toggle_button.dart / glow_fab.dart) */
+  .chrome-btn{position:absolute;top:62px;width:40px;height:40px;border-radius:50%;background:rgba(16,18,24,0.75);border:0.5px solid rgba(255,255,255,0.50);display:flex;align-items:center;justify-content:center;z-index:40}
+  .chrome-btn svg{width:20px;height:20px;color:#F8FAFC}
+  .toggle{left:16px}
+  .glow-fab{position:absolute;top:62px;right:16px;width:40px;height:40px;border-radius:50%;background:#1A1A2E;border:2px solid #64B5F6;box-shadow:0 0 12px 1px rgba(100,181,246,0.8);display:flex;align-items:center;justify-content:center;z-index:40}
+  .glow-fab svg{width:22px;height:22px;color:#fff}
+
+  /* orbital stage (orbital_visualization.dart) */
+  .stage{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:10}
+  .stage-title{font-size:14px;font-weight:600;letter-spacing:1px;color:rgba(201,206,214,0.72);margin-bottom:24px}
+  .orbit-box{width:320px;height:320px;position:relative}
+  .caption{font-size:14px;color:rgba(201,206,214,0.72);margin-top:20px}
+
+  .node{position:absolute;width:48px;height:48px;display:flex;align-items:center;justify-content:center;animation:nodeIn .5s ease both}
+  @keyframes nodeIn{from{transform:scale(0);opacity:0}to{transform:scale(1);opacity:1}}
+  .node .ring-b{border-radius:50%;display:flex;align-items:center;justify-content:center}
+  .avatar{border-radius:50%;overflow:hidden;display:block}
+  .unread-orbit{position:absolute;pointer-events:none;animation:spin 9s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* nav pill (feed_navigation_bar.dart / nav_bar_theme.dart) */
+  .navbar{position:absolute;bottom:20px;left:0;right:0;display:flex;justify-content:center;z-index:30}
+  .nav-pill{display:flex;gap:5px;padding:5px 6px;border-radius:30px;background:linear-gradient(180deg,rgba(255,255,255,0.18),rgba(255,255,255,0.10));border:1px solid rgba(255,255,255,0.30);backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);box-shadow:0 4px 16px rgba(0,0,0,0.12)}
+  .nav-btn{width:70px;border-radius:19px;padding:7px 0 6px;display:flex;flex-direction:column;align-items:center;gap:2px;position:relative}
+  .nav-btn svg{width:18px;height:18px}
+  .nav-btn span{font-size:11px;font-weight:500;color:rgba(255,255,255,0.55)}
+  .nav-btn svg{color:rgba(255,255,255,0.60)}
+  .nav-btn.active{background:linear-gradient(180deg,rgba(255,255,255,0.25),rgba(255,255,255,0.12))}
+  .nav-btn.active svg{color:#fff}
+  .nav-btn.active span{color:#fff;font-weight:600}
+  .nav-badge{position:absolute;top:-4px;right:-2px;min-width:18px;padding:1px 5px;border-radius:10px;background:linear-gradient(180deg,#FF3B30,#E0342A);box-shadow:0 0 8px rgba(255,59,48,0.4);font-size:10px;font-weight:700;color:#fff;text-align:center}
+
+  /* the existing pill, verbatim (friends_list_header.dart _PillButton) */
+  .qr-pill{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;background:rgba(29,185,84,0.15);border:1px solid rgba(29,185,84,0.30);color:#157A39;font-size:13px;font-weight:600;font-family:var(--body);white-space:nowrap}
+  .qr-pill svg{width:16px;height:16px}
+
+  /* option A dock */
+  .dock{position:absolute;bottom:92px;left:0;right:0;display:flex;justify-content:center;gap:8px;z-index:25}
+
+  /* option B top pair */
+  .top-pair{position:absolute;top:62px;left:50%;transform:translateX(-50%);display:flex;gap:8px;z-index:40}
+  .top-pair .chrome-btn{position:static}
+
+  /* option C ring satellites */
+  .satellite{position:absolute;width:48px;height:48px;display:flex;align-items:center;justify-content:center;z-index:20;animation:nodeIn .5s ease both}
+  .sat-core{width:40px;height:40px;border-radius:50%;background:rgba(16,18,24,0.88);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);box-shadow:0 0 12px rgba(29,185,84,0.18);display:flex;align-items:center;justify-content:center;position:relative}
+  .sat-core svg:not(.sat-dash){width:18px;height:18px;color:#1DB954;position:relative;z-index:2}
+  .sat-core svg.sat-dash{position:absolute;inset:0;width:100%;height:100%;z-index:1}
+  .sat-label{position:absolute;top:51px;left:50%;transform:translateX(-50%);font-size:10.5px;font-weight:600;color:rgba(216,222,230,0.85);white-space:nowrap}
+
+  /* option D identity hub */
+  .me-badge{position:absolute;right:-5px;bottom:-5px;width:18px;height:18px;border-radius:50%;background:#1DB954;border:2px solid #000;display:flex;align-items:center;justify-content:center;z-index:5}
+  .me-badge svg{width:10px;height:10px;color:#000}
+  .scan-solo{margin-top:16px}
+
+  @media (prefers-reduced-motion: reduce){
+    *{animation:none!important;transition:none!important}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <svg class="hero-orbit" width="420" height="360" viewBox="0 0 420 360" fill="none">
+      <circle cx="300" cy="120" r="150" stroke="rgba(129,230,217,0.18)" stroke-width="1.5" stroke-dasharray="8 4"/>
+      <circle cx="300" cy="120" r="96" stroke="rgba(167,139,250,0.14)" stroke-width="1.5" stroke-dasharray="8 4"/>
+      <circle cx="300" cy="120" r="150" stroke="rgba(129,230,217,0.06)" stroke-width="8" filter="blur(4px)"/>
+      <circle cx="176" cy="204" r="4" fill="#1DB954"/>
+      <circle cx="176" cy="204" r="9" fill="rgba(29,185,84,0.16)"/>
+    </svg>
+    <div class="eyebrow">mknoon · orbit screen · exploration 196</div>
+    <h1>QR enters the Orbit</h1>
+    <p class="brief"><b>My QR</b> and <b>Scan</b> are leaving the all-chats header and need a home on the inner-circle surface. Four placements below — every frame reproduces the shipped screen: ambient glows, the 193 view toggle, the create button, dashed rings at r62/r108, and the 194 unread satellites.</p>
+    <div class="before">
+      <div class="before-label">Today → all-chats header</div>
+      <div class="before-strip">
+        <span class="title">Close Friends</span>
+        <span class="spacer"></span>
+        <span class="qr-pill" data-icon="qr" data-text="My QR"></span>
+        <span style="width:8px"></span>
+        <span class="qr-pill" data-icon="cam" data-text="Scan"></span>
+      </div>
+      <div class="before-note">The pills only exist on the list view (FriendsListHeader). The default inner-circle view has no path to either action.</div>
+    </div>
+  </header>
+
+  <main class="grid">
+
+    <article class="card">
+      <div class="phone-wrap"><div class="phone" id="phone-a"></div></div>
+      <div class="notes">
+        <div class="opt-eyebrow">Option A <span class="tag gray">safest ship</span></div>
+        <div class="opt-name">The Dock</div>
+        <p class="thesis">The two pills move down as they are, docked just above the Feed–Orbit pill where the thumb already lives.</p>
+        <div class="nlabel">Why it works</div>
+        <ul>
+          <li>Zero new vocabulary — ships the existing <code style="font-family:var(--mono);font-size:12px">_PillButton</code> untouched.</li>
+          <li>Bottom-center is the easiest reach on a 6.1″ phone.</li>
+          <li>Reads as one action zone together with the nav pill.</li>
+        </ul>
+        <div class="nlabel">Watch out</div>
+        <ul>
+          <li class="warn">Two stacked floating bars crowd the bottom and compete for attention.</li>
+          <li class="warn">On short screens the dock squeezes the empty-state hint.</li>
+        </ul>
+        <div class="chips"><span class="chip">bottom: 92</span><span class="chip">reuses _PillButton verbatim</span><span class="chip">RTL-safe (centered)</span></div>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="phone-wrap"><div class="phone" id="phone-b"></div></div>
+      <div class="notes">
+        <div class="opt-eyebrow">Option B</div>
+        <div class="opt-name">Quiet Chrome</div>
+        <p class="thesis">QR and Scan join the top strip as twin 40&nbsp;px circles — the same chrome species as the view toggle and the create button.</p>
+        <div class="nlabel">Why it works</div>
+        <ul>
+          <li>The top-center strip is empty; utilities already live on this row.</li>
+          <li>Perfectly consistent chrome: surfaceSubtle fill, hairline border, 20&nbsp;px glyph.</li>
+          <li>The orbit itself stays untouched — ceremony preserved.</li>
+        </ul>
+        <div class="nlabel">Watch out</div>
+        <ul>
+          <li class="warn">Worst thumb reach; four circles start to read as a toolbar.</li>
+          <li class="warn">No labels — the two glyphs must carry meaning alone.</li>
+        </ul>
+        <div class="chips"><span class="chip">top: safeTop+8</span><span class="chip">40px chrome circle ×2</span><span class="chip">RTL-safe (centered)</span></div>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="phone-wrap"><div class="phone" id="phone-c"></div></div>
+      <div class="notes">
+        <div class="opt-eyebrow">Option C <span class="tag">design pick</span></div>
+        <div class="opt-name">Ring Satellites</div>
+        <p class="thesis">Grow-your-circle actions ride the outer ring itself — two glass satellites docked on the bottom arc, in the vocabulary the +N overflow badge already established.</p>
+        <div class="nlabel">Why it works</div>
+        <ul>
+          <li>Strongest conceptual fit: scanning someone adds them to <em>this</em> orbit, so the entry point sits where new friends will appear.</li>
+          <li>The vocabulary exists — glass circle + dashed border already means "an object on the ring that isn't a person".</li>
+          <li>Green glyph + tiny label anchor meaning without breaking the constellation.</li>
+        </ul>
+        <div class="nlabel">Watch out</div>
+        <ul>
+          <li class="warn">Occupies 2 of 8 outer slots (13 → 11 visible friends before the +N badge).</li>
+          <li class="warn">Fixed geometry must dodge the overflow-badge slot.</li>
+        </ul>
+        <div class="chips"><span class="chip">outer-ring slots 3+4</span><span class="chip">θ = 60° / 105°</span><span class="chip">overflow-badge glass</span></div>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="phone-wrap"><div class="phone" id="phone-d"></div></div>
+      <div class="notes">
+        <div class="opt-eyebrow">Option D</div>
+        <div class="opt-name">Identity Hub</div>
+        <p class="thesis">Your QR is you — it lives as a badge on your avatar at the center of the orbit. Scan becomes the single outward action beneath the caption.</p>
+        <div class="nlabel">Why it works</div>
+        <ul>
+          <li>Semantically exact for My QR: the center node <em>is</em> your identity.</li>
+          <li>Halves the button count on a ceremonial surface.</li>
+          <li>The scan pill reuses the existing string "Scan a friend's code".</li>
+        </ul>
+        <div class="nlabel">Watch out</div>
+        <ul>
+          <li class="warn">My QR discoverability drops to an 18&nbsp;px badge — likely needs a first-run hint.</li>
+          <li class="warn">Splits a pair users learned together; center-avatar tap gains a new meaning.</li>
+        </ul>
+        <div class="chips"><span class="chip">18px badge on me-avatar</span><span class="chip">reuses home_scan_friend_title</span></div>
+      </div>
+    </article>
+
+  </main>
+
+  <section class="verdict">
+    <div class="eyebrow">recommendation</div>
+    <h2>C for the product, A for the calendar</h2>
+    <p><b>Ring Satellites</b> is the only option that makes the migration feel designed rather than relocated — the actions that grow the orbit live on the orbit, using glass-on-ring vocabulary the overflow badge already shipped. If it needs to land this week with zero visual review risk, <b>The Dock</b> moves the exact existing pills and touches nothing else. B and D are documented as considered-and-declined: B taxes the quiet top strip for the worst reach zone, D trades too much discoverability for elegance.</p>
+  </section>
+
+  <div class="shared">
+    <div class="note"><b>Destinations unchanged</b> Both actions keep their full-screen pushes — QRDisplayWired (white QR card, green glow) and QRScannerWired (camera + green corner markers). No sheets introduced.</div>
+    <div class="note"><b>What remains behind</b> After migration the all-chats header keeps only the "Close Friends" title; the search-active pill-hiding rule disappears with the pills.</div>
+    <div class="note"><b>Untouched chrome</b> Every option keeps the 193 view toggle (top-left, physical) and the create button (top-right) exactly where they are.</div>
+    <div class="note"><b>Color note</b> The pill accent #157A39 was tuned for the list surface. On the pure-black orbit canvas consider brightening icon/label to #1DB954 — flagged, not applied, in A and D.</div>
+  </div>
+
+  <p class="colophon">196-orbit-qr-scan-entry-mockups · geometry &amp; colors sourced from orbit_screen.dart, orbital_visualization.dart, orbital_ring_painter.dart, friends_list_header.dart, unread_orbit_indicator.dart, nav_bar_theme.dart, ambient_background.dart · rings r62/r108 dash 8/4 · avatars 48/38/30 · unread ring 1.35r @ #1DB954</p>
+</div>
+
+<script>
+/* ---------- shared icon set ---------- */
+const IC = {
+  qr: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 11h8V3H3v8zm2-6h4v4H5V5zM3 21h8v-8H3v8zm2-6h4v4H5v-4zM13 3v8h8V3h-8zm6 6h-4V5h4v4zM19 19h2v2h-2zM13 13h2v2h-2zM15 15h2v2h-2zM13 17h2v2h-2zM15 19h2v2h-2zM17 17h2v2h-2zM17 13h2v2h-2zM19 15h2v2h-2z"/></svg>',
+  cam: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 5h-3.17L15 3H9L7.17 5H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 14H4V7h4.05l1.83-2h4.24l1.83 2H20v12zM12 8c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zm0 8c-1.65 0-3-1.35-3-3s1.35-3 3-3 3 1.35 3 3-1.35 3-3 3z"/></svg>',
+  chat: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.17L4 17.17V4h16v12z"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  navFeed: '<svg viewBox="0 0 800 800" fill="none"><rect x="100" y="100" width="600" height="140" rx="24" stroke="currentColor" stroke-width="48"/><rect x="100" y="330" width="600" height="140" rx="24" stroke="currentColor" stroke-width="48"/><rect x="100" y="560" width="600" height="140" rx="24" stroke="currentColor" stroke-width="48"/></svg>',
+  navOrbit: '<svg viewBox="0 0 100 100" fill="none"><circle cx="50" cy="50" r="12" fill="currentColor"/><ellipse cx="50" cy="50" rx="40" ry="16" stroke="currentColor" stroke-width="4"/><ellipse cx="50" cy="50" rx="40" ry="16" stroke="currentColor" stroke-width="4" transform="rotate(60 50 50)"/><ellipse cx="50" cy="50" rx="40" ry="16" stroke="currentColor" stroke-width="4" transform="rotate(120 50 50)"/></svg>',
+};
+
+/* hydrate the before-strip pills */
+document.querySelectorAll('.qr-pill[data-icon]').forEach(p=>{
+  p.innerHTML = IC[p.dataset.icon] + '<span>' + p.dataset.text + '</span>';
+});
+
+/* ---------- ring avatar generator (ring_avatar_spec palette) ---------- */
+const PALETTE = ['#FF3B3B','#FFFFFF','#1A1A1A','#1DB954'];
+const HUES = [12,205,145,280,330,48,190,95,260,20,170,310,225,140];
+function ringAvatar(size, seed){
+  const r = size/2, hue = HUES[seed % HUES.length];
+  const order = [0,1,2,3].map(k => PALETTE[(seed*7 + k) % 4]);
+  const radii = [0.42,0.30,0.18].map(f => (size*f).toFixed(1));
+  let s = '<svg class="avatar" width="'+size+'" height="'+size+'" viewBox="0 0 '+size+' '+size+'" '
+        + 'style="box-shadow:0 0 '+(size*0.35).toFixed(1)+'px '+(size*0.05).toFixed(1)+'px hsla('+hue+',70%,50%,0.35);border-radius:50%">'
+        + '<circle cx="'+r+'" cy="'+r+'" r="'+r+'" fill="rgba(22,24,30,0.9)"/>';
+  radii.forEach((rr,i)=>{
+    const dash = (i===1) ? ' stroke-dasharray="3 2.2"' : '';
+    s += '<circle cx="'+r+'" cy="'+r+'" r="'+rr+'" stroke="'+order[i]+'" stroke-width="'+(size*0.055).toFixed(1)+'" fill="none" opacity="0.9"'+dash+'/>';
+  });
+  s += '<circle cx="'+r+'" cy="'+r+'" r="'+(size*0.07).toFixed(1)+'" fill="'+order[3]+'"/></svg>';
+  return s;
+}
+
+/* ---------- 194 unread indicator (unread_orbit_indicator.dart) ---------- */
+function unreadOrbit(avatarSize, count){
+  const ringR = (avatarSize/2)*1.35, core = avatarSize*0.06;
+  const pad = core*2.6 + 2, S = (ringR + pad)*2, c = S/2;
+  const angles = [0.6,3.3,5.1].slice(0, Math.min(count,3));
+  let s = '<svg class="unread-orbit" width="'+S.toFixed(1)+'" height="'+S.toFixed(1)+'" viewBox="0 0 '+S.toFixed(1)+' '+S.toFixed(1)+'" style="left:50%;top:50%;margin-left:-'+(S/2).toFixed(1)+'px;margin-top:-'+(S/2).toFixed(1)+'px">'
+        + '<circle cx="'+c+'" cy="'+c+'" r="'+ringR.toFixed(1)+'" stroke="rgba(29,185,84,0.55)" stroke-width="1.1" fill="none"/>';
+  angles.forEach(a=>{
+    const x = c + ringR*Math.cos(a), y = c + ringR*Math.sin(a);
+    s += '<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+(core*2.6).toFixed(1)+'" fill="rgba(29,185,84,0.16)"/>'
+       + '<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+core.toFixed(1)+'" fill="#1DB954"/>';
+  });
+  return s + '</svg>';
+}
+
+/* ---------- dashed circle for satellites (overflow_badge style) ---------- */
+function dashedCircle(size){
+  const r = size/2 - 0.5;
+  return '<svg class="sat-dash" width="'+size+'" height="'+size+'" viewBox="0 0 '+size+' '+size+'">'
+       + '<circle cx="'+(size/2)+'" cy="'+(size/2)+'" r="'+r+'" stroke="rgba(255,255,255,0.32)" stroke-width="1" stroke-dasharray="4 3" fill="none"/></svg>';
+}
+
+/* ---------- base orbit screen ---------- */
+function polarPos(r, deg){
+  const a = deg*Math.PI/180;
+  return [160 + r*Math.cos(a), 160 + r*Math.sin(a)];
+}
+
+function renderPhone(id, cfg){
+  const el = document.getElementById(id);
+  cfg = cfg || {};
+  const outerN = cfg.outerFriends != null ? cfg.outerFriends : 8;
+
+  let h = '<div class="blob green"></div><div class="blob red"></div>'
+    + '<div class="island"></div>'
+    + '<div class="statusbar"><span class="sb-time">9:41</span><span class="sb-icons">'
+    + '<svg width="17" height="11" viewBox="0 0 17 11" fill="#fff"><rect x="0" y="7" width="3" height="4" rx="0.8"/><rect x="4.5" y="5" width="3" height="6" rx="0.8"/><rect x="9" y="2.5" width="3" height="8.5" rx="0.8"/><rect x="13.5" y="0" width="3" height="11" rx="0.8"/></svg>'
+    + '<svg width="15" height="11" viewBox="0 0 15 11" fill="#fff"><path d="M7.5 11 L10 8 A4 4 0 0 0 5 8 Z"/><path d="M2.5 5.2 A7.5 7.5 0 0 1 12.5 5.2 L11 7 A5.2 5.2 0 0 0 4 7 Z" opacity="0.9"/><path d="M0 2.5 A11 11 0 0 1 15 2.5 L13.4 4.3 A8.7 8.7 0 0 0 1.6 4.3 Z" opacity="0.8"/></svg>'
+    + '<svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3" stroke="rgba(255,255,255,0.5)"/><rect x="2" y="2" width="15" height="8" rx="1.6" fill="#fff"/><path d="M23 4v4a2.2 2.2 0 0 0 0-4z" fill="rgba(255,255,255,0.5)"/></svg>'
+    + '</span></div>'
+    + '<div class="chrome-btn toggle">'+IC.chat+'</div>'
+    + '<div class="glow-fab">'+IC.plus+'</div>';
+
+  if (cfg.topPair){
+    h += '<div class="top-pair"><div class="chrome-btn">'+IC.qr+'</div><div class="chrome-btn">'+IC.cam+'</div></div>';
+  }
+
+  /* orbital stage */
+  h += '<div class="stage"><div class="stage-title">YOUR INNER CIRCLE</div><div class="orbit-box">';
+
+  /* dashed rings + glow underlay (orbital_ring_painter.dart) */
+  h += '<svg width="320" height="320" viewBox="0 0 320 320" style="position:absolute;inset:0;overflow:visible">'
+     + '<circle cx="160" cy="160" r="62" stroke="rgba(129,230,217,0.08)" stroke-width="8" fill="none" filter="blur(4px)"/>'
+     + '<circle cx="160" cy="160" r="108" stroke="rgba(129,230,217,0.08)" stroke-width="8" fill="none" filter="blur(4px)"/>'
+     + '<circle cx="160" cy="160" r="62" stroke="rgba(129,230,217,0.25)" stroke-width="1.5" stroke-dasharray="8 4" fill="none"/>'
+     + '<circle cx="160" cy="160" r="108" stroke="rgba(167,139,250,0.20)" stroke-width="1.5" stroke-dasharray="8 4" fill="none"/>'
+     + '</svg>';
+
+  /* center me avatar (48px, photo-frame border, green glow) */
+  h += '<div style="position:absolute;left:136px;top:136px;width:48px;height:48px;border-radius:50%;border:1px solid rgba(255,255,255,0.35);box-shadow:0 0 16.8px 2.4px hsla(141,70%,45%,0.35);display:flex;align-items:center;justify-content:center">'
+     + ringAvatar(46, 13)
+     + (cfg.centerBadge ? '<div class="me-badge">'+IC.qr+'</div>' : '')
+     + '</div>';
+
+  /* ring 1: 5 friends, 38px, r=62 */
+  for (let i=0;i<5;i++){
+    const [x,y] = polarPos(62, i*72 - 90);
+    const unread = (i===1) ? unreadOrbit(38,3) : '';
+    h += '<div class="node" style="left:'+(x-24).toFixed(1)+'px;top:'+(y-24).toFixed(1)+'px;animation-delay:'+(i*40)+'ms">'
+       + unread
+       + '<div class="ring-b" style="width:38px;height:38px;border:1.5px solid rgba(255,255,255,0.20)">'+ringAvatar(35, i)+'</div></div>';
+  }
+
+  /* ring 2: 8 slots at i*45-75; satellites (option C) take bottom-arc slots 3+4 */
+  const satSlots = cfg.satellites ? [3,4] : [];
+  let fi = 5;
+  for (let i=0;i<8;i++){
+    const [x,y] = polarPos(108, i*45 - 75);
+    if (satSlots.includes(i)){
+      const lbl = (i===3) ? 'Scan' : 'My QR', icon = (i===3) ? IC.cam : IC.qr;
+      h += '<div class="satellite" style="left:'+(x-24).toFixed(1)+'px;top:'+(y-24).toFixed(1)+'px;animation-delay:'+((5+i)*40)+'ms">'
+         + '<div class="sat-core">'+dashedCircle(40)+icon+'</div>'
+         + '<div class="sat-label">'+lbl+'</div></div>';
+      continue;
+    }
+    if (fi >= 5 + outerN) continue;
+    const unread = (i===6) ? unreadOrbit(30,1) : '';
+    h += '<div class="node" style="left:'+(x-24).toFixed(1)+'px;top:'+(y-24).toFixed(1)+'px;animation-delay:'+((5+i)*40)+'ms">'
+       + unread
+       + '<div class="ring-b" style="width:30px;height:30px;border:1px solid rgba(255,255,255,0.14)">'+ringAvatar(28, fi)+'</div></div>';
+    fi++;
+  }
+
+  h += '</div><div class="caption">Close Friends</div>';
+  if (cfg.scanPill){
+    h += '<div class="scan-solo"><span class="qr-pill">'+IC.cam+'<span>Scan a friend’s code</span></span></div>';
+  }
+  h += '</div>';
+
+  if (cfg.dock){
+    h += '<div class="dock"><span class="qr-pill">'+IC.qr+'<span>My QR</span></span><span class="qr-pill">'+IC.cam+'<span>Scan</span></span></div>';
+  }
+
+  /* nav bar */
+  h += '<div class="navbar"><div class="nav-pill">'
+     + '<div class="nav-btn">'+IC.navFeed+'<span>Feed</span><span class="nav-badge">2</span></div>'
+     + '<div class="nav-btn active">'+IC.navOrbit+'<span>Orbit</span></div>'
+     + '</div></div>';
+
+  el.innerHTML = h;
+}
+
+renderPhone('phone-a', {dock:true});
+renderPhone('phone-b', {topPair:true});
+renderPhone('phone-c', {satellites:true, outerFriends:6});
+renderPhone('phone-d', {centerBadge:true, scanPill:true});
+</script>
+</body>
+</html>

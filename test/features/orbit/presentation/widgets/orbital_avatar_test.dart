@@ -94,5 +94,52 @@ void main() {
 
       expect(taps, 1);
     });
+
+    // 194 TC-194-36 — repaint containment: the rotating satellite field must not
+    // rebuild the avatar's child subtree. Uses motionEnabled:false so the
+    // entrance is instant and only the indicator rotation is live; bounded pumps
+    // (the ~9s repeat never settles).
+    testWidgets('satellite rotation does not rebuild the avatar child subtree', (
+      tester,
+    ) async {
+      var buildCount = 0;
+      await tester.pumpWidget(
+        wrap(
+          OrbitalAvatar(
+            peerId: 'peer-123',
+            size: 38,
+            globalIndex: 0,
+            motionEnabled: false,
+            unreadCount: 2,
+            child: _CountingBuildProbe(onBuild: () => buildCount++),
+          ),
+        ),
+      );
+      await tester.pump();
+      final afterMount = buildCount;
+      expect(afterMount, greaterThan(0));
+
+      for (var i = 0; i < 30; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+
+      expect(
+        buildCount,
+        afterMount,
+        reason: 'the rotating satellite field must not rebuild the avatar child',
+      );
+    });
   });
+}
+
+class _CountingBuildProbe extends StatelessWidget {
+  const _CountingBuildProbe({required this.onBuild});
+
+  final VoidCallback onBuild;
+
+  @override
+  Widget build(BuildContext context) {
+    onBuild();
+    return const SizedBox(width: 10, height: 10);
+  }
 }

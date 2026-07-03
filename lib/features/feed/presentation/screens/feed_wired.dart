@@ -79,8 +79,6 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
-import 'package:flutter_app/features/orbit2/orbit2_prototype.dart';
-import 'package:flutter_app/features/orbit2/presentation/screens/orbit2_screen.dart';
 import 'package:flutter_app/features/orbit3/orbit3_prototype.dart';
 import 'package:flutter_app/features/orbit3/presentation/screens/orbit3_screen.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
@@ -277,6 +275,11 @@ class _FeedWiredState extends State<FeedWired>
   StreamSubscription<ContactRequestModel>? _requestSubscription;
   StreamSubscription<ConversationMessage>? _chatSubscription;
   StreamSubscription<ConversationMessage>? _repoChangeSubscription;
+  // 194x: conversation read-marking events (peerId) — the aggregate Feed unread
+  // badge must drop when a conversation is read on ANY surface, including the
+  // orbit avatar tap / notification route that mark read through the repo
+  // without traversing the feed's own leave-thread recompute.
+  StreamSubscription<String>? _conversationReadSubscription;
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
   StreamSubscription<ReactionChange>? _reactionSubscription;
   StreamSubscription<dynamic>? _groupMessageSubscription;
@@ -394,6 +397,7 @@ class _FeedWiredState extends State<FeedWired>
     _startListeningForContactRequests();
     _startListeningForChatMessages();
     _startListeningForOutgoingMessageChanges();
+    _startListeningForConversationReads();
     _startListeningForContactUpdates();
     _startListeningForReactions();
     _startListeningForGroupReactions();
@@ -1450,6 +1454,34 @@ class _FeedWiredState extends State<FeedWired>
             );
           },
         );
+  }
+
+  /// 194x: recompute the aggregate unread badge whenever a conversation is
+  /// marked read. `markConversationAsRead` writes silently to the DB and does
+  /// NOT emit on [MessageRepositoryChangeSource.messageChanges], so the
+  /// outgoing-change listener above never catches a read. The only feed path
+  /// that recomputes on read today is the feed's own leave-thread handler — a
+  /// read from the orbit avatar tap, a notification route, or the all-chats list
+  /// left the Feed badge stale until this seam.
+  void _startListeningForConversationReads() {
+    final messageRepo = widget.messageRepository;
+    if (messageRepo is! ConversationReadEventSource) {
+      return;
+    }
+    final readSource = messageRepo as ConversationReadEventSource;
+    _conversationReadSubscription = readSource.conversationReadStream.listen(
+      (_) {
+        if (!mounted) return;
+        unawaited(_loadTotalUnreadCount());
+      },
+      onError: (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'FEED_READ_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
+      },
+    );
   }
 
   bool _shouldProcessRepositoryChange(ConversationMessage message) =>
@@ -2596,6 +2628,7 @@ class _FeedWiredState extends State<FeedWired>
     _requestSubscription?.cancel();
     _chatSubscription?.cancel();
     _repoChangeSubscription?.cancel();
+    _conversationReadSubscription?.cancel();
     _contactUpdateSubscription?.cancel();
     _reactionSubscription?.cancel();
     _groupReactionSubscription?.cancel();
@@ -2623,22 +2656,8 @@ class _FeedWiredState extends State<FeedWired>
   @override
   Widget build(BuildContext context) {
     final activeTab = _activeTab;
-    // Temporary Orbit2 visuals prototype: render it directly when its tab is
-    // active (bypasses the 2-pane Feed/Orbit swipe host on purpose).
-    if (kOrbit2PrototypeEnabled && activeTab == AppShellTab.orbit2) {
-      return Scaffold(
-        resizeToAvoidBottomInset: false,
-        body: Orbit2Screen(
-          userPeerId: _peerId,
-          userAvatarBytes: _avatarBytes,
-          backgroundPreference: widget.appShellController.backgroundPreference,
-          activeTab: activeTab,
-          onSwitchView: _onSwitchView,
-        ),
-      );
-    }
-    // Temporary Orbit3 "One Circle" visuals prototype — same direct-mount as
-    // Orbit2 (bypasses the 2-pane Feed/Orbit swipe host on purpose).
+    // Temporary Orbit3 "One Circle" visuals prototype — direct-mount when its
+    // tab is active (bypasses the 2-pane Feed/Orbit swipe host on purpose).
     if (kOrbit3PrototypeEnabled && activeTab == AppShellTab.orbit3) {
       return Scaffold(
         resizeToAvoidBottomInset: false,

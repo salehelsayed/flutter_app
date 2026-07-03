@@ -3,16 +3,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_button.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_theme.dart';
-import 'package:flutter_app/features/orbit2/orbit2_prototype.dart';
 import 'package:flutter_app/features/orbit3/orbit3_prototype.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
-  // Feed + Orbit are always present; the Orbit2 / Orbit3 prototype tabs are
-  // each flag-gated additive buttons.
-  final int expectedButtons = 2 +
-      (kOrbit2PrototypeEnabled ? 1 : 0) +
-      (kOrbit3PrototypeEnabled ? 1 : 0);
+  // Feed + Orbit are always present; the Orbit3 prototype tab is a flag-gated
+  // additive button.
+  final int expectedButtons = 2 + (kOrbit3PrototypeEnabled ? 1 : 0);
   // SVG assets may not load in test environment — suppress render errors.
   void suppressAssetErrors(WidgetTester tester) {
     final oldHandler = FlutterError.onError;
@@ -36,7 +33,7 @@ void main() {
   );
 
   group('FeedNavigationBar', () {
-    testWidgets('renders Feed/Orbit (+ Orbit2 prototype) NavBarButtons', (
+    testWidgets('renders Feed/Orbit (+ Orbit3 prototype) NavBarButtons', (
       tester,
     ) async {
       suppressAssetErrors(tester);
@@ -51,10 +48,7 @@ void main() {
       );
       expect(find.text('Feed'), findsOneWidget);
       expect(find.text('Orbit'), findsOneWidget);
-      expect(
-        find.text('Orbit2'),
-        kOrbit2PrototypeEnabled ? findsOneWidget : findsNothing,
-      );
+      expect(find.text('Orbit2'), findsNothing);
       expect(
         find.text('Orbit3'),
         kOrbit3PrototypeEnabled ? findsOneWidget : findsNothing,

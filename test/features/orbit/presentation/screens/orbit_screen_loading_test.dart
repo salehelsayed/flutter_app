@@ -11,10 +11,13 @@ import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_view_mode.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_screen.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_close_button.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_dock.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 
 import '../../../../shared/helpers/readability_test_helpers.dart';
@@ -102,6 +105,7 @@ void main() {
     int introCount = 0,
     int pendingGroupInviteCount = 0,
     int? reviewCount,
+    OrbitViewMode viewMode = OrbitViewMode.allChats,
   }) {
     final mergedItems = <OrbitItem>[
       ...friends.map(OrbitFriendItem.new),
@@ -110,7 +114,9 @@ void main() {
     final effectiveReviewCount =
         reviewCount ?? introCount + pendingGroupInviteCount;
     final headerNotifier = ValueNotifier(
-      OrbitHeaderProjection(allFriends: friends),
+      // 197: the Inner-Circle surface renders the merged friends+groups
+      // `innerItems`; `allFriends` still feeds the friend-only search badge.
+      OrbitHeaderProjection(allFriends: friends, innerItems: mergedItems),
     );
     final listNotifier = ValueNotifier(
       OrbitViewProjection(
@@ -166,6 +172,7 @@ void main() {
         onArchiveGroup: (_) {},
         onUnarchiveGroup: (_) {},
         onDeleteGroup: (_) {},
+        viewMode: viewMode,
         activeTab: activeTab,
         onSwitchView: onSwitchView,
         feedUnreadCountListenable: feedUnreadCountListenable,
@@ -333,8 +340,11 @@ void main() {
           .map((text) => text.style?.color)
           .whereType<Color>()
           .toSet();
+      // 193: on the all-chats view 'Close Friends' is the FriendsListHeader
+      // title (textPrimary) only — the textMuted circle caption now lives on
+      // the Inner-Circle view (the companion test below).
       expect(closeFriendColors, contains(colors.textPrimary));
-      expect(closeFriendColors, contains(colors.textMuted));
+      expect(closeFriendColors, isNot(contains(colors.textMuted)));
 
       final chevronIcons = tester.widgetList<Icon>(
         find.byIcon(Icons.chevron_right),
@@ -344,6 +354,66 @@ void main() {
         contains(colors.iconMuted),
       );
     });
+
+    testWidgets('daylight lagoon keeps the Inner-Circle caption readable', (
+      tester,
+    ) async {
+      suppressOverflowErrors();
+      suppressNavAssetErrors();
+      setPhoneSurface(tester);
+
+      await tester.pumpWidget(
+        buildOrbitScreen(
+          viewMode: OrbitViewMode.innerCircle,
+          backgroundPreference: BackgroundPreference.daylightLagoon,
+          friends: [
+            makeFriend(
+              id: 'friend-1',
+              username: 'Riley Lagoon',
+              lastActivity: 'مرحبا from a bright background',
+            ),
+          ],
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.byType(DaylightLagoonBackground), findsOneWidget);
+
+      // Inner-Circle view: 'Close Friends' is the textMuted caption only, and
+      // no all-chats search affordance is mounted.
+      final colors = BackgroundReadableColors.representativeLight;
+      final closeFriendColors = tester
+          .widgetList<Text>(find.text('Close Friends'))
+          .map((text) => text.style?.color)
+          .whereType<Color>()
+          .toSet();
+      expect(closeFriendColors, contains(colors.textMuted));
+      expect(closeFriendColors, isNot(contains(colors.textPrimary)));
+      expect(find.byType(OrbitSearchTrigger), findsNothing);
+    });
+
+    testWidgets(
+      'TC-197-11: inner-circle surface seats a provided group as a ring node',
+      (tester) async {
+        suppressOverflowErrors();
+        suppressNavAssetErrors();
+        setPhoneSurface(tester);
+
+        await tester.pumpWidget(
+          buildOrbitScreen(
+            viewMode: OrbitViewMode.innerCircle,
+            friends: [makeFriend(id: 'f-1', username: 'Riley')],
+            groups: [makeGroup(id: 'g-1', name: 'Alpha Group')],
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 300));
+
+        // The header carries the merged group (innerItems), so the Inner-Circle
+        // visualization seats it as a GroupAvatar ring node.
+        expect(find.byType(OrbitalVisualization), findsOneWidget);
+        expect(find.byType(GroupAvatar), findsOneWidget);
+      },
+    );
 
     testWidgets('daylight lagoon keeps intro list content readable', (
       tester,

@@ -54,8 +54,10 @@ import 'package:flutter_app/features/contacts/application/delete_contact_use_cas
 import 'package:flutter_app/features/contacts/application/unarchive_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/application/unblock_contact_use_case.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/confirmation_dialog.dart';
+import 'package:flutter_app/features/orbit/application/inner_circle_items.dart';
 import 'package:flutter_app/features/orbit/application/load_orbit_data_use_case.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_view_mode.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
@@ -214,6 +216,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   bool _activeGroupsLoaded = false;
   bool _archivedGroupsLoaded = false;
   late String _filterTab;
+  // 193: which surface Orbit shows. Reset to innerCircle on every entry (not
+  // persisted). Seeded in initState; flipped by [_onToggleView]; reset by
+  // [_resetToInnerCircleView] on the Feed→Orbit rising edge.
+  late OrbitViewMode _viewMode;
   bool _searchActive = false;
   String _searchQuery = '';
   bool _isSearchTriggerVisible = true;
@@ -240,6 +246,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   StreamSubscription<PendingGroupInvite>? _pendingGroupInviteSubscription;
   StreamSubscription<IntroductionModel>? _introReceivedSubscription;
   StreamSubscription<IntroductionModel>? _introStatusSubscription;
+  // 194: read-marking events (peerId) from the message repo — clears a lit
+  // unread node even when the read happened on a surface with no orbit nav hook.
+  StreamSubscription<String>? _readSubscription;
   ImageQualityPreference _qualityPreference = ImageQualityPreference.compressed;
   ImageQualityPreference _videoQualityPreference =
       ImageQualityPreference.compressed;
@@ -278,6 +287,12 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       userPeerId: _identity?.peerId,
       userAvatarBytes: _avatarBytes,
       allFriends: List<OrbitFriend>.unmodifiable(_activeFriends),
+      // 197: the Inner-Circle rings render active friends + active groups
+      // interleaved by recency (blocked friends dropped by the merge; archived
+      // groups already excluded from _activeGroups by the loader).
+      innerItems: List<OrbitItem>.unmodifiable(
+        mergeInnerCircleItems(friends: _activeFriends, groups: _activeGroups),
+      ),
     );
   }
 
@@ -372,6 +387,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     _filterTab = widget.initialFilterTab ?? 'all';
+    // 193 design lock: a non-null initialFilterTab (intro-notification route,
+    // 'intros'/'archived' harnesses) opens directly on the all-chats surface so
+    // the requested tab is reachable with zero taps; otherwise default to the
+    // Inner-Circle view.
+    _viewMode = widget.initialFilterTab != null
+        ? OrbitViewMode.allChats
+        : OrbitViewMode.innerCircle;
     final hasGroupSurfaces =
         widget.groupRepository != null && widget.groupMessageRepository != null;
     _activeGroupsLoaded = !hasGroupSurfaces;
@@ -406,6 +428,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _loadIntroductions();
     _startListeningForChatMessages();
     _startListeningForContactUpdates();
+    _startListeningForReadEvents();
     _startListeningForContactRequests();
     _startListeningForGroupMessages();
     _startListeningForPendingGroupInvites();
@@ -464,10 +487,25 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
     final isActive = _isOrbitActive;
     if (isActive && !_wasOrbitActive) {
+      // 193: every entry into Orbit resets to the Inner-Circle view (no
+      // persistence). This runs on the actual inactive→active rising edge only,
+      // so a background-kind notify while Orbit is active cannot reset it. Order
+      // lock: reset must NOT short-circuit the dirty replay (cat.22).
+      _resetToInnerCircleView();
       _replayDirtyOrbitWork();
     }
     _wasOrbitActive = isActive;
     setState(() {});
+  }
+
+  // 193: reset the view surface on every Orbit re-activation. Force-closes
+  // search so its dock/trigger can't linger over the Inner-Circle surface. The
+  // filter tab is deliberately preserved (locked asymmetry — cat.13).
+  void _resetToInnerCircleView() {
+    _viewMode = OrbitViewMode.innerCircle;
+    if (_searchActive) {
+      _onSearchClose();
+    }
   }
 
   // Replays one targeted refresh per buffered reason on Feed -> Orbit
@@ -1639,6 +1677,49 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     );
   }
 
+  /// 194: subscribe to conversation read-marking events so a lit unread node
+  /// clears when the friend's messages are read from ANY surface — including
+  /// ones with no orbit-owned nav hook (a notification-tap route pushed over the
+  /// active Orbit tab, or a feed-side open). Active: refresh the friend now +
+  /// emit a distinct ORBIT_FL_READ_REFRESH. Inactive: ride the existing
+  /// `_dirtyFriendPeerIds` replay on the next rising edge. No-op when the repo
+  /// is not a [ConversationReadEventSource].
+  void _startListeningForReadEvents() {
+    final repo = widget.messageRepo;
+    if (repo is! ConversationReadEventSource) {
+      return;
+    }
+    final readSource = repo as ConversationReadEventSource;
+    _readSubscription = readSource.conversationReadStream.listen(
+      (peerId) {
+        if (!_isOrbitActive) {
+          _dirtyFriendPeerIds.add(peerId);
+          return;
+        }
+        unawaited(_refreshOrbitFriend(peerId));
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'ORBIT_FL_READ_REFRESH',
+          details: {'peerId': peerId},
+        );
+      },
+      onError: (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'ORBIT_READ_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
+      },
+      onDone: () {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'ORBIT_READ_STREAM_DONE',
+          details: {},
+        );
+      },
+    );
+  }
+
   void _startListeningForContactUpdates() {
     _contactUpdateSubscription = widget.chatMessageListener.contactUpdatedStream
         .listen(
@@ -1794,6 +1875,21 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _openRowNotifier.value = null;
     _filterTab = tab;
     _publishListProjection();
+  }
+
+  // 193: flip the Orbit view surface. Leaving the all-chats view force-closes
+  // search so its dock/trigger don't dangle over the Inner-Circle surface.
+  void _onToggleView() {
+    setState(() {
+      if (_viewMode == OrbitViewMode.innerCircle) {
+        _viewMode = OrbitViewMode.allChats;
+      } else {
+        if (_searchActive) {
+          _onSearchClose();
+        }
+        _viewMode = OrbitViewMode.innerCircle;
+      }
+    });
   }
 
   Future<void> _onArchiveFriend(OrbitFriend friend) async {
@@ -2149,6 +2245,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _pendingGroupInviteSubscription?.cancel();
     _introReceivedSubscription?.cancel();
     _introStatusSubscription?.cancel();
+    _readSubscription?.cancel();
     // 153: never commit a deferred decline after unmount (safe-failure = the
     // invite is kept; a re-mount re-surfaces it = implicit undo).
     for (final timer in _declineCommitTimers.values) {
@@ -2227,6 +2324,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onDeleteGroup: _onDeleteGroup,
       onRetryStuckRejoinGroup: _onRetryStuckRejoinGroup,
       onLeaveStuckGroup: _onLeaveStuckGroup,
+      viewMode: _viewMode,
+      onToggleView: _onToggleView,
       activeTab: showPersistentNav
           ? widget.appShellController!.activeTab
           : null,

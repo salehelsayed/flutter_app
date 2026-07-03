@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/unread_orbit_indicator.dart';
 
 /// A positioned avatar on an orbital ring with a staggered entrance animation.
 ///
@@ -37,6 +38,14 @@ class OrbitalAvatar extends StatefulWidget {
   /// keeps the Orbit3 inner circle steady when the arch expands (168 C4).
   final bool animateEntrance;
 
+  /// 194 — unread messages on this friend. `> 0` overlays the messenger-orbit
+  /// [UnreadOrbitIndicator] on the node; `0` renders nothing (no ticker).
+  final int unreadCount;
+
+  /// 194 — when false the unread indicator's rotation is frozen (still visible).
+  /// Threaded from the visualization's reduce-motion read.
+  final bool unreadMotionEnabled;
+
   const OrbitalAvatar({
     super.key,
     required this.peerId,
@@ -51,6 +60,8 @@ class OrbitalAvatar extends StatefulWidget {
     this.riseUp = false,
     this.entranceDelayMs,
     this.animateEntrance = true,
+    this.unreadCount = 0,
+    this.unreadMotionEnabled = true,
   });
 
   @override
@@ -97,25 +108,48 @@ class _OrbitalAvatarState extends State<OrbitalAvatar>
     final avatar = SizedBox(
       width: tapTargetSize,
       height: tapTargetSize,
-      child: Center(
-        child: Container(
-          width: widget.size,
-          height: widget.size,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(
-              color: widget.borderColor,
-              width: widget.borderWidth,
+      // Stack is Clip.none so the unread indicator (ring at ~1.35x avatar
+      // radius) may overpaint the 48-box — the host visualization Stack is
+      // Clip.none too. The indicator is a sibling (not a wrapper) so satellite
+      // rotation cannot rebuild the avatar/child subtree (TC-194-36).
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.center,
+        children: [
+          Center(
+            child: Container(
+              width: widget.size,
+              height: widget.size,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: widget.borderColor,
+                  width: widget.borderWidth,
+                ),
+              ),
+              child: ClipOval(
+                child: widget.child ??
+                    UserAvatar(
+                      peerId: widget.peerId,
+                      size: widget.size - widget.borderWidth * 2,
+                    ),
+              ),
             ),
           ),
-          child: ClipOval(
-            child: widget.child ??
-                UserAvatar(
-                  peerId: widget.peerId,
-                  size: widget.size - widget.borderWidth * 2,
+          if (widget.unreadCount > 0)
+            // Non-hit-testing + semantics-neutral: the unread state is conveyed
+            // through the node's own semantic label (built by the visualization),
+            // and the 48px opaque GestureDetector stays the sole tap target.
+            ExcludeSemantics(
+              child: IgnorePointer(
+                child: UnreadOrbitIndicator(
+                  unreadCount: widget.unreadCount,
+                  diameter: widget.size,
+                  motionEnabled: widget.unreadMotionEnabled,
                 ),
-          ),
-        ),
+              ),
+            ),
+        ],
       ),
     );
     final child = widget.onTap == null

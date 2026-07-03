@@ -235,6 +235,20 @@ readonly GROUP_TESTS=(
   # must NEVER touch the 1:1 libp2p-LAN leg. Added here so the groups gate
   # actually exercises TD6 (the file is otherwise only in the 1to1/transport arrays).
   "test/core/services/p2p_service_impl_lan_media_test.dart"
+  # 193 orbit view split: new view-split widget tests + the orbit l10n parity
+  # test (test/l10n is OUTSIDE feature-host-all's glob, so it must be curated
+  # here to be reachable from the groups gate + completeness-check).
+  "test/features/orbit/presentation/screens/orbit_view_split_test.dart"
+  # 194 orbit per-node unread "messenger orbit" indicator: wired-host tier
+  # (live-appear + per-surface clear-on-read + surface-scoping regression).
+  # Auto-globs into feature-host-all, but pinned here so it also runs in the
+  # curated groups gate + completeness-check alongside the other orbit tests.
+  "test/features/orbit/presentation/screens/orbit_unread_indicator_wired_test.dart"
+  # 196 orbit QR-chrome migration: wired-host tier (PROD-CRITICAL tap→route
+  # push through _onMyQR/_onScanQR). Auto-globs into feature-host-all, pinned
+  # here so it also runs in the curated groups gate + completeness-check.
+  "test/features/orbit/presentation/screens/orbit_qr_entry_migration_test.dart"
+  "test/l10n/orbit_strings_parity_test.dart"
 )
 
 readonly POSTS_TESTS=(

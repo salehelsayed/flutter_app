@@ -283,7 +283,13 @@ Future<void> _cleanupAndroidAppWriteDir(String deviceId, String path) async {
 
 Future<Map<String, dynamic>> _waitForGroupFixture(
   String path, {
-  Duration timeout = const Duration(seconds: 120),
+  // This wait begins the instant `flutter drive`/`flutter test` is spawned, so
+  // its budget must cover a COLD Xcode build (~70s on the simulator) plus app
+  // install/launch, onboarding + relay connect, and group creation before the
+  // fixture is written. 120s only sufficed on warm builds; a cold build left
+  // ~50s and timed out. 300s keeps the assertion intact (the fixture must still
+  // actually appear) while tolerating a cold build.
+  Duration timeout = const Duration(seconds: 300),
 }) async {
   final deadline = DateTime.now().add(timeout);
   while (DateTime.now().isBefore(deadline)) {

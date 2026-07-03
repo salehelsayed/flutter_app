@@ -570,6 +570,38 @@ void main() {
       },
     );
 
+    // 194 (read-emission) — markConversationAsRead emits the peerId on
+    // conversationReadStream ONLY when >=1 row flipped to read (INV-5). Surfaces
+    // that project unread state (Orbit inner circle) subscribe to it.
+    test(
+      'markConversationAsRead emits peerId on conversationReadStream when rows>0, '
+      'and nothing when 0',
+      () async {
+        await repo.saveMessage(
+          makeMessage(id: 'in-1', contactPeerId: 'peer-x', isIncoming: true),
+        );
+        await repo.saveMessage(
+          makeMessage(id: 'in-2', contactPeerId: 'peer-x', isIncoming: true),
+        );
+
+        final reads = <String>[];
+        final sub = repo.conversationReadStream.listen(reads.add);
+        addTearDown(sub.cancel);
+
+        final marked = await repo.markConversationAsRead('peer-x');
+        await Future<void>.delayed(Duration.zero);
+        expect(marked, 2);
+        expect(reads, ['peer-x'], reason: 'one conversation-level read event');
+
+        reads.clear();
+        // Already read -> 0 rows -> no emission (INV-5 guard).
+        final markedAgain = await repo.markConversationAsRead('peer-x');
+        await Future<void>.delayed(Duration.zero);
+        expect(markedAgain, 0);
+        expect(reads, isEmpty);
+      },
+    );
+
     test('messageExists returns true for existing message', () async {
       await repo.saveMessage(makeMessage(id: 'msg-1'));
       expect(await repo.messageExists('msg-1'), true);

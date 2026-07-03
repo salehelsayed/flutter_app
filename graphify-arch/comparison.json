@@ -1,32 +1,32 @@
 {
   "full": {
     "graph": "graphify-out/graph.json",
-    "nodes": 107741,
-    "edges": 182256,
-    "communities": 4521,
-    "source_files": 5704,
-    "avg_edges_per_node": 1.6916,
-    "avg_nodes_per_community": 23.83,
-    "app_owned_nodes": 47817,
-    "app_owned_ratio": 0.4438,
+    "nodes": 108007,
+    "edges": 182634,
+    "communities": 4595,
+    "source_files": 5721,
+    "avg_edges_per_node": 1.6909,
+    "avg_nodes_per_community": 23.51,
+    "app_owned_nodes": 47984,
+    "app_owned_ratio": 0.4443,
     "noise_nodes": 22339,
-    "noise_ratio": 0.2073,
-    "unknown_source_nodes": 2024,
+    "noise_ratio": 0.2068,
+    "unknown_source_nodes": 2033,
     "unknown_source_ratio": 0.0188,
     "top_hub_noise_count": 5,
     "top_hub_noise_ratio": 0.5,
     "top_source_dirs": [
       [
         "Test-Flight-Improv",
-        31750
+        31974
       ],
       [
         "lib",
-        20760
+        20793
       ],
       [
         "test",
-        14640
+        14771
       ],
       [
         "ios/Pods",
@@ -38,7 +38,7 @@
       ],
       [
         "integration_test",
-        6156
+        6159
       ],
       [
         "go-mknoon",
@@ -90,7 +90,7 @@
       {
         "id": "package_flutter_test_flutter_test_dart",
         "label": "package:flutter_test/flutter_test.dart",
-        "degree": 1049,
+        "degree": 1056,
         "source_file": "",
         "noise": false
       },
@@ -111,28 +111,28 @@
       {
         "id": "l10n_app_localizations",
         "label": "app_localizations.dart",
-        "degree": 770,
+        "degree": 776,
         "source_file": "lib/l10n/app_localizations.dart",
         "noise": false
       },
       {
         "id": "l10n_app_localizations_ar",
         "label": "app_localizations_ar.dart",
-        "degree": 752,
+        "degree": 758,
         "source_file": "lib/l10n/app_localizations_ar.dart",
         "noise": false
       },
       {
         "id": "l10n_app_localizations_de",
         "label": "app_localizations_de.dart",
-        "degree": 752,
+        "degree": 758,
         "source_file": "lib/l10n/app_localizations_de.dart",
         "noise": false
       },
       {
         "id": "l10n_app_localizations_en",
         "label": "app_localizations_en.dart",
-        "degree": 752,
+        "degree": 758,
         "source_file": "lib/l10n/app_localizations_en.dart",
         "noise": false
       }
@@ -140,32 +140,32 @@
   },
   "architecture": {
     "graph": "graphify-arch/graphify-out/graph.json",
-    "nodes": 43266,
-    "edges": 67450,
-    "communities": 920,
+    "nodes": 43194,
+    "edges": 67487,
+    "communities": 962,
     "source_files": 2248,
-    "avg_edges_per_node": 1.559,
-    "avg_nodes_per_community": 47.03,
-    "app_owned_nodes": 41585,
-    "app_owned_ratio": 0.9611,
+    "avg_edges_per_node": 1.5624,
+    "avg_nodes_per_community": 44.9,
+    "app_owned_nodes": 41527,
+    "app_owned_ratio": 0.9614,
     "noise_nodes": 0,
     "noise_ratio": 0.0,
-    "unknown_source_nodes": 1681,
-    "unknown_source_ratio": 0.0389,
+    "unknown_source_nodes": 1667,
+    "unknown_source_ratio": 0.0386,
     "top_hub_noise_count": 0,
     "top_hub_noise_ratio": 0.0,
     "top_source_dirs": [
       [
         "lib",
-        17704
+        17518
       ],
       [
         "test",
-        14490
+        14615
       ],
       [
         "integration_test",
-        5870
+        5873
       ],
       [
         "go-mknoon",
@@ -195,7 +195,7 @@
       {
         "id": "package_flutter_test_flutter_test_dart",
         "label": "package:flutter_test/flutter_test.dart",
-        "degree": 1051,
+        "degree": 1056,
         "source_file": "",
         "noise": false
       },
@@ -209,21 +209,21 @@
       {
         "id": "lib_main",
         "label": "main.dart",
-        "degree": 599,
+        "degree": 597,
         "source_file": "lib/main.dart",
         "noise": false
       },
       {
         "id": "package_flutter_material_dart",
         "label": "package:flutter/material.dart",
-        "degree": 425,
+        "degree": 426,
         "source_file": "",
         "noise": false
       },
       {
         "id": "dart_convert",
         "label": "dart:convert",
-        "degree": 423,
+        "degree": 424,
         "source_file": "",
         "noise": false
       },
@@ -244,7 +244,7 @@
       {
         "id": "package_flutter_app_core_utils_flow_event_emitter_dart",
         "label": "package:flutter_app/core/utils/flow_event_emitter.dart",
-        "degree": 357,
+        "degree": 360,
         "source_file": "",
         "noise": false
       },
@@ -258,10 +258,10 @@
     ]
   },
   "deltas": {
-    "nodes": -0.5984,
-    "edges": -0.6299,
-    "communities": -0.7965,
-    "app_owned_ratio": 1.1656,
+    "nodes": -0.6001,
+    "edges": -0.6305,
+    "communities": -0.7906,
+    "app_owned_ratio": 1.1639,
     "noise_ratio": -1.0,
     "top_hub_noise_ratio": -1.0
   }

@@ -778,6 +778,42 @@ abstract class AppLocalizations {
   /// **'Close Friends'**
   String get orbit_close_friends;
 
+  /// No description provided for @orbit_view_toggle_to_list.
+  ///
+  /// In en, this message translates to:
+  /// **'Show all chats'**
+  String get orbit_view_toggle_to_list;
+
+  /// No description provided for @orbit_view_toggle_to_circle.
+  ///
+  /// In en, this message translates to:
+  /// **'Show inner circle'**
+  String get orbit_view_toggle_to_circle;
+
+  /// No description provided for @orbit_inner_circle_empty_hint.
+  ///
+  /// In en, this message translates to:
+  /// **'Add friends to see your inner circle'**
+  String get orbit_inner_circle_empty_hint;
+
+  /// No description provided for @orbit_node_unread_open_chat.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Open chat with {name}, 1 unread message} other{Open chat with {name}, {count} unread messages}}'**
+  String orbit_node_unread_open_chat(String name, int count);
+
+  /// No description provided for @orbit_node_open_group.
+  ///
+  /// In en, this message translates to:
+  /// **'Open group {name}'**
+  String orbit_node_open_group(String name);
+
+  /// No description provided for @orbit_node_unread_open_group.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Open group {name}, 1 unread message} other{Open group {name}, {count} unread messages}}'**
+  String orbit_node_unread_open_group(String name, int count);
+
   /// No description provided for @orbit_new_group.
   ///
   /// In en, this message translates to:
@@ -4304,12 +4340,6 @@ abstract class AppLocalizations {
   /// **'Message'**
   String get contact_profile_message_button;
 
-  /// No description provided for @nav_orbit2.
-  ///
-  /// In en, this message translates to:
-  /// **'Orbit2'**
-  String get nav_orbit2;
-
   /// No description provided for @nav_orbit3.
   ///
   /// In en, this message translates to:
@@ -4322,24 +4352,6 @@ abstract class AppLocalizations {
   /// **'Prototype · sample data'**
   String get orbit2_prototype_chip;
 
-  /// No description provided for @orbit2_size_legend.
-  ///
-  /// In en, this message translates to:
-  /// **'Bigger = closer · tap to chat · drag to rearrange'**
-  String get orbit2_size_legend;
-
-  /// No description provided for @orbit2_simulate.
-  ///
-  /// In en, this message translates to:
-  /// **'Simulate'**
-  String get orbit2_simulate;
-
-  /// No description provided for @orbit2_reset.
-  ///
-  /// In en, this message translates to:
-  /// **'Reset'**
-  String get orbit2_reset;
-
   /// No description provided for @orbit2_search_hint.
   ///
   /// In en, this message translates to:
@@ -4351,30 +4363,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Gravity'**
   String get orbit2_template_gravity;
-
-  /// No description provided for @orbit2_template_nebula.
-  ///
-  /// In en, this message translates to:
-  /// **'Nebula'**
-  String get orbit2_template_nebula;
-
-  /// No description provided for @orbit2_template_honeycomb.
-  ///
-  /// In en, this message translates to:
-  /// **'Honeycomb'**
-  String get orbit2_template_honeycomb;
-
-  /// No description provided for @orbit2_template_tiered.
-  ///
-  /// In en, this message translates to:
-  /// **'Tiered'**
-  String get orbit2_template_tiered;
-
-  /// No description provided for @orbit2_template_unified.
-  ///
-  /// In en, this message translates to:
-  /// **'One Circle'**
-  String get orbit2_template_unified;
 
   /// No description provided for @orbit2_mock_chat_demo_chip.
   ///
@@ -4394,42 +4382,6 @@ abstract class AppLocalizations {
   /// **'Message'**
   String get orbit2_mock_chat_composer_hint;
 
-  /// No description provided for @orbit2_hint.
-  ///
-  /// In en, this message translates to:
-  /// **'Drag the orbit anywhere · long-press a friend to bring them in'**
-  String get orbit2_hint;
-
-  /// No description provided for @orbit2_drop_hint.
-  ///
-  /// In en, this message translates to:
-  /// **'Drop here to add to your circle'**
-  String get orbit2_drop_hint;
-
-  /// No description provided for @orbit2_release_to_add.
-  ///
-  /// In en, this message translates to:
-  /// **'Release to add {name}'**
-  String orbit2_release_to_add(String name);
-
-  /// No description provided for @orbit2_promoted.
-  ///
-  /// In en, this message translates to:
-  /// **'{name} added to your inner circle'**
-  String orbit2_promoted(String name);
-
-  /// No description provided for @orbit2_new_group.
-  ///
-  /// In en, this message translates to:
-  /// **'New group'**
-  String get orbit2_new_group;
-
-  /// No description provided for @orbit2_group_created.
-  ///
-  /// In en, this message translates to:
-  /// **'New group created — drop in more friends to grow it'**
-  String get orbit2_group_created;
-
   /// No description provided for @orbit2_group_members.
   ///
   /// In en, this message translates to:
@@ -4442,29 +4394,11 @@ abstract class AppLocalizations {
   /// **'Show less'**
   String get orbit2_show_less;
 
-  /// No description provided for @orbit2_removed.
-  ///
-  /// In en, this message translates to:
-  /// **'{name} removed from your inner circle'**
-  String orbit2_removed(String name);
-
   /// No description provided for @orbit2_you.
   ///
   /// In en, this message translates to:
   /// **'You'**
   String get orbit2_you;
-
-  /// No description provided for @orbit2_manage.
-  ///
-  /// In en, this message translates to:
-  /// **'Manage'**
-  String get orbit2_manage;
-
-  /// No description provided for @orbit2_manage_done.
-  ///
-  /// In en, this message translates to:
-  /// **'Done'**
-  String get orbit2_manage_done;
 
   /// No description provided for @orbit2_names_show.
   ///
@@ -4477,24 +4411,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Hide names'**
   String get orbit2_names_hide;
-
-  /// No description provided for @orbit2_promoted_group.
-  ///
-  /// In en, this message translates to:
-  /// **'Group {name} added to your inner circle'**
-  String orbit2_promoted_group(String name);
-
-  /// No description provided for @orbit2_view_messages.
-  ///
-  /// In en, this message translates to:
-  /// **'Messages'**
-  String get orbit2_view_messages;
-
-  /// No description provided for @orbit2_inbox_empty.
-  ///
-  /// In en, this message translates to:
-  /// **'No conversations yet'**
-  String get orbit2_inbox_empty;
 
   /// No description provided for @orbit2_open_chat_with.
   ///

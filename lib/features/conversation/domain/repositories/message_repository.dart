@@ -149,3 +149,20 @@ abstract class MessageRepository {
 abstract class MessageRepositoryChangeSource {
   Stream<ConversationMessage> get messageChanges;
 }
+
+/// Optional read-marking event stream (194).
+///
+/// Emits a contact `peerId` whenever a [MessageRepository.markConversationAsRead]
+/// call actually flips >=1 incoming row to read. Deliberately a lightweight
+/// conversation-level signal (a `String` peerId, NOT a [ConversationMessage]) —
+/// riding [MessageRepositoryChangeSource.messageChanges] would force every
+/// message-change listener to special-case a synthetic "read" message. Surfaces
+/// that project unread state per contact (e.g. the Orbit inner circle) subscribe
+/// to this to clear an indicator even when the read happened on another surface
+/// (notification tap, feed-side open) that never traverses their own nav hooks.
+///
+/// Contract: fires ONLY when the marked-row count is `> 0` (INV-5), so a
+/// re-mark of an already-read conversation is silent and cannot loop listeners.
+abstract class ConversationReadEventSource {
+  Stream<String> get conversationReadStream;
+}

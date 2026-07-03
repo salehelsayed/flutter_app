@@ -183,6 +183,39 @@
   "pinned_remove": "Entfernen",
   "edit_pinned_hint": "Deinen Beitrag aktualisieren",
   "orbit_close_friends": "Enge Freunde",
+  "orbit_view_toggle_to_list": "Alle Chats anzeigen",
+  "orbit_view_toggle_to_circle": "Engsten Kreis anzeigen",
+  "orbit_inner_circle_empty_hint": "Füge Freunde hinzu, um deinen engsten Kreis zu sehen",
+  "orbit_node_unread_open_chat": "{count, plural, =1{Chat mit {name} öffnen, 1 ungelesene Nachricht} other{Chat mit {name} öffnen, {count} ungelesene Nachrichten}}",
+  "@orbit_node_unread_open_chat": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_node_open_group": "Gruppe {name} öffnen",
+  "@orbit_node_open_group": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "orbit_node_unread_open_group": "{count, plural, =1{Gruppe {name} öffnen, 1 ungelesene Nachricht} other{Gruppe {name} öffnen, {count} ungelesene Nachrichten}}",
+  "@orbit_node_unread_open_group": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "orbit_new_group": "Neue Gruppe",
   "orbit_new_announce": "Neue Ankündigung",
   "orbit_my_qr": "Mein QR",
@@ -1366,38 +1399,18 @@
   "contact_profile_connected_since_label": "Verbunden seit",
   "contact_profile_introduced_by_label": "Vorgestellt von",
   "contact_profile_message_button": "Nachricht",
-  "nav_orbit2": "Orbit2",
   "nav_orbit3": "Orbit3",
   "orbit2_prototype_chip": "Prototyp · Beispieldaten",
-  "orbit2_size_legend": "Größer = näher · tippen zum Chatten · ziehen zum Umordnen",
-  "orbit2_simulate": "Simulieren",
-  "orbit2_reset": "Zurücksetzen",
   "orbit2_search_hint": "Freund finden",
   "orbit2_template_gravity": "Gravitation",
-  "orbit2_template_nebula": "Nebel",
-  "orbit2_template_honeycomb": "Wabe",
-  "orbit2_template_tiered": "Ebenen",
-  "orbit2_template_unified": "Ein Kreis",
   "orbit2_mock_chat_demo_chip": "Demo · Nachrichten werden nicht gesendet",
   "orbit2_mock_chat_send_disabled": "Senden ist in dieser Vorschau deaktiviert",
   "orbit2_mock_chat_composer_hint": "Nachricht",
-  "orbit2_hint": "Ziehe den Orbit überallhin · halte einen Freund gedrückt, um ihn aufzunehmen",
-  "orbit2_drop_hint": "Hier ablegen, um ihn aufzunehmen",
-  "orbit2_release_to_add": "Loslassen, um {name} hinzuzufügen",
-  "orbit2_promoted": "{name} wurde zu deinem inneren Kreis hinzugefügt",
-  "orbit2_new_group": "Neue Gruppe",
-  "orbit2_group_created": "Neue Gruppe erstellt — zieh weitere Freunde hinein",
   "orbit2_group_members": "Gruppe · {count} Mitglieder",
   "orbit2_show_less": "Weniger anzeigen",
-  "orbit2_removed": "{name} aus deinem inneren Kreis entfernt",
   "orbit2_you": "Du",
-  "orbit2_manage": "Verwalten",
-  "orbit2_manage_done": "Fertig",
   "orbit2_names_show": "Namen anzeigen",
   "orbit2_names_hide": "Namen ausblenden",
-  "orbit2_promoted_group": "Gruppe {name} zu deinem inneren Kreis hinzugefügt",
-  "orbit2_view_messages": "Nachrichten",
-  "orbit2_inbox_empty": "Noch keine Unterhaltungen",
   "orbit2_open_chat_with": "Chat mit {name} öffnen",
   "orbit3_constellation_zodiac": "Tierkreis",
   "orbit3_constellation_galaxy": "Galaxie",

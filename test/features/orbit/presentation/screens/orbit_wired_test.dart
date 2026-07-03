@@ -46,6 +46,7 @@ import 'package:flutter_app/features/orbit/presentation/widgets/friend_row.dart'
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_close_button.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friends_filter_toggle.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
@@ -370,6 +371,11 @@ void main() {
     }
   }
 
+  Future<void> switchToAllChats(WidgetTester tester) async {
+    await tester.tap(find.byKey(const ValueKey('orbit-view-toggle')));
+    await pumpOrbitFrames(tester);
+  }
+
   Future<void> tapPendingGroupInviteAccept(
     WidgetTester tester,
     String groupId,
@@ -621,6 +627,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
+      await switchToAllChats(tester);
 
       // FriendRow renders the current display name
       expect(find.text('Bob'), findsWidgets);
@@ -675,6 +682,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
+      await switchToAllChats(tester);
 
       // OrbitSearchTrigger is the floating search pill at the bottom
       expect(find.byType(OrbitSearchTrigger), findsOneWidget);
@@ -700,6 +708,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
+      await switchToAllChats(tester);
 
       // FriendsFilterToggle renders 'All' and 'Archived' labels
       expect(find.byType(FriendsFilterToggle), findsOneWidget);
@@ -730,6 +739,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
+      await switchToAllChats(tester);
 
       // 1 active friend + 1 active group → badge must read 2 (both render in 'All').
       final toggle = tester.widget<FriendsFilterToggle>(
@@ -772,6 +782,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
         await tester.pump(const Duration(milliseconds: 100));
         await tester.pump(const Duration(milliseconds: 100));
+        await switchToAllChats(tester);
 
         expect(find.text("Couldn't join — retry"), findsOneWidget);
         final retryButton = find.byKey(
@@ -835,6 +846,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
         await tester.pump(const Duration(milliseconds: 100));
         await tester.pump(const Duration(milliseconds: 100));
+        await switchToAllChats(tester);
 
         // 0 friends + 2 active groups → badge must read 2.
         final toggle = tester.widget<FriendsFilterToggle>(
@@ -844,20 +856,34 @@ void main() {
       },
     );
 
-    testWidgets('friends list header shows QR buttons', (tester) async {
-      setLargeTestSurface(tester);
-      suppressOverflowErrors();
-      identityRepo.seed(testIdentity);
+    testWidgets(
+      'orbit chrome exposes QR entries on both surfaces; the header has no pills',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        suppressNavAssetErrors();
+        identityRepo.seed(testIdentity);
 
-      await tester.pumpWidget(buildOrbitWired());
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
+        await tester.pumpWidget(buildOrbitWired());
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
 
-      // FriendsListHeader renders 'My QR' and 'Scan' pill buttons
-      expect(find.text('My QR'), findsOneWidget);
-      expect(find.text('Scan'), findsOneWidget);
-    });
+        // 196: the QR entries are top chrome (not header pills), present on the
+        // Inner-Circle default surface...
+        expect(find.byKey(const ValueKey('orbit-my-qr-button')), findsOneWidget);
+        expect(find.byKey(const ValueKey('orbit-scan-button')), findsOneWidget);
+
+        await switchToAllChats(tester);
+
+        // ...and on the all-chats surface too. The header carries NO QR pills
+        // (Semantics labels create no Text nodes).
+        expect(find.byKey(const ValueKey('orbit-my-qr-button')), findsOneWidget);
+        expect(find.byKey(const ValueKey('orbit-scan-button')), findsOneWidget);
+        expect(find.text('My QR'), findsNothing);
+        expect(find.text('Scan'), findsNothing);
+      },
+    );
 
     testWidgets('close button pops navigation', (tester) async {
       setLargeTestSurface(tester);
@@ -1349,6 +1375,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
+      await switchToAllChats(tester);
 
       // Initially Bob exists as a friend but has no last activity text
       expect(find.text('Bob'), findsWidgets);
@@ -1521,6 +1548,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
         await tester.pump(const Duration(milliseconds: 100));
         await tester.pump(const Duration(milliseconds: 100));
+        await switchToAllChats(tester);
 
         spyContactRepo.resetTracking();
         spyMessageRepo.resetTracking();
@@ -1596,6 +1624,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
         await tester.pump(const Duration(milliseconds: 100));
         await tester.pump(const Duration(milliseconds: 100));
+        await switchToAllChats(tester);
 
         await tester.tap(find.byType(OrbitSearchTrigger));
         await tester.pump(const Duration(milliseconds: 100));
@@ -1666,6 +1695,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
         await tester.pump(const Duration(milliseconds: 100));
         await tester.pump(const Duration(milliseconds: 100));
+        await switchToAllChats(tester);
 
         await tester.tap(find.byType(OrbitSearchTrigger));
         await tester.pump(const Duration(milliseconds: 100));
@@ -1817,6 +1847,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
+      await switchToAllChats(tester);
 
       // Group name should appear in the list
       expect(find.text('Alpha Group'), findsOneWidget);
@@ -1849,6 +1880,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
         await tester.pump(const Duration(milliseconds: 100));
         await tester.pump(const Duration(milliseconds: 100));
+        await switchToAllChats(tester);
 
         expect(find.text('Joining Group'), findsOneWidget);
         expect(find.text('Joining…'), findsOneWidget);
@@ -1891,6 +1923,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
+      await switchToAllChats(tester);
 
       expect(find.text('Alpha Group'), findsOneWidget);
       expect(find.text('Alice'), findsOneWidget);
@@ -1935,6 +1968,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
+      await switchToAllChats(tester);
 
       // Initially group shows with no message preview
       expect(find.text('Alpha Group'), findsOneWidget);
@@ -2083,6 +2117,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
+      await switchToAllChats(tester);
 
       // Both should appear
       expect(find.text('Newer Group'), findsOneWidget);
@@ -2155,6 +2190,7 @@ void main() {
 
       await tester.pumpWidget(buildOrbitWired());
       await pumpOrbitFrames(tester, count: 6);
+      await switchToAllChats(tester);
 
       expect(find.text('Delete One Group'), findsOneWidget);
       expect(find.text('Keep One Group'), findsOneWidget);
@@ -2328,6 +2364,7 @@ void main() {
 
         await tester.pumpWidget(buildOrbitWired());
         await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
 
         // Sanity: Orbit shows the friends and the group before delete.
         expect(find.text('Alice'), findsWidgets);
@@ -2438,6 +2475,7 @@ void main() {
 
         await tester.pumpWidget(buildOrbitWired());
         await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
 
         expect(find.text('Dissolved One Group'), findsOneWidget);
         expect(find.text('Bob'), findsWidgets);
@@ -2482,6 +2520,7 @@ void main() {
           ),
         );
         await pumpOrbitFrames(tester);
+        await switchToAllChats(tester);
 
         observer.reset();
 
@@ -2621,15 +2660,25 @@ void main() {
           of: find.byType(FriendRow),
           matching: find.text('1'),
         );
+        // The unread badge lives on the all-chats row.
+        await switchToAllChats(tester);
         expect(unreadBadgeInRow(), findsOneWidget);
 
-        await tester.tap(find.bySemanticsLabel('Open chat with Bob'));
+        // Open the chat via the orbital avatar on the Inner-Circle view. Bob is
+        // lit (1 unread), so 194 gives his node the augmented unread label.
+        await tester.tap(find.byKey(const ValueKey('orbit-view-toggle')));
+        await pumpOrbitFrames(tester);
+        await tester.tap(
+          find.bySemanticsLabel('Open chat with Bob, 1 unread message'),
+        );
         await tester.pump();
         await pumpOrbitFrames(tester, count: 4);
 
         tester.state<NavigatorState>(find.byType(Navigator)).pop();
         await pumpOrbitFrames(tester, count: 8);
 
+        // Back on the all-chats list, the row no longer shows an unread badge.
+        await switchToAllChats(tester);
         expect(unreadBadgeInRow(), findsNothing);
         expect(find.byType(OrbitSearchTrigger), findsOneWidget);
       },
@@ -2745,6 +2794,7 @@ void main() {
         );
 
         await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
 
         expect(find.text('Dora'), findsWidgets);
 
@@ -3865,6 +3915,7 @@ void main() {
           ),
         );
         await pumpOrbitFrames(tester);
+        await switchToAllChats(tester);
 
         observer.reset();
 
@@ -3901,6 +3952,7 @@ void main() {
           buildOrbitWired(contactRepository: delayedContactRepo),
         );
         await pumpOrbitFrames(tester);
+        await switchToAllChats(tester);
 
         expect(find.text('Bob'), findsWidgets);
 
@@ -3934,6 +3986,7 @@ void main() {
           buildOrbitWired(groupRepository: delayedGroupRepo),
         );
         await pumpOrbitFrames(tester);
+        await switchToAllChats(tester);
 
         expect(find.text('Alpha Group'), findsOneWidget);
 
@@ -3995,6 +4048,7 @@ void main() {
           ),
         );
         await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
 
         await tester.tap(find.text('Orbit Actions Group'));
         await pumpOrbitFrames(tester, count: 10);
@@ -4090,6 +4144,7 @@ void main() {
           ),
         );
         await pumpOrbitFrames(tester, count: 6);
+        await switchToAllChats(tester);
 
         await tester.tap(find.text('Orbit Reactions Group'));
         await pumpOrbitFrames(tester, count: 10);
@@ -4208,6 +4263,7 @@ void main() {
           ),
         );
         await pumpOrbitFrames(tester);
+        await switchToAllChats(tester);
 
         expect(find.text('Bob'), findsWidgets);
         expect(find.byKey(const ValueKey('orbit-loading-row-0')), findsNothing);
@@ -4395,6 +4451,192 @@ void main() {
         });
       },
     );
+
+    testWidgets(
+      'TC-193-40: the re-entry view reset does not starve the dirty replay',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        // Non-null controller starting on Feed → Orbit is mounted but off-screen.
+        final shellController = AppShellController();
+        final spyContactRepo = _SpyContactRepository();
+        final spyMessageRepo = _SpyMessageRepository();
+        spyContactRepo.seed([testContact]);
+
+        final fakeChatListener = _FakeChatMessageListener(
+          messageRepo: spyMessageRepo,
+          contactRepo: spyContactRepo,
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            appShellController: shellController,
+            chatMessageListener: fakeChatListener,
+            contactRepository: spyContactRepo,
+            messageRepository: spyMessageRepo,
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(shellController.activeTab, AppShellTab.feed);
+
+        spyContactRepo.resetTracking();
+        spyMessageRepo.resetTracking();
+
+        // Buffer a chat event while Orbit is off-screen.
+        await spyMessageRepo.saveMessage(chatMsg('msg-buffered-1'));
+        fakeChatListener.emitIncomingMessage(chatMsg('msg-buffered-1'));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        // Re-enter Orbit: the view resets to Inner-Circle AND the buffered
+        // refresh still replays — the reset must NOT short-circuit the replay.
+        shellController.switchTo(AppShellTab.orbit);
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(spyMessageRepo.getConversationThreadSummaryCallCountByPeerId, {
+          'contact-peer-id': 1,
+        });
+        expect(spyContactRepo.getContactCallCountByPeerId, {
+          'contact-peer-id': 1,
+        });
+        expect(find.byType(OrbitalVisualization), findsOneWidget);
+        expect(find.byType(FriendRow), findsNothing);
+      },
+    );
+  });
+
+  group('193 orbit view split (wired)', () {
+    testWidgets(
+      'incoming message re-ranks the rings while the list stays absent',
+      (tester) async {
+        final handle = tester.ensureSemantics();
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        final spyContactRepo = _SpyContactRepository();
+        final spyMessageRepo = _SpyMessageRepository();
+        spyContactRepo.seed([testContact]);
+        final fakeChatListener = _FakeChatMessageListener(
+          messageRepo: spyMessageRepo,
+          contactRepo: spyContactRepo,
+        );
+        var headerBuilds = 0;
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            chatMessageListener: fakeChatListener,
+            contactRepository: spyContactRepo,
+            messageRepository: spyMessageRepo,
+            onHeaderBuild: () => headerBuilds++,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 4);
+
+        // Inner-Circle view: the friend renders as an orbital avatar, not a row.
+        expect(find.bySemanticsLabel('Open chat with Bob'), findsOneWidget);
+        expect(find.byType(FriendRow), findsNothing);
+
+        spyContactRepo.resetTracking();
+        spyMessageRepo.resetTracking();
+        final buildsBefore = headerBuilds;
+
+        await spyMessageRepo.saveMessage(
+          ConversationMessage(
+            id: 'rerank-1',
+            contactPeerId: 'contact-peer-id',
+            text: 'live ping',
+            senderPeerId: 'contact-peer-id',
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+        fakeChatListener.emitIncomingMessage(
+          ConversationMessage(
+            id: 'rerank-1',
+            contactPeerId: 'contact-peer-id',
+            text: 'live ping',
+            senderPeerId: 'contact-peer-id',
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 4);
+
+        // The live refresh republished the header (viz re-ranked) while the
+        // all-chats list never appeared.
+        expect(spyContactRepo.getContactCallCountByPeerId, {
+          'contact-peer-id': 1,
+        });
+        expect(headerBuilds, greaterThan(buildsBefore));
+        // 194: the incoming message lit Bob (1 unread) -> augmented unread label.
+        expect(
+          find.bySemanticsLabel('Open chat with Bob, 1 unread message'),
+          findsOneWidget,
+        );
+        expect(find.byType(FriendRow), findsNothing);
+        handle.dispose();
+      },
+    );
+
+    testWidgets('pop back from a conversation stays on the all-chats view', (
+      tester,
+    ) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+
+      await tester.pumpWidget(buildOrbitWired());
+      await pumpOrbitFrames(tester, count: 4);
+
+      await switchToAllChats(tester);
+      expect(find.byType(FriendRow), findsWidgets);
+
+      // Open Bob's chat from the row, then pop back.
+      await tester.tap(find.text('Bob').first);
+      await tester.pump();
+      await pumpOrbitFrames(tester, count: 4);
+      tester.state<NavigatorState>(find.byType(Navigator)).pop();
+      await pumpOrbitFrames(tester, count: 6);
+
+      // A route pop is NOT a shell entry → the all-chats view is preserved.
+      expect(find.byType(FriendRow), findsWidgets);
+      expect(find.byType(OrbitalVisualization), findsNothing);
+    });
+
+    testWidgets('avatar-opened chat pops back to the Inner-Circle view', (
+      tester,
+    ) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+
+      await tester.pumpWidget(buildOrbitWired());
+      await pumpOrbitFrames(tester, count: 10);
+
+      // Default Inner-Circle view: open Bob via the orbital avatar.
+      await tester.tap(find.bySemanticsLabel('Open chat with Bob'));
+      await tester.pump();
+      await pumpOrbitFrames(tester, count: 4);
+      tester.state<NavigatorState>(find.byType(Navigator)).pop();
+      await pumpOrbitFrames(tester, count: 8);
+
+      // The pop returns to the Inner-Circle view (it did not flip to the list).
+      expect(find.byType(OrbitalVisualization), findsOneWidget);
+      expect(find.byType(FriendRow), findsNothing);
+    });
   });
 }
 

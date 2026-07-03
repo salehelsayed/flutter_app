@@ -674,7 +674,12 @@ preflight_transport_census_processes() {
       awk '
         /run_transport_census_cli\.dart|transport_census_harness\.dart|go-mknoon\/bin\/testpeer/ &&
         $0 !~ /awk / &&
-        $0 !~ /ps -axo/ {
+        $0 !~ /ps -axo/ &&
+        # Exclude git invocations: an IDE/git "diff"/"status" lists the changed
+        # go-mknoon/bin/testpeer path as an argument, which is NOT an actual
+        # testpeer node. Matching "[ /]git " covers both PATH git ("... git ")
+        # and a full path ("/usr/bin/git ") without excluding real testpeer procs.
+        $0 !~ /[ \/]git / {
           print
         }
       '

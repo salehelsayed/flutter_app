@@ -183,6 +183,39 @@
   "pinned_remove": "إزالة",
   "edit_pinned_hint": "حدّث منشورك",
   "orbit_close_friends": "الأصدقاء المقرّبون",
+  "orbit_view_toggle_to_list": "عرض كل المحادثات",
+  "orbit_view_toggle_to_circle": "عرض الدائرة المقرّبة",
+  "orbit_inner_circle_empty_hint": "أضِف أصدقاء لرؤية دائرتك المقرّبة",
+  "orbit_node_unread_open_chat": "{count, plural, =1{افتح المحادثة مع {name}، رسالة واحدة غير مقروءة} =2{افتح المحادثة مع {name}، رسالتان غير مقروءتان} few{افتح المحادثة مع {name}، {count} رسائل غير مقروءة} many{افتح المحادثة مع {name}، {count} رسالة غير مقروءة} other{افتح المحادثة مع {name}، {count} رسالة غير مقروءة}}",
+  "@orbit_node_unread_open_chat": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_node_open_group": "افتح مجموعة {name}",
+  "@orbit_node_open_group": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "orbit_node_unread_open_group": "{count, plural, =1{افتح مجموعة {name}، رسالة واحدة غير مقروءة} =2{افتح مجموعة {name}، رسالتان غير مقروءتان} few{افتح مجموعة {name}، {count} رسائل غير مقروءة} many{افتح مجموعة {name}، {count} رسالة غير مقروءة} other{افتح مجموعة {name}، {count} رسالة غير مقروءة}}",
+  "@orbit_node_unread_open_group": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "orbit_new_group": "مجموعة جديدة",
   "orbit_new_announce": "إعلان جديد",
   "orbit_my_qr": "رمزي",
@@ -1366,38 +1399,18 @@
   "contact_profile_connected_since_label": "متصل منذ",
   "contact_profile_introduced_by_label": "عرّفك به",
   "contact_profile_message_button": "مراسلة",
-  "nav_orbit2": "أوربت٢",
   "nav_orbit3": "أوربت٣",
   "orbit2_prototype_chip": "نموذج · بيانات تجريبية",
-  "orbit2_size_legend": "الأكبر = الأقرب · انقر للمحادثة · اسحب لإعادة الترتيب",
-  "orbit2_simulate": "محاكاة",
-  "orbit2_reset": "إعادة",
   "orbit2_search_hint": "ابحث عن صديق",
   "orbit2_template_gravity": "جاذبية",
-  "orbit2_template_nebula": "سديم",
-  "orbit2_template_honeycomb": "خلية",
-  "orbit2_template_tiered": "طبقات",
-  "orbit2_template_unified": "دائرة واحدة",
   "orbit2_mock_chat_demo_chip": "تجريبي · الرسائل لا تُرسل",
   "orbit2_mock_chat_send_disabled": "الإرسال معطّل في هذه المعاينة",
   "orbit2_mock_chat_composer_hint": "رسالة",
-  "orbit2_hint": "اسحب المدار إلى أي مكان · اضغط مطوّلاً على صديق لإدخاله",
-  "orbit2_drop_hint": "أفلِت هنا لإضافته إلى دائرتك",
-  "orbit2_release_to_add": "أفلِت لإضافة {name}",
-  "orbit2_promoted": "تمت إضافة {name} إلى دائرتك الداخلية",
-  "orbit2_new_group": "مجموعة جديدة",
-  "orbit2_group_created": "تم إنشاء مجموعة جديدة — أفلِت المزيد من الأصدقاء لتكبيرها",
   "orbit2_group_members": "مجموعة · {count} أعضاء",
   "orbit2_show_less": "عرض أقل",
-  "orbit2_removed": "تمت إزالة {name} من دائرتك الداخلية",
   "orbit2_you": "أنت",
-  "orbit2_manage": "إدارة",
-  "orbit2_manage_done": "تم",
   "orbit2_names_show": "إظهار الأسماء",
   "orbit2_names_hide": "إخفاء الأسماء",
-  "orbit2_promoted_group": "تمت إضافة مجموعة {name} إلى دائرتك الداخلية",
-  "orbit2_view_messages": "الرسائل",
-  "orbit2_inbox_empty": "لا محادثات بعد",
   "orbit2_open_chat_with": "افتح محادثة مع {name}",
   "orbit3_constellation_zodiac": "الأبراج",
   "orbit3_constellation_galaxy": "المجرة",

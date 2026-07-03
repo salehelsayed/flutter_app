@@ -17,7 +17,10 @@ import 'package:flutter_app/features/settings/domain/models/background_preferenc
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_view_mode.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_close_button.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_qr_chrome_buttons.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_view_toggle_button.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friends_list_header.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friend_row.dart';
@@ -73,12 +76,22 @@ class OrbitIntrosViewData {
 class OrbitHeaderProjection {
   final String? userPeerId;
   final Uint8List? userAvatarBytes;
+
+  /// 1:1 friends only. Still feeds the friend-only search "inner circle" badge
+  /// (`indexOf(friend) < 13`) on the all-chats/search surface, which is a
+  /// deliberately friend-only cosmetic (see 197 Accepted Differences).
   final List<OrbitFriend> allFriends;
+
+  /// 197 — the merged friends+groups ring set the Inner-Circle visualization
+  /// renders, interleaved by recency (blocked friends already dropped, archived
+  /// groups already excluded upstream). Built via `mergeInnerCircleItems`.
+  final List<OrbitItem> innerItems;
 
   const OrbitHeaderProjection({
     this.userPeerId,
     this.userAvatarBytes,
     this.allFriends = const [],
+    this.innerItems = const [],
   });
 }
 
@@ -210,6 +223,14 @@ class OrbitScreen extends StatelessWidget {
   /// lightweight callers/tests can omit them.
   final void Function(OrbitGroup)? onRetryStuckRejoinGroup;
   final void Function(OrbitGroup)? onLeaveStuckGroup;
+  /// 193: which surface to show. Defaults to [OrbitViewMode.allChats] so the
+  /// existing bare-`OrbitScreen` pumps (loading / archived-groups / intro-route
+  /// harnesses) keep rendering the classic list without change.
+  final OrbitViewMode viewMode;
+
+  /// 193: flips [viewMode]. When null the top-left toggle is not mounted, so
+  /// bare-`OrbitScreen` callers stay unaffected.
+  final VoidCallback? onToggleView;
   final String? activeTab;
   final void Function(String)? onSwitchView;
   final ValueListenable<int>? feedUnreadCountListenable;
@@ -252,6 +273,8 @@ class OrbitScreen extends StatelessWidget {
     required this.onDeleteGroup,
     this.onRetryStuckRejoinGroup,
     this.onLeaveStuckGroup,
+    this.viewMode = OrbitViewMode.allChats,
+    this.onToggleView,
     this.activeTab,
     this.onSwitchView,
     this.feedUnreadCountListenable,
@@ -334,126 +357,33 @@ class OrbitScreen extends StatelessWidget {
         resizeToAvoidBottomInset: false,
         body: Stack(
           children: [
-            // Layer 1: Scrollable content
+            // Layer 1: the active surface — the Inner-Circle visualization
+            // (default on every entry) or the classic all-chats list, per
+            // [viewMode]. The two surfaces are disjoint: no list affordance
+            // leaks onto the circle, and no visualization header onto the list.
             SafeArea(
-              child: Column(
-                children: [
-                  // Collapsible header + orbital
-                  ValueListenableBuilder<OrbitHeaderProjection>(
-                    valueListenable: headerProjectionListenable,
-                    builder: (context, projection, child) {
-                      onHeaderBuild?.call();
-                      return AnimatedBuilder(
-                        animation: collapseAnimation,
-                        builder: (context, animatedChild) {
-                          final t = collapseAnimation.value;
-                          return Align(
-                            heightFactor: t,
-                            child: Opacity(
-                              opacity: t.clamp(0.0, 1.0),
-                              child: Transform.translate(
-                                offset: Offset(0, (1 - t) * -16),
-                                child: Transform.scale(
-                                  scale: 0.985 + 0.015 * t,
-                                  alignment: Alignment.topCenter,
-                                  child: animatedChild,
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                        child: Column(
-                          children: [
-                            OrbitalVisualization(
-                              userPeerId: projection.userPeerId,
-                              userAvatarBytes: projection.userAvatarBytes,
-                              friends: projection.allFriends
-                                  .where((friend) => !friend.isBlocked)
-                                  .toList(),
-                              onFriendTap: onFriendTap,
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.only(top: 20),
-                              child: Text(
-                                AppLocalizations.of(
-                                  context,
-                                )!.orbit_close_friends,
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: context
-                                      .backgroundReadableColors
-                                      .textMuted,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-
-                  // Scrollable friends list
-                  Expanded(
-                    child: ValueListenableBuilder<OrbitViewProjection>(
-                      valueListenable: listProjectionListenable,
-                      builder: (context, projection, child) {
-                        onListBuild?.call();
-                        return CustomScrollView(
-                          controller: scrollController,
-                          physics: const BouncingScrollPhysics(),
-                          cacheExtent: 600,
-                          slivers: [
-                            SliverToBoxAdapter(
-                              child: Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  16,
-                                  8,
-                                  16,
-                                  0,
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    FriendsListHeader(
-                                      onMyQR: onMyQR,
-                                      onScanQR: onScanQR,
-                                      searchActive: projection.searchActive,
-                                    ),
-                                    if (!projection.searchActive) ...[
-                                      const SizedBox(height: 8),
-                                      FriendsFilterToggle(
-                                        activeFilter: projection.filterTab,
-                                        activeCount: projection.activeCount,
-                                        archivedCount: projection.archivedCount,
-                                        introsCount: projection.reviewCount,
-                                        onFilterChanged: onFilterChanged,
-                                      ),
-                                    ],
-                                    const SizedBox(height: 8),
-                                    if (projection.reviewCount > 0 &&
-                                        projection.filterTab != 'intros')
-                                      _buildIntroBanner(context, projection),
-                                  ],
-                                ),
-                              ),
-                            ),
-                            _buildContentSliver(context, projection),
-                            SliverToBoxAdapter(
-                              child: SizedBox(
-                                height: _contentBottomSpacer(
-                                  context,
-                                  projection,
-                                ),
-                              ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
+              child: viewMode == OrbitViewMode.innerCircle
+                  ? _buildInnerCircleSurface(context)
+                  : _buildAllChatsListSurface(context),
             ),
+
+            // Layer 1b: top-left view toggle — present on BOTH surfaces so it
+            // can flip the view either way. Only mounted when a toggle handler
+            // is wired, so bare-OrbitScreen pumps are unaffected. Physical
+            // top-left (RTL-safe) — see OrbitViewToggleButton.
+            if (onToggleView != null)
+              OrbitViewToggleButton(
+                viewMode: viewMode,
+                onToggle: onToggleView!,
+              ),
+
+            // Layer 1c (196): twin "My QR" / "Scan" chrome buttons at
+            // top-center, on BOTH surfaces, fed by the existing onMyQR/onScanQR.
+            // Mounted UNCONDITIONALLY (not gated on onToggleView, unlike the
+            // toggle) and BEFORE the ExpandableFab so an open FAB scrim wins a
+            // tap over the chrome. Icon-only with l10n button Semantics; the
+            // full-width band is tap-transparent outside the two buttons.
+            OrbitQrChromeButtons(onMyQR: onMyQR, onScanQR: onScanQR),
 
             // Layer 2: Close button — standalone mode only. When the
             // persistent Feed/Orbit nav is shown, the Feed tab is the way back,
@@ -467,8 +397,9 @@ class OrbitScreen extends StatelessWidget {
 
             // Layer 3: Search trigger — standalone mode floats above the close
             // button. In persistent mode the trigger sits inline with the
-            // Feed/Orbit nav bar (built below) instead.
-            if (!_showsPersistentNav)
+            // Feed/Orbit nav bar (built below) instead. Search is an all-chats
+            // affordance — never shown on the Inner-Circle surface.
+            if (!_showsPersistentNav && viewMode == OrbitViewMode.allChats)
               AnimatedBuilder(
                 animation: searchTriggerAnimation,
                 builder: (context, child) {
@@ -491,9 +422,12 @@ class OrbitScreen extends StatelessWidget {
                 child: OrbitSearchTrigger(onSearchTap: onSearchOpen),
               ),
 
-            // Layer 4: Search dock (slides up from bottom)
-            AnimatedBuilder(
-              animation: searchDockAnimation,
+            // Layer 4: Search dock (slides up from bottom) — all-chats only
+            // (search is a list affordance; the Inner-Circle surface never
+            // mounts the dock, so its TextField cannot linger over the circle).
+            if (viewMode == OrbitViewMode.allChats)
+              AnimatedBuilder(
+                animation: searchDockAnimation,
               builder: (context, child) {
                 final t = searchDockAnimation.value;
                 return Positioned(
@@ -550,7 +484,9 @@ class OrbitScreen extends StatelessWidget {
                                 ),
                               );
                             },
-                            child: OrbitSearchTrigger(onSearchTap: onSearchOpen),
+                            child: viewMode == OrbitViewMode.allChats
+                                ? OrbitSearchTrigger(onSearchTap: onSearchOpen)
+                                : const SizedBox.shrink(),
                           ),
                         ),
                       ),
@@ -580,6 +516,127 @@ class OrbitScreen extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  /// Inner-Circle surface (default view): the orbital visualization + caption,
+  /// centered, with a zero-contacts hint when there are no friends yet. NO
+  /// list-coupled affordances. The collapse animation is inert here (search
+  /// cannot open on this surface), so the header renders fully expanded.
+  Widget _buildInnerCircleSurface(BuildContext context) {
+    return ValueListenableBuilder<OrbitHeaderProjection>(
+      valueListenable: headerProjectionListenable,
+      builder: (context, projection, child) {
+        onHeaderBuild?.call();
+        final readableColors = context.backgroundReadableColors;
+        // 197: the rings render the merged friends+groups ring set (blocked
+        // friends already dropped, archived groups already excluded upstream).
+        final innerItems = projection.innerItems;
+        return Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                OrbitalVisualization(
+                  userPeerId: projection.userPeerId,
+                  userAvatarBytes: projection.userAvatarBytes,
+                  items: innerItems,
+                  onFriendTap: onFriendTap,
+                  onGroupTap: onGroupTap,
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 20),
+                  child: Text(
+                    AppLocalizations.of(context)!.orbit_close_friends,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: readableColors.textMuted,
+                    ),
+                  ),
+                ),
+                if (innerItems.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Text(
+                      AppLocalizations.of(
+                        context,
+                      )!.orbit_inner_circle_empty_hint,
+                      key: const ValueKey('orbit-inner-circle-empty-hint'),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: readableColors.textMuted,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// All-chats surface (alternative view): the classic friends/groups list with
+  /// its QR header, filter tabs, intro banner, and search. NO visualization
+  /// header. This is the pre-193 list, unchanged, minus the collapsible header.
+  Widget _buildAllChatsListSurface(BuildContext context) {
+    return Column(
+      children: [
+        Expanded(
+          child: ValueListenableBuilder<OrbitViewProjection>(
+            valueListenable: listProjectionListenable,
+            builder: (context, projection, child) {
+              onListBuild?.call();
+              return CustomScrollView(
+                controller: scrollController,
+                physics: const BouncingScrollPhysics(),
+                cacheExtent: 600,
+                slivers: [
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      // 196: the first sliver clears the top chrome strip
+                      // (toggle + QR pair, both at safeTop+8) VERTICALLY — top
+                      // padding 8 → 56 — now that the QR entries left the header
+                      // for OrbitQrChromeButtons. The old physical-left inset is
+                      // gone: the header is title-only, so nothing sits under
+                      // the top-left toggle in either direction.
+                      padding: const EdgeInsets.fromLTRB(16, 56, 16, 0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const FriendsListHeader(),
+                          if (!projection.searchActive) ...[
+                            const SizedBox(height: 8),
+                            FriendsFilterToggle(
+                              activeFilter: projection.filterTab,
+                              activeCount: projection.activeCount,
+                              archivedCount: projection.archivedCount,
+                              introsCount: projection.reviewCount,
+                              onFilterChanged: onFilterChanged,
+                            ),
+                          ],
+                          const SizedBox(height: 8),
+                          if (projection.reviewCount > 0 &&
+                              projection.filterTab != 'intros')
+                            _buildIntroBanner(context, projection),
+                        ],
+                      ),
+                    ),
+                  ),
+                  _buildContentSliver(context, projection),
+                  SliverToBoxAdapter(
+                    child: SizedBox(
+                      height: _contentBottomSpacer(context, projection),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 

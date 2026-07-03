@@ -341,6 +341,20 @@ Future<void> _runOrbitSessionAndOpenThreads({
     await tester.pump(const Duration(milliseconds: 100));
   }
 
+  // 193: default entry is the Inner-Circle view — the all-chats list (and its
+  // contact/group name text) only renders after the top-left toggle is tapped.
+  // The group has no orbital avatar (the viz is friends-only), so the toggle is
+  // mandatory to reach the threads opened below.
+  expect(
+    find.text(aliceContactName),
+    findsNothing,
+    reason: '$sessionLabel: default entry must be the Inner-Circle view',
+  );
+  await tester.tap(find.byKey(const ValueKey('orbit-view-toggle')));
+  for (var i = 0; i < 6; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+
   expect(
     find.text(aliceContactName),
     findsWidgets,

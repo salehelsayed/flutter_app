@@ -2,10 +2,16 @@
 set -euo pipefail
 
 # ── Config ──────────────────────────────────────────────────
-DEVICE_A="347FB118-10D0-40C8-A05B-B0C3BD6B8CCD"
-DEVICE_B="5BA69F1C-B112-47BE-B1FF-8C1003728C8F"
-DEVICE_C="1B098DFF-6294-407A-A209-BBF360893485"
-DEVICE_D="38FECA55-03C1-4907-BD9D-8E64BF8E3469"
+# Honor DEVICE_A..D from the environment (the run_with_devices.sh helper /
+# smoke_test_friends.sh export the actually-booted sim UDIDs). Falling back to
+# these hardcoded defaults ONLY when unset. Previously these were unconditional
+# assignments that clobbered the inherited env, so the reset booted/installed on
+# stale UDIDs while smoke_test_friends drove the real ones — causing
+# CoreSimulator SimError 405 "Unable to lookup in current state: Shutdown".
+DEVICE_A="${DEVICE_A:-347FB118-10D0-40C8-A05B-B0C3BD6B8CCD}"
+DEVICE_B="${DEVICE_B:-5BA69F1C-B112-47BE-B1FF-8C1003728C8F}"
+DEVICE_C="${DEVICE_C:-1B098DFF-6294-407A-A209-BBF360893485}"
+DEVICE_D="${DEVICE_D:-38FECA55-03C1-4907-BD9D-8E64BF8E3469}"
 INTRO_E2E_DEVICE_SET="${INTRO_E2E_DEVICE_SET:-three}"
 
 case "$INTRO_E2E_DEVICE_SET" in

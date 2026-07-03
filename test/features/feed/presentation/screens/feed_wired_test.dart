@@ -35,6 +35,7 @@ import 'package:flutter_app/features/identity/presentation/widgets/cosmic_backgr
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
@@ -923,24 +924,85 @@ void main() {
       expect(feedScrollOffset(), closeTo(scrolledOffset, 1));
     });
 
-    testWidgets('orbit search state survives an inline host tab round trip', (
-      tester,
-    ) async {
+    testWidgets(
+      'orbit re-entry resets to the Inner-Circle view (search state does not survive)',
+      (tester) async {
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+
+        final otherContact = testContact.copyWith(
+          peerId: 'contact-peer-id-2',
+          publicKey: 'contact-pk-2',
+          username: 'Cara',
+          signature: 'sig-2',
+          scannedAt: '2026-02-01T09:30:00.000Z',
+        );
+        contactRepo.seed([testContact, otherContact]);
+
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'msg-orbit-search-1',
+            contactPeerId: testContact.peerId,
+            text: 'Bob orbit message',
+            senderPeerId: testContact.peerId,
+            timestamp: '2026-02-01T10:00:00.000Z',
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: '2026-02-01T10:00:00.000Z',
+          ),
+        );
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'msg-orbit-search-2',
+            contactPeerId: otherContact.peerId,
+            text: 'Cara orbit message',
+            senderPeerId: otherContact.peerId,
+            timestamp: '2026-02-01T10:05:00.000Z',
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: '2026-02-01T10:05:00.000Z',
+          ),
+        );
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester, count: 10);
+
+        await tester.tap(feedOrbitNavLabel());
+        await pumpFeedFrames(tester, count: 10);
+
+        // Reach the all-chats view, open search, and filter to Bob.
+        await tester.tap(find.byKey(const ValueKey('orbit-view-toggle')));
+        await pumpFeedFrames(tester, count: 4);
+        await tester.tap(find.byType(OrbitSearchTrigger));
+        await pumpFeedFrames(tester, count: 4);
+        await tester.enterText(orbitSearchField(), 'Bo');
+        await pumpFeedFrames(tester, count: 4);
+        expect(orbitScopedText('Bob'), findsWidgets);
+        expect(orbitScopedText('Cara'), findsNothing);
+
+        // Leave to Feed and re-enter Orbit → the inline-tab rising edge resets
+        // the view to Inner-Circle. This is the ONLY path that proves the reset
+        // fires on the latched host (initState alone cannot cover it). The
+        // search state does NOT survive.
+        await tester.tap(orbitFeedNavLabel());
+        await pumpFeedFrames(tester, count: 10);
+        await tester.tap(feedOrbitNavLabel());
+        await pumpFeedFrames(tester, count: 10);
+
+        expect(find.byType(OrbitalVisualization), findsOneWidget);
+        expect(orbitSearchField(), findsNothing);
+        expect(orbitScopedText('Bob'), findsNothing);
+      },
+    );
+
+    testWidgets('orbit nav tap lands on the Inner-Circle view', (tester) async {
       suppressFeedNavErrors();
       identityRepo.seed(testIdentity);
-
-      final otherContact = testContact.copyWith(
-        peerId: 'contact-peer-id-2',
-        publicKey: 'contact-pk-2',
-        username: 'Cara',
-        signature: 'sig-2',
-        scannedAt: '2026-02-01T09:30:00.000Z',
-      );
-      contactRepo.seed([testContact, otherContact]);
+      contactRepo.seed([testContact]);
 
       await messageRepo.saveMessage(
         ConversationMessage(
-          id: 'msg-orbit-search-1',
+          id: 'msg-orbit-nav-1',
           contactPeerId: testContact.peerId,
           text: 'Bob orbit message',
           senderPeerId: testContact.peerId,
@@ -950,18 +1012,6 @@ void main() {
           createdAt: '2026-02-01T10:00:00.000Z',
         ),
       );
-      await messageRepo.saveMessage(
-        ConversationMessage(
-          id: 'msg-orbit-search-2',
-          contactPeerId: otherContact.peerId,
-          text: 'Cara orbit message',
-          senderPeerId: otherContact.peerId,
-          timestamp: '2026-02-01T10:05:00.000Z',
-          isIncoming: true,
-          status: 'delivered',
-          createdAt: '2026-02-01T10:05:00.000Z',
-        ),
-      );
 
       await tester.pumpWidget(buildFeedWired());
       await pumpFeedFrames(tester, count: 10);
@@ -969,23 +1019,11 @@ void main() {
       await tester.tap(feedOrbitNavLabel());
       await pumpFeedFrames(tester, count: 10);
 
-      await tester.tap(find.byType(OrbitSearchTrigger));
-      await pumpFeedFrames(tester, count: 4);
-      await tester.enterText(orbitSearchField(), 'Bo');
-      await pumpFeedFrames(tester, count: 4);
-
-      expect(orbitScopedText('Bob'), findsWidgets);
-      expect(orbitScopedText('Cara'), findsNothing);
-
-      await tester.tap(orbitFeedNavLabel());
-      await pumpFeedFrames(tester, count: 10);
-      await tester.tap(feedOrbitNavLabel());
-      await pumpFeedFrames(tester, count: 10);
-
-      expect(orbitScopedText('Bob'), findsWidgets);
-      expect(orbitScopedText('Cara'), findsNothing);
-      final searchField = tester.widget<TextField>(orbitSearchField());
-      expect(searchField.controller!.text, 'Bo');
+      // The shell entry lands on the Inner-Circle view: the visualization is
+      // shown and no all-chats list/search affordance is present.
+      expect(find.byType(OrbitalVisualization), findsOneWidget);
+      expect(find.byType(OrbitSearchTrigger), findsNothing);
+      expect(orbitScopedText('Bob'), findsNothing);
     });
 
     testWidgets(
@@ -1098,6 +1136,10 @@ void main() {
 
       await tester.tap(find.text('Orbit'));
       await pumpFeedFrames(tester, count: 10);
+
+      // Reach the all-chats list where Bob's row lives.
+      await tester.tap(find.byKey(const ValueKey('orbit-view-toggle')));
+      await pumpFeedFrames(tester, count: 4);
 
       final orbitBobFinder = orbitScopedText('Bob').first;
       await tester.ensureVisible(orbitBobFinder);
@@ -2074,6 +2116,50 @@ void main() {
           messageRepo.getTotalUnreadCountExcludingArchivedCallCount,
           greaterThan(0),
         );
+      },
+    );
+
+    testWidgets(
+      'reading a conversation on another surface clears the Feed nav unread '
+      'badge (repo read-event drives the total-unread recompute)',
+      (tester) async {
+        setPhoneViewport(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final fakeChatListener = _FakeChatMessageListener(
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+        final ts = DateTime.utc(2026, 3, 1, 8, 0).toIso8601String();
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'unread-1',
+            contactPeerId: testContact.peerId,
+            text: 'unread hello',
+            senderPeerId: testContact.peerId,
+            timestamp: ts,
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: ts,
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(chatMessageListener: fakeChatListener),
+        );
+        await pumpFeedFrames(tester);
+
+        // The Feed nav button shows the aggregate unread.
+        expect(navButton(tester, 'Feed').badgeCount, 1);
+
+        // Read the conversation on ANOTHER surface (orbit avatar tap /
+        // notification route): the same repo is marked read WITHOUT traversing
+        // the feed's own leave-thread recompute. markConversationAsRead does NOT
+        // emit on messageChanges, so only the read-event seam can catch this.
+        await messageRepo.markConversationAsRead(testContact.peerId);
+        await pumpFeedFrames(tester);
+
+        expect(navButton(tester, 'Feed').badgeCount, 0);
       },
     );
 

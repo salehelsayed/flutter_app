@@ -1,12 +1,12 @@
-import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/orbit2/application/orbit2_mock_data.dart';
 import 'package:flutter_app/features/orbit2/domain/models/avatar_tier.dart';
 import 'package:flutter_app/features/orbit2/domain/models/orbit2_group.dart';
 import 'package:flutter_app/features/orbit2/domain/models/orbit2_inner_item.dart';
-import 'package:flutter_app/features/orbit2/domain/models/orbit2_layout_template.dart';
 
+// NOTE: These models (Orbit2InnerItem / Orbit2Group / AvatarTier / Orbit2MockData)
+// are shared leaf types still consumed by the Orbit3 prototype after the Orbit2
+// screen was removed, so their coverage stays here.
 void main() {
   group('Orbit2InnerItem union', () {
     final set = Orbit2MockData.build();
@@ -49,162 +49,6 @@ void main() {
     test('all avatars render at one uniform size', () {
       expect(AvatarTier.sizeA.diameter, AvatarTier.sizeB.diameter);
       expect(AvatarTier.sizeA.diameter, kFloatingAvatarDiameter);
-    });
-  });
-
-  group('layoutPositions', () {
-    const canvas = Size(900, 640);
-    final tiers = <AvatarTier>[
-      AvatarTier.sizeA, AvatarTier.sizeA, AvatarTier.sizeA, AvatarTier.sizeA,
-      AvatarTier.sizeB, AvatarTier.sizeB, AvatarTier.sizeB, AvatarTier.sizeB,
-      AvatarTier.sizeB, AvatarTier.sizeB, AvatarTier.sizeB,
-    ];
-
-    test('returns one position per tier, all templates', () {
-      for (final t in Orbit2LayoutTemplate.values) {
-        expect(layoutPositions(t, canvas: canvas, tiers: tiers).length,
-            tiers.length, reason: '$t');
-      }
-    });
-
-    test('all centers stay in bounds, all templates', () {
-      const margin = 44.0;
-      for (final t in Orbit2LayoutTemplate.values) {
-        final p = layoutPositions(t, canvas: canvas, tiers: tiers);
-        for (final o in p) {
-          expect(o.dx, inInclusiveRange(margin - 0.5, canvas.width - margin + 0.5),
-              reason: '$t dx');
-          expect(o.dy, inInclusiveRange(margin - 0.5, canvas.height - margin + 0.5),
-              reason: '$t dy');
-        }
-      }
-    });
-
-    test('no two avatars overlap (pairwise spacing), all templates', () {
-      for (final t in Orbit2LayoutTemplate.values) {
-        final p = layoutPositions(t, canvas: canvas, tiers: tiers);
-        // Uniform avatars (r=20) ⇒ min centre separation = 20+20+12 = 52.
-        for (var i = 0; i < p.length; i++) {
-          for (var j = i + 1; j < p.length; j++) {
-            expect((p[i] - p[j]).distance, greaterThanOrEqualTo(51.0),
-                reason: '$t pair $i,$j');
-          }
-        }
-      }
-    });
-
-    test('innerGravity: Size-A is closer to centre than Size-B on average', () {
-      final p = layoutPositions(Orbit2LayoutTemplate.innerGravity,
-          canvas: canvas, tiers: tiers);
-      final centre = Offset(canvas.width / 2, canvas.height / 2);
-      double meanDist(AvatarTier tier) {
-        var sum = 0.0;
-        var count = 0;
-        for (var i = 0; i < tiers.length; i++) {
-          if (tiers[i] == tier) {
-            sum += (p[i] - centre).distance;
-            count++;
-          }
-        }
-        return sum / count;
-      }
-      expect(meanDist(AvatarTier.sizeA), lessThan(meanDist(AvatarTier.sizeB)));
-    });
-
-    test('tieredBands: every Size-A sits above every Size-B', () {
-      final p = layoutPositions(Orbit2LayoutTemplate.tieredBands,
-          canvas: canvas, tiers: tiers);
-      var maxA = double.negativeInfinity;
-      var minB = double.infinity;
-      for (var i = 0; i < tiers.length; i++) {
-        if (tiers[i] == AvatarTier.sizeA) maxA = maxA > p[i].dy ? maxA : p[i].dy;
-        if (tiers[i] == AvatarTier.sizeB) minB = minB < p[i].dy ? minB : p[i].dy;
-      }
-      expect(maxA, lessThan(minB));
-    });
-
-    test('exclusion zone: no avatar overlaps the inner circle, all templates', () {
-      const exCenter = Offset(450, 320);
-      const exRadius = 130.0;
-      for (final t in Orbit2LayoutTemplate.values) {
-        final p = layoutPositions(
-          t,
-          canvas: canvas,
-          tiers: tiers,
-          exclusionCenter: exCenter,
-          exclusionRadius: exRadius,
-        );
-        for (var i = 0; i < p.length; i++) {
-          expect((p[i] - exCenter).distance, greaterThanOrEqualTo(exRadius - 2),
-              reason: '$t avatar $i is inside the inner-circle zone');
-        }
-      }
-    });
-
-    test('spacing modes: wider centre-to-centre when names are shown', () {
-      for (final t in Orbit2LayoutTemplate.values) {
-        final named = layoutPositions(t,
-            canvas: canvas, tiers: tiers, minSpacing: kNamedSpacing);
-        final bare = layoutPositions(t,
-            canvas: canvas, tiers: tiers, minSpacing: kBareSpacing);
-        for (var i = 0; i < tiers.length; i++) {
-          for (var j = i + 1; j < tiers.length; j++) {
-            expect((named[i] - named[j]).distance,
-                greaterThanOrEqualTo(kNamedSpacing - 2),
-                reason: '$t named pair $i,$j');
-            expect((bare[i] - bare[j]).distance,
-                greaterThanOrEqualTo(kBareSpacing - 2),
-                reason: '$t bare pair $i,$j');
-          }
-        }
-      }
-    });
-
-    test('deterministic — same inputs yield identical output', () {
-      for (final t in Orbit2LayoutTemplate.values) {
-        final a = layoutPositions(t, canvas: canvas, tiers: tiers);
-        final b = layoutPositions(t, canvas: canvas, tiers: tiers);
-        expect(a, b, reason: '$t');
-      }
-    });
-
-    test('empty and single tiers do not throw', () {
-      for (final t in Orbit2LayoutTemplate.values) {
-        expect(layoutPositions(t, canvas: canvas, tiers: const []), isEmpty);
-        expect(
-          layoutPositions(t, canvas: canvas, tiers: const [AvatarTier.sizeA]).length,
-          1,
-        );
-      }
-    });
-  });
-
-  group('repel (magnet)', () {
-    const center = Offset(200, 200);
-    const radius = 100.0;
-
-    test('point outside the zone is unchanged', () {
-      const home = Offset(400, 200); // 200 away
-      expect(repel(home, center, radius), home);
-    });
-
-    test('point inside the zone is pushed to the boundary', () {
-      const home = Offset(240, 200); // 40 away, inside
-      final r = repel(home, center, radius);
-      expect((r - center).distance, closeTo(radius, 0.001));
-      // pushed along the same direction (to the right)
-      expect(r.dx, greaterThan(home.dx));
-      expect(r.dy, closeTo(200, 0.001));
-    });
-
-    test('point at the centre is pushed straight down by radius', () {
-      final r = repel(center, center, radius);
-      expect(r, Offset(center.dx, center.dy + radius));
-    });
-
-    test('deterministic', () {
-      const home = Offset(250, 230);
-      expect(repel(home, center, radius), repel(home, center, radius));
     });
   });
 
@@ -292,10 +136,5 @@ void main() {
       // deterministic
       expect([for (final e in build()) e.id], [for (final e in entries) e.id]);
     });
-  });
-
-  test('AppShellTab accepts orbit2', () {
-    expect(AppShellTab.isValid(AppShellTab.orbit2), isTrue);
-    expect(AppShellTab.orbit2, 'orbit2');
   });
 }

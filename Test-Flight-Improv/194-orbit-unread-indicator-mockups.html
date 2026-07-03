@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>194 · Orbit unread indicator — 4 alternatives</title>
+<style>
+  /* ================================================================
+     Palette lifted 1:1 from the app:
+     - cosmic bg gradient          cosmic_background.dart:108
+     - dashed rings                orbital_ring_painter.dart:8-59
+     - green unread pill           unread_count_badge.dart:58-92
+     - red nav badge               nav_bar_theme.dart:60-64
+     - profile orbit satellites    contact_profile_screen.dart:730-776
+     - node placement formula      orbital_visualization.dart:89-143
+     ================================================================ */
+  :root {
+    --ink-hi: #F8FAFC;
+    --ink-mid: rgba(229, 231, 235, 0.87);
+    --ink-muted: rgba(201, 206, 214, 0.72);
+    --ring-teal: rgba(129, 230, 217, 0.25);
+    --ring-violet: rgba(167, 139, 250, 0.20);
+    --glass: rgba(10, 10, 15, 0.52);
+    --glass-border: rgba(255, 255, 255, 0.14);
+  }
+  /* Unread accent — switchable. Green = the app's existing unread
+     semantic (friend-row pill); red = the nav-bar badge family;
+     peer = user-b's own identity hue. */
+  body[data-accent="green"] { --acc:#1DB954; --acc2:#18A349; --acc-glow:rgba(29,185,84,.45); --acc-ring:rgba(29,185,84,.55); --acc-halo:rgba(29,185,84,.18); }
+  body[data-accent="red"]   { --acc:#FF3B30; --acc2:#E0342A; --acc-glow:rgba(255,59,48,.45); --acc-ring:rgba(255,59,48,.55); --acc-halo:rgba(255,59,48,.18); }
+  body[data-accent="peer"]  { --acc:#26D980; --acc2:#1FB56A; --acc-glow:rgba(38,217,128,.45); --acc-ring:rgba(38,217,128,.55); --acc-halo:rgba(38,217,128,.18); }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    color: var(--ink-mid);
+    min-height: 100vh;
+    background: radial-gradient(circle at 15% 85%, #0A1124 0%, #050714 45%, #02030A 100%);
+    background-attachment: fixed;
+    overflow-x: hidden;
+  }
+
+  /* --- cosmic backdrop: nebula blooms + twinkling stars ------------- */
+  .cosmos { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
+  .bloom { position: absolute; border-radius: 50%; filter: blur(2px); }
+  .bloom.indigo { left: 20%; top: 90%; width: 120vw; height: 96vh; transform: translate(-50%,-50%);
+    background: radial-gradient(ellipse, rgba(129,140,248,.18) 0%, transparent 60%); }
+  .bloom.teal { left: 85%; top: 10%; width: 100vw; height: 80vh; transform: translate(-50%,-50%);
+    background: radial-gradient(ellipse, rgba(129,230,217,.10) 0%, transparent 62%); }
+  .bloom.rose { left: 70%; top: 60%; width: 80vw; height: 64vh; transform: translate(-50%,-50%);
+    background: radial-gradient(ellipse, rgba(244,114,182,.07) 0%, transparent 60%); }
+  .star { position: absolute; border-radius: 50%; background: #fff; opacity: .15;
+    animation: twinkle var(--tw-dur,4s) ease-in-out var(--tw-delay,0s) infinite; }
+  @keyframes twinkle { 0%,100% { opacity:.15; transform:scale(.9);} 50% { opacity:.85; transform:scale(1.1);} }
+
+  /* --- page chrome --------------------------------------------------- */
+  .wrap { position: relative; z-index: 1; max-width: 880px; margin: 0 auto; padding: 48px 20px 80px; }
+
+  .eyebrow {
+    font-size: 11px; font-weight: 700; letter-spacing: 2.6px; text-transform: uppercase;
+    color: rgba(129, 230, 217, 0.85); margin-bottom: 14px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  h1 {
+    color: var(--ink-hi); font-size: clamp(24px, 4.5vw, 34px); font-weight: 300;
+    letter-spacing: 4px; text-transform: uppercase; margin-bottom: 10px;
+  }
+  .lede { font-size: 14px; line-height: 1.65; color: var(--ink-muted); max-width: 62ch; }
+  .lede b { color: var(--ink-mid); font-weight: 600; }
+
+  .section-title {
+    margin: 44px 0 6px; font-size: 14px; font-weight: 600; letter-spacing: 1px;
+    text-transform: uppercase; color: var(--ink-muted);
+  }
+  .section-sub { font-size: 12.5px; line-height: 1.6; color: rgba(201,206,214,.55);
+    max-width: 68ch; margin-bottom: 18px; }
+
+  /* --- control bar (mimics the app's glass nav pill) ----------------- */
+  .controls {
+    position: sticky; top: 14px; z-index: 5;
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+    margin: 28px 0 4px; padding: 8px 10px;
+    border-radius: 30px;
+    background: linear-gradient(rgba(255,255,255,.14), rgba(255,255,255,.07));
+    border: 1px solid rgba(255,255,255,.26);
+    backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px);
+    box-shadow: 0 4px 16px rgba(0,0,0,.12);
+    width: fit-content;
+  }
+  .controls button {
+    font: 600 12px/1.2 -apple-system, sans-serif; color: #fff;
+    background: rgba(255,255,255,.10); border: 1px solid rgba(255,255,255,.22);
+    border-radius: 19px; padding: 9px 14px; cursor: pointer;
+    transition: background .22s ease-out;
+  }
+  .controls button:hover { background: rgba(255,255,255,.22); }
+  .controls .primary { background: linear-gradient(135deg, var(--acc), var(--acc2));
+    border-color: transparent; box-shadow: 0 2px 10px var(--acc-glow); }
+  .acc-group { display: flex; gap: 4px; margin-left: 6px; padding-left: 12px;
+    border-left: 1px solid rgba(255,255,255,.18); align-items: center; }
+  .acc-group span { font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase;
+    color: var(--ink-muted); margin-right: 4px; }
+  .acc-chip { width: 26px; height: 26px; border-radius: 50%; cursor: pointer;
+    border: 2px solid transparent; padding: 0; }
+  .acc-chip.g { background: #1DB954; } .acc-chip.r { background: #FF3B30; } .acc-chip.p { background: #26D980; border-style: dashed; border-color: rgba(255,255,255,.35); }
+  body[data-accent="green"] .acc-chip.g, body[data-accent="red"] .acc-chip.r, body[data-accent="peer"] .acc-chip.p
+    { border-color: #fff; box-shadow: 0 0 8px rgba(255,255,255,.4); }
+
+  /* --- alternatives grid --------------------------------------------- */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 22px; }
+
+  .card {
+    border-radius: 20px; background: var(--glass);
+    border: 1px solid var(--glass-border);
+    padding: 20px 20px 18px; display: flex; flex-direction: column;
+  }
+  .card header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+  .alt-ix {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px; font-weight: 700; color: var(--acc);
+    border: 1px solid var(--acc-ring); border-radius: 6px; padding: 2px 7px;
+  }
+  .card h2 { color: var(--ink-hi); font-size: 15px; font-weight: 600; letter-spacing: .4px; }
+  .card .desc { font-size: 12.5px; line-height: 1.6; color: var(--ink-muted); margin-top: 10px; }
+  .card .hint { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10.5px;
+    color: rgba(201,206,214,.45); margin-top: 10px; letter-spacing: .3px; }
+  .card.read .hint::after { content: " · read ✓"; color: var(--acc); }
+
+  /* --- the orbit scene (1:1 geometry from orbital_ring_painter) ------ */
+  .scene { position: relative; width: 280px; height: 280px; margin: 6px auto 0; }
+  .scene svg { position: absolute; inset: 0; }
+
+  .sun {
+    position: absolute; left: 116px; top: 116px; width: 48px; height: 48px;
+    border-radius: 50%; border: 2.5px solid rgba(255,255,255,.85);
+    background: radial-gradient(circle, hsl(60 80% 55% / .9) 0 13%, rgba(26,26,16,.9) 34%, rgba(26,26,16,.9) 100%);
+    box-shadow: 0 0 17px 3px hsl(60 70% 50% / .5), inset 0 0 6px hsl(60 70% 50% / .5);
+  }
+
+  /* friend node. Colored outer ring + glowing core = the peer's
+     deterministic identity avatar (RingAvatar) — NOT a state. */
+  .node {
+    position: absolute; width: 38px; height: 38px;
+    background: none; border: none; padding: 0; cursor: pointer; z-index: 2;
+    --hue: 150; --ring-c: rgba(255,59,59,.9); --orb-r: 32px;
+  }
+  .node.n30 { width: 30px; height: 30px; --orb-r: 26px; }
+  .avatar {
+    position: absolute; inset: 0; border-radius: 50%;
+    border: 2px solid var(--ring-c);
+    background: radial-gradient(circle, hsl(var(--hue) 70% 55%) 0 14%, #10151C 36%, #10151C 100%);
+    box-shadow: 0 0 13px 2px hsl(var(--hue) 70% 50% / .35),
+                inset 0 0 5px hsl(var(--hue) 70% 50% / .7);
+  }
+  .avatar::after { content: ""; position: absolute; inset: 3px; border-radius: 50%;
+    border: 1px solid rgba(255,255,255,.30); }
+  .node.n30 .avatar { border-width: 1.5px; }
+  .node.n30 .avatar::after { inset: 2px; }
+
+  /* ---- indicator A: count badge (green unread pill, friend-row spec) */
+  .ind-badge {
+    position: absolute; top: -7px; right: -9px; z-index: 3;
+    min-width: 18px; height: 18px; padding: 0 5px; border-radius: 10px;
+    background: linear-gradient(135deg, var(--acc), var(--acc2));
+    box-shadow: 0 2px 8px var(--acc-glow);
+    color: #fff; font-size: 10px; font-weight: 700; line-height: 18px; text-align: center;
+    transform: scale(1); opacity: 1;
+    transition: transform .3s cubic-bezier(.34,1.8,.64,1), opacity .2s ease;
+  }
+  .node.n30 .ind-badge { min-width: 15px; height: 15px; line-height: 15px;
+    font-size: 9px; padding: 0 4px; border-radius: 8px; top: -6px; right: -7px; }
+  .card.read .ind-badge, .node.read .ind-badge, .ind-badge.pop { transform: scale(0); opacity: 0; }
+  .card.read .ind-badge, .node.read .ind-badge { transition: transform .22s ease-in, opacity .22s ease-in; }
+
+  /* ---- indicator B/C: messenger orbit (contact-profile geometry,
+          1.1px ring + halo'd satellites, rigid rotation, 9s vs 28s) --- */
+  .orbit-wrap {
+    position: absolute; inset: -13px; z-index: 1;
+    transition: opacity .65s ease-out, transform .65s ease-out;
+  }
+  .node.n30 .orbit-wrap { inset: -11px; }
+  .card.read .orbit-wrap, .node.read .orbit-wrap { opacity: 0; transform: scale(1.35); }
+  .uring { position: absolute; inset: 0; border-radius: 50%;
+    border: 1.1px solid var(--acc-ring);
+    box-shadow: 0 0 8px var(--acc-halo), inset 0 0 8px var(--acc-halo); }
+  .orbiter { position: absolute; inset: 0; animation: spin 9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .sat { position: absolute; left: 50%; top: 50%; border-radius: 50%; display: none; }
+  .sat i { position: absolute; inset: 0; border-radius: 50%;
+    background: radial-gradient(circle, var(--acc) 0 34%, var(--acc-halo) 40% 72%, transparent 74%); }
+  /* initial phases 34° / 189° / 292° — same as _OrbitRingsPainter */
+  .sat.s1 { width: 13px; height: 13px; margin: -6.5px; transform: rotate(34deg)  translateY(calc(-1 * var(--orb-r))); }
+  .sat.s2 { width: 11px; height: 11px; margin: -5.5px; transform: rotate(189deg) translateY(calc(-1 * var(--orb-r))); }
+  .sat.s3 { width: 15px; height: 15px; margin: -7.5px; transform: rotate(292deg) translateY(calc(-1 * var(--orb-r))); }
+  .node.n30 .sat.s1 { width: 11px; height: 11px; margin: -5.5px; }
+  .node.n30 .sat.s2 { width: 9px;  height: 9px;  margin: -4.5px; }
+  .node.n30 .sat.s3 { width: 12px; height: 12px; margin: -6px; }
+  .node[data-sats="1"] .sat.s1,
+  .node[data-sats="2"] .sat.s1, .node[data-sats="2"] .sat.s2,
+  .node[data-sats="3"] .sat.s1, .node[data-sats="3"] .sat.s2, .node[data-sats="3"] .sat.s3 { display: block; }
+
+  /* ---- indicator D: breathing beacon -------------------------------- */
+  .beacon {
+    position: absolute; inset: -5px; border-radius: 50%; z-index: 1;
+    border: 1.5px solid var(--acc-ring);
+    animation: breathe 2.4s ease-in-out infinite;
+    transition: opacity .65s ease-out, transform .65s ease-out;
+  }
+  .node.n30 .beacon { inset: -4px; }
+  .card.read .beacon, .node.read .beacon { opacity: 0; transform: scale(1.3); animation: none; }
+  @keyframes breathe {
+    0%, 100% { box-shadow: 0 0 10px 2px var(--acc-halo); opacity: .55; }
+    50%      { box-shadow: 0 0 22px 6px var(--acc-glow); opacity: 1; }
+  }
+
+  /* --- verdict / footnote -------------------------------------------- */
+  .verdict { margin-top: 30px; border-radius: 20px; padding: 22px 24px;
+    background: var(--glass); border: 1px solid var(--glass-border); }
+  .verdict h3 { color: var(--ink-hi); font-size: 13px; font-weight: 700;
+    letter-spacing: 1.6px; text-transform: uppercase; margin-bottom: 12px; }
+  .verdict h3 span { color: var(--acc); }
+  .verdict p { font-size: 13px; line-height: 1.7; color: var(--ink-muted); margin-bottom: 10px; }
+  .verdict p b { color: var(--ink-mid); font-weight: 600; }
+  .footnote { margin-top: 22px; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 10.5px; line-height: 1.8; color: rgba(201,206,214,.40); letter-spacing: .2px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .star, .orbiter, .beacon { animation: none !important; }
+    .star { opacity: .35; }
+  }
+</style>
+</head>
+<body data-accent="green">
+
+<div class="cosmos" id="cosmos">
+  <div class="bloom indigo"></div><div class="bloom teal"></div><div class="bloom rose"></div>
+</div>
+
+<div class="wrap">
+  <div class="eyebrow">mknoon · orbit · proposal 194</div>
+  <h1>Unread, on the orbit</h1>
+  <p class="lede">
+    <b>user-b</b> has sent messages user-a hasn't read. Four ways to say so on the inner-circle map,
+    each running live below on the real Orbit geometry — first as a close-up on user-b alone, then
+    <b>at scale with 13 friends, four of them with unread messages</b>. Tap any avatar to read and
+    watch the signal clear — exactly what happens when the chat is opened from the Orbit, a
+    notification, or the Feed.
+  </p>
+
+  <div class="controls">
+    <button class="primary" onclick="arrive()">a message arrives</button>
+    <button onclick="readAll()">mark all read</button>
+    <div class="acc-group">
+      <span>accent</span>
+      <button class="acc-chip g" title="App green — the existing unread pill" onclick="setAccent('green')"></button>
+      <button class="acc-chip r" title="Nav red — the tab-bar badge family" onclick="setAccent('red')"></button>
+      <button class="acc-chip p" title="Peer hue — user-b's identity color" onclick="setAccent('peer')"></button>
+    </div>
+  </div>
+
+  <h2 class="section-title">Close-up · the signal itself</h2>
+  <p class="section-sub">user-b alone on the inner ring, as in the screenshot. Judge the shape and the read-decay here.</p>
+
+  <div class="grid" id="closeGrid">
+
+    <!-- A · count badge -->
+    <div class="card" data-alt="A">
+      <header><span class="alt-ix">A</span><h2>Count badge</h2></header>
+      <div class="scene">
+        <svg viewBox="0 0 280 280" aria-hidden="true"></svg>
+        <div class="sun"></div>
+        <button class="node" style="left:121px; top:59px;" onclick="readCard(this)" aria-label="user-b — tap to read">
+          <span class="avatar"></span>
+          <span class="ind-badge">2</span>
+        </button>
+      </div>
+      <p class="desc">The app's existing green unread pill, moved onto the orbital node.
+        Zero motion, carries the exact count, instantly familiar from the friend list.
+        The quietest honest option.</p>
+      <p class="hint">tap user-b to read</p>
+    </div>
+
+    <!-- B · messenger orbit -->
+    <div class="card" data-alt="B">
+      <header><span class="alt-ix">B</span><h2>Messenger orbit</h2></header>
+      <div class="scene">
+        <svg viewBox="0 0 280 280" aria-hidden="true"></svg>
+        <div class="sun"></div>
+        <button class="node" style="left:121px; top:59px;" data-sats="2" onclick="readCard(this)" aria-label="user-b — tap to read">
+          <span class="orbit-wrap">
+            <span class="uring"></span>
+            <span class="orbiter"><span class="sat s1"><i></i></span><span class="sat s2"><i></i></span><span class="sat s3"><i></i></span></span>
+          </span>
+          <span class="avatar"></span>
+        </button>
+      </div>
+      <p class="desc">The contact-profile orbit you love, miniaturized: same 1.1px ring,
+        same halo'd satellites and phases, sped from 28s to 9s so it reads as <i>activity</i>.
+        One satellite per unread message (caps at 3). No numerals — a message is literally
+        circling user-b, waiting.</p>
+      <p class="hint">tap user-b to read</p>
+    </div>
+
+    <!-- C · orbit + badge -->
+    <div class="card" data-alt="C">
+      <header><span class="alt-ix">C</span><h2>Orbit + badge</h2></header>
+      <div class="scene">
+        <svg viewBox="0 0 280 280" aria-hidden="true"></svg>
+        <div class="sun"></div>
+        <button class="node" style="left:121px; top:59px;" data-sats="1" onclick="readCard(this)" aria-label="user-b — tap to read">
+          <span class="orbit-wrap">
+            <span class="uring"></span>
+            <span class="orbiter"><span class="sat s1"><i></i></span></span>
+          </span>
+          <span class="avatar"></span>
+          <span class="ind-badge">2</span>
+        </button>
+      </div>
+      <p class="desc">Motion for the glance, badge for the count: a single satellite
+        carries the ambient signal while the pill answers "how many". The loudest option —
+        earns its keep if unread counts matter on this surface.</p>
+      <p class="hint">tap user-b to read</p>
+    </div>
+
+    <!-- D · breathing beacon -->
+    <div class="card" data-alt="D">
+      <header><span class="alt-ix">D</span><h2>Breathing beacon</h2></header>
+      <div class="scene">
+        <svg viewBox="0 0 280 280" aria-hidden="true"></svg>
+        <div class="sun"></div>
+        <button class="node" style="left:121px; top:59px;" onclick="readCard(this)" aria-label="user-b — tap to read">
+          <span class="beacon"></span>
+          <span class="avatar"></span>
+        </button>
+      </div>
+      <p class="desc">No new geometry at all: a thin accent ring hugs the avatar and the
+        glow breathes on a slow 2.4s cycle. Ambient and calm, but carries no count and is
+        the easiest to miss at a glance.</p>
+      <p class="hint">tap user-b to read</p>
+    </div>
+
+  </div>
+
+  <h2 class="section-title">At scale · a full inner circle</h2>
+  <p class="section-sub">
+    13 friends placed with the app's real formula (5 × 38px on the inner ring, 8 × 30px staggered +15°
+    on the outer). <b>Four have unread messages</b> — user-b at the top with 2, plus friends with 1, 3
+    and 1. This is where the alternatives really separate: watch how much motion the sky can take,
+    whether badges collide, and whether you can still find "who wants me" in half a second.
+    Tap any lit avatar to read that friend (clears in all four cards); "a message arrives" lights up
+    a random friend.
+  </p>
+
+  <div class="grid" id="scaleGrid">
+    <div class="card scale" data-alt="A">
+      <header><span class="alt-ix">A</span><h2>Count badge</h2></header>
+      <div class="scene" data-variant="A">
+        <svg viewBox="0 0 280 280" aria-hidden="true"></svg>
+        <div class="sun"></div>
+      </div>
+      <p class="desc">Badges survive density best and stay countable — but four sets of numerals
+        makes the sky read like a dashboard.</p>
+    </div>
+    <div class="card scale" data-alt="B">
+      <header><span class="alt-ix">B</span><h2>Messenger orbit</h2></header>
+      <div class="scene" data-variant="B">
+        <svg viewBox="0 0 280 280" aria-hidden="true"></svg>
+        <div class="sun"></div>
+      </div>
+      <p class="desc">The judgement call: every lit friend gets motion. Four orbits at once is
+        lively — decide here if it's alive or noisy. (All satellites share one angular velocity,
+        so the motion stays coherent.)</p>
+    </div>
+    <div class="card scale" data-alt="C">
+      <header><span class="alt-ix">C</span><h2>Orbit + badge</h2></header>
+      <div class="scene" data-variant="C">
+        <svg viewBox="0 0 280 280" aria-hidden="true"></svg>
+        <div class="sun"></div>
+      </div>
+      <p class="desc">Loudest at scale — motion <i>and</i> numerals on four nodes. If this feels
+        like too much, a hybrid rule helps: satellite always, badge only when count &gt; 1.</p>
+    </div>
+    <div class="card scale" data-alt="D">
+      <header><span class="alt-ix">D</span><h2>Breathing beacon</h2></header>
+      <div class="scene" data-variant="D">
+        <svg viewBox="0 0 280 280" aria-hidden="true"></svg>
+        <div class="sun"></div>
+      </div>
+      <p class="desc">Calmest crowd by far — but with four beacons breathing on the same cycle
+        it reads as ambience, not as "these four specifically want you".</p>
+    </div>
+  </div>
+
+  <div class="verdict">
+    <h3>Recommendation · <span>C on this screen, B if counts stay in the list</span></h3>
+    <p><b>C (orbit + badge)</b> gives both answers a glance needs — <i>who</i> (the motion pulls the
+      eye) and <i>how much</i> (the pill) — and both halves are already app vocabulary: the satellite
+      ring is the contact-profile orbit, the pill is the friend-row unread badge. If the at-scale
+      section feels loud, <b>B</b> is the elegant fallback: message-as-satellite is the most
+      "orbit-native" metaphor here.</p>
+    <p><b>Accent:</b> green is the app's existing unread semantic (friend rows); red currently means
+      tab-level attention. Recommend green for consistency — flip the swatches above to compare.</p>
+    <p><b>Implementation note:</b> this is presentation-only. <code>OrbitFriend.unreadCount</code>
+      already exists and is populated via <code>getUnreadCountForContact</code>; reading from chat,
+      notification, or Feed already zeroes it, so the clear-on-read behavior shown here comes for free
+      on the next projection update.</p>
+  </div>
+
+  <p class="footnote">
+    scene reproduces orbit_screen geometry 1:1 — dashed rings r62/r108, #81E6D9 25% / #A78BFA 20%,
+    stroke 1.5, dash 8/4 (orbital_ring_painter.dart) · nodes 38px/30px, borders white 20%/14%,
+    angle = i·360/n + ring·15° − 90° (orbital_visualization.dart) · satellites: phases 34°/189°/292°,
+    halo 2.6× core (contact_profile_screen.dart:_OrbitRingsPainter) · badge: unread_count_badge.dart
+    pill at nav-badge scale · colored identity rings on avatars = deterministic RingAvatar, not a
+    state · honors prefers-reduced-motion
+  </p>
+</div>
+
+<script>
+  // dashed orbit rings — exact painter spec, drawn once per scene
+  document.querySelectorAll('.scene svg').forEach(svg => {
+    svg.innerHTML =
+      '<circle cx="140" cy="140" r="62"  fill="none" stroke="rgba(129,230,217,.08)" stroke-width="8" filter="blur(4px)"/>' +
+      '<circle cx="140" cy="140" r="108" fill="none" stroke="rgba(129,230,217,.08)" stroke-width="8" filter="blur(4px)"/>' +
+      '<circle cx="140" cy="140" r="62"  fill="none" stroke="rgba(129,230,217,.25)" stroke-width="1.5" stroke-dasharray="8 4"/>' +
+      '<circle cx="140" cy="140" r="108" fill="none" stroke="rgba(167,139,250,.20)" stroke-width="1.5" stroke-dasharray="8 4"/>';
+  });
+
+  // starfield — twinkle 2.5–5.5s with 0–4s phase (cosmic_background.dart)
+  const cosmos = document.getElementById('cosmos');
+  for (let i = 0; i < 72; i++) {
+    const s = document.createElement('div');
+    s.className = 'star';
+    const d = 0.8 + Math.random() * 1.4;
+    s.style.cssText = `left:${Math.random()*100}%; top:${Math.random()*100}%;` +
+      `width:${d}px; height:${d}px;` +
+      `--tw-dur:${(2.5 + Math.random()*3).toFixed(2)}s; --tw-delay:${(Math.random()*4).toFixed(2)}s;`;
+    cosmos.appendChild(s);
+  }
+
+  /* ============ shared state ============ */
+  let closeUnread = 2; // user-b in the close-up section
+  const closeCards = [...document.querySelectorAll('#closeGrid .card')];
+
+  // 13 friends: ring 0 = inner (r62, 5 × 38px), ring 1 = outer (r108, 8 × 30px, +15° stagger)
+  // identity hue + RingAvatar outer-ring color are per-peer deterministic, so they vary
+  const RING_C = ['rgba(255,59,59,.9)', 'rgba(255,255,255,.7)', 'rgba(29,185,84,.9)'];
+  const HUES = [150, 20, 210, 275, 330, 45, 95, 185, 240, 300, 65, 10, 130];
+  const friends = HUES.map((hue, i) => ({
+    ring: i < 5 ? 0 : 1,
+    ringIdx: i < 5 ? i : i - 5,
+    hue,
+    ringC: RING_C[i % 3],
+    unread: 0,
+  }));
+  // user-b (top of inner ring) + three others start lit
+  friends[0].unread = 2; friends[3].unread = 1; friends[7].unread = 3; friends[11].unread = 1;
+
+  /* ============ build the at-scale scenes ============ */
+  const IND = {
+    A: '<span class="ind-badge"></span>',
+    B: '<span class="orbit-wrap"><span class="uring"></span><span class="orbiter">' +
+       '<span class="sat s1"><i></i></span><span class="sat s2"><i></i></span><span class="sat s3"><i></i></span>' +
+       '</span></span>',
+    C: '<span class="orbit-wrap"><span class="uring"></span><span class="orbiter">' +
+       '<span class="sat s1"><i></i></span></span></span>',
+    D: '<span class="beacon"></span>',
+  };
+  IND.C += IND.A;
+
+  document.querySelectorAll('.scene[data-variant]').forEach(scene => {
+    const v = scene.dataset.variant;
+    friends.forEach((f, fi) => {
+      const size = f.ring === 0 ? 38 : 30;
+      const r = f.ring === 0 ? 62 : 108;
+      const n = f.ring === 0 ? 5 : 8;
+      // angle = index*360/count + ringIndex*15 - 90  (orbital_visualization.dart)
+      const a = (f.ringIdx * 360 / n + f.ring * 15 - 90) * Math.PI / 180;
+      const x = 140 + r * Math.cos(a), y = 140 + r * Math.sin(a);
+      const node = document.createElement('button');
+      node.className = 'node' + (size === 30 ? ' n30' : '');
+      node.dataset.fi = fi;
+      node.style.cssText = `left:${(x - size/2).toFixed(1)}px; top:${(y - size/2).toFixed(1)}px;` +
+        `--hue:${f.hue}; --ring-c:${f.ringC};`;
+      node.setAttribute('aria-label', `friend ${fi} — tap to read`);
+      node.innerHTML = (v === 'A' ? '' : IND[v].replace(IND.A, '')) + '<span class="avatar"></span>' +
+        (v === 'A' || v === 'C' ? IND.A : '');
+      node.onclick = () => readFriend(fi);
+      scene.appendChild(node);
+    });
+  });
+
+  /* ============ render ============ */
+  function renderClose() {
+    closeCards.forEach(card => {
+      const badge = card.querySelector('.ind-badge');
+      if (badge) badge.textContent = closeUnread > 99 ? '99+' : closeUnread;
+      if (card.dataset.alt === 'B') card.querySelector('.node').dataset.sats = Math.min(closeUnread, 3);
+    });
+  }
+  function renderScale() {
+    document.querySelectorAll('.scene[data-variant] .node').forEach(node => {
+      const f = friends[node.dataset.fi];
+      node.classList.toggle('read', f.unread === 0);
+      const badge = node.querySelector('.ind-badge');
+      if (badge && f.unread > 0) badge.textContent = f.unread > 99 ? '99+' : f.unread;
+      if (node.closest('.scene').dataset.variant === 'B') node.dataset.sats = Math.max(1, Math.min(f.unread, 3));
+    });
+  }
+
+  function popBadges(scope) {
+    scope.forEach(b => {
+      b.classList.add('pop');
+      requestAnimationFrame(() => requestAnimationFrame(() => b.classList.remove('pop')));
+    });
+  }
+
+  /* ============ interactions ============ */
+  function arrive() {
+    closeUnread++;
+    closeCards.forEach(card => card.classList.remove('read'));
+    renderClose();
+    popBadges(document.querySelectorAll('#closeGrid .ind-badge'));
+    // ...and a random friend lights up at scale (the app pill pulses on count change)
+    const fi = Math.floor(Math.random() * friends.length);
+    friends[fi].unread++;
+    renderScale();
+    popBadges(document.querySelectorAll(`.scene[data-variant] .node[data-fi="${fi}"] .ind-badge`));
+  }
+  function readCard(node) { node.closest('.card').classList.add('read'); }
+  function readFriend(fi) { friends[fi].unread = 0; renderScale(); }
+  function readAll() {
+    closeCards.forEach(c => c.classList.add('read'));
+    friends.forEach(f => f.unread = 0);
+    renderScale();
+  }
+  function setAccent(a) { document.body.dataset.accent = a; }
+
+  renderClose();
+  renderScale();
+</script>
+</body>
+</html>

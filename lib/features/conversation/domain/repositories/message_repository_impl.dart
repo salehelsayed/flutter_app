@@ -12,7 +12,8 @@ class MessageRepositoryImpl
     implements
         MessageRepository,
         ConversationThreadSummaryRepository,
-        MessageRepositoryChangeSource {
+        MessageRepositoryChangeSource,
+        ConversationReadEventSource {
   final Future<void> Function(Map<String, Object?> row) dbInsertMessage;
   final Future<List<Map<String, Object?>>> Function(String contactPeerId)
   dbLoadMessagesForContact;
@@ -83,6 +84,10 @@ class MessageRepositoryImpl
   dbMarkInboxCustodyChecked;
   final StreamController<ConversationMessage> _messageChangeController =
       StreamController<ConversationMessage>.broadcast();
+  // 194: conversation-level read-marking signal (peerId), emitted only when a
+  // markConversationAsRead call actually flips >=1 row (INV-5).
+  final StreamController<String> _conversationReadController =
+      StreamController<String>.broadcast();
   final Map<String, ConversationMessage> _messageSnapshots = {};
 
   MessageRepositoryImpl({
@@ -244,6 +249,10 @@ class MessageRepositoryImpl
   }
 
   @override
+  Stream<String> get conversationReadStream =>
+      _conversationReadController.stream;
+
+  @override
   Future<int> markConversationAsRead(String contactPeerId) async {
     emitFlowEvent(
       layer: 'FL',
@@ -254,7 +263,13 @@ class MessageRepositoryImpl
             : contactPeerId,
       },
     );
-    return dbMarkConversationAsRead(contactPeerId);
+    final markedCount = await dbMarkConversationAsRead(contactPeerId);
+    // 194: fire the read-event only when something actually changed (INV-5) so a
+    // re-mark of an already-read conversation stays silent.
+    if (markedCount > 0) {
+      _conversationReadController.add(contactPeerId);
+    }
+    return markedCount;
   }
 
   @override

@@ -425,6 +425,43 @@ class AppLocalizationsDe extends AppLocalizations {
   String get orbit_close_friends => 'Enge Freunde';
 
   @override
+  String get orbit_view_toggle_to_list => 'Alle Chats anzeigen';
+
+  @override
+  String get orbit_view_toggle_to_circle => 'Engsten Kreis anzeigen';
+
+  @override
+  String get orbit_inner_circle_empty_hint =>
+      'Füge Freunde hinzu, um deinen engsten Kreis zu sehen';
+
+  @override
+  String orbit_node_unread_open_chat(String name, int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Chat mit $name öffnen, $count ungelesene Nachrichten',
+      one: 'Chat mit $name öffnen, 1 ungelesene Nachricht',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String orbit_node_open_group(String name) {
+    return 'Gruppe $name öffnen';
+  }
+
+  @override
+  String orbit_node_unread_open_group(String name, int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Gruppe $name öffnen, $count ungelesene Nachrichten',
+      one: 'Gruppe $name öffnen, 1 ungelesene Nachricht',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get orbit_new_group => 'Neue Gruppe';
 
   @override
@@ -2643,41 +2680,16 @@ class AppLocalizationsDe extends AppLocalizations {
   String get contact_profile_message_button => 'Nachricht';
 
   @override
-  String get nav_orbit2 => 'Orbit2';
-
-  @override
   String get nav_orbit3 => 'Orbit3';
 
   @override
   String get orbit2_prototype_chip => 'Prototyp · Beispieldaten';
 
   @override
-  String get orbit2_size_legend =>
-      'Größer = näher · tippen zum Chatten · ziehen zum Umordnen';
-
-  @override
-  String get orbit2_simulate => 'Simulieren';
-
-  @override
-  String get orbit2_reset => 'Zurücksetzen';
-
-  @override
   String get orbit2_search_hint => 'Freund finden';
 
   @override
   String get orbit2_template_gravity => 'Gravitation';
-
-  @override
-  String get orbit2_template_nebula => 'Nebel';
-
-  @override
-  String get orbit2_template_honeycomb => 'Wabe';
-
-  @override
-  String get orbit2_template_tiered => 'Ebenen';
-
-  @override
-  String get orbit2_template_unified => 'Ein Kreis';
 
   @override
   String get orbit2_mock_chat_demo_chip =>
@@ -2691,30 +2703,6 @@ class AppLocalizationsDe extends AppLocalizations {
   String get orbit2_mock_chat_composer_hint => 'Nachricht';
 
   @override
-  String get orbit2_hint =>
-      'Ziehe den Orbit überallhin · halte einen Freund gedrückt, um ihn aufzunehmen';
-
-  @override
-  String get orbit2_drop_hint => 'Hier ablegen, um ihn aufzunehmen';
-
-  @override
-  String orbit2_release_to_add(String name) {
-    return 'Loslassen, um $name hinzuzufügen';
-  }
-
-  @override
-  String orbit2_promoted(String name) {
-    return '$name wurde zu deinem inneren Kreis hinzugefügt';
-  }
-
-  @override
-  String get orbit2_new_group => 'Neue Gruppe';
-
-  @override
-  String get orbit2_group_created =>
-      'Neue Gruppe erstellt — zieh weitere Freunde hinein';
-
-  @override
   String orbit2_group_members(int count) {
     return 'Gruppe · $count Mitglieder';
   }
@@ -2723,35 +2711,13 @@ class AppLocalizationsDe extends AppLocalizations {
   String get orbit2_show_less => 'Weniger anzeigen';
 
   @override
-  String orbit2_removed(String name) {
-    return '$name aus deinem inneren Kreis entfernt';
-  }
-
-  @override
   String get orbit2_you => 'Du';
-
-  @override
-  String get orbit2_manage => 'Verwalten';
-
-  @override
-  String get orbit2_manage_done => 'Fertig';
 
   @override
   String get orbit2_names_show => 'Namen anzeigen';
 
   @override
   String get orbit2_names_hide => 'Namen ausblenden';
-
-  @override
-  String orbit2_promoted_group(String name) {
-    return 'Gruppe $name zu deinem inneren Kreis hinzugefügt';
-  }
-
-  @override
-  String get orbit2_view_messages => 'Nachrichten';
-
-  @override
-  String get orbit2_inbox_empty => 'Noch keine Unterhaltungen';
 
   @override
   String orbit2_open_chat_with(String name) {

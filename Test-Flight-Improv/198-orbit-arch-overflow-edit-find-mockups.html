@@ -1,0 +1,1242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>198 · The orbit overflows — arches, long-press tuning, and finding people</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   198 mockups — palette lifted 1:1 from the app:
+   orbital_visualization.dart:32-38 (320 box, r62/r108, 5+8 seats, 38/30px)
+   orbital_ring_painter.dart:16-59 (teal 0x4081E6D9, purple 0x33A78BFA, dash 8/4, glow stroke 8 blur 4)
+   overflow_badge.dart:45-128 (28px, dashed 4/3, +N 10px w600)
+   unread_orbit_indicator.dart (ring 1.35r stroke 1.1 @1DB954 a.55, sats .06d, 9s spin)
+   ambient_background.dart:170-253 (black + green/red drifting blobs)
+   orbit3_arch_layout.dart / orbit3_screen.dart:474-631 (arch rows: 36px, perRow 7, dip .32, dotted 81E6D9)
+   orbit3_dimension_preferences.dart:24-39 (4 knobs, ranges, defaults)
+   nav_bar_theme.dart (pill radius 30 blur 28, buttons 70/19/11)
+   ============================================================ */
+:root{
+  --page-bg:#0C0E13; --card-bg:#12151C; --ink:#F2F5F8; --muted:#9AA3B2; --faint:#6B7382;
+  --hairline:rgba(255,255,255,0.08); --green:#1DB954; --green-dim:rgba(29,185,84,0.55);
+  --ring-teal:rgba(129,230,217,0.25); --ring-purple:rgba(167,139,250,0.20);
+  --arch-dot:rgba(129,230,217,0.60); --warn:rgba(255,107,107,0.55);
+  --display:'Space Grotesk',-apple-system,sans-serif;
+  --body:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  --mono:ui-monospace,'SF Mono',Menlo,monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--page-bg);color:var(--ink);font-family:var(--body);-webkit-font-smoothing:antialiased}
+.wrap{max-width:1280px;margin:0 auto;padding:56px 32px 80px}
+
+/* ---------- hero ---------- */
+.hero{position:relative;margin-bottom:26px}
+.hero svg.deco{position:absolute;top:-30px;right:-10px;opacity:.5;pointer-events:none}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:2.5px;text-transform:uppercase;color:var(--green);margin-bottom:14px}
+h1{font-family:var(--display);font-size:clamp(30px,4vw,44px);font-weight:700;line-height:1.08;max-width:720px}
+.brief{margin-top:16px;font-size:15px;line-height:1.65;color:var(--muted);max-width:760px}
+.brief b{color:var(--ink);font-weight:600}
+.qlist{margin-top:18px;display:flex;gap:12px;flex-wrap:wrap}
+.qlist a{font-family:var(--mono);font-size:11.5px;color:var(--ink);text-decoration:none;border:1px solid var(--hairline);
+  border-radius:20px;padding:7px 14px;background:rgba(255,255,255,0.03)}
+.qlist a b{color:var(--green)}
+.qlist a:hover{border-color:rgba(29,185,84,0.4)}
+
+/* ---------- today strip ---------- */
+.today{border:1px solid var(--hairline);background:#0A0C10;border-radius:14px;padding:20px 22px;margin:30px 0 44px;
+  display:flex;gap:26px;align-items:center;flex-wrap:wrap}
+.today .mini{width:190px;height:150px;position:relative;flex:none;background:#000;border-radius:10px;overflow:hidden}
+.today-note{flex:1;min-width:280px;font-size:13.5px;line-height:1.6;color:var(--muted)}
+.today-note b{color:var(--ink)}
+.today-note .bad{color:#FF8A80}
+.today-note .flabel{font-family:var(--mono);font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--faint);display:block;margin-bottom:6px}
+
+/* ---------- section headers ---------- */
+.sec{margin:54px 0 20px}
+.sec .s-eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:2.5px;text-transform:uppercase;color:var(--green);margin-bottom:8px}
+.sec h2{font-family:var(--display);font-size:26px;font-weight:700}
+.sec p{margin-top:8px;color:var(--muted);font-size:14px;line-height:1.6;max-width:740px}
+
+/* ---------- option cards ---------- */
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:26px}
+.grid.three{grid-template-columns:1fr 1fr 1fr}
+@media (max-width:1120px){.grid,.grid.three{grid-template-columns:1fr}}
+.card{background:var(--card-bg);border:1px solid var(--hairline);border-radius:20px;padding:26px;display:flex;gap:26px}
+@media (max-width:640px){.card{flex-direction:column}}
+.grid.three .card{flex-direction:column}
+.notes{flex:1;min-width:0}
+.opt-eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--faint);display:flex;gap:10px;align-items:center}
+.tag{font-size:10px;letter-spacing:1px;border-radius:10px;padding:3px 9px;border:1px solid var(--hairline);color:var(--muted)}
+.tag.pick{color:var(--green);border-color:rgba(29,185,84,0.4);background:rgba(29,185,84,0.08)}
+.opt-name{font-family:var(--display);font-size:24px;font-weight:700;margin:8px 0 10px}
+.thesis{font-size:14px;line-height:1.6;color:var(--muted);margin-bottom:14px}
+.thesis b{color:var(--ink);font-weight:600}
+.nlabel{font-family:var(--mono);font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--faint);margin:14px 0 8px}
+ul.pts{list-style:none}
+ul.pts li{font-size:13px;line-height:1.55;color:var(--muted);padding-left:16px;position:relative;margin-bottom:6px}
+ul.pts li::before{content:'';width:5px;height:5px;border-radius:50%;background:rgba(129,230,217,0.5);position:absolute;left:2px;top:8px}
+ul.pts li.warn::before{background:var(--warn)}
+ul.pts li b{color:var(--ink);font-weight:600}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
+.chips span{font-family:var(--mono);font-size:10.5px;color:var(--muted);border:1px solid var(--hairline);border-radius:8px;padding:4px 8px;background:rgba(255,255,255,0.02)}
+.try{font-family:var(--mono);font-size:10.5px;color:var(--green);margin-top:10px;text-align:center}
+.demo-btn{display:inline-block;margin-top:12px;font-family:var(--mono);font-size:11px;color:var(--ink);background:rgba(29,185,84,0.12);
+  border:1px solid rgba(29,185,84,0.35);border-radius:16px;padding:7px 14px;cursor:pointer;user-select:none}
+.demo-btn:hover{background:rgba(29,185,84,0.2)}
+.pop-toggle{display:flex;gap:6px;justify-content:center;margin-top:10px}
+.pop-toggle button{font-family:var(--mono);font-size:10.5px;color:var(--muted);background:transparent;border:1px solid var(--hairline);
+  border-radius:12px;padding:4px 12px;cursor:pointer}
+.pop-toggle button.on{color:var(--green);border-color:rgba(29,185,84,0.45);background:rgba(29,185,84,0.08)}
+
+/* ---------- phone frame (390x844 scaled .727 → 285x616) ---------- */
+.phone-wrap{width:285px;flex:none;margin:0 auto}
+.phone{width:390px;height:844px;transform:scale(0.727);transform-origin:top left;background:#000;border-radius:54px;
+  border:1.5px solid rgba(255,255,255,0.10);box-shadow:0 30px 70px rgba(0,0,0,0.55);position:relative;overflow:hidden;
+  margin-bottom:-228px}
+.island{position:absolute;top:12px;left:50%;transform:translateX(-50%);width:112px;height:32px;background:#000;border-radius:20px;z-index:60}
+.statusbar{position:absolute;top:0;left:0;right:0;height:54px;display:flex;justify-content:space-between;align-items:flex-end;
+  padding:0 32px 6px;z-index:55;font-size:15px;font-weight:600;color:#fff}
+.blob{position:absolute;border-radius:50%;pointer-events:none}
+.blob.g{width:300px;height:300px;top:-100px;left:-100px;background:radial-gradient(circle,rgba(29,185,84,0.30),transparent 70%);animation:driftG 8s ease-in-out infinite alternate}
+.blob.r{width:350px;height:350px;bottom:-100px;right:-100px;background:radial-gradient(circle,rgba(255,50,50,0.25),transparent 70%);animation:driftR 9s ease-in-out infinite alternate}
+@keyframes driftG{to{transform:translate(30px,20px)}}
+@keyframes driftR{to{transform:translate(-25px,-30px)}}
+
+/* top chrome: toggle L, QR pair C, fab R — all top 62 (safeTop 54 + 8) */
+.chrome-circle{position:absolute;top:62px;width:40px;height:40px;border-radius:50%;background:rgba(16,18,24,0.75);
+  border:0.5px solid rgba(255,255,255,0.50);display:flex;align-items:center;justify-content:center;z-index:50}
+.chrome-circle svg{width:20px;height:20px;stroke:#F8FAFC;fill:none;stroke-width:1.6}
+.qr-pair{position:absolute;top:62px;left:0;right:0;display:flex;justify-content:center;gap:8px;z-index:50;pointer-events:none}
+.qr-pair .chrome-circle{position:static}
+.glow-fab{position:absolute;top:62px;right:16px;width:40px;height:40px;border-radius:50%;background:#1A1A2E;
+  border:2px solid #64B5F6;box-shadow:0 0 12px 1px rgba(100,181,246,0.8);display:flex;align-items:center;justify-content:center;z-index:50}
+.glow-fab span{color:#fff;font-size:24px;font-weight:300;line-height:1;margin-top:-2px}
+
+/* orbit stage — scrolls vertically when the arch stack outgrows it (deep stacks push the circle down, never cull) */
+.stage{position:absolute;left:0;right:0;top:112px;bottom:96px;overflow-y:auto;overflow-x:hidden;z-index:10;scrollbar-width:none}
+.stage::-webkit-scrollbar{display:none}
+.canvas{position:absolute;left:50%;width:390px;transform:translateX(-50%);transition:top .45s cubic-bezier(.3,.9,.3,1)}
+.node{position:absolute;border-radius:50%;cursor:pointer}
+.node .av{width:100%;height:100%;border-radius:50%;overflow:hidden}
+.node.r1 .av{border:1.5px solid rgba(255,255,255,0.20)}
+.node.r2 .av,.node.arch .av{border:1px solid rgba(255,255,255,0.14)}
+.node.grp .av{border:1px solid rgba(78,205,196,0.9)}
+@keyframes nodeIn{from{transform:scale(0);opacity:0}to{transform:scale(1);opacity:1}}
+.node.enter{animation:nodeIn .5s cubic-bezier(.34,1.2,.5,1) both}
+.me{position:absolute;border-radius:50%;border:1px solid rgba(255,255,255,0.35);
+  box-shadow:0 0 16.8px 2.4px hsla(141,70%,45%,0.35);overflow:hidden}
+.n-label{position:absolute;top:calc(100% + 3px);left:50%;transform:translateX(-50%);font-size:9.5px;font-weight:600;color:#F8FAFC;
+  text-shadow:0 1px 3px rgba(0,0,0,0.54);white-space:nowrap;max-width:56px;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
+.n-label.low{top:calc(100% + 14px)} /* alternate arc/row seats drop a line — neighbors are ~44px apart, labels up to 56px wide */
+.badge{position:absolute;width:28px;height:28px;border-radius:50%;background:rgba(10,10,15,0.8);backdrop-filter:blur(4px);
+  display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;letter-spacing:-0.5px;color:#C9CED6;
+  cursor:pointer;z-index:20;transition:box-shadow .3s}
+.badge::before{content:'';position:absolute;inset:-8px;border-radius:50%} /* 44px hit target */
+.badge:hover{box-shadow:0 0 10px rgba(29,185,84,0.28)}
+.badge svg.dash{position:absolute;inset:0;pointer-events:none}
+.badge .chev{display:none}
+.badge.open .pn{display:none}
+.badge.open .chev{display:block;font-size:13px;color:#1ED760}
+.caption{position:absolute;left:0;right:0;text-align:center;font-size:14px;color:#C9CED6;opacity:.72}
+.title-cap{position:absolute;left:0;right:0;text-align:center;font-size:14px;font-weight:600;letter-spacing:1px;color:#C9CED6;opacity:.72}
+
+/* arch rows (option A) + arcs (option B) */
+.arch-layer{position:absolute;left:0;right:0}
+.arch-svg{position:absolute;pointer-events:none;overflow:visible}
+.spot-dim .node:not(.lit),.spot-dim .me,.spot-dim .badge{opacity:.28;transition:opacity .35s}
+.node.lit{z-index:30}
+.node.lit .av{box-shadow:0 0 16px 2px rgba(29,185,84,0.65)}
+.node,.me,.badge{transition:opacity .35s}
+
+/* unread indicator (194) */
+.unread{position:absolute;pointer-events:none;animation:spin 9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* nav pill */
+.nav{position:absolute;bottom:20px;left:0;right:0;display:flex;justify-content:center;z-index:40}
+.nav .pill{display:flex;gap:5px;padding:5px 6px;border-radius:30px;background:linear-gradient(180deg,rgba(255,255,255,0.18),rgba(255,255,255,0.10));
+  border:1px solid rgba(255,255,255,0.30);backdrop-filter:blur(28px);box-shadow:0 4px 16px rgba(0,0,0,0.12)}
+.nav .btn{width:70px;border-radius:19px;padding:6px 0;text-align:center;color:rgba(255,255,255,0.55);font-size:11px;font-weight:500}
+.nav .btn svg{width:18px;height:18px;stroke:rgba(255,255,255,0.6);fill:none;stroke-width:1.6;display:block;margin:0 auto 2px}
+.nav .btn.on{background:linear-gradient(180deg,rgba(255,255,255,0.25),rgba(255,255,255,0.12));color:#fff}
+.nav .btn.on svg{stroke:#fff}
+
+/* ---------- edit mode ---------- */
+.edit-glow .ring-svg{filter:drop-shadow(0 0 6px rgba(129,230,217,0.35))}
+@keyframes jiggle{0%,100%{transform:rotate(0)}25%{transform:rotate(.5deg)}75%{transform:rotate(-.5deg)}}
+.edit-glow .canvas{animation:jiggle 1.6s ease-in-out infinite}
+.edit-banner{position:absolute;top:116px;left:50%;transform:translateX(-50%);font-family:var(--mono);font-size:10px;
+  letter-spacing:1.5px;color:#1ED760;background:rgba(10,10,15,0.7);border:1px solid rgba(29,185,84,0.35);
+  border-radius:12px;padding:5px 12px;z-index:52;white-space:nowrap}
+
+/* A: tune dock */
+.dock{position:absolute;left:10px;right:10px;bottom:78px;background:rgba(10,10,15,0.82);backdrop-filter:blur(18px);
+  border:1px solid rgba(255,255,255,0.14);border-radius:20px;padding:14px 16px 12px;z-index:45;
+  transform:translateY(140%);transition:transform .35s cubic-bezier(.3,.9,.3,1)}
+.dock.up{transform:translateY(0)}
+.dk-row{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+.dk-row.dead{opacity:.35}
+.dk-row .dk-name{width:86px;font-size:11px;color:#E5E7EB;flex:none}
+.dk-row .dk-val{width:34px;font-family:var(--mono);font-size:10.5px;color:#1ED760;text-align:right;flex:none}
+.dk-row input[type=range]{flex:1;accent-color:#1DB954;height:16px}
+.dock .dk-foot{display:flex;justify-content:space-between;align-items:center;margin-top:4px;gap:10px}
+.dock .dk-foot .dk-btns{display:flex;gap:8px;flex:none}
+.spot-dim .caption{opacity:.15}
+.dock .dk-hint{font-size:9.5px;color:#6B7382}
+.dk-btn{font-size:11px;font-weight:600;border-radius:14px;padding:5px 14px;cursor:pointer;border:1px solid rgba(255,255,255,0.16);color:#C9CED6;background:transparent}
+.dk-btn.done{color:#0A0A0F;background:#1DB954;border-color:#1DB954}
+
+/* B: handles */
+.handle{position:absolute;width:30px;height:30px;border-radius:50%;background:rgba(20,40,28,0.92);border:2px solid #1ED760;
+  z-index:46;display:flex;align-items:center;justify-content:center;cursor:grab;touch-action:none;
+  animation:pulseH 1.6s ease-in-out infinite}
+.handle:active{cursor:grabbing;animation:none;box-shadow:0 0 22px 4px rgba(29,185,84,0.9);background:rgba(29,185,84,0.35)}
+.handle svg{width:16px;height:16px;stroke:#B9F6CA;fill:none;stroke-width:2.2;pointer-events:none}
+.handle .h-tip{position:absolute;top:34px;left:50%;transform:translateX(-50%);font-family:var(--mono);font-size:9.5px;
+  color:#D9F7E4;background:rgba(10,20,14,0.92);border:1px solid rgba(29,185,84,0.45);border-radius:9px;padding:3px 8px;
+  white-space:nowrap;pointer-events:none}
+@keyframes pulseH{0%,100%{box-shadow:0 0 10px 1px rgba(29,185,84,0.55)}50%{box-shadow:0 0 22px 5px rgba(29,185,84,0.95)}}
+/* selected handle: teal = "the +/− is wired to me" */
+.handle.sel{border-color:#4ECDC4;background:rgba(78,205,196,0.30);animation:none;box-shadow:0 0 20px 4px rgba(78,205,196,0.8)}
+.handle.sel svg{stroke:#E0FFFA}
+.handle.sel .h-tip{color:#D8FFF9;border-color:rgba(78,205,196,0.6);background:rgba(8,24,20,0.94)}
+/* −/+ ride the nav-bar line: − left of the pill, + right of it. Appear when a handle is armed. */
+.nav-step{position:absolute;bottom:28px;width:48px;height:48px;border-radius:50%;z-index:47;
+  background:rgba(8,20,17,0.9);backdrop-filter:blur(16px);border:1px solid rgba(78,205,196,0.55);
+  color:#B9F6E8;font-size:22px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;
+  opacity:0;pointer-events:none;transform:translateY(12px);transition:transform .25s cubic-bezier(.3,.9,.3,1),opacity .25s,background .15s}
+.nav-step.on{opacity:1;pointer-events:auto;transform:none}
+.nav-step.dec{left:22px}
+.nav-step.inc{right:22px}
+.nav-step:hover{background:rgba(78,205,196,0.16)}
+.nav-step:active{background:rgba(78,205,196,0.32);box-shadow:0 0 14px rgba(78,205,196,0.5)}
+/* live value bubble floats above the armed (teal) handle */
+.handle .h-val{display:none;position:absolute;bottom:37px;left:50%;transform:translateX(-50%);
+  font-family:var(--mono);font-size:12px;font-weight:700;color:#4ECDC4;background:rgba(8,24,20,0.94);
+  border:1px solid rgba(78,205,196,0.6);border-radius:9px;padding:3px 9px;white-space:nowrap;pointer-events:none}
+.handle.sel .h-val{display:block}
+/* edit mode: dim the orbit so the handles pop; lift the dim while a handle is being dragged */
+.edit-dim .node,.edit-dim .me,.edit-dim .badge,.edit-dim .caption,.edit-dim .title-cap{opacity:.22;transition:opacity .3s}
+.edit-dim .node.lit{opacity:1} /* a search-lit match stays bright while sculpting (handles × chips combo) */
+.edit-dim .arch-svg,.edit-dim .ring-svg{opacity:.45;transition:opacity .3s}
+.phone{user-select:none;-webkit-user-select:none}
+/* Reset/Done flank the EDITING ORBIT banner at the top — the bottom band belongs to nav + steppers */
+.edit-pill-top{position:absolute;top:112px;left:14px;right:14px;display:flex;justify-content:space-between;z-index:52;pointer-events:none}
+.edit-pill-top .dk-btn{backdrop-filter:blur(10px);background:rgba(10,10,15,0.7);pointer-events:auto;height:28px}
+.edit-pill-top .dk-btn.done{background:#1DB954;color:#0A0A0F}
+
+/* C: steppers */
+.steppers{position:absolute;left:12px;bottom:84px;z-index:46;display:flex;flex-direction:column;gap:8px;align-items:flex-start;
+  opacity:0;pointer-events:none;transform:translateY(10px);transition:all .3s}
+.steppers.on{opacity:1;pointer-events:auto;transform:none}
+.reset-pill{display:flex;align-items:center;gap:5px;background:rgba(10,10,15,0.8);backdrop-filter:blur(10px);
+  border:1px solid rgba(255,255,255,0.4);border-radius:16px;padding:6px 10px;font-size:11.5px;font-weight:600;color:#E5E7EB;cursor:pointer}
+.stp-grid{display:flex;gap:8px}
+.stp-col{display:flex;flex-direction:column;gap:8px}
+.stepper{width:44px;background:rgba(10,10,15,0.8);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.4);
+  border-radius:16px;overflow:hidden;text-align:center}
+.stepper .st-head{padding:6px 0 3px}
+.stepper .st-head .st-ic{font-size:12px;line-height:1;color:#9AA3B2}
+.stepper .st-head .st-val{font-family:var(--mono);font-size:10.5px;font-weight:700;color:#F8FAFC;margin-top:2px}
+.stepper .st-head .st-lb{font-size:7.5px;color:#6B7382;letter-spacing:.4px;text-transform:uppercase;margin-top:1px}
+.stepper .st-div{height:1px;width:26px;margin:2px auto;background:rgba(255,255,255,0.4)}
+.stepper button{display:block;width:100%;height:34px;background:none;border:none;color:#C9CED6;font-size:19px;cursor:pointer}
+.stepper button:hover{background:rgba(255,255,255,0.06)}
+.done-chip{font-size:11px;font-weight:700;color:#0A0A0F;background:#1DB954;border:none;border-radius:16px;padding:7px 16px;cursor:pointer}
+
+/* ---------- find section ---------- */
+.search-pill{position:absolute;right:12px;bottom:84px;height:40px;display:flex;align-items:center;background:rgba(10,10,15,0.8);
+  backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.4);border-radius:16px;z-index:44;overflow:hidden;
+  width:40px;transition:width .2s ease-out}
+.search-pill.open{width:200px}
+.search-pill .sp-ic{width:40px;flex:none;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.search-pill .sp-ic svg{width:19px;height:19px;stroke:#C9CED6;fill:none;stroke-width:1.8}
+.search-pill input{flex:1;background:none;border:none;outline:none;color:#F8FAFC;font-size:13.5px;min-width:0;caret-color:#1DB954}
+.search-pill input::placeholder{color:#6B7382}
+.spot-card{position:absolute;left:50%;transform:translateX(-50%) scale(0);z-index:48;display:flex;flex-direction:column;align-items:center;
+  transition:transform .4s cubic-bezier(.34,1.3,.5,1)}
+.spot-card.show{transform:translateX(-50%) scale(1)}
+.spot-card .sc-av{width:56px;height:56px;border-radius:50%;overflow:hidden;border:1.5px solid rgba(255,255,255,0.35);
+  box-shadow:0 0 22px 3px rgba(29,185,84,0.55)}
+.spot-card .sc-name{margin-top:7px;font-size:12px;font-weight:600;color:#F8FAFC}
+.spot-card .sc-cta{margin-top:3px;font-size:9.5px;color:#1ED760;background:rgba(29,185,84,0.12);border:1px solid rgba(29,185,84,0.4);
+  border-radius:10px;padding:3px 10px}
+.spot-card .sc-from{margin-top:4px;font-family:var(--mono);font-size:8.5px;color:#6B7382}
+.result-strip{position:absolute;left:12px;right:60px;bottom:132px;display:flex;gap:8px;z-index:44;flex-wrap:nowrap;overflow:hidden;
+  pointer-events:none} /* only the chips themselves are tappable — the strip's empty width must never eat canvas taps */
+.result-chip{pointer-events:auto;display:flex;flex-direction:column;align-items:center;background:rgba(10,10,15,0.8);backdrop-filter:blur(12px);
+  border:1px solid rgba(255,255,255,0.16);border-radius:14px;padding:8px 10px 6px;cursor:pointer;animation:nodeIn .3s both}
+.result-chip:hover{border-color:rgba(29,185,84,0.5)}
+.result-chip .rc-av{width:36px;height:36px;border-radius:50%;overflow:hidden}
+.result-chip .rc-nm{margin-top:4px;font-size:9px;color:#E5E7EB;max-width:52px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.result-chip .rc-where{font-family:var(--mono);font-size:7.5px;color:#6B7382;margin-top:1px}
+
+/* ---------- verdict / shared / colophon ---------- */
+.verdict{margin-top:56px;border:1px solid rgba(29,185,84,0.3);border-radius:20px;padding:28px 30px;
+  background:linear-gradient(180deg,rgba(29,185,84,0.06),rgba(29,185,84,0.02))}
+.verdict h2{font-family:var(--display);font-size:24px;font-weight:700;margin:6px 0 12px}
+.verdict p{font-size:14px;line-height:1.7;color:var(--muted);max-width:900px}
+.verdict p b{color:var(--ink)}
+.shared{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px;margin-top:26px}
+.shared .sh{border:1px solid var(--hairline);border-radius:14px;padding:16px 18px;background:rgba(255,255,255,0.02)}
+.shared .sh h3{font-family:var(--mono);font-size:10.5px;letter-spacing:1.5px;text-transform:uppercase;color:var(--green);margin-bottom:8px}
+.shared .sh p{font-size:12.5px;line-height:1.6;color:var(--muted)}
+.shared .sh p b{color:var(--ink)}
+.colophon{margin-top:44px;font-family:var(--mono);font-size:10.5px;line-height:1.8;color:var(--faint);border-top:1px solid var(--hairline);padding-top:18px}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <svg class="deco" width="420" height="360" viewBox="0 0 420 360" fill="none">
+    <circle cx="300" cy="120" r="150" stroke="rgba(129,230,217,0.18)" stroke-width="1.5" stroke-dasharray="8 4"/>
+    <circle cx="300" cy="120" r="96" stroke="rgba(167,139,250,0.15)" stroke-width="1.5" stroke-dasharray="8 4"/>
+    <path d="M 150 120 A 150 150 0 0 1 450 120" stroke="rgba(29,185,84,0.25)" stroke-width="1.5" stroke-dasharray="2 6"/>
+  </svg>
+  <div class="eyebrow">mknoon · orbit screen · exploration 198</div>
+  <h1>When the circle overflows: arches, a long-press tuner, and finding people</h1>
+  <p class="brief">The inner circle seats <b>13</b> (5 + 8). Beyond that, today's production screen shows a <b>+N badge that does nothing</b> — and the Orbit3 lab's answer (arch rows above the circle) ships with a dozen known rough edges. These frames port the lab's three ideas onto the <b>real Orbit surface</b> — with the 196 QR chrome, 197 groups-on-rings, and 194 unread indicators in place — and fix the lab's weaknesses along the way. Every phone below is <b>live</b>: tap, hold, and type in them.</p>
+  <div class="qlist">
+    <a href="#combo"><b>★</b> · The combined build (handles × chips)</a>
+    <a href="#arches"><b>1</b> · How the arches open</a>
+    <a href="#edit"><b>2</b> · Edit on long-press</a>
+    <a href="#find"><b>3</b> · Finding someone up there</a>
+  </div>
+</header>
+
+<div class="today">
+  <div class="mini" id="mini-today"></div>
+  <div class="today-note">
+    <span class="flabel">today · production</span>
+    With 14+ chats the ring shows a 28px <b>“+N” badge</b> — but it has <span class="bad">no tap handler</span> (overflow_badge.dart: no GestureDetector) and its 245° slot sits <span class="bad">≈9px from seat 13's center</span>, so it crowds the last avatar. The people behind it are unreachable from this view.
+  </div>
+  <div class="today-note">
+    <span class="flabel">today · orbit3 lab</span>
+    The lab's arch rows work, but: <span class="bad">20–36px tap targets</span> (no 44pt floor), search that <span class="bad">never highlights arch members</span> (it dims the whole circle instead), an <span class="bad">always-visible 2×2 stepper stack</span> covering the canvas, no unread signals, and the circle can scroll fully out of view.
+  </div>
+</div>
+
+<!-- ================= FEATURED : ORBIT HANDLES × RESULT CHIPS ================= -->
+<section class="sec" id="combo">
+  <div class="s-eyebrow">featured · orbit handles × result chips — both on one phone</div>
+  <h2>The combined build: sculpt the shell, then find anyone in it</h2>
+  <p>Question 2's <b>Orbit Handles</b> and question 3's <b>Result Chips</b> composed on one live surface. The two features never fight over a gesture: editing lives on the <b>long-press</b>, finding lives in the <b>search pill</b> — you can even keep sculpting while a search result is lit.</p>
+</section>
+<main>
+  <article class="card">
+    <div class="phone-wrap">
+      <div class="phone" id="phone-hero"></div>
+      <div class="try">try: press &amp; hold to sculpt · type in the pill · tap a chip</div>
+      <span class="demo-btn" data-demo="phone-hero">Search for Nadia →</span>
+      <div class="pop-toggle" data-phone="phone-hero"><button data-pop="24" class="on">24 friends</button><button data-pop="50">50 friends</button></div>
+    </div>
+    <div class="notes">
+      <div class="opt-eyebrow">Featured <span class="tag pick">handles × chips</span></div>
+      <div class="opt-name">Sculpt &amp; Summon</div>
+      <p class="thesis">The design-pick <b>Concentric Arcs</b> carrying both winners at once: <b>Orbit Handles</b> to tune the geometry in place, <b>Result Chips</b> to find anyone the shell has swallowed.</p>
+      <div class="nlabel">What to try</div>
+      <ul class="pts">
+        <li><b>Hold the orbit ½s</b> — five handles appear: wrap the arcs to the 332° shell, cap seats per arc, pull the arches off the circle, spread the rings, size the avatars.</li>
+        <li><b>Type “na”</b> — every match lights in place while the rest of the orbit fades, and the strip chips them (Nadia, Rania, Dina, Hana…) with their seats; tap a chip to focus just that one.</li>
+        <li><b>They compose</b>: the pill and chips sit outside the canvas, so searching never ends edit mode — a lit match stays at full brightness while you sculpt around it.</li>
+        <li><b>Double-tap empty space</b> — names appear under every avatar and group, staggered on alternate seats so they never collide; double-tap again to hide.</li>
+        <li><b>Pick 50 friends</b> and widen the knobs — no arc is ever culled: the circle slides down to make room and the stack <b>scrolls</b> (drag it like a phone, or wheel) between the arches and the circle. Search auto-scrolls to off-view matches.</li>
+        <li class="warn">Both surfaces share the bottom band — the chip strip rides above the pill, and the −/+ steppers land on the nav line only while a handle is armed.</li>
+      </ul>
+      <div class="chips"><span>arcs + handles + chips</span><span>long-press = edit · pill = find</span><span>chip → light in place</span><span>starts expanded</span></div>
+    </div>
+  </article>
+</main>
+
+<!-- ================= SECTION 1 : ARCHES ================= -->
+<section class="sec" id="arches">
+  <div class="s-eyebrow">question 1 · decided trigger, open geometry</div>
+  <h2>Tap the +N badge — how do the arches open?</h2>
+  <p>The badge becomes the toggle: it gets a real seat (ring 2 re-lays as 9 slots when overflow exists, so nothing crowds), a 44pt hit area, and flips to a chevron while open. What differs between the options is the <b>shape the overflow takes</b> above the circle.</p>
+</section>
+<main class="grid">
+  <article class="card">
+    <div class="phone-wrap">
+      <div class="phone" id="phone-a1"></div>
+      <div class="try">try: tap the +N badge · then the chevron</div>
+      <div class="pop-toggle" data-phone="phone-a1"><button data-pop="24" class="on">24 friends</button><button data-pop="50">50 friends</button></div>
+    </div>
+    <div class="notes">
+      <div class="opt-eyebrow">Option A <span class="tag">safest ship</span></div>
+      <div class="opt-name">Stacked Domes</div>
+      <p class="thesis">Orbit3's arch rows, production-hardened. Overflow chunks into gentle domes of 7 that stack upward, newest nearest the circle. Same math the lab already proved — <b>plus the fixes it never got</b>.</p>
+      <div class="nlabel">Why it works</div>
+      <ul class="pts">
+        <li><b>Densest option</b> — 7 per row; 50 friends = 6 rows, all visible on one screen at default scale.</li>
+        <li>Row pitch raised 50→56px so every avatar honors the <b>44pt tap floor</b> the inner circle already enforces.</li>
+        <li><b>No row is ever culled</b>: the circle glides down to make room and the whole field scrolls — arches and circle both stay reachable (the lab marooned the circle below the fold with no way back).</li>
+        <li>194 unread satellites ride along onto arch members — the lab dropped them.</li>
+      </ul>
+      <div class="nlabel">Watch out</div>
+      <ul class="pts">
+        <li class="warn">Reads as <b>rows of people</b>, not orbits — the dome dip (11.5px) is subtle; the ring metaphor weakens up top.</li>
+        <li class="warn">Name labels stay off by default; <b>double-tap toggles them</b>, staggered two-row under alternate seats — the lab's 9.5px labels collided with the next row.</li>
+      </ul>
+      <div class="chips"><span>36px avatars · 7/row</span><span>row pitch 56</span><span>dip = 0.32×avatar</span><span>dotted 81E6D9 1.6px 1.4/5</span><span>badge = toggle</span><span>stagger row×60ms + col×4ms</span></div>
+    </div>
+  </article>
+  <article class="card">
+    <div class="phone-wrap">
+      <div class="phone" id="phone-b1"></div>
+      <div class="try">try: tap +N · press &amp; hold to sculpt — drag “arc wrap” around the circle until the overflow becomes a full shell</div>
+      <div class="pop-toggle" data-phone="phone-b1"><button data-pop="24" class="on">24 friends</button><button data-pop="50">50 friends</button></div>
+    </div>
+    <div class="notes">
+      <div class="opt-eyebrow">Option B <span class="tag pick">design pick</span></div>
+      <div class="opt-name">Concentric Arcs</div>
+      <p class="thesis">The orbit simply <b>keeps going</b>. Overflow rides true arcs — r154, r200, r246, the same +46px ring gap — sharing the circle's center, drawn in the same dashed teal/purple vocabulary. The +N badge doesn't open a panel; it <b>reveals the rest of the solar system</b>.</p>
+      <div class="nlabel">Why it works</div>
+      <ul class="pts">
+        <li><b>One geometry, one metaphor</b> — recency still reads as distance from you, continuously, instead of switching to rows at seat 14.</li>
+        <li>The circle <b>takes its expanded seat instantly</b> — no glide — and the outer arcs bloom around it with staggered entrances; the motion belongs to the arrivals, not the circle.</li>
+        <li>Arc capacity self-limits (~9/8/8 within screen width), which keeps <b>every tap target ≥44pt for free</b> — and the per-arc knob can <b>cap a ring lower</b> (fewer seats, spread wider), pushing the rest outward.</li>
+        <li><b>The curve knob becomes “wrap”</b>: from a shallow crown (72° per side) all the way to arcs that reach 166° per side — a 332° shell. Past 1.6× the width pinch releases and the arcs bend on around the circle; at full wrap the overflow is a true spiral shell around your inner circle.</li>
+      </ul>
+      <div class="nlabel">Watch out</div>
+      <ul class="pts">
+        <li class="warn"><b>Lower density</b>: ~8–9 seats per arc, so 50+ friends stack five-plus arcs — the circle slides down to fit them and the canvas scrolls to travel the stack.</li>
+        <li class="warn">Edge avatars sit close to the bezel — and past 1.6× wrap they deliberately clip at it (the pinch sin φ ≤ 170/r holds only up to 1.6×). Fine as a sculpted look; the default must stay fully on-screen on narrow devices.</li>
+      </ul>
+      <div class="chips"><span>arcs r154/200/246 · gap 46·sp</span><span>circle→first-arc gap = own knob (og)</span><span>wrap = curve knob · 72°→166°/side</span><span>width pinch ≤1.6× · releases to full wrap</span><span>34px avatars · per-arc = max cap</span><span>badge = toggle</span><span>pure paint — no new data</span></div>
+    </div>
+  </article>
+</main>
+
+<!-- ================= SECTION 2 : EDIT ================= -->
+<section class="sec" id="edit">
+  <div class="s-eyebrow">question 2 · long-press replaces always-on chrome</div>
+  <h2>Hold the orbit to tune it</h2>
+  <p>Orbit3 pins its four knobs on screen permanently. Here the canvas stays clean: a <b>long-press (500ms) anywhere on the orbit</b> enters edit mode — haptic, rings brighten — and one of these three control surfaces appears. Same four dimensions, same ranges, persisted like the lab (SecureKeyStore). Done or tap-outside exits.</p>
+</section>
+<main class="grid three">
+  <article class="card">
+    <div class="phone-wrap">
+      <div class="phone" id="phone-a2"></div>
+      <div class="try">try: press &amp; hold the orbit ½s · drag sliders</div>
+    </div>
+    <div class="notes">
+      <div class="opt-eyebrow">Option A <span class="tag pick">design pick</span></div>
+      <div class="opt-name">Tune Dock</div>
+      <p class="thesis">A glass dock slides over the nav with <b>four labeled sliders</b> and live values. The orbit redraws as you drag — the whole canvas stays visible above it.</p>
+      <div class="nlabel">Why it works</div>
+      <ul class="pts">
+        <li>Sliders fix the lab's coarse steppers — <b>continuous scrub</b>, real labels, live value readout.</li>
+        <li>Arch-only knobs (curve, per-row) <b>dim with a hint</b> when the arches are closed — the lab showed dead knobs silently.</li>
+        <li>One save on Done (the lab wrote to Keychain on every tap).</li>
+      </ul>
+      <div class="nlabel">Watch out</div>
+      <ul class="pts"><li class="warn">Covers the nav pill while open (it's modal by intent).</li></ul>
+      <div class="chips"><span>avatar 0.6–1.4×</span><span>spacing 0.7–1.5×</span><span>curve 0.5–2.5×</span><span>per-arc 4–9</span><span>orbit gap 0.5–2.5×</span><span>Reset · Done</span></div>
+    </div>
+  </article>
+  <article class="card">
+    <div class="phone-wrap">
+      <div class="phone" id="phone-b2"></div>
+      <div class="try">try: press &amp; hold · drag the arc-tip handle around the circle to the full shell · or tap it → +/−</div>
+    </div>
+    <div class="notes">
+      <div class="opt-eyebrow">Option B</div>
+      <div class="opt-name">Orbit Handles</div>
+      <p class="thesis">No panel at all. Edit mode puts <b>grab handles on the geometry itself</b>: pull the outer ring to space the rings <b>and the arcs</b>, the seat handle to size avatars, the arc tip to wrap the overflow around the circle — all the way to the 332° shell — and the tip's twin on the far end to <b>cap how many seats each arc holds</b>. (On the domes variant the pair becomes dome-bend + per-row count.)</p>
+      <div class="nlabel">Why it works</div>
+      <ul class="pts">
+        <li><b>Zero chrome</b> — you sculpt the thing you're looking at; the mapping teaches itself.</li>
+        <li>Entering edit <b>dims the crowd to 22%</b> so the four handles pop; the dim lifts while you drag, so the orbit answers your hand at full brightness, then settles back.</li>
+        <li><b>Tap a handle to arm it</b>: its glow flips green → teal, its live value floats in a bubble right above it, and −/+ buttons land on the nav-bar line (− left, + right) — both thumbs, no reaching, nothing covering the orbit. Drag stays available for coarse moves.</li>
+        <li>Feels native to the orbital metaphor; the jiggle + handles read instantly as "edit mode".</li>
+      </ul>
+      <div class="nlabel">Watch out</div>
+      <ul class="pts">
+        <li class="warn"><b>Discoverability + a11y</b>: four drag targets need alternate switch-access paths; VoiceOver story is hard.</li>
+        <li class="warn">Wrap/max-per-arc handles only exist when the arches are open — two invisible controls otherwise.</li>
+      </ul>
+      <div class="chips"><span>drag ring2 = spacing (rings + arcs)</span><span>drag seat = avatar ×</span><span>drag arc tip = wrap → full shell</span><span>drag far tip = max per arc</span><span>drag arc apex = orbit gap</span><span>tap = arm (teal) · value above handle</span><span>−/+ flank the nav pill</span><span>tap empty space = Done</span><span>Reset top-left</span></div>
+    </div>
+  </article>
+  <article class="card">
+    <div class="phone-wrap">
+      <div class="phone" id="phone-c2"></div>
+      <div class="try">try: press &amp; hold · tap + / −</div>
+    </div>
+    <div class="notes">
+      <div class="opt-eyebrow">Option C <span class="tag">cheapest ship</span></div>
+      <div class="opt-name">Summoned Steppers</div>
+      <p class="thesis">Orbit3's proven 2×2 stepper grid — but it <b>only exists inside edit mode</b>, gains tiny text labels, and adds a Done chip. Smallest diff from lab code that already works.</p>
+      <div class="nlabel">Why it works</div>
+      <ul class="pts">
+        <li>The widget, ranges, and persistence <b>already exist</b> in orbit3_screen.dart — this is mostly a visibility gate.</li>
+        <li>Discrete stops are predictable and RTL/a11y-friendly (buttons, not gestures).</li>
+      </ul>
+      <div class="nlabel">Watch out</div>
+      <ul class="pts">
+        <li class="warn">Coarse: 5 stops for avatar size — fine-tuning stays impossible (curve now steps 0.1).</li>
+        <li class="warn">No orbit-gap stepper: the 2×2 lab grid only carries the four original knobs — dock/handles get the fifth.</li>
+        <li class="warn">Still occludes the lower-left canvas while open.</li>
+      </ul>
+      <div class="chips"><span>lab widget + labels</span><span>±0.2 / ±0.1 / ±0.1 / ±1 steps</span><span>tap-outside dismiss</span></div>
+    </div>
+  </article>
+</main>
+
+<!-- ================= SECTION 3 : FIND ================= -->
+<section class="sec" id="find">
+  <div class="s-eyebrow">question 3 · search that survives the arches</div>
+  <h2>Finding someone who lives up there</h2>
+  <p>The lab's search dims the whole circle and never touches the arches — the people hardest to spot are the ones search ignores. Three replacements, all driven from one search pill (bottom-right, above the nav). Each phone has <b>Nadia seated deep in the overflow</b>.</p>
+</section>
+<main class="grid three">
+  <article class="card">
+    <div class="phone-wrap">
+      <div class="phone" id="phone-a3"></div>
+      <div class="try">try: tap 🔍 and type “na” — or use the button</div>
+      <span class="demo-btn" data-demo="phone-a3">Search for Nadia →</span>
+    </div>
+    <div class="notes">
+      <div class="opt-eyebrow">Option A <span class="tag pick">design pick</span></div>
+      <div class="opt-name">Come To Me</div>
+      <p class="thesis">Don't hunt — <b>summon</b>. The best match glides out of the overflow to a spotlit pedestal beneath the circle: full-size, named, one tap from chat. Everyone else dims. Clear the query and they fly home.</p>
+      <div class="nlabel">Why it works</div>
+      <ul class="pts">
+        <li>Works from the <b>collapsed</b> state — no need to open the arches at all (the lab required expand + manual scanning).</li>
+        <li>Borrows the proven "found → promote" loop from the InnerSky drawer's Pin, but keeps it spatial.</li>
+        <li>Scales to 100+ friends: the answer is always one avatar in one place.</li>
+      </ul>
+      <div class="nlabel">Watch out</div>
+      <ul class="pts"><li class="warn">Shows <b>one</b> best match; ties need the strip from Option C as a secondary row.</li></ul>
+      <div class="chips"><span>56px spotlight + name</span><span>glow 1DB954 @.55</span><span>others dim .28</span><span>“from arc 2” provenance tag</span></div>
+    </div>
+  </article>
+  <article class="card">
+    <div class="phone-wrap">
+      <div class="phone" id="phone-b3"></div>
+      <div class="try">try: tap 🔍 and type “na” — or use the button</div>
+      <span class="demo-btn" data-demo="phone-b3">Search for Nadia →</span>
+    </div>
+    <div class="notes">
+      <div class="opt-eyebrow">Option B</div>
+      <div class="opt-name">Open The Sky</div>
+      <p class="thesis">Search <b>auto-expands the arches</b>, scrolls the match's arc into view, and lights the match with the inner-circle glow the lab already owns — match label forced on, everything else at 0.28.</p>
+      <div class="nlabel">Why it works</div>
+      <ul class="pts">
+        <li>Fixes the lab's gap <b>literally</b>: wire searchQuery into the arch rows + reuse the existing scroll-to-reveal machinery.</li>
+        <li>You see the match <b>in context</b> — neighbors, arc, distance from the circle stay visible.</li>
+      </ul>
+      <div class="nlabel">Watch out</div>
+      <ul class="pts">
+        <li class="warn">Heavier choreography per keystroke (expand + scroll + glow) — needs debounce; can feel jumpy while typing.</li>
+        <li class="warn">Multiple matches scattered across arcs still make you scan.</li>
+      </ul>
+      <div class="chips"><span>auto-expand on first key</span><span>scroll-to-reveal (exists)</span><span>glow 1DB954 .65 blur 16</span><span>dim .28</span></div>
+    </div>
+  </article>
+  <article class="card">
+    <div class="phone-wrap">
+      <div class="phone" id="phone-c3"></div>
+      <div class="try">try: tap 🔍 and type “a” — then tap a chip</div>
+      <span class="demo-btn" data-demo="phone-c3">Search for Nadia →</span>
+    </div>
+    <div class="notes">
+      <div class="opt-eyebrow">Option C</div>
+      <div class="opt-name">Result Chips</div>
+      <p class="thesis">As you type, every on-canvas match <b>lights in place while the crowd fades to 28%</b>, and the matching faces appear as a <b>chip strip above the pill</b> — avatar, name, and where they live ("ring 1", "arc 2"). Tap a chip to focus one match or open the chat. The orbit itself never moves.</p>
+      <div class="nlabel">Why it works</div>
+      <ul class="pts">
+        <li>Handles <b>many matches</b> gracefully — the other two options degrade past one.</li>
+        <li>Zero spatial disruption; cheapest to reason about and test.</li>
+      </ul>
+      <div class="nlabel">Watch out</div>
+      <ul class="pts">
+        <li class="warn">It's a mini-list — <b>abandons the spatial metaphor</b> (the same critique that shelved the InnerSky drawer).</li>
+        <li class="warn">Strip + keyboard + pill stack up over the lower canvas.</li>
+      </ul>
+      <div class="chips"><span>36px chips + 9px names</span><span>provenance label per chip</span><span>tap = spotlight or open</span></div>
+    </div>
+  </article>
+</main>
+
+<!-- ================= VERDICT ================= -->
+<section class="verdict">
+  <div class="s-eyebrow" style="color:var(--green);font-family:var(--mono);font-size:11px;letter-spacing:2.5px;text-transform:uppercase">recommendation</div>
+  <h2>B-arcs for the product · A-dock to tune it · A-summon to find them</h2>
+  <p><b>Arches:</b> Option B (Concentric Arcs) is the design pick — it makes overflow feel like more orbit instead of a different widget, and its capacity limit buys correct tap targets for free. Option A (Stacked Domes) is the proven, denser fallback if 50+ friend density on one screen outranks the metaphor. <b>Edit:</b> Option A (Tune Dock) — sliders + labels + live preview fix every documented stepper complaint; C is the budget path (gate the existing lab widget behind long-press); B (Handles) is a delight worth keeping on the shelf, but its a11y story shouldn't block this feature. <b>Find:</b> Option A (Come To Me) — summoning beats hunting at every population size, and it composes: B's glow-in-context can fire when the arches happen to be open, and C's chip strip is the natural upgrade for multi-match queries. Documented as considered-and-declined: a pull-up drawer (list, not orbit — rejected with InnerSky) and fisheye tier-climbing (novel gesture load for a find task).</p>
+</section>
+
+<div class="shared">
+  <div class="sh"><h3>Chrome untouched</h3><p>193 toggle (top-left), 196 QR pair (top-center), FAB (top-right), nav pill — all keep their seats in every option. The arches live strictly between the chrome band and the nav; the expanded canvas clips beneath both.</p></div>
+  <div class="sh"><h3>Badge fix rides along</h3><p>Whatever wins, the +N badge gets a real 9th slot on ring 2 (8 members re-spread across 9 seats on overflow), a <b>44pt hit target</b>, chevron-when-open, and Semantics "N more people — tap to open".</p></div>
+  <div class="sh"><h3>Unread + groups everywhere</h3><p>Arch members are the same node species as ring members: 194 unread satellites, 197 group avatars (teal border), and tap-to-open all carry up into the arches. The lab rendered arch members bare.</p></div>
+  <div class="sh"><h3>Persistence &amp; RTL</h3><p>Four knobs persist via the SecureKeyStore key + use-case pattern (background_preference template) and must register in the <b>migration registry</b> or they won't survive account Move. Arch fill order mirrors under RTL — the lab laid out LTR-only.</p></div>
+</div>
+
+<div class="colophon">
+  geometry &amp; color provenance — orbital_visualization.dart (320 box · r62/r108 · 5+8 seats · 38/30px · +15°/ring · badge 245°) ·
+  orbital_ring_painter.dart (teal .25 / purple .20 · dash 8/4 · glow stroke 8 blur 4) · overflow_badge.dart (28px · dash 4/3 · +N 10px) ·
+  unread_orbit_indicator.dart (ring 1.35r · 1.1px · @1DB954 .55 · sats .06d · 9s) · orbit3_arch_layout.dart (36px rows · dip .32 · stagger 60/4ms) ·
+  orbit3_dimension_preferences.dart (0.6–1.4 / 0.7–1.5 / 0.5–2.5 / 4–9) · orbit_qr_chrome_buttons.dart (40px twins, 8px gap) ·
+  nav_bar_theme.dart (pill r30 blur 28) · ambient_background.dart (green/red drift 8s/9s) — honors prefers-reduced-motion
+</div>
+
+</div>
+<script>
+'use strict';
+/* ---------- data ---------- */
+const NAMES=[
+ ['Amira'],['Bassem',2],['Carmen'],['Design Crew',0,1],['Dalia'],['Elias'],['Farah',1],['Ghada'],['Hadi'],
+ ['Hiking Group',0,1],['Ines'],['Jana'],['Karim'],                      // 13 seated
+ ['Lina'],['Marco'],['Mona',3],['Omar'],['Book Club',0,1],['Petra'],['Qasim'],['Rania'],['Sami'],['Nadia',2],['Tala'],
+ ['Uri'],['Vera'],['Walid'],['Xena'],['Yara'],['Zaid'],['Aya'],['Bilal'],['Cyra'],['Dina'],['Emad'],['Fadi'],
+ ['Gina'],['Hana'],['Ivan'],['Jude'],['Kaia'],['Leila'],['Mira'],['Noor'],['Oday'],['Pia'],['Rami'],['Sofia'],['Tarek'],['Wael']
+].map((a,i)=>({id:i,name:a[0],unread:a[1]||0,isGroup:!!a[2]}));
+const SCALE=0.727, STAGE_H=636, CBOX=390, CC=195, TOP_COLLAPSED=123, TOP_EXPANDED=236;
+const PHONES={};
+
+/* ---------- generative avatars (ringAvatar convention from 196) ---------- */
+const PALETTE=['#FF3B3B','#FFFFFF','#1A1A1A','#1DB954'];
+function hash(s){let h=5381;for(const c of s)h=((h<<5)+h+c.charCodeAt(0))>>>0;return h}
+function ringAvatar(size,seed){
+  const h=hash(seed),hue=(h>>16)%360,c1=PALETTE[h%4],c2=PALETTE[(h>>2)%4],c3=PALETTE[(h>>4)%4];
+  const r=size/2,st=Math.max(1,size*0.055);
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="display:block;background:#16181E">
+    <circle cx="${r}" cy="${r}" r="${size*0.42}" fill="none" stroke="${c1}" stroke-width="${st}"/>
+    <circle cx="${r}" cy="${r}" r="${size*0.30}" fill="none" stroke="${c2}" stroke-width="${st}" stroke-dasharray="3 2.2"/>
+    <circle cx="${r}" cy="${r}" r="${size*0.18}" fill="none" stroke="${c3}" stroke-width="${st}"/>
+    <circle cx="${r}" cy="${r}" r="${size*0.07}" fill="hsl(${hue},70%,55%)"/></svg>`;
+}
+function groupFace(size){
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" style="display:block;background:rgba(78,205,196,0.18)">
+    <circle cx="9" cy="10" r="3" fill="none" stroke="#4ECDC4" stroke-width="1.6"/>
+    <circle cx="15.5" cy="10" r="2.4" fill="none" stroke="#4ECDC4" stroke-width="1.4" opacity=".7"/>
+    <path d="M4.5 18c.7-2.6 2.4-4 4.5-4s3.8 1.4 4.5 4" fill="none" stroke="#4ECDC4" stroke-width="1.6" stroke-linecap="round"/>
+    <path d="M14.5 15.5c1.9.2 3.2 1.3 3.8 3" fill="none" stroke="#4ECDC4" stroke-width="1.4" stroke-linecap="round" opacity=".7"/></svg>`;
+}
+/* 194 unread indicator: ring 1.35r stroke 1.1 @1DB954 .55, ≤3 satellites .06d, 9s spin */
+function unreadOrbit(size,count){
+  if(!count)return'';
+  const d=size*1.35,off=-(d-size)/2,core=Math.max(2.4,size*0.06),ph=[0.6,3.3,5.1];
+  let sats='';
+  for(let i=0;i<Math.min(count,3);i++){
+    const x=d/2+(d/2)*Math.cos(ph[i]),y=d/2+(d/2)*Math.sin(ph[i]);
+    sats+=`<div style="position:absolute;left:${x-core}px;top:${y-core}px;width:${core*2}px;height:${core*2}px;border-radius:50%;
+      background:#1DB954;box-shadow:0 0 ${core*1.6}px ${core*1.6}px rgba(29,185,84,0.16)"></div>`;
+  }
+  return `<div class="unread" style="left:${off}px;top:${off}px;width:${d}px;height:${d}px;border-radius:50%;
+    border:1.1px solid rgba(29,185,84,0.55)">${sats}</div>`;
+}
+function nodeHTML(m,x,y,size,cls,label,delayMs,lowLabel){
+  const face=m.isGroup?groupFace(size-2):ringAvatar(size-2,m.name);
+  const hue=(hash(m.name)>>16)%360;
+  const glow=m.isGroup?'':`box-shadow:0 0 ${size*0.35}px ${size*0.05}px hsla(${hue},70%,50%,0.35);`;
+  const enter=delayMs!=null?' enter':'',dly=delayMs!=null?`animation-delay:${delayMs}ms;`:'';
+  return `<div class="node ${cls}${m.isGroup?' grp':''}${enter}" data-mid="${m.id}" data-x="${x}" data-y="${y}"
+    style="left:${x-size/2}px;top:${y-size/2}px;width:${size}px;height:${size}px;${dly}">
+    <div class="av" style="${glow}">${face}</div>${unreadOrbit(size,m.unread)}
+    ${label?`<div class="n-label${lowLabel?' low':''}">${m.name}</div>`:''}</div>`;
+}
+const seatAngle=(i,n,ring)=>((i*360/n)+ring*15-90)*Math.PI/180;
+
+/* ---------- phone shell ---------- */
+const IC={
+  chat:'<svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-8 8H4l2-3a8 8 0 1 1 15-5z"/></svg>',
+  qr:'<svg viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6"/><rect x="14" y="4" width="6" height="6"/><rect x="4" y="14" width="6" height="6"/><path d="M14 14h3v3h-3zM19 19h1"/></svg>',
+  cam:'<svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="2"/><circle cx="12" cy="13" r="4"/><path d="M8 7l1.5-2.5h5L16 7"/></svg>',
+  feed:'<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="4" rx="1.5"/><rect x="4" y="12" width="16" height="4" rx="1.5" opacity=".6"/></svg>',
+  orbit:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" stroke-dasharray="4 3"/><circle cx="12" cy="12" r="2.5"/></svg>',
+  search:'<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>'
+};
+function shellHTML(cfg){
+  return `
+  <div class="blob g"></div><div class="blob r"></div>
+  <div class="island"></div>
+  <div class="statusbar"><span>9:41</span><svg width="52" height="13" viewBox="0 0 52 13" fill="#fff">
+    <rect x="0" y="6" width="3" height="6" rx="1"/><rect x="5" y="4" width="3" height="8" rx="1"/><rect x="10" y="2" width="3" height="10" rx="1"/>
+    <path d="M21 6 a8 8 0 0 1 10 0" stroke="#fff" stroke-width="2" fill="none"/><circle cx="26" cy="9" r="1.6"/>
+    <rect x="36" y="2.5" width="14" height="8" rx="2.5" fill="none" stroke="#fff"/><rect x="38" y="4.5" width="9" height="4" rx="1"/></svg></div>
+  <div class="chrome-circle" style="left:16px">${IC.chat}</div>
+  <div class="qr-pair"><div class="chrome-circle">${IC.qr}</div><div class="chrome-circle">${IC.cam}</div></div>
+  <div class="glow-fab"><span>+</span></div>
+  <div class="stage"><div class="canvas" style="top:0;height:${STAGE_H}px;width:390px"></div></div>
+  <div class="nav"><div class="pill">
+    <div class="btn">${IC.feed}Feed</div><div class="btn on">${IC.orbit}Orbit</div></div></div>`;
+}
+
+/* ---------- geometry ---------- */
+function circleGroupHTML(st){
+  const k=st.knobs,sp=k.sp,avS=k.av,over=st.members.length>13;
+  const r1=62*sp,r2=108*sp,a1=38*avS,a2=30*avS;
+  let h=`<div class="ring-svg" style="position:absolute;left:0;top:0"><svg width="390" height="390" style="overflow:visible">
+    <circle cx="195" cy="195" r="${r1}" fill="none" stroke="rgba(129,230,217,0.08)" stroke-width="8" style="filter:blur(4px)"/>
+    <circle cx="195" cy="195" r="${r2}" fill="none" stroke="rgba(129,230,217,0.08)" stroke-width="8" style="filter:blur(4px)"/>
+    <circle cx="195" cy="195" r="${r1}" fill="none" stroke="rgba(129,230,217,0.25)" stroke-width="1.5" stroke-dasharray="8 4"/>
+    <circle cx="195" cy="195" r="${r2}" fill="none" stroke="rgba(167,139,250,0.20)" stroke-width="1.5" stroke-dasharray="8 4"/></svg></div>`;
+  const meS=48*avS;
+  h+=`<div class="me" style="left:${CC-meS/2}px;top:${CC-meS/2}px;width:${meS}px;height:${meS}px">${ringAvatar(meS-2,'me-saleh')}</div>`;
+  st.members.slice(0,5).forEach((m,i)=>{
+    const a=seatAngle(i,5,0);h+=nodeHTML(m,CC+Math.cos(a)*r1,CC+Math.sin(a)*r1,a1,'r1',st.labels);});
+  const slots=over?9:8;
+  st.members.slice(5,13).forEach((m,i)=>{
+    const a=seatAngle(i,slots,1);h+=nodeHTML(m,CC+Math.cos(a)*r2,CC+Math.sin(a)*r2,a2,'r2',st.labels);});
+  if(over){
+    const a=seatAngle(8,9,1),bx=CC+Math.cos(a)*r2,by=CC+Math.sin(a)*r2,n=st.members.length-13;
+    h+=`<div class="badge ${st.expanded?'open':''}" style="left:${bx-14}px;top:${by-14}px">
+      <svg class="dash" width="28" height="28"><circle cx="14" cy="14" r="13" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="1" stroke-dasharray="4 3"/></svg>
+      <span class="pn">+${n}</span><span class="chev">⌄</span></div>`;
+  }
+  const topY=CC-r2-a2/2-34,botY=CC+r2+a2/2+14;
+  if(!st.expanded)h+=`<div class="title-cap" style="top:${topY}px">YOUR INNER CIRCLE</div>`;
+  h+=`<div class="caption" style="top:${botY}px">Close Friends</div>`;
+  return h;
+}
+/* option A: stacked dome rows (orbit3_arch_layout.dart math, 44pt-safe pitch) */
+function domesHTML(st,cTop,animate){
+  const k=st.knobs,av=Math.min(60,Math.max(20,36*k.av)),rowH=(av+20)*k.sp,dip=Math.max(4,Math.min(rowH/2,av*0.32*k.cv));
+  const per=Math.max(4,Math.min(k.pr,Math.floor(366/(av+2))));
+  const overflow=st.members.slice(13),rows=[];
+  for(let i=0;i<overflow.length;i+=per)rows.push(overflow.slice(i,i+per));
+  const cy=cTop+CC,circleTopY=cy-(108*k.sp+15*k.av+10);
+  let h='',paths='';
+  const nRows=rows.length;
+  rows.forEach((row,ri)=>{
+    const cYr=circleTopY-Math.max(0,8+26*(k.og-1))-ri*rowH-rowH/2; // og widens the circle→first-row gap too
+    const pitch=(366-av)/(per-1),full=row.length===per;
+    const width=av+(row.length-1)*pitch;
+    const x0=full?12+av/2:CC-width/2+av/2;
+    const pts=row.map((m,j)=>{
+      const u=full?(j/(per-1))*2-1:((x0+j*pitch)-CC)/183;
+      return{m,x:x0+j*pitch,y:cYr+dip*(Math.min(1,u*u)-1)};});
+    const p0=pts[0],pl=pts[pts.length-1];
+    if(pts.length>1)paths+=`<path d="M ${p0.x} ${p0.y} Q ${(p0.x+pl.x)/2} ${cYr-2*dip} ${pl.x} ${pl.y}" fill="none"
+      stroke="rgba(129,230,217,0.6)" stroke-width="1.6" stroke-dasharray="1.4 5" stroke-linecap="round"/>`;
+    pts.forEach((p,j)=>{
+      const delay=animate?(nRows-1-ri)*60+j*4:null;
+      h+=nodeHTML(p.m,p.x,p.y,av,'arch',st.labels,delay,j%2);});
+  });
+  return{h,paths};
+}
+/* option B: concentric arcs — same center, ring gap 46.
+   Wrap: the curve knob extends the span past the horizontal (base 72° × cv).
+   Up to 1.6× every arc stays inside the bezel (width pinch: sinφ ≤ 170/r);
+   past 1.6× the pinch releases and the arcs keep wrapping around the circle —
+   the knob's top reaches 166° per side (a 332° shell), edge avatars clipping at
+   the bezel like the lab spiral. PHI_FULL stays short of π so the two arc ends
+   never meet at the bottom. */
+const PHI_FULL=2.9;
+function arcPhi(r,cv){const base=Math.min(PHI_FULL,1.25*cv);
+  if(r<=170)return base;
+  const pinch=Math.asin(Math.min(1,170/r));
+  const release=Math.min(1,Math.max(0,(cv-1.6)/0.9)); // 0 at 1.6× → 1 at the 2.5× top
+  return Math.min(base,pinch+(PHI_FULL-pinch)*release)}
+function arcsHTML(st,cTop,animate){
+  const k=st.knobs;
+  // avatar size follows ONLY the avatar knob (like the inner rings) — so the
+  // spacing knob visibly moves the arcs apart/together instead of being cancelled
+  // by avatar shrink; at extreme-tight spacing neighbouring rings may kiss
+  const av=Math.min(52,Math.max(20,34*k.av));
+  const cy=cTop+CC;
+  const overflow=st.members.slice(13);
+  let h='',paths='',idx=0,arcI=0;
+  while(idx<overflow.length&&arcI<12){
+    const r=(108+46*k.og+46*arcI)*k.sp; // og scales only the circle→first-arch gap
+    const phiMax=arcPhi(r,k.cv);
+    // per-arc knob = MAX seats per arc (auto-fit still prevents collisions; the knob can only lower it)
+    const cap=Math.max(4,Math.min(Math.floor((2*phiMax*r)/(av+10)),Math.round(k.pr)));
+    const seat=overflow.slice(idx,idx+cap);
+    const xA=CC+r*Math.sin(-phiMax),yA=cy-r*Math.cos(-phiMax),xB=CC+r*Math.sin(phiMax),yB=cy-r*Math.cos(phiMax);
+    const col=arcI%2?'rgba(167,139,250,0.20)':'rgba(129,230,217,0.25)';
+    const big=phiMax>Math.PI/2?1:0; // span >180° must take the major arc through the top
+    paths+=`<path d="M ${xA} ${yA} A ${r} ${r} 0 ${big} 1 ${xB} ${yB}" fill="none" stroke="rgba(129,230,217,0.08)" stroke-width="8" style="filter:blur(4px)"/>
+      <path d="M ${xA} ${yA} A ${r} ${r} 0 ${big} 1 ${xB} ${yB}" fill="none" stroke="${col}" stroke-width="1.5" stroke-dasharray="8 4"/>`;
+    const pitch=cap>1?(2*phiMax)/(cap-1):0;
+    const start=seat.length===cap?-phiMax:-pitch*(seat.length-1)/2;
+    seat.forEach((m,j)=>{
+      const phi=start+j*pitch,x=CC+r*Math.sin(phi),y=cy-r*Math.cos(phi);
+      const delay=animate?arcI*60+j*5:null;
+      h+=nodeHTML(m,x,y,av,'arch',st.labels,delay,j%2);});
+    idx+=cap;arcI++;
+  }
+  return{h,paths};
+}
+/* how far the arch stack would poke past the chrome with the circle at its default seat —
+   the circle slides DOWN by this amount and the stage scrolls; nothing is ever culled */
+function archOverhang(st){
+  const k=st.knobs,overflow=st.members.length-13;
+  if(overflow<=0)return 0;
+  const cy0=TOP_EXPANDED+CC,MARGIN=30;
+  let topY;
+  if(st.cfg.arch==='arcs'){
+    const av=Math.min(52,Math.max(20,34*k.av)),caps=arcCapsFor(st);
+    let idx=0,a=0;
+    while(idx<overflow&&a<caps.length){idx+=caps[a];a++}
+    const maxR=(108+46*k.og+46*(a-1))*k.sp;
+    topY=cy0-maxR-av/2-16;
+  }else{
+    const av=Math.min(60,Math.max(20,36*k.av)),rowH=(av+20)*k.sp,dip=Math.max(4,Math.min(rowH/2,av*0.32*k.cv));
+    const per=Math.max(4,Math.min(k.pr,Math.floor(366/(av+2))));
+    const nRows=Math.ceil(overflow/per);
+    const circleTopY=cy0-(108*k.sp+15*k.av+10),off0=Math.max(0,8+26*(k.og-1));
+    topY=circleTopY-off0-(nRows-1)*rowH-rowH/2-dip-av/2-6;
+  }
+  return Math.max(0,Math.ceil(MARGIN-topY));
+}
+/* full canvas render */
+function renderCanvas(id){
+  const st=PHONES[id],cv=st.canvas;
+  const extra=st.expanded?archOverhang(st):0;
+  const cTop=(st.expanded?TOP_EXPANDED:TOP_COLLAPSED)+extra,canvasH=STAGE_H+extra;
+  st.cTopNow=cTop;
+  let arch={h:'',paths:''};
+  if(st.expanded)arch=(st.cfg.arch==='arcs'?arcsHTML:domesHTML)(st,cTop,st.animateNext);
+  st.animateNext=false;
+  cv.style.height=canvasH+'px';
+  cv.innerHTML=`
+    ${st.expanded?`<svg class="arch-svg" width="390" height="${canvasH}" style="left:0;top:0">${arch.paths}</svg>`:''}
+    <div class="arch-layer">${arch.h}</div>
+    <div class="circle-grp" style="position:absolute;left:0;top:${cTop}px;width:390px;height:390px">
+      ${circleGroupHTML(st)}</div>`; // the circle takes its seat instantly — only arch nodes animate in
+
+  const dExtra=extra-(st.lastExtra||0);st.lastExtra=extra;
+  if(dExtra)st.stage.scrollTop=Math.max(0,st.stage.scrollTop+dExtra); // keep the circle visually planted as headroom grows/shrinks
+  const badge=cv.querySelector('.badge');
+  if(badge)badge.addEventListener('click',e=>{e.stopPropagation();st.expanded=!st.expanded;st.animateNext=st.expanded;renderCanvas(id);
+    if(st.onExpandChange)st.onExpandChange();});
+  if(st.decorate)st.decorate();
+}
+/* ---------- phone init ---------- */
+function initPhone(id,cfg){
+  const ph=document.getElementById(id);
+  ph.innerHTML=shellHTML(cfg);
+  const st=PHONES[id]={cfg,id,pop:cfg.pop||24,expanded:!!cfg.startExpanded,labels:false,
+    knobs:defKnobs(cfg),animateNext:!!cfg.startExpanded,phone:ph,
+    stage:ph.querySelector('.stage'),canvas:ph.querySelector('.canvas')};
+  st.members=NAMES.slice(0,st.pop);
+  // the nodeIn entry animation (fill:both) pins opacity at 1 and would override the
+  // edit-dim / spot-dim fades — shed the class as soon as each entrance finishes
+  st.canvas.addEventListener('animationend',e=>{const n=e.target.closest('.node.enter');if(n)n.classList.remove('enter')});
+  // double-tap empty space = toggle name labels (badge/handles keep their own gestures)
+  st.stage.addEventListener('dblclick',e=>{
+    if(justPanned(st)||e.target.closest('.badge,.handle,.nav-step'))return;
+    st.labels=!st.labels;renderCanvas(id);});
+  st.stage.addEventListener('scroll',()=>{if(st.editOn)positionHandles(st)});
+  // phone-style drag-to-pan: drag the stack vertically to scroll it (wheel works too).
+  // Capture starts only after the 6px threshold, so plain taps keep their targets.
+  let pan=null;
+  st.stage.addEventListener('pointerdown',e=>{
+    if(e.target.closest('.badge,.handle,.nav-step'))return;
+    pan={y:e.clientY,top:st.stage.scrollTop,id:e.pointerId,moved:false};});
+  st.stage.addEventListener('pointermove',e=>{
+    if(!pan)return;
+    const dy=(e.clientY-pan.y)/SCALE;
+    if(!pan.moved&&Math.abs(dy)>6){pan.moved=true;try{st.stage.setPointerCapture(pan.id)}catch(_){}}
+    if(pan.moved){st.stage.scrollTop=pan.top-dy;st._pannedAt=performance.now()}});
+  const endPan=()=>{pan=null};
+  st.stage.addEventListener('pointerup',endPan);
+  st.stage.addEventListener('pointercancel',endPan);
+  if(cfg.edit)buildEdit(st);
+  if(cfg.find)buildFind(st);
+  renderCanvas(id);
+  return st;
+}
+
+/* ---------- edit surfaces ---------- */
+/* arcs default the per-arc MAX to 9 (non-binding at default wrap — auto-fit seats 8/9/8);
+   domes keep the lab's exact per-row count of 7 */
+const defKnobs=cfg=>({av:1,sp:1,cv:1,pr:cfg.arch==='arcs'?9:7,og:1});
+const justPanned=st=>performance.now()-(st._pannedAt||0)<350; // a drag-scroll release must not read as a tap
+const KNOB_DEFS=[
+  {k:'av',name:'Avatar size',min:0.6,max:1.4,step:0.05,coarse:0.2,fmt:v=>v.toFixed(1)+'×',ic:'◯',archOnly:false},
+  {k:'sp',name:'Ring spacing',min:0.7,max:1.5,step:0.05,coarse:0.1,fmt:v=>v.toFixed(1)+'×',ic:'↕',archOnly:false},
+  {k:'cv',name:'Arch curve',min:0.5,max:2.5,step:0.1,coarse:0.1,fmt:v=>v.toFixed(1)+'×',ic:'⌒',archOnly:true},
+  {k:'pr',name:'Per arc',min:4,max:9,step:1,coarse:1,fmt:v=>String(Math.round(v)),ic:'⁙',archOnly:true},
+  // og multiplies ONLY the circle→first-arch gap (arc-to-arc stays 46·sp).
+  // Appended LAST: option C's 2×2 lab grid indexes KNOB_DEFS[0..3] and stays untouched.
+  {k:'og',name:'Orbit gap',min:0.5,max:2.5,step:0.05,coarse:0.1,fmt:v=>v.toFixed(1)+'×',ic:'⇕',archOnly:true}
+];
+function enterEdit(st){if(st.editOn)return;st.editOn=true;
+  st.canvas.querySelectorAll('.node.enter').forEach(n=>n.classList.remove('enter')); // mid-flight entrances must not out-cascade the dim
+  st.canvas.classList.add('edit-glow');
+  st.banner=document.createElement('div');st.banner.className='edit-banner';
+  st.banner.textContent=st.cfg.edit==='handles'?'TAP AWAY TO FINISH':'EDITING ORBIT';
+  st.phone.appendChild(st.banner);
+  if(st.cfg.edit==='dock')st.dock.classList.add('up');
+  if(st.cfg.edit==='steppers')st.steppers.classList.add('on');
+  if(st.cfg.edit==='handles'){
+    st._suppressNextStageClick=true; // the long-press release click must not immediately tap-away
+    st.canvas.classList.add('edit-dim');buildHandles(st);positionHandles(st);
+  }
+}
+function exitEdit(st){if(!st.editOn)return;st.editOn=false;
+  st.canvas.classList.remove('edit-glow','edit-dim');
+  if(st.banner){st.banner.remove();st.banner=null}
+  if(st.dock)st.dock.classList.remove('up');
+  if(st.steppers)st.steppers.classList.remove('on');
+  if(st.handleBox){st.handleBox.remove();st.handleBox=null}
+  if(st.stepBtns){st.stepBtns.remove();st.stepBtns=null}
+  if(st.editPills){st.editPills.remove();st.editPills=null}
+}
+function armLongPress(st){
+  let timer=null,sx=0,sy=0;
+  st.stage.addEventListener('pointerdown',e=>{
+    if(e.target.closest('.badge,.node,.handle'))return;
+    sx=e.clientX;sy=e.clientY;
+    timer=setTimeout(()=>{timer=null;enterEdit(st)},500);});
+  const cancel=()=>{if(timer){clearTimeout(timer);timer=null}};
+  st.stage.addEventListener('pointerup',cancel);
+  st.stage.addEventListener('pointerleave',cancel);
+  st.stage.addEventListener('pointermove',e=>{if(timer&&(Math.abs(e.clientX-sx)>8||Math.abs(e.clientY-sy)>8))cancel()});
+}
+function buildEdit(st){
+  armLongPress(st);
+  const mode=st.cfg.edit;
+  if(mode==='dock'){
+    const d=document.createElement('div');d.className='dock';
+    d.innerHTML=KNOB_DEFS.map(def=>`
+      <div class="dk-row" data-k="${def.k}"><span class="dk-name">${def.name}</span>
+      <input type="range" min="${def.min}" max="${def.max}" step="${def.step}" value="${st.knobs[def.k]}">
+      <span class="dk-val">${def.fmt(st.knobs[def.k])}</span></div>`).join('')+
+      `<div class="dk-foot"><span class="dk-hint"></span><span class="dk-btns">
+       <button class="dk-btn" data-act="reset">Reset</button>
+       <button class="dk-btn done" data-act="done">Done</button></span></div>`;
+    st.phone.appendChild(d);st.dock=d;
+    d.querySelectorAll('input').forEach(inp=>{
+      inp.addEventListener('input',()=>{
+        const k=inp.closest('.dk-row').dataset.k;
+        st.knobs[k]=parseFloat(inp.value);
+        inp.closest('.dk-row').querySelector('.dk-val').textContent=KNOB_DEFS.find(x=>x.k===k).fmt(st.knobs[k]);
+        renderCanvas(st.id);});});
+    d.querySelector('[data-act=reset]').addEventListener('click',()=>{
+      st.knobs=defKnobs(st.cfg);
+      d.querySelectorAll('.dk-row').forEach(r=>{const def=KNOB_DEFS.find(x=>x.k===r.dataset.k);
+        r.querySelector('input').value=st.knobs[r.dataset.k];r.querySelector('.dk-val').textContent=def.fmt(st.knobs[r.dataset.k]);});
+      renderCanvas(st.id);});
+    d.querySelector('[data-act=done]').addEventListener('click',()=>exitEdit(st));
+    st.onExpandChange=()=>refreshDockDead(st);
+    refreshDockDead(st);
+  }
+  if(mode==='steppers'){
+    const s=document.createElement('div');s.className='steppers';
+    s.innerHTML=`<div class="reset-pill">⟳ Reset</div><div class="stp-grid">
+      <div class="stp-col">${stepperHTML(st,0)}${stepperHTML(st,1)}</div>
+      <div class="stp-col">${stepperHTML(st,2)}${stepperHTML(st,3)}</div></div>
+      <button class="done-chip">Done</button>`;
+    st.phone.appendChild(s);st.steppers=s;
+    s.querySelectorAll('.stepper').forEach((el,i)=>{
+      const def=KNOB_DEFS[i];
+      el.querySelector('.st-inc').addEventListener('click',()=>{bump(st,def,+1)});
+      el.querySelector('.st-dec').addEventListener('click',()=>{bump(st,def,-1)});});
+    s.querySelector('.reset-pill').addEventListener('click',()=>{st.knobs=defKnobs(st.cfg);refreshSteppers(st);renderCanvas(st.id)});
+    s.querySelector('.done-chip').addEventListener('click',()=>exitEdit(st));
+  }
+  if(mode==='handles'){
+    st.decorate=()=>{if(st.editOn)positionHandles(st)};
+    // tap-away = Done: any empty space (or a dimmed avatar) ends edit mode;
+    // handles, the +N badge, −/+ and Reset stay interactive without exiting
+    st.stage.addEventListener('pointerdown',()=>{st._suppressNextStageClick=false},true);
+    st.stage.addEventListener('click',e=>{
+      if(!st.editOn||justPanned(st))return;
+      if(st._suppressNextStageClick){st._suppressNextStageClick=false;return}
+      if(e.target.closest('.handle,.badge,.nav-step,.edit-pill-top'))return;
+      exitEdit(st);
+    });
+  }
+}
+function refreshDockDead(st){
+  if(!st.dock)return;
+  const dead=!st.expanded;
+  st.dock.querySelectorAll('.dk-row').forEach(r=>{
+    const def=KNOB_DEFS.find(x=>x.k===r.dataset.k);
+    r.classList.toggle('dead',def.archOnly&&dead);});
+  st.dock.querySelector('.dk-hint').textContent=dead?'curve, per-arc & orbit gap apply once the arches are open (+N)':'';
+}
+function stepperHTML(st,i){const def=KNOB_DEFS[i];
+  return `<div class="stepper" data-k="${def.k}"><div class="st-head"><div class="st-ic">${def.ic}</div>
+    <div class="st-val">${def.fmt(st.knobs[def.k])}</div><div class="st-lb">${def.name}</div></div>
+    <div class="st-div"></div><button class="st-inc">+</button><div class="st-div"></div><button class="st-dec">−</button></div>`;}
+function bump(st,def,dir){
+  st.knobs[def.k]=Math.min(def.max,Math.max(def.min,+(st.knobs[def.k]+dir*def.coarse).toFixed(2)));
+  refreshSteppers(st);renderCanvas(st.id);
+}
+function refreshSteppers(st){
+  st.steppers.querySelectorAll('.stepper').forEach(el=>{
+    const def=KNOB_DEFS.find(x=>x.k===el.dataset.k);
+    el.querySelector('.st-val').textContent=def.fmt(st.knobs[el.dataset.k]);});
+}
+/* handles (option B2): drag the geometry itself.
+   Built ONCE per edit session (so a drag never destroys its own handle);
+   positionHandles() re-seats them after every canvas render. */
+function buildHandles(st){
+  if(st.handleBox)st.handleBox.remove();
+  // the box lives on the PHONE, not the stage: the stage is a z-10 stacking context, so
+  // handles inside it could never rise above the search pill/chip strip (z-44) — and the
+  // ring-spacing handle sits exactly in the chip strip's band
+  const box=document.createElement('div');box.style.cssText='position:absolute;inset:0;pointer-events:none;z-index:46';
+  st.handleBox=box;st.phone.appendChild(box);
+  const k=st.knobs,defOf=key=>KNOB_DEFS.find(d=>d.k===key);
+  /* −/+ ride the nav-bar line (− left, + right); the live value floats above the armed handle */
+  const btns=document.createElement('div');
+  btns.style.cssText='position:absolute;inset:0;pointer-events:none;z-index:47';
+  btns.innerHTML=`<button class="nav-step dec" aria-label="decrease">−</button>
+    <button class="nav-step inc" aria-label="increase">+</button>`;
+  st.phone.appendChild(btns);st.stepBtns=btns;
+  const bDec=btns.querySelector('.dec'),bInc=btns.querySelector('.inc');
+  st.selKnob=null;
+  const updateStepVal=()=>{if(!st.selKnob)return;
+    st.h[st.selKnob].querySelector('.h-val').textContent=defOf(st.selKnob).fmt(k[st.selKnob])};
+  st.selectKnob=key=>{
+    st.selKnob=key;
+    Object.entries(st.h).forEach(([kk,el])=>el.classList.toggle('sel',kk===key));
+    bDec.classList.toggle('on',!!key);bInc.classList.toggle('on',!!key);
+    if(key)updateStepVal();
+  };
+  const flashDim=()=>{st.canvas.classList.remove('edit-dim');clearTimeout(st._dimT);
+    st._dimT=setTimeout(()=>{if(st.editOn)st.canvas.classList.add('edit-dim')},650)};
+  bInc.addEventListener('click',()=>{if(!st.selKnob)return;const d=defOf(st.selKnob);
+    k[st.selKnob]=Math.min(d.max,+(k[st.selKnob]+d.coarse).toFixed(2));updateStepVal();flashDim();renderCanvas(st.id)});
+  bDec.addEventListener('click',()=>{if(!st.selKnob)return;const d=defOf(st.selKnob);
+    k[st.selKnob]=Math.max(d.min,+(k[st.selKnob]-d.coarse).toFixed(2));updateStepVal();flashDim();renderCanvas(st.id)});
+  const mk=(key,tip,glyph,onDrag)=>{
+    const h=document.createElement('div');h.className='handle';h.dataset.h=key;h.style.pointerEvents='auto';
+    h.innerHTML=`<svg viewBox="0 0 24 24">${glyph}</svg><span class="h-tip">${tip}</span><span class="h-val"></span>`;
+    let s0=null;
+    h.addEventListener('pointerdown',e=>{
+      e.preventDefault();e.stopPropagation();
+      st.selectKnob(key); // tap arms this dimension on the +/− stepper (teal glow)
+      try{h.setPointerCapture(e.pointerId)}catch(_){}
+      s0={x:e.clientX,y:e.clientY,av:k.av,sp:k.sp,cv:k.cv,pr:k.pr,og:k.og};
+      st.canvas.classList.remove('edit-dim'); // lift the dim while sculpting — watch it change live
+    });
+    h.addEventListener('pointermove',e=>{if(!s0)return;
+      onDrag((e.clientX-s0.x)/SCALE,(e.clientY-s0.y)/SCALE,s0);
+      updateStepVal();
+      renderCanvas(st.id)});
+    const end=()=>{if(!s0)return;s0=null;if(st.editOn)st.canvas.classList.add('edit-dim')};
+    h.addEventListener('pointerup',end);
+    h.addEventListener('pointercancel',end);
+    box.appendChild(h);
+    return h;};
+  st.h={};
+  st.h.sp=mk('sp','ring spacing ↕','<path d="M12 4v16M8 8l4-4 4 4M8 16l4 4 4-4"/>',
+    (dx,dy,s0)=>{k.sp=Math.min(1.5,Math.max(0.7,s0.sp+dy/108))});
+  st.h.av=mk('av','avatar size ↕','<circle cx="12" cy="12" r="7"/>',
+    (dx,dy,s0)=>{k.av=Math.min(1.4,Math.max(0.6,s0.av-dy/90))});
+  const arcs=st.cfg.arch==='arcs';
+  st.h.cv=mk('cv',arcs?'arc wrap ↕':'arch curve ↕','<path d="M4 16 Q12 6 20 16"/>',
+    (dx,dy,s0)=>{ // domes: apex up = deeper dome; arcs: the tip follows the finger's ANGLE around the circle, so the wrap can keep bending past the horizon into the full shell
+      if(!arcs){k.cv=Math.min(2.5,Math.max(0.5,s0.cv-dy/26));return}
+      const cy=(st.cTopNow!=null?st.cTopNow:TOP_EXPANDED)+CC,r=(108+46*k.og)*k.sp,p0=arcPhi(r,s0.cv);
+      const px=CC+r*Math.sin(p0)+4+dx,py=cy-r*Math.cos(p0)+4+dy;
+      k.cv=Math.min(2.5,Math.max(0.5,Math.abs(Math.atan2(px-CC,cy-py))/1.25))});
+  st.h.pr=mk('pr',arcs?'max / arc ⟷':'per arc ⟷','<path d="M4 12h16M14 6l6 6-6 6"/>',
+    (dx,dy,s0)=>{k.pr=Math.round(Math.min(9,Math.max(4,s0.pr+dx/34)))});
+  st.h.og=mk('og','orbit gap ↕','<path d="M4 8 Q12 2 20 8M4 21 Q12 15 20 21M12 10v7"/>',
+    (dx,dy,s0)=>{ // rides the first arc's apex: pull up = push the arches away from the circle
+      k.og=Math.min(2.5,Math.max(0.5,s0.og-dy/(46*k.sp)))});
+  if(st.editPills)st.editPills.remove();
+  const pills=document.createElement('div');pills.className='edit-pill-top';
+  pills.innerHTML='<button class="dk-btn" data-act="reset">Reset</button>';
+  st.editPills=pills;st.phone.appendChild(pills);
+  pills.querySelector('[data-act=reset]').addEventListener('click',()=>{st.knobs=defKnobs(st.cfg);renderCanvas(st.id)});
+}
+function positionHandles(st){
+  if(!st.handleBox||!st.h)return;
+  const k=st.knobs,cTop=st.cTopNow!=null?st.cTopNow:(st.expanded?TOP_EXPANDED:TOP_COLLAPSED),cy=cTop+CC;
+  // x/y arrive in canvas coords; the box is phone-anchored, so shift by the stage's top (112px)
+  // minus the scroll offset — and hide any handle that has scrolled out of the stage band
+  const scroll=st.stage.scrollTop||0;
+  const put=(h,x,y,show)=>{const vy=y-scroll+112;
+    h.style.display=(show&&vy>124&&vy<736)?'flex':'none';h.style.left=(x-15)+'px';h.style.top=(vy-15)+'px'};
+  put(st.h.sp,CC,cy+108*k.sp,true); // 6 o'clock on ring2 — clear of max/arc at the arc's left tip
+  put(st.h.av,CC,cy-62*k.sp,true);
+  if(st.expanded&&st.cfg.arch==='arcs'){
+    const r=(108+46*k.og)*k.sp,phi=arcPhi(r,k.cv);
+    put(st.h.cv,CC+r*Math.sin(phi)+4,cy-r*Math.cos(phi)+4,true); // rides the wrap tip of the first arc
+    put(st.h.pr,CC+r*Math.sin(-phi)-4,cy-r*Math.cos(-phi)+4,true); // its twin on the other tip — max seats per arc
+    put(st.h.og,CC,cy-r,true); // first arc's apex — radial gap to the circle
+  }else if(st.expanded){
+    const av=Math.min(60,Math.max(20,36*k.av)),rowH=(av+20)*k.sp,dip=Math.max(4,Math.min(rowH/2,av*0.32*k.cv));
+    const circleTopY=cy-(108*k.sp+15*k.av+10),row0=circleTopY-Math.max(0,8+26*(k.og-1))-rowH/2;
+    put(st.h.cv,CC,row0-dip,true);
+    put(st.h.pr,352,row0,true);
+    put(st.h.og,0,0,false); // domes tune their gap from the dock
+    if(st.selKnob==='og')st.selectKnob(null);
+  }else{
+    put(st.h.cv,0,0,false);put(st.h.pr,0,0,false);put(st.h.og,0,0,false);
+    if(st.selKnob==='cv'||st.selKnob==='pr'||st.selKnob==='og')st.selectKnob(null); // its handle just vanished with the arches
+  }
+}
+/* ---------- find surfaces ---------- */
+const extraCSS=document.createElement('style');
+extraCSS.textContent=`.toast{position:absolute;bottom:150px;left:50%;transform:translateX(-50%);background:rgba(10,10,15,0.88);
+  border:1px solid rgba(29,185,84,0.4);color:#F8FAFC;font-size:11.5px;padding:7px 14px;border-radius:14px;z-index:70;
+  white-space:nowrap;animation:nodeIn .25s both}`;
+document.head.appendChild(extraCSS);
+function toast(st,msg){
+  const t=document.createElement('div');t.className='toast';t.textContent=msg;
+  st.phone.appendChild(t);setTimeout(()=>t.remove(),1500);
+}
+function arcCapsFor(st){
+  const av=Math.min(52,Math.max(20,34*st.knobs.av)),caps=[];
+  for(let a=0;a<12;a++){const r=(108+46*st.knobs.og+46*a)*st.knobs.sp;
+    const phi=arcPhi(r,st.knobs.cv);
+    caps.push(Math.max(4,Math.min(Math.floor((2*phi*r)/(av+10)),Math.round(st.knobs.pr))));}
+  return caps;
+}
+function locationOf(st,idx){
+  if(idx<5)return'ring 1';if(idx<13)return'ring 2';
+  let o=idx-13;
+  if(st.cfg.arch==='arcs'){const caps=arcCapsFor(st);for(let a=0;a<caps.length;a++){if(o<caps[a])return'arc '+(a+1);o-=caps[a]}return'arc 6+'}
+  return'row '+(Math.floor(o/st.knobs.pr)+1);
+}
+function clearFind(st){
+  st.canvas.classList.remove('spot-dim');
+  st.canvas.querySelectorAll('.node.lit').forEach(n=>{n.classList.remove('lit');const l=n.querySelector('.n-label.tmp');if(l)l.remove()});
+  st.canvas.querySelectorAll('.node[data-hid]').forEach(n=>{n.style.opacity='';n.removeAttribute('data-hid')});
+  if(st.spot){st.spot.remove();st.spot=null}
+  if(st.flight){st.flight.remove();st.flight=null}
+  if(st.strip)st.strip.innerHTML='';
+}
+function litNode(st,mid,withLabel){
+  const n=st.canvas.querySelector(`.node[data-mid="${mid}"]`);
+  if(!n)return null;
+  n.classList.add('lit');
+  if(withLabel&&!n.querySelector('.n-label')){
+    const l=document.createElement('div');l.className='n-label tmp';l.textContent=NAMES[mid].name;n.appendChild(l);}
+  return n;
+}
+function buildFind(st){
+  const pill=document.createElement('div');pill.className='search-pill';
+  pill.innerHTML=`<div class="sp-ic">${IC.search}</div><input placeholder="Find a friend" aria-label="Find a friend">`;
+  st.phone.appendChild(pill);st.pill=pill;
+  const input=pill.querySelector('input');st.searchInput=input;
+  pill.querySelector('.sp-ic').addEventListener('click',()=>{
+    pill.classList.toggle('open');
+    if(pill.classList.contains('open'))input.focus();else{input.value='';st.findHandler('')}});
+  input.addEventListener('input',()=>st.findHandler(input.value));
+  // tap anywhere outside the search UI = close & clear (a 'click' listener, so a tapped
+  // result — pulled avatar, chip-lit node — still fires its own handler first)
+  st.phone.addEventListener('click',e=>{
+    if(!pill.classList.contains('open')||justPanned(st))return;
+    if(e.target.closest('.search-pill,.result-strip,.spot-card,.handle,.nav-step,.edit-pill-top'))return;
+    if(st.flight&&st.flight.contains(e.target))return;
+    pill.classList.remove('open');input.value='';st.findHandler('');
+  });
+  if(st.cfg.find==='chips'){
+    const strip=document.createElement('div');strip.className='result-strip';st.phone.appendChild(strip);st.strip=strip;}
+  st.findHandler=q=>{
+    q=q.trim().toLowerCase();clearFind(st);
+    if(!q)return;
+    const matches=st.members.map((m,i)=>({m,i})).filter(x=>x.m.name.toLowerCase().includes(q));
+    if(!matches.length)return;
+    if(st.cfg.find==='pull'){
+      const best=matches[0];
+      st.canvas.classList.add('spot-dim');
+      if(best.i<13||st.expanded){litNode(st,best.m.id,true);return}
+      const cTop=TOP_COLLAPSED,cy=cTop+CC;
+      const pedY=cy+(108*st.knobs.sp+15)+60;
+      const src=st.canvas.querySelector(`.node[data-mid="${best.m.id}"]`);
+      let sx=CC,sy=cy-108*st.knobs.sp-20;
+      if(src){sx=parseFloat(src.dataset.x);sy=parseFloat(src.dataset.y);src.style.opacity='.12';src.setAttribute('data-hid','1')}
+      else{const b=st.canvas.querySelector('.badge');if(b)sx=parseFloat(b.style.left)+14,sy=parseFloat(b.style.top)+cTop+14}
+      const fl=document.createElement('div');
+      fl.style.cssText=`position:absolute;left:${sx-28}px;top:${sy-28}px;width:56px;height:56px;border-radius:50%;overflow:hidden;
+        z-index:47;transform:scale(0.6);transition:all .5s cubic-bezier(.3,.9,.3,1);box-shadow:0 0 18px 2px rgba(29,185,84,0.5)`;
+      fl.innerHTML=best.m.isGroup?groupFace(56):ringAvatar(56,best.m.name);
+      st.canvas.appendChild(fl);st.flight=fl;
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{
+        fl.style.left=(CC-28)+'px';fl.style.top=(pedY-28)+'px';fl.style.transform='scale(1)';}));
+      const card=document.createElement('div');card.className='spot-card';card.style.top=(pedY+30)+'px';
+      card.innerHTML=`<div class="sc-name">${best.m.name}</div><div class="sc-cta">tap to chat</div>
+        <div class="sc-from">from ${locationOf(st,best.i)} · seat ${best.i+1}</div>`;
+      st.canvas.appendChild(card);st.spot=card;
+      setTimeout(()=>card.classList.add('show'),380);
+      fl.addEventListener('click',()=>toast(st,'Opening chat with '+best.m.name));
+    }
+    const reveal=lit=>{ // scroll the topmost lit match into the stage band if it's off-view
+      if(!lit.length)return;
+      const y=Math.min(...lit.map(n=>+n.dataset.y)),top=st.stage.scrollTop;
+      if(y<top+70||y>top+STAGE_H-90)st.stage.scrollTop=Math.max(0,y-140);};
+    if(st.cfg.find==='expand'){
+      const needsArch=matches.some(x=>x.i>=13);
+      if(needsArch&&!st.expanded){st.expanded=true;st.animateNext=true;renderCanvas(st.id)}
+      st.canvas.classList.add('spot-dim');
+      reveal(matches.map(x=>litNode(st,x.m.id,true)).filter(Boolean));
+    }
+    if(st.cfg.find==='chips'){
+      // typing already lights every on-canvas match and fades the rest — the chips add names/provenance
+      const lit=matches.map(x=>litNode(st,x.m.id,true)).filter(Boolean);
+      if(lit.length){st.canvas.classList.add('spot-dim');reveal(lit)}
+      matches.slice(0,4).forEach(x=>{
+        const c=document.createElement('div');c.className='result-chip';
+        c.innerHTML=`<div class="rc-av">${x.m.isGroup?groupFace(36):ringAvatar(36,x.m.name)}</div>
+          <div class="rc-nm">${x.m.name}</div><div class="rc-where">${locationOf(st,x.i)}</div>`;
+        c.addEventListener('click',()=>{ // chip = focus down to just that match
+          toast(st,'Opening chat with '+x.m.name);
+          st.canvas.classList.add('spot-dim');
+          st.canvas.querySelectorAll('.node.lit').forEach(n=>n.classList.remove('lit'));
+          st.canvas.querySelectorAll('.n-label.tmp').forEach(l=>l.remove());
+          litNode(st,x.m.id,true);});
+        st.strip.appendChild(c);});
+    }
+  };
+}
+
+/* ---------- today mini ---------- */
+function renderMini(){
+  const el=document.getElementById('mini-today');
+  const cx=95,cy=72,r1=28,r2=48;
+  let dots='';
+  for(let i=0;i<5;i++){const a=seatAngle(i,5,0);dots+=`<circle cx="${cx+Math.cos(a)*r1}" cy="${cy+Math.sin(a)*r1}" r="4.5" fill="#2A2E38" stroke="rgba(255,255,255,0.35)" stroke-width="1"/>`}
+  for(let i=0;i<8;i++){const a=seatAngle(i,8,1);dots+=`<circle cx="${cx+Math.cos(a)*r2}" cy="${cy+Math.sin(a)*r2}" r="3.6" fill="#2A2E38" stroke="rgba(255,255,255,0.28)" stroke-width="1"/>`}
+  const ba=seatAngle(8,9,1),bx=cx+Math.cos(ba)*r2,by=cy+Math.sin(ba)*r2;
+  el.innerHTML=`<svg width="190" height="150">
+    <circle cx="${cx}" cy="${cy}" r="${r1}" fill="none" stroke="rgba(129,230,217,0.25)" stroke-width="1.2" stroke-dasharray="6 3"/>
+    <circle cx="${cx}" cy="${cy}" r="${r2}" fill="none" stroke="rgba(167,139,250,0.20)" stroke-width="1.2" stroke-dasharray="6 3"/>
+    <circle cx="${cx}" cy="${cy}" r="8" fill="#1A2E22" stroke="rgba(29,185,84,0.6)" stroke-width="1.2"/>${dots}
+    <circle cx="${bx}" cy="${by}" r="9" fill="rgba(10,10,15,0.9)" stroke="rgba(255,107,107,0.8)" stroke-width="1" stroke-dasharray="3 2"/>
+    <text x="${bx}" y="${by+3}" text-anchor="middle" fill="#FF8A80" font-size="7" font-family="monospace">+11</text>
+    <text x="95" y="140" text-anchor="middle" fill="#6B7382" font-size="8.5" font-family="monospace">the badge is decorative — 11 people unreachable</text></svg>`;
+}
+
+/* ---------- boot ---------- */
+initPhone('phone-hero',{arch:'arcs',edit:'handles',find:'chips',startExpanded:true});
+initPhone('phone-a1',{arch:'domes'});
+initPhone('phone-b1',{arch:'arcs',edit:'handles'});
+initPhone('phone-a2',{arch:'domes',edit:'dock'});
+initPhone('phone-b2',{arch:'arcs',edit:'handles',startExpanded:true});
+initPhone('phone-c2',{arch:'domes',edit:'steppers'});
+initPhone('phone-a3',{arch:'arcs',find:'pull'});
+initPhone('phone-b3',{arch:'domes',find:'expand'});
+initPhone('phone-c3',{arch:'arcs',find:'chips'});
+renderMini();
+Object.values(PHONES).forEach(st=>{
+  st.canvas.addEventListener('click',e=>{
+    if(justPanned(st))return;
+    const n=e.target.closest('.node');
+    if(n&&!st.editOn)toast(st,'Opening chat with '+NAMES[+n.dataset.mid].name);});
+});
+document.querySelectorAll('.pop-toggle').forEach(pt=>{
+  pt.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+    pt.querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');
+    const st=PHONES[pt.dataset.phone];st.pop=+b.dataset.pop;st.members=NAMES.slice(0,st.pop);
+    st.animateNext=st.expanded;renderCanvas(st.id);}));
+});
+document.querySelectorAll('.demo-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    const st=PHONES[btn.dataset.demo];
+    st.pill.classList.add('open');st.searchInput.value='';
+    const word='Nadia';let i=0;
+    const iv=setInterval(()=>{
+      i++;st.searchInput.value=word.slice(0,i);st.findHandler(st.searchInput.value);
+      if(i>=word.length)clearInterval(iv);},160);
+  });
+});
+</script>
+</body>
+</html>

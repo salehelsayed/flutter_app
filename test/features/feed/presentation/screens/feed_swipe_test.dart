@@ -17,6 +17,8 @@ import 'package:flutter_app/features/feed/presentation/widgets/letter_card_syste
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
     as p2p;
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
@@ -875,6 +877,50 @@ void main() {
       expect(find.byType(OrbitWired), findsOneWidget);
     },
   );
+
+  testWidgets('swipe entry lands on the Inner-Circle view', (tester) async {
+    setPhoneViewport(tester);
+    suppressFeedNavErrors();
+    identityRepo.seed(testIdentity);
+
+    await tester.pumpWidget(buildWired());
+    await pumpFrames(tester);
+
+    await tester.drag(feedOrbitSwipeHost(), const Offset(-170, 0));
+    await pumpFrames(tester);
+
+    expect(appShellController.activeTab, 'orbit');
+    expect(find.byType(OrbitWired), findsOneWidget);
+    // Edge-swipe entry lands on the Inner-Circle view — no all-chats affordance.
+    expect(find.byType(OrbitalVisualization), findsOneWidget);
+    expect(find.byType(OrbitSearchTrigger), findsNothing);
+  });
+
+  testWidgets('toggle tap does not move the Feed↔Orbit pane', (tester) async {
+    setPhoneViewport(tester);
+    suppressFeedNavErrors();
+    identityRepo.seed(testIdentity);
+
+    await tester.pumpWidget(buildWired());
+    await pumpFrames(tester);
+
+    await tester.drag(feedOrbitSwipeHost(), const Offset(-170, 0));
+    await pumpFrames(tester);
+    expect(appShellController.activeTab, 'orbit');
+
+    final hostBefore = tester.getTopLeft(feedOrbitSwipeHost());
+
+    // A tap on the toggle flips the view but must NOT translate the host pane
+    // (the gesture arena distinguishes a tap from a horizontal host drag).
+    await tester.tap(find.byKey(const ValueKey('orbit-view-toggle')));
+    await pumpFrames(tester);
+
+    expect(appShellController.activeTab, 'orbit');
+    expect(tester.getTopLeft(feedOrbitSwipeHost()), hostBefore);
+    // ... and the view actually flipped to all-chats.
+    expect(find.byType(OrbitSearchTrigger), findsOneWidget);
+    expect(find.byType(OrbitalVisualization), findsNothing);
+  });
 
   // (TC-37 removed: it exercised the Undo SnackBar vs live re-surface race. The
   // swipe-dismiss Undo SnackBar was removed, so there is no UI undo to tap; the

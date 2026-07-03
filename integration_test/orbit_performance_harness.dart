@@ -13,10 +13,14 @@ import 'package:integration_test/integration_test.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/orbit/application/inner_circle_items.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_view_mode.dart';
 import 'package:flutter_app/features/orbit/presentation/navigation/orbit_route_transition.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_screen.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/overflow_badge.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/unread_orbit_indicator.dart';
 
 late final IntegrationTestWidgetsFlutterBinding binding;
 
@@ -79,14 +83,18 @@ class _OrbitScenario {
     required this.id,
     required this.friends,
     required this.expectOverflow,
+    this.groups = const <OrbitGroup>[],
+    this.expectUnreadIndicator = false,
   });
 
   final String id;
   final List<OrbitFriend> friends;
+  final List<OrbitGroup> groups;
   final bool expectOverflow;
+  final bool expectUnreadIndicator;
 }
 
-OrbitFriend _makeFriend(int i) {
+OrbitFriend _makeFriend(int i, {int unreadCount = 0}) {
   return OrbitFriend(
     contact: ContactModel(
       peerId: 'orbit-peer-$i',
@@ -97,6 +105,25 @@ OrbitFriend _makeFriend(int i) {
       scannedAt: '2026-03-26T00:00:00Z',
     ),
     messageCount: 50 - i,
+    unreadCount: unreadCount,
+  );
+}
+
+// 197 — mixed inner-circle scenario: real group avatars (Image.file/initials)
+// must not blow the ring's paint budget.
+OrbitGroup _makeGroup(int i, {int unreadCount = 0}) {
+  return OrbitGroup(
+    group: GroupModel(
+      id: 'orbit-group-$i',
+      name: 'Group $i',
+      type: GroupType.chat,
+      topicName: 'topic-orbit-group-$i',
+      createdBy: 'creator',
+      myRole: GroupRole.admin,
+      createdAt: DateTime.utc(2026, 3, 1),
+    ),
+    unreadCount: unreadCount,
+    lastActivityTimestamp: DateTime.utc(2026, 3, 25, 0, 60 - i),
   );
 }
 
@@ -117,7 +144,10 @@ class _OrbitHostState extends State<_OrbitHost> {
     unawaited(
       navigator.push<void>(
         buildOrbitSlideUpRoute<void>(
-          builder: (_) => _OrbitRouteScreen(friends: widget.scenario.friends),
+          builder: (_) => _OrbitRouteScreen(
+            friends: widget.scenario.friends,
+            groups: widget.scenario.groups,
+          ),
         ),
       ),
     );
@@ -142,9 +172,13 @@ class _OrbitHostState extends State<_OrbitHost> {
 }
 
 class _OrbitRouteScreen extends StatefulWidget {
-  const _OrbitRouteScreen({required this.friends});
+  const _OrbitRouteScreen({
+    required this.friends,
+    this.groups = const <OrbitGroup>[],
+  });
 
   final List<OrbitFriend> friends;
+  final List<OrbitGroup> groups;
 
   @override
   State<_OrbitRouteScreen> createState() => _OrbitRouteScreenState();
@@ -166,6 +200,11 @@ class _OrbitRouteScreenState extends State<_OrbitRouteScreen> {
       OrbitHeaderProjection(
         userPeerId: 'self-peer',
         allFriends: List<OrbitFriend>.unmodifiable(widget.friends),
+        // 197: the Inner-Circle surface renders the merged friends+groups set.
+        innerItems: mergeInnerCircleItems(
+          friends: widget.friends,
+          groups: widget.groups,
+        ),
       ),
     );
     _listNotifier = ValueNotifier<OrbitViewProjection>(
@@ -198,6 +237,9 @@ class _OrbitRouteScreenState extends State<_OrbitRouteScreen> {
       collapseAnimation: const AlwaysStoppedAnimation(1.0),
       searchDockAnimation: const AlwaysStoppedAnimation(0.0),
       searchTriggerAnimation: const AlwaysStoppedAnimation(1.0),
+      // 193: the perf target is the Inner-Circle visualization (its OverflowBadge
+      // only renders on this surface).
+      viewMode: OrbitViewMode.innerCircle,
       onClose: () => Navigator.of(context).maybePop(),
       onFriendTap: (_) {},
       onMyQR: () {},
@@ -253,6 +295,11 @@ Future<void> _runScenario(
   await tester.pump();
   await _pumpFrames(tester, count: _openFrames);
   expect(find.byType(OrbitScreen), findsOneWidget);
+
+  if (scenario.expectUnreadIndicator) {
+    // Structural presence only (report-only harness — no frame-budget expects).
+    expect(find.byType(UnreadOrbitIndicator), findsWidgets);
+  }
 
   if (scenario.expectOverflow) {
     expect(find.byType(OverflowBadge), findsOneWidget);
@@ -395,6 +442,31 @@ void registerOrbitPerf() {
       id: withOverflow.id,
       friends: List<OrbitFriend>.generate(15, _makeFriend),
       expectOverflow: true,
+    ),
+    // 194 TC-194-35: 8 friends, 4 lit (counts 1/2/3/120) animating the messenger
+    // orbit. Report-only (no frame-budget expects) + a structural presence check.
+    _OrbitScenario(
+      id: 'orbit_open_unread_indicators',
+      friends: <OrbitFriend>[
+        _makeFriend(0, unreadCount: 1),
+        _makeFriend(1, unreadCount: 2),
+        _makeFriend(2, unreadCount: 3),
+        _makeFriend(3, unreadCount: 120),
+        _makeFriend(4),
+        _makeFriend(5),
+        _makeFriend(6),
+        _makeFriend(7),
+      ],
+      expectOverflow: false,
+      expectUnreadIndicator: true,
+    ),
+    // 197 TC-197-10: mixed inner circle — 8 friends + 5 groups fill all 13
+    // seats (no overflow) with real GroupAvatar nodes on the rings.
+    _OrbitScenario(
+      id: 'orbit_open_mixed_friends_groups',
+      friends: List<OrbitFriend>.generate(8, _makeFriend),
+      groups: List<OrbitGroup>.generate(5, _makeGroup),
+      expectOverflow: false,
     ),
   ];
 

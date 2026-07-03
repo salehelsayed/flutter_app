@@ -427,6 +427,49 @@ class AppLocalizationsAr extends AppLocalizations {
   String get orbit_close_friends => 'الأصدقاء المقرّبون';
 
   @override
+  String get orbit_view_toggle_to_list => 'عرض كل المحادثات';
+
+  @override
+  String get orbit_view_toggle_to_circle => 'عرض الدائرة المقرّبة';
+
+  @override
+  String get orbit_inner_circle_empty_hint =>
+      'أضِف أصدقاء لرؤية دائرتك المقرّبة';
+
+  @override
+  String orbit_node_unread_open_chat(String name, int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'افتح المحادثة مع $name، $count رسالة غير مقروءة',
+      many: 'افتح المحادثة مع $name، $count رسالة غير مقروءة',
+      few: 'افتح المحادثة مع $name، $count رسائل غير مقروءة',
+      two: 'افتح المحادثة مع $name، رسالتان غير مقروءتان',
+      one: 'افتح المحادثة مع $name، رسالة واحدة غير مقروءة',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String orbit_node_open_group(String name) {
+    return 'افتح مجموعة $name';
+  }
+
+  @override
+  String orbit_node_unread_open_group(String name, int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'افتح مجموعة $name، $count رسالة غير مقروءة',
+      many: 'افتح مجموعة $name، $count رسالة غير مقروءة',
+      few: 'افتح مجموعة $name، $count رسائل غير مقروءة',
+      two: 'افتح مجموعة $name، رسالتان غير مقروءتان',
+      one: 'افتح مجموعة $name، رسالة واحدة غير مقروءة',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get orbit_new_group => 'مجموعة جديدة';
 
   @override
@@ -2622,41 +2665,16 @@ class AppLocalizationsAr extends AppLocalizations {
   String get contact_profile_message_button => 'مراسلة';
 
   @override
-  String get nav_orbit2 => 'أوربت٢';
-
-  @override
   String get nav_orbit3 => 'أوربت٣';
 
   @override
   String get orbit2_prototype_chip => 'نموذج · بيانات تجريبية';
 
   @override
-  String get orbit2_size_legend =>
-      'الأكبر = الأقرب · انقر للمحادثة · اسحب لإعادة الترتيب';
-
-  @override
-  String get orbit2_simulate => 'محاكاة';
-
-  @override
-  String get orbit2_reset => 'إعادة';
-
-  @override
   String get orbit2_search_hint => 'ابحث عن صديق';
 
   @override
   String get orbit2_template_gravity => 'جاذبية';
-
-  @override
-  String get orbit2_template_nebula => 'سديم';
-
-  @override
-  String get orbit2_template_honeycomb => 'خلية';
-
-  @override
-  String get orbit2_template_tiered => 'طبقات';
-
-  @override
-  String get orbit2_template_unified => 'دائرة واحدة';
 
   @override
   String get orbit2_mock_chat_demo_chip => 'تجريبي · الرسائل لا تُرسل';
@@ -2668,30 +2686,6 @@ class AppLocalizationsAr extends AppLocalizations {
   String get orbit2_mock_chat_composer_hint => 'رسالة';
 
   @override
-  String get orbit2_hint =>
-      'اسحب المدار إلى أي مكان · اضغط مطوّلاً على صديق لإدخاله';
-
-  @override
-  String get orbit2_drop_hint => 'أفلِت هنا لإضافته إلى دائرتك';
-
-  @override
-  String orbit2_release_to_add(String name) {
-    return 'أفلِت لإضافة $name';
-  }
-
-  @override
-  String orbit2_promoted(String name) {
-    return 'تمت إضافة $name إلى دائرتك الداخلية';
-  }
-
-  @override
-  String get orbit2_new_group => 'مجموعة جديدة';
-
-  @override
-  String get orbit2_group_created =>
-      'تم إنشاء مجموعة جديدة — أفلِت المزيد من الأصدقاء لتكبيرها';
-
-  @override
   String orbit2_group_members(int count) {
     return 'مجموعة · $count أعضاء';
   }
@@ -2700,35 +2694,13 @@ class AppLocalizationsAr extends AppLocalizations {
   String get orbit2_show_less => 'عرض أقل';
 
   @override
-  String orbit2_removed(String name) {
-    return 'تمت إزالة $name من دائرتك الداخلية';
-  }
-
-  @override
   String get orbit2_you => 'أنت';
-
-  @override
-  String get orbit2_manage => 'إدارة';
-
-  @override
-  String get orbit2_manage_done => 'تم';
 
   @override
   String get orbit2_names_show => 'إظهار الأسماء';
 
   @override
   String get orbit2_names_hide => 'إخفاء الأسماء';
-
-  @override
-  String orbit2_promoted_group(String name) {
-    return 'تمت إضافة مجموعة $name إلى دائرتك الداخلية';
-  }
-
-  @override
-  String get orbit2_view_messages => 'الرسائل';
-
-  @override
-  String get orbit2_inbox_empty => 'لا محادثات بعد';
 
   @override
   String orbit2_open_chat_with(String name) {

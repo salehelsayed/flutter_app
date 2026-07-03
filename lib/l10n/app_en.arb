@@ -183,6 +183,39 @@
   "pinned_remove": "Remove",
   "edit_pinned_hint": "Update your post",
   "orbit_close_friends": "Close Friends",
+  "orbit_view_toggle_to_list": "Show all chats",
+  "orbit_view_toggle_to_circle": "Show inner circle",
+  "orbit_inner_circle_empty_hint": "Add friends to see your inner circle",
+  "orbit_node_unread_open_chat": "{count, plural, =1{Open chat with {name}, 1 unread message} other{Open chat with {name}, {count} unread messages}}",
+  "@orbit_node_unread_open_chat": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_node_open_group": "Open group {name}",
+  "@orbit_node_open_group": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "orbit_node_unread_open_group": "{count, plural, =1{Open group {name}, 1 unread message} other{Open group {name}, {count} unread messages}}",
+  "@orbit_node_unread_open_group": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "orbit_new_group": "New Group",
   "orbit_new_announce": "New Announce",
   "orbit_my_qr": "My QR",
@@ -1439,53 +1472,21 @@
   "contact_profile_connected_since_label": "Connected since",
   "contact_profile_introduced_by_label": "Introduced by",
   "contact_profile_message_button": "Message",
-  "nav_orbit2": "Orbit2",
   "nav_orbit3": "Orbit3",
   "orbit2_prototype_chip": "Prototype · sample data",
-  "orbit2_size_legend": "Bigger = closer · tap to chat · drag to rearrange",
-  "orbit2_simulate": "Simulate",
-  "orbit2_reset": "Reset",
   "orbit2_search_hint": "Find a friend",
   "orbit2_template_gravity": "Gravity",
-  "orbit2_template_nebula": "Nebula",
-  "orbit2_template_honeycomb": "Honeycomb",
-  "orbit2_template_tiered": "Tiered",
-  "orbit2_template_unified": "One Circle",
   "orbit2_mock_chat_demo_chip": "Demo · messages aren't sent",
   "orbit2_mock_chat_send_disabled": "Sending is disabled in this preview",
   "orbit2_mock_chat_composer_hint": "Message",
-  "orbit2_hint": "Drag the orbit anywhere · long-press a friend to bring them in",
-  "orbit2_drop_hint": "Drop here to add to your circle",
-  "orbit2_release_to_add": "Release to add {name}",
-  "@orbit2_release_to_add": {
-    "placeholders": { "name": { "type": "String" } }
-  },
-  "orbit2_promoted": "{name} added to your inner circle",
-  "@orbit2_promoted": {
-    "placeholders": { "name": { "type": "String" } }
-  },
-  "orbit2_new_group": "New group",
-  "orbit2_group_created": "New group created — drop in more friends to grow it",
   "orbit2_group_members": "Group · {count} members",
   "@orbit2_group_members": {
     "placeholders": { "count": { "type": "int" } }
   },
   "orbit2_show_less": "Show less",
-  "orbit2_removed": "{name} removed from your inner circle",
-  "@orbit2_removed": {
-    "placeholders": { "name": { "type": "String" } }
-  },
   "orbit2_you": "You",
-  "orbit2_manage": "Manage",
-  "orbit2_manage_done": "Done",
   "orbit2_names_show": "Show names",
   "orbit2_names_hide": "Hide names",
-  "orbit2_promoted_group": "Group {name} added to your inner circle",
-  "@orbit2_promoted_group": {
-    "placeholders": { "name": { "type": "String" } }
-  },
-  "orbit2_view_messages": "Messages",
-  "orbit2_inbox_empty": "No conversations yet",
   "orbit2_open_chat_with": "Open chat with {name}",
   "@orbit2_open_chat_with": {
     "placeholders": { "name": { "type": "String" } }

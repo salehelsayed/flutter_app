@@ -10,10 +10,14 @@ class InMemoryMessageRepository
     implements
         MessageRepository,
         ConversationThreadSummaryRepository,
-        MessageRepositoryChangeSource {
+        MessageRepositoryChangeSource,
+        ConversationReadEventSource {
   final Map<String, ConversationMessage> _messages = {};
   final StreamController<ConversationMessage> _messageChangeController =
       StreamController<ConversationMessage>.broadcast();
+  // 194: mirrors the impl — conversation-level read signal (peerId).
+  final StreamController<String> _conversationReadController =
+      StreamController<String>.broadcast();
 
   // 160 spy counters: distinguish the unbounded full-load path from the
   // batched-summary + bounded-page paths so widget tests can assert the feed
@@ -35,6 +39,10 @@ class InMemoryMessageRepository
   @override
   Stream<ConversationMessage> get messageChanges =>
       _messageChangeController.stream;
+
+  @override
+  Stream<String> get conversationReadStream =>
+      _conversationReadController.stream;
 
   /// 162 test hook: emit an arbitrary message-change onto [messageChanges]
   /// WITHOUT persisting it, so a test can craft a clean `delete(X)` then
@@ -134,6 +142,10 @@ class InMemoryMessageRepository
         _messages[entry.key] = m.copyWith(readAt: now);
         count++;
       }
+    }
+    // 194: fire the read-event only when a row actually flipped (INV-5).
+    if (count > 0) {
+      _conversationReadController.add(contactPeerId);
     }
     return count;
   }

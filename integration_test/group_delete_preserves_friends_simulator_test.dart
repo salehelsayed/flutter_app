@@ -278,6 +278,13 @@ void registerDeletePreservesFriendsSim() {
         await tester.pump(const Duration(milliseconds: 100));
       }
 
+      // 193: default entry is the Inner-Circle view — toggle to the all-chats
+      // list to see (and swipe-delete) the friend/group rows below.
+      await tester.tap(find.byKey(const ValueKey('orbit-view-toggle')));
+      for (var i = 0; i < 4; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
       // -- sanity: orbit shows the friends and the group.
       expect(find.text('Alice'), findsWidgets);
       expect(find.text('Charlie'), findsWidgets);
