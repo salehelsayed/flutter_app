@@ -50,14 +50,24 @@ class OrbitalVisualization extends StatelessWidget {
   /// rings to 0.45, so the geometry handles read as the foreground.
   final bool editDim;
 
+  /// 198 fidelity (M10-half) — edit-session ring emphasis. While [editDim]
+  /// holds, an emphasised ring layer sits at 0.85 instead of 0.45; a lifted dim
+  /// (drag / stepper flash) always restores 1.0 regardless.
+  final bool editEmphasis;
+
   /// 198 — indices of find-lit members; lit nodes stay full-bright.
   final Set<int> litIndices;
 
   /// 198 — when true, non-lit nodes dim to 0.28 (find "come to me").
   final bool findActive;
 
-  static const double _size = 320;
-  static const double _center = _size / 2;
+  /// 198 fidelity — optional key placed on the canvas box itself (NOT the
+  /// widget root, which is offset by the title row) so the host surface can
+  /// measure the canvas origin and seat the geometry handles on it.
+  final Key? canvasKey;
+
+  static const double _size = kOrbitCanvasSize;
+  static const double _center = kOrbitCanvasCenter;
   static const double _minTapTargetSize = 48;
 
   const OrbitalVisualization({
@@ -72,8 +82,10 @@ class OrbitalVisualization extends StatelessWidget {
     this.onBadgeTap,
     this.labelsVisible = false,
     this.editDim = false,
+    this.editEmphasis = false,
     this.litIndices = const {},
     this.findActive = false,
+    this.canvasKey,
   });
 
   /// A node's opacity under the edit / find dims. Lit find-matches stay
@@ -137,7 +149,9 @@ class OrbitalVisualization extends StatelessWidget {
     final children = <Widget>[
       Positioned.fill(
         child: Opacity(
-          opacity: editDim ? 0.45 : 1.0,
+          // Pinned triple (TC-198F-20): edit-idle 0.85, drag/flash 1.0 (the
+          // dim itself lifts), non-emphasised edit callers keep the 0.45.
+          opacity: editDim ? (editEmphasis ? 0.85 : 0.45) : 1.0,
           child: CustomPaint(
             painter: OrbitalRingPainter(
               center: Offset(cx, cy),
@@ -174,7 +188,10 @@ class OrbitalVisualization extends StatelessWidget {
       children.add(Positioned(
         left: cx + seat.dx - tapTargetSize / 2,
         top: cy + seat.dy - tapTargetSize / 2,
+        // Keyed so tests can read THIS dim (OrbitalAvatar has its own inner
+        // entrance Opacity) — INV-5 asserts go through it.
         child: Opacity(
+          key: ValueKey('orbit-node-dim-${seat.index}'),
           opacity: _dimFor(seat.index),
           child: _buildNode(
             item,
@@ -227,9 +244,15 @@ class OrbitalVisualization extends StatelessWidget {
           ),
         ),
         SizedBox(
+          key: canvasKey,
           width: _size,
           height: boxHeight,
-          child: Stack(clipBehavior: Clip.none, children: children),
+          // Stable inner key so tests can measure the canvas box without
+          // access to the host's (Global) canvasKey — same rect by construction.
+          child: KeyedSubtree(
+            key: const ValueKey('orbit-viz-canvas'),
+            child: Stack(clipBehavior: Clip.none, children: children),
+          ),
         ),
       ],
     );

@@ -240,4 +240,36 @@ void main() {
       expect(scaled.ring2Radius, closeTo(162, 1e-9));
     });
   });
+
+  group('198 fidelity — drag-mapping helpers (rows 21/22)', () {
+    // M8 — og drag sensitivity scales with the spacing knob: −dy/(46·sp), so a
+    // spaced-out orbit needs the same FINGER travel per visual gap change.
+    test('og drag sensitivity scales with spacing (÷46·sp)', () {
+      expect(orbitGapDragDelta(-46, 1.0), closeTo(1.0, 1e-9));
+      expect(orbitGapDragDelta(-46, 1.5), closeTo(1.0 / 1.5, 1e-9));
+      expect(orbitGapDragDelta(46, 1.0), closeTo(-1.0, 1e-9));
+      // Same dy, sp 1.5 → delta ÷1.5 (the wired twin drags the real handle).
+      expect(orbitGapDragDelta(-23, 1.0) / orbitGapDragDelta(-23, 1.5),
+          closeTo(1.5, 1e-9));
+    });
+
+    // M7 — cv pointer-angle mapping: the wrap follows the finger's ANGLE around
+    // the circle centre: cv = clamp(|atan2(px−cx, cy−py)|/1.25, 0.5, 2.5).
+    test('cv pointer-angle mapping: |atan2|/1.25 clamped to [0.5, 2.5]', () {
+      const centre = Offset(160, 217);
+      // Pointer straight above the centre → angle 0 → clamps at min 0.5.
+      expect(orbitArcWrapFromPointer(centre, const Offset(160, 100)), 0.5);
+      // Pointer due right → π/2 / 1.25.
+      expect(orbitArcWrapFromPointer(centre, const Offset(300, 217)),
+          closeTo(math.pi / 2 / 1.25, 1e-9));
+      // Pointer due left mirrors through |atan2| — same wrap (RTL-safe).
+      expect(orbitArcWrapFromPointer(centre, const Offset(20, 217)),
+          closeTo(math.pi / 2 / 1.25, 1e-9));
+      // Pointer (almost) straight below → angle → π → clamps at max 2.5.
+      expect(orbitArcWrapFromPointer(centre, const Offset(161, 400)), 2.5);
+      // A mid-quadrant point matches the formula exactly.
+      expect(orbitArcWrapFromPointer(centre, const Offset(260, 159)),
+          closeTo(math.atan2(100, 58).abs() / 1.25, 1e-9));
+    });
+  });
 }

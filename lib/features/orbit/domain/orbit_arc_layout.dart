@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' show Offset;
 
 import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.dart';
 
@@ -14,6 +15,11 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.da
 /// Coordinates are offsets from the shared circle centre ([dx] right, [dy]
 /// down). The rings and every arc share that one centre; the widget adds the
 /// canvas origin / scroll offset.
+
+// ---- Canvas constants (the viz canvas box; hoisted so the surface's handle
+// anchors and the widget share one source of truth). ----
+const double kOrbitCanvasSize = 320.0;
+const double kOrbitCanvasCenter = kOrbitCanvasSize / 2;
 
 // ---- Base geometry constants (pre-198 production values). ----
 const double kOrbitRing1Radius = 62.0;
@@ -170,11 +176,15 @@ double orbitArcRadius(OrbitGeometryPrefs geometry, int arcIndex) =>
             kOrbitArcRingGap * arcIndex) *
         geometry.spacingScale;
 
+/// Radians of arc half-span per unit of the wrap knob (mockup 1.25) — shared
+/// by [orbitArcPhi] and the [orbitArcWrapFromPointer] inverse mapping.
+const double kOrbitPhiPerWrap = 1.25;
+
 /// Half-span (radians) of an arc at [radius] under wrap knob [arcWrap]. Below
 /// the 170px pinch width the span is `min(2.9, 1.25·cv)`; past it the span is
 /// pinched to keep the arc inside the bezel until cv releases it back to 2.9.
 double orbitArcPhi(double radius, double arcWrap) {
-  final base = math.min(kOrbitPhiFull, 1.25 * arcWrap);
+  final base = math.min(kOrbitPhiFull, kOrbitPhiPerWrap * arcWrap);
   if (radius <= kOrbitPinchHalfWidth) return base;
   final pinch = math.asin(math.min(1.0, kOrbitPinchHalfWidth / radius));
   final release = ((arcWrap - 1.6) / 0.9).clamp(0.0, 1.0);
@@ -349,4 +359,47 @@ OrbitLayout computeOrbitLayout({
     memberCount: memberCount,
     mirrored: mirrored,
   );
+}
+
+/// 198 fidelity — centre-local anchor of [knob]'s geometry handle (spec :23):
+/// sp rides ring 2's 6 o'clock, av ring 1's 12 o'clock, og the first arc's
+/// apex, cv the first arc's +φ tip, pr its −φ twin. Anchors sit on the PAINTED
+/// geometry, not on seats (ring-2 seats are offset +15°). [mirrored] flips the
+/// tip x like [computeOrbitLayout] does under RTL — the renderer must place
+/// these with a physical `Positioned(left:)` (never PositionedDirectional) or
+/// the tips double-flip.
+Offset orbitHandleAnchor(
+  OrbitKnob knob,
+  OrbitGeometryPrefs geometry, {
+  bool mirrored = false,
+}) {
+  final sp = geometry.spacingScale;
+  final r0 = orbitArcRadius(geometry, 0);
+  final phi0 = orbitArcPhi(r0, geometry.arcWrap);
+  final sign = mirrored ? -1.0 : 1.0;
+  return switch (knob) {
+    OrbitKnob.spacingScale => Offset(0, kOrbitRing2Radius * sp),
+    OrbitKnob.avatarScale => Offset(0, -kOrbitRing1Radius * sp),
+    OrbitKnob.orbitGap => Offset(0, -r0),
+    OrbitKnob.arcWrap =>
+      Offset(sign * r0 * math.sin(phi0), -r0 * math.cos(phi0)),
+    OrbitKnob.maxPerArc =>
+      Offset(-sign * r0 * math.sin(phi0), -r0 * math.cos(phi0)),
+  };
+}
+
+/// 198 fidelity (M8) — og knob delta for a drag of [dy] pixels: −dy/(46·sp),
+/// with sp snapshotted at drag START so the mapping is stable mid-gesture.
+/// The ÷sp keeps the same finger travel per VISUAL gap change at any spacing.
+double orbitGapDragDelta(double dy, double spAtDragStart) =>
+    -dy / (kOrbitArcRingGap * spAtDragStart);
+
+/// 198 fidelity (M7) — cv follows the pointer's ANGLE around the circle
+/// [centre]: cv = clamp(|atan2(px−cx, cy−py)| / 1.25, 0.5, 2.5). |atan2| makes
+/// the mapping mirror-symmetric, so it needs no RTL special-casing.
+double orbitArcWrapFromPointer(Offset centre, Offset pointer) {
+  final angle =
+      math.atan2(pointer.dx - centre.dx, centre.dy - pointer.dy).abs();
+  return (angle / kOrbitPhiPerWrap)
+      .clamp(OrbitGeometryPrefs.minArcWrap, OrbitGeometryPrefs.maxArcWrap);
 }

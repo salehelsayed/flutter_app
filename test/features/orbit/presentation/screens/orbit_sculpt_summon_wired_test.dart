@@ -1,15 +1,22 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
+import 'package:flutter_app/features/orbit/domain/orbit_arc_layout.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/inner_circle_interactive_surface.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbital_ring_painter.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/overflow_badge.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/l10n/app_localizations_en.dart';
 
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
 
@@ -77,13 +84,16 @@ void main() {
     FakeSecureKeyStore? store,
     Listenable? resetSignal,
     Key? key,
+    Locale locale = const Locale('en'),
+    bool resizeToAvoidBottomInset = true,
   }) =>
       MaterialApp(
-        locale: const Locale('en'),
+        locale: locale,
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         theme: ThemeData(extensions: [BackgroundReadableColors.dark]),
         home: Scaffold(
+          resizeToAvoidBottomInset: resizeToAvoidBottomInset,
           body: InnerCircleInteractiveSurface(
             key: key,
             userPeerId: 'me',
@@ -139,6 +149,82 @@ void main() {
   Finder handleF(OrbitKnob k) =>
       find.byKey(ValueKey('orbit-handle-${k.name}'));
   Finder bubbleF() => find.byKey(const ValueKey('orbit-edit-value-bubble'));
+
+  // ---- 198 fidelity helpers (geometry-anchored handles) ----
+  // Mounted-even-if-band-hidden variant (Offstage hides from default finders).
+  Finder handleAnyF(OrbitKnob k) =>
+      find.byKey(ValueKey('orbit-handle-${k.name}'), skipOffstage: false);
+  Finder canvasF() => find.byKey(const ValueKey('orbit-viz-canvas'));
+  Offset canvasOrigin(WidgetTester tester) => tester.getTopLeft(canvasF());
+
+  double overhangOf(int itemCount, OrbitGeometryPrefs g,
+          {required bool expanded}) =>
+      expanded
+          ? orbitArcOverhang(memberCount: itemCount, geometry: g, centerY: 160)
+          : 0.0;
+
+  // Centre-local anchor formulas (plan §RED catalog) — an independent oracle,
+  // deliberately NOT the production helper. sp/av/og/cv/pr sit on the PAINTED
+  // geometry (ring2 seats are +15° off — never assert against seat rects).
+  Offset anchorOf(OrbitKnob knob, OrbitGeometryPrefs g,
+      {bool mirrored = false}) {
+    final sp = g.spacingScale;
+    final r0 = (108 + 46 * g.orbitGap) * sp;
+    final phi0 = orbitArcPhi(r0, g.arcWrap);
+    final sign = mirrored ? -1.0 : 1.0;
+    return switch (knob) {
+      OrbitKnob.spacingScale => Offset(0, 108 * sp),
+      OrbitKnob.avatarScale => Offset(0, -62 * sp),
+      OrbitKnob.orbitGap => Offset(0, -r0),
+      OrbitKnob.arcWrap =>
+        Offset(sign * r0 * math.sin(phi0), -r0 * math.cos(phi0)),
+      OrbitKnob.maxPerArc =>
+        Offset(-sign * r0 * math.sin(phi0), -r0 * math.cos(phi0)),
+    };
+  }
+
+  Offset expectedCenter(
+    WidgetTester tester,
+    OrbitKnob knob,
+    OrbitGeometryPrefs g,
+    int itemCount, {
+    required bool expanded,
+    bool mirrored = false,
+  }) {
+    final o = canvasOrigin(tester);
+    final ov = overhangOf(itemCount, g, expanded: expanded);
+    final a = anchorOf(knob, g, mirrored: mirrored);
+    return o + Offset(160 + a.dx, 160 + ov + a.dy);
+  }
+
+  String bubbleText(WidgetTester tester) => tester
+      .widget<Text>(
+          find.descendant(of: bubbleF(), matching: find.byType(Text)))
+      .data!;
+  double bubbleValue(WidgetTester tester) =>
+      double.parse(bubbleText(tester).replaceAll('×', ''));
+
+  double ringOpacity(WidgetTester tester) => tester
+      .widget<Opacity>(find
+          .ancestor(
+              of: find.byWidgetPredicate(
+                  (w) => w is CustomPaint && w.painter is OrbitalRingPainter),
+              matching: find.byType(Opacity))
+          .first)
+      .opacity;
+
+  // The viz's per-node dim wrapper (OrbitalAvatar has its own inner entrance
+  // Opacity, so ancestor-of-node lookups grab the wrong one).
+  double nodeOpacity(WidgetTester tester, int index) => tester
+      .widget<Opacity>(find.byKey(ValueKey('orbit-node-dim-$index')))
+      .opacity;
+
+  Finder centreAvatarF() => find.byType(UserAvatar).first;
+
+  Future<void> expandBadge(WidgetTester tester) async {
+    await tester.tap(find.byType(OverflowBadge));
+    await settle(tester);
+  }
 
   group('198 F6 — edit session (Group B)', () {
     testWidgets('TC-198-14 long-press empty space enters edit (banner, Reset)',
@@ -260,7 +346,9 @@ void main() {
       expect(bannerF(), findsOneWidget);
 
       // Tapping a (dimmed) node while editing ends the session without routing.
-      await tester.tap(find.bySemanticsLabel('Open chat with friend0'));
+      // friend2 — friend0's 12-o'clock seat now hosts the av handle, whose
+      // handle-wins overlap contract is pinned separately by TC-198F-25.
+      await tester.tap(find.bySemanticsLabel('Open chat with friend2'));
       await tester.pump(const Duration(milliseconds: 350));
       expect(bannerF(), findsNothing);
       expect(tappedFriends, isEmpty);
@@ -521,6 +609,817 @@ void main() {
       expect(find.byType(TextField), findsNothing);
       expect(find.byKey(const ValueKey('orbit-find-chip-0')), findsNothing);
       expect(editEvents.last, isFalse);
+    });
+  });
+
+  group('198 fidelity — geometry-anchored handles (F rows)', () {
+    const g0 = OrbitGeometryPrefs.defaults;
+
+    testWidgets('TC-198F-01 five handles seated at geometry anchors (expanded)',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(20)));
+      await settle(tester);
+      await expandBadge(tester);
+      await longPressBg(tester);
+      await settle(tester);
+      for (final k in OrbitKnob.values) {
+        final expected = expectedCenter(tester, k, g0, 20, expanded: true);
+        final actual = tester.getCenter(handleF(k));
+        expect((actual - expected).distance, lessThan(2.0),
+            reason: '${k.name} at $actual, formula anchor $expected');
+      }
+      await settle(tester);
+    });
+
+    testWidgets(
+        'TC-198F-02 handles re-seat same-frame on knob change; Reset re-seats to defaults',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(20)));
+      await settle(tester);
+      await expandBadge(tester);
+      await longPressBg(tester);
+      await settle(tester);
+
+      // One drag-update frame: the sp drag clamps at 0.7 (slop-proof) and every
+      // handle must sit at the NEW geometry's formula anchor on THIS pump.
+      final gDrag =
+          await tester.startGesture(tester.getCenter(handleF(OrbitKnob.spacingScale)));
+      await tester.pump(const Duration(milliseconds: 20));
+      await gDrag.moveBy(const Offset(0, -20)); // consume the touch slop
+      await tester.pump();
+      await gDrag.moveBy(const Offset(0, -60)); // deep past the 0.7 clamp
+      await tester.pump(); // the single frame under test — no lag allowed
+      expect(find.text('0.7×'), findsOneWidget);
+      final gNew = g0.copyWith(spacingScale: 0.7);
+      for (final k in OrbitKnob.values) {
+        final expected = expectedCenter(tester, k, gNew, 20, expanded: true);
+        expect((tester.getCenter(handleF(k)) - expected).distance, lessThan(2.0),
+            reason: '${k.name} re-seated same-frame');
+      }
+      await gDrag.up();
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('orbit-edit-reset')));
+      await tester.pump();
+      for (final k in OrbitKnob.values) {
+        final expected = expectedCenter(tester, k, g0, 20, expanded: true);
+        expect((tester.getCenter(handleF(k)) - expected).distance, lessThan(2.0),
+            reason: '${k.name} re-seated to the default anchor after Reset');
+      }
+      await settle(tester);
+    });
+
+    testWidgets(
+        'TC-198-71 handles track scroll; off-band hidden not unmounted; armed survives',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(80))); // deep stack — scrollable
+      await settle(tester);
+      await expandBadge(tester);
+      await longPressBg(tester);
+      await settle(tester);
+
+      // sp's anchor starts below the fold: hidden (default finders skip
+      // Offstage) but MOUNTED (state maintained, recognizer alive).
+      expect(handleF(OrbitKnob.spacingScale), findsNothing);
+      expect(handleAnyF(OrbitKnob.spacingScale), findsOneWidget);
+
+      await tester.tap(handleF(OrbitKnob.orbitGap), warnIfMissed: false);
+      await tester.pump();
+      expect(bubbleF(), findsOneWidget);
+
+      // Scroll: every visible handle shifts by exactly the canvas delta.
+      const visibleKnobs = [
+        OrbitKnob.orbitGap,
+        OrbitKnob.avatarScale,
+        OrbitKnob.arcWrap,
+        OrbitKnob.maxPerArc,
+      ];
+      final before = {
+        for (final k in visibleKnobs) k: tester.getCenter(handleF(k)),
+      };
+      final originBefore = canvasOrigin(tester);
+      await tester.dragFrom(const Offset(60, 300), const Offset(0, -120));
+      await tester.pump();
+      final dy = canvasOrigin(tester).dy - originBefore.dy;
+      expect(dy, lessThan(-80), reason: 'the surface actually scrolled');
+      for (final k in visibleKnobs) {
+        expect(tester.getCenter(handleF(k)).dy - before[k]!.dy, closeTo(dy, 2),
+            reason: '${k.name} tracked the scroll delta');
+        expect(tester.getCenter(handleF(k)).dx, closeTo(before[k]!.dx, 2));
+      }
+      expect(bubbleF(), findsOneWidget, reason: 'armed og survived the scroll');
+
+      // Scroll to the bottom: sp enters the band at its formula anchor.
+      await tester.dragFrom(const Offset(60, 300), const Offset(0, -400));
+      await settle(tester, count: 4);
+      expect(handleF(OrbitKnob.spacingScale), findsOneWidget);
+      final spExpected =
+          expectedCenter(tester, OrbitKnob.spacingScale, g0, 80, expanded: true);
+      expect(
+          (tester.getCenter(handleF(OrbitKnob.spacingScale)) - spExpected)
+              .distance,
+          lessThan(2.0));
+      expect(bubbleF(), findsOneWidget);
+
+      // Scroll back to the top: sp exits again — hidden, never unmounted.
+      await tester.dragFrom(const Offset(60, 300), const Offset(0, 600));
+      await settle(tester, count: 4);
+      expect(handleF(OrbitKnob.spacingScale), findsNothing);
+      expect(handleAnyF(OrbitKnob.spacingScale), findsOneWidget);
+      expect(bubbleF(), findsOneWidget, reason: 'og still armed');
+      await settle(tester);
+    });
+
+    testWidgets(
+        'TC-198F-04 live drag never interrupted by re-seat/band-hide; yield gate held',
+        (tester) async {
+      tester.view.physicalSize = const Size(800, 380);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(host(_friends(20)));
+      await settle(tester);
+      await expandBadge(tester);
+      await longPressBg(tester);
+      await settle(tester);
+
+      // Sweep the cv tip around the circle: the anchor crosses the bottom band
+      // edge mid-gesture while the SAME drag keeps delivering updates.
+      final g = await tester.startGesture(
+          tester.getCenter(handleF(OrbitKnob.arcWrap)));
+      await tester.pump(const Duration(milliseconds: 20));
+      for (var i = 0; i < 10; i++) {
+        await g.moveBy(const Offset(-7, 16));
+        await tester.pump();
+      }
+      // The tip anchor is now below the 380px band → hidden but mounted, and
+      // the gesture is still live.
+      expect(handleF(OrbitKnob.arcWrap), findsNothing,
+          reason: 'cv handle band-hidden mid-drag');
+      expect(handleAnyF(OrbitKnob.arcWrap), findsOneWidget,
+          reason: 'band-hide must never unmount (kills the recognizer)');
+      final vHidden = bubbleValue(tester);
+      await g.moveBy(const Offset(-40, 0));
+      await tester.pump();
+      expect(bubbleValue(tester), greaterThan(vHidden + 0.1),
+          reason: 'drag updates keep flowing while hidden');
+      expect(editEvents, [true],
+          reason: 'yield gate (INV-8) never dropped mid-drag');
+      await g.up();
+      await tester.pump();
+      expect(editEvents, [true]);
+      expect(tester.takeException(), isNull);
+      await settle(tester);
+    });
+
+    testWidgets(
+        'TC-198-72 planted circle: og drag on a deep stack keeps the circle stationary (scroll compensates)',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(80)));
+      await settle(tester);
+      await expandBadge(tester);
+      // Scroll to the bottom, then back off the boundary so clamping cannot
+      // mask a missing compensation seam.
+      await tester.dragFrom(const Offset(60, 300), const Offset(0, -500));
+      await settle(tester, count: 4);
+      await tester.dragFrom(const Offset(60, 300), const Offset(0, 60));
+      await settle(tester, count: 4);
+      await longPressBg(tester);
+      await settle(tester);
+
+      final userBefore = tester.getCenter(centreAvatarF());
+      final g = await tester.startGesture(
+          tester.getCenter(handleF(OrbitKnob.orbitGap)));
+      await tester.pump(const Duration(milliseconds: 20));
+      for (var i = 0; i < 6; i++) {
+        await g.moveBy(const Offset(0, 8)); // shrink og → overhang shrinks
+        await tester.pump();
+        final drift =
+            (tester.getCenter(centreAvatarF()).dy - userBefore.dy).abs();
+        expect(drift, lessThan(8),
+            reason: 'circle planted mid-drag (step ${i + 1})');
+      }
+      await g.up();
+      await tester.pump();
+      expect((tester.getCenter(centreAvatarF()).dy - userBefore.dy).abs(),
+          lessThan(8),
+          reason: 'circle planted after the drag');
+      expect(find.text('1.0×'), findsNothing, reason: 'og actually changed');
+      await settle(tester);
+    });
+
+    testWidgets('TC-198F-06 RTL: tip↔knob assignment pinned in screen space',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(20), locale: const Locale('ar')));
+      await settle(tester);
+      await expandBadge(tester);
+      await longPressBg(tester);
+      await settle(tester);
+
+      final cv = tester.getCenter(handleF(OrbitKnob.arcWrap));
+      final pr = tester.getCenter(handleF(OrbitKnob.maxPerArc));
+      final cvExpected = expectedCenter(tester, OrbitKnob.arcWrap, g0, 20,
+          expanded: true, mirrored: true);
+      final prExpected = expectedCenter(tester, OrbitKnob.maxPerArc, g0, 20,
+          expanded: true, mirrored: true);
+      expect((cv - cvExpected).distance, lessThan(2.0),
+          reason: 'cv follows the mirrored +φ tip');
+      expect((pr - prExpected).distance, lessThan(2.0),
+          reason: 'pr rides the mirrored −φ twin tip');
+      // Under RTL cv sits screen-LEFT and pr screen-RIGHT — and never swap.
+      final centreX = canvasOrigin(tester).dx + 160;
+      expect(cv.dx, lessThan(centreX));
+      expect(pr.dx, greaterThan(centreX));
+      expect(tester.takeException(), isNull, reason: 'no overflow errors');
+      await settle(tester);
+    });
+
+    testWidgets(
+        'TC-198F-07 collapsed edit: av/sp at ring anchors; cv/pr/og absent',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(12)));
+      await settle(tester);
+      await longPressBg(tester);
+      await settle(tester);
+      for (final k in [OrbitKnob.avatarScale, OrbitKnob.spacingScale]) {
+        final expected = expectedCenter(tester, k, g0, 12, expanded: false);
+        expect((tester.getCenter(handleF(k)) - expected).distance,
+            lessThan(2.0),
+            reason: '${k.name} at its ring anchor while collapsed');
+      }
+      for (final k in [
+        OrbitKnob.arcWrap,
+        OrbitKnob.maxPerArc,
+        OrbitKnob.orbitGap,
+      ]) {
+        expect(handleAnyF(k), findsNothing,
+            reason: '${k.name} truly absent (not just hidden) while collapsed');
+      }
+      await settle(tester);
+    });
+
+    testWidgets('TC-198F-08 keyboard during edit+find does not desync handles',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(20)));
+      await settle(tester);
+      await expandBadge(tester);
+      await longPressBg(tester);
+      await settle(tester);
+      await tester.tap(find.byKey(const ValueKey('orbit-find-pill')));
+      await tester.pump();
+
+      // Keyboard: a real view inset shrinks the Scaffold body → constraints
+      // change → the measured origin must be re-derived.
+      tester.view.viewInsets = const FakeViewPadding(bottom: 600); // 200 logical
+      addTearDown(tester.view.resetViewInsets);
+      await tester.pump();
+      await settle(tester);
+
+      var visible = 0;
+      for (final k in OrbitKnob.values) {
+        if (handleF(k).evaluate().isEmpty) continue; // band-hide is legal
+        visible++;
+        final expected = expectedCenter(tester, k, g0, 20, expanded: true);
+        expect((tester.getCenter(handleF(k)) - expected).distance,
+            lessThan(2.0),
+            reason: '${k.name} matches the re-measured origin');
+      }
+      expect(visible, greaterThanOrEqualTo(3));
+      expect(bannerF(), findsOneWidget, reason: 'edit survived the keyboard');
+      await settle(tester);
+    });
+
+    testWidgets(
+        'TC-198F-09 first frame after long-press: no crash, handles appear only positioned',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(20)));
+      await settle(tester);
+      await expandBadge(tester);
+      await longPressBg(tester); // ends with a single pump — the first frame
+      // Either not yet shown (first-frame guard) or already at a valid anchor —
+      // never a (0,0)/top-left cluster.
+      for (final k in OrbitKnob.values) {
+        if (handleF(k).evaluate().isEmpty) continue;
+        final expected = expectedCenter(tester, k, g0, 20, expanded: true);
+        expect((tester.getCenter(handleF(k)) - expected).distance,
+            lessThan(2.0),
+            reason: '${k.name} must never render unpositioned');
+      }
+      expect(tester.takeException(), isNull);
+      await settle(tester);
+      for (final k in OrbitKnob.values) {
+        final expected = expectedCenter(tester, k, g0, 20, expanded: true);
+        expect((tester.getCenter(handleF(k)) - expected).distance,
+            lessThan(2.0),
+            reason: '${k.name} settled at its anchor');
+      }
+    });
+
+    testWidgets(
+        'TC-198F-13 pulse/timer lifecycle: stops on session end; survives route-pop mid-edit',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(8)));
+      await settle(tester);
+      await longPressBg(tester);
+      await tester.pump();
+      final discF =
+          find.byKey(const ValueKey('orbit-handle-disc-avatarScale'));
+      double blur() =>
+          (tester.widget<Container>(discF).decoration! as BoxDecoration)
+              .boxShadow!
+              .first
+              .blurRadius;
+      final b0 = blur();
+      await tester.pump(const Duration(milliseconds: 800));
+      expect(blur(), isNot(closeTo(b0, 0.01)), reason: 'pulse is running');
+
+      await tapAwayBg(tester);
+      expect(bannerF(), findsNothing);
+      expect(discF, findsNothing,
+          reason: 'session end tears the pulse down with the overlay');
+      await settle(tester);
+
+      // Re-enter, then rip the route out mid-edit (the F13 perf harness pops
+      // the route while editing) — no ticker/timer leak, no exception.
+      await longPressBg(tester);
+      await tester.pump();
+      expect(bannerF(), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'TC-198-20R value bubble floats above the ARMED handle and moves on re-arm',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(8)));
+      await settle(tester);
+      await longPressBg(tester);
+      await settle(tester);
+      await tester.tap(handleF(OrbitKnob.avatarScale), warnIfMissed: false);
+      await tester.pump();
+      final avCenter = tester.getCenter(handleF(OrbitKnob.avatarScale));
+      var bubble = tester.getRect(bubbleF());
+      expect((bubble.center.dx - avCenter.dx).abs(), lessThanOrEqualTo(2.0),
+          reason: 'bubble horizontally centred on the armed handle');
+      expect(bubble.bottom, lessThan(avCenter.dy - 15),
+          reason: 'bubble floats above the disc');
+      expect(avCenter.dy - 15 - bubble.bottom, lessThanOrEqualTo(12),
+          reason: 'bubble hugs the disc (gap ≤12px)');
+      expect(find.text('1.0×'), findsOneWidget);
+      final text = tester.widget<Text>(
+          find.descendant(of: bubbleF(), matching: find.byType(Text)));
+      expect(text.style!.color, const Color(0xFF4ECDC4),
+          reason: 'teal armed-value treatment');
+
+      await tester.tap(handleF(OrbitKnob.spacingScale), warnIfMissed: false);
+      await tester.pump();
+      final spCenter = tester.getCenter(handleF(OrbitKnob.spacingScale));
+      bubble = tester.getRect(bubbleF());
+      expect((bubble.center.dx - spCenter.dx).abs(), lessThanOrEqualTo(2.0));
+      expect(bubble.bottom, lessThan(spCenter.dy - 15),
+          reason: 'bubble relocated above the re-armed handle');
+      await settle(tester);
+    });
+
+    testWidgets('TC-198F-15 bubble tracks the handle and updates live mid-drag',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(8)));
+      await settle(tester);
+      await longPressBg(tester);
+      await settle(tester);
+      final start = tester.getCenter(handleF(OrbitKnob.spacingScale));
+      final g = await tester.startGesture(start);
+      await tester.pump(const Duration(milliseconds: 20));
+      await g.moveBy(const Offset(0, -20)); // slop + arm via pan-start
+      await tester.pump();
+      await g.moveBy(const Offset(0, -25));
+      await tester.pump(); // mid-drag frame
+      expect(find.text('1.0×'), findsNothing,
+          reason: 'value updates live mid-drag, not on drag-end');
+      final spNow = tester.getCenter(handleF(OrbitKnob.spacingScale));
+      expect(spNow.dy, lessThan(start.dy),
+          reason: 'sp anchor rose as the knob shrank');
+      final bubble = tester.getRect(bubbleF());
+      expect((bubble.center.dx - spNow.dx).abs(), lessThanOrEqualTo(2.0));
+      expect(bubble.bottom, lessThan(spNow.dy - 14),
+          reason: 'bubble tracks the moving anchor');
+      await g.up();
+      await tester.pump();
+      await settle(tester);
+    });
+
+    testWidgets('TC-198-20S −/+ steppers land at the bottom corners while armed',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(8)));
+      await settle(tester);
+      await longPressBg(tester);
+      await settle(tester);
+      expect(find.byKey(const ValueKey('orbit-edit-step-decrease')),
+          findsNothing,
+          reason: 'absent when nothing is armed');
+
+      await tester.tap(handleF(OrbitKnob.avatarScale), warnIfMissed: false);
+      await tester.pump();
+      final surface =
+          tester.getRect(find.byType(InnerCircleInteractiveSurface));
+      final dec = tester
+          .getRect(find.byKey(const ValueKey('orbit-edit-step-decrease')));
+      final inc = tester
+          .getRect(find.byKey(const ValueKey('orbit-edit-step-increase')));
+      expect(dec.left - surface.left, closeTo(22, 2));
+      expect(surface.right - inc.right, closeTo(22, 2));
+      expect(surface.bottom - dec.bottom, closeTo(28, 2),
+          reason: '− rides the nav-bar line');
+      expect(surface.bottom - inc.bottom, closeTo(28, 2),
+          reason: '+ rides the nav-bar line');
+      expect(dec.size, const Size(48, 48));
+      expect(inc.size, const Size(48, 48));
+      await settle(tester);
+    });
+
+    testWidgets(
+        'TC-198F-17 armed-state bottom re-flow: find pill lifts and stays usable',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(20)));
+      await settle(tester);
+      await expandBadge(tester);
+      await longPressBg(tester);
+      await settle(tester);
+      final surface =
+          tester.getRect(find.byType(InnerCircleInteractiveSurface));
+      Rect pill() =>
+          tester.getRect(find.byKey(const ValueKey('orbit-find-pill')));
+      expect(surface.bottom - pill().bottom, closeTo(40, 2),
+          reason: 'idle band while nothing is armed');
+
+      await tester.tap(handleF(OrbitKnob.orbitGap), warnIfMissed: false);
+      await tester.pump();
+      expect(surface.bottom - pill().bottom, closeTo(88, 2),
+          reason: 'armed: pill lifts clear of the + stepper band');
+
+      // The lifted pill still opens find WITHOUT ending the edit session.
+      await tester.tap(find.byKey(const ValueKey('orbit-find-pill')));
+      await tester.pump();
+      expect(find.byType(TextField), findsOneWidget);
+      expect(bannerF(), findsOneWidget);
+      await tester.tap(find.byType(TextField));
+      await tester.pump();
+      expect(bannerF(), findsOneWidget,
+          reason: 'expanded pill + armed: focus does not end edit');
+
+      // Disarm (badge collapse disarms cv/pr/og) → pill returns to its band.
+      await tester.tap(find.byType(OverflowBadge), warnIfMissed: false);
+      await settle(tester);
+      expect(bubbleF(), findsNothing, reason: 'og disarmed by the collapse');
+      expect(surface.bottom - pill().bottom, closeTo(40, 2));
+      await settle(tester);
+    });
+
+    testWidgets(
+        'TC-198F-18 bottom-band disjointness sweep (armed × find × chips × keyboard)',
+        (tester) async {
+      tester.view.viewInsets = const FakeViewPadding(bottom: 360); // 120 logical
+      addTearDown(tester.view.resetViewInsets);
+      // resizeToAvoidBottomInset:false mirrors the production orbit screen —
+      // every bottom-anchored edit element must carry the bottomInset term.
+      await tester.pumpWidget(
+          host(_friends(20), resizeToAvoidBottomInset: false));
+      await settle(tester);
+      await expandBadge(tester);
+      await longPressBg(tester);
+      await settle(tester);
+      await tester.tap(handleF(OrbitKnob.orbitGap), warnIfMissed: false);
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('orbit-find-pill')));
+      await tester.pump();
+      await tester.enterText(find.byType(TextField), 'friend1');
+      await tester.pump();
+
+      final surface =
+          tester.getRect(find.byType(InnerCircleInteractiveSurface));
+      final chipKeys = [
+        for (final el in find
+            .byWidgetPredicate((w) =>
+                w.key is ValueKey<String> &&
+                (w.key! as ValueKey<String>).value.startsWith('orbit-find-chip-'))
+            .evaluate())
+          (el.widget.key! as ValueKey<String>).value,
+      ];
+      expect(chipKeys.length, greaterThanOrEqualTo(2),
+          reason: 'the sweep needs at least two chips');
+      final rects = <String, Rect>{
+        'decrease': tester
+            .getRect(find.byKey(const ValueKey('orbit-edit-step-decrease'))),
+        'increase': tester
+            .getRect(find.byKey(const ValueKey('orbit-edit-step-increase'))),
+        'pill': tester.getRect(find.byKey(const ValueKey('orbit-find-pill'))),
+        for (final k in chipKeys) k: tester.getRect(find.byKey(ValueKey(k))),
+      };
+      final names = rects.keys.toList();
+      for (var i = 0; i < names.length; i++) {
+        for (var j = i + 1; j < names.length; j++) {
+          expect(rects[names[i]]!.overlaps(rects[names[j]]!), isFalse,
+              reason: '${names[i]} × ${names[j]} must be disjoint');
+        }
+      }
+      // The bottomInset term is present on every bottom-anchored element.
+      expect(surface.bottom - rects['increase']!.bottom, closeTo(120 + 28, 2));
+      expect(surface.bottom - rects['decrease']!.bottom, closeTo(120 + 28, 2));
+      expect(surface.bottom - rects['pill']!.bottom, closeTo(120 + 88, 2));
+      for (final k in chipKeys) {
+        expect(surface.bottom - rects[k]!.bottom, closeTo(120 + 144, 6),
+            reason: 'chip strip lifts to its armed-state band ($k)');
+      }
+      await settle(tester);
+    });
+
+    testWidgets(
+        'TC-198-21R stepper press flash-lifts the dim 650ms; cancels safely',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(8)));
+      await settle(tester);
+      await longPressBg(tester);
+      await settle(tester);
+      OrbitalVisualization viz() => tester
+          .widget<OrbitalVisualization>(find.byType(OrbitalVisualization));
+      expect(viz().editDim, isTrue);
+
+      await tester.tap(handleF(OrbitKnob.avatarScale), warnIfMissed: false);
+      await tester.pump();
+      final inc = find.byKey(const ValueKey('orbit-edit-step-increase'));
+      await tester.tap(inc);
+      await tester.pump();
+      expect(viz().editDim, isFalse, reason: 'stepper press lifts the dim');
+      await tester.pump(const Duration(milliseconds: 700));
+      expect(viz().editDim, isTrue, reason: 'dim returns after 650ms');
+
+      // Rapid double-press re-arms the window: still lifted at t=900ms.
+      await tester.tap(inc);
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(inc);
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(viz().editDim, isFalse,
+          reason: 're-pressed at t=400ms → still lifted at t=900ms');
+      await tester.pump(const Duration(milliseconds: 700));
+      expect(viz().editDim, isTrue);
+
+      // Press then tap-away inside the window: session end cancels the timer.
+      await tester.tap(inc);
+      await tester.pump();
+      await tapAwayBg(tester);
+      expect(bannerF(), findsNothing);
+      await tester.pump(const Duration(milliseconds: 700));
+      expect(viz().editDim, isFalse,
+          reason: 'no dim flip after the session ended');
+      await settle(tester);
+    });
+
+    testWidgets(
+        'TC-198F-20 ring emphasis while editing; find-lit nodes stay full-bright through the flash',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(8)));
+      await settle(tester);
+      final dynamic vizIdle =
+          tester.widget(find.byType(OrbitalVisualization));
+      expect(vizIdle.editEmphasis as bool, isFalse);
+      expect(ringOpacity(tester), 1.0);
+
+      await longPressBg(tester);
+      await settle(tester);
+      final dynamic vizEdit =
+          tester.widget(find.byType(OrbitalVisualization));
+      expect(vizEdit.editEmphasis as bool, isTrue);
+      expect(ringOpacity(tester), 0.85,
+          reason: 'edit-idle: brightened ring (HEAD pinned 0.45)');
+
+      // Mid-drag → 1.0, back to the brightened value on release.
+      final g = await tester.startGesture(
+          tester.getCenter(handleF(OrbitKnob.avatarScale)));
+      await tester.pump(const Duration(milliseconds: 20));
+      await g.moveBy(const Offset(0, -20));
+      await tester.pump();
+      expect(ringOpacity(tester), 1.0, reason: 'dragging: rings full-bright');
+      await g.up();
+      await tester.pump();
+      expect(ringOpacity(tester), 0.85);
+
+      // Find during edit, then a stepper flash: rings 1.0, the lit node stays
+      // full-bright (INV-5), the unlit node follows the find dim.
+      await tester.tap(find.byKey(const ValueKey('orbit-find-pill')));
+      await tester.pump();
+      await tester.enterText(find.byType(TextField), 'friend0');
+      await tester.pump();
+      await tester.tap(handleF(OrbitKnob.avatarScale), warnIfMissed: false);
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('orbit-edit-step-increase')));
+      await tester.pump();
+      expect(ringOpacity(tester), 1.0, reason: 'flash: rings full-bright');
+      expect(nodeOpacity(tester, 0), 1.0,
+          reason: 'find-lit node stays bright through the flash');
+      expect(nodeOpacity(tester, 1), 0.28,
+          reason: 'unlit node keeps the find dim during the flash');
+      await tester.pump(const Duration(milliseconds: 700));
+      expect(ringOpacity(tester), 0.85);
+      expect(nodeOpacity(tester, 0), 1.0);
+      expect(nodeOpacity(tester, 1), 0.22,
+          reason: 'edit dim resumes after the flash');
+      await settle(tester);
+    });
+
+    testWidgets('TC-198F-21 same dy, sp=1.5 → og delta ÷1.5', (tester) async {
+      await tester.pumpWidget(host(_friends(20)));
+      await settle(tester);
+      await expandBadge(tester);
+      await longPressBg(tester);
+      await settle(tester);
+
+      Future<double> dragOgAndRead() async {
+        final g = await tester.startGesture(
+            tester.getCenter(handleF(OrbitKnob.orbitGap)));
+        await tester.pump(const Duration(milliseconds: 20));
+        await g.moveBy(const Offset(0, -20)); // slop
+        await tester.pump();
+        await g.moveBy(const Offset(0, -46)); // identical post-slop travel
+        await tester.pump();
+        final v = bubbleValue(tester);
+        await g.up();
+        await tester.pump();
+        return v;
+      }
+
+      final ogAtSp1 = await dragOgAndRead();
+      await tester.tap(find.byKey(const ValueKey('orbit-edit-reset')));
+      await tester.pump();
+
+      // sp → 1.5 via the stepper (5 coarse increments of 0.1).
+      await tester.tap(handleF(OrbitKnob.spacingScale), warnIfMissed: false);
+      await tester.pump();
+      for (var i = 0; i < 5; i++) {
+        await tester
+            .tap(find.byKey(const ValueKey('orbit-edit-step-increase')));
+        await tester.pump();
+      }
+      expect(find.text('1.5×'), findsOneWidget);
+      final ogAtSp15 = await dragOgAndRead();
+
+      expect(ogAtSp15, lessThan(ogAtSp1),
+          reason: 'the ÷sp term slows og at wide spacing');
+      expect((ogAtSp1 - 1.0) / (ogAtSp15 - 1.0), closeTo(1.5, 0.35),
+          reason: 'same finger travel → knob delta ratio ≈ sp ratio');
+      await settle(tester);
+    });
+
+    testWidgets('TC-198F-22 horizontal drag on the cv handle changes the wrap',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(20)));
+      await settle(tester);
+      await expandBadge(tester);
+      await longPressBg(tester);
+      await settle(tester);
+
+      final cvCenter = tester.getCenter(handleF(OrbitKnob.arcWrap));
+      final origin = canvasOrigin(tester);
+      final centre =
+          origin + Offset(160, 160 + overhangOf(20, g0, expanded: true));
+      final g = await tester.startGesture(cvCenter);
+      await tester.pump(const Duration(milliseconds: 20));
+      await g.moveBy(const Offset(30, 0));
+      await tester.pump();
+      await g.moveBy(const Offset(30, 0));
+      await tester.pump();
+
+      // The mapping follows the ABSOLUTE pointer angle, so the prediction is
+      // slop-proof: impossible on HEAD where cv ignores dx entirely.
+      final pointer = cvCenter + const Offset(60, 0);
+      final predicted = (math
+                  .atan2(pointer.dx - centre.dx, centre.dy - pointer.dy)
+                  .abs() /
+              1.25)
+          .clamp(0.5, 2.5);
+      expect(find.text('1.0×'), findsNothing,
+          reason: 'a horizontal-only drag changed the wrap');
+      expect(bubbleValue(tester), closeTo(predicted, 0.051),
+          reason: 'cv lands at the atan2 prediction for the final pointer');
+      await g.up();
+      await tester.pump();
+      await settle(tester);
+    });
+
+    testWidgets('TC-198F-23 banner + Reset wear the green terminal chrome',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(8)));
+      await settle(tester);
+      await longPressBg(tester);
+      await settle(tester);
+
+      final surface =
+          tester.getRect(find.byType(InnerCircleInteractiveSurface));
+      final bannerDeco = tester.widget<Container>(bannerF()).decoration!
+          as BoxDecoration;
+      expect(bannerDeco.border, isNotNull,
+          reason: 'banner wears the green-tinted bordered pill');
+      expect((bannerDeco.border! as Border).top.color,
+          const Color(0x591DB954));
+      final bannerText = tester.widget<Text>(
+          find.descendant(of: bannerF(), matching: find.byType(Text)));
+      expect(bannerText.style!.color, const Color(0xFF1ED760));
+      expect(bannerText.data, 'TAP AWAY TO FINISH', reason: 'copy unchanged');
+      final bRect = tester.getRect(bannerF());
+      expect((bRect.center.dx - surface.center.dx).abs(), lessThan(2.0),
+          reason: 'banner stays top-centre');
+      expect(bRect.top - surface.top, lessThan(60));
+
+      final resetF = find.byKey(const ValueKey('orbit-edit-reset'));
+      expect(find.descendant(of: resetF, matching: find.text('Reset')),
+          findsOneWidget, reason: 'copy unchanged');
+      expect(
+          find.ancestor(
+              of: find.text('Reset'), matching: find.byType(TextButton)),
+          findsNothing,
+          reason: 'Reset is the dark bordered pill, not a TextButton');
+      final resetDeco = tester
+          .widget<Container>(
+              find.descendant(of: resetF, matching: find.byType(Container))
+                  .first)
+          .decoration! as BoxDecoration;
+      expect(resetDeco.border, isNotNull);
+      expect((resetDeco.border! as Border).top.color, const Color(0x29FFFFFF));
+      expect(resetDeco.color, const Color(0xB30A0A0F));
+      final rRect = tester.getRect(resetF);
+      expect(rRect.top - surface.top, lessThan(60), reason: 'Reset top-left');
+      expect(rRect.left - surface.left, lessThan(40));
+      await settle(tester);
+    });
+
+    testWidgets(
+        'TC-198-56 ensureSemantics sweep: exactly one labeled button per handle; steppers/Reset/pill labeled',
+        (tester) async {
+      final semantics = tester.ensureSemantics();
+      final en = AppLocalizationsEn();
+      final names = <OrbitKnob, String>{
+        OrbitKnob.avatarScale: en.orbit_handle_avatar_size,
+        OrbitKnob.spacingScale: en.orbit_handle_ring_spacing,
+        OrbitKnob.arcWrap: en.orbit_handle_arc_wrap,
+        OrbitKnob.maxPerArc: en.orbit_handle_max_per_arc,
+        OrbitKnob.orbitGap: en.orbit_handle_orbit_gap,
+      };
+      await tester.pumpWidget(host(_friends(20)));
+      await settle(tester);
+      await expandBadge(tester);
+      await longPressBg(tester);
+      await settle(tester);
+
+      for (final k in OrbitKnob.values) {
+        final name = names[k]!;
+        expect(name.contains('↕') || name.contains('⟷'), isFalse,
+            reason: 'glyphs never enter Semantics labels');
+        final f = find.bySemanticsLabel(name);
+        expect(f, findsOneWidget,
+            reason:
+                'exactly ONE $name node — the tip-pill must not double-announce');
+        expect(tester.getSemantics(f).flagsCollection.isButton, isTrue,
+            reason: '$name announces as a button');
+      }
+
+      await tester.tap(handleF(OrbitKnob.avatarScale), warnIfMissed: false);
+      await tester.pump();
+      final incLabel =
+          en.orbit_edit_step_increase(names[OrbitKnob.avatarScale]!);
+      final decLabel =
+          en.orbit_edit_step_decrease(names[OrbitKnob.avatarScale]!);
+      expect(incLabel.contains('↕') || incLabel.contains('⟷'), isFalse);
+      expect(find.bySemanticsLabel(incLabel), findsOneWidget);
+      expect(find.bySemanticsLabel(decLabel), findsOneWidget);
+      expect(find.bySemanticsLabel(en.orbit_edit_reset), findsOneWidget);
+      expect(find.bySemanticsLabel(en.orbit_find_pill_semantics),
+          findsOneWidget);
+      await settle(tester);
+      semantics.dispose();
+    });
+
+    testWidgets(
+        'TC-198F-25 z-order: handles win pointer events over underlying seats',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(8)));
+      await settle(tester);
+      await longPressBg(tester);
+      await settle(tester);
+
+      // friend0's ring-1 seat sits exactly at 12 o'clock — the av handle's
+      // anchor. Tapping there must arm the handle, never open a chat and never
+      // end the session (node-tap-in-edit is tap-away anyway).
+      final expected = expectedCenter(
+          tester, OrbitKnob.avatarScale, g0, 8, expanded: false);
+      expect(
+          (tester.getCenter(handleF(OrbitKnob.avatarScale)) - expected)
+              .distance,
+          lessThan(2.0));
+      await tester.tapAt(expected);
+      await tester.pump();
+      expect(bubbleF(), findsOneWidget, reason: 'the handle won the tap');
+      expect(tappedFriends, isEmpty, reason: 'no chat opened');
+      expect(bannerF(), findsOneWidget, reason: 'session did not end');
+      await settle(tester);
     });
   });
 }
