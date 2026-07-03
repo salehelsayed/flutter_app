@@ -796,6 +796,102 @@ abstract class AppLocalizations {
   /// **'Add friends to see your inner circle'**
   String get orbit_inner_circle_empty_hint;
 
+  /// No description provided for @orbit_overflow_badge_open.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 more person — tap to open} other{{count} more people — tap to open}}'**
+  String orbit_overflow_badge_open(int count);
+
+  /// No description provided for @orbit_overflow_badge_collapse.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide extra people'**
+  String get orbit_overflow_badge_collapse;
+
+  /// No description provided for @orbit_edit_banner.
+  ///
+  /// In en, this message translates to:
+  /// **'TAP AWAY TO FINISH'**
+  String get orbit_edit_banner;
+
+  /// No description provided for @orbit_edit_reset.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset'**
+  String get orbit_edit_reset;
+
+  /// No description provided for @orbit_handle_ring_spacing.
+  ///
+  /// In en, this message translates to:
+  /// **'Ring spacing'**
+  String get orbit_handle_ring_spacing;
+
+  /// No description provided for @orbit_handle_avatar_size.
+  ///
+  /// In en, this message translates to:
+  /// **'Avatar size'**
+  String get orbit_handle_avatar_size;
+
+  /// No description provided for @orbit_handle_arc_wrap.
+  ///
+  /// In en, this message translates to:
+  /// **'Arc wrap'**
+  String get orbit_handle_arc_wrap;
+
+  /// No description provided for @orbit_handle_max_per_arc.
+  ///
+  /// In en, this message translates to:
+  /// **'Max per arc'**
+  String get orbit_handle_max_per_arc;
+
+  /// No description provided for @orbit_handle_orbit_gap.
+  ///
+  /// In en, this message translates to:
+  /// **'Orbit gap'**
+  String get orbit_handle_orbit_gap;
+
+  /// No description provided for @orbit_edit_step_increase.
+  ///
+  /// In en, this message translates to:
+  /// **'Increase {name}'**
+  String orbit_edit_step_increase(String name);
+
+  /// No description provided for @orbit_edit_step_decrease.
+  ///
+  /// In en, this message translates to:
+  /// **'Decrease {name}'**
+  String orbit_edit_step_decrease(String name);
+
+  /// No description provided for @orbit_find_placeholder.
+  ///
+  /// In en, this message translates to:
+  /// **'Find someone…'**
+  String get orbit_find_placeholder;
+
+  /// No description provided for @orbit_find_pill_semantics.
+  ///
+  /// In en, this message translates to:
+  /// **'Find someone in your circle'**
+  String get orbit_find_pill_semantics;
+
+  /// No description provided for @orbit_chip_provenance_ring.
+  ///
+  /// In en, this message translates to:
+  /// **'Ring {ring}'**
+  String orbit_chip_provenance_ring(int ring);
+
+  /// No description provided for @orbit_chip_provenance_arc.
+  ///
+  /// In en, this message translates to:
+  /// **'Arc {arc}'**
+  String orbit_chip_provenance_arc(int arc);
+
+  /// No description provided for @orbit_chip_open.
+  ///
+  /// In en, this message translates to:
+  /// **'Open {name}'**
+  String orbit_chip_open(String name);
+
   /// No description provided for @orbit_node_unread_open_chat.
   ///
   /// In en, this message translates to:

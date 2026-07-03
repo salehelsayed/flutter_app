@@ -186,6 +186,64 @@
   "orbit_view_toggle_to_list": "Show all chats",
   "orbit_view_toggle_to_circle": "Show inner circle",
   "orbit_inner_circle_empty_hint": "Add friends to see your inner circle",
+  "orbit_overflow_badge_open": "{count, plural, =1{1 more person — tap to open} other{{count} more people — tap to open}}",
+  "@orbit_overflow_badge_open": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_overflow_badge_collapse": "Hide extra people",
+  "orbit_edit_banner": "TAP AWAY TO FINISH",
+  "orbit_edit_reset": "Reset",
+  "orbit_handle_ring_spacing": "Ring spacing",
+  "orbit_handle_avatar_size": "Avatar size",
+  "orbit_handle_arc_wrap": "Arc wrap",
+  "orbit_handle_max_per_arc": "Max per arc",
+  "orbit_handle_orbit_gap": "Orbit gap",
+  "orbit_edit_step_increase": "Increase {name}",
+  "@orbit_edit_step_increase": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "orbit_edit_step_decrease": "Decrease {name}",
+  "@orbit_edit_step_decrease": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "orbit_find_placeholder": "Find someone…",
+  "orbit_find_pill_semantics": "Find someone in your circle",
+  "orbit_chip_provenance_ring": "Ring {ring}",
+  "@orbit_chip_provenance_ring": {
+    "placeholders": {
+      "ring": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_chip_provenance_arc": "Arc {arc}",
+  "@orbit_chip_provenance_arc": {
+    "placeholders": {
+      "arc": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_chip_open": "Open {name}",
+  "@orbit_chip_open": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "orbit_node_unread_open_chat": "{count, plural, =1{Open chat with {name}, 1 unread message} other{Open chat with {name}, {count} unread messages}}",
   "@orbit_node_unread_open_chat": {
     "placeholders": {

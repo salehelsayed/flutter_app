@@ -435,6 +435,72 @@ class AppLocalizationsDe extends AppLocalizations {
       'Füge Freunde hinzu, um deinen engsten Kreis zu sehen';
 
   @override
+  String orbit_overflow_badge_open(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count weitere Personen – zum Öffnen tippen',
+      one: '1 weitere Person – zum Öffnen tippen',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get orbit_overflow_badge_collapse => 'Weitere Personen ausblenden';
+
+  @override
+  String get orbit_edit_banner => 'ZUM BEENDEN DANEBEN TIPPEN';
+
+  @override
+  String get orbit_edit_reset => 'Zurücksetzen';
+
+  @override
+  String get orbit_handle_ring_spacing => 'Ringabstand';
+
+  @override
+  String get orbit_handle_avatar_size => 'Avatar-Größe';
+
+  @override
+  String get orbit_handle_arc_wrap => 'Bogenkrümmung';
+
+  @override
+  String get orbit_handle_max_per_arc => 'Max. pro Bogen';
+
+  @override
+  String get orbit_handle_orbit_gap => 'Orbit-Abstand';
+
+  @override
+  String orbit_edit_step_increase(String name) {
+    return '$name erhöhen';
+  }
+
+  @override
+  String orbit_edit_step_decrease(String name) {
+    return '$name verringern';
+  }
+
+  @override
+  String get orbit_find_placeholder => 'Jemanden finden…';
+
+  @override
+  String get orbit_find_pill_semantics => 'Jemanden in deinem Kreis finden';
+
+  @override
+  String orbit_chip_provenance_ring(int ring) {
+    return 'Ring $ring';
+  }
+
+  @override
+  String orbit_chip_provenance_arc(int arc) {
+    return 'Bogen $arc';
+  }
+
+  @override
+  String orbit_chip_open(String name) {
+    return '$name öffnen';
+  }
+
+  @override
   String orbit_node_unread_open_chat(String name, int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,

@@ -82,6 +82,10 @@ class OrbitSeat {
   final int? arcIndex;
   final int entranceDelayMs;
 
+  /// Alternating (0/1) label stagger — `j%2` within an arc so adjacent arc
+  /// labels don't collide. Always 0 for ring seats (rings never stagger labels).
+  final int staggerParity;
+
   const OrbitSeat({
     required this.index,
     required this.dx,
@@ -92,6 +96,7 @@ class OrbitSeat {
     required this.kind,
     required this.arcIndex,
     required this.entranceDelayMs,
+    this.staggerParity = 0,
   });
 
   OrbitProvenance get provenance => switch (kind) {
@@ -242,14 +247,14 @@ OrbitLayout computeOrbitLayout({
   final ring1Avatar = kOrbitRing1AvatarSize * av;
   final ring2Avatar = kOrbitRing2AvatarSize * av;
   final over = memberCount > _kInnerCircleSeats;
-  final slots = over ? 9 : 8;
   final sign = mirrored ? -1.0 : 1.0;
   final seats = <OrbitSeat>[];
 
-  // Ring 1 — members 0..4.
+  // Ring 1 — members 0..4. A partial ring spreads over its actual seat count
+  // (HEAD parity, INV-6); the full ring is 5.
   final ring1End = math.min(kOrbitRing1Count, memberCount);
   for (var i = 0; i < ring1End; i++) {
-    final a = orbitSeatAngle(i, kOrbitRing1Count, 0);
+    final a = orbitSeatAngle(i, ring1End, 0);
     final dx = sign * math.cos(a) * r1;
     final dy = math.sin(a) * r1;
     seats.add(OrbitSeat(
@@ -265,10 +270,14 @@ OrbitLayout computeOrbitLayout({
     ));
   }
 
-  // Ring 2 — members 5..12, re-spread to 9 slots when overflowing.
+  // Ring 2 — members 5..12. A partial ring spreads over its actual seat count
+  // (HEAD parity); a FULL ring re-spreads to 9 slots when overflowing so the
+  // badge can take the 9th slot.
   final ring2End = math.min(_kInnerCircleSeats, memberCount);
+  final ring2Count = ring2End - kOrbitRing1Count;
+  final ring2Slots = over ? 9 : ring2Count;
   for (var i = kOrbitRing1Count; i < ring2End; i++) {
-    final a = orbitSeatAngle(i - kOrbitRing1Count, slots, 1);
+    final a = orbitSeatAngle(i - kOrbitRing1Count, ring2Slots, 1);
     final dx = sign * math.cos(a) * r2;
     final dy = math.sin(a) * r2;
     seats.add(OrbitSeat(
@@ -325,6 +334,7 @@ OrbitLayout computeOrbitLayout({
         kind: OrbitSeatKind.arc,
         arcIndex: arcI,
         entranceDelayMs: arcI * 60 + j * 5,
+        staggerParity: j % 2,
       ));
     }
     idx += cap; // advance by full cap (mockup); overshoot past the end is harmless

@@ -209,6 +209,22 @@ void main() {
       expect(over.seats[6].angle, isNot(closeTo(full.seats[6].angle, 1e-6)));
     });
 
+    // A partial ring spreads over its ACTUAL seat count (HEAD parity), not a
+    // fixed 5/8 — the pure prerequisite for TC-198-62.
+    test('partial rings spread over their actual seat count, no badge', () {
+      final ten = computeOrbitLayout(memberCount: 10, geometry: _g());
+      expect(ten.badge, isNull);
+      void expectSameDir(double a, double b) {
+        expect(math.cos(a), closeTo(math.cos(b), 1e-9));
+        expect(math.sin(a), closeTo(math.sin(b), 1e-9));
+      }
+
+      // ring 1 = 5 seats over 5; ring 2 = 5 seats over 5.
+      expectSameDir(ten.seats[0].angle, orbitSeatAngle(0, 5, 0));
+      expectSameDir(ten.seats[5].angle, orbitSeatAngle(0, 5, 1));
+      expectSameDir(ten.seats[9].angle, orbitSeatAngle(4, 5, 1));
+    });
+
     // Ring radii + avatar sizes scale with sp / av (INV-6 default parity lives
     // in the widget suite; this locks the pure inputs it depends on).
     test('ring radii scale with sp; avatar sizes match ring/arc species', () {

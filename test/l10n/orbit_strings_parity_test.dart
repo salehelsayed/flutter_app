@@ -26,6 +26,23 @@ void main() {
     // gone), so this keeps the keys live across every locale.
     'orbit_my_qr',
     'orbit_scan',
+    // 198 TC-198-57 — Sculpt & Summon strings (badge / edit handles / find / chips).
+    'orbit_overflow_badge_open',
+    'orbit_overflow_badge_collapse',
+    'orbit_edit_banner',
+    'orbit_edit_reset',
+    'orbit_handle_ring_spacing',
+    'orbit_handle_avatar_size',
+    'orbit_handle_arc_wrap',
+    'orbit_handle_max_per_arc',
+    'orbit_handle_orbit_gap',
+    'orbit_edit_step_increase',
+    'orbit_edit_step_decrease',
+    'orbit_find_placeholder',
+    'orbit_find_pill_semantics',
+    'orbit_chip_provenance_ring',
+    'orbit_chip_provenance_arc',
+    'orbit_chip_open',
   ];
 
   Map<String, Object?> loadArb(String locale) {
@@ -70,6 +87,24 @@ void main() {
         // 196 QR chrome button labels.
         expect(l10n.orbit_my_qr.trim(), isNotEmpty);
         expect(l10n.orbit_scan.trim(), isNotEmpty);
+        // 198 Sculpt & Summon — invoke each with its args to prove it generated.
+        expect(l10n.orbit_overflow_badge_open(1).trim(), isNotEmpty);
+        expect(l10n.orbit_overflow_badge_open(3).trim(), isNotEmpty);
+        expect(l10n.orbit_overflow_badge_collapse.trim(), isNotEmpty);
+        expect(l10n.orbit_edit_banner.trim(), isNotEmpty);
+        expect(l10n.orbit_edit_reset.trim(), isNotEmpty);
+        expect(l10n.orbit_handle_ring_spacing.trim(), isNotEmpty);
+        expect(l10n.orbit_handle_avatar_size.trim(), isNotEmpty);
+        expect(l10n.orbit_handle_arc_wrap.trim(), isNotEmpty);
+        expect(l10n.orbit_handle_max_per_arc.trim(), isNotEmpty);
+        expect(l10n.orbit_handle_orbit_gap.trim(), isNotEmpty);
+        expect(l10n.orbit_edit_step_increase('Ring spacing').trim(), isNotEmpty);
+        expect(l10n.orbit_edit_step_decrease('Ring spacing').trim(), isNotEmpty);
+        expect(l10n.orbit_find_placeholder.trim(), isNotEmpty);
+        expect(l10n.orbit_find_pill_semantics.trim(), isNotEmpty);
+        expect(l10n.orbit_chip_provenance_ring(1).trim(), isNotEmpty);
+        expect(l10n.orbit_chip_provenance_arc(2).trim(), isNotEmpty);
+        expect(l10n.orbit_chip_open('Alice').trim(), isNotEmpty);
       }
     });
 
@@ -88,6 +123,17 @@ void main() {
       );
       expect(en.orbit_my_qr, 'My QR');
       expect(en.orbit_scan, 'Scan');
+      // 198 English baselines.
+      expect(en.orbit_overflow_badge_open(1), '1 more person — tap to open');
+      expect(en.orbit_overflow_badge_open(3), '3 more people — tap to open');
+      expect(en.orbit_overflow_badge_collapse, 'Hide extra people');
+      expect(en.orbit_edit_banner, 'TAP AWAY TO FINISH');
+      expect(en.orbit_edit_reset, 'Reset');
+      expect(en.orbit_handle_ring_spacing, 'Ring spacing');
+      expect(en.orbit_edit_step_increase('Ring spacing'), 'Increase Ring spacing');
+      expect(en.orbit_chip_provenance_ring(1), 'Ring 1');
+      expect(en.orbit_chip_provenance_arc(2), 'Arc 2');
+      expect(en.orbit_chip_open('Alice'), 'Open Alice');
     });
   });
 }

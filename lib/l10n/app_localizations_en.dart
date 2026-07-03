@@ -426,6 +426,72 @@ class AppLocalizationsEn extends AppLocalizations {
       'Add friends to see your inner circle';
 
   @override
+  String orbit_overflow_badge_open(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count more people — tap to open',
+      one: '1 more person — tap to open',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get orbit_overflow_badge_collapse => 'Hide extra people';
+
+  @override
+  String get orbit_edit_banner => 'TAP AWAY TO FINISH';
+
+  @override
+  String get orbit_edit_reset => 'Reset';
+
+  @override
+  String get orbit_handle_ring_spacing => 'Ring spacing';
+
+  @override
+  String get orbit_handle_avatar_size => 'Avatar size';
+
+  @override
+  String get orbit_handle_arc_wrap => 'Arc wrap';
+
+  @override
+  String get orbit_handle_max_per_arc => 'Max per arc';
+
+  @override
+  String get orbit_handle_orbit_gap => 'Orbit gap';
+
+  @override
+  String orbit_edit_step_increase(String name) {
+    return 'Increase $name';
+  }
+
+  @override
+  String orbit_edit_step_decrease(String name) {
+    return 'Decrease $name';
+  }
+
+  @override
+  String get orbit_find_placeholder => 'Find someone…';
+
+  @override
+  String get orbit_find_pill_semantics => 'Find someone in your circle';
+
+  @override
+  String orbit_chip_provenance_ring(int ring) {
+    return 'Ring $ring';
+  }
+
+  @override
+  String orbit_chip_provenance_arc(int arc) {
+    return 'Arc $arc';
+  }
+
+  @override
+  String orbit_chip_open(String name) {
+    return 'Open $name';
+  }
+
+  @override
   String orbit_node_unread_open_chat(String name, int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,

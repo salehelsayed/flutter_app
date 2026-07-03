@@ -437,6 +437,75 @@ class AppLocalizationsAr extends AppLocalizations {
       'أضِف أصدقاء لرؤية دائرتك المقرّبة';
 
   @override
+  String orbit_overflow_badge_open(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count شخص إضافي — انقر للفتح',
+      many: '$count شخصًا إضافيًا — انقر للفتح',
+      few: '$count أشخاص إضافيين — انقر للفتح',
+      two: 'شخصان إضافيان — انقر للفتح',
+      one: 'شخص واحد إضافي — انقر للفتح',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get orbit_overflow_badge_collapse => 'إخفاء الأشخاص الإضافيين';
+
+  @override
+  String get orbit_edit_banner => 'انقر بعيدًا للإنهاء';
+
+  @override
+  String get orbit_edit_reset => 'إعادة تعيين';
+
+  @override
+  String get orbit_handle_ring_spacing => 'تباعد الحلقات';
+
+  @override
+  String get orbit_handle_avatar_size => 'حجم الصورة الرمزية';
+
+  @override
+  String get orbit_handle_arc_wrap => 'انحناء القوس';
+
+  @override
+  String get orbit_handle_max_per_arc => 'الحد الأقصى لكل قوس';
+
+  @override
+  String get orbit_handle_orbit_gap => 'فجوة المدار';
+
+  @override
+  String orbit_edit_step_increase(String name) {
+    return 'زيادة $name';
+  }
+
+  @override
+  String orbit_edit_step_decrease(String name) {
+    return 'تقليل $name';
+  }
+
+  @override
+  String get orbit_find_placeholder => 'ابحث عن شخص…';
+
+  @override
+  String get orbit_find_pill_semantics => 'ابحث عن شخص في دائرتك';
+
+  @override
+  String orbit_chip_provenance_ring(int ring) {
+    return 'حلقة $ring';
+  }
+
+  @override
+  String orbit_chip_provenance_arc(int arc) {
+    return 'قوس $arc';
+  }
+
+  @override
+  String orbit_chip_open(String name) {
+    return 'فتح $name';
+  }
+
+  @override
   String orbit_node_unread_open_chat(String name, int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,

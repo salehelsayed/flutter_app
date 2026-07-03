@@ -265,27 +265,87 @@ void main() {
       expect(tappedFriend?.peerId, 'peer-6-abcdef1234');
     });
 
-    testWidgets('center avatar and overflow badge do not open chat', (
-      tester,
-    ) async {
+    // TC-198-67 — supersedes the old badge-inertness lock: the center avatar
+    // still never opens a chat, and the badge now TOGGLES the arcs (fires
+    // onBadgeTap) while NEVER opening a chat (INV-1).
+    testWidgets(
+        'TC-198-67: center avatar never opens chat; badge toggles arcs, never opens chat',
+        (tester) async {
       final friends = List.generate(15, (i) => _makeFriend(i));
-      var tapCount = 0;
+      var friendTaps = 0;
+      var badgeTaps = 0;
 
       await tester.pumpWidget(
         wrap(
           OrbitalVisualization(
             userPeerId: 'my-peer-id-123',
             items: _items(friends),
-            onFriendTap: (_) => tapCount++,
+            onFriendTap: (_) => friendTaps++,
+            onBadgeTap: () => badgeTaps++,
           ),
         ),
       );
       await pumpPastAnimations(tester);
 
-      await tester.tap(find.byType(UserAvatar).first);
-      await tester.tap(find.byType(OverflowBadge), warnIfMissed: false);
+      await tester.tap(find.byType(UserAvatar).first, warnIfMissed: false);
+      await tester.tap(find.byType(OverflowBadge));
+      await tester.pump();
 
-      expect(tapCount, 0);
+      expect(friendTaps, 0, reason: 'neither center nor badge opens a chat');
+      expect(badgeTaps, 1, reason: 'the badge toggled the arcs');
+    });
+
+    // TC-198-03 — overflow re-spreads ring 2 across 9 slots so the badge and
+    // seat 13 no longer overlap (HEAD had their hit boxes ~9.42px apart).
+    testWidgets(
+        'TC-198-03 overflow re-spreads ring 2 across 9 slots; badge and seat 13 disjoint',
+        (tester) async {
+      final friends = List.generate(15, (i) => _makeFriend(i));
+      await tester.pumpWidget(
+        wrap(
+          OrbitalVisualization(
+            userPeerId: 'p',
+            items: _items(friends),
+            onFriendTap: (_) {},
+            onBadgeTap: () {},
+          ),
+        ),
+      );
+      await pumpPastAnimations(tester);
+
+      // seat 13 = the 13th member (index 12), the last ring-2 slot.
+      final seat13 = tester.getRect(
+        find.bySemanticsLabel('Open chat with friend12'),
+      );
+      final badge = tester.getRect(find.byType(OverflowBadge));
+      expect(seat13.overlaps(badge), isFalse,
+          reason: 'badge and seat 13 hit boxes must be disjoint');
+    });
+
+    // TC-198-04 — badge floors its hit target to ≥44pt and carries a localized
+    // plural Semantics label.
+    testWidgets('TC-198-04 badge ≥44pt hit target + localized plural semantics',
+        (tester) async {
+      final friends = List.generate(16, (i) => _makeFriend(i)); // overflow = 3
+      await tester.pumpWidget(
+        wrap(
+          OrbitalVisualization(
+            userPeerId: 'p',
+            items: _items(friends),
+            onFriendTap: (_) {},
+            onBadgeTap: () {},
+          ),
+        ),
+      );
+      await pumpPastAnimations(tester);
+
+      final hit = find.descendant(
+        of: find.byType(OverflowBadge),
+        matching: find.byType(GestureDetector),
+      );
+      expect(tester.getSize(hit).width, greaterThanOrEqualTo(44));
+      expect(tester.getSize(hit).height, greaterThanOrEqualTo(44));
+      expect(find.bySemanticsLabel(RegExp(r'3 more people')), findsOneWidget);
     });
 
     // ── 194: per-node unread "messenger orbit" indicator ───────────────────
