@@ -12,15 +12,16 @@ Spec: [198-orbit-sculpt-and-summon-spec.md](198-orbit-sculpt-and-summon-spec.md)
 | 2026-07-03 | Arbiter | — | plan structurally sufficient; open product flags listed in Accepted Differences | hand off to execution |
 
 ## Execution Progress
+Baseline: dirty tree swept clean at `d34f6499` (193/194/196/197 checkpoint) before starting.
+
 | Time | Phase | Files touched | Command/evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|
-| | contract extraction (git status --short) | | | scope confirmed | |
-| | RED tests added | | (cmd proving they FAIL) | RED for expected reason | |
-| | implementation | | | scoped files only | |
-| | direct GREEN | | (exact cmd) | reds now green | |
-| | preservation GREEN | | (exact cmd) | sentinels green | |
-| | named gates | | (exact cmd + counts) | gate green | |
-| | QA (independent) | | (re-run cmds) | blocking: none/list | verdict |
+| 2026-07-03 | **Slice P DONE** (`84f351b4`) | orbit_geometry_prefs(.dart+use_cases), orbit_arc_layout, orbit_find_matches + 4 test files | `flutter test` 4 pure files = 30 pass (RED→GREEN captured) | pure engine complete; analyzer clean. **Correction:** capacity math gives 24→[8,3] (plan prose's [9,2] is wrong) | Slice A |
+| 2026-07-03 | **Slice A DONE** (`5766addc`) | overflow_badge, orbital_visualization, orbital_ring_painter, orbit_arc_layout(staggerParity+partial-ring), l10n en/ar/de+regen; F5/F7/F8/F11 | full orbit tree + l10n = **382 pass** (incl. TC-67 rewrite, 16 F5 arc tests, badge a11y) | badge toggle + arcs + painter + 16 l10n keys shipped; 193/194/196/197 sentinels green | Slice D/F10 |
+| 2026-07-03 | **Slice D — F10 half DONE** (`1f7ed409`) | migration_secure_storage_key (enum), registry (_fixedKeys), 3 migration test files | account_migration suite = **277 pass** (RED→GREEN; registry+source-audit+bundle round-trip ×2) | orbit_geometry_prefs_v1 Move-registered migrate/OPTIONAL; sculpted promotes, never-sculpted skips | wired slices |
+| | **REMAINING** (not started) | orbit_screen.dart, orbit_wired.dart, feed_wired.dart, perf harness, cold-start sim | — | Slices SCROLL/B/C/F/R + F6 (~36 wired tests) + F9 YIELD + F12 sim + F13 perf + F6-D wired persistence. All land in the 3 heavily-contended shared files (3 other live sessions editing them). Largest, highest-conflict-risk half. | resume with Slice SCROLL then B |
+| | direct GREEN (done slices) | — | `flutter test test/features/orbit/ test/l10n/orbit_strings_parity_test.dart` = 382; `flutter test test/features/account_migration/` = 277 | reds now green for P/A/D-F10 | — |
+| | named gates / QA | — | pending the wired slices | not yet run (groups/move-feature/perf/sim gates await wired work) | — |
 
 ## Source Of Truth
 - Spec: `Test-Flight-Improv/198-orbit-sculpt-and-summon-spec.md` (73 TCs, groups A–I; §1 design-contract table)
