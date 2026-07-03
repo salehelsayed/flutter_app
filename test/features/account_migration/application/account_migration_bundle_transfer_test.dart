@@ -26,6 +26,7 @@ import 'package:flutter_app/features/account_migration/domain/models/migration_t
 import 'package:flutter_app/features/account_migration/domain/repositories/account_migration_authority_repository.dart';
 import 'package:flutter_app/features/account_migration/domain/repositories/migration_cutover_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -1210,6 +1211,114 @@ void main() {
         );
       },
     );
+
+    // 198 F10c — the sculpt geometry key rides the Move bundle end-to-end and
+    // is only observable on the ACTIVE key after acceptOldBlockProof.
+    Future<void> runCutoverToProof() async {
+      await activeDb.delete('identity');
+      await activeDb.insert('identity', {
+        'id': 1,
+        'peer_id': 'new-temp-peer',
+        'public_key': 'new-public',
+        'username': 'new-temp',
+      });
+      await destinationStore.write(
+        MigrationSecureStorageRegistry.dbEncryptionKey,
+        'new-active-db-key',
+      );
+      final source = AccountMigrationProductionBundleSource(
+        sourceDb: sourceDb,
+        primaryStore: sourceStore,
+        documentsRootPath: tempDir.path,
+        exportDirectoryPath: p.join(tempDir.path, 'exports'),
+        snapshotExporter: MigrationDatabaseSnapshotExporter(
+          closeExportedDatabaseAfterValidation: false,
+          adapter: _RecordingSnapshotExportAdapter(
+            verificationDb: verificationDb,
+            snapshotBytes: utf8.encode('snapshot-db-bytes'),
+          ),
+        ),
+        segmentSize: 24,
+      );
+      final bundle = await source(_request());
+      final authorityRepository = _MemoryAuthorityRepository();
+      final cutoverRepository = _MemoryCutoverRepository();
+      final receiver = AccountMigrationProductionBundleReceiver(
+        streamCrypto: _testStreamCrypto(),
+        secureStorageStaging: MigrationSecureStorageStaging(
+          primaryStore: destinationStore,
+        ),
+        databaseImportStaging: MigrationDatabaseImportStaging(
+          secureStorageStaging: MigrationSecureStorageStaging(
+            primaryStore: destinationStore,
+          ),
+          opener: _RecordingStagedDatabaseOpener(database: verificationDb),
+        ),
+        activeDatabaseImporter: MigrationDatabaseActiveImporter(
+          activeDatabase: activeDb,
+        ),
+        cutoverCoordinator: MigrationCutoverCoordinator(
+          authorityRepository: authorityRepository,
+          cutoverRepository: cutoverRepository,
+          now: () => DateTime.utc(2026, 6, 8, 12),
+        ),
+        authorityRepository: authorityRepository,
+        stagingDirectoryPath: p.join(tempDir.path, 'incoming'),
+        documentsRootPath: p.join(tempDir.path, 'destination-documents'),
+      );
+      final pending = _pendingSession();
+      final transcript = _request().transcript;
+
+      expect(
+        await receiver.acceptManifest(
+          manifest: bundle.manifest,
+          transcript: transcript,
+          pendingSession: pending,
+        ),
+        isTrue,
+      );
+      await _sendAllChunks(
+        receiver,
+        bundle,
+        transcript: transcript,
+        pendingSession: pending,
+      );
+      expect(
+        await receiver.complete(
+          manifest: bundle.manifest,
+          transcript: transcript,
+          pendingSession: pending,
+        ),
+        isTrue,
+      );
+      final proof = await receiver.acceptOldBlockProof(
+        manifest: bundle.manifest,
+        transcript: transcript,
+        pendingSession: pending,
+        oldBlockProof: _oldBlockProof(),
+      );
+      expect(proof?.provesNewActiveCommitted, isTrue);
+    }
+
+    test('198 TC-198-37: a sculpted geometry key promotes to the destination',
+        () async {
+      await sourceStore.write(OrbitGeometryPrefs.storageKey, '0.8|1.2|1.3|5|1.5');
+      await runCutoverToProof();
+      expect(
+        await destinationStore.read(OrbitGeometryPrefs.storageKey),
+        '0.8|1.2|1.3|5|1.5',
+        reason: 'the migrate/optional key is promoted onto the active key',
+      );
+    });
+
+    test(
+        '198 TC-198-37: a never-sculpted source carries no orbit key, import ok',
+        () async {
+      // No sculpt key on sourceStore → optional-missing is skipped in the
+      // bundle; the transfer still completes and destination has no key.
+      await runCutoverToProof();
+      expect(await destinationStore.read(OrbitGeometryPrefs.storageKey), isNull);
+    });
 
     group('receiver completion and proof stage telemetry', () {
       late List<Map<String, dynamic>> events;

@@ -4,6 +4,7 @@ import 'package:flutter_app/features/account_migration/application/account_migra
 import 'package:flutter_app/features/account_migration/application/migration_pairing_session_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/migration_secure_storage_registry.dart';
 import 'package:flutter_app/features/account_migration/domain/models/migration_secure_storage_key.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -33,6 +34,9 @@ void main() {
           'video_quality_preference',
           'push_fcm_token',
           'push_fcm_platform',
+          // 198 TC-198-37 — the sculpt geometry key literal lives in lib and is
+          // registry-classified.
+          OrbitGeometryPrefs.storageKey,
         };
 
         for (final key in expectedFixedKeys) {

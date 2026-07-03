@@ -2,6 +2,7 @@ import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/migration_pairing_session_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/domain/models/migration_secure_storage_key.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.dart';
 import 'package:flutter_app/features/push/infrastructure/push_token_store_impl.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
@@ -68,6 +69,15 @@ class MigrationSecureStorageRegistry {
       scope: MigrationSecureStoreScope.primary,
       activeKey: ImageQualityPreference.videoStorageKey,
       category: MigrationSecureStorageKeyCategory.videoQualityPreference,
+      policy: MigrationSecureStorageKeyPolicy.migrate,
+      criticality: MigrationSecureStorageKeyCriticality.optional,
+    ),
+    // 198 — the Orbit sculpt geometry knobs. OPTIONAL is forced: critical would
+    // break every Move from a phone that never sculpted (no stored value).
+    MigrationSecureStorageKey(
+      scope: MigrationSecureStoreScope.primary,
+      activeKey: OrbitGeometryPrefs.storageKey,
+      category: MigrationSecureStorageKeyCategory.orbitGeometryPreferences,
       policy: MigrationSecureStorageKeyPolicy.migrate,
       criticality: MigrationSecureStorageKeyCriticality.optional,
     ),

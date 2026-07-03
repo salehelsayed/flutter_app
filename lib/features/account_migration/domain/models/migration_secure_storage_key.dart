@@ -11,6 +11,7 @@ enum MigrationSecureStorageKeyCategory {
   backgroundPreference,
   imageQualityPreference,
   videoQualityPreference,
+  orbitGeometryPreferences,
   pushFcmToken,
   pushFcmPlatform,
   accountMigrationAuthority,

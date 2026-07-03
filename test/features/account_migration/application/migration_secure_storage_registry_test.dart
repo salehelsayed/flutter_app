@@ -3,6 +3,7 @@ import 'package:flutter_app/features/account_migration/application/account_migra
 import 'package:flutter_app/features/account_migration/application/migration_pairing_session_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/migration_secure_storage_registry.dart';
 import 'package:flutter_app/features/account_migration/domain/models/migration_secure_storage_key.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -33,6 +34,8 @@ void main() {
             'push_fcm_platform',
             SecureKeyStoreAccountMigrationAuthorityRepository.storageKey,
             SecureKeyStoreMigrationPairingSessionRepository.storageKey,
+            // 198 TC-198-37 — the sculpt geometry key is Move-registered.
+            OrbitGeometryPrefs.storageKey,
           }),
         );
 
@@ -82,6 +85,24 @@ void main() {
           byKey[SecureKeyStoreMigrationPairingSessionRepository.storageKey]!
               .includeInExportPayload,
           isFalse,
+        );
+        // 198 TC-198-37 — migrate + optional (critical would break every Move
+        // from a never-sculpted phone) + exported (migrate ⇒ payload).
+        expect(
+          byKey[OrbitGeometryPrefs.storageKey]!.category,
+          MigrationSecureStorageKeyCategory.orbitGeometryPreferences,
+        );
+        expect(
+          byKey[OrbitGeometryPrefs.storageKey]!.policy,
+          MigrationSecureStorageKeyPolicy.migrate,
+        );
+        expect(
+          byKey[OrbitGeometryPrefs.storageKey]!.criticality,
+          MigrationSecureStorageKeyCriticality.optional,
+        );
+        expect(
+          byKey[OrbitGeometryPrefs.storageKey]!.includeInExportPayload,
+          isTrue,
         );
       },
     );
