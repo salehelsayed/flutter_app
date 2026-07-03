@@ -242,6 +242,10 @@ host-only for closure (pure UI geometry/styling/gesture — no OS/crypto/transpo
 Recommended belt-and-braces (not closure-blocking): one iOS-sim run of the F13 perf harness (`ORBIT` target) — it long-presses, drags a handle, and pops the route mid-edit, which exercises the ticker lifecycle on a real device pipeline; fold into the already-pending 198 F12/SIM-PC session.
 Deferred device work → 198 close-out session: F12 cold-start sim case (unchanged by this slice).
 
+**EXECUTED 2026-07-03 (198 close-out device leg, iPhone 17 Pro sim):**
+- **F12 GREEN** — `All tests passed!` (+2: cold-start render case + the 198 orbit case: badge expands arcs → overflow chat renders → find chips a hidden group) on the real iOS render/gesture pipeline. Two findings en route: (1) first attempt stalled in the iOS tooling-launch handshake on stale sim state — fixed by `simctl erase` (known stall-retry quirk); (2) the never-before-executed F12 case had a latent authoring bug — exact-match `bySemanticsLabel('Open chat with friend13')` vs the seeded-unread 194 label (`…, 1 unread message`); product verified correct via host reproduction; finder fixed to a RegExp prefix (`9c1177a4`), no assertion weakened.
+- **F13 leg is structurally N/A on sim:** `ORBIT 0` self-skips on iOS/Android (`skipOnMobileDevice → return`, orbit_performance_harness.dart:526-530) — the recommendation above cannot run on an iOS sim as written. Ticker lifecycle remains locked host-side (TC-198F-13). If ever wanted on-pipeline: run the ORBIT target on the macOS desktop device, or extend the F12 case with a long-press+drag interaction.
+
 ## Acceptance Gates  (literal — copy/paste, with expected counts)
 ```bash
 # 0. Dirty-tree snapshot (before anything)
