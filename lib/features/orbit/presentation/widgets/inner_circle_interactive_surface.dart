@@ -185,8 +185,18 @@ class _InnerCircleInteractiveSurfaceState
       _armed = null;
       _dimFlashTimer?.cancel();
       _dimFlash = false;
+      _settleInterruptedDrag();
     }
     widget.onEditSessionActiveChanged?.call(value);
+  }
+
+  // A handle unmounted mid-drag (session end / badge collapse) disposes its
+  // recognizer without onPanEnd/Cancel — settle the bookkeeping and persist
+  // here or the dim stays lifted and the dragged value is silently lost.
+  void _settleInterruptedDrag() {
+    if (!_draggingHandle) return;
+    _draggingHandle = false;
+    _persist(_geometry);
   }
 
   List<OrbitKnob> get _visibleKnobs =>
@@ -299,9 +309,11 @@ class _InnerCircleInteractiveSurfaceState
   void _onBadgeTap() => setState(() {
         _overflowExpanded = !_overflowExpanded;
         if (!_overflowExpanded) {
-          // Collapsing removes cv/pr/og — disarm if one of them was armed.
+          // Collapsing removes cv/pr/og — disarm if one of them was armed,
+          // and settle a live drag whose handle just unmounted (TC-198F-26).
           if (_armed != null && !_collapsedKnobs.contains(_armed)) {
             _armed = null;
+            _settleInterruptedDrag();
           }
         }
       });
@@ -414,7 +426,15 @@ class _InnerCircleInteractiveSurfaceState
     if (!_overflowExpanded || !_scroll.hasClients) return;
     final delta = _overhangFor(next) - _overhangFor(_geometry);
     if (delta == 0) return;
-    final target = (_scroll.offset + delta).clamp(0.0, double.infinity);
+    final position = _scroll.position;
+    // A short stack has no range to absorb the growth — never force the
+    // position out of range (the circle rides the growth; the steppers stay
+    // the recovery path). Growth extends the extent by exactly delta, so the
+    // clamp below stays reachable after this frame's layout.
+    if (delta > 0 && position.maxScrollExtent <= 0) return;
+    final target = (_scroll.offset + delta)
+        .clamp(0.0, position.maxScrollExtent + (delta > 0 ? delta : 0.0));
+    if (target == _scroll.offset) return;
     _scroll.jumpTo(target.toDouble());
   }
 
@@ -767,13 +787,16 @@ class _InnerCircleInteractiveSurfaceState
             kOrbitCanvasCenter + overhang + anchor.dy);
     // Floats above the armed disc (M5): bottom edge 6px above the disc top,
     // horizontally centred on the handle via the fixed-width Center trick.
+    // Clamped into the surface band: the bubble stays PRESENT while its
+    // handle is band-hidden (TC-198-71) but never paints past the surface
+    // (TC-198F-28).
+    final rawBottom =
+        constraints.maxHeight - pos.dy + OrbitEditHandle.discSize / 2 + 6;
+    final cx = pos.dx.clamp(24.0, constraints.maxWidth - 24.0);
     return Positioned(
-      left: pos.dx - 100,
+      left: cx - 100,
       width: 200,
-      bottom: constraints.maxHeight -
-          pos.dy +
-          OrbitEditHandle.discSize / 2 +
-          6,
+      bottom: rawBottom.clamp(8.0, constraints.maxHeight - 48.0),
       child: IgnorePointer(
         child: Center(
           child: Container(

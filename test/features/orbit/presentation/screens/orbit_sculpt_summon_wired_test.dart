@@ -86,12 +86,15 @@ void main() {
     Key? key,
     Locale locale = const Locale('en'),
     bool resizeToAvoidBottomInset = true,
+    TargetPlatform? platform,
   }) =>
       MaterialApp(
         locale: locale,
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
-        theme: ThemeData(extensions: [BackgroundReadableColors.dark]),
+        theme: ThemeData(
+            platform: platform,
+            extensions: [BackgroundReadableColors.dark]),
         home: Scaffold(
           resizeToAvoidBottomInset: resizeToAvoidBottomInset,
           body: InnerCircleInteractiveSurface(
@@ -1395,6 +1398,113 @@ void main() {
           findsOneWidget);
       await settle(tester);
       semantics.dispose();
+    });
+
+    // QA follow-up (wf_75f2c515-12b finding 1): a handle unmounted mid-drag
+    // (badge collapse) disposes its recognizer without onPanEnd/Cancel — the
+    // surface must settle the drag bookkeeping and persist the value itself.
+    testWidgets(
+        'TC-198F-26 badge collapse mid og-drag settles the drag: dim restores, value persists',
+        (tester) async {
+      final store = FakeSecureKeyStore();
+      await tester.pumpWidget(host(_friends(20), store: store));
+      await settle(tester);
+      await expandBadge(tester);
+      await longPressBg(tester);
+      await settle(tester);
+      OrbitalVisualization viz() => tester
+          .widget<OrbitalVisualization>(find.byType(OrbitalVisualization));
+
+      final g = await tester.startGesture(
+          tester.getCenter(handleF(OrbitKnob.orbitGap)));
+      await tester.pump(const Duration(milliseconds: 20));
+      await g.moveBy(const Offset(0, -20));
+      await tester.pump();
+      await g.moveBy(const Offset(0, -30));
+      await tester.pump();
+      expect(viz().editDim, isFalse, reason: 'dim lifted mid-drag');
+      expect(await store.read(OrbitGeometryPrefs.storageKey), isNull,
+          reason: 'nothing persisted before the drag settles');
+
+      // A second finger collapses the badge mid-drag → the og handle unmounts.
+      await tester.tap(find.byType(OverflowBadge), warnIfMissed: false);
+      await settle(tester, count: 4);
+      expect(bannerF(), findsOneWidget, reason: 'still editing');
+      expect(viz().editDim, isTrue,
+          reason: 'dim restored after the drag died with its handle');
+      expect(await store.read(OrbitGeometryPrefs.storageKey), isNotNull,
+          reason: 'the interrupted drag value was persisted');
+      await g.up(); // stale pointer-up must be harmless
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      await settle(tester);
+    });
+
+    // QA follow-up (finding 4): with a short stack there is no scroll range to
+    // absorb Δoverhang — compensation must not force the position out of range
+    // (the circle rides the growth; steppers remain the recovery path).
+    testWidgets(
+        'TC-198F-27 og drag on a short stack: no out-of-range scroll (canvas stays pinned)',
+        (tester) async {
+      // iOS bouncing physics tolerate out-of-range pixels (Android clamping
+      // self-corrects) — this is where a forced jump becomes visible drift.
+      await tester.pumpWidget(host(_friends(20),
+          platform: TargetPlatform.iOS)); // fits the viewport
+      await settle(tester);
+      await expandBadge(tester);
+      await longPressBg(tester);
+      await settle(tester);
+      final originBefore = canvasOrigin(tester);
+      final g = await tester.startGesture(
+          tester.getCenter(handleF(OrbitKnob.orbitGap)));
+      await tester.pump(const Duration(milliseconds: 20));
+      await g.moveBy(const Offset(0, -20));
+      await tester.pump();
+      for (var i = 0; i < 4; i++) {
+        await g.moveBy(const Offset(0, -12)); // grow og → overhang grows
+        await tester.pump();
+        expect(canvasOrigin(tester).dy, closeTo(originBefore.dy, 1.0),
+            reason: 'content top pinned, no forced scroll (step ${i + 1})');
+      }
+      await g.up();
+      await tester.pump();
+      await settle(tester);
+      expect(canvasOrigin(tester).dy, closeTo(originBefore.dy, 1.0),
+          reason: 'no ballistic settle after release');
+      expect(tester.takeException(), isNull);
+    });
+
+    // QA follow-up (finding 3): the bubble stays PRESENT while its armed
+    // handle is band-hidden (TC-198-71 contract) but must clamp into the
+    // surface band instead of painting past it.
+    testWidgets(
+        'TC-198F-28 armed bubble clamps to the surface band while its handle is off-band',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(80)));
+      await settle(tester);
+      await expandBadge(tester);
+      await tester.dragFrom(const Offset(60, 300), const Offset(0, -500));
+      await settle(tester, count: 4);
+      await longPressBg(tester);
+      await settle(tester);
+      await tester.tap(handleF(OrbitKnob.spacingScale), warnIfMissed: false);
+      await tester.pump();
+      expect(bubbleF(), findsOneWidget);
+
+      // Scroll back to the top: sp exits the band; bubble present AND inside.
+      await tester.dragFrom(const Offset(60, 300), const Offset(0, 600));
+      await settle(tester, count: 4);
+      expect(handleF(OrbitKnob.spacingScale), findsNothing);
+      expect(bubbleF(), findsOneWidget,
+          reason: 'armed state survives (TC-198-71 contract)');
+      final surface =
+          tester.getRect(find.byType(InnerCircleInteractiveSurface));
+      final b = tester.getRect(bubbleF());
+      expect(b.bottom, lessThanOrEqualTo(surface.bottom + 0.1),
+          reason: 'bubble never paints past the surface bottom');
+      expect(b.top, greaterThanOrEqualTo(surface.top - 0.1),
+          reason: 'bubble never paints past the surface top');
+      await settle(tester);
     });
 
     testWidgets(
