@@ -44,6 +44,7 @@ import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/overflow_badge.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -247,6 +248,204 @@ void main() {
       );
     },
   );
+
+  // 198 F12 (SIM-PC) — the real render/gesture/route pipeline for Sculpt &
+  // Summon: the overflow badge expands the arcs, an overflow chat opens, and the
+  // find pill chips a group so its conversation opens.
+  testWidgets(
+    'simulator: 198 orbit overflow — badge expands arcs, an overflow chat '
+    'opens, find chips a hidden group',
+    (tester) async {
+      final identityRepo = FakeIdentityRepository();
+      final contactRepo = FakeContactRepository();
+      final messageRepo = InMemoryMessageRepository();
+      final mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
+      final groupRepo = InMemoryGroupRepository();
+      final groupMsgRepo = InMemoryGroupMessageRepository();
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            const MethodChannel('plugins.flutter.io/path_provider'),
+            (methodCall) async =>
+                methodCall.method == 'getApplicationDocumentsDirectory'
+                    ? '/tmp/test_docs_198_orbit_sim'
+                    : null,
+          );
+      addTearDown(() {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+              const MethodChannel('plugins.flutter.io/path_provider'),
+              null,
+            );
+      });
+
+      identityRepo.seed(IdentityModel(
+        peerId: 'me-peer',
+        publicKey: 'pk-me',
+        privateKey: 'sk-me',
+        mnemonic12: 'w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12',
+        mlKemPublicKey: 'mlkem-me',
+        username: 'Me',
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+        updatedAt: DateTime.now().toUtc().toIso8601String(),
+      ));
+
+      // 14 friends, friend0 newest .. friend13 oldest (→ overflow). One DM each
+      // sets recency; the overflow friend's body is what must render.
+      final base = DateTime.utc(2026, 5, 1, 9);
+      contactRepo.seed([
+        for (var i = 0; i < 14; i++)
+          ContactModel(
+            peerId: 'f$i-peer',
+            publicKey: 'pk-f$i',
+            rendezvous: '/dns4/relay/tcp/443',
+            username: 'friend$i',
+            signature: 'sig-f$i',
+            scannedAt: base.subtract(Duration(minutes: i)).toIso8601String(),
+            mlKemPublicKey: 'mlkem-f$i',
+          ),
+      ]);
+      for (var i = 0; i < 14; i++) {
+        final ts = base.subtract(Duration(minutes: i)).toIso8601String();
+        await messageRepo.saveMessage(ConversationMessage(
+          id: 'dm-$i',
+          contactPeerId: 'f$i-peer',
+          senderPeerId: 'f$i-peer',
+          text: 'hi from friend$i',
+          timestamp: ts,
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: ts,
+        ));
+      }
+
+      // A group (newest → seated on a ring, but findable regardless).
+      await groupRepo.saveGroup(GroupModel(
+        id: 'find-grp',
+        name: 'FindMe Group',
+        type: GroupType.chat,
+        topicName: 'topic-find-grp',
+        createdAt: base.add(const Duration(minutes: 30)),
+        createdBy: 'f0-peer',
+        myRole: GroupRole.member,
+      ));
+      await groupMsgRepo.saveMessage(GroupMessage(
+        id: 'gm-1',
+        groupId: 'find-grp',
+        senderPeerId: 'f0-peer',
+        senderUsername: 'friend0',
+        text: 'group hello there',
+        timestamp: base.add(const Duration(minutes: 31)),
+        isIncoming: true,
+        createdAt: base.add(const Duration(minutes: 31)),
+      ));
+
+      final originalOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        final s = details.toString();
+        if (s.contains('overflowed') ||
+            s.contains('Unable to load asset') ||
+            s.contains('SvgPicture')) {
+          return;
+        }
+        originalOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = originalOnError);
+
+      final bridge = FakeBridge();
+      final gmListener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: groupMsgRepo,
+        bridge: bridge,
+      );
+      final postsPrivacy = InMemoryPostsPrivacySettingsRepository();
+      addTearDown(postsPrivacy.dispose);
+
+      await tester.pumpWidget(MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: OrbitWired(
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          contactRequestRepo: FakeContactRequestRepository(),
+          contactRequestListener: ContactRequestListener(
+            contactRequestStream: const Stream<ChatMessage>.empty(),
+            requestRepo: FakeContactRequestRepository(),
+            contactRepo: contactRepo,
+            bridge: bridge,
+            getOwnPeerId: () => '',
+          ),
+          messageRepo: messageRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          chatMessageListener: ChatMessageListener(
+            chatMessageStream: const Stream<ChatMessage>.empty(),
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+          ),
+          bridge: bridge,
+          p2pService: FakeP2PService(),
+          mediaFileManager: FakeMediaFileManager(),
+          secureKeyStore: FakeSecureKeyStore(),
+          imageProcessor: ImageProcessor(
+            compressFile: ({
+              required path,
+              required quality,
+              required keepExif,
+              minWidth = 1920,
+              minHeight = 1080,
+            }) async => null,
+            compressVideo: ({required path, required compress, onProgress}) async => null,
+          ),
+          feedClearedRepository: InMemoryFeedClearedRepository(),
+          groupRepository: groupRepo,
+          groupMessageRepository: groupMsgRepo,
+          groupMessageListener: gmListener,
+          postsPrivacySettingsRepository: postsPrivacy,
+        ),
+      ));
+      for (var i = 0; i < 12; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      // Inner-Circle default view: 15 items ⇒ 2 overflow ⇒ badge "+2".
+      expect(find.byType(OverflowBadge), findsOneWidget);
+      expect(find.text('+2'), findsOneWidget);
+      // The overflow friend is not seated until the arcs expand.
+      expect(find.bySemanticsLabel('Open chat with friend13'), findsNothing);
+
+      await tester.tap(find.byType(OverflowBadge));
+      for (var i = 0; i < 14; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.bySemanticsLabel('Open chat with friend13'), findsOneWidget);
+
+      // Open the overflow chat — its body renders.
+      await tester.tap(find.bySemanticsLabel('Open chat with friend13'));
+      for (var i = 0; i < 16; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.text('hi from friend13'), findsWidgets);
+      Navigator.of(tester.element(find.byType(Navigator).last)).pop();
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      // Find pill → chip a group by name → its conversation opens.
+      await tester.tap(find.byKey(const ValueKey('orbit-find-pill')));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.enterText(find.byType(TextField), 'FindMe');
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.text('FindMe Group'), findsWidgets);
+      await tester.tap(find.text('FindMe Group').last);
+      for (var i = 0; i < 16; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.text('group hello there'), findsWidgets);
+    },
+  );
 }
 
 /// Builds a fresh OrbitWired with the supplied (persistent) repos, pumps
@@ -343,8 +542,9 @@ Future<void> _runOrbitSessionAndOpenThreads({
 
   // 193: default entry is the Inner-Circle view — the all-chats list (and its
   // contact/group name text) only renders after the top-left toggle is tapped.
-  // The group has no orbital avatar (the viz is friends-only), so the toggle is
-  // mandatory to reach the threads opened below.
+  // This helper opens threads via the LIST (by name text), so the toggle is
+  // mandatory. (197: the viz does render group avatars; the 198 F12 case above
+  // exercises the Inner-Circle/arc/find path directly instead.)
   expect(
     find.text(aliceContactName),
     findsNothing,

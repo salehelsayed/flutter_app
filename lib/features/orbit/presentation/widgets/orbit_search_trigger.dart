@@ -2,7 +2,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 
-/// 36x36 glass circle search button for opening the search dock.
+/// 44x44 glass circle search button for opening the search dock.
 class OrbitSearchTrigger extends StatelessWidget {
   final VoidCallback onSearchTap;
 

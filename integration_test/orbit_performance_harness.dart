@@ -19,6 +19,7 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_view_mode.dart';
 import 'package:flutter_app/features/orbit/presentation/navigation/orbit_route_transition.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_screen.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/overflow_badge.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/unread_orbit_indicator.dart';
 
@@ -85,6 +86,7 @@ class _OrbitScenario {
     required this.expectOverflow,
     this.groups = const <OrbitGroup>[],
     this.expectUnreadIndicator = false,
+    this.interaction,
   });
 
   final String id;
@@ -92,6 +94,11 @@ class _OrbitScenario {
   final List<OrbitGroup> groups;
   final bool expectOverflow;
   final bool expectUnreadIndicator;
+
+  /// 198 F13 — optional post-open interaction (expand arcs / sculpt a knob /
+  /// run a find query) exercised inside [_runScenario] between open and close.
+  /// Report-only, so best-effort gestures never assert.
+  final Future<void> Function(WidgetTester tester)? interaction;
 }
 
 OrbitFriend _makeFriend(int i, {int unreadCount = 0}) {
@@ -312,6 +319,14 @@ Future<void> _runScenario(
     expect(find.byType(OverflowBadge), findsNothing);
   }
 
+  if (scenario.interaction != null) {
+    developer.Timeline.instantSync(
+      'orbit_perf_phase',
+      arguments: {'scenario': scenario.id, 'phase': 'interaction'},
+    );
+    await scenario.interaction!(tester);
+  }
+
   developer.Timeline.instantSync(
     'orbit_perf_phase',
     arguments: {'scenario': scenario.id, 'phase': 'pop_start'},
@@ -467,6 +482,41 @@ void registerOrbitPerf() {
       friends: List<OrbitFriend>.generate(8, _makeFriend),
       groups: List<OrbitGroup>.generate(5, _makeGroup),
       expectOverflow: false,
+    ),
+    // 198 TC-198-68: 50 items → expand overflow arcs → one knob sculpt → one
+    // find query. Report-only (no frame-budget expects); exercises the arc
+    // render + edit overlay + find lighting paths.
+    _OrbitScenario(
+      id: 'orbit_open_arcs_expanded_sculpt_find',
+      friends: List<OrbitFriend>.generate(50, _makeFriend),
+      expectOverflow: true,
+      interaction: (tester) async {
+        // Expand the overflow arcs.
+        await tester.tap(find.byType(OverflowBadge));
+        await _pumpFrames(tester, count: 12);
+
+        // Enter edit + one knob drag (best-effort — report-only).
+        final viz = tester.getRect(find.byType(OrbitalVisualization));
+        final g = await tester.startGesture(Offset(viz.left - 6, viz.center.dy));
+        await tester.pump(const Duration(milliseconds: 620));
+        await g.up();
+        await _pumpFrames(tester, count: 4);
+        final handle =
+            find.byKey(const ValueKey('orbit-handle-spacingScale'));
+        if (handle.evaluate().isNotEmpty) {
+          await tester.drag(handle, const Offset(0, -40));
+          await _pumpFrames(tester, count: 8);
+        }
+
+        // One find query.
+        final pill = find.byKey(const ValueKey('orbit-find-pill'));
+        if (pill.evaluate().isNotEmpty) {
+          await tester.tap(pill);
+          await _pumpFrames(tester, count: 2);
+          await tester.enterText(find.byType(TextField), 'friend3');
+          await _pumpFrames(tester, count: 6);
+        }
+      },
     ),
   ];
 
