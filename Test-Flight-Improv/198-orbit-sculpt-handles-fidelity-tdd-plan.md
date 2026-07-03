@@ -1,6 +1,6 @@
 # 198 - Orbit "Sculpt & Summon" edit-mode mockup fidelity — geometry-anchored handles  (Modification)
 
-Status: awaiting-review
+Status: IMPLEMENTED — host-green + mutation-verified (commits `9b784bfd` + `bcba6beb`, 2026-07-03)
 Spec: [198-orbit-sculpt-and-summon-spec.md](198-orbit-sculpt-and-summon-spec.md) (re-opened Group B rows) + mockup contract [198-orbit-arch-overflow-edit-find-mockups.html](198-orbit-arch-overflow-edit-find-mockups.html) (handles build: html:192-228, 971-1073) + 12 adversarially verified mismatches (workflow `wf_b3a2d45a-f09`, 17 agents; full detail archived in this plan §Root Cause)
 
 ## Planning Progress
@@ -20,7 +20,7 @@ Spec: [198-orbit-sculpt-and-summon-spec.md](198-orbit-sculpt-and-summon-spec.md)
 | 2026-07-03 | direct GREEN | + churn: TC-198-19 taps friend2 (friend0's seat hosts the av handle; overlap pinned by TC-198F-25) — no assertion weakened | `flutter test .../orbit_sculpt_summon_wired_test.dart` → **46/46**; `orbit_edit_handle_test.dart` → 4/4; `orbit_arc_layout_test.dart` → 17/17 | reds now green | preservation |
 | 2026-07-03 | preservation GREEN | — | `flutter test test/features/orbit/ test/l10n/orbit_strings_parity_test.dart` → **434 passed** (was 403+3 parity; +28 new); `./scripts/run_test_gates.sh feed` → 285 passed (F9 yield rows green); parity file byte-identical; `l10n_integrity_test` scan = exactly the 3 orbit3 literals (0 production-orbit) | sentinels green | gates |
 | 2026-07-03 | named gates | — | `./scripts/run_test_gates.sh groups` → green (orbit wired pin now 46; see QA row); `flutter analyze lib/features/orbit test/features/orbit` → 5 pre-existing only (0 new); `git diff --check` clean | gate green | QA |
-| 2026-07-03 | QA (independent) | — | mutation-verification workflow (worktree-isolated, named matrix reverts) + independent review agents | see Final Execution Verdict | verdict |
+| 2026-07-03 | QA (independent) | — | workflow `wf_75f2c515-12b` (6 agents, worktree-isolated): **16/16 named matrix mutations re-red their tests, zero coverage holes**; Scope-Guard conformance reviewer: **0 findings**; correctness reviewer: 4 minor → 3 fixed red-first in `bcba6beb` (TC-198F-26 drag-settle on mid-drag unmount, TC-198F-27 short-stack scroll-write guard [green-guard: framework self-corrects on both physics], TC-198F-28 bubble clamp), 1 recorded as Accepted Difference (cv pinch-snap = mockup parity) | blocking: none | IMPLEMENTED |
 
 ## Source Of Truth
 - Spec / intent: 198-orbit-sculpt-and-summon-spec.md §1.B + contract table :42-43 + Group B TCs; mockup html (handles variant) is the visual contract
@@ -315,6 +315,7 @@ git diff --check
 - Off-viewport tips (horizontal) are hidden like vertical band exits; steppers remain the recovery path (mockup lets them clip off-bezel too).
 - 3-button `kOrbit3PrototypeEnabled` nav pill overlaps the left stepper at 320pt — debug-only lab flag, not shipped chrome.
 - M12 long-press slop 18px (framework) vs mockup ~8px — pre-existing Accepted Difference, unchanged.
+- **cv pinch-snap (QA finding, 2026-07-03):** when r0 > 170px (big og/sp), the cv handle seats at the PINCHED φ while the drag maps the unpinched |atan2|/1.25 inverse — grabbing the handle snaps the bubble value (e.g. 1.0→0.7) and the handle drifts from the finger during the drag. This is MOCKUP PARITY (the mockup's positionHandles seats at pinched arcPhi while its drag maps unpinched) and both formulas are plan/test-pinned — **flag to product**; a fix would invert through `orbitArcPhi` in `orbitArcWrapFromPointer` and re-pin TC-198F-22.
 
 ## Dependency Impact
 - 198 close-out session (device proof F12/SIM-PC) depends on this slice: run it AFTER this lands so the sim exercises the final edit UI; the F13 ORBIT perf interaction (drag via `orbit-handle-spacingScale` key) keeps working because the key is preserved.
@@ -328,4 +329,4 @@ Self-check against references/sufficiency-checklist.md: spec-case totality ✔ (
 Structural blockers: none identified at planning time. | Deferred details: exact new-test count for the `groups` gate expected number (record at execution); assert-tolerance tuning for measured origins under test fonts (Stop-if in step 5). | Accepted differences: listed above, all recorded with owners.
 
 ## Final Execution Verdict
-Verdict: (pending execution) | Files changed: — | Tests run: — | Blocking: — | QA verdict: — | Non-blocking follow-ups: —
+Verdict: **IMPLEMENTED (host-green, mutation-verified)** — commits `9b784bfd` (slice) + `bcba6beb` (QA follow-ups) | Files changed: orbit_arc_layout.dart (+consts, 3 pure helpers), orbital_visualization.dart (canvasKey, editEmphasis, node-dim keys), orbit_edit_handle.dart (NEW), inner_circle_interactive_surface.dart (overlay rework), 3 test files (+31 tests total) | Tests run: wired 49/49 · handle 4/4 · layout 17/17 · orbit cluster 437 · feed gate 285 · groups gate 1010 · parity untouched-green · literal-scan 3 orbit3/0 production · analyze 0 new | Blocking: none | QA verdict: 16/16 mutations re-red, Scope Guard 0 findings, 4 minor correctness findings → 3 fixed red-first, 1 Accepted Difference (cv pinch-snap, mockup parity, flagged to product) | Non-blocking follow-ups: cv pinch-snap product decision; device leg = F12 cold-start sim case + optional F13 ORBIT perf leg (198 close-out session); the shipped HEAD chip-drag closure bug (origin reset on arming rebuild) is fixed as a side effect of state-side delta accumulation.
