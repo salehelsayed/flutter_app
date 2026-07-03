@@ -319,6 +319,11 @@ class _FeedWiredState extends State<FeedWired>
   // 134-P6 gesture arena (TC-35): true while a card-level swipe is live, so the
   // screen-level Feed↔Orbit host swipe yields the gesture to the card.
   bool _feedCardSwipeActive = false;
+  // 198 (INV-8): true while an Orbit sculpt edit session is active. The raw
+  // host-swipe Listener bypasses the gesture arena, so this flag is the ONLY
+  // mechanism keeping a rightward handle drag from sliding the tab to Feed
+  // mid-sculpt (mirrors [_orbitRowActionOpen] / [_feedCardSwipeActive]).
+  bool _orbitEditSessionActive = false;
 
   List<FeedItem> get _feedItems => _feedStore.items;
   void _clearEditState({
@@ -2348,6 +2353,10 @@ class _FeedWiredState extends State<FeedWired>
     _orbitRowActionOpen = isOpen;
   }
 
+  void _onOrbitEditSessionActiveChanged(bool active) {
+    _orbitEditSessionActive = active;
+  }
+
   void _resetHostSwipeTracking() {
     _hostSwipePointer = null;
     _hostSwipeStartPosition = null;
@@ -2395,10 +2404,16 @@ class _FeedWiredState extends State<FeedWired>
           startingTab == AppShellTab.orbit && totalDelta.dx > 0;
       final blockedByOrbitRow =
           startingTab == AppShellTab.orbit && _orbitRowActionOpen;
+      // 198 (INV-8): an active Orbit sculpt edit session owns the horizontal
+      // gesture on the orbit tab — the host yields so a handle drag can't slide
+      // to Feed mid-sculpt.
+      final blockedByOrbitEdit =
+          startingTab == AppShellTab.orbit && _orbitEditSessionActive;
       // 134-P6 (TC-35): a live card swipe owns the horizontal gesture — the host
       // yields (mirror the blockedByOrbitRow bail).
       if ((!movingToOrbit && !movingToFeed) ||
           blockedByOrbitRow ||
+          blockedByOrbitEdit ||
           _feedCardSwipeActive) {
         return;
       }
@@ -2566,6 +2581,7 @@ class _FeedWiredState extends State<FeedWired>
       onEmbeddedExit: _onOrbitEmbeddedExit,
       onEmbeddedExitActionChanged: _registerOrbitEmbeddedExitAction,
       onRowActionOpenChanged: _onOrbitRowActionOpenChanged,
+      onEditSessionActiveChanged: _onOrbitEditSessionActiveChanged,
       transportMetrics: widget.transportMetrics,
       accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
       accountMigrationSizeGate: widget.accountMigrationSizeGate,

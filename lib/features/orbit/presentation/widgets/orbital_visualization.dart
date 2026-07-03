@@ -46,6 +46,16 @@ class OrbitalVisualization extends StatelessWidget {
   /// 198 — render a name label under every node (double-tap toggle).
   final bool labelsVisible;
 
+  /// 198 — when true (edit mode, not mid-drag) every node dims to 0.22 and the
+  /// rings to 0.45, so the geometry handles read as the foreground.
+  final bool editDim;
+
+  /// 198 — indices of find-lit members; lit nodes stay full-bright.
+  final Set<int> litIndices;
+
+  /// 198 — when true, non-lit nodes dim to 0.28 (find "come to me").
+  final bool findActive;
+
   static const double _size = 320;
   static const double _center = _size / 2;
   static const double _minTapTargetSize = 48;
@@ -61,7 +71,20 @@ class OrbitalVisualization extends StatelessWidget {
     this.overflowExpanded = false,
     this.onBadgeTap,
     this.labelsVisible = false,
+    this.editDim = false,
+    this.litIndices = const {},
+    this.findActive = false,
   });
+
+  /// A node's opacity under the edit / find dims. Lit find-matches stay
+  /// full-bright even over the edit dim (TC-198-50); INV-5 forbids an
+  /// all-dimmed-nothing-lit state, which the caller enforces upstream.
+  double _dimFor(int index) {
+    if (litIndices.contains(index)) return 1.0;
+    if (editDim) return 0.22;
+    if (findActive) return 0.28;
+    return 1.0;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -113,12 +136,15 @@ class OrbitalVisualization extends StatelessWidget {
 
     final children = <Widget>[
       Positioned.fill(
-        child: CustomPaint(
-          painter: OrbitalRingPainter(
-            center: Offset(cx, cy),
-            ring1Radius: layout.ring1Radius,
-            ring2Radius: layout.ring2Radius,
-            arcs: arcRings,
+        child: Opacity(
+          opacity: editDim ? 0.45 : 1.0,
+          child: CustomPaint(
+            painter: OrbitalRingPainter(
+              center: Offset(cx, cy),
+              ring1Radius: layout.ring1Radius,
+              ring2Radius: layout.ring2Radius,
+              arcs: arcRings,
+            ),
           ),
         ),
       ),
@@ -148,18 +174,21 @@ class OrbitalVisualization extends StatelessWidget {
       children.add(Positioned(
         left: cx + seat.dx - tapTargetSize / 2,
         top: cy + seat.dy - tapTargetSize / 2,
-        child: _buildNode(
-          item,
-          avatarSize: seat.avatarSize,
-          globalIndex: seat.index,
-          borderWidth: borderWidth,
-          borderColor: borderColor,
-          l10n: l10n,
-          unreadMotionEnabled: motionEnabled,
-          // Ring entrance keeps the pre-198 stagger; arc entrance uses the
-          // layout stagger and honors reduce-motion (INV-7).
-          entranceDelayMs: isArc ? seat.entranceDelayMs : null,
-          entranceMotionEnabled: isArc ? motionEnabled : true,
+        child: Opacity(
+          opacity: _dimFor(seat.index),
+          child: _buildNode(
+            item,
+            avatarSize: seat.avatarSize,
+            globalIndex: seat.index,
+            borderWidth: borderWidth,
+            borderColor: borderColor,
+            l10n: l10n,
+            unreadMotionEnabled: motionEnabled,
+            // Ring entrance keeps the pre-198 stagger; arc entrance uses the
+            // layout stagger and honors reduce-motion (INV-7).
+            entranceDelayMs: isArc ? seat.entranceDelayMs : null,
+            entranceMotionEnabled: isArc ? motionEnabled : true,
+          ),
         ),
       ));
       if (labelsVisible) {

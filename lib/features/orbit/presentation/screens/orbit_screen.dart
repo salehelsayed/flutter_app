@@ -1,7 +1,9 @@
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/inner_circle_interactive_surface.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -21,7 +23,6 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_view_mode.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_close_button.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_qr_chrome_buttons.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_view_toggle_button.dart';
-import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friends_list_header.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friend_row.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/group_row.dart';
@@ -240,6 +241,18 @@ class OrbitScreen extends StatelessWidget {
   final BackgroundPreference backgroundPreference;
   final BackgroundReadableTone? readableToneOverride;
 
+  /// 198 — persists the Inner-Circle sculpt geometry. Null ⇒ no persistence
+  /// (bare-`OrbitScreen` pumps that never sculpt).
+  final SecureKeyStore? secureKeyStore;
+
+  /// 198 — bubbles the edit-session active flag up to the feed↔orbit host-swipe
+  /// yield gate (INV-8).
+  final ValueChanged<bool>? onInnerCircleEditSessionChanged;
+
+  /// 198 — poked by the host on the Feed→Orbit rising edge to reset the
+  /// Inner-Circle transient state (expansion / labels / edit / find).
+  final Listenable? innerCircleResetListenable;
+
   const OrbitScreen({
     super.key,
     required this.headerProjectionListenable,
@@ -283,6 +296,9 @@ class OrbitScreen extends StatelessWidget {
     this.onListBuild,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
     this.readableToneOverride,
+    this.secureKeyStore,
+    this.onInnerCircleEditSessionChanged,
+    this.innerCircleResetListenable,
   });
 
   bool get _showsPersistentNav => activeTab != null && onSwitchView != null;
@@ -528,51 +544,19 @@ class OrbitScreen extends StatelessWidget {
       valueListenable: headerProjectionListenable,
       builder: (context, projection, child) {
         onHeaderBuild?.call();
-        final readableColors = context.backgroundReadableColors;
         // 197: the rings render the merged friends+groups ring set (blocked
         // friends already dropped, archived groups already excluded upstream).
-        final innerItems = projection.innerItems;
-        return Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                OrbitalVisualization(
-                  userPeerId: projection.userPeerId,
-                  userAvatarBytes: projection.userAvatarBytes,
-                  items: innerItems,
-                  onFriendTap: onFriendTap,
-                  onGroupTap: onGroupTap,
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(top: 20),
-                  child: Text(
-                    AppLocalizations.of(context)!.orbit_close_friends,
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: readableColors.textMuted,
-                    ),
-                  ),
-                ),
-                if (innerItems.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 12),
-                    child: Text(
-                      AppLocalizations.of(
-                        context,
-                      )!.orbit_inner_circle_empty_hint,
-                      key: const ValueKey('orbit-inner-circle-empty-hint'),
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: readableColors.textMuted,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
+        // 198: the interactive surface owns the sculpt/find/labels/expansion
+        // session state + persistence; the caption + empty hint live inside it.
+        return InnerCircleInteractiveSurface(
+          userPeerId: projection.userPeerId,
+          userAvatarBytes: projection.userAvatarBytes,
+          items: projection.innerItems,
+          onFriendTap: onFriendTap,
+          onGroupTap: onGroupTap,
+          secureKeyStore: secureKeyStore,
+          onEditSessionActiveChanged: onInnerCircleEditSessionChanged,
+          resetSignal: innerCircleResetListenable,
         );
       },
     );

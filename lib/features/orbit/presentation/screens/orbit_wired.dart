@@ -140,6 +140,10 @@ class OrbitWired extends StatefulWidget {
   final ValueChanged<FeedRouteChanges?>? onEmbeddedExit;
   final ValueChanged<VoidCallback?>? onEmbeddedExitActionChanged;
   final ValueChanged<bool>? onRowActionOpenChanged;
+
+  /// 198 — bubbles the Inner-Circle edit-session active flag to the embedding
+  /// host (the feed↔orbit host-swipe yield gate). Invoked on edit enter/exit.
+  final ValueChanged<bool>? onEditSessionActiveChanged;
   final PendingPostTargetStore? pendingPostTargetStore;
   final PostsPrivacySettingsRepository? postsPrivacySettingsRepository;
   final String? initialFilterTab;
@@ -187,6 +191,7 @@ class OrbitWired extends StatefulWidget {
     this.onEmbeddedExit,
     this.onEmbeddedExitActionChanged,
     this.onRowActionOpenChanged,
+    this.onEditSessionActiveChanged,
     this.pendingPostTargetStore,
     this.postsPrivacySettingsRepository,
     this.initialFilterTab,
@@ -222,6 +227,11 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   late OrbitViewMode _viewMode;
   bool _searchActive = false;
   String _searchQuery = '';
+
+  // 198 — bumped on the Feed→Orbit rising edge; the Inner-Circle interactive
+  // surface listens and re-derives its transient state (expansion/labels/edit/
+  // find) to defaults. The persisted knobs are untouched.
+  final ValueNotifier<int> _innerCircleResetTick = ValueNotifier<int>(0);
   bool _isSearchTriggerVisible = true;
   final ValueNotifier<Key?> _openRowNotifier = ValueNotifier(null);
   final ValueNotifier<OrbitHeaderProjection> _headerProjectionNotifier =
@@ -506,6 +516,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     if (_searchActive) {
       _onSearchClose();
     }
+    // 198: also reset the Inner-Circle surface's transient state (arcs collapse,
+    // labels off, edit exits, find clears). Knobs persist.
+    _innerCircleResetTick.value++;
   }
 
   // Replays one targeted refresh per buffered reason on Feed -> Orbit
@@ -2268,6 +2281,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _scrollController.dispose();
     _searchController.dispose();
     _searchFocusNode.dispose();
+    _innerCircleResetTick.dispose();
     _openRowNotifier.removeListener(_onOpenRowNotifierChanged);
     widget.appShellController?.removeListener(_onAppShellChanged);
     widget.onEmbeddedExitActionChanged?.call(null);
@@ -2339,6 +2353,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       backgroundPreference:
           widget.appShellController?.backgroundPreference ??
           BackgroundPreference.defaultBackground,
+      secureKeyStore: widget.secureKeyStore,
+      onInnerCircleEditSessionChanged: widget.onEditSessionActiveChanged,
+      innerCircleResetListenable: _innerCircleResetTick,
     );
   }
 
