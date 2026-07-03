@@ -164,6 +164,24 @@ class _InnerCircleInteractiveSurfaceState
     }
   }
 
+  // During an edit session a node tap acts as tap-away: it ends the session and
+  // NEVER opens a chat (TC-198-19). Idle, it routes normally.
+  void _onNodeFriendTap(OrbitFriend friend) {
+    if (_editing) {
+      setState(() => _setEditing(false));
+      return;
+    }
+    widget.onFriendTap(friend);
+  }
+
+  void _onNodeGroupTap(OrbitGroup group) {
+    if (_editing) {
+      setState(() => _setEditing(false));
+      return;
+    }
+    widget.onGroupTap(group);
+  }
+
   void _onBadgeTap() => setState(() {
         _overflowExpanded = !_overflowExpanded;
         if (!_overflowExpanded) {
@@ -343,8 +361,8 @@ class _InnerCircleInteractiveSurfaceState
                               userPeerId: widget.userPeerId,
                               userAvatarBytes: widget.userAvatarBytes,
                               items: widget.items,
-                              onFriendTap: widget.onFriendTap,
-                              onGroupTap: widget.onGroupTap,
+                              onFriendTap: _onNodeFriendTap,
+                              onGroupTap: _onNodeGroupTap,
                               geometry: _geometry,
                               overflowExpanded: _overflowExpanded,
                               onBadgeTap: _onBadgeTap,

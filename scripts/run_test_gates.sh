@@ -248,6 +248,10 @@ readonly GROUP_TESTS=(
   # push through _onMyQR/_onScanQR). Auto-globs into feature-host-all, pinned
   # here so it also runs in the curated groups gate + completeness-check.
   "test/features/orbit/presentation/screens/orbit_qr_entry_migration_test.dart"
+  # 198 orbit Sculpt & Summon: the headline wired surface suite (edit session,
+  # geometry handles, find, labels, persistence, reset seam). The glob does NOT
+  # add it, so it is pinned here to run under the curated groups gate.
+  "test/features/orbit/presentation/screens/orbit_sculpt_summon_wired_test.dart"
   "test/l10n/orbit_strings_parity_test.dart"
 )
 

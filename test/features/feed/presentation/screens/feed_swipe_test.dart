@@ -926,4 +926,71 @@ void main() {
   // swipe-dismiss Undo SnackBar was removed, so there is no UI undo to tap; the
   // store single-source-of-truth / re-surface invariant is covered by
   // feed_store_test and feed_pending_projection_test.)
+
+  // ── 198 F9 (INV-8): an active Orbit sculpt edit session yields the host swipe.
+  // Empty background point ABOVE the circle column (on a phone the 320px viz
+  // nearly fills the width, so a side point lands inside the viz box).
+  Offset orbitBgPoint(WidgetTester tester) {
+    final viz = tester.getRect(find.byType(OrbitalVisualization));
+    // Just left of the 320px viz box — the background sibling receives it (a
+    // point INSIDE the viz box is absorbed by the centering Center).
+    return Offset(viz.left - 6, viz.center.dy);
+  }
+
+  Future<void> enterOrbitAndEdit(WidgetTester tester) async {
+    await tester.drag(feedOrbitSwipeHost(), const Offset(-170, 0));
+    await pumpFrames(tester);
+    expect(appShellController.activeTab, 'orbit');
+    expect(find.byType(OrbitalVisualization), findsOneWidget);
+
+    // Long-press empty orbit canvas → enter edit.
+    final g = await tester.startGesture(orbitBgPoint(tester));
+    await tester.pump(const Duration(milliseconds: 620));
+    await g.up();
+    await pumpFrames(tester);
+    expect(find.byKey(const ValueKey('orbit-edit-banner')), findsOneWidget);
+  }
+
+  testWidgets(
+    'YIELD-1: an active Orbit edit session suppresses the feed↔orbit host swipe',
+    (tester) async {
+      setPhoneViewport(tester);
+      suppressFeedNavErrors();
+      identityRepo.seed(testIdentity);
+      await tester.pumpWidget(buildWired());
+      await pumpFrames(tester);
+
+      await enterOrbitAndEdit(tester);
+
+      // A rightward host drag (orbit→feed) must NOT slide to Feed mid-sculpt.
+      await tester.drag(feedOrbitSwipeHost(), const Offset(170, 0));
+      await pumpFrames(tester);
+      expect(appShellController.activeTab, 'orbit',
+          reason: 'the edit session yields the host swipe (INV-8)');
+    },
+  );
+
+  testWidgets(
+    'YIELD-2: the host swipe restores after the edit session exits',
+    (tester) async {
+      setPhoneViewport(tester);
+      suppressFeedNavErrors();
+      identityRepo.seed(testIdentity);
+      await tester.pumpWidget(buildWired());
+      await pumpFrames(tester);
+
+      await enterOrbitAndEdit(tester);
+
+      // Tap-away to exit the edit session.
+      await tester.tapAt(orbitBgPoint(tester));
+      await tester.pump(const Duration(milliseconds: 350));
+      await pumpFrames(tester);
+      expect(find.byKey(const ValueKey('orbit-edit-banner')), findsNothing);
+
+      // Now a rightward host drag switches back to Feed.
+      await tester.drag(feedOrbitSwipeHost(), const Offset(170, 0));
+      await pumpFrames(tester);
+      expect(appShellController.activeTab, 'feed');
+    },
+  );
 }
