@@ -409,19 +409,23 @@ void main() {
       }
 
       // Inner-Circle default view: 15 items ⇒ 2 overflow ⇒ badge "+2".
+      // The seeded DMs are unread, so node labels carry the 194 unread suffix
+      // ('Open chat with friend13, 1 unread message') — match by prefix.
+      final friend13Node =
+          find.bySemanticsLabel(RegExp('^Open chat with friend13'));
       expect(find.byType(OverflowBadge), findsOneWidget);
       expect(find.text('+2'), findsOneWidget);
       // The overflow friend is not seated until the arcs expand.
-      expect(find.bySemanticsLabel('Open chat with friend13'), findsNothing);
+      expect(friend13Node, findsNothing);
 
-      await tester.tap(find.byType(OverflowBadge));
+      await tester.tap(find.byType(OverflowBadge), warnIfMissed: false);
       for (var i = 0; i < 14; i++) {
         await tester.pump(const Duration(milliseconds: 100));
       }
-      expect(find.bySemanticsLabel('Open chat with friend13'), findsOneWidget);
+      expect(friend13Node, findsOneWidget);
 
       // Open the overflow chat — its body renders.
-      await tester.tap(find.bySemanticsLabel('Open chat with friend13'));
+      await tester.tap(friend13Node);
       for (var i = 0; i < 16; i++) {
         await tester.pump(const Duration(milliseconds: 100));
       }
