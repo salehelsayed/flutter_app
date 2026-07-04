@@ -27,6 +27,11 @@ class OrbitEditHandle extends StatefulWidget {
   final String label;
   final bool armed;
 
+  /// 202: false while the host band-hides this handle (Offstage). The pulse
+  /// freezes (drops its ticker) when invisible, so an off-band handle costs
+  /// nothing per frame — the element stays MOUNTED (TC-198-71 / TC-202-05).
+  final bool visible;
+
   /// 203 B3 — RAW avatarScale from the live geometry. The disc, glow and icon
   /// derive from ONE [effectiveDiscSize]; the interactive box ([hitTarget]),
   /// the Positioned centring and the tip-pill offset NEVER scale.
@@ -43,6 +48,7 @@ class OrbitEditHandle extends StatefulWidget {
     required this.knob,
     required this.label,
     required this.armed,
+    this.visible = true,
     this.scale = 1.0,
     required this.onArm,
     required this.onPanStart,
@@ -110,7 +116,8 @@ class _OrbitEditHandleState extends State<OrbitEditHandle>
     final mediaQuery = MediaQuery.maybeOf(context);
     final reduceMotion = (mediaQuery?.disableAnimations ?? false) ||
         (mediaQuery?.accessibleNavigation ?? false);
-    final shouldAnimate = !widget.armed && !reduceMotion;
+    // 202: a band-hidden handle freezes too — no ticker off-band (TC-202-05).
+    final shouldAnimate = !widget.armed && !reduceMotion && widget.visible;
     if (!shouldAnimate) {
       _pulse.stop();
       _pulse.value = 0;
@@ -163,53 +170,96 @@ class _OrbitEditHandleState extends State<OrbitEditHandle>
               onPanEnd: widget.onPanEnd,
               onPanCancel: widget.onPanCancel,
               child: Center(
-                child: AnimatedBuilder(
-                  animation: _pulse,
-                  builder: (context, _) {
-                    // pulseH keyframes: rest → peak → rest over one period.
-                    final wave =
-                        0.5 - 0.5 * math.cos(2 * math.pi * _pulse.value);
-                    return Container(
-                      key: ValueKey('orbit-handle-disc-${widget.knob.name}'),
-                      width: effectiveDisc,
-                      height: effectiveDisc,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: armed ? _tealFill : _greenFill,
-                        border: Border.all(
-                          color: armed ? _tealBorder : _greenBorder,
-                          width: 2,
-                        ),
-                        boxShadow: [
-                          if (armed)
-                            BoxShadow(
-                              color: _tealHalo,
-                              blurRadius: 20 * factor,
-                              spreadRadius: 4 * factor,
-                            )
-                          else
-                            BoxShadow(
-                              color: _greenHalo,
-                              blurRadius: (10 + 12 * wave) * factor,
-                              spreadRadius: (1 + 4 * wave) * factor,
+                child: SizedBox(
+                  width: effectiveDisc,
+                  height: effectiveDisc,
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    alignment: Alignment.center,
+                    children: [
+                      // 202 INV-202-1: the breathing halo is a pre-rasterized
+                      // max-size shadow whose OPACITY cross-fades — a constant
+                      // raster cost instead of a per-frame Gaussian re-blur.
+                      // Unarmed only; the armed handle keeps its static teal
+                      // halo on the disc below.
+                      if (!armed)
+                        AnimatedBuilder(
+                          animation: _pulse,
+                          builder: (context, child) {
+                            // pulseH keyframes: rest → peak → rest per period.
+                            final wave = 0.5 -
+                                0.5 * math.cos(2 * math.pi * _pulse.value);
+                            return Opacity(
+                              key: ValueKey(
+                                  'orbit-handle-halo-${widget.knob.name}'),
+                              opacity: wave.clamp(0.0, 1.0),
+                              child: child,
+                            );
+                          },
+                          child: RepaintBoundary(
+                            child: Container(
+                              width: effectiveDisc,
+                              height: effectiveDisc,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                boxShadow: [
+                                  // Peak of the old breathing range
+                                  // (rest 10/1 → peak 22/5), rasterized once.
+                                  BoxShadow(
+                                    color: _greenHalo,
+                                    blurRadius: 22 * factor,
+                                    spreadRadius: 5 * factor,
+                                  ),
+                                ],
+                              ),
                             ),
-                        ],
-                      ),
-                      child: Center(
-                        child: CustomPaint(
-                          key: ValueKey(
-                              'orbit-handle-icon-${widget.knob.name}'),
-                          // The painter normalizes by size/24, so the scaled
-                          // box scales the strokes with it.
-                          size: Size(16 * factor, 16 * factor),
-                          painter: OrbitHandleIconPainter(
-                            knob: widget.knob,
-                            color: armed ? _tealIcon : _greenIcon,
+                          ),
+                        ),
+                      // The disc: a CONSTANT resting (unarmed) / static (armed)
+                      // shadow — no per-frame blur re-raster.
+                      Container(
+                        key: ValueKey('orbit-handle-disc-${widget.knob.name}'),
+                        width: effectiveDisc,
+                        height: effectiveDisc,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: armed ? _tealFill : _greenFill,
+                          border: Border.all(
+                            color: armed ? _tealBorder : _greenBorder,
+                            width: 2,
+                          ),
+                          boxShadow: [
+                            if (armed)
+                              BoxShadow(
+                                color: _tealHalo,
+                                blurRadius: 20 * factor,
+                                spreadRadius: 4 * factor,
+                              )
+                            else
+                              // Resting halo (wave = 0 values) held constant.
+                              BoxShadow(
+                                color: _greenHalo,
+                                blurRadius: 10 * factor,
+                                spreadRadius: 1 * factor,
+                              ),
+                          ],
+                        ),
+                        child: Center(
+                          child: CustomPaint(
+                            key: ValueKey(
+                                'orbit-handle-icon-${widget.knob.name}'),
+                            // The painter normalizes by size/24, so the scaled
+                            // box scales the strokes with it.
+                            size: Size(16 * factor, 16 * factor),
+                            painter: OrbitHandleIconPainter(
+                              knob: widget.knob,
+                              color: armed ? _tealIcon : _greenIcon,
+                            ),
                           ),
                         ),
                       ),
-                    );
-                  },
+                    ],
+                  ),
                 ),
               ),
             ),

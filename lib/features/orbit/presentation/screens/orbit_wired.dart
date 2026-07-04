@@ -247,6 +247,12 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   late final AnimationController _collapseController;
   late final AnimationController _searchDockController;
   late final AnimationController _searchTriggerController;
+  // 202 INV-202-5: hoisted so OrbitScreen receives the SAME animation object
+  // across rebuilds. The old per-build CurvedAnimation registered a never-
+  // removed status listener on each shared controller every OrbitWired build.
+  late final CurvedAnimation _collapseAnimation;
+  late final CurvedAnimation _searchDockAnimation;
+  late final CurvedAnimation _searchTriggerAnimation;
 
   StreamSubscription<ConversationMessage>? _chatSubscription;
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
@@ -428,6 +434,12 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       duration: const Duration(milliseconds: 340),
       value: 1.0, // starts visible
     );
+    _collapseAnimation =
+        CurvedAnimation(parent: _collapseController, curve: _animCurve);
+    _searchDockAnimation =
+        CurvedAnimation(parent: _searchDockController, curve: _animCurve);
+    _searchTriggerAnimation =
+        CurvedAnimation(parent: _searchTriggerController, curve: Curves.ease);
 
     _loadIdentity();
     _loadQualityPreference();
@@ -487,6 +499,17 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   // live-update delivery). Contact-requests are NEVER buffered (they stay live).
   final Set<String> _dirtyFriendPeerIds = {};
   final Set<String> _dirtyGroupIds = {};
+
+  // 202: trailing-flush refresh coalescer (feed 162 precedent). Burst sources
+  // (the chat / group message streams + the Feed→Orbit dirty replay) enqueue
+  // here; a same-key burst inside the 32ms window dedupes to ONE snapshot load
+  // (+ ONE rejoin-states load per group) and ONE projection publish per flush.
+  final Set<String> _pendingFriendRefreshPeerIds = {};
+  final Set<String> _pendingGroupRefreshGroupIds = {};
+  Timer? _orbitRefreshCoalesceTimer;
+  static const Duration _orbitRefreshCoalesceWindow =
+      Duration(milliseconds: 32);
+
   bool _introsDirty = false;
   bool _invitesDirty = false;
   bool _wasOrbitActive = true;
@@ -529,14 +552,14 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       final peerIds = _dirtyFriendPeerIds.toList();
       _dirtyFriendPeerIds.clear();
       for (final peerId in peerIds) {
-        unawaited(_refreshOrbitFriend(peerId));
+        _enqueueOrbitFriendRefresh(peerId);
       }
     }
     if (_dirtyGroupIds.isNotEmpty) {
       final groupIds = _dirtyGroupIds.toList();
       _dirtyGroupIds.clear();
       for (final groupId in groupIds) {
-        unawaited(_refreshOrbitGroup(groupId));
+        _enqueueOrbitGroupRefresh(groupId);
       }
     }
     if (_introsDirty) {
@@ -765,6 +788,40 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       if (friend.isBlocked) blocked.add(friend.peerId);
     }
     return blocked;
+  }
+
+  // 202: enqueue a burst-driven friend/group refresh into the trailing-flush
+  // coalescer. Discrete user actions (contact CRUD, group lifecycle, route
+  // results) stay DIRECT — only the high-frequency message streams + the dirty
+  // replay funnel through here so a same-key burst costs one snapshot load.
+  void _enqueueOrbitFriendRefresh(String peerId) {
+    _pendingFriendRefreshPeerIds.add(peerId);
+    _orbitRefreshCoalesceTimer ??=
+        Timer(_orbitRefreshCoalesceWindow, _flushOrbitRefreshes);
+  }
+
+  void _enqueueOrbitGroupRefresh(String groupId) {
+    _pendingGroupRefreshGroupIds.add(groupId);
+    _orbitRefreshCoalesceTimer ??=
+        Timer(_orbitRefreshCoalesceWindow, _flushOrbitRefreshes);
+  }
+
+  void _flushOrbitRefreshes() {
+    _orbitRefreshCoalesceTimer = null;
+    if (_pendingFriendRefreshPeerIds.isNotEmpty) {
+      final peerIds = _pendingFriendRefreshPeerIds.toList();
+      _pendingFriendRefreshPeerIds.clear();
+      for (final peerId in peerIds) {
+        unawaited(_refreshOrbitFriend(peerId));
+      }
+    }
+    if (_pendingGroupRefreshGroupIds.isNotEmpty) {
+      final groupIds = _pendingGroupRefreshGroupIds.toList();
+      _pendingGroupRefreshGroupIds.clear();
+      for (final groupId in groupIds) {
+        unawaited(_refreshOrbitGroup(groupId));
+      }
+    }
   }
 
   Future<void> _refreshOrbitFriend(String peerId) async {
@@ -1651,7 +1708,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           _dirtyGroupIds.add(message.groupId);
           return;
         }
-        unawaited(_refreshOrbitGroup(message.groupId));
+        _enqueueOrbitGroupRefresh(message.groupId);
       },
       onError: (error) {
         emitFlowEvent(
@@ -1677,7 +1734,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           _dirtyFriendPeerIds.add(message.contactPeerId);
           return;
         }
-        unawaited(_refreshOrbitFriend(message.contactPeerId));
+        _enqueueOrbitFriendRefresh(message.contactPeerId);
       },
       onError: (error) {
         emitFlowEvent(
@@ -2257,6 +2314,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   @override
   void dispose() {
     _chatSubscription?.cancel();
+    // 202: drop any pending coalesced refresh so its timer never fires after
+    // teardown (TC-202-09d).
+    _orbitRefreshCoalesceTimer?.cancel();
     _contactUpdateSubscription?.cancel();
     _requestSubscription?.cancel();
     _groupMessageSubscription?.cancel();
@@ -2281,6 +2341,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _detachExternalRouteChangesListenable(
       widget.externalRouteChangesListenable,
     );
+    _collapseAnimation.dispose();
+    _searchDockAnimation.dispose();
+    _searchTriggerAnimation.dispose();
     _collapseController.dispose();
     _searchDockController.dispose();
     _searchTriggerController.dispose();
@@ -2309,18 +2372,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       scrollController: _scrollController,
       searchController: _searchController,
       searchFocusNode: _searchFocusNode,
-      collapseAnimation: CurvedAnimation(
-        parent: _collapseController,
-        curve: _animCurve,
-      ),
-      searchDockAnimation: CurvedAnimation(
-        parent: _searchDockController,
-        curve: _animCurve,
-      ),
-      searchTriggerAnimation: CurvedAnimation(
-        parent: _searchTriggerController,
-        curve: Curves.ease,
-      ),
+      collapseAnimation: _collapseAnimation,
+      searchDockAnimation: _searchDockAnimation,
+      searchTriggerAnimation: _searchTriggerAnimation,
       onClose: _onClose,
       onFriendTap: _onFriendTap,
       onFriendAvatarTap: _onFriendAvatarTap,

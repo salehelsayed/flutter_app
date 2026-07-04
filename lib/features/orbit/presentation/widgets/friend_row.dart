@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
@@ -178,6 +180,7 @@ class _AnimatedFriendRowState extends State<AnimatedFriendRow>
   late final AnimationController _controller;
   late final Animation<double> _fadeAnimation;
   late final Animation<Offset> _slideAnimation;
+  bool _entranceScheduled = false;
 
   @override
   void initState() {
@@ -191,8 +194,25 @@ class _AnimatedFriendRowState extends State<AnimatedFriendRow>
       begin: const Offset(0, 0.15),
       end: Offset.zero,
     ).animate(_fadeAnimation);
+  }
 
-    Future.delayed(Duration(milliseconds: widget.index * 20), () {
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_entranceScheduled) return;
+    _entranceScheduled = true;
+    // 202 INV-202-6: honor OS reduce-motion (jump to the end, no ticker) and
+    // clamp the stagger so a deep-list row is never invisible for seconds on a
+    // fling — index*20ms was unbounded (index 100 → 2s).
+    final mediaQuery = MediaQuery.maybeOf(context);
+    final reduceMotion = (mediaQuery?.disableAnimations ?? false) ||
+        (mediaQuery?.accessibleNavigation ?? false);
+    if (reduceMotion) {
+      _controller.value = 1.0;
+      return;
+    }
+    final delayMs = math.min(widget.index, 12) * 20;
+    Future.delayed(Duration(milliseconds: delayMs), () {
       if (mounted) _controller.forward();
     });
   }

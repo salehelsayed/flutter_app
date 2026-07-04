@@ -56,6 +56,12 @@ class InnerCircleInteractiveSurface extends StatefulWidget {
   /// `max(base, bottomClearance)` so it never sits under host chrome.
   final double bottomClearance;
 
+  /// 202 test-only rebuild probe: fired once per surface build so the
+  /// drag-single-rebuild test (TC-202-04) can count rebuilds. Behavior-inert
+  /// (precedent debugOnHeaderBuild / debugOnListBuild in orbit_wired). Never
+  /// wired in production.
+  final VoidCallback? debugOnSurfaceBuild;
+
   const InnerCircleInteractiveSurface({
     super.key,
     required this.userPeerId,
@@ -67,6 +73,7 @@ class InnerCircleInteractiveSurface extends StatefulWidget {
     this.onEditSessionActiveChanged,
     this.resetSignal,
     this.bottomClearance = 0,
+    this.debugOnSurfaceBuild,
   });
 
   @override
@@ -268,11 +275,24 @@ class _InnerCircleInteractiveSurfaceState
       signature: _measureSignature(constraints),
     );
     final prev = _canvasMeasurement;
-    if (prev == null ||
-        prev.origin != next.origin ||
-        prev.scrollOffset != next.scrollOffset ||
-        prev.signature != next.signature) {
+    if (prev == null) {
+      // First-frame path — the handle layer stays hidden until this lands
+      // (TC-198F-09), so a rebuild is required to reveal the seated handles.
       setState(() => _canvasMeasurement = next);
+      return;
+    }
+    final originMoved =
+        prev.origin != next.origin || prev.scrollOffset != next.scrollOffset;
+    if (originMoved) {
+      // The canvas actually moved (constraints / keyboard / scroll) — re-seat
+      // the handles with a rebuild.
+      setState(() => _canvasMeasurement = next);
+    } else if (prev.signature != next.signature) {
+      // 202 INV-202-2: a pure knob / geometry change bumps the signature but
+      // NOT the origin. The seat + anchor formulas already re-derive from
+      // _geometry in the drag's own frame (TC-198F-02), so refresh the stored
+      // measurement silently — this kills the second per-drag-frame rebuild.
+      _canvasMeasurement = next;
     }
   }
 
@@ -503,6 +523,7 @@ class _InnerCircleInteractiveSurfaceState
 
   @override
   Widget build(BuildContext context) {
+    widget.debugOnSurfaceBuild?.call();
     final readableColors = context.backgroundReadableColors;
     final l10n = AppLocalizations.of(context)!;
     final find = _find;
@@ -770,18 +791,26 @@ class _InnerCircleInteractiveSurfaceState
           ignoring: !visible,
           child: ExcludeSemantics(
             excluding: !visible,
-            child: OrbitEditHandle(
-              knob: knob,
-              label: _handleName(l10n, knob),
-              armed: _armed == knob,
-              // 203 B3: discs scale live with the avatar-size knob (raw value;
-              // the widget clamps). Flows through the drag's own setState.
-              scale: _geometry.avatarScale,
-              onArm: () => _armKnob(knob),
-              onPanStart: (d) => _onHandlePanStart(knob, d),
-              onPanUpdate: (d) => _onHandlePanUpdate(knob, d),
-              onPanEnd: (_) => _handleDragEnd(),
-              onPanCancel: _handleDragEnd,
+            child: RepaintBoundary(
+              // 202 INV-202-1: isolate each handle's pulsing halo raster from
+              // its sibling handles and the chrome layer.
+              key: ValueKey('orbit-handle-boundary-${knob.name}'),
+              child: OrbitEditHandle(
+                knob: knob,
+                label: _handleName(l10n, knob),
+                armed: _armed == knob,
+                // 202: freeze the pulse (drop its ticker) while band-hidden;
+                // the element stays mounted (TC-198-71 / TC-202-05).
+                visible: visible,
+                // 203 B3: discs scale live with the avatar-size knob (raw
+                // value; the widget clamps). Flows through the drag's setState.
+                scale: _geometry.avatarScale,
+                onArm: () => _armKnob(knob),
+                onPanStart: (d) => _onHandlePanStart(knob, d),
+                onPanUpdate: (d) => _onHandlePanUpdate(knob, d),
+                onPanEnd: (_) => _handleDragEnd(),
+                onPanCancel: _handleDragEnd,
+              ),
             ),
           ),
         ),

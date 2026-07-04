@@ -152,12 +152,18 @@ class OrbitalVisualization extends StatelessWidget {
           // Pinned triple (TC-198F-20): edit-idle 0.85, drag/flash 1.0 (the
           // dim itself lifts), non-emphasised edit callers keep the 0.45.
           opacity: editDim ? (editEmphasis ? 0.85 : 0.45) : 1.0,
-          child: CustomPaint(
-            painter: OrbitalRingPainter(
-              center: Offset(cx, cy),
-              ring1Radius: layout.ring1Radius,
-              ring2Radius: layout.ring2Radius,
-              arcs: arcRings,
+          // 202 INV-202-1: isolate the blurred ring raster INSIDE the editDim
+          // Opacity so the dim recomposites the cached rings instead of
+          // re-running the MaskFilter blur every animation frame.
+          child: RepaintBoundary(
+            key: const ValueKey('orbit-ring-boundary'),
+            child: CustomPaint(
+              painter: OrbitalRingPainter(
+                center: Offset(cx, cy),
+                ring1Radius: layout.ring1Radius,
+                ring2Radius: layout.ring2Radius,
+                arcs: arcRings,
+              ),
             ),
           ),
         ),
@@ -197,21 +203,26 @@ class OrbitalVisualization extends StatelessWidget {
         child: Opacity(
           key: ValueKey('orbit-node-dim-${seat.index}'),
           opacity: _dimFor(seat.index),
-          child: _buildNode(
-            item,
-            avatarSize: seat.avatarSize,
-            globalIndex: seat.index,
-            borderWidth: borderWidth,
-            borderColor: borderColor,
-            l10n: l10n,
-            unreadMotionEnabled: motionEnabled,
-            // Ring entrance keeps the pre-198 stagger; arc entrance uses the
-            // layout stagger and honors reduce-motion (INV-7).
-            entranceDelayMs: isArc ? seat.entranceDelayMs : null,
-            // 201 INV-201-4: ring entrances honor OS reduce-motion too. The
-            // pre-201 `: true` hard-code animated rings even under reduce-motion
-            // (documented by the arcs_test ":196 drain" comment).
-            entranceMotionEnabled: motionEnabled,
+          // 202 INV-202-1: isolate each node's raster INSIDE its dim layer so a
+          // dim tick recomposites the cached raster instead of re-rasterizing
+          // it, and the unread satellite rotation invalidates only its own node.
+          child: RepaintBoundary(
+            child: _buildNode(
+              item,
+              avatarSize: seat.avatarSize,
+              globalIndex: seat.index,
+              borderWidth: borderWidth,
+              borderColor: borderColor,
+              l10n: l10n,
+              unreadMotionEnabled: motionEnabled,
+              // Ring entrance keeps the pre-198 stagger; arc entrance uses the
+              // layout stagger and honors reduce-motion (INV-7).
+              entranceDelayMs: isArc ? seat.entranceDelayMs : null,
+              // 201 INV-201-4: ring entrances honor OS reduce-motion too. The
+              // pre-201 `: true` hard-code animated rings even under
+              // reduce-motion (documented by the arcs_test ":196 drain").
+              entranceMotionEnabled: motionEnabled,
+            ),
           ),
         ),
       ));
