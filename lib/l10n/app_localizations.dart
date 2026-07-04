@@ -3896,12 +3896,6 @@ abstract class AppLocalizations {
   /// **'{prefix}, but {issues}.'**
   String group_member_added_with_warnings(String prefix, String issues);
 
-  /// No description provided for @group_invite_joined.
-  ///
-  /// In en, this message translates to:
-  /// **'Joined {name}'**
-  String group_invite_joined(String name);
-
   /// No description provided for @group_invite_no_longer_available.
   ///
   /// In en, this message translates to:
@@ -3973,12 +3967,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Group already added'**
   String get group_invite_duplicate_group;
-
-  /// No description provided for @group_invite_joined_recovery.
-  ///
-  /// In en, this message translates to:
-  /// **'Joined {name}, but recovery is still catching up'**
-  String group_invite_joined_recovery(String name);
 
   /// No description provided for @group_invite_accepted_recovery.
   ///

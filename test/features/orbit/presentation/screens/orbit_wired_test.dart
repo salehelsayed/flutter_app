@@ -3361,7 +3361,8 @@ void main() {
           find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
           findsNothing,
         );
-        expect(find.text('Joined Writers Room'), findsOneWidget);
+        // 208: a navigating accept shows NO confirmation snackbar.
+        expect(find.byType(SnackBar), findsNothing);
 
         // B1: a successful accept auto-opens the joined group's conversation.
         expect(find.byType(GroupConversationWired), findsOneWidget);
@@ -3810,8 +3811,10 @@ void main() {
         final group = await groupRepo.getGroup(staleInvite.groupId);
         expect(group, isNotNull);
         expect(group!.name, 'test 3');
-        expect(find.text('Joined test 3'), findsOneWidget);
-        expect(find.text('Joined test 2'), findsNothing);
+        // 208: a navigating accept shows NO confirmation snackbar. The
+        // latest-vs-stale discriminator is preserved by the group.name and
+        // conversation-title asserts below.
+        expect(find.byType(SnackBar), findsNothing);
 
         // B1: accepting auto-opens the joined group's conversation ('test 3').
         expect(find.byType(GroupConversationWired), findsOneWidget);
@@ -3905,8 +3908,9 @@ void main() {
         final group = await groupRepo.getGroup(staleInvite.groupId);
         expect(group, isNotNull);
         expect(group!.name, 'test 3');
-        expect(find.text('Joined test 3'), findsOneWidget);
-        expect(find.text('Joined test 2'), findsNothing);
+        // 208: a navigating accept shows NO confirmation snackbar. The
+        // latest-vs-stale discriminator is preserved by the group.name asserts.
+        expect(find.byType(SnackBar), findsNothing);
       },
     );
 
@@ -3971,7 +3975,8 @@ void main() {
           find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
           findsNothing,
         );
-        expect(find.text('Joined Package Writers'), findsOneWidget);
+        // 208: a navigating accept shows NO confirmation snackbar.
+        expect(find.byType(SnackBar), findsNothing);
 
         final tombstone = await pendingInviteRepo.getWelcomeKeyPackageTombstone(
           packageId: defaultGroupWelcomeKeyPackageIdForDevice(localDeviceId)!,
@@ -4044,7 +4049,8 @@ void main() {
           find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
           findsNothing,
         );
-        expect(find.text('Joined Cursor Writers'), findsOneWidget);
+        // 208: a navigating accept shows NO confirmation snackbar.
+        expect(find.byType(SnackBar), findsNothing);
         expect(
           bridge.commandLog.where((cmd) => cmd == 'group:inboxRetrieveCursor'),
           hasLength(2),

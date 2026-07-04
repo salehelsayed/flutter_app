@@ -1031,7 +1031,8 @@ void main() {
           findsNothing,
         );
         expect(find.text('Book Club'), findsAtLeastNWidgets(1));
-        expect(find.text('Joined Book Club'), findsOneWidget);
+        // 208: a navigating accept shows NO confirmation snackbar.
+        expect(find.byType(SnackBar), findsNothing);
         expect(await msgRepo.getMessage('offline-msg-1'), isNotNull);
 
         final reactions = await reactionRepo.getReactionsForMessage(
@@ -1155,7 +1156,8 @@ void main() {
           bridge.commandLog.where((cmd) => cmd == 'group:inboxRetrieveCursor'),
           hasLength(5),
         );
-        expect(find.text('Joined test 3'), findsOneWidget);
+        // 208: a navigating accept shows NO confirmation snackbar.
+        expect(find.byType(SnackBar), findsNothing);
         expect(
           find.text('Invite accepted, but recovery is still catching up'),
           findsNothing,
@@ -1196,7 +1198,8 @@ void main() {
           findsNothing,
         );
         expect(find.text('Package Room'), findsOneWidget);
-        expect(find.text('Joined Package Room'), findsOneWidget);
+        // 208: a navigating accept shows NO confirmation snackbar.
+        expect(find.byType(SnackBar), findsNothing);
 
         final tombstone = await pendingInviteRepo.getWelcomeKeyPackageTombstone(
           packageId: defaultGroupWelcomeKeyPackageIdForDevice(localDeviceId)!,
@@ -1208,13 +1211,12 @@ void main() {
       },
     );
 
-    // TC-03 (plan 150) — strengthened from the prior shape-b sentinel (was
-    // ":1155 bridgeError accept … materializes the group for background
-    // recovery"). This IS the shape-b path `(bridgeError, group != null)` at
-    // use-case :562-566. TC-03 makes it NAVIGATE and surface the resurrected
-    // `group_invite_joined_recovery` copy as a navigate-time snackbar — NOT the
-    // generic "Failed to accept invite". Sibling reconciliation (C3): the old
-    // no-navigate behavior is replaced here so the sentinel and TC-03 agree.
+    // TC-03 (plan 150; reversed by 208) — the shape-b path
+    // `(bridgeError, group != null)` at use-case :562-566. It NAVIGATES into
+    // the materialized group and (per 208) surfaces NO snackbar — the former
+    // navigate-time `group_invite_joined_recovery` confirmation toast is
+    // removed. It must still take the success-like path, never the generic
+    // "Failed to accept invite".
     testWidgets(
       'TC-03 bridgeError with materialized group navigates and reports '
       'join-with-recovery (not failure)',
@@ -1272,96 +1274,17 @@ void main() {
         // cleanest discriminator that `_onGroupTap` fired.
         expect(find.byType(GroupConversationScreen), findsOneWidget);
 
-        // The join-with-recovery copy is surfaced as a navigate-time snackbar
-        // (the card is consumed/gone, so it cannot render inline). For a group
-        // named "Book Club" the rendered en string is — asserted at SHOW-TIME,
-        // while the default 4s snackbar is still fresh:
-        expect(
-          find.text('Joined Book Club, but recovery is still catching up'),
-          findsOneWidget,
-        );
-        // Never the generic failure copy on this success-like path.
+        // 208: the shape-b (join-with-recovery) navigating accept shows NO
+        // snackbar — the recovery confirmation toast is intentionally removed.
+        // The card is consumed/gone, so nothing renders inline either.
+        expect(find.byType(SnackBar), findsNothing);
+        // Still the success-like path — never the generic failure copy.
         expect(find.text('Failed to accept invite'), findsNothing);
 
         // Drain any remaining in-flight timers (snackbar auto-dismiss, the
         // backgrounded GroupConversationWired's own startup work) so there is
         // no "A Timer is still pending after the widget tree was disposed"
         // teardown error.
-        await pumpFrames(tester, count: 220);
-      },
-    );
-
-    // TC-03a (plan 150) — source-wiring lock: the previously-dead l10n key
-    // `group_invite_joined_recovery` is now reachable from the accept handler.
-    // The shape-b path (same setup as TC-03) is the ONLY surface that renders
-    // it; if the wiring is removed, the key goes dead again and this reds.
-    //
-    // Distinct angle from TC-03 (so this is NOT a strict subset): the shape-b
-    // flow runs under the GERMAN locale and asserts the LOCALIZED recovery
-    // copy. This locks the resurrected key's wiring across locales (en + de),
-    // not just the en render TC-03 already covers. Asserted at SHOW-TIME under
-    // the default-duration snackbar (no hard-coded long window).
-    testWidgets(
-      'TC-03a l10n source-wiring lock: group_invite_joined_recovery is '
-      'referenced from the accept handler (de locale)',
-      (tester) async {
-        final invite = makePendingInvite();
-        await pendingInviteRepo.savePendingInvite(invite);
-        bridge.responses['group:join'] = {
-          'ok': false,
-          'errorCode': 'JOIN_FAILED',
-        };
-        bridge.responses['group:publish'] = {
-          'ok': false,
-          'errorCode': 'PUBLISH_FAILED',
-        };
-        bridge.responses['group:inboxRetrieveCursor'] = {
-          'ok': false,
-          'errorCode': 'RELAY_UNAVAILABLE',
-          'errorMessage': 'relay unavailable',
-        };
-
-        // A German-locale MaterialApp around the same wired screen (the shared
-        // buildWidget() helper is pinned to en).
-        await tester.pumpWidget(
-          MaterialApp(
-            locale: const Locale('de'),
-            localizationsDelegates: AppLocalizations.localizationsDelegates,
-            supportedLocales: AppLocalizations.supportedLocales,
-            home: GroupListWired(
-              groupRepo: groupRepo,
-              msgRepo: msgRepo,
-              groupMessageListener: FakeGroupMessageListener(
-                messageStreamController.stream,
-              ),
-              bridge: bridge,
-              identityRepo: identityRepo,
-              contactRepo: contactRepo,
-              p2pService: p2pService,
-              groupInviteListener: groupInviteListener,
-            ),
-          ),
-        );
-        await pumpFrames(tester);
-
-        await tester.tap(
-          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
-        );
-        await pumpUntil(
-          tester,
-          () => find.byType(GroupConversationScreen).evaluate().isNotEmpty,
-        );
-
-        // The resurrected key is now rendered IN GERMAN (dead on HEAD → finds
-        // nothing). For a group named "Book Club" the de string is:
-        expect(
-          find.text(
-            'Book Club beigetreten, aber die Wiederherstellung holt noch auf',
-          ),
-          findsOneWidget,
-        );
-
-        // Drain remaining timers so there is no pending-timer teardown error.
         await pumpFrames(tester, count: 220);
       },
     );
@@ -1499,7 +1422,8 @@ void main() {
           findsNothing,
         );
         expect(find.text('Cursor Room'), findsOneWidget);
-        expect(find.text('Joined Cursor Room'), findsOneWidget);
+        // 208: a navigating accept shows NO confirmation snackbar.
+        expect(find.byType(SnackBar), findsNothing);
         expect(
           bridge.commandLog.where((cmd) => cmd == 'group:inboxRetrieveCursor'),
           hasLength(2),
@@ -1808,11 +1732,12 @@ void main() {
       );
     }
 
-    // TC-05 (plan 150) — scoped no-snackbar lock over the NON-navigating
-    // outcomes: a representative terminal (notFound) + repairPending + a
-    // keep-pending bridgeError each leave NO SnackBar. The navigating outcomes
-    // (success / joinedRecovery) keep a navigate-time snackbar and are NOT
-    // covered here (locked positively by TC-08 / TC-03).
+    // TC-05 (plan 150; note 208) — scoped no-snackbar lock over the
+    // NON-navigating outcomes: a representative terminal (notFound) +
+    // repairPending + a keep-pending bridgeError each leave NO SnackBar. Since
+    // 208 the navigating outcomes (success / joinedRecovery) ALSO show no
+    // snackbar (locked by TC-08 / TC-03); this lock stays scoped to the
+    // non-navigating rows.
     testWidgets(
       'TC-05 no accept snackbar for any non-navigating outcome (lock)',
       (tester) async {
@@ -1967,10 +1892,10 @@ void main() {
       },
     );
 
-    // TC-08 (plan 150) — preservation: a success accept removes the row,
-    // navigates, AND still shows the kept `group_invite_joined` "Joined <name>"
-    // snackbar (DECISION-2). Guards the switch rewrite against dropping the
-    // navigate arm or the kept success snackbar. Mirrors EK011/cursor.
+    // TC-08 (plan 150; reversed by 208) — preservation: a success accept
+    // removes the row and NAVIGATES, and (per 208) shows NO snackbar. Guards
+    // the switch rewrite against dropping the navigate arm. Mirrors
+    // EK011/cursor.
     testWidgets(
       'TC-08 success accept still navigates and removes the row (preservation)',
       (tester) async {
@@ -2004,8 +1929,8 @@ void main() {
           findsNothing,
         );
         expect(find.byType(GroupConversationScreen), findsOneWidget);
-        // The kept success snackbar (DECISION-2) — "Joined Preserve Room".
-        expect(find.text('Joined Preserve Room'), findsOneWidget);
+        // 208: a navigating accept shows NO confirmation snackbar.
+        expect(find.byType(SnackBar), findsNothing);
       },
     );
 

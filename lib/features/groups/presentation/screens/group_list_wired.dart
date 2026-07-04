@@ -367,14 +367,13 @@ class _GroupListWiredState extends State<GroupListWired>
       // Plan 150: each non-navigating accept outcome becomes per-row inline
       // state (live card for KEPT invites; ghost row for the 8 terminal
       // outcomes whose invite was just deleted) instead of a transient
-      // snackbar. The 2 navigating outcomes (success / join-with-recovery)
-      // keep a single navigate-time confirmation snackbar (DECISION-2).
+      // snackbar. 208 extends this to the 2 navigating outcomes (success /
+      // join-with-recovery): they navigate straight into the chat with NO
+      // snackbar (reverses DECISION-2's navigate-time confirmation toast).
       switch (result) {
         case AcceptPendingGroupInviteResult.success:
-          // Navigating: keep the success snackbar (DECISION-2).
-          _showSnackBar(
-            l10n.group_invite_joined(group?.name ?? invite.groupName),
-          );
+          // 208: navigating accept — move into the group chat with NO
+          // confirmation snackbar.
           if (group != null && mounted) {
             _onGroupTap(group);
           }
@@ -382,14 +381,10 @@ class _GroupListWiredState extends State<GroupListWired>
         case AcceptPendingGroupInviteResult.bridgeError:
           if (group != null) {
             // Shape-b: the group materialized but background recovery is still
-            // draining. Treat as join-with-recovery — navigate + a navigate-
-            // time snackbar (the card is consumed/gone, so no inline surface).
-            // Uses the default snackbar duration (parity with the `success`
-            // confirmation); the recovery copy is a brief acknowledgement, not
-            // a persistent banner.
-            _showSnackBar(
-              l10n.group_invite_joined_recovery(group.name),
-            );
+            // draining. Treat as join-with-recovery — navigate into the chat
+            // with NO snackbar (208 reverses DECISION-2's navigate-time
+            // recovery toast; the card is consumed/gone, so nothing renders
+            // inline either).
             if (mounted) {
               _onGroupTap(group);
             }

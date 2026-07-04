@@ -2438,11 +2438,6 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
-  String group_invite_joined(String name) {
-    return 'انضممت إلى $name';
-  }
-
-  @override
   String get group_invite_no_longer_available => 'لم تعد الدعوة متاحة';
 
   @override
@@ -2478,11 +2473,6 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get group_invite_duplicate_group => 'تمت إضافة المجموعة بالفعل';
-
-  @override
-  String group_invite_joined_recovery(String name) {
-    return 'انضممت إلى $name، لكن الاسترداد ما زال يلحق بالرسائل';
-  }
 
   @override
   String get group_invite_accepted_recovery =>

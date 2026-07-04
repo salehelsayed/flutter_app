@@ -2431,11 +2431,6 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
-  String group_invite_joined(String name) {
-    return '$name beigetreten';
-  }
-
-  @override
   String get group_invite_no_longer_available =>
       'Einladung nicht mehr verfügbar';
 
@@ -2475,11 +2470,6 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get group_invite_duplicate_group => 'Gruppe bereits hinzugefügt';
-
-  @override
-  String group_invite_joined_recovery(String name) {
-    return '$name beigetreten, aber die Wiederherstellung holt noch auf';
-  }
 
   @override
   String get group_invite_accepted_recovery =>

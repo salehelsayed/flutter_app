@@ -1405,14 +1405,6 @@
       }
     }
   },
-  "group_invite_joined": "Joined {name}",
-  "@group_invite_joined": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
   "group_invite_no_longer_available": "Invite no longer available",
   "group_invite_expired": "Invite expired",
   "group_invite_expired_ask_resend": "This invite has expired. Ask the group admin to send a fresh one.",
@@ -1425,14 +1417,6 @@
   "group_invite_waiting_for_key": "Waiting for key",
   "group_invite_invalid": "Invite is no longer valid",
   "group_invite_duplicate_group": "Group already added",
-  "group_invite_joined_recovery": "Joined {name}, but recovery is still catching up",
-  "@group_invite_joined_recovery": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
   "group_invite_accepted_recovery": "Invite accepted, but recovery is still catching up",
   "group_invite_accept_failed": "Failed to accept invite",
   "group_invite_declined": "Invite declined",

@@ -1419,7 +1419,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       final l10n = AppLocalizations.of(context)!;
       switch (result) {
         case AcceptPendingGroupInviteResult.success:
-          _showSnackBar('Joined ${group?.name ?? invite.groupName}');
+          // 208: navigating accept — open the group chat with NO confirmation
+          // snackbar.
           if (group != null && mounted) {
             _openGroupConversationFromModel(group);
           }

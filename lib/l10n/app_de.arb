@@ -1311,14 +1311,6 @@
       }
     }
   },
-  "group_invite_joined": "{name} beigetreten",
-  "@group_invite_joined": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
   "group_invite_no_longer_available": "Einladung nicht mehr verfügbar",
   "group_invite_expired": "Einladung abgelaufen",
   "group_invite_expired_ask_resend": "Diese Einladung ist abgelaufen. Bitte den Gruppen-Admin um eine neue.",
@@ -1331,14 +1323,6 @@
   "group_invite_waiting_for_key": "Warte auf Schlüssel",
   "group_invite_invalid": "Einladung ist nicht mehr gültig",
   "group_invite_duplicate_group": "Gruppe bereits hinzugefügt",
-  "group_invite_joined_recovery": "{name} beigetreten, aber die Wiederherstellung holt noch auf",
-  "@group_invite_joined_recovery": {
-    "placeholders": {
-      "name": {
-        "type": "String"
-      }
-    }
-  },
   "group_invite_accepted_recovery": "Einladung angenommen, aber die Wiederherstellung holt noch auf",
   "group_invite_accept_failed": "Einladung konnte nicht angenommen werden",
   "group_invite_declined": "Einladung abgelehnt",
