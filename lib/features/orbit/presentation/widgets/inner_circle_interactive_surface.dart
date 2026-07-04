@@ -222,6 +222,13 @@ class _InnerCircleInteractiveSurfaceState
 
   bool get _findActive => _findController.text.trim().isNotEmpty;
 
+  // 201: the persistent-nav [bottomClearance] floors the WHOLE find/edit chrome
+  // with a single uniform lift, so the staggered bottom bands (28/40/88/96/144
+  // that keep the corner steppers, find pill and chip strip mutually disjoint)
+  // never collapse under it — a per-band max(base, clearance) would pin the
+  // small bases (28/40) together and overlap the pill onto the chips/steppers.
+  double get _bandLift => math.max(0.0, widget.bottomClearance - 28.0);
+
   // ---- canvas measurement (198 fidelity) ----
   double get _currentOverhang => _overhangFor(_geometry);
 
@@ -705,7 +712,7 @@ class _InnerCircleInteractiveSurfaceState
         Positioned(
           key: const ValueKey('orbit-slot-step-decrease'),
           left: 22,
-          bottom: bottomInset + math.max(28.0, widget.bottomClearance),
+          bottom: bottomInset + 28.0 + _bandLift,
           child: _StepperButton(
             key: const ValueKey('orbit-edit-step-decrease'),
             icon: Icons.remove,
@@ -717,7 +724,7 @@ class _InnerCircleInteractiveSurfaceState
         Positioned(
           key: const ValueKey('orbit-slot-step-increase'),
           right: 22,
-          bottom: bottomInset + math.max(28.0, widget.bottomClearance),
+          bottom: bottomInset + 28.0 + _bandLift,
           child: _StepperButton(
             key: const ValueKey('orbit-edit-step-increase'),
             icon: Icons.add,
@@ -848,8 +855,7 @@ class _InnerCircleInteractiveSurfaceState
           key: const ValueKey('orbit-slot-find-chips'),
           left: 12,
           right: 12,
-          bottom:
-              bottomInset + math.max(lifted ? 144.0 : 96.0, widget.bottomClearance),
+          bottom: bottomInset + (lifted ? 144.0 : 96.0) + _bandLift,
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -877,8 +883,7 @@ class _InnerCircleInteractiveSurfaceState
         key: const ValueKey('orbit-slot-find-pill'),
         left: _findOpen ? 16 : null,
         right: 16,
-        bottom:
-            bottomInset + math.max(lifted ? 88.0 : 40.0, widget.bottomClearance),
+        bottom: bottomInset + (lifted ? 88.0 : 40.0) + _bandLift,
         child: _findOpen
             ? Container(
                 key: const ValueKey('orbit-find-pill'),

@@ -89,6 +89,7 @@ void main() {
     Locale locale = const Locale('en'),
     bool resizeToAvoidBottomInset = true,
     TargetPlatform? platform,
+    double bottomClearance = 0,
   }) =>
       MaterialApp(
         locale: locale,
@@ -108,6 +109,7 @@ void main() {
             secureKeyStore: store,
             onEditSessionActiveChanged: editEvents.add,
             resetSignal: resetSignal,
+            bottomClearance: bottomClearance,
           ),
         ),
       );
@@ -1875,6 +1877,59 @@ void main() {
           tester.getSize(find.byKey(const ValueKey('orbit-find-pill')));
       expect(size.width, greaterThanOrEqualTo(44));
       expect(size.height, greaterThanOrEqualTo(44));
+      await settle(tester);
+    });
+
+    // TC-201-14 — a non-zero bottomClearance lifts the WHOLE find/edit stack by
+    // a uniform amount and must NOT collapse the staggered bands. Regression:
+    // `max(base, clearance)` pinned the small-base elements (pill 40 / steppers
+    // 28) up to the clearance, overlapping the chip strip / each other whenever
+    // the host clearance (58-88 in persistent nav) exceeded those bases.
+    testWidgets('TC-201-14 bottomClearance preserves the staggered bottom bands',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(20), bottomClearance: 88));
+      await settle(tester);
+      await expandBadge(tester);
+      await longPressBg(tester);
+      await settle(tester);
+      await tester.tap(handleF(OrbitKnob.orbitGap), warnIfMissed: false);
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('orbit-find-pill')));
+      await tester.pump();
+      await tester.enterText(find.byType(TextField), 'friend1');
+      await tester.pump();
+
+      final surface =
+          tester.getRect(find.byType(InnerCircleInteractiveSurface));
+      final chipKeys = [
+        for (final el in find
+            .byWidgetPredicate((w) =>
+                w.key is ValueKey<String> &&
+                (w.key! as ValueKey<String>)
+                    .value
+                    .startsWith('orbit-find-chip-'))
+            .evaluate())
+          (el.widget.key! as ValueKey<String>).value,
+      ];
+      expect(chipKeys.length, greaterThanOrEqualTo(2));
+      final rects = <String, Rect>{
+        'decrease': tester
+            .getRect(find.byKey(const ValueKey('orbit-edit-step-decrease'))),
+        'increase': tester
+            .getRect(find.byKey(const ValueKey('orbit-edit-step-increase'))),
+        'pill': tester.getRect(find.byKey(const ValueKey('orbit-find-pill'))),
+        for (final k in chipKeys) k: tester.getRect(find.byKey(ValueKey(k))),
+      };
+      final names = rects.keys.toList();
+      for (var i = 0; i < names.length; i++) {
+        for (var j = i + 1; j < names.length; j++) {
+          expect(rects[names[i]]!.overlaps(rects[names[j]]!), isFalse,
+              reason: '${names[i]} x ${names[j]} disjoint under clearance');
+        }
+      }
+      // The lowest band (steppers) sits at/above the clearance floor.
+      expect(surface.bottom - rects['decrease']!.bottom,
+          greaterThanOrEqualTo(88 - 2));
       await settle(tester);
     });
   });
