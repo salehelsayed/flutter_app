@@ -1011,6 +1011,95 @@ void main() {
       await settle(tester);
     });
 
+    // ── 203 B3: handle discs scale with the avatar-size knob ──────────────
+
+    testWidgets(
+        'TC-203-09 seeded avatarScale 1.4 renders 42px discs — collapsed av '
+        'AND expanded og handles', (tester) async {
+      // Seed BEFORE pump — _restoreGeometry runs once from initState, a later
+      // write is a silent no-op.
+      final store = FakeSecureKeyStore();
+      await store.write(OrbitGeometryPrefs.storageKey, '1.4|1.0|1.0|9|1.0');
+      await tester.pumpWidget(host(_friends(8), store: store));
+      await settle(tester);
+      await longPressBg(tester);
+      await tester.pump();
+      final avDisc = tester.getSize(
+          find.byKey(const ValueKey('orbit-handle-disc-avatarScale')));
+      expect(avDisc.width, closeTo(42, 0.5),
+          reason: 'collapsed-mode disc scales from the persisted store');
+      await settle(tester);
+
+      // Expanded-only witness: the og handle only mounts with arcs expanded
+      // (one ctor site serves both modes, but the wiring must be SEEN there).
+      final store2 = FakeSecureKeyStore();
+      await store2.write(OrbitGeometryPrefs.storageKey, '1.4|1.0|1.0|9|1.0');
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+      await tester.pumpWidget(host(_friends(20), store: store2));
+      await settle(tester);
+      await expandBadge(tester);
+      await longPressBg(tester);
+      await tester.pump();
+      final ogDisc = tester.getSize(
+          find.byKey(const ValueKey('orbit-handle-disc-orbitGap')));
+      expect(ogDisc.width, closeTo(42, 0.5),
+          reason: 'expanded-mode disc scales from the persisted store');
+      await settle(tester);
+    });
+
+    testWidgets(
+        'TC-203-10 live application: av clamp-drag grows the disc same-pump',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(8)));
+      await settle(tester);
+      await longPressBg(tester);
+      await tester.tap(handleF(OrbitKnob.avatarScale));
+      await tester.pump();
+      expect(
+          tester
+              .getSize(find.byKey(
+                  const ValueKey('orbit-handle-disc-avatarScale')))
+              .width,
+          closeTo(30, 0.5));
+
+      // Saturates the 1.4 clamp regardless of the ~18px tester slop
+      // (TC-198-22 precedent).
+      await tester.drag(handleF(OrbitKnob.avatarScale), const Offset(0, -80));
+      await tester.pump(); // ONE pump — same-frame application, no lag
+      expect(
+          tester
+              .getSize(find.byKey(
+                  const ValueKey('orbit-handle-disc-avatarScale')))
+              .width,
+          closeTo(42, 0.5),
+          reason: 'disc grew in the drag\'s own build');
+      expect(find.text('1.4×'), findsOneWidget,
+          reason: 'value-bubble corroboration');
+      await settle(tester);
+    });
+
+    testWidgets(
+        'TC-203-11 bubble hugs the SCALED disc at 1.4 (shared '
+        'effectiveDiscSize lock)', (tester) async {
+      final store = FakeSecureKeyStore();
+      await store.write(OrbitGeometryPrefs.storageKey, '1.4|1.0|1.0|9|1.0');
+      await tester.pumpWidget(host(_friends(8), store: store));
+      await settle(tester);
+      await longPressBg(tester);
+      await settle(tester);
+      await tester.tap(handleF(OrbitKnob.avatarScale), warnIfMissed: false);
+      await tester.pump();
+      final avCenter = tester.getCenter(handleF(OrbitKnob.avatarScale));
+      final bubble = tester.getRect(bubbleF());
+      // Bubble bottom = disc center − (effectiveDiscSize/2 + 6) = center − 27.
+      // A partial fix that scales the widget but leaves the bubble clamp on
+      // discSize/2 sits at center − 21 and stays red here.
+      expect(avCenter.dy - bubble.bottom, closeTo(27, 2.0),
+          reason: 'bubble bottom hugs the 42px disc: half 21 + 6px gap');
+      await settle(tester);
+    });
+
     testWidgets('TC-198-20S −/+ steppers land at the bottom corners while armed',
         (tester) async {
       await tester.pumpWidget(host(_friends(8)));

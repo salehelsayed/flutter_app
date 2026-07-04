@@ -762,6 +762,9 @@ class _InnerCircleInteractiveSurfaceState
               knob: knob,
               label: _handleName(l10n, knob),
               armed: _armed == knob,
+              // 203 B3: discs scale live with the avatar-size knob (raw value;
+              // the widget clamps). Flows through the drag's own setState.
+              scale: _geometry.avatarScale,
               onArm: () => _armKnob(knob),
               onPanStart: (d) => _onHandlePanStart(knob, d),
               onPanUpdate: (d) => _onHandlePanUpdate(knob, d),
@@ -790,8 +793,10 @@ class _InnerCircleInteractiveSurfaceState
     // Clamped into the surface band: the bubble stays PRESENT while its
     // handle is band-hidden (TC-198-71) but never paints past the surface
     // (TC-198F-28).
-    final rawBottom =
-        constraints.maxHeight - pos.dy + OrbitEditHandle.discSize / 2 + 6;
+    final rawBottom = constraints.maxHeight -
+        pos.dy +
+        OrbitEditHandle.effectiveDiscSize(_geometry.avatarScale) / 2 +
+        6;
     final cx = pos.dx.clamp(24.0, constraints.maxWidth - 24.0);
     return Positioned(
       left: cx - 100,

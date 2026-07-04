@@ -36,10 +36,12 @@ void main() {
         ),
       );
 
-  Widget handle(OrbitKnob knob, {bool armed = false}) => OrbitEditHandle(
+  Widget handle(OrbitKnob knob, {bool armed = false, double scale = 1.0}) =>
+      OrbitEditHandle(
         knob: knob,
         label: labels[knob]!,
         armed: armed,
+        scale: scale,
         onArm: () {},
         onPanStart: (_) {},
         onPanUpdate: (_) {},
@@ -66,7 +68,7 @@ void main() {
       expect(size.width, greaterThanOrEqualTo(44), reason: knob.name);
       expect(size.height, greaterThanOrEqualTo(44), reason: knob.name);
 
-      // ~30px circular disc.
+      // ~30px circular disc (at default scale 1.0).
       final discSize = tester.getSize(discF(knob));
       expect(discSize.width, closeTo(30, 0.5), reason: knob.name);
       expect(discSize.height, closeTo(30, 0.5), reason: knob.name);
@@ -111,6 +113,57 @@ void main() {
     expect(deco.boxShadow!.first.color, const Color(0xCC4ECDC4));
     expect(deco.color, const Color(0x4D4ECDC4),
         reason: 'armed disc gets the translucent teal fill');
+  });
+
+  testWidgets(
+      'TC-203-07 disc scales with avatarScale: 42 at 1.4, floor 24 at 0.6, '
+      'hit target stays 44', (tester) async {
+    // 30×0.6 = 18 clamps to the 24 floor — the ONLY observable clamp end
+    // (30×1.4 = 42 == ceiling exactly, so the ceiling never binds; clamp
+    // mutations must be asserted against the 0.6 row).
+    for (final (scale, expected) in [(1.4, 42.0), (0.6, 24.0)]) {
+      await tester.pumpWidget(
+          wrap(handle(OrbitKnob.avatarScale, scale: scale)));
+      await tester.pump();
+
+      final discSize = tester.getSize(discF(OrbitKnob.avatarScale));
+      expect(discSize.width, closeTo(expected, 0.5), reason: 'scale $scale');
+      expect(discSize.height, closeTo(expected, 0.5), reason: 'scale $scale');
+
+      // The interactive box never scales (INV-F7: all anchor/position math
+      // keys off hitTarget).
+      final target =
+          tester.getSize(find.byKey(const ValueKey('orbit-handle-avatarScale')));
+      expect(target.width, greaterThanOrEqualTo(44), reason: 'scale $scale');
+      expect(target.height, greaterThanOrEqualTo(44), reason: 'scale $scale');
+    }
+  });
+
+  testWidgets('TC-203-08 glow and icon scale by the disc factor',
+      (tester) async {
+    const factor = 42.0 / 30.0; // effectiveDiscSize(1.4) / discSize
+
+    // Unarmed leg FIRST (fresh mount): read blur on the first un-advanced
+    // frame (wave = 0 → 10×factor; precedent TC-198-59 resting read).
+    await tester.pumpWidget(wrap(handle(OrbitKnob.avatarScale, scale: 1.4)));
+    await tester.pump();
+    final unarmed = discDeco(tester, OrbitKnob.avatarScale);
+    expect(unarmed.boxShadow!.first.blurRadius, closeTo(10 * factor, 0.01),
+        reason: 'unarmed resting blur scales by the disc factor');
+
+    // Armed freezes the pulse → STATIC blur/spread.
+    await tester.pumpWidget(
+        wrap(handle(OrbitKnob.avatarScale, armed: true, scale: 1.4)));
+    await tester.pump();
+    final armed = discDeco(tester, OrbitKnob.avatarScale);
+    expect(armed.boxShadow!.first.blurRadius, closeTo(20 * factor, 0.01));
+    expect(armed.boxShadow!.first.spreadRadius, closeTo(4 * factor, 0.01));
+
+    // Icon paints in a scaled box; the painter normalizes by size/24, so no
+    // painter change is under test — only the Size passed to it.
+    final icon = tester.widget<CustomPaint>(
+        find.byKey(const ValueKey('orbit-handle-icon-avatarScale')));
+    expect(icon.size, const Size(16 * factor, 16 * factor));
   });
 
   testWidgets('TC-198-59 unarmed pulse animates the halo', (tester) async {

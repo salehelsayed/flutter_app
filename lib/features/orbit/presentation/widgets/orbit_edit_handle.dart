@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.dart';
 
 /// 198 fidelity — one geometry-anchored edit handle (mockup `.handle`,
-/// html:192-228): a 30px glowing circular disc with a per-knob stroke icon,
-/// seated ON the orbit geometry by the host surface, with an always-visible
-/// tip-pill (localized name + letter-free direction glyph) hanging below.
+/// html:192-228): a glowing circular disc (30px at default scale; 203 B3
+/// scales it with the avatar-size knob via [effectiveDiscSize]) with a
+/// per-knob stroke icon, seated ON the orbit geometry by the host surface,
+/// with an always-visible tip-pill (localized name + letter-free direction
+/// glyph) hanging below.
 ///
 /// Unarmed: green border + a breathing green halo (`pulseH`). Armed: static
 /// teal halo + translucent teal fill — "the +/− steppers are wired to me".
@@ -24,6 +26,12 @@ class OrbitEditHandle extends StatefulWidget {
   /// one Semantics label. Glyphs never enter it.
   final String label;
   final bool armed;
+
+  /// 203 B3 — RAW avatarScale from the live geometry. The disc, glow and icon
+  /// derive from ONE [effectiveDiscSize]; the interactive box ([hitTarget]),
+  /// the Positioned centring and the tip-pill offset NEVER scale.
+  final double scale;
+
   final VoidCallback onArm;
   final GestureDragStartCallback onPanStart;
   final GestureDragUpdateCallback onPanUpdate;
@@ -35,6 +43,7 @@ class OrbitEditHandle extends StatefulWidget {
     required this.knob,
     required this.label,
     required this.armed,
+    this.scale = 1.0,
     required this.onArm,
     required this.onPanStart,
     required this.onPanUpdate,
@@ -45,8 +54,15 @@ class OrbitEditHandle extends StatefulWidget {
   /// The interactive box the host centres on the geometry anchor (INV-F7).
   static const double hitTarget = 44.0;
 
-  /// Visual disc diameter (mockup 30px).
+  /// Visual disc diameter at default scale (mockup 30px) — see
+  /// [effectiveDiscSize] for the rendered size.
   static const double discSize = 30.0;
+
+  /// 203 B3 — the ONE shared disc-size helper: raw avatarScale in, rendered
+  /// disc diameter out, clamped to [24, 42]. The host's bubble clamp uses it
+  /// too, so the bubble always hugs the disc actually painted.
+  static double effectiveDiscSize(double scale) =>
+      (discSize * scale).clamp(24.0, 42.0);
 
   @override
   State<OrbitEditHandle> createState() => _OrbitEditHandleState();
@@ -114,6 +130,8 @@ class _OrbitEditHandleState extends State<OrbitEditHandle>
   @override
   Widget build(BuildContext context) {
     final armed = widget.armed;
+    final effectiveDisc = OrbitEditHandle.effectiveDiscSize(widget.scale);
+    final factor = effectiveDisc / OrbitEditHandle.discSize;
     final glyph = widget.knob == OrbitKnob.maxPerArc ? '⟷' : '↕';
     final tipStyle = TextStyle(
       fontSize: 9.5,
@@ -153,8 +171,8 @@ class _OrbitEditHandleState extends State<OrbitEditHandle>
                         0.5 - 0.5 * math.cos(2 * math.pi * _pulse.value);
                     return Container(
                       key: ValueKey('orbit-handle-disc-${widget.knob.name}'),
-                      width: OrbitEditHandle.discSize,
-                      height: OrbitEditHandle.discSize,
+                      width: effectiveDisc,
+                      height: effectiveDisc,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: armed ? _tealFill : _greenFill,
@@ -164,16 +182,16 @@ class _OrbitEditHandleState extends State<OrbitEditHandle>
                         ),
                         boxShadow: [
                           if (armed)
-                            const BoxShadow(
+                            BoxShadow(
                               color: _tealHalo,
-                              blurRadius: 20,
-                              spreadRadius: 4,
+                              blurRadius: 20 * factor,
+                              spreadRadius: 4 * factor,
                             )
                           else
                             BoxShadow(
                               color: _greenHalo,
-                              blurRadius: 10 + 12 * wave,
-                              spreadRadius: 1 + 4 * wave,
+                              blurRadius: (10 + 12 * wave) * factor,
+                              spreadRadius: (1 + 4 * wave) * factor,
                             ),
                         ],
                       ),
@@ -181,7 +199,9 @@ class _OrbitEditHandleState extends State<OrbitEditHandle>
                         child: CustomPaint(
                           key: ValueKey(
                               'orbit-handle-icon-${widget.knob.name}'),
-                          size: const Size(16, 16),
+                          // The painter normalizes by size/24, so the scaled
+                          // box scales the strokes with it.
+                          size: Size(16 * factor, 16 * factor),
                           painter: OrbitHandleIconPainter(
                             knob: widget.knob,
                             color: armed ? _tealIcon : _greenIcon,
