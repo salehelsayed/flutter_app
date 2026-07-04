@@ -357,6 +357,18 @@ void main() {
       expect(find.text('friend7'), findsOneWidget);
     });
 
+    // TC-205-08 — 205 item 5: double-tap labels are high-contrast (textPrimary
+    // + a drop shadow), not the pale translucent textMuted with no scrim.
+    testWidgets('TC-205-08 double-tap labels are high-contrast', (tester) async {
+      await tester.pumpWidget(expandable(_friends(13), labelsVisible: true));
+      await settle(tester);
+      final label = tester.widget<Text>(find.text('friend0'));
+      expect(label.style?.color, BackgroundReadableColors.dark.textPrimary,
+          reason: 'HEAD renders the pale textMuted');
+      expect(label.style?.shadows, isNotEmpty,
+          reason: 'HEAD renders no shadow/scrim over the dark canvas');
+    });
+
     // Entrance must relinquish opacity (not pin nodes mid-entrance).
     testWidgets('after entrance an arc node is fully opaque', (tester) async {
       await tester.pumpWidget(expandable(_friends(16), startExpanded: true));

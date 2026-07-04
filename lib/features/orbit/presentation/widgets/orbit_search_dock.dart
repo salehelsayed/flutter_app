@@ -55,7 +55,8 @@ class OrbitSearchDock extends StatelessWidget {
                       Icon(
                         Icons.search,
                         size: 18,
-                        color: readableColors.iconMuted,
+                        // 205 item 3: bright lens over the near-black surface.
+                        color: readableColors.iconPrimary,
                       ),
                       const SizedBox(width: 10),
                       Expanded(

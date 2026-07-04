@@ -79,8 +79,6 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
-import 'package:flutter_app/features/orbit3/orbit3_prototype.dart';
-import 'package:flutter_app/features/orbit3/presentation/screens/orbit3_screen.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/settings/presentation/navigation/settings_route_transition.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
@@ -2672,22 +2670,6 @@ class _FeedWiredState extends State<FeedWired>
   @override
   Widget build(BuildContext context) {
     final activeTab = _activeTab;
-    // Temporary Orbit3 "One Circle" visuals prototype — direct-mount when its
-    // tab is active (bypasses the 2-pane Feed/Orbit swipe host on purpose).
-    if (kOrbit3PrototypeEnabled && activeTab == AppShellTab.orbit3) {
-      return Scaffold(
-        resizeToAvoidBottomInset: false,
-        body: Orbit3Screen(
-          userPeerId: _peerId,
-          userAvatarBytes: _avatarBytes,
-          backgroundPreference: widget.appShellController.backgroundPreference,
-          activeTab: activeTab,
-          onSwitchView: _onSwitchView,
-          // Persist the dimension steppers across launches (plan 169).
-          secureKeyStore: widget.secureKeyStore,
-        ),
-      );
-    }
     // 163 (navigation-hangs-2): each pane is isolated in its own RepaintBoundary
     // (built here, OUTSIDE the AnimatedBuilder.builder, so swipe identity holds)
     // to contain a rebuild/repaint of one pane from dirtying the other.

@@ -1,8 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
-import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
-import 'package:flutter_app/features/orbit3/orbit3_prototype.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'nav_bar_button.dart';
 import 'nav_bar_theme.dart';
@@ -84,15 +82,6 @@ class FeedNavigationBar extends StatelessWidget {
                     onTap: () => onSwitchView('orbit'),
                     badgeCount: orbitBadgeCount,
                   ),
-                  if (kOrbit3PrototypeEnabled) ...[
-                    const SizedBox(width: NavBarTheme.buttonSpacing),
-                    NavBarButton(
-                      label: l10n.nav_orbit3,
-                      svgAsset: 'assets/icons/nav_orbit.svg',
-                      isActive: activeTab == AppShellTab.orbit3,
-                      onTap: () => onSwitchView(AppShellTab.orbit3),
-                    ),
-                  ],
                 ],
               );
             },

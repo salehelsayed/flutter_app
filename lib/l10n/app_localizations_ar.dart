@@ -488,6 +488,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get orbit_find_pill_semantics => 'ابحث عن شخص في دائرتك';
 
   @override
+  String get orbit_find_close => 'إغلاق البحث';
+
+  @override
   String orbit_chip_provenance_ring(int ring) {
     return 'حلقة $ring';
   }
@@ -2726,87 +2729,4 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get contact_profile_message_button => 'مراسلة';
-
-  @override
-  String get nav_orbit3 => 'أوربت٣';
-
-  @override
-  String get orbit2_prototype_chip => 'نموذج · بيانات تجريبية';
-
-  @override
-  String get orbit2_search_hint => 'ابحث عن صديق';
-
-  @override
-  String get orbit2_template_gravity => 'جاذبية';
-
-  @override
-  String get orbit2_mock_chat_demo_chip => 'تجريبي · الرسائل لا تُرسل';
-
-  @override
-  String get orbit2_mock_chat_send_disabled => 'الإرسال معطّل في هذه المعاينة';
-
-  @override
-  String get orbit2_mock_chat_composer_hint => 'رسالة';
-
-  @override
-  String orbit2_group_members(int count) {
-    return 'مجموعة · $count أعضاء';
-  }
-
-  @override
-  String get orbit2_show_less => 'عرض أقل';
-
-  @override
-  String get orbit2_you => 'أنت';
-
-  @override
-  String get orbit2_names_show => 'إظهار الأسماء';
-
-  @override
-  String get orbit2_names_hide => 'إخفاء الأسماء';
-
-  @override
-  String orbit2_open_chat_with(String name) {
-    return 'افتح محادثة مع $name';
-  }
-
-  @override
-  String get orbit3_constellation_zodiac => 'الأبراج';
-
-  @override
-  String get orbit3_constellation_galaxy => 'المجرة';
-
-  @override
-  String get orbit3_listens => 'يستمع';
-
-  @override
-  String get orbit3_talks => 'يتحدث';
-
-  @override
-  String orbit3_released_to_drawer(String name) {
-    return 'تم نقل $name إلى الدرج';
-  }
-
-  @override
-  String get orbit3_inner_short => 'داخلي';
-
-  @override
-  String get orbit3_all_friends => 'كل الأصدقاء';
-
-  @override
-  String get orbit3_drag_up_to_search => 'اسحب للأعلى للبحث';
-
-  @override
-  String get orbit3_find_anyone => 'ابحث عن أي شخص';
-
-  @override
-  String get orbit3_pin => 'تثبيت';
-
-  @override
-  String orbit3_pulled_into_inner_tier(String name) {
-    return 'تم سحب $name إلى الطبقة الداخلية';
-  }
-
-  @override
-  String get orbit3_tap_to_open => 'اضغط للفتح';
 }

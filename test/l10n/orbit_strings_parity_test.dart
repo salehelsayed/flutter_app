@@ -43,6 +43,8 @@ void main() {
     'orbit_chip_provenance_ring',
     'orbit_chip_provenance_arc',
     'orbit_chip_open',
+    // 205 TC-205-11 — the inner-circle find-pill close X Semantics label.
+    'orbit_find_close',
   ];
 
   Map<String, Object?> loadArb(String locale) {
@@ -88,6 +90,26 @@ void main() {
             reason: '$locale ARB re-introduces removed orbit key "$key"',
           );
         }
+      }
+    });
+
+    test('TC-205-11 orbit2/orbit3/nav_orbit3 keys are absent from every ARB',
+        () {
+      // 205 item 7 — the deleted mock prototypes take all their l10n with them,
+      // atomically across every locale (a one-sided removal would trip
+      // l10n_integrity parity).
+      for (final locale in const ['en', 'ar', 'de']) {
+        final bundle = loadArb(locale);
+        final leftover = bundle.keys
+            .where((k) =>
+                k.startsWith('orbit2_') ||
+                k.startsWith('orbit3_') ||
+                k.startsWith('@orbit2_') ||
+                k.startsWith('@orbit3_') ||
+                k == 'nav_orbit3')
+            .toList();
+        expect(leftover, isEmpty,
+            reason: '$locale ARB still carries prototype keys: $leftover');
       }
     });
 

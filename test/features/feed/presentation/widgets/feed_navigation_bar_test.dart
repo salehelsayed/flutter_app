@@ -3,13 +3,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_button.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_theme.dart';
-import 'package:flutter_app/features/orbit3/orbit3_prototype.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
-  // Feed + Orbit are always present; the Orbit3 prototype tab is a flag-gated
-  // additive button.
-  final int expectedButtons = 2 + (kOrbit3PrototypeEnabled ? 1 : 0);
+  // 205 item 7 — the Orbit3 prototype tab is deleted; the bar is exactly
+  // Feed + Orbit.
+  const int expectedButtons = 2;
   // SVG assets may not load in test environment — suppress render errors.
   void suppressAssetErrors(WidgetTester tester) {
     final oldHandler = FlutterError.onError;
@@ -33,7 +32,7 @@ void main() {
   );
 
   group('FeedNavigationBar', () {
-    testWidgets('renders Feed/Orbit (+ Orbit3 prototype) NavBarButtons', (
+    testWidgets('TC-205-10 renders exactly Feed/Orbit, no Orbit2/Orbit3', (
       tester,
     ) async {
       suppressAssetErrors(tester);
@@ -49,10 +48,7 @@ void main() {
       expect(find.text('Feed'), findsOneWidget);
       expect(find.text('Orbit'), findsOneWidget);
       expect(find.text('Orbit2'), findsNothing);
-      expect(
-        find.text('Orbit3'),
-        kOrbit3PrototypeEnabled ? findsOneWidget : findsNothing,
-      );
+      expect(find.text('Orbit3'), findsNothing);
       expect(find.text('Remember'), findsNothing);
       expect(find.text('Posts'), findsNothing);
     });

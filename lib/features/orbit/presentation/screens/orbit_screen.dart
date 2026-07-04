@@ -184,8 +184,10 @@ class _OrbitIntroEntry {
 
 /// Pure UI layout for the Orbit screen.
 ///
-/// Receives all state and callbacks from OrbitWired.
-class OrbitScreen extends StatelessWidget {
+/// Receives all state and callbacks from OrbitWired. 205 item 6 — a thin
+/// StatefulWidget that owns the transient inner-circle edit flag; the layout
+/// itself lives in [_OrbitScreenView].
+class OrbitScreen extends StatefulWidget {
   final ValueListenable<OrbitHeaderProjection> headerProjectionListenable;
   final ValueListenable<OrbitViewProjection> listProjectionListenable;
   final ScrollController scrollController;
@@ -300,6 +302,180 @@ class OrbitScreen extends StatelessWidget {
     this.innerCircleResetListenable,
   });
 
+  @override
+  State<OrbitScreen> createState() => _OrbitScreenState();
+}
+
+/// 205 item 6 — owns the transient "inner-circle is editing" flag so the view
+/// toggle (Layer 1b) and QR chrome (Layer 1c) unmount while the user sculpts the
+/// inner circle, then re-mount when the session ends. The flag is derived from
+/// the surface's own edit-active signal, which is ALSO forwarded upward to the
+/// 198 feed↔orbit swipe-yield gate (INV-7 preserved).
+class _OrbitScreenState extends State<OrbitScreen> {
+  bool _innerEditing = false;
+
+  void _onInnerEdit(bool active) {
+    if (_innerEditing != active) {
+      setState(() => _innerEditing = active);
+    }
+    widget.onInnerCircleEditSessionChanged?.call(active);
+  }
+
+  @override
+  Widget build(BuildContext context) => _OrbitScreenView(
+        headerProjectionListenable: widget.headerProjectionListenable,
+        listProjectionListenable: widget.listProjectionListenable,
+        scrollController: widget.scrollController,
+        searchController: widget.searchController,
+        searchFocusNode: widget.searchFocusNode,
+        collapseAnimation: widget.collapseAnimation,
+        searchDockAnimation: widget.searchDockAnimation,
+        searchTriggerAnimation: widget.searchTriggerAnimation,
+        onClose: widget.onClose,
+        onFriendTap: widget.onFriendTap,
+        onFriendAvatarTap: widget.onFriendAvatarTap,
+        onMyQR: widget.onMyQR,
+        onScanQR: widget.onScanQR,
+        onSearchOpen: widget.onSearchOpen,
+        onSearchClose: widget.onSearchClose,
+        onSearchChanged: widget.onSearchChanged,
+        onSearchClear: widget.onSearchClear,
+        onFilterChanged: widget.onFilterChanged,
+        onArchiveFriend: widget.onArchiveFriend,
+        onUnarchiveFriend: widget.onUnarchiveFriend,
+        onBlockFriend: widget.onBlockFriend,
+        onUnblockFriend: widget.onUnblockFriend,
+        onDeleteFriend: widget.onDeleteFriend,
+        openRowNotifier: widget.openRowNotifier,
+        onGroupTap: widget.onGroupTap,
+        onCreateGroup: widget.onCreateGroup,
+        onArchiveGroup: widget.onArchiveGroup,
+        onUnarchiveGroup: widget.onUnarchiveGroup,
+        onDeleteGroup: widget.onDeleteGroup,
+        onRetryStuckRejoinGroup: widget.onRetryStuckRejoinGroup,
+        onLeaveStuckGroup: widget.onLeaveStuckGroup,
+        viewMode: widget.viewMode,
+        onToggleView: widget.onToggleView,
+        activeTab: widget.activeTab,
+        onSwitchView: widget.onSwitchView,
+        feedUnreadCountListenable: widget.feedUnreadCountListenable,
+        onIntroBannerTap: widget.onIntroBannerTap,
+        onHeaderBuild: widget.onHeaderBuild,
+        onListBuild: widget.onListBuild,
+        backgroundPreference: widget.backgroundPreference,
+        readableToneOverride: widget.readableToneOverride,
+        secureKeyStore: widget.secureKeyStore,
+        innerCircleResetListenable: widget.innerCircleResetListenable,
+        innerEditing: _innerEditing,
+        onInnerEdit: _onInnerEdit,
+      );
+}
+
+/// Pure UI layout for the Orbit screen (all state + callbacks supplied by
+/// [OrbitScreen]/[OrbitWired]). Split out of [OrbitScreen] (205 item 6) so the
+/// parent can hold the transient inner-circle edit flag and gate the toggle /
+/// QR chrome on it.
+class _OrbitScreenView extends StatelessWidget {
+  final ValueListenable<OrbitHeaderProjection> headerProjectionListenable;
+  final ValueListenable<OrbitViewProjection> listProjectionListenable;
+  final ScrollController scrollController;
+  final TextEditingController searchController;
+  final FocusNode searchFocusNode;
+  final Animation<double> collapseAnimation;
+  final Animation<double> searchDockAnimation;
+  final Animation<double> searchTriggerAnimation;
+  final VoidCallback onClose;
+  final void Function(OrbitFriend) onFriendTap;
+  final void Function(OrbitFriend)? onFriendAvatarTap;
+  final VoidCallback onMyQR;
+  final VoidCallback onScanQR;
+  final VoidCallback onSearchOpen;
+  final VoidCallback onSearchClose;
+  final void Function(String) onSearchChanged;
+  final VoidCallback onSearchClear;
+  final void Function(String) onFilterChanged;
+  final void Function(OrbitFriend) onArchiveFriend;
+  final void Function(OrbitFriend) onUnarchiveFriend;
+  final void Function(OrbitFriend) onBlockFriend;
+  final void Function(OrbitFriend) onUnblockFriend;
+  final void Function(OrbitFriend) onDeleteFriend;
+  final ValueNotifier<Key?> openRowNotifier;
+  final void Function(OrbitGroup) onGroupTap;
+  final void Function(GroupType) onCreateGroup;
+  final void Function(OrbitGroup) onArchiveGroup;
+  final void Function(OrbitGroup) onUnarchiveGroup;
+  final void Function(OrbitGroup) onDeleteGroup;
+  final void Function(OrbitGroup)? onRetryStuckRejoinGroup;
+  final void Function(OrbitGroup)? onLeaveStuckGroup;
+  final OrbitViewMode viewMode;
+  final VoidCallback? onToggleView;
+  final String? activeTab;
+  final void Function(String)? onSwitchView;
+  final ValueListenable<int>? feedUnreadCountListenable;
+  final VoidCallback? onIntroBannerTap;
+  final VoidCallback? onHeaderBuild;
+  final VoidCallback? onListBuild;
+  final BackgroundPreference backgroundPreference;
+  final BackgroundReadableTone? readableToneOverride;
+  final SecureKeyStore? secureKeyStore;
+  final Listenable? innerCircleResetListenable;
+
+  /// 205 item 6 — whether the inner-circle surface is mid edit-session (gates
+  /// the toggle + QR chrome).
+  final bool innerEditing;
+
+  /// 205 item 6 — the surface's edit-active signal sink (flips [innerEditing]
+  /// AND forwards to the 198 swipe-yield gate).
+  final void Function(bool) onInnerEdit;
+
+  const _OrbitScreenView({
+    required this.headerProjectionListenable,
+    required this.listProjectionListenable,
+    required this.scrollController,
+    required this.searchController,
+    required this.searchFocusNode,
+    required this.collapseAnimation,
+    required this.searchDockAnimation,
+    required this.searchTriggerAnimation,
+    required this.onClose,
+    required this.onFriendTap,
+    required this.onFriendAvatarTap,
+    required this.onMyQR,
+    required this.onScanQR,
+    required this.onSearchOpen,
+    required this.onSearchClose,
+    required this.onSearchChanged,
+    required this.onSearchClear,
+    required this.onFilterChanged,
+    required this.onArchiveFriend,
+    required this.onUnarchiveFriend,
+    required this.onBlockFriend,
+    required this.onUnblockFriend,
+    required this.onDeleteFriend,
+    required this.openRowNotifier,
+    required this.onGroupTap,
+    required this.onCreateGroup,
+    required this.onArchiveGroup,
+    required this.onUnarchiveGroup,
+    required this.onDeleteGroup,
+    required this.onRetryStuckRejoinGroup,
+    required this.onLeaveStuckGroup,
+    required this.viewMode,
+    required this.onToggleView,
+    required this.activeTab,
+    required this.onSwitchView,
+    required this.feedUnreadCountListenable,
+    required this.onIntroBannerTap,
+    required this.onHeaderBuild,
+    required this.onListBuild,
+    required this.backgroundPreference,
+    required this.readableToneOverride,
+    required this.secureKeyStore,
+    required this.innerCircleResetListenable,
+    required this.innerEditing,
+    required this.onInnerEdit,
+  });
+
   bool get _showsPersistentNav => activeTab != null && onSwitchView != null;
 
   double _persistentNavBottomOffset(BuildContext context) {
@@ -399,7 +575,9 @@ class OrbitScreen extends StatelessWidget {
             // can flip the view either way. Only mounted when a toggle handler
             // is wired, so bare-OrbitScreen pumps are unaffected. Physical
             // top-left (RTL-safe) — see OrbitViewToggleButton.
-            if (onToggleView != null)
+            // 205 item 6: hidden while the inner-circle surface is editing, so
+            // it never occludes the edit Reset chrome nor steals its taps.
+            if (onToggleView != null && !innerEditing)
               OrbitViewToggleButton(
                 viewMode: viewMode,
                 onToggle: onToggleView!,
@@ -411,7 +589,10 @@ class OrbitScreen extends StatelessWidget {
             // toggle) and BEFORE the ExpandableFab so an open FAB scrim wins a
             // tap over the chrome. Icon-only with l10n button Semantics; the
             // full-width band is tap-transparent outside the two buttons.
-            OrbitQrChromeButtons(onMyQR: onMyQR, onScanQR: onScanQR),
+            // 205 item 6: also hidden during an inner-circle edit session so the
+            // centered edit banner clears the top-center QR band.
+            if (!innerEditing)
+              OrbitQrChromeButtons(onMyQR: onMyQR, onScanQR: onScanQR),
 
             // Layer 2: Close button — standalone mode only. When the
             // persistent Feed/Orbit nav is shown, the Feed tab is the way back,
@@ -567,7 +748,7 @@ class OrbitScreen extends StatelessWidget {
           onFriendTap: onFriendTap,
           onGroupTap: onGroupTap,
           secureKeyStore: secureKeyStore,
-          onEditSessionActiveChanged: onInnerCircleEditSessionChanged,
+          onEditSessionActiveChanged: onInnerEdit,
           resetSignal: innerCircleResetListenable,
           bottomClearance: _innerCircleBottomClearance(context),
         );
@@ -1099,7 +1280,8 @@ class OrbitScreen extends StatelessWidget {
       child: Center(
         child: Column(
           children: [
-            Icon(Icons.search, size: 40, color: readableColors.iconMuted),
+            // 205 item 3: bright no-results lens over the near-black surface.
+            Icon(Icons.search, size: 40, color: readableColors.iconPrimary),
             const SizedBox(height: 16),
             Text(
               l10n.orbit_no_friends_matching(searchQuery),

@@ -868,6 +868,12 @@ abstract class AppLocalizations {
   /// **'Find someone in your circle'**
   String get orbit_find_pill_semantics;
 
+  /// No description provided for @orbit_find_close.
+  ///
+  /// In en, this message translates to:
+  /// **'Close search'**
+  String get orbit_find_close;
+
   /// No description provided for @orbit_chip_provenance_ring.
   ///
   /// In en, this message translates to:
@@ -4423,156 +4429,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Message'**
   String get contact_profile_message_button;
-
-  /// No description provided for @nav_orbit3.
-  ///
-  /// In en, this message translates to:
-  /// **'Orbit3'**
-  String get nav_orbit3;
-
-  /// No description provided for @orbit2_prototype_chip.
-  ///
-  /// In en, this message translates to:
-  /// **'Prototype · sample data'**
-  String get orbit2_prototype_chip;
-
-  /// No description provided for @orbit2_search_hint.
-  ///
-  /// In en, this message translates to:
-  /// **'Find a friend'**
-  String get orbit2_search_hint;
-
-  /// No description provided for @orbit2_template_gravity.
-  ///
-  /// In en, this message translates to:
-  /// **'Gravity'**
-  String get orbit2_template_gravity;
-
-  /// No description provided for @orbit2_mock_chat_demo_chip.
-  ///
-  /// In en, this message translates to:
-  /// **'Demo · messages aren\'t sent'**
-  String get orbit2_mock_chat_demo_chip;
-
-  /// No description provided for @orbit2_mock_chat_send_disabled.
-  ///
-  /// In en, this message translates to:
-  /// **'Sending is disabled in this preview'**
-  String get orbit2_mock_chat_send_disabled;
-
-  /// No description provided for @orbit2_mock_chat_composer_hint.
-  ///
-  /// In en, this message translates to:
-  /// **'Message'**
-  String get orbit2_mock_chat_composer_hint;
-
-  /// No description provided for @orbit2_group_members.
-  ///
-  /// In en, this message translates to:
-  /// **'Group · {count} members'**
-  String orbit2_group_members(int count);
-
-  /// No description provided for @orbit2_show_less.
-  ///
-  /// In en, this message translates to:
-  /// **'Show less'**
-  String get orbit2_show_less;
-
-  /// No description provided for @orbit2_you.
-  ///
-  /// In en, this message translates to:
-  /// **'You'**
-  String get orbit2_you;
-
-  /// No description provided for @orbit2_names_show.
-  ///
-  /// In en, this message translates to:
-  /// **'Show names'**
-  String get orbit2_names_show;
-
-  /// No description provided for @orbit2_names_hide.
-  ///
-  /// In en, this message translates to:
-  /// **'Hide names'**
-  String get orbit2_names_hide;
-
-  /// No description provided for @orbit2_open_chat_with.
-  ///
-  /// In en, this message translates to:
-  /// **'Open chat with {name}'**
-  String orbit2_open_chat_with(String name);
-
-  /// No description provided for @orbit3_constellation_zodiac.
-  ///
-  /// In en, this message translates to:
-  /// **'Zodiac'**
-  String get orbit3_constellation_zodiac;
-
-  /// No description provided for @orbit3_constellation_galaxy.
-  ///
-  /// In en, this message translates to:
-  /// **'Galaxy'**
-  String get orbit3_constellation_galaxy;
-
-  /// No description provided for @orbit3_listens.
-  ///
-  /// In en, this message translates to:
-  /// **'listens'**
-  String get orbit3_listens;
-
-  /// No description provided for @orbit3_talks.
-  ///
-  /// In en, this message translates to:
-  /// **'talks'**
-  String get orbit3_talks;
-
-  /// No description provided for @orbit3_released_to_drawer.
-  ///
-  /// In en, this message translates to:
-  /// **'{name} released to the drawer'**
-  String orbit3_released_to_drawer(String name);
-
-  /// No description provided for @orbit3_inner_short.
-  ///
-  /// In en, this message translates to:
-  /// **'Inner'**
-  String get orbit3_inner_short;
-
-  /// No description provided for @orbit3_all_friends.
-  ///
-  /// In en, this message translates to:
-  /// **'All friends'**
-  String get orbit3_all_friends;
-
-  /// No description provided for @orbit3_drag_up_to_search.
-  ///
-  /// In en, this message translates to:
-  /// **'drag up to search'**
-  String get orbit3_drag_up_to_search;
-
-  /// No description provided for @orbit3_find_anyone.
-  ///
-  /// In en, this message translates to:
-  /// **'Find anyone'**
-  String get orbit3_find_anyone;
-
-  /// No description provided for @orbit3_pin.
-  ///
-  /// In en, this message translates to:
-  /// **'Pin'**
-  String get orbit3_pin;
-
-  /// No description provided for @orbit3_pulled_into_inner_tier.
-  ///
-  /// In en, this message translates to:
-  /// **'{name} pulled into your inner tier'**
-  String orbit3_pulled_into_inner_tier(String name);
-
-  /// No description provided for @orbit3_tap_to_open.
-  ///
-  /// In en, this message translates to:
-  /// **'tap to open'**
-  String get orbit3_tap_to_open;
 }
 
 class _AppLocalizationsDelegate

@@ -494,6 +494,11 @@ class _InnerCircleInteractiveSurfaceState
     if (_findFocus.hasFocus) _findFocus.unfocus();
   }
 
+  // 205 item 1: the find pill's trailing X — collapse the pill AND dismiss the
+  // keyboard (Signal-style), the discoverable counterpart to the background-tap
+  // close path (_onBackgroundTap), which the keyboard/orbit make unhittable.
+  void _closeFind() => setState(_closeFindInternal);
+
   void _openItemFromChip(OrbitFindMatch match) {
     // Chip tap opens the chat, ends any edit session, persists the knobs.
     if (_editing) setState(() => _setEditing(false));
@@ -532,6 +537,16 @@ class _InnerCircleInteractiveSurfaceState
     return LayoutBuilder(
       builder: (context, constraints) {
         _lastConstraints = constraints;
+        // 205 item 4: vertically center the collapsed base canvas within the
+        // surface (the "orbit sits too high" fix). Only the collapsed 320px
+        // canvas centers; once the arcs expand they inflate the canvas beyond the
+        // viewport, so it top-anchors and scrolls exactly as pre-205 — preserving
+        // the same-frame handle-seat + planted-circle edit invariants (TC-198F-02
+        // / TC-198F-27 / TC-198-71) untouched, while a short default population
+        // sits mid-surface (TC-205-05).
+        final centerTopInset = _overflowExpanded
+            ? 0.0
+            : math.max(0.0, (constraints.maxHeight - kOrbitCanvasSize) / 2);
         if (_canvasMeasurement == null ||
             _canvasMeasurement!.signature != _measureSignature(constraints)) {
           _scheduleCanvasMeasure();
@@ -549,6 +564,10 @@ class _InnerCircleInteractiveSurfaceState
                 child: ConstrainedBox(
                   constraints:
                       BoxConstraints(minHeight: constraints.maxHeight),
+                  // The ConstrainedBox floors the Stack at the viewport height so
+                  // a short population is centered (via the leading spacer below)
+                  // while an overflow-tall population scrolls (the Stack grows
+                  // past the floor and the scroll view takes over).
                   child: Stack(
                     children: [
                       Positioned.fill(
@@ -565,6 +584,8 @@ class _InnerCircleInteractiveSurfaceState
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
+                            // 205 item 4: fixed centering spacer (see build()).
+                            SizedBox(height: centerTopInset),
                             OrbitalVisualization(
                               userPeerId: widget.userPeerId,
                               userAvatarBytes: widget.userAvatarBytes,
@@ -877,6 +898,10 @@ class _InnerCircleInteractiveSurfaceState
     // Armed-state bottom re-flow (TC-198F-17/18): the corner steppers own the
     // bottomInset+28 band, so the pill and chip strip lift clear while armed.
     final lifted = _editing && _armed != null;
+    // 205 item 2: while the keyboard is up it already covers the persistent-nav
+    // band, so the pill anchors just above the keyboard (small base gap, no
+    // _bandLift) instead of floating ~104px clear of it.
+    final kbUp = bottomInset > 0;
     return [
       // Chip strip (hit-transparent container; only chips are tappable).
       if (find.chips.isNotEmpty)
@@ -912,19 +937,22 @@ class _InnerCircleInteractiveSurfaceState
         key: const ValueKey('orbit-slot-find-pill'),
         left: _findOpen ? 16 : null,
         right: 16,
-        bottom: bottomInset + (lifted ? 88.0 : 40.0) + _bandLift,
+        bottom: bottomInset +
+            (lifted ? 88.0 : (kbUp ? 10.0 : 40.0)) +
+            (kbUp ? 0.0 : _bandLift),
         child: _findOpen
             ? Container(
                 key: const ValueKey('orbit-find-pill'),
-                constraints: const BoxConstraints(minHeight: 48),
-                padding: const EdgeInsets.symmetric(horizontal: 14),
+                constraints: const BoxConstraints(minHeight: 56),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 decoration: BoxDecoration(
                   color: colors.glassSurface,
                   borderRadius: BorderRadius.circular(24),
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.search, size: 20, color: colors.iconMuted),
+                    Icon(Icons.search, size: 22, color: colors.iconPrimary),
                     const SizedBox(width: 10),
                     Expanded(
                       child: TextField(
@@ -932,11 +960,28 @@ class _InnerCircleInteractiveSurfaceState
                         focusNode: _findFocus,
                         onChanged: _onFindChanged,
                         style: TextStyle(
-                            fontSize: 15, color: colors.textPrimary),
+                            fontSize: 16, color: colors.textPrimary),
                         decoration: InputDecoration(
                           isDense: true,
                           border: InputBorder.none,
                           hintText: l10n.orbit_find_placeholder,
+                        ),
+                      ),
+                    ),
+                    // 205 item 1: a discoverable close X — collapse the pill and
+                    // dismiss the keyboard, so the user never depends on the
+                    // undiscoverable background tap.
+                    GestureDetector(
+                      key: const ValueKey('orbit-find-close'),
+                      behavior: HitTestBehavior.opaque,
+                      onTap: _closeFind,
+                      child: Semantics(
+                        button: true,
+                        label: l10n.orbit_find_close,
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 8),
+                          child: Icon(Icons.close,
+                              size: 20, color: colors.iconPrimary),
                         ),
                       ),
                     ),
@@ -958,7 +1003,8 @@ class _InnerCircleInteractiveSurfaceState
                       color: colors.glassSurface,
                       shape: BoxShape.circle,
                     ),
-                    child: Icon(Icons.search, size: 20, color: colors.iconMuted),
+                    child:
+                        Icon(Icons.search, size: 20, color: colors.iconPrimary),
                   ),
                 ),
               ),

@@ -357,10 +357,17 @@ class OrbitalVisualization extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           textAlign: TextAlign.center,
+          // 205 item 5: high-contrast labels — bright textPrimary + a weighted
+          // face + a drop shadow scrim so the name reads over the dark canvas
+          // (HEAD rendered the pale translucent textMuted with no shadow).
           style: TextStyle(
             fontSize: 9,
-            color: readableColors.textMuted,
+            fontWeight: FontWeight.w600,
+            color: readableColors.textPrimary,
             height: 1,
+            shadows: const [
+              Shadow(blurRadius: 3, color: Color(0xCC000000)),
+            ],
           ),
         ),
       ),

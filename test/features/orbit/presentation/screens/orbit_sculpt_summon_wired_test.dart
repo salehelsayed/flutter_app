@@ -11,7 +11,9 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_view_mode.dart';
 import 'package:flutter_app/features/orbit/domain/orbit_arc_layout.dart';
+import 'package:flutter_app/features/orbit/presentation/screens/orbit_screen.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/inner_circle_interactive_surface.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_avatar.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_ring_painter.dart';
@@ -21,6 +23,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/l10n/app_localizations_en.dart';
 
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
+import 'orbit_screen_pump_harness.dart';
 
 /// 198 F6 — the interactive Inner-Circle surface (Sculpt & Summon) driven
 /// through its real production widget: edit session, geometry handles, find,
@@ -2003,6 +2006,110 @@ void main() {
           c0 + (visAfter - visBefore),
           reason: 'only in-band handles keep a running pulse ticker');
       await settle(tester, count: 4);
+    });
+  });
+
+  // ==========================================================================
+  // 205 — vertical centering (item 4) + edit-mode chrome suppression (item 6),
+  // driven through the real OrbitScreen (toggle + QR + edit-active forward).
+  // ==========================================================================
+  group('205 — canvas centering + edit-mode chrome (TC-205)', () {
+    void suppressAssetErrors(WidgetTester tester) {
+      final old = FlutterError.onError;
+      FlutterError.onError = (details) {
+        final msg = details.exceptionAsString();
+        if (msg.contains('Unable to load asset') ||
+            msg.contains('SvgPicture') ||
+            msg.contains('ImageFilter')) {
+          return;
+        }
+        old?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = old);
+    }
+
+    Widget innerScreen({
+      int friends = 8,
+      VoidCallback? onToggleView,
+      ValueChanged<bool>? onInnerEdit,
+    }) =>
+        buildOrbitScreenHarness(
+          viewMode: OrbitViewMode.innerCircle,
+          header:
+              OrbitHeaderProjection(userPeerId: 'me', innerItems: _friends(friends)),
+          onToggleView: onToggleView ?? () {},
+          onMyQR: () {},
+          onScanQR: () {},
+          onInnerEdit: onInnerEdit,
+        );
+
+    testWidgets('TC-205-05 orbit canvas is vertically centered', (tester) async {
+      suppressAssetErrors(tester);
+      tester.view.physicalSize = const Size(400, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(innerScreen(friends: 3));
+      await settle(tester);
+
+      final origin = canvasOrigin(tester);
+      final centerY = origin.dy + 160; // kOrbitCanvasCenter
+      final surface =
+          tester.getRect(find.byType(InnerCircleInteractiveSurface));
+      final mid = surface.center.dy;
+      // HEAD top-anchors the canvas → its centre lands ~160px below the safe
+      // top, far above the surface midpoint.
+      expect((centerY - mid).abs(), lessThan(40),
+          reason: 'canvas centre within ~40px of the surface midpoint');
+      await settle(tester);
+    });
+
+    testWidgets(
+        'TC-205-06 entering edit hides the toggle + QR chrome; Reset '
+        'unobstructed', (tester) async {
+      suppressAssetErrors(tester);
+      await tester.pumpWidget(innerScreen(onInnerEdit: (_) {}));
+      await settle(tester);
+
+      // Idle: the toggle + QR chrome are present.
+      expect(find.byKey(const ValueKey('orbit-view-toggle')), findsOneWidget);
+      expect(find.byKey(const ValueKey('orbit-my-qr-button')), findsOneWidget);
+      expect(find.byKey(const ValueKey('orbit-scan-button')), findsOneWidget);
+
+      await longPressBg(tester); // enter edit
+      expect(bannerF(), findsOneWidget, reason: 'edit session active');
+
+      // Both the view toggle (Layer 1b) and the QR chrome (Layer 1c) unmount.
+      expect(find.byKey(const ValueKey('orbit-view-toggle')), findsNothing,
+          reason: 'toggle hidden while editing');
+      expect(find.byKey(const ValueKey('orbit-my-qr-button')), findsNothing,
+          reason: 'QR chrome hidden while editing');
+      expect(find.byKey(const ValueKey('orbit-scan-button')), findsNothing);
+
+      // Reset is present and unobstructed — the toggle no longer wins its band.
+      final resetF = find.byKey(const ValueKey('orbit-edit-reset'));
+      expect(resetF, findsOneWidget);
+      await tester.tap(resetF); // no occlusion, no throw
+      await tester.pump();
+      expect(bannerF(), findsOneWidget, reason: 'still editing after Reset');
+      await settle(tester);
+    });
+
+    testWidgets(
+        'TC-205-07 edit-active still forwarded upward (198 swipe-yield '
+        'preserved)', (tester) async {
+      suppressAssetErrors(tester);
+      final edits = <bool>[];
+      await tester.pumpWidget(innerScreen(onInnerEdit: edits.add));
+      await settle(tester);
+
+      await longPressBg(tester);
+      expect(edits, [true], reason: 'enter forwards true to the host');
+
+      await tapAwayBg(tester);
+      expect(edits, [true, false],
+          reason: 'exit forwards false (the 198 swipe-yield gate)');
+      await settle(tester);
     });
   });
 }

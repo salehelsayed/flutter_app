@@ -474,6 +474,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get orbit_find_pill_semantics => 'Find someone in your circle';
 
   @override
+  String get orbit_find_close => 'Close search';
+
+  @override
   String orbit_chip_provenance_ring(int ring) {
     return 'Ring $ring';
   }
@@ -2668,88 +2671,4 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get contact_profile_message_button => 'Message';
-
-  @override
-  String get nav_orbit3 => 'Orbit3';
-
-  @override
-  String get orbit2_prototype_chip => 'Prototype · sample data';
-
-  @override
-  String get orbit2_search_hint => 'Find a friend';
-
-  @override
-  String get orbit2_template_gravity => 'Gravity';
-
-  @override
-  String get orbit2_mock_chat_demo_chip => 'Demo · messages aren\'t sent';
-
-  @override
-  String get orbit2_mock_chat_send_disabled =>
-      'Sending is disabled in this preview';
-
-  @override
-  String get orbit2_mock_chat_composer_hint => 'Message';
-
-  @override
-  String orbit2_group_members(int count) {
-    return 'Group · $count members';
-  }
-
-  @override
-  String get orbit2_show_less => 'Show less';
-
-  @override
-  String get orbit2_you => 'You';
-
-  @override
-  String get orbit2_names_show => 'Show names';
-
-  @override
-  String get orbit2_names_hide => 'Hide names';
-
-  @override
-  String orbit2_open_chat_with(String name) {
-    return 'Open chat with $name';
-  }
-
-  @override
-  String get orbit3_constellation_zodiac => 'Zodiac';
-
-  @override
-  String get orbit3_constellation_galaxy => 'Galaxy';
-
-  @override
-  String get orbit3_listens => 'listens';
-
-  @override
-  String get orbit3_talks => 'talks';
-
-  @override
-  String orbit3_released_to_drawer(String name) {
-    return '$name released to the drawer';
-  }
-
-  @override
-  String get orbit3_inner_short => 'Inner';
-
-  @override
-  String get orbit3_all_friends => 'All friends';
-
-  @override
-  String get orbit3_drag_up_to_search => 'drag up to search';
-
-  @override
-  String get orbit3_find_anyone => 'Find anyone';
-
-  @override
-  String get orbit3_pin => 'Pin';
-
-  @override
-  String orbit3_pulled_into_inner_tier(String name) {
-    return '$name pulled into your inner tier';
-  }
-
-  @override
-  String get orbit3_tap_to_open => 'tap to open';
 }

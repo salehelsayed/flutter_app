@@ -483,6 +483,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get orbit_find_pill_semantics => 'Jemanden in deinem Kreis finden';
 
   @override
+  String get orbit_find_close => 'Suche schließen';
+
+  @override
   String orbit_chip_provenance_ring(int ring) {
     return 'Ring $ring';
   }
@@ -2738,89 +2741,4 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get contact_profile_message_button => 'Nachricht';
-
-  @override
-  String get nav_orbit3 => 'Orbit3';
-
-  @override
-  String get orbit2_prototype_chip => 'Prototyp · Beispieldaten';
-
-  @override
-  String get orbit2_search_hint => 'Freund finden';
-
-  @override
-  String get orbit2_template_gravity => 'Gravitation';
-
-  @override
-  String get orbit2_mock_chat_demo_chip =>
-      'Demo · Nachrichten werden nicht gesendet';
-
-  @override
-  String get orbit2_mock_chat_send_disabled =>
-      'Senden ist in dieser Vorschau deaktiviert';
-
-  @override
-  String get orbit2_mock_chat_composer_hint => 'Nachricht';
-
-  @override
-  String orbit2_group_members(int count) {
-    return 'Gruppe · $count Mitglieder';
-  }
-
-  @override
-  String get orbit2_show_less => 'Weniger anzeigen';
-
-  @override
-  String get orbit2_you => 'Du';
-
-  @override
-  String get orbit2_names_show => 'Namen anzeigen';
-
-  @override
-  String get orbit2_names_hide => 'Namen ausblenden';
-
-  @override
-  String orbit2_open_chat_with(String name) {
-    return 'Chat mit $name öffnen';
-  }
-
-  @override
-  String get orbit3_constellation_zodiac => 'Tierkreis';
-
-  @override
-  String get orbit3_constellation_galaxy => 'Galaxie';
-
-  @override
-  String get orbit3_listens => 'hört zu';
-
-  @override
-  String get orbit3_talks => 'spricht';
-
-  @override
-  String orbit3_released_to_drawer(String name) {
-    return '$name in die Ablage verschoben';
-  }
-
-  @override
-  String get orbit3_inner_short => 'Innen';
-
-  @override
-  String get orbit3_all_friends => 'Alle Freunde';
-
-  @override
-  String get orbit3_drag_up_to_search => 'Zum Suchen nach oben ziehen';
-
-  @override
-  String get orbit3_find_anyone => 'Beliebige Person finden';
-
-  @override
-  String get orbit3_pin => 'Anheften';
-
-  @override
-  String orbit3_pulled_into_inner_tier(String name) {
-    return '$name in deine innere Ebene gezogen';
-  }
-
-  @override
-  String get orbit3_tap_to_open => 'Tippen zum Öffnen';
 }
