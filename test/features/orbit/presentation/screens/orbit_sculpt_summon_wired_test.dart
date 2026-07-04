@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.dart';
@@ -12,6 +13,7 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/domain/orbit_arc_layout.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/inner_circle_interactive_surface.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbital_avatar.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_ring_painter.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/overflow_badge.dart';
@@ -1634,6 +1636,245 @@ void main() {
       expect(bubbleF(), findsOneWidget, reason: 'the handle won the tap');
       expect(tappedFriends, isEmpty, reason: 'no chat opened');
       expect(bannerF(), findsOneWidget, reason: 'session did not end');
+      await settle(tester);
+    });
+  });
+
+  // ==========================================================================
+  // 201 — element identity + find UX (find-pill remount/size/avatar +
+  // label-toggle avatar blink). All rows extend this GROUP_TESTS-pinned suite.
+  // ==========================================================================
+  group('201 — element identity + find UX (TC-201)', () {
+    // TC-201-01 — the find TextField element survives an edit enter AND exit.
+    testWidgets('TC-201-01 find TextField State survives edit enter and exit',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(8)));
+      await settle(tester);
+      await tester.tap(find.byKey(const ValueKey('orbit-find-pill')));
+      await tester.pump();
+      final s1 = tester.state(find.byType(EditableText));
+
+      // Edit enters — banner/Reset/handle-layer Positioneds are inserted BEFORE
+      // the find slots in the outer Stack. Unkeyed → the pill's slot is stolen
+      // and the EditableText deactivates (focus/IME drop).
+      await longPressBg(tester);
+      await tester.pump();
+      expect(bannerF(), findsOneWidget, reason: 'edit session active');
+      expect(identical(tester.state(find.byType(EditableText)), s1), isTrue,
+          reason: 'edit-enter must not remount the find TextField');
+
+      // Exit edit via a background tap WHILE editing: _onBackgroundTap ends the
+      // edit FIRST and leaves find open (the query-clearing else-if is not hit).
+      await tapAwayBg(tester);
+      expect(bannerF(), findsNothing, reason: 'edit ended');
+      expect(find.byType(EditableText), findsOneWidget,
+          reason: 'find stays open after the edit exit');
+      expect(identical(tester.state(find.byType(EditableText)), s1), isTrue,
+          reason: 'edit-exit must not remount the find TextField');
+      await settle(tester);
+    });
+
+    // TC-201-02 — the find TextField survives the chips empty↔non-empty edges.
+    testWidgets(
+        'TC-201-02 find TextField State survives the chips empty and non-empty edges',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(8)));
+      await settle(tester);
+      await tester.tap(find.byKey(const ValueKey('orbit-find-pill')));
+      await tester.pump();
+      final s1 = tester.state(find.byType(EditableText));
+
+      // empty → non-empty: the chip strip Positioned is inserted before the pill.
+      await tester.enterText(find.byType(TextField), 'friend');
+      await tester.pump();
+      expect(find.byKey(const ValueKey('orbit-find-chip-0')), findsOneWidget);
+      expect(identical(tester.state(find.byType(EditableText)), s1), isTrue,
+          reason: 'chips appearing must not remount the find TextField');
+
+      // non-empty → empty: the chip strip is removed again (reverse edge).
+      await tester.enterText(find.byType(TextField), 'zzzzz');
+      await tester.pump();
+      expect(find.byKey(const ValueKey('orbit-find-chip-0')), findsNothing);
+      expect(identical(tester.state(find.byType(EditableText)), s1), isTrue,
+          reason: 'chips disappearing must not remount the find TextField');
+      await settle(tester);
+    });
+
+    // TC-201-03 — the expanded pill is a full-width, >=48-high bar.
+    testWidgets('TC-201-03 expanded find pill is a full-width >=48-high bar',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(8)));
+      await settle(tester);
+      await tester.tap(find.byKey(const ValueKey('orbit-find-pill')));
+      await tester.pump();
+      final s = tester.getRect(find.byType(InnerCircleInteractiveSurface));
+      final r = tester.getRect(find.byKey(const ValueKey('orbit-find-pill')));
+      expect(r.left - s.left, closeTo(16, 2), reason: 'left inset 16');
+      expect(s.right - r.right, closeTo(16, 2), reason: 'right inset 16');
+      expect(r.height, greaterThanOrEqualTo(48), reason: 'a >=48-high bar');
+
+      // Non-armed pill x chip-strip disjointness (the F18 sweep runs armed-only,
+      // leaving the idle-state slack unpinned).
+      await tester.enterText(find.byType(TextField), 'friend');
+      await tester.pump();
+      final pill =
+          tester.getRect(find.byKey(const ValueKey('orbit-find-pill')));
+      final chip0 =
+          tester.getRect(find.byKey(const ValueKey('orbit-find-chip-0')));
+      expect(pill.overlaps(chip0), isFalse,
+          reason: 'the widened pill clears the chip strip while idle');
+      await settle(tester);
+    });
+
+    // TC-201-05 — a friend find chip shows the member's avatar.
+    testWidgets('TC-201-05 friend find chip shows the member avatar',
+        (tester) async {
+      await tester.pumpWidget(
+          host(<OrbitItem>[..._friends(5), _group('Book Club')]));
+      await settle(tester);
+      await tester.tap(find.byKey(const ValueKey('orbit-find-pill')));
+      await tester.pump();
+      await tester.enterText(find.byType(TextField), 'friend0');
+      await tester.pump();
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('orbit-find-chip-0')),
+          matching: find.byType(UserAvatar),
+        ),
+        findsOneWidget,
+        reason: 'the friend chip renders a UserAvatar, not name-only text',
+      );
+      await settle(tester);
+    });
+
+    // TC-201-06 — a group find chip shows the group avatar.
+    testWidgets('TC-201-06 group find chip shows the group avatar',
+        (tester) async {
+      await tester.pumpWidget(
+          host(<OrbitItem>[..._friends(5), _group('Book Club')]));
+      await settle(tester);
+      await tester.tap(find.byKey(const ValueKey('orbit-find-pill')));
+      await tester.pump();
+      await tester.enterText(find.byType(TextField), 'book');
+      await tester.pump();
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('orbit-find-chip-5')),
+          matching: find.byType(GroupAvatar),
+        ),
+        findsOneWidget,
+        reason: 'the group chip renders a GroupAvatar',
+      );
+      await settle(tester);
+    });
+
+    // TC-201-07 — four long-name chips lay out without overflow.
+    testWidgets('TC-201-07 four long-name chips lay out without overflow',
+        (tester) async {
+      final longName = 'z' * 38; // exceeds any sane chip width
+      final items = <OrbitItem>[
+        for (var i = 0; i < 4; i++)
+          OrbitFriendItem(OrbitFriend(
+            contact: ContactModel(
+              peerId: 'peer-long-$i',
+              publicKey: 'pk-$i',
+              rendezvous: '/ip4/127.0.0.1/tcp/500$i',
+              username: 'match$longName$i',
+              signature: 'sig-$i',
+              scannedAt: '2024-01-01T00:00:00Z',
+            ),
+            messageCount: i,
+            lastMessageTimestamp: '2024-01-01T00:00:00Z',
+          )),
+      ];
+      await tester.pumpWidget(host(items));
+      await settle(tester);
+      await tester.tap(find.byKey(const ValueKey('orbit-find-pill')));
+      await tester.pump();
+      await tester.enterText(find.byType(TextField), 'match');
+      await tester.pump();
+      expect(tester.takeException(), isNull,
+          reason: 'four long-name chips must not overflow the strip');
+      final label = tester.widget<Text>(find.descendant(
+        of: find.byKey(const ValueKey('orbit-find-chip-0')),
+        matching: find.text('match${longName}0'),
+      ));
+      expect(label.overflow, TextOverflow.ellipsis,
+          reason: 'chip label ellipsises');
+      expect(
+        find.ancestor(
+          of: find.text('match${longName}0'),
+          matching: find.byType(Flexible),
+        ),
+        findsWidgets,
+        reason: 'chip label sits inside a Flexible',
+      );
+      await settle(tester);
+    });
+
+    // TC-201-08 — the label double-tap does not remount orbit nodes.
+    testWidgets('TC-201-08 label double-tap does not remount orbit nodes',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(8)));
+      await settle(tester);
+      final before =
+          tester.stateList<State>(find.byType(OrbitalAvatar)).toList();
+
+      await doubleTapBg(tester); // labels on
+      await tester.pump();
+      final afterOn =
+          tester.stateList<State>(find.byType(OrbitalAvatar)).toList();
+      expect(afterOn.length, before.length);
+      for (var i = 0; i < before.length; i++) {
+        expect(identical(before[i], afterOn[i]), isTrue,
+            reason: 'node $i must not re-inflate on the label toggle');
+      }
+
+      await doubleTapBg(tester); // labels off
+      await tester.pump();
+      final afterOff =
+          tester.stateList<State>(find.byType(OrbitalAvatar)).toList();
+      for (var i = 0; i < before.length; i++) {
+        expect(identical(before[i], afterOff[i]), isTrue,
+            reason: 'node $i must not re-inflate on the label toggle-off');
+      }
+      await settle(tester);
+    });
+
+    // TC-201-09 — the OverflowBadge survives label toggle + arc expand/collapse.
+    testWidgets(
+        'TC-201-09 OverflowBadge survives label toggle and arc expand and collapse',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(20)));
+      await settle(tester);
+      final b1 = tester.state(find.byType(OverflowBadge));
+
+      await doubleTapBg(tester); // labels on
+      await tester.pump();
+      expect(identical(tester.state(find.byType(OverflowBadge)), b1), isTrue,
+          reason: 'badge must not re-inflate on the label toggle');
+
+      await tester.tap(find.byType(OverflowBadge)); // expand arcs
+      await settle(tester);
+      expect(identical(tester.state(find.byType(OverflowBadge)), b1), isTrue,
+          reason: 'badge must not re-inflate on arc expand');
+
+      await tester.tap(find.byType(OverflowBadge)); // collapse arcs
+      await settle(tester);
+      expect(identical(tester.state(find.byType(OverflowBadge)), b1), isTrue,
+          reason: 'badge must not re-inflate on arc collapse');
+      await settle(tester);
+    });
+
+    // TC-201-11 — the collapsed find pill is a 44px tap target.
+    testWidgets('TC-201-11 collapsed find pill is a 44px tap target',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(8)));
+      await settle(tester);
+      final size =
+          tester.getSize(find.byKey(const ValueKey('orbit-find-pill')));
+      expect(size.width, greaterThanOrEqualTo(44));
+      expect(size.height, greaterThanOrEqualTo(44));
       await settle(tester);
     });
   });

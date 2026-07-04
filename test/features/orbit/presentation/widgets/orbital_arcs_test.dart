@@ -372,5 +372,29 @@ void main() {
           .first);
       expect(opacity.opacity, 1.0);
     });
+
+    // TC-201-10 — ring-node entrance honors OS reduce-motion. On HEAD the
+    // visualization hard-codes `entranceMotionEnabled: true` for non-arc seats
+    // (orbital_visualization.dart:207), so ring nodes animate even under
+    // disableAnimations; the fix threads `motionEnabled` to every seat.
+    testWidgets('TC-201-10 ring-node entrance honors reduce-motion',
+        (tester) async {
+      await tester.pumpWidget(
+        expandable(_friends(8), disableAnimations: true),
+      );
+      await tester.pump(); // one frame — no long delay
+      // friend5 is a ring node with a non-zero stagger index: on HEAD its
+      // Future.delayed(200ms) entrance timer has not fired at t=0, so the
+      // entrance Opacity reads 0. Instant-under-reduce-motion ⇒ 1.0.
+      // Locate the node by globalIndex, NOT by semantics: an Opacity of 0 drops
+      // its child from the semantics tree, so bySemanticsLabel would find
+      // nothing precisely in the (HEAD) state this row exists to catch.
+      final node =
+          find.byWidgetPredicate((w) => w is OrbitalAvatar && w.globalIndex == 5);
+      final opacity = tester.widget<Opacity>(
+          find.descendant(of: node, matching: find.byType(Opacity)).first);
+      expect(opacity.opacity, 1.0);
+      await settle(tester); // once instant, no ring entrance timers to drain
+    });
   });
 }

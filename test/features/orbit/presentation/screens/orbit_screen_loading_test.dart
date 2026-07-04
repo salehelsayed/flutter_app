@@ -589,5 +589,47 @@ void main() {
         expect(searchDockRect.bottom, lessThanOrEqualTo(navRect.top));
       },
     );
+
+    testWidgets(
+      'TC-201-04 expanded find pill is full-width and clears the persistent nav',
+      (tester) async {
+        suppressOverflowErrors();
+        suppressNavAssetErrors();
+        setPhoneSurface(tester);
+
+        await tester.pumpWidget(
+          buildOrbitScreen(
+            viewMode: OrbitViewMode.innerCircle,
+            activeTab: 'orbit',
+            onSwitchView: (_) {},
+            feedUnreadCountListenable: ValueNotifier<int>(0),
+            friends: [makeFriend(id: 'f-1', username: 'Riley')],
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 300));
+
+        // Open the find pill on the inner-circle surface.
+        await tester.tap(
+          find.byKey(const ValueKey('orbit-find-pill')),
+          warnIfMissed: false,
+        );
+        await tester.pump();
+
+        final screen = tester.getRect(find.byType(OrbitScreen));
+        final pill =
+            tester.getRect(find.byKey(const ValueKey('orbit-find-pill')));
+        // HEAD-red: on HEAD the expanded pill is a 200px right-anchored box,
+        // not a full-width bar.
+        expect(pill.left - screen.left, closeTo(16, 2),
+            reason: 'expanded pill spans full width (left inset 16)');
+        expect(screen.right - pill.right, closeTo(16, 2),
+            reason: 'expanded pill spans full width (right inset 16)');
+        // Nav-clearance: the widened pill must not sit under the persistent nav
+        // band at zero safe-area (needs the bottomClearance wiring).
+        final nav = tester.getRect(find.byType(FeedNavigationBar));
+        expect(pill.overlaps(nav), isFalse,
+            reason: 'the pill clears the persistent Feed/Orbit nav band');
+      },
+    );
   });
 }
