@@ -477,6 +477,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get orbit_find_close => 'Close search';
 
   @override
+  String get orbit_open_settings => 'Open settings';
+
+  @override
   String orbit_chip_provenance_ring(int ring) {
     return 'Ring $ring';
   }

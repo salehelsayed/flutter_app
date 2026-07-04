@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
@@ -74,14 +73,11 @@ import 'package:flutter_app/features/introduction/domain/repositories/introducti
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/introduction/application/expire_old_introductions_use_case.dart';
 import 'package:flutter_app/features/introduction/application/load_introductions_use_case.dart';
-import 'package:flutter_app/features/home/application/identity_avatar_resolver.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
-import 'package:flutter_app/features/settings/presentation/navigation/settings_route_transition.dart';
-import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/domain/repositories/contact_presence_snapshot_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
@@ -247,7 +243,6 @@ class _FeedWiredState extends State<FeedWired>
   static const _hostSwipeVelocityThreshold = 900.0;
 
   String _username = 'Username';
-  Uint8List? _avatarBytes;
   String? _peerId;
   IdentityModel? _identity;
   final FeedStore _feedStore = FeedStore();
@@ -427,14 +422,11 @@ class _FeedWiredState extends State<FeedWired>
       final identity = await widget.repository.loadIdentity();
       if (identity == null || !mounted) return;
 
-      final avatarBytes = await IdentityAvatarResolver.resolve(identity);
-
-      if (!mounted) return;
-
+      // 206: the Feed header no longer renders the self avatar (Settings moved
+      // to the Orbit center avatar), so resolving avatar bytes here is dead.
       setState(() {
         _identity = identity;
         _username = identity.username;
-        _avatarBytes = avatarBytes;
         _peerId = identity.peerId;
       });
       unawaited(_refreshOrbitBadgeCount());
@@ -1866,37 +1858,6 @@ class _FeedWiredState extends State<FeedWired>
     unawaited(_openGroupConversation(groupThread));
   }
 
-  void _onAvatarTap() {
-    _clearFeedComposerFocus();
-    Navigator.of(context)
-        .push(
-          buildSettingsSlideUpRoute(
-            builder: (_) => SettingsWired(
-              identityRepo: widget.repository,
-              bridge: widget.bridge,
-              contactRepo: widget.contactRepository,
-              p2pService: widget.p2pService,
-              secureKeyStore: widget.secureKeyStore,
-              imageProcessor: widget.imageProcessor,
-              appShellController: widget.appShellController,
-              postsPrivacySettingsRepository:
-                  widget.postsPrivacySettingsRepository,
-              introductionRepository: widget.introductionRepository,
-              nearbyLocationService: widget.nearbyLocationService,
-              transportMetrics: widget.transportMetrics,
-              accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
-              accountMigrationSizeGate: widget.accountMigrationSizeGate,
-            ),
-          ),
-        )
-        .then((_) {
-          _loadIdentity();
-          _loadBackgroundPreference();
-          _loadQualityPreference();
-          _loadVideoQualityPreference();
-        });
-  }
-
   String get _activeTab => widget.appShellController.activeTab;
 
   void _clearFeedComposerFocus({bool notify = true}) {
@@ -2509,6 +2470,19 @@ class _FeedWiredState extends State<FeedWired>
     if (!mounted) {
       return;
     }
+    // 206: Settings (opened from ANY entry point now — including the Orbit
+    // center avatar) pushes identity/quality changes passively via the shared
+    // controller, replacing the removed Feed-header `.then` reloads.
+    final changeKind = widget.appShellController.lastChangeKind;
+    if (changeKind == AppShellChangeKind.identity) {
+      unawaited(_loadIdentity());
+      return;
+    }
+    if (changeKind == AppShellChangeKind.mediaQuality) {
+      unawaited(_loadQualityPreference());
+      unawaited(_loadVideoQualityPreference());
+      return;
+    }
     // 163 (navigation-hangs-2): a background-only change must still rebuild so
     // the new BackgroundPreference reaches the panes (recolor needs the rebuild
     // under minimal scope), but it must NOT run the tab-change side-effects
@@ -2583,6 +2557,9 @@ class _FeedWiredState extends State<FeedWired>
       transportMetrics: widget.transportMetrics,
       accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
       accountMigrationSizeGate: widget.accountMigrationSizeGate,
+      // 206: the Orbit center avatar opens Settings; thread the nearby service
+      // so its posts-nearby refresh is functional (not silently degraded).
+      nearbyLocationService: widget.nearbyLocationService,
     );
   }
 
@@ -2677,7 +2654,6 @@ class _FeedWiredState extends State<FeedWired>
       key: const ValueKey<String>('feed-pane-repaint-boundary'),
       child: FeedScreen(
         username: _username,
-      userAvatarBytes: _avatarBytes,
       userPeerId: _peerId,
       feedItems: _feedItems,
       feedItemsListenable: _feedStore.itemsListenable,
@@ -2691,7 +2667,6 @@ class _FeedWiredState extends State<FeedWired>
       orbitBadgeCountListenable: _orbitBadgeCountNotifier,
       onOpenFullConversation: _onOpenFullConversation,
       onGroupTap: _onGroupTap,
-      onAvatarTap: _onAvatarTap,
       focusedId: _focusedId,
       onFocusCard: _onFocusCard,
       onClearFocus: _onClearFocus,

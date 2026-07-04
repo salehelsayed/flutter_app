@@ -33,6 +33,15 @@ class OrbitalVisualization extends StatelessWidget {
   final ValueChanged<OrbitFriend>? onFriendTap;
   final ValueChanged<OrbitGroup>? onGroupTap;
 
+  /// 206 — when non-null, the center self-avatar becomes the Settings entry:
+  /// an idle tap fires [onSelfAvatarTap], a long-press fires
+  /// [onSelfAvatarLongPress] (sculpt-entry uniformity). The detector + button
+  /// Semantics mount ONLY when [onSelfAvatarTap] is wired, so bare/widget pumps
+  /// keep their single-GestureDetector tree (TC-194-26 / INV-206-1); the
+  /// painted [Positioned] and 48px box are unchanged (geometry locks).
+  final VoidCallback? onSelfAvatarTap;
+  final VoidCallback? onSelfAvatarLongPress;
+
   /// 198 — the five sculpt knobs (defaults ⇒ pre-198 geometry, INV-6).
   final OrbitGeometryPrefs geometry;
 
@@ -77,6 +86,8 @@ class OrbitalVisualization extends StatelessWidget {
     required this.items,
     this.onFriendTap,
     this.onGroupTap,
+    this.onSelfAvatarTap,
+    this.onSelfAvatarLongPress,
     this.geometry = OrbitGeometryPrefs.defaults,
     this.overflowExpanded = false,
     this.onBadgeTap,
@@ -170,13 +181,33 @@ class OrbitalVisualization extends StatelessWidget {
       ),
       if (userPeerId != null)
         Positioned(
+          // Geometry lock (INV-206-3): same anchor + 48px box as pre-206, so the
+          // sculpt/arcs center-avatar position sentinels stay green.
           left: cx - 24,
           top: cy - 24,
-          child: UserAvatar(
-            peerId: userPeerId,
-            avatarBytes: userAvatarBytes,
-            size: 48,
-          ),
+          child: onSelfAvatarTap == null
+              ? UserAvatar(
+                  peerId: userPeerId,
+                  avatarBytes: userAvatarBytes,
+                  size: 48,
+                )
+              : Semantics(
+                  button: true,
+                  label: l10n.orbit_open_settings,
+                  child: GestureDetector(
+                    key: const ValueKey('orbit-center-self-avatar'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: onSelfAvatarTap,
+                    onLongPressStart: onSelfAvatarLongPress == null
+                        ? null
+                        : (_) => onSelfAvatarLongPress!(),
+                    child: UserAvatar(
+                      peerId: userPeerId,
+                      avatarBytes: userAvatarBytes,
+                      size: 48,
+                    ),
+                  ),
+                ),
         ),
     ];
 

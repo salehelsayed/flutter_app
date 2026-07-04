@@ -37,5 +37,31 @@ void main() {
         expect(kinds.last, AppShellChangeKind.tab);
       },
     );
+
+    test('notifyIdentityChanged sets kind + notifies', () {
+      final controller = AppShellController();
+      final kinds = <AppShellChangeKind>[];
+      controller.addListener(() => kinds.add(controller.lastChangeKind));
+
+      controller.notifyIdentityChanged();
+
+      expect(kinds, [AppShellChangeKind.identity]);
+      expect(controller.lastChangeKind, AppShellChangeKind.identity);
+      // Distinct from the pre-206 kinds.
+      expect(controller.lastChangeKind, isNot(AppShellChangeKind.tab));
+      expect(controller.lastChangeKind, isNot(AppShellChangeKind.background));
+    });
+
+    test('notifyMediaQualityChanged sets kind + notifies', () {
+      final controller = AppShellController();
+      final kinds = <AppShellChangeKind>[];
+      controller.addListener(() => kinds.add(controller.lastChangeKind));
+
+      controller.notifyMediaQualityChanged();
+
+      expect(kinds, [AppShellChangeKind.mediaQuality]);
+      expect(controller.lastChangeKind, AppShellChangeKind.mediaQuality);
+      expect(controller.lastChangeKind, isNot(AppShellChangeKind.identity));
+    });
   });
 }

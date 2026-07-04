@@ -737,4 +737,120 @@ void main() {
       },
     );
   });
+
+  // ── 206: the center self-avatar becomes the Settings entry point ──────────
+  group('206 center self-avatar → Settings entry', () {
+    const centerKey = ValueKey('orbit-center-self-avatar');
+
+    testWidgets(
+        'TC-206-10 wired self-tap fires onSelfAvatarTap, never onFriendTap',
+        (tester) async {
+      final friends = List.generate(15, (i) => _makeFriend(i));
+      var selfTaps = 0;
+      var friendTaps = 0;
+      await tester.pumpWidget(
+        wrap(
+          OrbitalVisualization(
+            userPeerId: 'my-peer-id-123',
+            items: _items(friends),
+            onFriendTap: (_) => friendTaps++,
+            onSelfAvatarTap: () => selfTaps++,
+          ),
+        ),
+      );
+      await pumpPastAnimations(tester);
+
+      await tester.tap(find.byKey(centerKey));
+      await tester.pump();
+
+      expect(selfTaps, 1);
+      expect(friendTaps, 0);
+    });
+
+    testWidgets('TC-206-25 semantics button + l10n label', (tester) async {
+      final handle = tester.ensureSemantics();
+      await tester.pumpWidget(
+        wrap(
+          OrbitalVisualization(
+            userPeerId: 'my-peer-id-123',
+            items: const <OrbitItem>[],
+            onSelfAvatarTap: () {},
+          ),
+        ),
+      );
+      await pumpPastAnimations(tester);
+
+      expect(find.bySemanticsLabel('Open settings'), findsOneWidget);
+      handle.dispose();
+    });
+
+    testWidgets('TC-206-26 hit target >=48 and position unchanged',
+        (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          OrbitalVisualization(
+            userPeerId: 'my-peer-id-123',
+            items: const <OrbitItem>[],
+            onSelfAvatarTap: () {},
+          ),
+        ),
+      );
+      await pumpPastAnimations(tester);
+
+      final size = tester.getSize(find.byKey(centerKey));
+      expect(size.width, greaterThanOrEqualTo(48));
+      expect(size.height, greaterThanOrEqualTo(48));
+
+      // The wrapper must not shift the painted center: it stays on the canvas
+      // center anchor (same geometry the sculpt/arcs locks pin).
+      final avatarCenter = tester.getRect(find.byKey(centerKey)).center;
+      final canvasCenter =
+          tester.getRect(find.byKey(const ValueKey('orbit-viz-canvas'))).center;
+      expect((avatarCenter - canvasCenter).distance, lessThan(0.5));
+    });
+
+    testWidgets('TC-206-05 null userPeerId -> no center avatar, canvas tap no-op',
+        (tester) async {
+      var selfTaps = 0;
+      await tester.pumpWidget(
+        wrap(
+          OrbitalVisualization(
+            userPeerId: null,
+            items: const <OrbitItem>[],
+            onSelfAvatarTap: () => selfTaps++,
+          ),
+        ),
+      );
+      await pumpPastAnimations(tester);
+
+      expect(find.byType(UserAvatar), findsNothing);
+      expect(find.byKey(centerKey), findsNothing);
+      final canvasCenter =
+          tester.getRect(find.byKey(const ValueKey('orbit-viz-canvas'))).center;
+      await tester.tapAt(canvasCenter);
+      await tester.pump();
+      expect(selfTaps, 0);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('INV-206-1 no callback -> no detector (TC-194-26 guard)',
+        (tester) async {
+      final friends = [_makeFriend(0)];
+      await tester.pumpWidget(
+        wrap(
+          OrbitalVisualization(
+            userPeerId: 'my-peer-id-123',
+            items: _items(friends),
+            onFriendTap: (_) {},
+          ),
+        ),
+      );
+      await pumpPastAnimations(tester);
+
+      // No self-tap callback → no center detector mounts, so the 1-friend tree
+      // still has EXACTLY one GestureDetector (TC-194-26's single-match holds).
+      expect(find.byKey(centerKey), findsNothing);
+      expect(tester.getSize(find.byType(GestureDetector)), const Size(48, 48));
+    });
+  });
 }

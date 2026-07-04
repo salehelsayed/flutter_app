@@ -4296,6 +4296,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         transportMetrics: widget.transportMetrics,
         accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
         accountMigrationSizeGate: widget.accountMigrationSizeGate,
+        // 206: the Orbit center avatar opens Settings; thread the nearby service
+        // so its posts-nearby refresh is functional on this construction path.
+        nearbyLocationService: widget.nearbyLocationService,
       ),
     );
   }

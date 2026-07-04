@@ -874,6 +874,12 @@ abstract class AppLocalizations {
   /// **'Close search'**
   String get orbit_find_close;
 
+  /// No description provided for @orbit_open_settings.
+  ///
+  /// In en, this message translates to:
+  /// **'Open settings'**
+  String get orbit_open_settings;
+
   /// No description provided for @orbit_chip_provenance_ring.
   ///
   /// In en, this message translates to:

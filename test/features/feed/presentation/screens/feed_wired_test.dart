@@ -17,6 +17,10 @@ import 'package:flutter_app/features/conversation/application/send_chat_message_
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart'
+    show ConversationWired;
+import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
+import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
@@ -32,7 +36,6 @@ import 'package:flutter_app/features/groups/domain/models/pending_group_invite.d
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
-import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
@@ -406,8 +409,13 @@ void main() {
     });
 
     testWidgets(
-      'refreshes background preference after returning from Settings',
+      'opens Settings from the orbit center avatar and reflects background '
+      'change on Feed',
       (tester) async {
+        // 206 B row 15 (PROD-CRITICAL full chain): FeedWired → embedded
+        // OrbitWired → center avatar → SettingsWired → shared-controller
+        // background propagation back onto the Feed. Replaces the old
+        // Feed-header-avatar entry (that avatar is removed).
         identityRepo.seed(testIdentity);
 
         await tester.pumpWidget(buildFeedWired());
@@ -415,7 +423,14 @@ void main() {
 
         expect(find.byType(CosmicBackground), findsNothing);
 
-        await tester.tap(find.byType(UserAvatar).first);
+        // Mount + reveal the embedded orbit host, then open Settings from its
+        // center self-avatar.
+        appShellController.switchTo('orbit');
+        await pumpFeedFrames(tester, count: 10);
+
+        await tester.tap(
+          find.byKey(const ValueKey('orbit-center-self-avatar')),
+        );
         await pumpFeedFrames(tester, count: 10);
 
         expect(find.text('Settings'), findsOneWidget);
@@ -435,10 +450,81 @@ void main() {
         await tester.tap(find.byIcon(Icons.chevron_left));
         await pumpFeedFrames(tester, count: 10);
 
+        appShellController.switchTo('feed');
+        await pumpFeedFrames(tester, count: 10);
+
         expect(find.byType(FeedScreen), findsOneWidget);
-        expect(find.byType(CosmicBackground), findsOneWidget);
+        // Scope to the Feed pane: the embedded orbit host stays mounted and also
+        // renders a CosmicBackground, so an unscoped finder would see two.
+        expect(
+          find.descendant(
+            of: find.byType(FeedScreen),
+            matching: find.byType(CosmicBackground),
+          ),
+          findsOneWidget,
+        );
       },
     );
+
+    testWidgets('TC-206-19 identity change-kind reloads Feed username',
+        (tester) async {
+      identityRepo.seed(testIdentity);
+
+      await tester.pumpWidget(buildFeedWired());
+      await pumpFeedFrames(tester, count: 8);
+      expect(find.text('@Alice'), findsOneWidget);
+
+      // Change the username in the repo, then fire the identity change-kind —
+      // the Feed reloads identity without any Settings-return `.then`.
+      identityRepo.seed(IdentityModel(
+        peerId: testIdentity.peerId,
+        publicKey: testIdentity.publicKey,
+        privateKey: testIdentity.privateKey,
+        mnemonic12: testIdentity.mnemonic12,
+        username: 'Bob',
+        createdAt: testIdentity.createdAt,
+        updatedAt: DateTime.now().toUtc().toIso8601String(),
+      ));
+      appShellController.notifyIdentityChanged();
+      await pumpFeedFrames(tester, count: 4);
+
+      expect(find.text('@Bob'), findsOneWidget);
+    });
+
+    testWidgets('TC-206-20 mediaQuality change-kind reloads quality prefs',
+        (tester) async {
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+
+      await tester.pumpWidget(buildFeedWired());
+      await pumpFeedFrames(tester, count: 8);
+
+      // Persist NEW image + video quality, then fire the mediaQuality kind.
+      await saveImageQualityPreference(
+        secureKeyStore: secureKeyStore,
+        preference: ImageQualityPreference.original,
+      );
+      await saveVideoQualityPreference(
+        secureKeyStore: secureKeyStore,
+        preference: ImageQualityPreference.original,
+      );
+      appShellController.notifyMediaQualityChanged();
+      await pumpFeedFrames(tester, count: 4);
+
+      // Open a 1:1 conversation via the Feed's own callback: the reloaded prefs
+      // must be CARRIED INTO the ConversationWired push (not just the keystore).
+      final feedScreen = tester.widget<FeedScreen>(find.byType(FeedScreen));
+      feedScreen.onOpenFullConversation!(testContact.peerId);
+      await pumpFeedFrames(tester, count: 6);
+
+      final conversation =
+          tester.widget<ConversationWired>(find.byType(ConversationWired));
+      expect(conversation.qualityPreference, ImageQualityPreference.original);
+      expect(
+        conversation.videoQualityPreference,
+        ImageQualityPreference.original,
+      );
+    });
 
     testWidgets('loads and displays username from identity', (tester) async {
       identityRepo.seed(testIdentity);

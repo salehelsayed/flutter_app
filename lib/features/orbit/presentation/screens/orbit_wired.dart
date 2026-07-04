@@ -89,9 +89,12 @@ import 'package:flutter_app/features/feed/application/app_shell_controller.dart'
 import 'package:flutter_app/features/feed/data/feed_cleared_repository.dart';
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
+import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
+import 'package:flutter_app/features/settings/presentation/navigation/settings_route_transition.dart';
+import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
 import 'orbit_screen.dart';
 
 /// Wired widget connecting OrbitScreen to business logic.
@@ -153,6 +156,10 @@ class OrbitWired extends StatefulWidget {
   final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
   final AccountMigrationSizeGate? accountMigrationSizeGate;
 
+  /// 206 — threaded into the Settings screen opened from the center self-avatar
+  /// so its posts-nearby interactive refresh is functional (not degraded).
+  final NearbyLocationService? nearbyLocationService;
+
   const OrbitWired({
     super.key,
     required this.identityRepo,
@@ -200,6 +207,7 @@ class OrbitWired extends StatefulWidget {
     this.transportMetrics,
     this.accountMigrationRunTransfer,
     this.accountMigrationSizeGate,
+    this.nearbyLocationService,
   });
 
   @override
@@ -514,8 +522,21 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   bool _invitesDirty = false;
   bool _wasOrbitActive = true;
 
+  // 206 — single-flight latch for the center-avatar Settings route.
+  bool _settingsRouteActive = false;
+
   void _onAppShellChanged() {
     if (!mounted) {
+      return;
+    }
+    // 206: a self-identity change (username/avatar saved in Settings) reloads
+    // the center avatar. This is the SINGLE refresh mechanism — no
+    // `.then(_loadIdentity)` on the settings push (dual mechanisms mask a
+    // mutation revert — the INV-203-1 lesson). Orbit renders no self username,
+    // so this runs purely for avatar-bytes correctness on a photo change.
+    if (widget.appShellController?.lastChangeKind ==
+        AppShellChangeKind.identity) {
+      _loadIdentity();
       return;
     }
     final isActive = _isOrbitActive;
@@ -584,6 +605,42 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       secureKeyStore: widget.secureKeyStore,
     );
     _videoQualityPreference = pref;
+  }
+
+  // 206 — the center self-avatar opens the FULL Settings screen (functionally
+  // equivalent to the removed Feed-header entry): the SAME shared
+  // AppShellController + posts-privacy repo + the orbit-threaded nearby service.
+  // A tap-only detector fires onTap twice on a double-tap and once on a
+  // long-press release, so a single-flight latch (released on any pop path via
+  // whenComplete) guards against stacked Settings routes.
+  void _onSelfAvatarTap() {
+    final shell = widget.appShellController;
+    final privacy = widget.postsPrivacySettingsRepository;
+    if (shell == null || privacy == null || _settingsRouteActive) return;
+    _settingsRouteActive = true;
+    Navigator.of(context)
+        .push(
+          buildSettingsSlideUpRoute<void>(
+            builder: (_) => SettingsWired(
+              identityRepo: widget.identityRepo,
+              bridge: widget.bridge,
+              contactRepo: widget.contactRepo,
+              p2pService: widget.p2pService,
+              secureKeyStore: widget.secureKeyStore,
+              imageProcessor: widget.imageProcessor,
+              appShellController: shell,
+              postsPrivacySettingsRepository: privacy,
+              introductionRepository: widget.introductionRepository,
+              nearbyLocationService: widget.nearbyLocationService,
+              transportMetrics: widget.transportMetrics,
+              accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
+              accountMigrationSizeGate: widget.accountMigrationSizeGate,
+            ),
+          ),
+        )
+        .whenComplete(() {
+      _settingsRouteActive = false;
+    });
   }
 
   void _loadIdentity() async {
@@ -2416,6 +2473,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       secureKeyStore: widget.secureKeyStore,
       onInnerCircleEditSessionChanged: widget.onEditSessionActiveChanged,
       innerCircleResetListenable: _innerCircleResetTick,
+      onSelfAvatarTap: _onSelfAvatarTap,
     );
   }
 

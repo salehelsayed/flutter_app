@@ -254,6 +254,10 @@ class OrbitScreen extends StatefulWidget {
   /// Inner-Circle transient state (expansion / labels / edit / find).
   final Listenable? innerCircleResetListenable;
 
+  /// 206 — non-null when the host wires the Inner-Circle center self-avatar to
+  /// open Settings. Threaded down to [InnerCircleInteractiveSurface].
+  final VoidCallback? onSelfAvatarTap;
+
   const OrbitScreen({
     super.key,
     required this.headerProjectionListenable,
@@ -300,6 +304,7 @@ class OrbitScreen extends StatefulWidget {
     this.secureKeyStore,
     this.onInnerCircleEditSessionChanged,
     this.innerCircleResetListenable,
+    this.onSelfAvatarTap,
   });
 
   @override
@@ -366,6 +371,7 @@ class _OrbitScreenState extends State<OrbitScreen> {
         readableToneOverride: widget.readableToneOverride,
         secureKeyStore: widget.secureKeyStore,
         innerCircleResetListenable: widget.innerCircleResetListenable,
+        onSelfAvatarTap: widget.onSelfAvatarTap,
         innerEditing: _innerEditing,
         onInnerEdit: _onInnerEdit,
       );
@@ -419,6 +425,7 @@ class _OrbitScreenView extends StatelessWidget {
   final BackgroundReadableTone? readableToneOverride;
   final SecureKeyStore? secureKeyStore;
   final Listenable? innerCircleResetListenable;
+  final VoidCallback? onSelfAvatarTap;
 
   /// 205 item 6 — whether the inner-circle surface is mid edit-session (gates
   /// the toggle + QR chrome).
@@ -472,6 +479,7 @@ class _OrbitScreenView extends StatelessWidget {
     required this.readableToneOverride,
     required this.secureKeyStore,
     required this.innerCircleResetListenable,
+    this.onSelfAvatarTap,
     required this.innerEditing,
     required this.onInnerEdit,
   });
@@ -750,6 +758,7 @@ class _OrbitScreenView extends StatelessWidget {
           secureKeyStore: secureKeyStore,
           onEditSessionActiveChanged: onInnerEdit,
           resetSignal: innerCircleResetListenable,
+          onSelfAvatarTap: onSelfAvatarTap,
           bottomClearance: _innerCircleBottomClearance(context),
         );
       },

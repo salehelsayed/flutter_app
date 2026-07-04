@@ -199,6 +199,7 @@
   "orbit_find_placeholder": "Jemanden finden…",
   "orbit_find_pill_semantics": "Jemanden in deinem Kreis finden",
   "orbit_find_close": "Suche schließen",
+  "orbit_open_settings": "Einstellungen öffnen",
   "orbit_chip_provenance_ring": "Ring {ring}",
   "orbit_chip_provenance_arc": "Bogen {arc}",
   "orbit_chip_open": "{name} öffnen",

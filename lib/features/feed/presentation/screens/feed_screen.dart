@@ -30,11 +30,9 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 class FeedScreen extends StatefulWidget {
   // ── Identity / header ──────────────────────────────────────────────────
   final String username;
-  final Uint8List? userAvatarBytes;
   final String? userPeerId;
   final ValueChanged<String>? onUsernameChanged;
   final P2PService? p2pService;
-  final VoidCallback? onAvatarTap;
 
   // ── Feed data ──────────────────────────────────────────────────────────
   final List<FeedItem> feedItems;
@@ -90,7 +88,6 @@ class FeedScreen extends StatefulWidget {
   const FeedScreen({
     super.key,
     required this.username,
-    this.userAvatarBytes,
     this.userPeerId,
     required this.feedItems,
     this.feedItemsListenable,
@@ -106,7 +103,6 @@ class FeedScreen extends StatefulWidget {
     this.orbitBadgeCountListenable,
     this.onOpenFullConversation,
     this.onGroupTap,
-    this.onAvatarTap,
     this.focusedId,
     this.onFocusCard,
     this.onClearFocus,
@@ -210,11 +206,8 @@ class _FeedScreenState extends State<FeedScreen> {
                         ),
                         child: FeedHeader(
                           username: widget.username,
-                          avatarBytes: widget.userAvatarBytes,
-                          peerId: widget.userPeerId,
                           onUsernameChanged: widget.onUsernameChanged,
                           p2pService: widget.p2pService,
-                          onAvatarTap: widget.onAvatarTap,
                         ),
                       ),
                       const SizedBox(height: 10),

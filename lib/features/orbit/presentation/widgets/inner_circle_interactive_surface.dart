@@ -41,6 +41,10 @@ class InnerCircleInteractiveSurface extends StatefulWidget {
   final ValueChanged<OrbitFriend> onFriendTap;
   final ValueChanged<OrbitGroup> onGroupTap;
 
+  /// 206 — non-null when the host wires the center self-avatar to open Settings.
+  /// The surface gates it on modal state (edit/find) before invoking the host.
+  final VoidCallback? onSelfAvatarTap;
+
   /// Persists the five geometry knobs. Null ⇒ no persistence (bare-screen pumps).
   final SecureKeyStore? secureKeyStore;
 
@@ -69,6 +73,7 @@ class InnerCircleInteractiveSurface extends StatefulWidget {
     required this.items,
     required this.onFriendTap,
     required this.onGroupTap,
+    this.onSelfAvatarTap,
     this.secureKeyStore,
     this.onEditSessionActiveChanged,
     this.resetSignal,
@@ -343,6 +348,29 @@ class _InnerCircleInteractiveSurfaceState
     widget.onGroupTap(group);
   }
 
+  // 206 — a center self-avatar tap: on the idle surface it opens Settings; in a
+  // transient mode it tap-aways (end edit, else close find) and does NOT open
+  // Settings (INV-206-4), mirroring _onNodeFriendTap + the _onBackgroundTap
+  // find-close branch. The hit-opaque canvas means this pointer never reached
+  // the background detector, so the gating here is the deliberate new behavior.
+  void _onSelfAvatarTap() {
+    if (_editing) {
+      setState(() => _setEditing(false));
+      return;
+    }
+    if (_findOpen || _findActive) {
+      setState(_closeFindInternal);
+      return;
+    }
+    widget.onSelfAvatarTap?.call();
+  }
+
+  // 206 — a center long-press enters edit (sculpt-entry uniformity with the
+  // background long-press), respecting the existing edit gate.
+  void _onSelfAvatarLongPress() {
+    if (!_editing) _enterEdit();
+  }
+
   void _onBadgeTap() => setState(() {
         _overflowExpanded = !_overflowExpanded;
         if (!_overflowExpanded) {
@@ -592,6 +620,15 @@ class _InnerCircleInteractiveSurfaceState
                               items: widget.items,
                               onFriendTap: _onNodeFriendTap,
                               onGroupTap: _onNodeGroupTap,
+                              // 206 null-preserving: no host callback ⇒ no
+                              // center detector mounts (INV-206-1 / TC-194-26).
+                              onSelfAvatarTap: widget.onSelfAvatarTap == null
+                                  ? null
+                                  : _onSelfAvatarTap,
+                              onSelfAvatarLongPress: widget.onSelfAvatarTap ==
+                                      null
+                                  ? null
+                                  : _onSelfAvatarLongPress,
                               geometry: _geometry,
                               overflowExpanded: _overflowExpanded,
                               onBadgeTap: _onBadgeTap,

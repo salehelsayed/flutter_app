@@ -199,6 +199,7 @@
   "orbit_find_placeholder": "ابحث عن شخص…",
   "orbit_find_pill_semantics": "ابحث عن شخص في دائرتك",
   "orbit_find_close": "إغلاق البحث",
+  "orbit_open_settings": "فتح الإعدادات",
   "orbit_chip_provenance_ring": "حلقة {ring}",
   "orbit_chip_provenance_arc": "قوس {arc}",
   "orbit_chip_open": "فتح {name}",

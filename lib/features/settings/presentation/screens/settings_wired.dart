@@ -260,6 +260,8 @@ class _SettingsWiredState extends State<SettingsWired> {
       secureKeyStore: widget.secureKeyStore,
       preference: newQuality,
     );
+    // 206: propagate so the Feed's next media send honors the new preference.
+    widget.appShellController.notifyMediaQualityChanged();
   }
 
   Future<void> _loadVideoQualityPreference() async {
@@ -277,6 +279,8 @@ class _SettingsWiredState extends State<SettingsWired> {
       secureKeyStore: widget.secureKeyStore,
       preference: newQuality,
     );
+    // 206: propagate so the Feed's next media send honors the new preference.
+    widget.appShellController.notifyMediaQualityChanged();
   }
 
   Future<void> _loadPostsPrivacySettings() async {
@@ -415,6 +419,9 @@ class _SettingsWiredState extends State<SettingsWired> {
       if (!mounted) return;
 
       setState(() => _identity = updated);
+      // 206: propagate the identity change to the Feed AND Orbit passively (the
+      // shared AppShellController), replacing the removed Feed-header `.then`.
+      widget.appShellController.notifyIdentityChanged();
 
       emitFlowEvent(
         layer: 'FL',
@@ -468,6 +475,9 @@ class _SettingsWiredState extends State<SettingsWired> {
         if (updated != null && mounted) {
           setState(() => _identity = updated);
         }
+        // 206: fire AFTER uploadProfilePicture's invalidatePeer broadcasts so
+        // the resolver re-reads the fresh bytes when listeners reload identity.
+        widget.appShellController.notifyIdentityChanged();
       } else {
         // Revert preview on failure
         setState(() => _pickedAvatarBytes = previousBytes);

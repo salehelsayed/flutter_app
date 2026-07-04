@@ -45,6 +45,10 @@ void main() {
     'orbit_chip_open',
     // 205 TC-205-11 — the inner-circle find-pill close X Semantics label.
     'orbit_find_close',
+    // 206 — the orbit center self-avatar's "open settings" button Semantics
+    // label (the migrated settings entry point). A hardcoded literal would trip
+    // l10n_integrity_test, so this key is mandatory across every locale.
+    'orbit_open_settings',
   ];
 
   Map<String, Object?> loadArb(String locale) {
@@ -148,6 +152,8 @@ void main() {
         expect(l10n.orbit_chip_provenance_ring(1).trim(), isNotEmpty);
         expect(l10n.orbit_chip_provenance_arc(2).trim(), isNotEmpty);
         expect(l10n.orbit_chip_open('Alice').trim(), isNotEmpty);
+        // 206 — the center self-avatar settings-entry Semantics label.
+        expect(l10n.orbit_open_settings.trim(), isNotEmpty);
       }
     });
 
@@ -177,6 +183,8 @@ void main() {
       expect(en.orbit_chip_provenance_ring(1), 'Ring 1');
       expect(en.orbit_chip_provenance_arc(2), 'Arc 2');
       expect(en.orbit_chip_open('Alice'), 'Open Alice');
+      // 206 baseline.
+      expect(en.orbit_open_settings, 'Open settings');
     });
   });
 }

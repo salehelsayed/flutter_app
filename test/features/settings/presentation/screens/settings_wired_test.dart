@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
@@ -27,6 +28,7 @@ import 'package:flutter_app/features/identity/presentation/widgets/cosmic_backgr
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/image_quality_toggle.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../../shared/fakes/in_memory_introduction_repository.dart';
 import '../../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
@@ -898,6 +900,95 @@ void main() {
     }
 
     expect(popped, isTrue);
+  });
+
+  // ── 206: settings-side change-kind notifications (E6) ─────────────────────
+
+  testWidgets('TC-206-19a username save fires AppShellChangeKind.identity',
+      (tester) async {
+    final controller = AppShellController();
+    addTearDown(controller.dispose);
+    final kinds = <AppShellChangeKind>[];
+    controller.addListener(() => kinds.add(controller.lastChangeKind));
+
+    await pumpScreen(
+      tester,
+      identityRepo: FakeIdentityRepository(makeIdentity()),
+      appShellController: controller,
+    );
+
+    await tester.tap(find.byIcon(Icons.edit));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'Bob');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(kinds, contains(AppShellChangeKind.identity));
+    expect(controller.lastChangeKind, AppShellChangeKind.identity);
+  });
+
+  testWidgets(
+      'TC-206-20a image+video quality saves fire AppShellChangeKind.mediaQuality',
+      (tester) async {
+    final controller = AppShellController();
+    addTearDown(controller.dispose);
+    final kinds = <AppShellChangeKind>[];
+    controller.addListener(() => kinds.add(controller.lastChangeKind));
+
+    await pumpScreen(
+      tester,
+      identityRepo: FakeIdentityRepository(makeIdentity()),
+      appShellController: controller,
+    );
+
+    final photoToggle = find.byType(ImageQualityToggle).at(0);
+    final videoToggle = find.byType(ImageQualityToggle).at(1);
+
+    await tester.ensureVisible(photoToggle);
+    await tester
+        .tap(find.descendant(of: photoToggle, matching: find.text('Original')));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await tester.ensureVisible(videoToggle);
+    await tester
+        .tap(find.descendant(of: videoToggle, matching: find.text('Original')));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(
+      kinds.where((k) => k == AppShellChangeKind.mediaQuality).length,
+      2,
+    );
+  });
+
+  // TC-206-18a — source-guard: the avatar-upload success branch fires the
+  // identity change-kind (E6). Driving the full ImagePicker → upload →
+  // image-decode pipeline in a widget test is impractical (the decode of a
+  // synthetic avatar never settles), so this pins the exact code line — the
+  // behavioral avatar propagation rides the identity change-kind, proven by
+  // orbit_settings_entry_test's TC-206-18 + app_shell_controller_test. Mutation:
+  // remove the avatar-block notify → this block no longer contains it → red.
+  test('TC-206-18a avatar save fires AppShellChangeKind.identity', () {
+    final src = File(
+      'lib/features/settings/presentation/screens/settings_wired.dart',
+    ).readAsStringSync();
+
+    final uploadIdx = src.indexOf('uploadProfilePicture(');
+    expect(uploadIdx, greaterThanOrEqualTo(0),
+        reason: 'the avatar upload call must exist');
+
+    final afterUpload = src.substring(uploadIdx);
+    final successIdx = afterUpload.indexOf('if (success)');
+    expect(successIdx, greaterThanOrEqualTo(0));
+    final elseIdx = afterUpload.indexOf('} else {', successIdx);
+    expect(elseIdx, greaterThan(successIdx));
+
+    final successBlock = afterUpload.substring(successIdx, elseIdx);
+    expect(
+      successBlock.contains('notifyIdentityChanged'),
+      isTrue,
+      reason:
+          'the avatar-upload success branch must fire notifyIdentityChanged',
+    );
   });
 }
 

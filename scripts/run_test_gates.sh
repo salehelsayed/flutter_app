@@ -180,6 +180,8 @@ readonly FEED_TESTS=(
   "test/features/feed/presentation/screens/feed_reduced_motion_test.dart"
   "test/features/feed/presentation/screens/feed_screen_test.dart"
   "test/features/feed/presentation/screens/feed_wired_test.dart"
+  # 206: Feed header avatar removal (username + connection dot preserved).
+  "test/features/feed/presentation/widgets/feed_header_test.dart"
   # 134-P8 additive guards: l10n parity, shared-widget survival, contract.
   "test/l10n/feed_strings_parity_test.dart"
   "test/features/feed/presentation/widgets/feed_shared_widget_survival_test.dart"
@@ -225,6 +227,8 @@ readonly GROUP_TESTS=(
   "test/features/groups/presentation/group_list_wired_test.dart"
   "test/features/groups/presentation/group_info_wired_test.dart"
   "test/features/orbit/presentation/screens/orbit_wired_test.dart"
+  # 206: Orbit center self-avatar → Settings entry (full-chain + gating + latch).
+  "test/features/orbit/presentation/screens/orbit_settings_entry_test.dart"
   "test/features/groups/presentation/widgets/pending_group_invite_card_test.dart"
   # 156 QW-4: group avatar cacheWidth/cacheHeight.
   "test/features/groups/presentation/widgets/group_avatar_test.dart"
