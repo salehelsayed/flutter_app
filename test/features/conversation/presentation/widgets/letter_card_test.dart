@@ -232,6 +232,46 @@ void main() {
         expect(find.byIcon(Icons.done_all_rounded), findsNothing);
       });
 
+      // 210 TC #1: a group message queued while the sender is offline renders a
+      // CLOCK (schedule) glyph — a benign "waiting to send" state derived purely
+      // from the persisted 'queued_offline' status — never a tick, an error, the
+      // inbox glyph, or the two-tick. Legacy path only (transportStatusGlyph is
+      // 1:1-only and is not set for group bubbles).
+      testWidgets(
+        "status 'queued_offline' renders a clock (schedule) glyph, not a tick",
+        (tester) async {
+          await tester.pumpWidget(
+            buildTestWidget(isIncoming: false, status: 'queued_offline'),
+          );
+          expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+          expect(find.byIcon(Icons.done_rounded), findsNothing);
+          expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+          expect(find.byIcon(Icons.done_all_rounded), findsNothing);
+          expect(find.byIcon(Icons.inbox_rounded), findsNothing);
+        },
+      );
+
+      // 210 TC #2 (guard, GREEN on HEAD): the new 'queued_offline' clock must NOT
+      // broaden to the in-flight states — 'sending' and 'pending' stay a single
+      // tick (online in-doubt / legacy unchanged), never the clock.
+      testWidgets(
+        "'sending' and 'pending' still render a single tick, never the clock "
+        '(210 guard)',
+        (tester) async {
+          await tester.pumpWidget(
+            buildTestWidget(isIncoming: false, status: 'sending'),
+          );
+          expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+          expect(find.byIcon(Icons.schedule_rounded), findsNothing);
+
+          await tester.pumpWidget(
+            buildTestWidget(isIncoming: false, status: 'pending'),
+          );
+          expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+          expect(find.byIcon(Icons.schedule_rounded), findsNothing);
+        },
+      );
+
       testWidgets('shows pending media delivery note while media is sending', (
         tester,
       ) async {

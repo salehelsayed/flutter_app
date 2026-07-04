@@ -1977,7 +1977,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       text: text,
       timestamp: now,
       quotedMessageId: quotedMessageId,
-      status: 'sending',
+      // 210: while the sender is offline the optimistic bubble must show a CLOCK
+      // from the very first frame (no 'sending' tick flash). The send result
+      // handler re-affirms 'queued_offline' after the awaited send fails.
+      status: widget.p2pService.currentState.relayReady
+          ? 'sending'
+          : GroupMessage.statusQueuedOffline,
       isIncoming: false,
       createdAt: now,
     );
@@ -2213,6 +2218,18 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           await _refreshVisibleGroup();
         }
         _setTerminalSendReadOnly(_terminalReadOnlyForSendResult(result));
+      } else if (!widget.p2pService.currentState.relayReady &&
+          message != null) {
+        // 210: the send failed purely because WE are offline (relay
+        // unreachable) and a durable row exists (message != null). Keep it as a
+        // self-healing 'queued_offline' row (clock, not tick), leave the
+        // composer clear (no Retry), and surface the honest offline snackbar —
+        // the stuck-sending recovery sweep re-drives it on reconnect. Ordered
+        // AFTER the terminal checks so a terminal group-lifecycle failure still
+        // wins (error + read-only), and BEFORE the online-error restore so the
+        // relayReady==true case keeps its 'failed' + composer restore.
+        await _markOutgoingMessageQueuedOffline(messageId);
+        _showOfflineQueuedSnackBar();
       } else if (message == null) {
         await _restoreComposerSnapshotWithoutFailure(
           composerSnapshot,
@@ -2640,6 +2657,47 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       SnackBar(
         content: Text(text),
         backgroundColor: backgroundColor,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  /// 210: persist the durable 'queued_offline' status for a message that could
+  /// not send because WE are offline, and reflect it in the on-screen row.
+  /// Unlike the failure helpers this deliberately does NOT restore the composer
+  /// or mark the row 'failed' — the message stays durably queued and self-heals
+  /// when connectivity returns (the stuck-sending recovery sweep re-drives it).
+  /// The status write is the LAST write for this row, so it wins over the
+  /// 'failed' the send use case stamped on the connectivity failure.
+  Future<void> _markOutgoingMessageQueuedOffline(String messageId) async {
+    _updateLocalMessageStatus(messageId, GroupMessage.statusQueuedOffline);
+    await _persistMessageStatus(messageId, GroupMessage.statusQueuedOffline);
+  }
+
+  /// 210: the offline queued-send informational snackbar. Mirrors the 1:1
+  /// `conversation_wired` offline copy EXACTLY — a wifi-off glyph + the
+  /// hardcoded "Will send when you're back online" const on the slate/blueGrey
+  /// floating surface (informational/self-healing tone, NOT error-red). The copy
+  /// is a hardcoded const to match 1:1; l10n is deferred debt for both paths.
+  void _showOfflineQueuedSnackBar() {
+    if (!mounted) return;
+    const senderOfflineCopy = "Will send when you're back online";
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.wifi_off_rounded, color: Colors.white, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                senderOfflineCopy,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.blueGrey[700],
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -3850,7 +3908,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         text: '',
         timestamp: now,
         quotedMessageId: quotedMessageId,
-        status: 'sending',
+        // 210: same offline-first clock as the text path (voice is a separate
+        // send surface).
+        status: widget.p2pService.currentState.relayReady
+            ? 'sending'
+            : GroupMessage.statusQueuedOffline,
         isIncoming: false,
         createdAt: now,
       );
@@ -4085,6 +4147,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
               await _refreshVisibleGroup();
             }
             _setTerminalSendReadOnly(_terminalReadOnlyForSendResult(result));
+          } else if (!widget.p2pService.currentState.relayReady &&
+              message != null) {
+            // 210 (voice path parity): offline connectivity failure with a
+            // durable row → keep it 'queued_offline' (clock), do NOT restore the
+            // quote/composer to a failed state, and show the offline snackbar.
+            // Ordered after the terminal checks, as in the text path.
+            _clearRestoredVoiceContinuationTracking(messageId: messageId);
+            await _markOutgoingMessageQueuedOffline(messageId);
+            _showOfflineQueuedSnackBar();
           } else {
             _updateLocalMessageStatus(messageId, 'failed');
             await _persistMessageStatus(messageId, 'failed');

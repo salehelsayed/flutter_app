@@ -46,6 +46,7 @@ import 'package:flutter_app/core/notifications/active_conversation_tracker.dart'
 import 'package:flutter_app/features/groups/presentation/screens/group_info_screen.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
@@ -260,6 +261,32 @@ class _GatedPublishBridge extends FakeBridge {
       await publishGate.future;
     }
 
+    return super.send(message);
+  }
+}
+
+/// 210: gates `group:sendReliable` behind a [Completer] and answers with a
+/// connectivity-class failure when released, so an offline optimistic bubble can
+/// be asserted on the frame BEFORE the send result handler runs (the "no tick
+/// flash" check).
+class _GatedReliableFailBridge extends FakeBridge {
+  final Completer<void> sendGate = Completer<void>();
+  int reliableAttempts = 0;
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd == 'group:sendReliable') {
+      reliableAttempts++;
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+      await sendGate.future;
+      return jsonEncode({'ok': false, 'errorCode': 'NETWORK_DOWN'});
+    }
     return super.send(message);
   }
 }
@@ -960,7 +987,18 @@ void main() {
         },
       );
       identityRepo = FakeIdentityRepository(identity: testIdentity);
-      p2pService = FakeP2PService();
+      // 210 preservation: the ~167 existing sends assume a reachable relay (a
+      // tick, no offline affordance). The bare FakeP2PService() is
+      // relayReady==false; pin it ONLINE here so ONLY the dedicated offline
+      // tests below (which build their own offline FakeP2PService) exercise the
+      // new `!relayReady` queued-offline branch.
+      p2pService = FakeP2PService(
+        initialState: const NodeState(
+          isStarted: true,
+          peerId: 'me',
+          relayState: 'online',
+        ),
+      );
       messageStreamController = StreamController<GroupMessage>.broadcast();
       wakeLockDriver = FakeUploadWakeLockDriver();
       UploadWakeLockController.debugReset(driver: wakeLockDriver);
@@ -1048,6 +1086,318 @@ void main() {
         ),
       );
     }
+
+    // ---- 210: group offline-send (queued-offline snackbar + clock, not tick) ----
+    group('210 offline queued-offline send', () {
+      // relayReady == false: node started but no relayState/circuit → offline.
+      FakeP2PService offlineP2pService() => FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'me'),
+      );
+
+      // A bridge whose reliable send returns a connectivity-class failure, as the
+      // relay is unreachable while offline (NETWORK_DOWN is NOT a "bridge
+      // unavailable" code, so the use case returns `error` rather than falling
+      // back to legacy publish).
+      FakeBridge offlineFailingBridge() => FakeBridge(
+        initialResponses: {
+          'group:sendReliable': {'ok': false, 'errorCode': 'NETWORK_DOWN'},
+        },
+      );
+
+      Future<GroupMessage> queuedRowFor(String text) async {
+        final rows = await msgRepo.getMessagesPage('group-1');
+        return rows.firstWhere((m) => m.text == text && !m.isIncoming);
+      }
+
+      // TC #3: offline text send → wifi-off snackbar + clock, no tick, no error,
+      // composer not restored, no Retry, durable row is 'queued_offline'.
+      testWidgets(
+        'offline text send shows wifi-off snackbar + clock, no tick, no Retry',
+        (tester) async {
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          p2pService = offlineP2pService();
+          bridge = offlineFailingBridge();
+
+          await tester.pumpWidget(buildWidget(group: group));
+          await pumpFrames(tester);
+
+          await tester.enterText(find.byType(TextField), 'Offline text');
+          await pumpFrames(tester);
+          await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+          await pumpFrames(tester, count: 20);
+
+          // Informational snackbar — mirrors 1:1 exactly.
+          expect(find.text("Will send when you're back online"), findsOneWidget);
+          expect(
+            find.descendant(
+              of: find.byType(SnackBar),
+              matching: find.byIcon(Icons.wifi_off_rounded),
+            ),
+            findsOneWidget,
+          );
+          expect(
+            tester.widget<SnackBar>(find.byType(SnackBar)).backgroundColor,
+            Colors.blueGrey[700],
+          );
+
+          // Bubble shows a CLOCK, never a tick or an error.
+          expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+          expect(find.byIcon(Icons.done_rounded), findsNothing);
+          expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+
+          // Composer NOT restored (the message stays durably queued).
+          expect(
+            tester.widget<TextField>(find.byType(TextField)).controller?.text ??
+                '',
+            isEmpty,
+          );
+
+          // Durable row is 'queued_offline'; no Retry affordance is offered.
+          final queued = await queuedRowFor('Offline text');
+          expect(queued.status, 'queued_offline');
+          expect(
+            find.byKey(ValueKey('failed-message-retry-${queued.id}')),
+            findsNothing,
+          );
+        },
+      );
+
+      // TC #4: the optimistic bubble must show the clock on the FIRST post-tap
+      // frame (before the gated send resolves) — never a 'sending' tick flash.
+      testWidgets(
+        'optimistic offline bubble shows a clock immediately (no tick flash)',
+        (tester) async {
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          p2pService = offlineP2pService();
+          final gated = _GatedReliableFailBridge();
+          bridge = gated;
+          addTearDown(() {
+            if (!gated.sendGate.isCompleted) gated.sendGate.complete();
+          });
+
+          await tester.pumpWidget(buildWidget(group: group));
+          await pumpFrames(tester);
+
+          await tester.enterText(find.byType(TextField), 'Optimistic offline');
+          await pumpFrames(tester);
+          await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+
+          // The reliable send is gated (unresolved), so the result handler has
+          // NOT run: the optimistic status alone is under test here.
+          await pumpUntil(
+            tester,
+            () => find.text('Optimistic offline').evaluate().isNotEmpty,
+          );
+          await pumpFrames(tester, count: 3);
+
+          expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+          expect(find.byIcon(Icons.done_rounded), findsNothing);
+
+          // Release; it settles to queued_offline (still a clock).
+          gated.sendGate.complete();
+          await pumpFrames(tester, count: 20);
+          expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+          expect(find.byIcon(Icons.done_rounded), findsNothing);
+        },
+      );
+
+      // TC #5: the voice path (`_onRecordStop`) is a separate send surface — it
+      // gets the SAME offline affordance (snackbar + clock).
+      testWidgets(
+        'voice/audio offline send shows wifi-off snackbar + clock (path parity)',
+        (tester) async {
+          final tempDir = Directory.systemTemp.createTempSync(
+            'group-voice-offline-',
+          );
+          addTearDown(() {
+            if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+          });
+          final recorder = FakeAudioRecorderService()..fakeDurationMs = 1500;
+          final voiceFile = File(p.join(tempDir.path, 'voice.m4a'))
+            ..writeAsStringSync('voice');
+          recorder.fakeOutputPath = voiceFile.path;
+          final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
+
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          // Members present → the send reaches the connectivity path (NOT the
+          // empty-membership groupDissolved terminal branch).
+          await saveActiveGroupMembers(groupRepo, group);
+          p2pService = offlineP2pService();
+          bridge = offlineFailingBridge();
+
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: mediaFileManager,
+              audioRecorderService: recorder,
+            ),
+          );
+          await pumpFrames(tester, count: 20);
+
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          final startRecording =
+              screen.onRecordStart! as Future<void> Function();
+          await startRecording();
+          await pumpUntil(
+            tester,
+            () =>
+                tester
+                    .widget<GroupConversationScreen>(
+                      find.byType(GroupConversationScreen),
+                    )
+                    .recordingState ==
+                VoiceRecordingState.recording,
+          );
+
+          final recordingScreen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          final stopRecording =
+              recordingScreen.onRecordStop! as Future<void> Function();
+          await tester.runAsync(() async {
+            await stopRecording();
+          });
+          await pumpFrames(tester, count: 20);
+
+          expect(find.text("Will send when you're back online"), findsOneWidget);
+          expect(
+            find.descendant(
+              of: find.byType(SnackBar),
+              matching: find.byIcon(Icons.wifi_off_rounded),
+            ),
+            findsOneWidget,
+          );
+          expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+          expect(find.byIcon(Icons.done_rounded), findsNothing);
+          expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+
+          final after = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          final voiceRows = after.messages
+              .where((m) => !m.isIncoming && m.text.isEmpty)
+              .toList();
+          expect(voiceRows, hasLength(1));
+          expect(voiceRows.single.status, 'queued_offline');
+        },
+      );
+
+      // TC #6 (guard, GREEN on HEAD): an ONLINE success shows a tick and NO
+      // offline snackbar — the branch must not fire when relayReady is true.
+      testWidgets(
+        'online success shows a tick and NO offline snackbar (guard)',
+        (tester) async {
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          // p2pService stays the setUp ONLINE default; setUp bridge = publish ok.
+
+          await tester.pumpWidget(buildWidget(group: group));
+          await pumpFrames(tester);
+
+          await tester.enterText(find.byType(TextField), 'Online ok');
+          await pumpFrames(tester);
+          await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+          await pumpFrames(tester, count: 20);
+
+          expect(find.text('Online ok'), findsOneWidget);
+          expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+          expect(find.byIcon(Icons.schedule_rounded), findsNothing);
+          expect(find.text("Will send when you're back online"), findsNothing);
+        },
+      );
+
+      // TC #7 (ordering guard, GREEN on HEAD): a TERMINAL group failure while
+      // offline still shows the error glyph + read-only banner and NO offline
+      // snackbar — the terminal checks precede the offline branch.
+      testWidgets(
+        'terminal group failure while offline still shows error + read-only, '
+        'no offline snackbar',
+        (tester) async {
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          // No members → empty-membership chat → use case returns groupDissolved
+          // (a terminal result) BEFORE any connectivity-class branch.
+          p2pService = offlineP2pService();
+
+          await tester.pumpWidget(buildWidget(group: group));
+          await pumpFrames(tester);
+
+          await tester.enterText(find.byType(TextField), 'Terminal offline');
+          await pumpFrames(tester);
+          await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+          await pumpFrames(tester, count: 20);
+
+          expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
+          expect(find.byIcon(Icons.schedule_rounded), findsNothing);
+          expect(find.text("Will send when you're back online"), findsNothing);
+          expect(
+            find.byKey(const ValueKey('group-read-only-banner')),
+            findsOneWidget,
+          );
+        },
+      );
+
+      // TC #10: the clock→tick transition. Once the queued message actually
+      // sends (connectivity returns, the row settles to 'sent' and the listener
+      // streams it), the clock is replaced by a single tick — no error, no
+      // duplicate, composer still clear, screen not read-only.
+      testWidgets(
+        'queued_offline settles to a tick when the message actually sends',
+        (tester) async {
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          p2pService = offlineP2pService();
+          bridge = offlineFailingBridge();
+
+          await tester.pumpWidget(buildWidget(group: group));
+          await pumpFrames(tester);
+
+          await tester.enterText(find.byType(TextField), 'Reconnect me');
+          await pumpFrames(tester);
+          await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+          await pumpFrames(tester, count: 20);
+
+          expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+          final queued = await queuedRowFor('Reconnect me');
+          expect(queued.status, 'queued_offline');
+
+          // Simulate the re-send completing: the DB row settles to 'sent' and the
+          // listener streams the settled row for that id.
+          await msgRepo.updateMessageStatus(queued.id, 'sent');
+          messageStreamController.add(queued.copyWith(status: 'sent'));
+          await pumpFrames(tester, count: 20);
+
+          expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+          expect(find.byIcon(Icons.schedule_rounded), findsNothing);
+          expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+          expect(find.text('Reconnect me'), findsOneWidget);
+          expect(
+            tester.widget<TextField>(find.byType(TextField)).controller?.text ??
+                '',
+            isEmpty,
+          );
+          final after = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          expect(
+            after.messages.where(
+              (m) => m.text == 'Reconnect me' && !m.isIncoming,
+            ),
+            hasLength(1),
+          );
+        },
+      );
+    });
 
     testWidgets('prefills shared text into the group composer', (tester) async {
       final group = makeChatGroup();

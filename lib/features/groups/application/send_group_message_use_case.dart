@@ -406,9 +406,14 @@ bool _canReuseOutgoingMessageId({
   String? logicalDeliveryId,
 }) {
   if (existing.isIncoming) return false;
+  // 210: 'queued_offline' is a live re-usable optimistic row too — the
+  // media/voice paths pre-persist the optimistic message before calling this use
+  // case, so an offline pre-save must be reused (not treated as a collision that
+  // mints a duplicate row with a fresh id).
   if (existing.status != 'sending' &&
       existing.status != 'failed' &&
-      existing.status != 'pending') {
+      existing.status != 'pending' &&
+      existing.status != GroupMessage.statusQueuedOffline) {
     return false;
   }
   if (existing.groupId != groupId || existing.senderPeerId != senderPeerId) {

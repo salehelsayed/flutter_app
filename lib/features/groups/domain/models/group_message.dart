@@ -48,6 +48,15 @@ class GroupMessage {
   /// retryable). Treated as a read-only superset of 'failed' on display paths.
   static const String statusSendFailed = 'send_failed';
 
+  /// 210: an outgoing message composed while the sender is offline (relay
+  /// unreachable). It is durably queued and self-healing — NOT a failure — so it
+  /// renders a CLOCK (waiting-to-send), never a tick or an error, and the
+  /// composer is not restored to a Retry state. The stuck-sending recovery sweep
+  /// re-drives it into the normal retry lane when connectivity returns, where it
+  /// settles to 'sent' (tick). Distinct from 'pending' (online in-doubt, still a
+  /// tick) and 'sending' (online in-flight, a tick).
+  static const String statusQueuedOffline = 'queued_offline';
+
   /// Whether this message was received from another group member.
   final bool isIncoming;
 

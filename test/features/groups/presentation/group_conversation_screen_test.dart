@@ -218,6 +218,34 @@ void main() {
     expect(find.text('Alice'), findsOneWidget);
   });
 
+  // 210 TC #8: a persisted 'queued_offline' outgoing row reconstructs a CLOCK on
+  // mount. The glyph is derived purely from the durable status, so a cold reopen
+  // shows the same waiting-to-send affordance (no in-memory-only latch) — never
+  // a tick or an error.
+  testWidgets(
+    'a persisted queued_offline message reconstructs a clock on remount',
+    (tester) async {
+      final queued = GroupMessage(
+        id: 'msg-queued-offline',
+        groupId: 'group-1',
+        // senderPeerId == ownPeerId ('peer-1') → outgoing bubble (isSent).
+        senderPeerId: 'peer-1',
+        senderUsername: 'You',
+        text: 'Queued while offline',
+        timestamp: DateTime.now().toUtc(),
+        createdAt: DateTime.now().toUtc(),
+        status: 'queued_offline',
+        isIncoming: false,
+      );
+
+      await tester.pumpWidget(buildTestWidget(messages: [queued]));
+
+      expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.done_rounded), findsNothing);
+      expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+    },
+  );
+
   testWidgets('ML-016 non-contact sender labels render stable fallback', (
     tester,
   ) async {

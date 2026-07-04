@@ -935,10 +935,18 @@ Future<List<Map<String, dynamic>>> dbLoadGroupMessagesWithFailedInboxStore(
   );
 }
 
-/// Transitions outgoing 'sending' messages to 'failed'.
+/// Transitions stuck outgoing rows to 'failed' so the retry lane re-drives them.
 ///
-/// When [olderThan] is provided, only messages older than the cutoff are
-/// transitioned. When omitted, all outgoing sending rows are transitioned.
+/// Covers two stuck states:
+/// - `sending`: an in-flight send that never settled. When [olderThan] is
+///   provided, only rows older than the cutoff are transitioned (a fresh
+///   in-flight send is not yet "stuck"); when omitted, all outgoing sending
+///   rows are transitioned.
+/// - 210 `queued_offline`: a message composed while the sender was offline. It
+///   never left the device, so it is ALWAYS re-driven regardless of age — this
+///   is what keeps a queued offline send from being stranded across an
+///   app-resume recovery sweep. It re-enters the normal retry lane and settles
+///   to 'sent' (tick) once connectivity returns.
 ///
 /// Returns the number of rows affected.
 Future<int> dbTransitionGroupSendingToFailed(
@@ -947,13 +955,18 @@ Future<int> dbTransitionGroupSendingToFailed(
 }) async {
   if (olderThan == null) {
     return db.rawUpdate(
-      "UPDATE group_messages SET status = 'failed' WHERE status = 'sending' AND is_incoming = 0",
+      "UPDATE group_messages SET status = 'failed' "
+      "WHERE status IN ('sending', 'queued_offline') AND is_incoming = 0",
     );
   }
 
   final threshold = olderThan.toUtc().toIso8601String();
   return db.rawUpdate(
-    "UPDATE group_messages SET status = 'failed' WHERE status = 'sending' AND is_incoming = 0 AND COALESCE(last_send_attempt_at, timestamp) < ?",
+    "UPDATE group_messages SET status = 'failed' "
+    'WHERE is_incoming = 0 '
+    "AND ((status = 'sending' "
+    'AND COALESCE(last_send_attempt_at, timestamp) < ?) '
+    "OR status = 'queued_offline')",
     [threshold],
   );
 }

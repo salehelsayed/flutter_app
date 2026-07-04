@@ -1070,6 +1070,14 @@ class LetterCard extends StatelessWidget {
     if (status == 'failed' || status == 'send_failed') {
       return Icons.error_outline_rounded;
     }
+    // 210: a group message queued while the sender is OFFLINE — durably queued
+    // and self-healing, NOT in-flight — rests on a CLOCK until connectivity
+    // returns (distinct from 'sending'/'pending' below, which stay a single
+    // tick). Group/legacy path only; the 1:1 transportStatusGlyph branch is
+    // untouched (this value never reaches it).
+    if (status == 'queued_offline') {
+      return Icons.schedule_rounded;
+    }
     // 155: 'pending' is genuinely in-flight — NOT yet in the relay inbox.
     // (Changed) in-flight now shows a single tick instead of the clock.
     if (status == 'pending') {
@@ -1096,6 +1104,13 @@ class LetterCard extends StatelessWidget {
           ? const Color(0xFF8A4A00)
           : const Color.fromRGBO(255, 200, 100, 0.50);
     }
+    // 210: 'queued_offline' is a benign waiting-to-send state (not an error and
+    // not the amber in-doubt hue) — the neutral muted tone, same as 'sent'.
+    if (status == 'queued_offline') {
+      return readableColors.isLightSurface
+          ? readableColors.iconMuted
+          : const Color.fromRGBO(255, 255, 255, 0.25);
+    }
     // 'sent', 'sending', 'inboxed', 'delivered', 'queued' → neutral muted.
     return readableColors.isLightSurface
         ? readableColors.iconMuted
@@ -1113,6 +1128,11 @@ class LetterCard extends StatelessWidget {
     if (status == 'failed' || status == 'send_failed') {
       return l10n.message_status_failed;
     }
+    // 210: waiting-to-send while offline. Hardcoded copy mirrors the group
+    // offline snackbar's hardcoded const (l10n is deferred debt for both — see
+    // the 210 plan's Accepted Differences); reads "waiting to send" to a screen
+    // reader via the message_status_semantics wrapper.
+    if (status == 'queued_offline') return 'waiting to send';
     if (status == 'sending') return l10n.message_status_sending;
     if (status == 'sent') return l10n.message_status_sent;
     if (status == 'pending') {

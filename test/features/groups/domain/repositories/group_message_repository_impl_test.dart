@@ -513,6 +513,53 @@ void main() {
         expect(events, isEmpty);
       },
     );
+
+    // 210 TC #9: the stuck-sending recovery sweep also re-drives 'queued_offline'
+    // rows (a message queued while the sender was offline) into the retry lane —
+    // regardless of age — so the queued send is never stranded. A 'sent' control
+    // row is left untouched, and a second sweep is idempotent.
+    test('recoverStuckSendingMessages re-drives queued_offline rows', () async {
+      // A 'sending' row this fresh would be BELOW the age cutoff and skipped; a
+      // 'queued_offline' row is re-driven regardless of age.
+      final recentTs = DateTime.now().toUtc();
+      await repo.saveMessage(
+        makeMessage(
+          id: 'queued-offline-1',
+          status: 'queued_offline',
+          isIncoming: false,
+          timestamp: recentTs,
+          createdAt: recentTs,
+          lastSendAttemptAt: recentTs,
+        ),
+      );
+      await repo.saveMessage(
+        makeMessage(
+          id: 'sent-control-1',
+          status: 'sent',
+          isIncoming: false,
+          timestamp: recentTs,
+          createdAt: recentTs,
+        ),
+      );
+
+      final recovered = await repo.recoverStuckSendingMessages(
+        olderThan: const Duration(seconds: 30),
+      );
+
+      expect(recovered, 1);
+      // Transitioned into the retry lane ('failed' is what
+      // retryFailedGroupMessages loads) — the queued send is now re-drivable.
+      expect((await repo.getMessage('queued-offline-1'))!.status, 'failed');
+      // The unrelated 'sent' row is left alone.
+      expect((await repo.getMessage('sent-control-1'))!.status, 'sent');
+
+      // Idempotent: a second sweep finds nothing new (the row is now 'failed').
+      final again = await repo.recoverStuckSendingMessages(
+        olderThan: const Duration(seconds: 30),
+      );
+      expect(again, 0);
+      expect((await repo.getMessage('queued-offline-1'))!.status, 'failed');
+    });
   });
 
   group('pause recovery', () {
