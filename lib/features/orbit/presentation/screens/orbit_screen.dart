@@ -318,6 +318,19 @@ class OrbitScreen extends StatelessWidget {
     return _persistentNavReservedHeight(context) + 8;
   }
 
+  /// 201: the surface-relative bottom reservation the Inner-Circle find pill /
+  /// chip strip / corner steppers must clear so they never sit under the
+  /// persistent Feed/Orbit nav band. Zero when that nav isn't shown. Mirrors the
+  /// search-dock offset minus the SafeArea inset the surface already carries
+  /// (the surface is wrapped in SafeArea; the nav band is screen-anchored).
+  double _innerCircleBottomClearance(BuildContext context) {
+    if (!_showsPersistentNav) {
+      return 0;
+    }
+    final safeBottom = MediaQuery.viewPaddingOf(context).bottom;
+    return math.max(0.0, _searchDockBottomOffset(context) - safeBottom);
+  }
+
   double _contentBottomSpacer(
     BuildContext context,
     OrbitViewProjection projection,
@@ -556,6 +569,7 @@ class OrbitScreen extends StatelessWidget {
           secureKeyStore: secureKeyStore,
           onEditSessionActiveChanged: onInnerCircleEditSessionChanged,
           resetSignal: innerCircleResetListenable,
+          bottomClearance: _innerCircleBottomClearance(context),
         );
       },
     );

@@ -186,6 +186,10 @@ class OrbitalVisualization extends StatelessWidget {
         OrbitSeatKind.arc => (1.0, outerBorderColor),
       };
       children.add(Positioned(
+        // 201 INV-201-2: a stable slot key on the node Positioned so a label
+        // insertion / arc reveal cannot re-slot it (positional matching would
+        // otherwise re-inflate every following node → entrance replay "blink").
+        key: ValueKey('orbit-node-${seat.index}'),
         left: cx + seat.dx - tapTargetSize / 2,
         top: cy + seat.dy - tapTargetSize / 2,
         // Keyed so tests can read THIS dim (OrbitalAvatar has its own inner
@@ -204,7 +208,10 @@ class OrbitalVisualization extends StatelessWidget {
             // Ring entrance keeps the pre-198 stagger; arc entrance uses the
             // layout stagger and honors reduce-motion (INV-7).
             entranceDelayMs: isArc ? seat.entranceDelayMs : null,
-            entranceMotionEnabled: isArc ? motionEnabled : true,
+            // 201 INV-201-4: ring entrances honor OS reduce-motion too. The
+            // pre-201 `: true` hard-code animated rings even under reduce-motion
+            // (documented by the arcs_test ":196 drain" comment).
+            entranceMotionEnabled: motionEnabled,
           ),
         ),
       ));
@@ -219,6 +226,10 @@ class OrbitalVisualization extends StatelessWidget {
       final badge = layout.badge!;
       final badgeHalf = onBadgeTap != null ? 22.0 : 14.0;
       children.add(Positioned(
+        // 201 INV-201-2: the single badge keeps a stable slot key so node/label
+        // insertions before it (label toggle, arc expand/collapse) never
+        // re-inflate it (which replayed its 1.5s entrance / blanked it).
+        key: const ValueKey('orbit-overflow-badge-seat'),
         left: cx + badge.dx - badgeHalf,
         top: cy + badge.dy - badgeHalf,
         child: OverflowBadge(
@@ -323,6 +334,9 @@ class OrbitalVisualization extends StatelessWidget {
     const labelWidth = 72.0;
     final stagger = seat.staggerParity * 12.0;
     return Positioned(
+      // 201: label slot key pairs with its node's key so the interleaved
+      // node/label pairs reconcile by key, not by list position.
+      key: ValueKey('orbit-label-${seat.index}'),
       left: cx + seat.dx - labelWidth / 2,
       top: cy + seat.dy + seat.avatarSize / 2 + 2 + stagger,
       width: labelWidth,

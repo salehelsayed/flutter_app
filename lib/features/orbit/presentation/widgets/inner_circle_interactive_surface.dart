@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/orbit/application/orbit_find_matches.dart';
 import 'package:flutter_app/features/orbit/application/orbit_geometry_prefs_use_cases.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
@@ -47,6 +50,12 @@ class InnerCircleInteractiveSurface extends StatefulWidget {
   /// Host pokes this on the Feed→Orbit rising edge to reset the transient state.
   final Listenable? resetSignal;
 
+  /// 201: extra bottom reservation (logical px) the host needs the find pill /
+  /// chip strip / corner steppers to clear — e.g. the persistent Feed/Orbit nav
+  /// band. Default 0 (bare-screen pumps); each bottom band takes
+  /// `max(base, bottomClearance)` so it never sits under host chrome.
+  final double bottomClearance;
+
   const InnerCircleInteractiveSurface({
     super.key,
     required this.userPeerId,
@@ -57,6 +66,7 @@ class InnerCircleInteractiveSurface extends StatefulWidget {
     this.secureKeyStore,
     this.onEditSessionActiveChanged,
     this.resetSignal,
+    this.bottomClearance = 0,
   });
 
   @override
@@ -593,6 +603,7 @@ class _InnerCircleInteractiveSurfaceState
     return [
       // Banner — green terminal chrome (M11), copy/position unchanged.
       Positioned(
+        key: const ValueKey('orbit-slot-edit-banner'),
         top: 12,
         left: 0,
         right: 0,
@@ -623,6 +634,7 @@ class _InnerCircleInteractiveSurfaceState
 
       // Reset (top-left) — the dark bordered pill treatment (M11).
       Positioned(
+        key: const ValueKey('orbit-slot-edit-reset'),
         top: 8,
         left: 8,
         child: Semantics(
@@ -663,6 +675,7 @@ class _InnerCircleInteractiveSurfaceState
       // live drag; re-seated per build from the measured origin + pure anchor
       // formulas; band-hidden (Offstage, never unmounted) off-viewport.
       Positioned.fill(
+        key: const ValueKey('orbit-slot-handle-layer'),
         child: ListenableBuilder(
           listenable: _scroll,
           builder: (context, _) {
@@ -690,8 +703,9 @@ class _InnerCircleInteractiveSurfaceState
       // orbit_view_toggle_button.dart) + the bottomInset term (keyboard).
       if (armed != null) ...[
         Positioned(
+          key: const ValueKey('orbit-slot-step-decrease'),
           left: 22,
-          bottom: bottomInset + 28,
+          bottom: bottomInset + math.max(28.0, widget.bottomClearance),
           child: _StepperButton(
             key: const ValueKey('orbit-edit-step-decrease'),
             icon: Icons.remove,
@@ -701,8 +715,9 @@ class _InnerCircleInteractiveSurfaceState
           ),
         ),
         Positioned(
+          key: const ValueKey('orbit-slot-step-increase'),
           right: 22,
-          bottom: bottomInset + 28,
+          bottom: bottomInset + math.max(28.0, widget.bottomClearance),
           child: _StepperButton(
             key: const ValueKey('orbit-edit-step-increase'),
             icon: Icons.add,
@@ -830,9 +845,11 @@ class _InnerCircleInteractiveSurfaceState
       // Chip strip (hit-transparent container; only chips are tappable).
       if (find.chips.isNotEmpty)
         Positioned(
+          key: const ValueKey('orbit-slot-find-chips'),
           left: 12,
           right: 12,
-          bottom: bottomInset + (lifted ? 144 : 96),
+          bottom:
+              bottomInset + math.max(lifted ? 144.0 : 96.0, widget.bottomClearance),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -841,7 +858,7 @@ class _InnerCircleInteractiveSurfaceState
                   padding: const EdgeInsets.symmetric(horizontal: 4),
                   child: _FindChip(
                     key: ValueKey('orbit-find-chip-${chip.index}'),
-                    label: orbitItemDisplayName(chip.item),
+                    item: chip.item,
                     provenance: chip.provenance.isArc
                         ? l10n.orbit_chip_provenance_arc(chip.provenance.arcNumber!)
                         : l10n.orbit_chip_provenance_ring(chip.provenance.ringNumber!),
@@ -853,30 +870,35 @@ class _InnerCircleInteractiveSurfaceState
           ),
         ),
 
-      // Pill (bottom-right): 40px collapsed → ~200px expanded TextField.
+      // Pill: a 44px collapsed circle (bottom-right) that expands to a
+      // full-width (left/right 16) >=48-high search bar. Bottom band clears any
+      // host chrome via bottomClearance (persistent nav).
       Positioned(
+        key: const ValueKey('orbit-slot-find-pill'),
+        left: _findOpen ? 16 : null,
         right: 16,
-        bottom: bottomInset + (lifted ? 88 : 40),
+        bottom:
+            bottomInset + math.max(lifted ? 88.0 : 40.0, widget.bottomClearance),
         child: _findOpen
             ? Container(
                 key: const ValueKey('orbit-find-pill'),
-                width: 200,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
+                constraints: const BoxConstraints(minHeight: 48),
+                padding: const EdgeInsets.symmetric(horizontal: 14),
                 decoration: BoxDecoration(
                   color: colors.glassSurface,
-                  borderRadius: BorderRadius.circular(22),
+                  borderRadius: BorderRadius.circular(24),
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.search, size: 18, color: colors.iconMuted),
-                    const SizedBox(width: 8),
+                    Icon(Icons.search, size: 20, color: colors.iconMuted),
+                    const SizedBox(width: 10),
                     Expanded(
                       child: TextField(
                         controller: _findController,
                         focusNode: _findFocus,
                         onChanged: _onFindChanged,
                         style: TextStyle(
-                            fontSize: 14, color: colors.textPrimary),
+                            fontSize: 15, color: colors.textPrimary),
                         decoration: InputDecoration(
                           isDense: true,
                           border: InputBorder.none,
@@ -896,8 +918,8 @@ class _InnerCircleInteractiveSurfaceState
                   behavior: HitTestBehavior.opaque,
                   onTap: _openFind,
                   child: Container(
-                    width: 40,
-                    height: 40,
+                    width: 44,
+                    height: 44,
                     decoration: BoxDecoration(
                       color: colors.glassSurface,
                       shape: BoxShape.circle,
@@ -949,14 +971,14 @@ class _StepperButton extends StatelessWidget {
 }
 
 class _FindChip extends StatelessWidget {
-  final String label;
+  final OrbitItem item;
   final String provenance;
   final BackgroundReadableColors colors;
   final VoidCallback onTap;
 
   const _FindChip({
     super.key,
-    required this.label,
+    required this.item,
     required this.provenance,
     required this.colors,
     required this.onTap,
@@ -964,6 +986,7 @@ class _FindChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final label = orbitItemDisplayName(item);
     return Semantics(
       button: true,
       label: label,
@@ -971,8 +994,10 @@ class _FindChip extends StatelessWidget {
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
         child: Container(
-          constraints: const BoxConstraints(minHeight: 44),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          // maxWidth bounds each chip so four long names can't overflow the
+          // strip; the label Flexible + ellipsis truncates within that bound.
+          constraints: const BoxConstraints(minHeight: 44, maxWidth: 112),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           decoration: BoxDecoration(
             color: colors.glassSurface,
             borderRadius: BorderRadius.circular(16),
@@ -980,18 +1005,31 @@ class _FindChip extends StatelessWidget {
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: colors.textPrimary,
-                ),
+              _avatar(),
+              const SizedBox(height: 4),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: colors.textPrimary,
+                      ),
+                    ),
+                  ),
+                ],
               ),
               Text(
                 provenance,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(fontSize: 9, color: colors.textMuted),
               ),
             ],
@@ -1000,4 +1038,19 @@ class _FindChip extends StatelessWidget {
       ),
     );
   }
+
+  // The member's own avatar above the name: friends inherit plan 200's
+  // aspect-safe UserAvatar; groups render the group glyph (200 GroupAvatar).
+  Widget _avatar() => switch (item) {
+        OrbitFriendItem(:final friend) =>
+          UserAvatar(peerId: friend.peerId, size: 40),
+        OrbitGroupItem(:final group) => GroupAvatar(
+            groupId: group.groupId,
+            name: group.name,
+            avatarPath: group.group.avatarPath,
+            size: 40,
+            borderRadius: BorderRadius.circular(20),
+            cacheBustKey: group.group.lastMetadataEventAt?.toIso8601String(),
+          ),
+      };
 }
