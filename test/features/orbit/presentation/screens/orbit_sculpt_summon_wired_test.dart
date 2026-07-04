@@ -1072,8 +1072,14 @@ void main() {
           closeTo(30, 0.5));
 
       // Saturates the 1.4 clamp regardless of the ~18px tester slop
-      // (TC-198-22 precedent).
-      await tester.drag(handleF(OrbitKnob.avatarScale), const Offset(0, -80));
+      // (TC-198-22 precedent), asserting MID-GESTURE — a settle-only
+      // (pan-end) application stays red here.
+      final g = await tester.startGesture(
+          tester.getCenter(handleF(OrbitKnob.avatarScale)));
+      await tester.pump(const Duration(milliseconds: 20));
+      await g.moveBy(const Offset(0, -20)); // slop + pan-start (F15 precedent)
+      await tester.pump();
+      await g.moveBy(const Offset(0, -60)); // −60/90 saturates the 1.4 clamp
       await tester.pump(); // ONE pump — same-frame application, no lag
       expect(
           tester
@@ -1081,9 +1087,11 @@ void main() {
                   const ValueKey('orbit-handle-disc-avatarScale')))
               .width,
           closeTo(42, 0.5),
-          reason: 'disc grew in the drag\'s own build');
+          reason: 'disc grew in the drag\'s own build, gesture still live');
       expect(find.text('1.4×'), findsOneWidget,
           reason: 'value-bubble corroboration');
+      await g.up();
+      await tester.pump();
       await settle(tester);
     });
 
