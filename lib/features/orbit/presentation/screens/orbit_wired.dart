@@ -649,7 +649,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     if (groupRepository == null || groupMessageRepository == null) {
       _activeGroupsLoaded = true;
       _archivedGroupsLoaded = true;
-      _publishListProjection();
+      _publishAllProjections();
       return;
     }
 
@@ -673,11 +673,15 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           )
           .toList();
       _activeGroupsLoaded = true;
-      _publishListProjection();
+      // 203 B2: group-funnel publishes go through publish-all — the rings'
+      // ONLY feed is the header projection's innerItems, so a list-only
+      // publish here left a freshly loaded group off the Inner-Circle rings
+      // until an unrelated friend/identity refresh happened to flush it.
+      _publishAllProjections();
     } catch (e) {
       if (mounted) {
         _activeGroupsLoaded = true;
-        _publishListProjection();
+        _publishAllProjections();
       }
       emitFlowEvent(
         layer: 'FL',
@@ -696,11 +700,11 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       if (!mounted) return;
       _archivedGroups = archived;
       _archivedGroupsLoaded = true;
-      _publishListProjection();
+      _publishAllProjections();
     } catch (e) {
       if (mounted) {
         _archivedGroupsLoaded = true;
-        _publishListProjection();
+        _publishAllProjections();
       }
       emitFlowEvent(
         layer: 'FL',
@@ -847,7 +851,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       _sortGroups(archivedGroups);
       _activeGroups = activeGroups;
       _archivedGroups = archivedGroups;
-      _publishListProjection();
+      // 203 B2: publish-all so seat/remove/unread/metadata changes reach the
+      // ring projection live (see _loadGroupData).
+      _publishAllProjections();
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',

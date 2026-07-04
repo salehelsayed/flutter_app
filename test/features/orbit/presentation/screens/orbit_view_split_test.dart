@@ -344,6 +344,53 @@ void main() {
       expect(find.text('ZS'), findsNothing); // "Zulu Squad" excluded
     });
 
+    testWidgets(
+      'TC-203-01 group load completing AFTER friend publishes still seats '
+      'the ring node',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        suppressNavAssetErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+
+        // 203 B2: park the WHOLE group load (getActiveGroups is the first
+        // await in _loadGroupData) until every friend/identity publish has
+        // settled — the ring seat must then come from the group leg's OWN
+        // publish, with no later friend-side publish to flush it.
+        final gated = _GatedGroupRepository()..gate = Completer<void>();
+        // Seed DIRECTLY on the gated repo: the shared seedGroup helper is
+        // hard-wired to the file-level groupRepo instance.
+        await gated.saveGroup(
+          GroupModel(
+            id: 'g-1',
+            name: 'Alpha Group',
+            type: GroupType.chat,
+            topicName: 'topic-g-1',
+            createdAt: DateTime.utc(2026, 3, 1),
+            createdBy: 'peer-admin',
+            myRole: GroupRole.admin,
+          ),
+        );
+        addTearDown(() {
+          // Leak-safety: never leave the load parked on a pending future.
+          if (!gated.gate!.isCompleted) gated.gate!.complete();
+        });
+
+        await tester.pumpWidget(buildOrbitWired(groupRepository: gated));
+        await pumpOrbitFrames(tester, count: 4);
+
+        // PRECONDITION: group load still parked — no ring node yet.
+        expect(find.byType(GroupAvatar), findsNothing);
+
+        gated.gate!.complete();
+        await pumpOrbitFrames(tester, count: 4);
+
+        expect(find.byType(GroupAvatar), findsOneWidget);
+        expect(find.byType(GroupRow), findsNothing);
+      },
+    );
+
     testWidgets('top-left toggle switches to the all-chats view', (
       tester,
     ) async {
@@ -738,4 +785,18 @@ void main() {
       expect(find.byType(OrbitalVisualization), findsNothing);
     });
   });
+}
+
+/// 203 B2 (TC-203-01): gates [getActiveGroups] — the first await in
+/// `_loadGroupData` — on an optional [Completer], parking the whole group
+/// load so a test can order it strictly AFTER the friend/identity publishes.
+class _GatedGroupRepository extends InMemoryGroupRepository {
+  Completer<void>? gate;
+
+  @override
+  Future<List<GroupModel>> getActiveGroups() async {
+    final pending = gate;
+    if (pending != null) await pending.future;
+    return super.getActiveGroups();
+  }
 }

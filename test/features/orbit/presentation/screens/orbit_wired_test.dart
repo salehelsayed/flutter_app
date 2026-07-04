@@ -35,6 +35,7 @@ import 'package:flutter_app/features/groups/domain/models/group_thread_summary.d
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_reaction_details_sheet.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -43,6 +44,7 @@ import 'package:flutter_app/features/introduction/domain/models/introduction_mod
 import 'package:flutter_app/features/introduction/domain/models/introduction_outbox_delivery.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friend_row.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/group_row.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_close_button.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friends_filter_toggle.dart';
@@ -4586,6 +4588,210 @@ void main() {
         );
         expect(find.byType(FriendRow), findsNothing);
         handle.dispose();
+      },
+    );
+
+    // ── 203 B2: group events alone must republish the ring projection ──────
+
+    testWidgets(
+      'TC-203-02 a group materialized post-startup seats on the rings with '
+      'zero friend events',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+
+        await tester.pumpWidget(buildOrbitWired());
+        await pumpOrbitFrames(tester, count: 4);
+
+        expect(find.byType(GroupAvatar), findsNothing);
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'g-1',
+            name: 'Alpha Group',
+            type: GroupType.chat,
+            topicName: 'topic-g-1',
+            createdAt: DateTime.utc(2026, 3, 1),
+            createdBy: 'peer-admin',
+            myRole: GroupRole.admin,
+          ),
+        );
+        // Emit WITHOUT saving to groupMsgRepo: unread stays 0 (no lit-node
+        // rotation, no 194 semantics-label suffix) — the emission only drives
+        // _refreshOrbitGroup.
+        groupMessageStreamController.add(
+          GroupMessage(
+            id: 'gm-seat',
+            groupId: 'g-1',
+            senderPeerId: 'peer-bob',
+            senderUsername: 'Bob',
+            text: 'first group msg',
+            timestamp: DateTime.utc(2026, 3, 2),
+            isIncoming: true,
+            createdAt: DateTime.utc(2026, 3, 2),
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 4);
+
+        expect(find.byType(GroupAvatar), findsOneWidget);
+        expect(find.byType(GroupRow), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'TC-203-03 archiving a seated group removes its ring node without '
+      'friend events',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'g-1',
+            name: 'Alpha Group',
+            type: GroupType.chat,
+            topicName: 'topic-g-1',
+            createdAt: DateTime.utc(2026, 3, 1),
+            createdBy: 'peer-admin',
+            myRole: GroupRole.admin,
+          ),
+        );
+
+        await tester.pumpWidget(buildOrbitWired());
+        await pumpOrbitFrames(tester, count: 4);
+
+        expect(find.byType(GroupAvatar), findsOneWidget);
+
+        // Repo-mutation + stream emit is the clean driver for the
+        // _refreshOrbitGroup isArchived branch (the row UI is off-surface).
+        await groupRepo.archiveGroup('g-1');
+        groupMessageStreamController.add(
+          GroupMessage(
+            id: 'gm-archive',
+            groupId: 'g-1',
+            senderPeerId: 'peer-bob',
+            senderUsername: 'Bob',
+            text: 'post-archive msg',
+            timestamp: DateTime.utc(2026, 3, 2),
+            isIncoming: true,
+            createdAt: DateTime.utc(2026, 3, 2),
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 4);
+
+        expect(find.byType(GroupAvatar), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'TC-203-04 an incoming group message lights the group ring node '
+      '(unread badge + semantics)',
+      (tester) async {
+        final handle = tester.ensureSemantics();
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'g-1',
+            name: 'Alpha Group',
+            type: GroupType.chat,
+            topicName: 'topic-g-1',
+            createdAt: DateTime.utc(2026, 3, 1),
+            createdBy: 'peer-admin',
+            myRole: GroupRole.admin,
+          ),
+        );
+
+        await tester.pumpWidget(buildOrbitWired());
+        await pumpOrbitFrames(tester, count: 4);
+
+        expect(find.byType(GroupAvatar), findsOneWidget);
+        // Prefix-match the node label (house 198-F12 idiom): the group node
+        // merges the initials fallback ('AG') into its semantics node, so an
+        // exact bySemanticsLabel can never match.
+        expect(
+          tester.getSemantics(find.byType(GroupAvatar)).label,
+          startsWith('Open group Alpha Group'),
+        );
+
+        // Save THEN emit so getGroupThreadSummary returns unread 1 — the
+        // badge/label IS the assert target here (bounded pumps only: the lit
+        // node hosts the ~9s rotation).
+        final unreadMsg = GroupMessage(
+          id: 'gm-unread',
+          groupId: 'g-1',
+          senderPeerId: 'peer-bob',
+          senderUsername: 'Bob',
+          text: 'unread ping',
+          timestamp: DateTime.utc(2026, 3, 2),
+          isIncoming: true,
+          createdAt: DateTime.utc(2026, 3, 2),
+        );
+        await groupMsgRepo.saveMessage(unreadMsg);
+        groupMessageStreamController.add(unreadMsg);
+        await pumpOrbitFrames(tester, count: 4);
+
+        // The arb `=1` plural branch (en:266) reaches the ring node's
+        // semantics — prefix-matched past the merged initials suffix.
+        expect(
+          tester.getSemantics(find.byType(GroupAvatar)).label,
+          startsWith('Open group Alpha Group, 1 unread message'),
+        );
+        handle.dispose();
+      },
+    );
+
+    testWidgets(
+      'TC-203-05 a group rename reaches the ring node after a group refresh',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final model = GroupModel(
+          id: 'g-1',
+          name: 'Alpha Group',
+          type: GroupType.chat,
+          topicName: 'topic-g-1',
+          createdAt: DateTime.utc(2026, 3, 1),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.admin,
+        );
+        await groupRepo.saveGroup(model);
+
+        await tester.pumpWidget(buildOrbitWired());
+        await pumpOrbitFrames(tester, count: 4);
+
+        expect(find.text('AG'), findsOneWidget); // initials fallback
+
+        await groupRepo.updateGroup(
+          model.copyWith(
+            name: 'Renamed Group',
+            lastMetadataEventAt: DateTime.utc(2026, 3, 3),
+          ),
+        );
+        // Emit WITHOUT saving — unread stays 0, the label keeps its plain form.
+        groupMessageStreamController.add(
+          GroupMessage(
+            id: 'gm-rename',
+            groupId: 'g-1',
+            senderPeerId: 'peer-bob',
+            senderUsername: 'Bob',
+            text: 'metadata refresh driver',
+            timestamp: DateTime.utc(2026, 3, 3),
+            isIncoming: true,
+            createdAt: DateTime.utc(2026, 3, 3),
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 4);
+
+        expect(find.text('RG'), findsOneWidget);
+        expect(find.text('AG'), findsNothing);
       },
     );
 
