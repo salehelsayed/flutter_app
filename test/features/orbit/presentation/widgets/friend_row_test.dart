@@ -240,4 +240,56 @@ void main() {
       expect(_textFor(tester, 'رسالة صوتية').textDirection, TextDirection.rtl);
     });
   });
+
+  group('AnimatedFriendRow', () {
+    Widget wrap(Widget child) => MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: child),
+        );
+
+    double fadeOpacity(WidgetTester tester) => tester
+        .widget<FadeTransition>(find.descendant(
+          of: find.byType(AnimatedFriendRow),
+          matching: find.byType(FadeTransition),
+        ))
+        .opacity
+        .value;
+
+    testWidgets('TC-202-11 AnimatedFriendRow is instant under reduce-motion',
+        (tester) async {
+      await tester.pumpWidget(wrap(
+        Builder(
+          builder: (context) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: true),
+            child: AnimatedFriendRow(
+              index: 40,
+              child: FriendRow(friend: _makeFriend(), onTap: () {}),
+            ),
+          ),
+        ),
+      ));
+      await tester.pump();
+      expect(fadeOpacity(tester), 1.0,
+          reason: 'reduce-motion jumps the entrance straight to the end');
+    });
+
+    testWidgets('TC-202-12 entrance stagger is clamped', (tester) async {
+      await tester.pumpWidget(wrap(
+        AnimatedFriendRow(
+          index: 100,
+          child: FriendRow(friend: _makeFriend(), onTap: () {}),
+        ),
+      ));
+      // Clamp ceiling = min(index, 12) * 20ms = 240ms delay; + 400ms entrance.
+      // Stepped bounded pumps (a single long pump can leave opacity ~0 because
+      // the ticker bases elapsed from its first post-delay tick).
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(fadeOpacity(tester), 1.0,
+          reason: 'a clamped stagger completes well within 1s');
+    });
+  });
 }

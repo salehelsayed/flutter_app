@@ -90,6 +90,7 @@ void main() {
     bool resizeToAvoidBottomInset = true,
     TargetPlatform? platform,
     double bottomClearance = 0,
+    VoidCallback? onSurfaceBuild,
   }) =>
       MaterialApp(
         locale: locale,
@@ -110,6 +111,7 @@ void main() {
             onEditSessionActiveChanged: editEvents.add,
             resetSignal: resetSignal,
             bottomClearance: bottomClearance,
+            debugOnSurfaceBuild: onSurfaceBuild,
           ),
         ),
       );
@@ -938,14 +940,14 @@ void main() {
       await tester.pump();
       final discF =
           find.byKey(const ValueKey('orbit-handle-disc-avatarScale'));
-      double blur() =>
-          (tester.widget<Container>(discF).decoration! as BoxDecoration)
-              .boxShadow!
-              .first
-              .blurRadius;
-      final b0 = blur();
+      final haloF =
+          find.byKey(const ValueKey('orbit-handle-halo-avatarScale'));
+      // 202: the disc shadow is constant now; a running pulse breathes the halo
+      // layer's OPACITY instead.
+      double haloOpacity() => tester.widget<Opacity>(haloF).opacity;
+      final o0 = haloOpacity();
       await tester.pump(const Duration(milliseconds: 800));
-      expect(blur(), isNot(closeTo(b0, 0.01)), reason: 'pulse is running');
+      expect(haloOpacity(), isNot(closeTo(o0, 0.01)), reason: 'pulse is running');
 
       await tapAwayBg(tester);
       expect(bannerF(), findsNothing);
@@ -1931,6 +1933,76 @@ void main() {
       expect(surface.bottom - rects['decrease']!.bottom,
           greaterThanOrEqualTo(88 - 2));
       await settle(tester);
+    });
+
+    // ---- 202 interaction-perf slice ----
+
+    testWidgets(
+        'TC-202-02 each edit handle is isolated by a keyed RepaintBoundary',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(8)));
+      await settle(tester);
+      await longPressBg(tester); // collapsed edit → av + sp visible
+      for (final knob in const [OrbitKnob.avatarScale, OrbitKnob.spacingScale]) {
+        expect(
+          find.byKey(ValueKey('orbit-handle-boundary-${knob.name}'),
+              skipOffstage: false),
+          findsOneWidget,
+          reason: '${knob.name} handle isolated by its keyed RepaintBoundary',
+        );
+      }
+      await settle(tester);
+    });
+
+    testWidgets(
+        'TC-202-04 a pure-geometry sculpt-drag frame rebuilds the surface exactly once',
+        (tester) async {
+      var builds = 0;
+      await tester
+          .pumpWidget(host(_friends(8), onSurfaceBuild: () => builds++));
+      await settle(tester);
+      await longPressBg(tester); // enter edit (collapsed: av + sp visible)
+      final start = tester.getCenter(handleF(OrbitKnob.spacingScale));
+      final gesture = await tester.startGesture(start);
+      await gesture.moveBy(const Offset(0, -20)); // consume slop → onPanStart
+      await tester.pump();
+      builds = 0; // count only the clean drag frame below
+      await gesture.moveBy(const Offset(0, -60)); // one pure-geometry drag frame
+      await tester.pump(); // the drag setState build
+      await tester.pump(); // the post-frame measure (silent after the fix)
+      expect(builds, 1,
+          reason: 'a pure-geometry drag frame rebuilds the surface once');
+      await gesture.up();
+      await settle(tester);
+    });
+
+    testWidgets('TC-202-05 band-hidden handles stop their pulse tickers',
+        (tester) async {
+      await tester.pumpWidget(host(_friends(80))); // deep, scrollable, 0 unread
+      await settle(tester, count: 50); // drain ring entrances + badge timers
+      await expandBadge(tester);
+      await longPressBg(tester); // edit: all 5 knobs mounted, none armed
+      await settle(tester, count: 50); // drain the arc entrances too
+      int visibleHandles() => OrbitKnob.values
+          .where((k) => handleF(k).evaluate().isNotEmpty)
+          .length;
+      final visBefore = visibleHandles();
+      final c0 = tester.binding.transientCallbackCount;
+      // TC-198-71 scroll choreography: push handles out of the band.
+      await tester.dragFrom(const Offset(60, 300), const Offset(0, -400));
+      await tester.pump();
+      await settle(tester, count: 8); // let the ballistic scroll ticker die
+      final visAfter = visibleHandles();
+      expect(visAfter, isNot(visBefore),
+          reason: 'the scroll must change band membership for a live delta');
+      // Direction-agnostic: a handle ENTERING the band starts one pulse ticker,
+      // one LEAVING stops one. On HEAD every mounted handle ticks regardless of
+      // Offstage, so the count never tracks membership (red); the fix makes the
+      // running-ticker count equal the in-band handle count.
+      expect(tester.binding.transientCallbackCount,
+          c0 + (visAfter - visBefore),
+          reason: 'only in-band handles keep a running pulse ticker');
+      await settle(tester, count: 4);
     });
   });
 }

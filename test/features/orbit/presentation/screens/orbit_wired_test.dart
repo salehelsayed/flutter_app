@@ -18,6 +18,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/conversat
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
+import 'package:flutter_app/features/orbit/presentation/screens/orbit_screen.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_button.dart';
@@ -2016,6 +2017,159 @@ void main() {
       expect(spyGroupMsgRepo.getGroupThreadSummariesCallCount, 0);
       expect(spyGroupMsgRepo.getLatestMessageCallCountByGroupId, isEmpty);
       expect(spyGroupMsgRepo.getUnreadCountCallCountByGroupId, isEmpty);
+    });
+
+    // ---- 202 trailing-flush refresh coalescer ----
+
+    testWidgets(
+        'TC-202-07 a same-peer event burst coalesces to ONE snapshot load and publish',
+        (tester) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+      final spyContactRepo = _SpyContactRepository();
+      final spyMessageRepo = _SpyMessageRepository();
+      spyContactRepo.seed([testContact]);
+      final fakeChatListener = _FakeChatMessageListener(
+        messageRepo: spyMessageRepo,
+        contactRepo: spyContactRepo,
+      );
+      await tester.pumpWidget(buildOrbitWired(
+        chatMessageListener: fakeChatListener,
+        contactRepository: spyContactRepo,
+        messageRepository: spyMessageRepo,
+      ));
+      await pumpOrbitFrames(tester);
+      await switchToAllChats(tester);
+      spyContactRepo.resetTracking();
+      spyMessageRepo.resetTracking();
+      // 3 incoming messages for the SAME peer, back-to-back (no pump between).
+      for (var i = 0; i < 3; i++) {
+        fakeChatListener.emitIncomingMessage(ConversationMessage(
+          id: 'burst-$i',
+          contactPeerId: 'contact-peer-id',
+          text: 'burst $i',
+          senderPeerId: 'contact-peer-id',
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          isIncoming: true,
+          status: 'delivered',
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+        ));
+      }
+      await pumpOrbitFrames(tester); // 100ms steps flush the 32ms window
+      expect(spyContactRepo.getContactCallCountByPeerId, {'contact-peer-id': 1});
+    });
+
+    testWidgets(
+        'TC-202-08 a same-group event burst coalesces to one snapshot + one rejoin load',
+        (tester) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+      final spyGroupRepo = _SpyGroupRepository();
+      final spyGroupMsgRepo = _SpyGroupMessageRepository();
+      await spyGroupRepo.saveGroup(GroupModel(
+        id: 'g-1',
+        name: 'Alpha Group',
+        type: GroupType.chat,
+        topicName: 'topic-g-1',
+        createdAt: DateTime.utc(2026, 3, 1),
+        createdBy: 'peer-admin',
+        myRole: GroupRole.admin,
+      ));
+      await tester.pumpWidget(buildOrbitWired(
+        groupRepository: spyGroupRepo,
+        groupMessageRepository: spyGroupMsgRepo,
+      ));
+      await pumpOrbitFrames(tester);
+      await switchToAllChats(tester);
+      spyGroupRepo.resetTracking();
+      spyGroupMsgRepo.resetTracking();
+      for (var i = 0; i < 3; i++) {
+        final m = GroupMessage(
+          id: 'gm-$i',
+          groupId: 'g-1',
+          senderPeerId: 'peer-bob',
+          senderUsername: 'Bob',
+          text: 'burst $i',
+          timestamp: DateTime.utc(2026, 3, 2),
+          isIncoming: true,
+          createdAt: DateTime.utc(2026, 3, 2),
+        );
+        await spyGroupMsgRepo.saveMessage(m);
+        groupMessageStreamController.add(m);
+      }
+      await pumpOrbitFrames(tester);
+      expect(spyGroupRepo.getGroupCallCountById, {'g-1': 1});
+      expect(spyGroupRepo.loadGroupRejoinStatesCallCount, 1);
+    });
+
+    testWidgets(
+        'TC-202-09d disposing mid-coalesce-window leaves no pending timer',
+        (tester) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+      final spyContactRepo = _SpyContactRepository();
+      final spyMessageRepo = _SpyMessageRepository();
+      spyContactRepo.seed([testContact]);
+      final fakeChatListener = _FakeChatMessageListener(
+        messageRepo: spyMessageRepo,
+        contactRepo: spyContactRepo,
+      );
+      await tester.pumpWidget(buildOrbitWired(
+        chatMessageListener: fakeChatListener,
+        contactRepository: spyContactRepo,
+        messageRepository: spyMessageRepo,
+      ));
+      await pumpOrbitFrames(tester);
+      await switchToAllChats(tester);
+      // Open the 32ms window, then tear the widget down WITHIN it.
+      fakeChatListener.emitIncomingMessage(ConversationMessage(
+        id: 'pending-1',
+        contactPeerId: 'contact-peer-id',
+        text: 'x',
+        senderPeerId: 'contact-peer-id',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        isIncoming: true,
+        status: 'delivered',
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+      ));
+      await tester.pump(const Duration(milliseconds: 5)); // enqueue + arm timer
+      await tester.pumpWidget(const SizedBox()); // dispose WITHIN the window
+      expect(tester.takeException(), isNull);
+      // The harness's end-of-test pending-timer check now runs: a coalescer
+      // timer that outlived dispose (naive impl) fails here; the fix cancels it.
+    });
+
+    testWidgets(
+        'TC-202-10 the three OrbitScreen animations are identical across OrbitWired rebuilds',
+        (tester) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+      final shell = AppShellController(); // defaults to feed
+      await tester.pumpWidget(buildOrbitWired(
+        appShellController: shell,
+        feedUnreadCountListenable: ValueNotifier<int>(0),
+      ));
+      await pumpOrbitFrames(tester, count: 6);
+      OrbitScreen orbitScreen() =>
+          tester.widget<OrbitScreen>(find.byType(OrbitScreen));
+      final c1 = orbitScreen().collapseAnimation;
+      final d1 = orbitScreen().searchDockAnimation;
+      final t1 = orbitScreen().searchTriggerAnimation;
+      shell.switchTo(AppShellTab.orbit); // REAL feed→orbit transition → setState
+      await pumpOrbitFrames(tester, count: 6);
+      final c2 = orbitScreen().collapseAnimation;
+      final d2 = orbitScreen().searchDockAnimation;
+      final t2 = orbitScreen().searchTriggerAnimation;
+      expect(identical(c1, c2), isTrue,
+          reason: 'collapseAnimation is per-State');
+      expect(identical(d1, d2), isTrue,
+          reason: 'searchDockAnimation is per-State');
+      expect(identical(t1, t2), isTrue,
+          reason: 'searchTriggerAnimation is per-State');
     });
 
     testWidgets('create-group route result refreshes only the affected group', (
@@ -5027,10 +5181,20 @@ class _SpyGroupRepository extends InMemoryGroupRepository {
     return super.getGroup(id);
   }
 
+  // 202: the second per-refresh group roundtrip — deduped by the coalescer.
+  int loadGroupRejoinStatesCallCount = 0;
+
+  @override
+  Future<Map<String, GroupRejoinState>> loadGroupRejoinStates() {
+    loadGroupRejoinStatesCallCount++;
+    return super.loadGroupRejoinStates();
+  }
+
   void resetTracking() {
     getActiveGroupsCallCount = 0;
     getAllGroupsCallCount = 0;
     getGroupCallCountById.clear();
+    loadGroupRejoinStatesCallCount = 0;
   }
 }
 

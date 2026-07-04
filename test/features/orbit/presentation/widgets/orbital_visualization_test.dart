@@ -10,6 +10,7 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_avatar.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbital_ring_painter.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/overflow_badge.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/unread_orbit_indicator.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -125,6 +126,58 @@ void main() {
       .map((ab) => ab.listenable)
       .whereType<AnimationController>()
       .toList();
+
+  group('TC-202 repaint isolation', () {
+    testWidgets(
+        'TC-202-01 every node subtree is isolated by a RepaintBoundary inside its dim layer',
+        (tester) async {
+      const n = 8;
+      await tester.pumpWidget(wrap(OrbitalVisualization(
+        userPeerId: 'me',
+        items: _items([for (var i = 0; i < n; i++) _makeFriend(i)]),
+        onFriendTap: (_) {},
+      )));
+      await tester.pump();
+      for (var i = 0; i < n; i++) {
+        expect(
+          find.descendant(
+            of: find.byKey(ValueKey('orbit-node-dim-$i')),
+            matching: find.byType(RepaintBoundary),
+          ),
+          findsOneWidget,
+          reason: 'node $i must isolate its raster inside the keyed dim Opacity',
+        );
+      }
+      await pumpBounded(tester);
+    });
+
+    testWidgets(
+        'TC-202-03 the ring CustomPaint is isolated by a keyed RepaintBoundary',
+        (tester) async {
+      await tester.pumpWidget(wrap(OrbitalVisualization(
+        userPeerId: 'me',
+        items: _items([for (var i = 0; i < 5; i++) _makeFriend(i)]),
+        onFriendTap: (_) {},
+      )));
+      await tester.pump();
+      final ringBoundary = find.descendant(
+        of: find.byType(OrbitalVisualization),
+        matching: find.byKey(const ValueKey('orbit-ring-boundary')),
+      );
+      expect(ringBoundary, findsOneWidget);
+      expect(
+        find.descendant(
+          of: ringBoundary,
+          matching: find.byWidgetPredicate(
+            (w) => w is CustomPaint && w.painter is OrbitalRingPainter,
+          ),
+        ),
+        findsOneWidget,
+        reason: 'the ring painter renders inside the keyed boundary',
+      );
+      await pumpBounded(tester);
+    });
+  });
 
   group('OrbitalVisualization', () {
     testWidgets('TC-203-14 renders no inner-circle heading', (tester) async {

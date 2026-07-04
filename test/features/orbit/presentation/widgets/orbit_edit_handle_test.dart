@@ -54,6 +54,13 @@ void main() {
   BoxDecoration discDeco(WidgetTester tester, OrbitKnob knob) =>
       tester.widget<Container>(discF(knob)).decoration! as BoxDecoration;
 
+  // 202 — the breathing halo is now a pre-rasterized max-size shadow layer
+  // whose OPACITY animates (cross-fade), so the disc shadow stays constant.
+  Finder haloF(OrbitKnob knob) =>
+      find.byKey(ValueKey('orbit-handle-halo-${knob.name}'));
+  double haloOpacity(WidgetTester tester, OrbitKnob knob) =>
+      tester.widget<Opacity>(haloF(knob)).opacity;
+
   testWidgets(
       'handle visual contract: circular disc in ≥44pt target, per-knob icon, tip-pill below',
       (tester) async {
@@ -169,12 +176,12 @@ void main() {
   testWidgets('TC-198-59 unarmed pulse animates the halo', (tester) async {
     await tester.pumpWidget(wrap(handle(OrbitKnob.spacingScale)));
     await tester.pump();
-    final b0 =
-        discDeco(tester, OrbitKnob.spacingScale).boxShadow!.first.blurRadius;
+    // 202: the disc shadow is now constant; the pulse breathes the halo layer's
+    // OPACITY (contract preserved — the unarmed handle still breathes).
+    final o0 = haloOpacity(tester, OrbitKnob.spacingScale);
     await tester.pump(const Duration(milliseconds: 800)); // half the period
-    final b1 =
-        discDeco(tester, OrbitKnob.spacingScale).boxShadow!.first.blurRadius;
-    expect(b1, isNot(closeTo(b0, 0.01)), reason: 'pulse breathes the halo');
+    final o1 = haloOpacity(tester, OrbitKnob.spacingScale);
+    expect(o1, isNot(closeTo(o0, 0.01)), reason: 'pulse breathes the halo');
   });
 
   testWidgets(
@@ -187,14 +194,34 @@ void main() {
         accessibleNavigation: mode == 'accessibleNavigation',
       ));
       await tester.pump();
-      final b0 =
-          discDeco(tester, OrbitKnob.spacingScale).boxShadow!.first.blurRadius;
+      // 202: contract preserved (reduce-motion freezes the breathing) — the
+      // frozen quantity is now the halo OPACITY (blur is always constant).
+      final o0 = haloOpacity(tester, OrbitKnob.spacingScale);
       await tester.pump(const Duration(milliseconds: 800));
-      final b1 =
-          discDeco(tester, OrbitKnob.spacingScale).boxShadow!.first.blurRadius;
-      expect(b1, closeTo(b0, 1e-9), reason: '$mode freezes the pulse');
+      final o1 = haloOpacity(tester, OrbitKnob.spacingScale);
+      expect(o1, closeTo(o0, 1e-9), reason: '$mode freezes the pulse');
       expect(discF(OrbitKnob.spacingScale), findsOneWidget,
           reason: 'handle stays statically visible under $mode');
     }
+  });
+
+  testWidgets('TC-202-06 pulse animates opacity over a constant-shadow disc',
+      (tester) async {
+    await tester.pumpWidget(wrap(handle(OrbitKnob.spacingScale)));
+    await tester.pump();
+    final blur0 =
+        discDeco(tester, OrbitKnob.spacingScale).boxShadow!.first.blurRadius;
+    final op0 = haloOpacity(tester, OrbitKnob.spacingScale);
+    await tester.pump(const Duration(milliseconds: 800)); // half the period
+    final blur1 =
+        discDeco(tester, OrbitKnob.spacingScale).boxShadow!.first.blurRadius;
+    final op1 = haloOpacity(tester, OrbitKnob.spacingScale);
+    // The disc shadow is a CONSTANT resting halo (blur 10 / spread 1 at scale
+    // 1.0) — no per-frame Gaussian re-raster.
+    expect(blur0, closeTo(10, 0.01));
+    expect(blur1, closeTo(blur0, 1e-9),
+        reason: 'the disc shadow no longer animates per frame');
+    // The breathing is a cheap opacity cross-fade over the pre-rasterized halo.
+    expect(op1, isNot(closeTo(op0, 0.01)), reason: 'the halo opacity breathes');
   });
 }
