@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>207 · Where should Intro live under Orbit?</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ------------------------------------------------------------------
+   Palette & geometry provenance (read from app source, 2026-07-04):
+   - rings: orbital_ring_painter.dart:42-44 — teal rgba(129,230,217,.25) r62,
+     purple rgba(167,139,250,.20) r108, dash 8/4 stroke 1.5, glow underlay
+     rgba(129,230,217,.08) stroke 8 blur 4
+   - seats: orbit_arc_layout.dart:21-30 — ring1 5×38px r62, ring2 8×30px r108,
+     center self-avatar 48px (opens Settings, c433462f)
+   - ambient bg: ambient_background.dart:180-252 — #000 + green blob
+     rgba(29,185,84,.30→0) top-left, red blob rgba(255,50,50,.25→0) bottom-right
+   - nav bar: nav_bar_theme.dart:9-64 — glass pill, blur 28, radius 30,
+     badge gradient #FF3B30→#E0342A
+   - find pill: inner_circle_interactive_surface.dart:973-1048 — 44px glass
+     circle right:16, ≈104 above physical bottom (lifts on armed-edit)
+   - intro banner (list view today): orbit_screen.dart:832-906 — dark fill
+     #1DB954@8%, border @20-25%, icon #1DB954, '{N} items pending'
+   - intros tab: friends_filter_toggle.dart:46-53; rows: intro_row.dart
+   - badge count: feed_wired.dart:541-581 — reviewCount = folded pending
+     intros + pending group invites
+   ------------------------------------------------------------------ */
+:root{
+  --display:'Space Grotesk',sans-serif;
+  --body:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  --mono:ui-monospace,'SF Mono',Menlo,monospace;
+  --page-bg:#0C0E13;
+  --card-bg:#12151C;
+  --ink:#F2F5F8;
+  --muted:#9AA3B2;
+  --faint:#6B7382;
+  --hairline:rgba(255,255,255,0.08);
+  --green:#1DB954;
+  --green-hi:#1ED760;
+  --teal:#4ECDC4;
+  --ring-teal:rgba(129,230,217,0.25);
+  --ring-purple:rgba(167,139,250,0.20);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--page-bg);color:var(--ink);font-family:var(--body);-webkit-font-smoothing:antialiased;line-height:1.5}
+.wrap{max-width:1280px;margin:0 auto;padding:56px 32px 80px}
+
+/* ---------- hero ---------- */
+header.hero{position:relative;margin-bottom:44px}
+.hero-orbit{position:absolute;top:-24px;right:0;opacity:.5;pointer-events:none}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:2.5px;text-transform:uppercase;color:var(--green);margin-bottom:14px}
+h1{font-family:var(--display);font-weight:700;font-size:clamp(30px,4vw,44px);line-height:1.12;max-width:720px}
+.brief{margin-top:16px;font-size:15px;color:var(--muted);max-width:720px}
+.brief b{color:var(--ink);font-weight:600}
+
+/* ---------- before/today strip ---------- */
+section.before{background:#0A0C10;border:1px solid var(--hairline);border-radius:20px;padding:26px;margin-bottom:40px;display:flex;gap:30px;flex-wrap:wrap;align-items:flex-start}
+.before .notes{flex:1;min-width:300px}
+.before h2{font-family:var(--display);font-size:20px;font-weight:600;margin-bottom:10px}
+.before p{font-size:14px;color:var(--muted);margin-bottom:10px}
+.bad{color:#FF6B6B;font-weight:600}
+.before ul{list-style:none;margin-top:8px}
+.before li{font-size:13.5px;color:var(--muted);padding-left:18px;position:relative;margin-bottom:8px}
+.before li::before{content:'';position:absolute;left:2px;top:8px;width:6px;height:6px;border-radius:50%;background:rgba(255,107,107,0.55)}
+.before li.ok::before{background:rgba(129,230,217,0.5)}
+.phone-cap{font-family:var(--mono);font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--faint);text-align:center;margin-top:10px}
+
+/* ---------- option grid & cards ---------- */
+main.grid{display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-bottom:44px}
+article.card{background:var(--card-bg);border:1px solid var(--hairline);border-radius:20px;padding:26px;display:flex;gap:26px}
+.card .notes{flex:1;min-width:0}
+.opt-eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--faint);display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.tag{font-family:var(--mono);font-size:10px;letter-spacing:1px;padding:3px 9px;border-radius:20px;border:1px solid rgba(255,255,255,0.16);color:var(--muted)}
+.tag.pick{color:var(--green);border-color:rgba(29,185,84,0.4);background:rgba(29,185,84,0.08)}
+.opt-name{font-family:var(--display);font-size:24px;font-weight:600;margin-bottom:10px}
+.thesis{font-size:14px;color:var(--muted);margin-bottom:16px}
+.thesis b{color:var(--ink);font-weight:600}
+.nlabel{font-family:var(--mono);font-size:10.5px;letter-spacing:1.6px;text-transform:uppercase;color:var(--faint);margin:14px 0 7px}
+.card ul{list-style:none}
+.card li{font-size:13px;color:var(--muted);padding-left:16px;position:relative;margin-bottom:7px}
+.card li::before{content:'';position:absolute;left:1px;top:7px;width:5px;height:5px;border-radius:50%;background:rgba(129,230,217,0.5)}
+.card li.warn::before{background:rgba(255,107,107,0.55)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
+.chips span{font-family:var(--mono);font-size:10px;color:var(--muted);border:1px solid var(--hairline);border-radius:6px;padding:3px 8px;white-space:nowrap}
+.try{font-size:12px;color:var(--faint);margin-top:10px;text-align:center}
+.demo-btn{display:block;margin:8px auto 0;font-family:var(--mono);font-size:11px;color:var(--teal);background:rgba(78,205,196,0.08);border:1px solid rgba(78,205,196,0.35);border-radius:8px;padding:6px 14px;cursor:pointer}
+.demo-btn:hover{background:rgba(78,205,196,0.16)}
+
+/* ---------- phone frame (390×844 @ .727 => 285×616) ---------- */
+.phone-wrap{flex:0 0 285px;width:285px;height:616px;position:relative}
+.phone{width:390px;height:844px;transform:scale(0.727);transform-origin:top left;background:#000;border-radius:54px;border:1.5px solid rgba(255,255,255,0.10);overflow:hidden;position:relative;box-shadow:0 30px 70px rgba(0,0,0,0.55)}
+.phone-wrap.sm{flex:0 0 234px;width:234px;height:508px}
+.phone-wrap.sm .phone{transform:scale(0.6)}
+.island{position:absolute;top:12px;left:50%;transform:translateX(-50%);width:112px;height:32px;background:#000;border-radius:20px;z-index:60}
+.statusbar{position:absolute;top:0;left:0;right:0;height:54px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 32px 6px;z-index:55}
+.sb-time{font-size:15px;font-weight:600;color:#fff}
+.sb-icons{display:flex;align-items:center;gap:6px}
+
+/* in-phone ambient background (ambient_background.dart) */
+.blob{position:absolute;border-radius:50%;pointer-events:none}
+.blob.green{width:300px;height:300px;top:-100px;left:-100px;background:radial-gradient(circle,rgba(29,185,84,0.30) 0%,rgba(29,185,84,0) 70%);animation:driftA 8s ease-in-out infinite alternate}
+.blob.red{width:350px;height:350px;bottom:-100px;right:-100px;background:radial-gradient(circle,rgba(255,50,50,0.25) 0%,rgba(255,50,50,0) 70%);animation:driftB 9s ease-in-out infinite alternate}
+@keyframes driftA{to{transform:translate(30px,20px)}}
+@keyframes driftB{to{transform:translate(-25px,-30px)}}
+
+/* top chrome (orbit_screen.dart L1b/L1c/L5, safeTop 54 + 8) */
+.chrome-btn{position:absolute;top:62px;width:40px;height:40px;border-radius:50%;background:rgba(16,18,24,0.75);border:0.5px solid rgba(255,255,255,0.50);display:flex;align-items:center;justify-content:center;z-index:40}
+.chrome-center{position:absolute;top:62px;left:50%;transform:translateX(-50%);display:flex;gap:8px;z-index:40}
+.chrome-center .cbtn{width:40px;height:40px;border-radius:50%;background:rgba(16,18,24,0.75);border:0.5px solid rgba(255,255,255,0.50);display:flex;align-items:center;justify-content:center}
+.glow-fab{position:absolute;top:62px;right:16px;width:40px;height:40px;border-radius:50%;background:#1A1A2E;border:2px solid #64B5F6;box-shadow:0 0 12px 1px rgba(100,181,246,0.8);display:flex;align-items:center;justify-content:center;z-index:40}
+
+/* orbit canvas */
+.orbit-box{position:absolute;left:35px;top:271px;width:320px;height:320px}
+.ring-glow{position:absolute;inset:0;filter:blur(4px)}
+.node{position:absolute;border-radius:50%;overflow:hidden}
+.node-wrap{position:absolute}
+.spin{animation:spin 9s linear infinite;transform-origin:center}
+@keyframes spin{to{transform:rotate(360deg)}}
+.ghost{filter:saturate(0.55) brightness(0.85)}
+.ghost-dot{position:absolute;top:-2px;right:-2px;width:9px;height:9px;border-radius:50%;background:#1DB954;box-shadow:0 0 0 3px rgba(29,185,84,0.18);animation:pulse 2.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 2px rgba(29,185,84,0.10)}50%{box-shadow:0 0 0 5px rgba(29,185,84,0.28)}}
+
+/* bottom nav (nav_bar_theme.dart) */
+.navbar{position:absolute;bottom:20px;left:0;right:0;display:flex;justify-content:center;z-index:45}
+.nav-pill{display:flex;gap:5px;padding:5px 6px;border-radius:30px;background:linear-gradient(180deg,rgba(255,255,255,0.18),rgba(255,255,255,0.10));border:1px solid rgba(255,255,255,0.30);backdrop-filter:blur(28px);box-shadow:0 4px 16px rgba(0,0,0,0.12)}
+.nav-btn{width:70px;border-radius:19px;display:flex;flex-direction:column;align-items:center;gap:1px;padding:6px 0;color:rgba(255,255,255,0.60);position:relative}
+.nav-btn .nl{font-size:11px}
+.nav-btn.active{background:linear-gradient(180deg,rgba(255,255,255,0.25),rgba(255,255,255,0.12));color:#fff}
+.nav-badge{position:absolute;top:2px;right:12px;min-width:16px;height:16px;border-radius:10px;background:linear-gradient(180deg,#FF3B30,#E0342A);box-shadow:0 0 8px rgba(255,59,48,0.4);color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 4px}
+
+/* find pill (collapsed, inner-circle view) */
+.find-pill{position:absolute;right:16px;width:44px;height:44px;border-radius:50%;background:rgba(10,10,15,0.8);display:flex;align-items:center;justify-content:center;z-index:44}
+/* search trigger (all-chats view, right slot of nav band) */
+.search-trigger{position:absolute;right:16px;bottom:30px;width:44px;height:44px;border-radius:50%;background:rgba(10,10,15,0.8);border:0.5px solid rgba(255,255,255,0.40);display:flex;align-items:center;justify-content:center;z-index:44}
+
+/* ---------- all-chats list view (before exhibit) ---------- */
+.seg-toggle{position:absolute;top:112px;left:16px;right:16px;display:flex;background:rgba(16,18,24,0.75);border:1px solid rgba(255,255,255,0.10);border-radius:10px;padding:3px;z-index:30}
+.seg{flex:1;text-align:center;font-size:13px;font-weight:600;color:rgba(201,206,214,0.72);padding:7px 0;border-radius:8px;display:flex;align-items:center;justify-content:center;gap:6px}
+.seg.on{background:rgba(255,255,255,0.12);color:#F8FAFC}
+.seg .cnt{font-size:11px;font-weight:700;color:#B9F6CA;background:rgba(29,185,84,0.25);border-radius:8px;padding:0 6px;line-height:16px}
+.list-banner{position:absolute;top:166px;left:16px;right:16px;display:flex;align-items:center;gap:10px;background:rgba(29,185,84,0.08);border:1px solid rgba(29,185,84,0.25);border-radius:12px;padding:10px 12px;z-index:30}
+.list-banner .bt{flex:1}
+.list-banner .bt1{font-size:13px;font-weight:700;color:#E5F4EA}
+.list-banner .bt2{font-size:11px;color:rgba(201,206,214,0.72)}
+.rowlist{position:absolute;top:232px;left:16px;right:16px;display:flex;flex-direction:column;gap:8px;z-index:25}
+.frow{display:flex;align-items:center;gap:12px;background:rgba(20,22,28,0.6);border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:11px 12px}
+.frow .fn{font-size:15px;font-weight:600;color:#F8FAFC}
+.frow .fs{font-size:12px;color:rgba(201,206,214,0.6)}
+.frow .ft{margin-left:auto;font-size:11px;color:rgba(201,206,214,0.5);align-self:flex-start;padding-top:2px}
+
+/* ---------- Option A: intro dock ---------- */
+.intro-dock{position:absolute;top:612px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:10px;white-space:nowrap;width:max-content;background:rgba(29,185,84,0.10);border:1px solid rgba(29,185,84,0.40);border-radius:24px;padding:8px 16px 8px 10px;box-shadow:0 0 18px rgba(29,185,84,0.15);z-index:35}
+.dock-avs{display:flex}
+.dock-avs .dav{width:26px;height:26px;border-radius:50%;border:1.5px dashed rgba(29,185,84,0.7);overflow:hidden;background:#16181E}
+.dock-avs .dav+.dav{margin-left:-8px}
+.dock-label{font-size:13px;font-weight:600;color:#E5F4EA}
+
+/* ---------- dismissed-state remnant (ignore path) ---------- */
+.intro-remnant{position:absolute;top:618px;left:50%;transform:translateX(-50%);width:32px;height:32px;border-radius:50%;background:rgba(10,10,15,0.8);border:1.5px dashed rgba(255,255,255,0.32);display:flex;align-items:center;justify-content:center;z-index:35}
+
+/* ---------- Option B: ghost hint ---------- */
+.ghost-hint{position:absolute;top:648px;left:0;right:0;text-align:center;font-size:11px;color:rgba(201,206,214,0.72);z-index:30}
+
+/* ---------- Option C: relocated banner ---------- */
+.bottom-banner{position:absolute;bottom:96px;left:16px;right:16px;display:flex;align-items:center;gap:10px;background:rgba(29,185,84,0.08);border:1px solid rgba(29,185,84,0.25);border-radius:12px;padding:10px 12px;z-index:35}
+.bottom-banner .bt{flex:1;min-width:0}
+.bottom-banner .bt1{font-size:13px;font-weight:700;color:#E5F4EA}
+.bottom-banner .bt2{font-size:11px;color:rgba(201,206,214,0.72);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---------- Option D: intro tray ---------- */
+.tray-handle{position:absolute;bottom:96px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:7px;background:rgba(29,185,84,0.10);border:1px solid rgba(29,185,84,0.40);border-radius:16px;padding:6px 14px;z-index:46;cursor:pointer}
+.tray-handle .th-label{font-size:12px;font-weight:600;color:#E5F4EA}
+.tray-sheet{position:absolute;left:0;right:0;bottom:0;height:430px;background:rgba(10,12,16,0.97);border-top:1px solid rgba(255,255,255,0.12);border-radius:24px 24px 0 0;padding:14px 16px;z-index:50}
+.grabber{width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,0.25);margin:0 auto 12px;cursor:pointer}
+.tray-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.tray-title{font-size:17px;font-weight:700;color:#F8FAFC}
+.tray-cnt{font-size:11px;font-weight:700;color:#B9F6CA;background:rgba(29,185,84,0.25);border-radius:8px;padding:1px 7px}
+.tray-x{margin-left:auto;width:28px;height:28px;border-radius:50%;background:rgba(24,26,32,0.86);border:1px solid rgba(255,255,255,0.12);display:flex;align-items:center;justify-content:center;cursor:pointer}
+.tray-sec{font-size:12px;color:rgba(201,206,214,0.72);margin:10px 0 6px}
+.icard{background:rgba(24,26,32,0.86);border:1px solid rgba(255,255,255,0.10);border-radius:14px;padding:12px;margin-bottom:8px}
+.icard .irow{display:flex;align-items:center;gap:12px}
+.icard .iname{font-size:15px;font-weight:600;color:#F8FAFC}
+.icard .isub{font-size:12px;color:rgba(201,206,214,0.6)}
+.ibtns{display:flex;gap:8px;margin-top:10px}
+.ibtn-accept{flex:1;background:#1DB954;border-radius:10px;text-align:center;padding:8px 0;font-size:13px;font-weight:700;color:#fff}
+.ibtn-pass{flex:1;border:1px solid rgba(255,255,255,0.25);border-radius:10px;text-align:center;padding:8px 0;font-size:13px;font-weight:600;color:#C9CED6}
+.iwait{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid rgba(255,255,255,0.08);border-radius:14px;background:rgba(20,22,28,0.5)}
+.iwait .iws{font-size:12px;color:rgba(201,206,214,0.55)}
+
+/* ---------- verdict / shared / colophon ---------- */
+section.verdict{border:1px solid rgba(29,185,84,0.3);background:linear-gradient(180deg,rgba(29,185,84,0.06),rgba(29,185,84,0.02));border-radius:20px;padding:28px 30px;margin-bottom:36px}
+.verdict .eyebrow{margin-bottom:10px}
+.verdict h2{font-family:var(--display);font-size:26px;font-weight:700;margin-bottom:12px}
+.verdict p{font-size:14.5px;color:var(--muted);max-width:980px}
+.verdict b{color:var(--ink)}
+.shared{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-bottom:44px}
+.shared .snote{border:1px solid var(--hairline);border-radius:14px;padding:16px 18px;background:#0E1117}
+.snote h3{font-family:var(--display);font-size:14.5px;font-weight:600;margin-bottom:6px}
+.snote p{font-size:12.5px;color:var(--muted)}
+.snote code{font-family:var(--mono);font-size:11px;color:#81E6D9}
+.colophon{font-family:var(--mono);font-size:11px;color:var(--faint);border-top:1px solid var(--hairline);padding-top:20px;line-height:1.8}
+
+@media (max-width:1120px){main.grid{grid-template-columns:1fr}}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <svg class="hero-orbit" width="220" height="150" viewBox="0 0 220 150" fill="none">
+    <circle cx="150" cy="60" r="46" stroke="rgba(129,230,217,0.25)" stroke-width="1.5" stroke-dasharray="8 4"/>
+    <circle cx="150" cy="60" r="80" stroke="rgba(167,139,250,0.20)" stroke-width="1.5" stroke-dasharray="8 4"/>
+    <circle cx="150" cy="60" r="7" fill="rgba(29,185,84,0.6)"/>
+    <circle cx="196" cy="60" r="5" fill="rgba(129,230,217,0.5)"/>
+    <circle cx="150" cy="140" r="5" stroke="rgba(29,185,84,0.7)" stroke-width="1.2" stroke-dasharray="3 2" fill="rgba(29,185,84,0.15)"/>
+  </svg>
+  <div class="eyebrow">mknoon · orbit screen · exploration 207</div>
+  <h1>Where should Intro live under Orbit?</h1>
+  <p class="brief">The red badge on the <b>Orbit</b> nav button counts pending introductions — but the default Orbit view (the Inner-Circle rings) renders <b>nothing</b> about them. The review surface hides on the all-chats <b>list</b> view, behind the top-left toggle. This exploration moves the Intro affordance onto the default orbit surface: four placements, one recommendation. Sending an intro (from the 1:1 chat) is untouched — this is only about <b>seeing and reviewing</b> pending intros.</p>
+</header>
+
+<section class="before">
+  <div>
+    <div class="phone-wrap sm"><div class="phone" id="phone-t1"></div></div>
+    <div class="phone-cap">today · default orbit view</div>
+  </div>
+  <div>
+    <div class="phone-wrap sm"><div class="phone" id="phone-t2"></div></div>
+    <div class="phone-cap">today · all-chats list (behind toggle)</div>
+  </div>
+  <div class="notes">
+    <h2>Today: the badge points at a blank room</h2>
+    <p>Pending intros produce a <span class="bad">red “3” on the Orbit nav button</span> — yet landing on Orbit shows only the rings. Nothing explains the badge.</p>
+    <ul>
+      <li>The Intros tab + green banner exist <b>only on the all-chats list view</b> (orbit_screen.dart:810) — a surface reached via the top-left view toggle, which most users never flip.</li>
+      <li>The Feed shows only <i>completed</i> intros (handshake letters); pending Accept/Pass is invisible there.</li>
+      <li>The “New Introduction” notification deep-links into this hidden tab — tap the notification, land somewhere you’ve never seen.</li>
+      <li class="ok">What already works: the review UI itself (IntroRow cards, Accept/Pass, “From {introducer}” sections) is solid — it’s the <b>entrance</b> that’s lost.</li>
+    </ul>
+  </div>
+</section>
+
+<main class="grid">
+
+  <!-- ============ OPTION A ============ -->
+  <article class="card">
+    <div>
+      <div class="phone-wrap"><div class="phone" id="phone-a"></div></div>
+      <div class="try">the dock sits in the free band below the rings</div>
+    </div>
+    <div class="notes">
+      <div class="opt-eyebrow">Option A <span class="tag pick">design pick</span></div>
+      <div class="opt-name">Intro dock — under the rings</div>
+      <p class="thesis">A compact green capsule floats in the empty band directly beneath the orbit canvas: the <b>pending people’s own faces</b>, a count, one tap to review. Literally “Intro, under Orbit.”</p>
+      <div class="nlabel">Why it works</div>
+      <ul>
+        <li>Occupies the only reliably free region of the inner-circle view — between the canvas bottom (≈y590) and the find pill (≈y696). Collides with nothing.</li>
+        <li>Intro identity reads instantly: green vocabulary + dashed rings = “not yet in your orbit.”</li>
+        <li>Avatar faces create a curiosity pull a generic banner never will — these are real people waiting.</li>
+        <li>Tap reuses today’s banner wiring (<b>onIntroBannerTap → Intros review</b>); zero new review UI to ship.</li>
+      </ul>
+      <div class="nlabel">Watch out</div>
+      <ul>
+        <li class="warn">Must hide during sculpt-edit, like all orbit chrome.</li>
+        <li class="warn">Overflow arcs expand downward into this band — the dock should fade while arcs are open.</li>
+        <li class="warn">Strictly count-gated: renders nothing at 0 pending.</li>
+      </ul>
+      <div class="chips"><span>y≈612 · centered</span><span>radius 24</span><span>fill rgba(29,185,84,.10)</span><span>border @.40</span><span>avatars 26px ×3, dashed</span><span>tap → Intros review</span></div>
+    </div>
+  </article>
+
+  <!-- ============ OPTION B ============ -->
+  <article class="card">
+    <div>
+      <div class="phone-wrap"><div class="phone" id="phone-b"></div></div>
+      <div class="try">ghosts park on a waiting arc outside Ring 2</div>
+    </div>
+    <div class="notes">
+      <div class="opt-eyebrow">Option B <span class="tag">most orbit-native</span></div>
+      <div class="opt-name">Waiting orbit — ghost nodes</div>
+      <p class="thesis">Pending intros appear as dashed <b>ghost avatars</b> parked on a waiting arc just outside Ring 2, at the bottom of the canvas — people literally waiting to enter your orbit. Tap a ghost to accept or pass.</p>
+      <div class="nlabel">Why it works</div>
+      <ul>
+        <li>Zero new chrome — the metaphor <i>is</i> the product. The strongest emotional read of the four.</li>
+        <li>Desaturated + dashed + pulsing dot cleanly separates “almost in” from real contacts.</li>
+        <li>Scales 1–3 pending gracefully along the arc.</li>
+      </ul>
+      <div class="nlabel">Watch out</div>
+      <ul>
+        <li class="warn">The canvas already hosts groups, overflow “+N” arcs, unread satellites and sculpt handles — tap ambiguity with real nodes is a genuine risk.</li>
+        <li class="warn">Expanded overflow arcs occupy exactly this space; the waiting arc must yield or fold.</li>
+        <li class="warn">&gt;3 pending needs its own “+N” fold; per-ghost Accept/Pass still needs a popover surface anyway.</li>
+      </ul>
+      <div class="chips"><span>r=140 · arc 150–210°</span><span>ghost 30px dashed</span><span>saturate .55</span><span>dot #1DB954 pulse</span><span>arc rgba(29,185,84,.18)</span></div>
+    </div>
+  </article>
+
+  <!-- ============ OPTION C ============ -->
+  <article class="card">
+    <div>
+      <div class="phone-wrap"><div class="phone" id="phone-c"></div></div>
+      <div class="try">the exact banner from the list view, re-mounted here — find pill lifts</div>
+    </div>
+    <div class="notes">
+      <div class="opt-eyebrow">Option C <span class="tag">cheapest ship</span></div>
+      <div class="opt-name">Relocated banner — above the nav</div>
+      <p class="thesis">Today’s green list-view banner, <b>mounted on the inner-circle view too</b>: full-width above the nav band. Familiar copy, familiar wiring.</p>
+      <div class="nlabel">Why it works</div>
+      <ul>
+        <li>Reuses the existing component, copy and tap wiring (orbit_screen.dart:832-906) verbatim — ships in a day.</li>
+        <li>Discoverability solved with a pattern users already met on the list view.</li>
+      </ul>
+      <div class="nlabel">Watch out</div>
+      <ul>
+        <li class="warn">The bottom strip is the busiest region of the screen: nav band, find pill, edit steppers. The find pill must lift +64 (precedent exists: armed-edit reflow).</li>
+        <li class="warn">Bottom-anchored full-width banners are the most banner-blind pattern in the app.</li>
+        <li class="warn">Two mounts of one banner to keep in sync across surfaces.</li>
+      </ul>
+      <div class="chips"><span>bottom:96 · full-width</span><span>radius 12</span><span>fill rgba(29,185,84,.08)</span><span>find pill lifts → y≈676</span><span>reuses orbit_screen.dart:832</span></div>
+    </div>
+  </article>
+
+  <!-- ============ OPTION D ============ -->
+  <article class="card">
+    <div>
+      <div class="phone-wrap"><div class="phone" id="phone-d"></div></div>
+      <div class="try">shown open — collapsed, only the small handle rides above the nav</div>
+      <button class="demo-btn" onclick="toggleTray()">toggle the tray</button>
+    </div>
+    <div class="notes">
+      <div class="opt-eyebrow">Option D <span class="tag">fullest review</span></div>
+      <div class="opt-name">Intro tray — review in place</div>
+      <p class="thesis">A slim handle above the nav opens a glass tray of <b>Accept/Pass cards</b> — the whole review loop happens on Orbit, no surface switch, no view toggle.</p>
+      <div class="nlabel">Why it works</div>
+      <ul>
+        <li>Closes the loop where the badge points: badge → handle → Accept, all in place.</li>
+        <li>The tray reuses IntroRow cards (intro_row.dart) 1:1 — same sections, same states.</li>
+        <li>Collapsed footprint is near zero; Option A’s dock can become this tray’s handle later.</li>
+      </ul>
+      <div class="nlabel">Watch out</div>
+      <ul>
+        <li class="warn">Biggest build of the four: sheet state, drag dismiss, deep-link target.</li>
+        <li class="warn">Duplicates the Intros tab’s surface — keep one source of truth for row logic and states.</li>
+        <li class="warn">Open sheet must not trap the sculpt long-press or the host feed↔orbit swipe.</li>
+      </ul>
+      <div class="chips"><span>handle bottom:96</span><span>sheet h≈430 · radius 24</span><span>cards = IntroRow 1:1</span><span>demo: tap handle / ✕</span></div>
+    </div>
+  </article>
+
+</main>
+
+<section class="before" id="ignore-path">
+  <div>
+    <div class="phone-wrap sm"><div class="phone" id="phone-q1"></div></div>
+    <div class="phone-cap">1 · intros arrive — dock + badge</div>
+  </div>
+  <div>
+    <div class="phone-wrap sm"><div class="phone" id="phone-q2"></div></div>
+    <div class="phone-cap">2 · dismissed — calm remnant, badge gone</div>
+  </div>
+  <div>
+    <div class="phone-wrap sm"><div class="phone" id="phone-q3"></div></div>
+    <div class="phone-cap">3 · only news returns — “1 new”</div>
+  </div>
+  <div class="notes">
+    <h2>The ignore path: quiet by default, loud only on news</h2>
+    <p>Not every intro deserves an answer — and <span class="bad">Pass is not a quiet escape</span>: passing sends a notification to the introducer (pass_introduction_use_case.dart:12-13). Users who’d rather not reject anyone will simply ignore, and an ignored intro lives for <b>30 days</b> before auto-expiring (introduction_model.dart:138). Whichever option ships must respect ignoring as a first-class choice:</p>
+    <ul>
+      <li class="ok"><b>Dismissal demotes, it doesn’t delete:</b> swipe the dock away and it collapses into a calm remnant — a 32px dashed chip, monochrome, <i>no count</i> — the same “folded content” vocabulary as the rings’ “+N” overflow badge. Furniture, not notification.</li>
+      <li class="ok"><b>Changed your mind? One tap back:</b> tap the remnant any time and the review reopens — no waiting for news, no hunting through the view toggle. (An Undo snackbar also covers accidental swipes.)</li>
+      <li class="ok"><b>Badge counts unseen, not pending:</b> dismissing clears the red nav badge too. Pending-but-seen intros also stay listed in the Intros tab — the always-on fallback surface.</li>
+      <li class="ok"><b>Only news re-inflates it:</b> a genuinely new intro brings the full dock back at the size of the news (“1 new introduction”), not the backlog.</li>
+      <li class="ok"><b>Total silence stays available:</b> long-press the remnant → hidden entirely for the current set (persisted like the chat IntroBanner’s “Maybe later”, dismissIntroBanner / migration 020); recall then lives in the Intros tab until expiry does the cleanup after 30 days.</li>
+      <li>Per option: <b>A</b>/<b>C</b> collapse to this same remnant; <b>D</b>’s handle effectively <i>is</i> the remnant already — it just sheds its count when seen; <b>B</b> is the cautionary tale — faces parked on the canvas have no graceful quiet state, one more reason B stays declined.</li>
+    </ul>
+    <div class="chips"><span>remnant 32px · dashed · countless</span><span>tap remnant = review</span><span>long-press = full hide</span><span>dismiss = seen-set, persisted</span><span>badge = unseen only</span><span>auto-expire 30d</span></div>
+  </div>
+</section>
+
+<section class="verdict">
+  <div class="eyebrow">recommendation</div>
+  <h2>A now — D when the tray earns it</h2>
+  <p><b>Ship Option A.</b> It puts intros literally under the orbit, in the one band nothing else claims, and uses the pending people’s own faces as the affordance. Its tap can reuse the existing banner jump to the Intros review list (<b>onIntroBannerTap</b> wiring), so the first ship is one small component with the full discoverability payoff. Pair it with the <b>ignore path</b> above — dismissing collapses the dock to a calm dashed remnant (tap to come back any time, long-press for total silence), badge = unseen, 30-day expiry — so a user who never wants to answer never feels nagged, and one who changes their mind is one tap away. When in-place review is worth the build, <b>Option D’s tray slots in behind A’s dock unchanged</b> — the dock becomes the handle, the tap opens the tray instead of switching views. <b>C</b> works but crowds the busiest strip of the screen, forces the find pill to move, and double-mounts a component that already struggles for attention. <b>B</b> is the most charming and the most dangerous — the canvas already juggles groups, overflow arcs, unread satellites and sculpt handles; parking tappable people among them buys delight at the price of ambiguity. Keep B as a later delighter once the canvas census calms down.</p>
+</section>
+
+<section class="shared">
+  <div class="snote"><h3>Count &amp; gating</h3><p>Every option is driven by <code>reviewCount</code> = folded pending intros + pending group invites (<code>feed_wired.dart:541-581</code>) — the same number as the red nav badge. At 0, nothing renders; with the ignore path, dock and badge key off <b>unseen</b> rather than raw pending.</p></div>
+  <div class="snote"><h3>Edit &amp; find etiquette</h3><p>Sculpt-edit hides all orbit chrome — the new element hides too. The find pill + chip strip own y≥660; A/B stay clear of it, C lifts the pill (armed-edit reflow precedent).</p></div>
+  <div class="snote"><h3>Sending is untouched</h3><p>Intros still start from the 1:1 chat (overflow menu + IntroBanner card). This decision only relocates the <b>receive/review</b> affordance onto the default orbit view.</p></div>
+  <div class="snote"><h3>Deep links follow</h3><p>The “New Introduction” notification currently lands on the hidden Intros tab. Whichever option ships becomes its target; the all-chats Intros tab remains the full management surface.</p></div>
+</section>
+
+<footer class="colophon">
+  geometry &amp; palette lifted from source · rings orbital_ring_painter.dart:42-44 (teal .25 / purple .20, dash 8 4, glow .08) · seats orbit_arc_layout.dart:21-30 (r62 → 5×38px, r108 → 8×30px, center 48px) · ambient blobs ambient_background.dart:180-252 · nav bar nav_bar_theme.dart:9-64 · find pill inner_circle_interactive_surface.dart:973-1048 · list banner orbit_screen.dart:832-906 · intros tab friends_filter_toggle.dart:46-53 + intro_row.dart · badge count feed_wired.dart:541-581 · pass notifies introducer pass_introduction_use_case.dart:12-13 · expiry 30d introduction_model.dart:138 · dismissal precedent dismissIntroBanner + migration 020 · phones 390×844 @ 0.727 · honors prefers-reduced-motion
+</footer>
+
+</div>
+
+<script>
+/* ---------- deterministic PRNG (stable screenshots) ---------- */
+function rng(seed){let s=seed%2147483647;if(s<=0)s+=2147483646;return function(){s=s*16807%2147483647;return (s-1)/2147483646}}
+
+/* ---------- icons ---------- */
+const IC={
+  search:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F8FAFC" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>',
+  list:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F8FAFC" stroke-width="1.8" stroke-linecap="round"><line x1="8" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="8" y1="18" x2="20" y2="18"/><circle cx="4" cy="6" r="1" fill="#F8FAFC"/><circle cx="4" cy="12" r="1" fill="#F8FAFC"/><circle cx="4" cy="18" r="1" fill="#F8FAFC"/></svg>',
+  orbit:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F8FAFC" stroke-width="1.6"><circle cx="12" cy="12" r="3" fill="#F8FAFC" stroke="none"/><circle cx="12" cy="12" r="9" stroke-dasharray="4 3"/></svg>',
+  qr:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F8FAFC" stroke-width="1.7"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 14h3v3h-3zM19 19h1"/></svg>',
+  scan:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F8FAFC" stroke-width="1.7" stroke-linecap="round"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+  plus:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F8FAFC" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+  chevR:'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(201,206,214,0.72)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>',
+  people:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1DB954" stroke-width="1.7" stroke-linecap="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3 2.8-4.5 5.5-4.5S13.9 16 14.5 19"/><circle cx="16.5" cy="9" r="2.6"/><path d="M16.5 14.2c2.3.2 3.7 1.6 4.2 4"/></svg>',
+  peopleGray:'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#C9CED6" stroke-width="1.7" stroke-linecap="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3 2.8-4.5 5.5-4.5S13.9 16 14.5 19"/><circle cx="16.5" cy="9" r="2.6"/><path d="M16.5 14.2c2.3.2 3.7 1.6 4.2 4"/></svg>',
+  feed:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="4" y="4" width="16" height="16" rx="3"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="12" y2="17"/></svg>',
+  orbitNav:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="8.5" stroke-dasharray="4 3"/></svg>',
+  caretUp:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#B9F6CA" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg>',
+  x:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#C9CED6" stroke-width="2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>',
+  sb:'<svg width="62" height="12" viewBox="0 0 62 12" fill="#fff"><rect x="0" y="7" width="3" height="5" rx="1"/><rect x="4.5" y="5" width="3" height="7" rx="1"/><rect x="9" y="3" width="3" height="9" rx="1"/><rect x="13.5" y="1" width="3" height="11" rx="1"/><path d="M27 4.5a8 8 0 0 1 9.6 0l-1.4 1.8a5.7 5.7 0 0 0-6.8 0zM29.3 7.4a4.6 4.6 0 0 1 5 0L31.8 10z"/><rect x="42" y="2.5" width="16" height="8" rx="2.4" fill="none" stroke="rgba(255,255,255,0.5)"/><rect x="43.5" y="4" width="10" height="5" rx="1.2"/><rect x="59" y="5" width="1.8" height="3" rx="0.9" fill="rgba(255,255,255,0.5)"/></svg>'
+};
+
+/* ---------- generative ring avatar (home ring_avatar convention) ---------- */
+const PALETTE=['#FF3B3B','#FFFFFF','#1A1A1A','#1DB954'];
+function ringAvatar(size,seed){
+  const r=rng(seed);
+  const hue=Math.floor(r()*360);
+  const c1=PALETTE[Math.floor(r()*4)],c2=PALETTE[Math.floor(r()*4)],c3=PALETTE[Math.floor(r()*4)];
+  const sw=(size*0.055).toFixed(1),h=size/2;
+  return `<div style="width:${size}px;height:${size}px;border-radius:50%;background:#16181E;box-shadow:0 0 ${(size*0.35).toFixed(0)}px ${(size*0.05).toFixed(1)}px hsla(${hue},70%,50%,0.35)">`+
+    `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`+
+    `<circle cx="${h}" cy="${h}" r="${(size*0.42).toFixed(1)}" fill="none" stroke="${c1}" stroke-width="${sw}"/>`+
+    `<circle cx="${h}" cy="${h}" r="${(size*0.30).toFixed(1)}" fill="none" stroke="${c2}" stroke-width="${sw}" stroke-dasharray="3 2.2"/>`+
+    `<circle cx="${h}" cy="${h}" r="${(size*0.18).toFixed(1)}" fill="none" stroke="${c3}" stroke-width="${sw}"/>`+
+    `<circle cx="${h}" cy="${h}" r="${(size*0.07).toFixed(1)}" fill="hsl(${hue},70%,55%)"/>`+
+    `</svg></div>`;
+}
+function groupFace(size){
+  return `<div style="width:${size}px;height:${size}px;border-radius:50%;background:rgba(78,205,196,0.18);display:flex;align-items:center;justify-content:center">`+
+    `<svg width="${size*0.62}" height="${size*0.62}" viewBox="0 0 24 24" fill="none" stroke="#4ECDC4" stroke-width="1.8" stroke-linecap="round"><circle cx="9" cy="9" r="3"/><path d="M4 19c.5-2.8 2.4-4.2 5-4.2s4.5 1.4 5 4.2"/><circle cx="16.5" cy="10" r="2.4"/><path d="M16.8 14.9c2 .3 3.2 1.5 3.7 3.6"/></svg></div>`;
+}
+/* unread ring + satellites (194 convention) */
+function unreadOrbit(avatar){
+  const d=Math.round(avatar*1.35*2)/2, s=d+10, c=s/2, r=avatar*1.35/2;
+  let dots='';
+  [0.6,3.3,5.1].forEach(ph=>{
+    const x=(c+r*Math.cos(ph)).toFixed(1),y=(c+r*Math.sin(ph)).toFixed(1);
+    dots+=`<circle cx="${x}" cy="${y}" r="${(avatar*0.06*2.6).toFixed(1)}" fill="rgba(29,185,84,0.16)"/><circle cx="${x}" cy="${y}" r="${(avatar*0.06).toFixed(1)}" fill="#1DB954"/>`;
+  });
+  return `<svg class="spin" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}" style="position:absolute;left:${-(s-avatar)/2}px;top:${-(s-avatar)/2}px;pointer-events:none">`+
+    `<circle cx="${c}" cy="${c}" r="${r.toFixed(1)}" fill="none" stroke="rgba(29,185,84,0.55)" stroke-width="1.1"/>${dots}</svg>`;
+}
+
+/* ---------- shared phone scaffolding ---------- */
+function frame(inner){
+  return `<div class="blob green"></div><div class="blob red"></div>
+  <div class="island"></div>
+  <div class="statusbar"><span class="sb-time">9:41</span><span class="sb-icons">${IC.sb}</span></div>
+  ${inner}`;
+}
+function topChrome(view){
+  return `<div class="chrome-btn" style="left:16px">${view==='inner'?IC.list:IC.orbit}</div>
+  <div class="chrome-center"><div class="cbtn">${IC.qr}</div><div class="cbtn">${IC.scan}</div></div>
+  <div class="glow-fab">${IC.plus}</div>`;
+}
+function navBar(badge){
+  return `<div class="navbar"><div class="nav-pill">
+    <div class="nav-btn">${IC.feed}<span class="nl">Feed</span></div>
+    <div class="nav-btn active">${IC.orbitNav}<span class="nl">Orbit</span>${badge?`<span class="nav-badge">${badge}</span>`:''}</div>
+  </div></div>`;
+}
+
+/* ---------- orbit canvas ---------- */
+function orbitCanvas(cfg){
+  cfg=cfg||{};
+  const seat=(deg,rad,size,html,extra,cls)=>{
+    const a=(deg-0)*Math.PI/180;
+    const x=160+rad*Math.cos(a),y=160+rad*Math.sin(a);
+    return `<div class="node-wrap ${cls||''}" style="left:${(x-size/2).toFixed(1)}px;top:${(y-size/2).toFixed(1)}px;width:${size}px;height:${size}px">${html}${extra||''}</div>`;
+  };
+  let nodes='';
+  /* ring 1: 5 × 38px, r62, angle i*72-90 */
+  for(let i=0;i<5;i++){
+    const av=`<div class="node" style="width:38px;height:38px;border:1.5px solid rgba(255,255,255,0.20)">${ringAvatar(35,101+i)}</div>`;
+    nodes+=seat(i*72-90,62,38,av,i===1?unreadOrbit(38):'');
+  }
+  /* ring 2: 8 × 30px, r108, angle i*45-75; index 2 = group node */
+  for(let i=0;i<8;i++){
+    let av;
+    if(i===2){av=`<div class="node" style="width:30px;height:30px;border:1px solid rgba(78,205,196,0.9)">${groupFace(28)}</div>`;}
+    else{av=`<div class="node" style="width:30px;height:30px;border:1px solid rgba(255,255,255,0.14)">${ringAvatar(28,201+i)}</div>`;}
+    nodes+=seat(i*45-75,108,30,av,i===5?unreadOrbit(30):'');
+  }
+  /* ghosts (Option B): waiting arc r140, bottom sector */
+  let ghostArc='';
+  if(cfg.ghosts){
+    /* from-top-clockwise coords: x=160+r·sin(θ), y=160−r·cos(θ) */
+    const g=(deg,seed)=>{
+      const t=deg*Math.PI/180;
+      const x=160+140*Math.sin(t),y=160-140*Math.cos(t);
+      return `<div class="node-wrap" style="left:${(x-15).toFixed(1)}px;top:${(y-15).toFixed(1)}px;width:30px;height:30px">
+        <div class="node ghost" style="width:30px;height:30px;border:1.5px dashed rgba(29,185,84,0.65)">${ringAvatar(27,seed)}</div>
+        <div class="ghost-dot"></div></div>`;
+    };
+    nodes+=g(155,301)+g(180,302)+g(205,303);
+    /* runway arc 140→220° from top, r140: endpoints (250,267)/(70,267) */
+    ghostArc=`<path d="M 250 267 A 140 140 0 0 1 70 267" fill="none" stroke="rgba(29,185,84,0.18)" stroke-width="1.5" stroke-dasharray="5 5"/>`;
+  }
+  return `<div class="orbit-box">
+    <svg class="ring-glow" width="320" height="320" viewBox="0 0 320 320">
+      <circle cx="160" cy="160" r="62" fill="none" stroke="rgba(129,230,217,0.08)" stroke-width="8"/>
+      <circle cx="160" cy="160" r="108" fill="none" stroke="rgba(129,230,217,0.08)" stroke-width="8"/>
+    </svg>
+    <svg width="320" height="320" viewBox="0 0 320 320" style="position:absolute;inset:0">
+      <circle cx="160" cy="160" r="62" fill="none" stroke="rgba(129,230,217,0.25)" stroke-width="1.5" stroke-dasharray="8 4"/>
+      <circle cx="160" cy="160" r="108" fill="none" stroke="rgba(167,139,250,0.20)" stroke-width="1.5" stroke-dasharray="8 4"/>
+      ${ghostArc}
+    </svg>
+    <div class="node-wrap" style="left:136px;top:136px;width:48px;height:48px">
+      <div class="node" style="width:48px;height:48px;border:1px solid rgba(255,255,255,0.35);box-shadow:0 0 16.8px 2.4px hsla(141,70%,45%,0.35)">${ringAvatar(46,7)}</div>
+    </div>
+    ${nodes}
+  </div>`;
+}
+
+/* ---------- option overlays ---------- */
+function introDock(n,label){
+  n=n||3;label=label||'3 waiting to meet you';
+  let avs='';
+  for(let i=0;i<n;i++)avs+=`<div class="dav">${ringAvatar(23,301+i)}</div>`;
+  return `<div class="intro-dock">
+    <div class="dock-avs">${avs}</div>
+    <span class="dock-label">${label}</span>${IC.chevR}
+  </div>`;
+}
+function bottomBanner(){
+  return `<div class="bottom-banner">${IC.people}<div class="bt"><div class="bt1">3 items pending</div><div class="bt2">Review and accept introductions to start chatting</div></div>${IC.chevR}</div>`;
+}
+function trayHandle(){
+  return `<div class="tray-handle" id="tray-handle" onclick="toggleTray()">${IC.caretUp}<span class="th-label">Intros · 3</span></div>`;
+}
+function traySheet(){
+  const card=(seed,name,by)=>`<div class="icard"><div class="irow">${ringAvatar(42,seed)}<div><div class="iname">${name}</div><div class="isub">Introduced by ${by}</div></div></div>
+    <div class="ibtns"><div class="ibtn-accept">Accept</div><div class="ibtn-pass">Pass</div></div></div>`;
+  return `<div class="tray-sheet" id="tray-sheet">
+    <div class="grabber" onclick="toggleTray()"></div>
+    <div class="tray-head"><span class="tray-title">Introductions</span><span class="tray-cnt">3</span><div class="tray-x" onclick="toggleTray()">${IC.x}</div></div>
+    <div class="tray-sec">From Sara</div>
+    ${card(301,'Layla','Sara')}
+    ${card(302,'Omar','Sara')}
+    <div class="tray-sec">From Kareem</div>
+    <div class="iwait">${ringAvatar(42,303)}<div><div class="iname">Nadia</div><div class="iws">Waiting for Nadia to accept…</div></div></div>
+  </div>`;
+}
+function introRemnant(){
+  return `<div class="intro-remnant">${IC.peopleGray}</div>`;
+}
+function ghostHint(){
+  return `<div class="ghost-hint">3 waiting to join your orbit — tap a face to review</div>`;
+}
+
+/* ---------- all-chats list view (before exhibit) ---------- */
+function listView(){
+  const row=(seed,name,sub,time)=>`<div class="frow">${ringAvatar(42,seed)}<div><div class="fn">${name}</div><div class="fs">${sub}</div></div><span class="ft">${time}</span></div>`;
+  return `${topChrome('list')}
+  <div class="seg-toggle"><div class="seg on">All</div><div class="seg">Intros <span class="cnt">3</span></div><div class="seg">Archived</div></div>
+  <div class="list-banner">${IC.people}<div class="bt"><div class="bt1">3 items pending</div><div class="bt2">Review and accept introductions to start chatting</div></div>${IC.chevR}</div>
+  <div class="rowlist">
+    ${row(101,'Sara','sent a photo','2m')}
+    ${row(102,'Kareem','voice message · 0:12','1h')}
+    ${row(201,'Hiking crew','Omar: trail on Friday?','3h')}
+    ${row(103,'Mona','ok see you then 👋','1d')}
+    ${row(104,'Adel','typing…','2d')}
+  </div>
+  ${navBar(3)}
+  <div class="search-trigger">${IC.search}</div>`;
+}
+
+/* ---------- inner-circle view renderer ---------- */
+function innerView(cfg){
+  cfg=cfg||{};
+  const findBottom=cfg.findBottom||104;
+  const badge=cfg.badge===undefined?3:cfg.badge;
+  let extras='';
+  if(cfg.dock)extras+=introDock(cfg.dockN,cfg.dockLabel);
+  if(cfg.remnant)extras+=introRemnant();
+  if(cfg.ghosts)extras+=ghostHint();
+  if(cfg.banner)extras+=bottomBanner();
+  if(cfg.tray)extras+=trayHandle()+traySheet();
+  return `${topChrome('inner')}
+  ${orbitCanvas(cfg)}
+  ${extras}
+  ${navBar(badge)}
+  <div class="find-pill" style="bottom:${findBottom}px">${IC.search}</div>`;
+}
+
+/* ---------- hydrate ---------- */
+function renderPhone(id,html){document.getElementById(id).innerHTML=frame(html)}
+renderPhone('phone-t1',innerView({}));
+renderPhone('phone-t2',listView());
+renderPhone('phone-a',innerView({dock:true}));
+renderPhone('phone-q1',innerView({dock:true,badge:3}));
+renderPhone('phone-q2',innerView({remnant:true,badge:0}));
+renderPhone('phone-q3',innerView({dock:true,dockN:1,dockLabel:'1 new introduction',badge:1}));
+renderPhone('phone-b',innerView({ghosts:true}));
+renderPhone('phone-c',innerView({banner:true,findBottom:168}));
+renderPhone('phone-d',innerView({tray:true}));
+
+/* Option D demo toggle: default OPEN so the payoff is visible */
+let trayOpen=true;
+function applyTray(){
+  const sheet=document.getElementById('tray-sheet');
+  const handle=document.getElementById('tray-handle');
+  if(sheet)sheet.style.display=trayOpen?'block':'none';
+  if(handle)handle.style.display=trayOpen?'none':'flex';
+}
+function toggleTray(){trayOpen=!trayOpen;applyTray()}
+applyTray();
+</script>
+</body>
+</html>

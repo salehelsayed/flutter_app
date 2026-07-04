@@ -24,9 +24,13 @@ If **$ARGUMENTS** is too vague to produce a meaningful spec, ask the user for cl
 
 Launch an Explore agent (subagent_type: `Explore`, thoroughness: `very thorough`).
 
+If evidence gathering needs MORE than one agent, do not let each one re-derive the same context: use the scout-then-fan-out shape — one budgeted graph scout, its compact digest embedded verbatim in every worker prompt — see `.claude/workflows/_template-scout-then-fanout.mjs`.
+
 Task for the Explore agent:
 
 > You are gathering evidence for a specification document about: **$ARGUMENTS**
+>
+> **Graphify-first (do this BEFORE any raw sweep).** Ground yourself in the knowledge graph: run `cd graphify-arch && graphify query "$ARGUMENTS" --budget 1500` (the app-owned DEFAULT graph), then `graphify path "<A>" "<B>"` / `graphify explain "<concept>"` from that dir as needed — fall back to the repo-root full graph only for generated/native/vendor/platform symbols or when the arch graph misses. Use the surfaced files to scope the sweep below, and verify hot spots in real source with file:line. This mirrors `tdd-plan/SKILL.md` Step 1's grounding.
 >
 > Search the codebase for ALL relevant:
 > 1. Production code paths in `lib/` — find the exact files, constants, classes, and functions involved
