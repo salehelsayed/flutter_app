@@ -52,7 +52,16 @@ target 'Runner' do
     :execution_position => :before_compile,
     :shell_path => '/bin/bash',
     :input_files => go_mknoon_input_files,
-    :output_files => go_mknoon_output_files,
+    # NOTE: intentionally NO :output_files. Declaring the GoMknoon.xcframework
+    # as this Runner script's output made the GoMknoon pod's "[CP] Copy
+    # XCFrameworks" phase (which consumes that xcframework) order AFTER this
+    # script, closing a build cycle:
+    #   Pods-Runner -> GoMknoon -> Runner -> Pods-Runner
+    # (Xcode: "Cycle in dependencies between targets 'Pods-Runner' and
+    # 'Runner'"). The xcframework is already built at `pod install` time (the
+    # go_mknoon_ensure block above) and this before_compile script is a fast
+    # idempotent freshness guard, so running it every build is harmless and the
+    # missing output declaration breaks the cycle without losing freshness.
     :script => <<-'SCRIPT'
 "${PODS_ROOT}/../../scripts/ensure_go_macos_bindings.sh"
 SCRIPT
