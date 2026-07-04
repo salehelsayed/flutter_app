@@ -1062,6 +1062,91 @@ void main() {
       expect(textField.controller?.text, 'Shared group text');
     });
 
+    // 204 TC-204-04 (BUG-1, group): the group attach sheet must expose an
+    // explicit Cancel affordance (the sheets are duplicated per surface, so the
+    // group needs its own lock). RED on HEAD: no Cancel row => key findsNothing.
+    testWidgets('attach sheet shows a Cancel affordance (group)', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+
+      await tester.pumpWidget(buildWidget(group: group));
+      await pumpFrames(tester, count: 20);
+
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump(const Duration(milliseconds: 500));
+
+      // Cancel is additive: the three pickers are still present.
+      expect(find.text('Media Library'), findsOneWidget);
+      expect(find.text('Take Photo'), findsOneWidget);
+      expect(find.text('Record Video'), findsOneWidget);
+
+      final cancel = find.byKey(GroupConversationWired.attachSheetCancelKey);
+      expect(cancel, findsOneWidget);
+      expect(
+        find.descendant(of: cancel, matching: find.text('Cancel')),
+        findsOneWidget,
+      );
+    });
+
+    // 204 TC-204-05 (BUG-1, group): Cancel dismisses the group sheet ONLY — it
+    // must not invoke a picker and must not clear already-staged media.
+    testWidgets(
+      'Cancel closes the group attach sheet without picking and keeps staged media (group)',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group_cancel_staged_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final attachment = File('${tempDir.path}/staged.jpg')
+          ..writeAsStringSync('image');
+        final mediaPicker = FakeMediaPicker();
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaPicker: mediaPicker,
+            initialAttachments: [attachment],
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        // Baseline: one attachment is staged, and no pick has happened yet.
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+        expect(mediaPicker.pickMultipleMediaCalls, 0);
+
+        // Open the sheet, then Cancel it.
+        await tester.tap(find.byIcon(Icons.add_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(find.text('Media Library'), findsOneWidget);
+
+        // Invoke the Cancel tile's onTap directly (the sheet extends below the
+        // short test viewport, so a hit-test tap would miss) — mirrors how this
+        // file drives the picker tiles.
+        tester
+            .widget<ListTile>(
+              find.byKey(GroupConversationWired.attachSheetCancelKey),
+            )
+            .onTap!();
+        await tester.pump(const Duration(milliseconds: 500));
+
+        // SHEET_DISMISSED: the picker options are gone.
+        expect(find.text('Media Library'), findsNothing);
+        // NOT PICK_INVOKED: Cancel never triggered a gallery pick.
+        expect(mediaPicker.pickMultipleMediaCalls, 0);
+        // STAGED_INTACT: the previously staged attachment survives.
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+      },
+    );
+
     testWidgets('does not render security status in group chat chrome', (
       tester,
     ) async {

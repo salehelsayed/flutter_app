@@ -123,6 +123,11 @@ class _RestoredGroupVoiceContinuation {
 
 /// Wired widget connecting GroupConversationScreen to business logic.
 class GroupConversationWired extends StatefulWidget {
+  /// 204 (BUG-1): the explicit Cancel row on the attach-source bottom sheet.
+  /// Distinct from the 1:1 key so surface-specific tests target each
+  /// unambiguously (the two sheets are duplicated per surface).
+  static const attachSheetCancelKey = ValueKey('group-attach-cancel-action');
+
   /// 159 (TC-159-05): a test-only counter incremented once per actual group
   /// display-items recompute on the wired State (the group memo is hoisted here
   /// because [GroupConversationScreen] is a StatelessWidget). Tests reset it.
@@ -3286,6 +3291,20 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                   Navigator.pop(ctx);
                   _pickVideoFromCamera();
                 },
+              ),
+              // 204 (BUG-1): explicit Cancel to go back to the chat. Dismisses
+              // the sheet ONLY — never picks, never touches staged media.
+              ListTile(
+                key: GroupConversationWired.attachSheetCancelKey,
+                leading: Icon(
+                  Icons.close_rounded,
+                  color: sheetColors.iconPrimary,
+                ),
+                title: Text(
+                  AppLocalizations.of(context)!.btn_cancel,
+                  style: TextStyle(color: sheetColors.textPrimary),
+                ),
+                onTap: () => Navigator.pop(ctx),
               ),
               const SizedBox(height: 16),
             ],

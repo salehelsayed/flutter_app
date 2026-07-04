@@ -187,6 +187,11 @@ class ConversationWired extends StatefulWidget {
   );
   static const deleteCancelKey = ValueKey('conversation-delete-cancel-action');
 
+  /// 204 (BUG-1): the explicit Cancel row on the attach-source bottom sheet.
+  static const attachSheetCancelKey = ValueKey(
+    'conversation-attach-cancel-action',
+  );
+
   /// 159 (TC-159-06): a test-only counter incremented once per
   /// [_ConversationWiredState._sortMessagesForDisplay] call. A relay-drain burst
   /// of M messageChanges events runs M synchronous sorts on HEAD; the per-frame
@@ -2979,6 +2984,20 @@ class _ConversationWiredState extends State<ConversationWired>
                   Navigator.pop(ctx);
                   _pickVideoFromCamera();
                 },
+              ),
+              // 204 (BUG-1): explicit Cancel to go back to the chat. Dismisses
+              // the sheet ONLY — never picks, never touches staged media.
+              ListTile(
+                key: ConversationWired.attachSheetCancelKey,
+                leading: Icon(
+                  Icons.close_rounded,
+                  color: sheetColors.iconPrimary,
+                ),
+                title: Text(
+                  AppLocalizations.of(context)!.btn_cancel,
+                  style: TextStyle(color: sheetColors.textPrimary),
+                ),
+                onTap: () => Navigator.pop(ctx),
               ),
               const SizedBox(height: 16),
             ],

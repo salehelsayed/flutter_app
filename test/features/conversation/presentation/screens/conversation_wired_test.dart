@@ -4103,6 +4103,106 @@ void main() {
       expect(find.text('Record Video'), findsOneWidget);
     });
 
+    // 204 TC-204-02 (BUG-1, 1:1): the attach sheet must expose an explicit
+    // Cancel affordance so a user who changed their mind can go back to the
+    // chat. RED on HEAD: no Cancel row => the key findsNothing.
+    testWidgets('attach sheet shows a Cancel affordance (1:1)', (tester) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+      );
+
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump(const Duration(milliseconds: 500));
+
+      // Cancel is additive: the three pickers are still present.
+      expect(find.text('Media Library'), findsOneWidget);
+      expect(find.text('Take Photo'), findsOneWidget);
+      expect(find.text('Record Video'), findsOneWidget);
+
+      // Anchor on the ValueKey (not the icon/text, which are ambiguous with the
+      // delete sheet / recording overlay).
+      final cancel = find.byKey(ConversationWired.attachSheetCancelKey);
+      expect(cancel, findsOneWidget);
+      expect(
+        find.descendant(of: cancel, matching: find.text('Cancel')),
+        findsOneWidget,
+      );
+    });
+
+    // 204 TC-204-03 (BUG-1, 1:1): Cancel dismisses the sheet ONLY — it must not
+    // invoke a picker and must not clear already-staged media.
+    testWidgets(
+      'Cancel closes the attach sheet without picking and keeps staged media (1:1)',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final tempDir = Directory.systemTemp.createTempSync(
+          'conversation_cancel_staged_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final attachment = File('${tempDir.path}/staged.jpg')
+          ..writeAsStringSync('image');
+        final mediaPicker = FakeMediaPicker();
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          mediaPicker: mediaPicker,
+          initialAttachments: [attachment],
+        );
+
+        // Baseline: one attachment is staged, and no pick has happened yet.
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+        expect(mediaPicker.pickMultipleMediaCalls, 0);
+
+        // Open the sheet, then Cancel it.
+        await tester.tap(find.byIcon(Icons.add_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(find.text('Media Library'), findsOneWidget);
+
+        // Invoke the Cancel tile's onTap directly (the sheet extends below the
+        // short test viewport, so a hit-test tap would miss) — mirrors how this
+        // file drives the picker tiles.
+        tester
+            .widget<ListTile>(
+              find.byKey(ConversationWired.attachSheetCancelKey),
+            )
+            .onTap!();
+        await tester.pump(const Duration(milliseconds: 500));
+
+        // SHEET_DISMISSED: the picker options are gone.
+        expect(find.text('Media Library'), findsNothing);
+        // NOT PICK_INVOKED: Cancel never triggered a gallery pick.
+        expect(mediaPicker.pickMultipleMediaCalls, 0);
+        // STAGED_INTACT: the previously staged attachment survives.
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+      },
+    );
+
     testWidgets('does not show AttachmentPreviewStrip initially', (
       tester,
     ) async {

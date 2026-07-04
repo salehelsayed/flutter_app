@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/l10n/app_localizations_en.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/voice_record_button.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 class _TestAppLocalizationsDelegate
@@ -36,6 +37,8 @@ void main() {
     bool isQuoteUnavailable = false,
     VoidCallback? onClearQuote,
     bool shouldRequestFocus = false,
+    VoidCallback? onRecordStart,
+    VoidCallback? onRecordStop,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -60,6 +63,8 @@ void main() {
             isQuoteUnavailable: isQuoteUnavailable,
             onClearQuote: onClearQuote,
             shouldRequestFocus: shouldRequestFocus,
+            onRecordStart: onRecordStart,
+            onRecordStop: onRecordStop,
           ),
         ),
       ),
@@ -118,6 +123,31 @@ void main() {
     testWidgets('shows attachment button', (tester) async {
       await tester.pumpWidget(buildTestWidget());
       expect(find.byIcon(Icons.add_rounded), findsOneWidget);
+    });
+
+    // 204 TC-204-01 (BUG-2): the "+" attach button must be the SAME size as the
+    // voice-note button — the user's literal ask. On HEAD the "+" Container is
+    // 36×36 while VoiceRecordButton is 48×48, so both assertions RED.
+    testWidgets('attach button matches the voice-note button size (48x48)', (
+      tester,
+    ) async {
+      // Empty text + non-null record callbacks => the mic VoiceRecordButton
+      // renders alongside the "+" (see _shouldShowMicButton).
+      await tester.pumpWidget(
+        buildTestWidget(onRecordStart: () {}, onRecordStop: () {}),
+      );
+
+      final attach = find.byKey(const ValueKey('composer-attach-button'));
+      expect(attach, findsOneWidget);
+      expect(find.byType(VoiceRecordButton), findsOneWidget);
+
+      // Absolute 48-pt tap target.
+      expect(tester.getSize(attach), const Size(48, 48));
+      // Parity with the mic — "same size as the voice-note button".
+      expect(
+        tester.getSize(attach),
+        tester.getSize(find.byType(VoiceRecordButton)),
+      );
     });
 
     testWidgets('shows send button icon', (tester) async {

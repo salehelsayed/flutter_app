@@ -342,8 +342,12 @@ class _ComposeAreaState extends State<ComposeArea>
                           : widget.onAttach,
                       behavior: HitTestBehavior.opaque,
                       child: Container(
-                        width: 36,
-                        height: 36,
+                        key: const ValueKey('composer-attach-button'),
+                        // Match the VoiceRecordButton / send button (48x48) so
+                        // the "+" is on the same accessible tap-target baseline
+                        // as the other composer action buttons (204 BUG-2).
+                        width: 48,
+                        height: 48,
                         decoration: BoxDecoration(
                           color: Color.fromRGBO(
                             255,
