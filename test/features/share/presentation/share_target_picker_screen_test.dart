@@ -123,6 +123,11 @@ void main() {
       (provider.imageProvider as FileImage).file.path,
       '/tmp/shared-photo.jpg',
     );
+    // TC-200-06: aspect-safe decode (fit) + carry-list preserved through the
+    // rewrite (filterQuality.low, errorBuilder fallback).
+    expect(provider.policy, ResizeImagePolicy.fit);
+    expect(image.filterQuality, FilterQuality.low);
+    expect(image.errorBuilder, isNotNull);
   });
 
   testWidgets('GIF preview avoids ResizeImage cache hints', (tester) async {

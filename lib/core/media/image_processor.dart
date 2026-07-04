@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
+import 'package:image/image.dart' as img;
 import 'package:video_compress/video_compress.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
@@ -61,9 +62,14 @@ class ImageProcessor {
     return result?.path ?? inputPath;
   }
 
-  /// Process avatar: always 512x512, quality 80, strip EXIF.
+  /// Process avatar: compress to a ≥512px jpeg (quality 80, EXIF stripped), then
+  /// center-square any non-square result so avatars are stored — and rendered —
+  /// without aspect-ratio stretch (plan 200; `flutter_image_compress` scales
+  /// proportionally and has no crop API).
   ///
-  /// Quality setting is ignored — avatars are always compressed.
+  /// The square step is strictly best-effort: a missing, undecodable, or
+  /// already-square compress output passes through byte-identical. A compress
+  /// failure (null) returns the input path with no crop.
   Future<String> processAvatar({required String inputPath}) async {
     if (!isProcessableImage(inputPath)) return inputPath;
 
@@ -75,7 +81,10 @@ class ImageProcessor {
       minHeight: 512,
     );
 
-    return result?.path ?? inputPath;
+    final compressedPath = result?.path;
+    if (compressedPath == null) return inputPath;
+
+    return _squareCropAvatar(compressedPath);
   }
 
   /// Process video: strip metadata via re-encoding, apply quality.
@@ -110,6 +119,48 @@ class ImageProcessor {
   bool isProcessableVideo(String path) {
     final ext = path.split('.').last.toLowerCase();
     return const {'mp4', 'mov', 'avi', 'mkv', 'm4v'}.contains(ext);
+  }
+}
+
+/// Best-effort center-square of an already-compressed avatar file.
+///
+/// Returns a NEW file path when a decodable, NON-square image was squared.
+/// Otherwise returns [compressedPath] unchanged — a missing file, undecodable
+/// bytes, or an already-square image all pass through byte-identical, so avatars
+/// never stretch while the downstream fake-compressor contracts (missing/junk/
+/// square bytes asserted byte-identical) stay green (plan 200). Any I/O, decode,
+/// or encode error is swallowed and the compress output is returned as-is.
+Future<String> _squareCropAvatar(String compressedPath) async {
+  try {
+    final file = File(compressedPath);
+    if (!await file.exists()) return compressedPath;
+
+    final decoded = img.decodeImage(await file.readAsBytes());
+    if (decoded == null) return compressedPath;
+    if (decoded.width == decoded.height) return compressedPath;
+
+    final side = decoded.width < decoded.height
+        ? decoded.width
+        : decoded.height;
+    final squared = img.copyCrop(
+      decoded,
+      x: (decoded.width - side) ~/ 2,
+      y: (decoded.height - side) ~/ 2,
+      width: side,
+      height: side,
+    );
+
+    final squaredPath = '$compressedPath.square.jpg';
+    await File(squaredPath).writeAsBytes(img.encodeJpg(squared, quality: 85));
+    // Best-effort: drop the pre-square intermediate so a non-square pick leaves
+    // one temp artifact, not two. Inner guard so a delete failure never falls
+    // through to the outer catch (which would discard the successful crop).
+    try {
+      await file.delete();
+    } catch (_) {}
+    return squaredPath;
+  } catch (_) {
+    return compressedPath;
   }
 }
 

@@ -10,6 +10,7 @@ import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart'
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/media/avatar_image_provider.dart';
 
 /// Pure UI screen for picking one or more share targets.
 ///
@@ -216,12 +217,17 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: _showPreviewImage
-                    ? Image.file(
-                        File(widget.sharedFilePaths.first),
+                    ? Image(
+                        // .gif is exempt (ResizeImage would drop animation);
+                        // non-gif decodes aspect-safe at the 144px thumb size.
+                        image: isGifPreview
+                            ? FileImage(File(widget.sharedFilePaths.first))
+                            : avatarResizedProvider(
+                                FileImage(File(widget.sharedFilePaths.first)),
+                                144,
+                              ),
                         key: const ValueKey('share-preview-image'),
                         fit: BoxFit.cover,
-                        cacheWidth: isGifPreview ? null : 144,
-                        cacheHeight: isGifPreview ? null : 144,
                         filterQuality: FilterQuality.low,
                         errorBuilder: (context, error, stackTrace) => Container(
                           color: readableColors.surfaceSubtle,

@@ -69,6 +69,9 @@ void main() {
         final resize = image.image as ResizeImage;
         expect(resize.width, (80 * 3.0).round()); // 240
         expect(resize.height, (80 * 3.0).round());
+        // TC-200-05: aspect-safe decode (fit) on the profile avatar surface.
+        expect(resize.policy, ResizeImagePolicy.fit);
+        expect(resize.imageProvider, isA<MemoryImage>());
       },
     );
   });

@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/utils/ring_avatar_generator.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
+import 'package:flutter_app/shared/widgets/media/avatar_image_provider.dart';
 
 /// Unified avatar widget used across all screens.
 ///
@@ -121,15 +122,13 @@ class UserAvatar extends StatelessWidget {
     if (avatarBytes != null) {
       return _wrapWithGlow(
         _buildPhotoAvatar(
-          Image.memory(
-            avatarBytes!,
+          Image(
+            // Avatar bytes are jpg/png (no GIF) — aspect-safe sized decode.
+            image: avatarResizedProvider(MemoryImage(avatarBytes!), cacheSize),
             key: ValueKey(avatarBytes.hashCode),
             fit: BoxFit.cover,
             width: size,
             height: size,
-            // Avatar bytes are jpg/png (no GIF), so resize unconditionally.
-            cacheWidth: cacheSize,
-            cacheHeight: cacheSize,
             errorBuilder: _errorBuilder,
           ),
         ),
@@ -149,19 +148,17 @@ class UserAvatar extends StatelessWidget {
           final realPath = avatarPath.split('?').first;
           return _wrapWithGlow(
             _buildPhotoAvatar(
-              Image.file(
-                File(realPath),
+              Image(
+                // 156 QW-4: decode at display size; .gif is exempt because
+                // ResizeImage collapses an animated GIF to its first frame.
+                image: realPath.toLowerCase().endsWith('.gif')
+                    ? FileImage(File(realPath))
+                    : avatarResizedProvider(FileImage(File(realPath)), cacheSize),
                 key: ValueKey(avatarPath), // unique key forces reload
                 fit: BoxFit.cover,
                 width: size,
                 height: size,
                 gaplessPlayback: false,
-                // 156 QW-4: decode at display size; .gif is exempt because
-                // ResizeImage collapses an animated GIF to its first frame.
-                cacheWidth:
-                    realPath.toLowerCase().endsWith('.gif') ? null : cacheSize,
-                cacheHeight:
-                    realPath.toLowerCase().endsWith('.gif') ? null : cacheSize,
                 errorBuilder: _errorBuilder,
               ),
             ),

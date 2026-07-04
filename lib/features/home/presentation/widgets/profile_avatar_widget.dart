@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/shared/widgets/media/avatar_image_provider.dart';
 import 'user_avatar.dart';
 
 /// Profile avatar with ring avatar default and camera button.
@@ -76,13 +77,12 @@ class ProfileAvatarWidget extends StatelessWidget {
         ),
       ),
       child: ClipOval(
-        child: Image.memory(
-          avatarBytes!,
+        child: Image(
+          // Aspect-safe sized decode (memory-only surface, jpg/png — no GIF).
+          image: avatarResizedProvider(MemoryImage(avatarBytes!), cacheSize),
           width: size,
           height: size,
           fit: BoxFit.cover,
-          cacheWidth: cacheSize,
-          cacheHeight: cacheSize,
         ),
       ),
     );

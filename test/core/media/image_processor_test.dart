@@ -1,5 +1,9 @@
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
@@ -252,6 +256,99 @@ void main() {
 
       expect(result, '/tmp/photo.jpg');
     });
+
+    test(
+      'TC-200-11: crops a decodable non-square compress output to 512x512 '
+      '(NEW file) while leaving the 512-min args unchanged',
+      () async {
+        final tempDir = Directory.systemTemp.createTempSync('img_proc_crop');
+        addTearDown(() => tempDir.deleteSync(recursive: true));
+        final input = File('${tempDir.path}/in.jpg')..writeAsBytesSync(<int>[0]);
+        final nonSquare = Uint8List.fromList(
+          img.encodeJpg(img.Image(width: 1024, height: 512), quality: 90),
+        );
+        int? capturedMinWidth;
+        int? capturedMinHeight;
+        final processor = ImageProcessor(
+          compressFile:
+              ({
+                required String path,
+                required int quality,
+                required bool keepExif,
+                int minWidth = 1920,
+                int minHeight = 1080,
+              }) async {
+                capturedMinWidth = minWidth;
+                capturedMinHeight = minHeight;
+                final out = '${path}_compressed.jpg';
+                File(out).writeAsBytesSync(nonSquare, flush: true);
+                return XFile(out);
+              },
+        );
+
+        final outPath = await processor.processAvatar(inputPath: input.path);
+
+        // Crop is a strictly post-compress step: the 512-min contract is intact.
+        expect(capturedMinWidth, 512);
+        expect(capturedMinHeight, 512);
+        final decoded = img.decodeImage(File(outPath).readAsBytesSync())!;
+        expect(decoded.width, 512);
+        expect(decoded.height, 512);
+        expect(outPath, isNot('${input.path}_compressed.jpg'));
+      },
+    );
+
+    test(
+      'TC-200-15: unwritten (missing) compress output passes through unchanged',
+      () async {
+        final processor = ImageProcessor(
+          compressFile:
+              ({
+                required String path,
+                required int quality,
+                required bool keepExif,
+                int minWidth = 1920,
+                int minHeight = 1080,
+              }) async => XFile('${path}_compressed.jpg'),
+        );
+
+        final result = await processor.processAvatar(
+          inputPath: '/tmp/missing-avatar.jpg',
+        );
+
+        // No throw, no crop — the reported compress path is returned verbatim.
+        expect(result, '/tmp/missing-avatar.jpg_compressed.jpg');
+      },
+    );
+
+    test(
+      'TC-200-15: undecodable compress output returns compress path byte-identical',
+      () async {
+        final tempDir = Directory.systemTemp.createTempSync('img_proc_junk');
+        addTearDown(() => tempDir.deleteSync(recursive: true));
+        final input = File('${tempDir.path}/in.jpg')..writeAsBytesSync(<int>[0]);
+        final junk = Uint8List.fromList(<int>[0xCA, 0xFE, 0xBA, 0xBE]);
+        final processor = ImageProcessor(
+          compressFile:
+              ({
+                required String path,
+                required int quality,
+                required bool keepExif,
+                int minWidth = 1920,
+                int minHeight = 1080,
+              }) async {
+                final out = '${path}_compressed.jpg';
+                File(out).writeAsBytesSync(junk, flush: true);
+                return XFile(out);
+              },
+        );
+
+        final result = await processor.processAvatar(inputPath: input.path);
+
+        expect(result, '${input.path}_compressed.jpg');
+        expect(File(result).readAsBytesSync(), junk);
+      },
+    );
   });
 
   group('isProcessableVideo', () {

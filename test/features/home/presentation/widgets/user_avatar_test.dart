@@ -122,6 +122,10 @@ void main() {
       final resize = image.image as ResizeImage;
       expect(resize.width, (42 * 3.0).round()); // 126
       expect(resize.height, (42 * 3.0).round());
+      // TC-200-03: aspect-safe decode (fit) + inner provider preserved.
+      expect(resize.policy, ResizeImagePolicy.fit);
+      expect(resize.imageProvider, isA<MemoryImage>());
+      expect(image.errorBuilder, isNotNull);
     },
   );
 
@@ -149,6 +153,10 @@ void main() {
       final resize = image.image as ResizeImage;
       expect(resize.width, (50 * 2.0).round()); // 100
       expect(resize.height, (50 * 2.0).round());
+      // TC-200-04: aspect-safe decode (fit) + inner FileImage preserved.
+      expect(resize.policy, ResizeImagePolicy.fit);
+      expect(resize.imageProvider, isA<FileImage>());
+      expect(image.errorBuilder, isNotNull);
     },
   );
 }

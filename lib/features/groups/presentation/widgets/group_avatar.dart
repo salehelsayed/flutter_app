@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+import 'package:flutter_app/shared/widgets/media/avatar_image_provider.dart';
 
 class GroupAvatar extends StatefulWidget {
   final String groupId;
@@ -105,28 +106,24 @@ class _GroupAvatarState extends State<GroupAvatar> {
       child: ClipRRect(
         borderRadius: widget.borderRadius,
         child: switch ((avatarBytes, imagePath)) {
-          (final Uint8List bytes, _) => Image.memory(
-            bytes,
+          (final Uint8List bytes, _) => Image(
+            // Group avatar bytes are jpg/png (no GIF) — aspect-safe sized decode.
+            image: avatarResizedProvider(MemoryImage(bytes), cacheSize),
             key: ValueKey(memoryKey),
             fit: BoxFit.cover,
             width: widget.size,
             height: widget.size,
-            // Group avatar bytes are jpg/png (no GIF) — resize unconditionally.
-            cacheWidth: cacheSize,
-            cacheHeight: cacheSize,
             errorBuilder: _errorBuilder,
           ),
-          (_, final String path) => Image.file(
-            File(path),
+          (_, final String path) => Image(
+            // .gif is exempt: ResizeImage collapses an animated GIF to frame 1.
+            image: path.toLowerCase().endsWith('.gif')
+                ? FileImage(File(path))
+                : avatarResizedProvider(FileImage(File(path)), cacheSize),
             key: ValueKey(imageKey),
             fit: BoxFit.cover,
             width: widget.size,
             height: widget.size,
-            // .gif is exempt: ResizeImage collapses an animated GIF to frame 1.
-            cacheWidth:
-                path.toLowerCase().endsWith('.gif') ? null : cacheSize,
-            cacheHeight:
-                path.toLowerCase().endsWith('.gif') ? null : cacheSize,
             errorBuilder: _errorBuilder,
           ),
           _ => _buildFallback(readableColors),

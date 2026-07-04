@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
@@ -3580,6 +3581,57 @@ void main() {
           reason: 'avatar ACL should not contain duplicate peer ids',
         );
         expect(capturedAllowedPeers, contains('peer-d'));
+      },
+    );
+
+    testWidgets(
+      'TC-200-12 admin picks a non-square photo -> committed preview is square',
+      (tester) async {
+        final tempDir = await _installPathProviderTempDirForTest();
+        final pickedAvatar = await _writePickedAvatar(tempDir, 'tc200-12');
+        final mediaPicker = FakeMediaPicker()
+          ..imageResult = XFile(pickedAvatar.path);
+        // The processor's compress output is a real, decodable non-square (2:1)
+        // image; the crop funnel must square it before it reaches the preview.
+        // Kept small so the inline pure-Dart crop completes within the pick
+        // pump window (squaring is size-independent — 120x60 proves the funnel).
+        final nonSquareJpeg = Uint8List.fromList(
+          img.encodeJpg(img.Image(width: 120, height: 60), quality: 90),
+        );
+        final groupRepo = InMemoryGroupRepository();
+        await _seedEditableGroup(groupRepo);
+
+        await _pumpEditableGroupInfo(
+          tester,
+          groupRepo: groupRepo,
+          mediaPicker: mediaPicker,
+          imageProcessor: _testAvatarImageProcessor(nonSquareJpeg),
+        );
+        await _openGroupDetailsEditor(tester);
+        await _pickGroupEditPhoto(tester);
+
+        GroupInfoScreenAvatarPreview readPreview() =>
+            tester.widget<GroupInfoScreenAvatarPreview>(
+              find.byType(GroupInfoScreenAvatarPreview),
+            );
+        // The inline crop resolves asynchronously; pump real time until the
+        // committed preview lands so the assertion never races the pick under
+        // CPU load (deterministic, not a fixed-window guess).
+        for (var i = 0; i < 50 && readPreview().previewBytes == null; i++) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 20)),
+          );
+          await tester.pump();
+        }
+
+        final preview = readPreview();
+        expect(preview.previewBytes, isNotNull);
+        final decoded = img.decodeImage(preview.previewBytes!)!;
+        expect(
+          decoded.width,
+          decoded.height,
+          reason: 'non-square pick must be squared by the normalizer funnel',
+        );
       },
     );
 
