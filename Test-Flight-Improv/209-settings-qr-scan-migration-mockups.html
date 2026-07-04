@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>209 · QR moves home — four Settings pages</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ------------------------------------------------------------------
+     provenance (all values verified in source, 2026-07-04, branch new-orbit)
+     scaffold #000 + ambient blobs .............. ambient_background.dart:180-252
+     glass card r16 rgba(10,10,15,.80)
+       border rgba(255,255,255,.40) blur 24 ..... background_readable_colors.dart:56-78
+     header: 40px back circle + 18/600 title .... settings_screen.dart:107-161
+     profile: avatar 100 + 32px #14B8A6 badge ... settings_profile_section.dart:28-66
+     nickname mknoon/@name + 14px pencil ........ editable_username_widget.dart:79-170
+     peer-id inset mono 12 + copy 36 ............ settings_peer_id_card.dart:47-115
+     segmented toggle fills ..................... image_quality_toggle.dart:64-137
+     move CTA #1DB954 pill h44 .................. settings_move_account_card.dart:34-80
+     card order ................................. settings_screen.dart:169-240
+     orbit chrome pair 40px circles ............. orbit_qr_chrome_buttons.dart:33-53
+     nav pill ................................... nav_bar_theme.dart:9-64
+     ring vocabulary r dash 8/4 teal/purple ..... orbital_ring_painter.dart:42-44
+     ------------------------------------------------------------------ */
+  :root{
+    --page-bg:#0C0E13;
+    --card-bg:#12151C;
+    --ink:#F2F5F8;
+    --muted:#9AA3B2;
+    --faint:#6B7382;
+    --hairline:rgba(255,255,255,0.08);
+    --green:#1DB954;
+    --teal:#4ECDC4;
+    --ring-teal:rgba(129,230,217,0.25);
+    --ring-purple:rgba(167,139,250,0.20);
+    --display:'Space Grotesk',-apple-system,BlinkMacSystemFont,sans-serif;
+    --body:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    --mono:ui-monospace,'SF Mono',Menlo,monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--page-bg);color:var(--ink);font-family:var(--body);-webkit-font-smoothing:antialiased;line-height:1.5}
+  .wrap{max-width:1280px;margin:0 auto;padding:56px 32px 80px}
+
+  /* ---------- page chrome ---------- */
+  header.hero{position:relative;padding:24px 0 40px}
+  .hero-orbit{position:absolute;top:-110px;right:-50px;pointer-events:none;opacity:.85}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:2.5px;color:var(--green);text-transform:uppercase}
+  h1{font-family:var(--display);font-weight:700;font-size:clamp(30px,4vw,44px);letter-spacing:-0.5px;margin:14px 0 16px;max-width:760px}
+  .brief{font-size:15px;line-height:1.65;color:var(--muted);max-width:700px}
+  .brief b{color:var(--ink);font-weight:600}
+
+  /* before strip */
+  .before{margin-top:34px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}
+  .before-label{font-family:var(--mono);font-size:11px;letter-spacing:1.5px;color:var(--faint);text-transform:uppercase;white-space:nowrap}
+  .before-strip{flex:0 1 430px;min-width:330px;height:64px;background:#000;border:1px solid var(--hairline);border-radius:14px;position:relative;overflow:hidden}
+  .before-note{font-size:12.5px;color:var(--faint);max-width:320px;line-height:1.5}
+  .bchrome{position:absolute;top:12px;width:40px;height:40px;border-radius:50%;background:rgba(16,18,24,0.75);border:0.5px solid rgba(255,255,255,0.50);display:flex;align-items:center;justify-content:center}
+  .bchrome svg{width:20px;height:20px;color:#F8FAFC}
+  .bpair{position:absolute;top:12px;left:50%;transform:translateX(-50%);display:flex;gap:8px}
+  .bpair .bchrome{position:static}
+  .bfab{position:absolute;top:12px;right:12px;width:40px;height:40px;border-radius:50%;background:#1A1A2E;border:2px solid #64B5F6;box-shadow:0 0 12px 1px rgba(100,181,246,0.8);display:flex;align-items:center;justify-content:center}
+  .bfab svg{width:22px;height:22px;color:#fff}
+
+  /* ---------- option grid ---------- */
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-top:12px}
+  @media(max-width:1120px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--card-bg);border:1px solid var(--hairline);border-radius:20px;padding:26px;display:flex;gap:26px;align-items:flex-start}
+  @media(max-width:640px){.card{flex-direction:column;align-items:center}}
+  .notes{flex:1;min-width:0;padding-top:6px}
+  .opt-eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:2px;color:var(--green);text-transform:uppercase;display:flex;align-items:center;gap:10px}
+  .tag{font-family:var(--mono);font-size:9.5px;letter-spacing:1px;padding:3px 8px;border-radius:999px;border:1px solid rgba(255,255,255,0.2);color:var(--muted)}
+  .tag.pick{border-color:rgba(29,185,84,0.45);color:var(--green);background:rgba(29,185,84,0.08)}
+  .opt-name{font-family:var(--display);font-size:24px;font-weight:600;margin:10px 0 8px;letter-spacing:-0.3px}
+  .thesis{font-size:14px;line-height:1.6;color:var(--muted);margin-bottom:16px}
+  .nlabel{font-family:var(--mono);font-size:10px;letter-spacing:1.8px;color:var(--faint);text-transform:uppercase;margin:15px 0 8px}
+  .notes ul{list-style:none}
+  .notes li{font-size:13px;line-height:1.55;color:var(--muted);padding-left:16px;position:relative;margin-bottom:7px}
+  .notes li::before{content:'';position:absolute;left:2px;top:8px;width:5px;height:5px;border-radius:50%;background:rgba(129,230,217,0.5)}
+  .notes li.warn::before{background:rgba(255,107,107,0.55)}
+  .notes code{font-family:var(--mono);font-size:12px}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:16px}
+  .chip{font-family:var(--mono);font-size:10.5px;color:var(--faint);border:1px solid var(--hairline);border-radius:6px;padding:4px 8px;white-space:nowrap}
+
+  /* ---------- footer ---------- */
+  .verdict{margin-top:44px;border:1px solid rgba(29,185,84,0.3);background:linear-gradient(180deg,rgba(29,185,84,0.06),rgba(29,185,84,0.02));border-radius:20px;padding:28px 30px}
+  .verdict h2{font-family:var(--display);font-size:20px;font-weight:600;margin:8px 0 10px}
+  .verdict p{font-size:14px;line-height:1.65;color:var(--muted);max-width:900px}
+  .verdict b{color:var(--ink)}
+  .shared{margin-top:26px;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
+  .shared .note{border:1px solid var(--hairline);border-radius:14px;padding:16px 18px;font-size:12.5px;line-height:1.6;color:var(--muted)}
+  .shared .note b{color:var(--ink);font-weight:600;display:block;margin-bottom:4px;font-size:12px;font-family:var(--mono);letter-spacing:1px;text-transform:uppercase}
+  .shared code{font-family:var(--mono);font-size:11px}
+  .colophon{margin-top:34px;font-family:var(--mono);font-size:10.5px;color:var(--faint);letter-spacing:.5px;line-height:1.8}
+
+  /* ---------- phone frame (390×844 @ .727 => 285×616) ---------- */
+  .phone-wrap{flex:0 0 285px;width:285px;height:616px;position:relative}
+  .phone{width:390px;height:844px;transform:scale(0.727);transform-origin:top left;background:#000;border-radius:54px;border:1.5px solid rgba(255,255,255,0.10);overflow:hidden;position:relative;box-shadow:0 30px 70px rgba(0,0,0,0.55)}
+  .island{position:absolute;top:12px;left:50%;transform:translateX(-50%);width:112px;height:32px;background:#000;border:1px solid rgba(255,255,255,0.05);border-radius:20px;z-index:60}
+  .statusbar{position:absolute;top:0;left:0;right:0;height:54px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 30px 6px;z-index:55}
+  .sb-time{font-size:15px;font-weight:600;color:#fff}
+  .sb-icons{display:flex;gap:6px;align-items:center}
+
+  /* ambient background (ambient_background.dart) */
+  .blob{position:absolute;border-radius:50%;pointer-events:none}
+  .blob.green{width:300px;height:300px;top:-100px;left:-100px;background:radial-gradient(circle,rgba(29,185,84,0.30) 0%,rgba(29,185,84,0) 70%);animation:driftA 8s ease-in-out infinite alternate}
+  .blob.red{width:350px;height:350px;bottom:-100px;right:-100px;background:radial-gradient(circle,rgba(255,50,50,0.25) 0%,rgba(255,50,50,0) 70%);animation:driftB 9s ease-in-out infinite alternate}
+  @keyframes driftA{to{transform:translate(30px,20px)}}
+  @keyframes driftB{to{transform:translate(-25px,-30px)}}
+
+  /* settings glass header (settings_screen.dart:107-161) */
+  .sheader{position:absolute;top:0;left:0;right:0;z-index:40;padding:58px 20px 12px;display:flex;align-items:center;justify-content:space-between;background:rgba(10,10,15,0.80);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-bottom:1px solid rgba(255,255,255,0.30)}
+  .backbtn{width:40px;height:40px;border-radius:50%;background:rgba(16,18,24,0.75);border:1px solid rgba(255,255,255,0.50);display:flex;align-items:center;justify-content:center}
+  .backbtn svg{width:20px;height:20px;color:#F8FAFC}
+  .stitle{font-size:18px;font-weight:600;color:#F8FAFC}
+  .hsp{width:40px}
+
+  /* scrollable content column */
+  .content{position:absolute;inset:0;padding-top:126px;z-index:10;overflow:hidden;display:flex;flex-direction:column}
+
+  /* profile block (settings_profile_section.dart) */
+  .profile{display:flex;flex-direction:column;align-items:center;padding:16px 20px 20px}
+  .avwrap{position:relative}
+  .av-b{border-radius:50%;border:1px solid rgba(255,255,255,0.35);box-shadow:0 0 34px 5px hsla(141,70%,45%,0.35)}
+  .cambadge{position:absolute;right:-2px;bottom:0;width:32px;height:32px;border-radius:50%;background:#14B8A6;border:2px solid #0A0A0F;display:flex;align-items:center;justify-content:center}
+  .cambadge svg{width:16px;height:16px;color:#fff}
+  .cambadge.sm{width:26px;height:26px}
+  .cambadge.sm svg{width:13px;height:13px}
+  .nick{margin-top:13px;font-size:15px;display:flex;align-items:center;gap:6px}
+  .nick .pre{color:rgba(201,206,214,0.72)}
+  .nick b{color:#F8FAFC;font-weight:600}
+  .nick svg{width:14px;height:14px;color:rgba(201,206,214,0.69)}
+
+  /* glass card + section label */
+  .sc{margin:0 20px;border-radius:16px;background:rgba(10,10,15,0.80);border:1px solid rgba(255,255,255,0.40);padding:16px 18px;backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px)}
+  .slabel{margin:0 24px 8px;font-size:11px;font-weight:700;letter-spacing:1px;color:rgba(201,206,214,0.72);text-transform:uppercase}
+  .gap24{height:24px;flex:none}
+  .gap18{height:18px;flex:none}
+  .gap14{height:14px;flex:none}
+
+  .cardhead{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+  .cardhead svg{width:16px;height:16px;color:rgba(201,206,214,0.69)}
+  .cardhead span{font-size:12px;font-weight:500;letter-spacing:0.8px;color:rgba(201,206,214,0.72);text-transform:uppercase}
+
+  .inset{background:rgba(16,18,24,0.75);border:1px solid rgba(255,255,255,0.50);border-radius:10px;padding:11px 12px;font-family:var(--mono);font-size:12px;color:#F8FAFC;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+  .ibtn{width:36px;height:36px;flex:none;border-radius:10px;background:rgba(16,18,24,0.75);border:1px solid rgba(255,255,255,0.40);display:flex;align-items:center;justify-content:center}
+  .ibtn svg{width:16px;height:16px;color:rgba(229,231,235,0.9)}
+  .helper{font-size:12px;color:rgba(201,206,214,0.72);margin-top:8px}
+
+  /* background options */
+  .bgopt{display:flex;align-items:flex-start;padding:8px 2px;gap:10px}
+  .bgopt .t{font-size:14px;color:#F8FAFC}
+  .bgopt .d{font-size:11.5px;color:rgba(201,206,214,0.72);margin-top:1px}
+  .bgopt .chk{width:18px;height:18px;color:rgba(29,185,84,0.95);margin-left:auto;flex:none}
+
+  /* segmented toggle */
+  .seg{display:flex;background:rgba(16,18,24,0.75);border-radius:10px;padding:3px}
+  .seg div{flex:1;text-align:center;padding:9px 0;font-size:13px;color:rgba(229,231,235,0.87)}
+  .seg .on{background:rgba(24,26,32,0.86);border-radius:8px;font-weight:600;color:#F8FAFC}
+
+  /* QR/Scan affordances */
+  .qr-pill{display:inline-flex;align-items:center;gap:7px;padding:9px 16px;border-radius:10px;background:rgba(29,185,84,0.15);border:1px solid rgba(29,185,84,0.30);color:#1DB954;font-size:13px;font-weight:600;white-space:nowrap}
+  .qr-pill svg{width:16px;height:16px}
+  .pillrow{display:flex;gap:8px;margin-top:14px}
+  .tiles{display:flex;gap:10px;padding:0 20px}
+  .tile{flex:1;border-radius:16px;background:rgba(10,10,15,0.80);border:1px solid rgba(255,255,255,0.40);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:13px 0}
+  .tile{padding:12px 0}
+  .tile svg{width:22px;height:22px;color:#1DB954}
+  .tile span{font-size:13px;font-weight:600;color:#F8FAFC}
+  .acts{display:flex;gap:10px;margin-top:14px}
+  .act{flex:1;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:14px;font-weight:600}
+  .act svg{width:17px;height:17px}
+  .act.pri{background:rgba(29,185,84,0.15);border:1px solid rgba(29,185,84,0.35);color:#1DB954}
+  .act.sec{background:rgba(16,18,24,0.75);border:1px solid rgba(255,255,255,0.40);color:#F8FAFC}
+
+  /* rows (options C/D) */
+  .row{display:flex;align-items:center;gap:12px;min-height:44px}
+  .row .ric{width:26px;height:26px;flex:none;display:flex;align-items:center;justify-content:center}
+  .row .ric svg{width:18px;height:18px;color:rgba(201,206,214,0.69)}
+  .row .ric.accent svg{color:#1DB954}
+  .row .ric.danger svg{color:#F87171}
+  .row .rl{font-size:14px;color:#F8FAFC}
+  .row .rv{margin-left:auto;font-size:12.5px;color:rgba(201,206,214,0.72);white-space:nowrap}
+  .row .chev{width:16px;height:16px;color:rgba(201,206,214,0.55);flex:none}
+  .row .chev.solo{margin-left:auto}
+  .rowdiv{height:1px;background:rgba(255,255,255,0.12);margin-left:38px}
+  .sw{width:46px;height:28px;border-radius:14px;position:relative;flex:none;margin-left:auto}
+  .sw.off{background:rgba(255,255,255,0.18)}
+  .sw.off::after{content:'';position:absolute;left:2px;top:2px;width:24px;height:24px;border-radius:50%;background:#fff}
+
+  /* move CTA */
+  .movebtn{margin-top:14px;height:44px;border-radius:22px;background:#1DB954;color:#06130A;display:flex;align-items:center;justify-content:center;gap:8px;font-size:14px;font-weight:700}
+  .movebtn svg{width:17px;height:17px}
+
+  /* option D ring hero */
+  .ringhero{position:relative;width:230px;height:206px;margin:2px auto 0;flex:none}
+  .sat{position:absolute;width:48px;display:flex;flex-direction:column;align-items:center;z-index:5}
+  .sat-core{width:40px;height:40px;border-radius:50%;background:rgba(16,18,24,0.88);box-shadow:0 0 12px rgba(29,185,84,0.18);display:flex;align-items:center;justify-content:center;position:relative}
+  .sat-core svg:not(.sat-dash){width:18px;height:18px;color:#1DB954;position:relative;z-index:2}
+  .sat-core svg.sat-dash{position:absolute;inset:0;width:100%;height:100%;z-index:1}
+  .sat-label{margin-top:3px;font-size:10.5px;font-weight:600;color:rgba(216,222,230,0.85);white-space:nowrap}
+
+  /* nav pill */
+  .navbar{position:absolute;bottom:20px;left:0;right:0;display:flex;justify-content:center;z-index:45}
+  .nav-pill{display:flex;gap:5px;padding:5px 6px;border-radius:30px;background:linear-gradient(180deg,rgba(255,255,255,0.18),rgba(255,255,255,0.10));border:1px solid rgba(255,255,255,0.30);backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);box-shadow:0 4px 16px rgba(0,0,0,0.12)}
+  .nav-btn{width:70px;border-radius:19px;padding:7px 0 6px;display:flex;flex-direction:column;align-items:center;gap:2px;position:relative}
+  .nav-btn svg{width:18px;height:18px;color:rgba(255,255,255,0.60)}
+  .nav-btn span{font-size:11px;font-weight:500;color:rgba(255,255,255,0.55)}
+  .nav-btn.active{background:linear-gradient(180deg,rgba(255,255,255,0.25),rgba(255,255,255,0.12))}
+  .nav-btn.active svg{color:#fff}
+  .nav-btn.active span{color:#fff;font-weight:600}
+  .nav-badge{position:absolute;top:-4px;right:-2px;min-width:18px;padding:1px 5px;border-radius:10px;background:linear-gradient(180deg,#FF3B30,#E0342A);box-shadow:0 0 8px rgba(255,59,48,0.4);font-size:10px;font-weight:700;color:#fff;text-align:center}
+
+  @media (prefers-reduced-motion: reduce){
+    *{animation:none!important;transition:none!important}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <svg class="hero-orbit" width="430" height="330" viewBox="0 0 430 330" fill="none">
+      <circle cx="310" cy="105" r="140" stroke="rgba(129,230,217,0.18)" stroke-width="1.5" stroke-dasharray="8 4"/>
+      <circle cx="310" cy="105" r="88" stroke="rgba(167,139,250,0.14)" stroke-width="1.5" stroke-dasharray="8 4"/>
+      <circle cx="310" cy="105" r="140" stroke="rgba(129,230,217,0.06)" stroke-width="8" filter="blur(4px)"/>
+      <g transform="translate(198,190)">
+        <rect x="0" y="0" width="26" height="26" rx="6" fill="rgba(29,185,84,0.14)" stroke="rgba(29,185,84,0.7)" stroke-width="1.5"/>
+        <rect x="6" y="6" width="14" height="14" rx="3" stroke="rgba(29,185,84,0.7)" stroke-width="1.5" fill="none"/>
+        <rect x="10.5" y="10.5" width="5" height="5" rx="1" fill="#1DB954"/>
+      </g>
+      <circle cx="398" cy="205" r="4" fill="#1DB954"/>
+      <circle cx="398" cy="205" r="9" fill="rgba(29,185,84,0.16)"/>
+    </svg>
+    <div class="eyebrow">mknoon · settings screen · exploration 209</div>
+    <h1>The QR comes home to Settings</h1>
+    <p class="brief">Since 206 the orbit's center avatar opens <b>Settings</b> — the page is now the identity surface. So <b>My QR</b> and <b>Scan</b> leave the orbit's top chrome and move <b>under the profile picture and nickname</b>. Four takes below: each migrates the pair, and each answers "improve the settings page" at a different amplitude — from a one-row diff to a full regroup.</p>
+    <div class="before">
+      <div class="before-label">Today → orbit top chrome</div>
+      <div class="before-strip">
+        <div class="bchrome" style="left:12px" data-ic="chat"></div>
+        <div class="bpair"><div class="bchrome" data-ic="qr"></div><div class="bchrome" data-ic="cam"></div></div>
+        <div class="bfab" data-ic="plus"></div>
+      </div>
+      <div class="before-note">The pair (196 Option B) sits between the view toggle and the create button — icon-only, worst thumb reach, and invisible from Settings, the page that owns identity.</div>
+    </div>
+  </header>
+
+  <main class="grid">
+
+    <article class="card">
+      <div class="phone-wrap"><div class="phone" id="pa"></div></div>
+      <div class="notes">
+        <div class="opt-eyebrow">Option A <span class="tag">safest ship</span></div>
+        <div class="opt-name">Twin Pills</div>
+        <p class="thesis">The chrome pair lands as two labeled pills directly under the nickname. Nothing else on the page moves.</p>
+        <div class="nlabel">Why it works</div>
+        <ul>
+          <li>One-widget diff: <code>SettingsProfileSection</code> gains a Row; every other card ships untouched.</li>
+          <li>The icons finally get their labels back — on Orbit they were Semantics-only.</li>
+          <li>Green-tinted pills read as "actions", distinct from the neutral setting cards below.</li>
+        </ul>
+        <div class="nlabel">Watch out</div>
+        <ul>
+          <li class="warn">The page stays a long undifferentiated card stack (~2.5 screens of scroll).</li>
+          <li class="warn">Peer ID still floats alone one card below the identity it belongs to.</li>
+        </ul>
+        <div class="chips"><span class="chip">diff ≈ 1 Row</span><span class="chip">keys: settings-my-qr / settings-scan</span><span class="chip">strings reuse orbit_my_qr · orbit_scan</span></div>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="phone-wrap"><div class="phone" id="pb"></div></div>
+      <div class="notes">
+        <div class="opt-eyebrow">Option B <span class="tag pick">design pick</span></div>
+        <div class="opt-name">Identity Card</div>
+        <p class="thesis">Everything that <em>is</em> you — avatar, name, peer ID, QR — fuses into one glass card; the page below gains named sections.</p>
+        <div class="nlabel">Why it works</div>
+        <ul>
+          <li>Semantically exact: the QR encodes peerId + key + name, so it lives with them (the WhatsApp/Signal-proven pattern).</li>
+          <li>The 44&nbsp;px QR thumbnail beside the peer ID teaches "your ID is scannable" before any button is pressed — and tap-throughs to the full code.</li>
+          <li>Section labels (<code>APPEARANCE · MEDIA · PRIVACY · ACCOUNT</code>) give the long page a spine without rebuilding any control.</li>
+        </ul>
+        <div class="nlabel">Watch out</div>
+        <ul>
+          <li class="warn">Tallest identity block: ~300&nbsp;px before the first actual setting.</li>
+          <li class="warn">Three QR affordances in one card (thumb, button, scan) — the thumbnail and button must open the same screen.</li>
+        </ul>
+        <div class="chips"><span class="chip">merges SettingsPeerIdCard</span><span class="chip">qr thumb 44px</span><span class="chip">controls unchanged, labels added</span></div>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="phone-wrap"><div class="phone" id="pc"></div></div>
+      <div class="notes">
+        <div class="opt-eyebrow">Option C <span class="tag">biggest cleanup</span></div>
+        <div class="opt-name">One Screen</div>
+        <p class="thesis">Always-expanded control cards compress into grouped rows with values; the whole page fits with no scroll, and QR / Scan become the two biggest targets on it.</p>
+        <div class="nlabel">Why it works</div>
+        <ul>
+          <li>The entire settings surface is visible at once — rows read like an index, values (<code>Default</code>, <code>Compressed</code>…) answer without opening.</li>
+          <li>Each row opens a focused sub-sheet (background chooser, quality picker, recovery phrase) instead of stacking every control inline.</li>
+          <li>Nearby stays an inline switch — the one-tap toggle keeps its one tap.</li>
+        </ul>
+        <div class="nlabel">Watch out</div>
+        <ul>
+          <li class="warn">Biggest build: 5 sub-sheets plus row state; every settings widget is touched.</li>
+          <li class="warn">Background/quality changes become two taps instead of one.</li>
+        </ul>
+        <div class="chips"><span class="chip">tiles 2 × (171×72)</span><span class="chip">7 rows · 0 scroll @ 844pt</span><span class="chip">sub-sheets: bg / photo / video / recovery</span></div>
+      </div>
+    </article>
+
+    <article class="card">
+      <div class="phone-wrap"><div class="phone" id="pd"></div></div>
+      <div class="notes">
+        <div class="opt-eyebrow">Option D <span class="tag">brand flourish</span></div>
+        <div class="opt-name">Personal Orbit</div>
+        <p class="thesis">Your avatar gets its own dashed ring, and My QR + Scan dock on it as satellites — the exact glass-on-ring vocabulary the orbit already taught.</p>
+        <div class="nlabel">Why it works</div>
+        <ul>
+          <li>Strongest continuity: satellite = "object on a ring that isn't a person", straight from the 196-C exploration.</li>
+          <li>Identity actions literally orbit your identity; the ceremonial arrival matches the 420&nbsp;ms slide-up route.</li>
+          <li>Pairs with C's grouped rows below, so the flourish doesn't cost the cleanup.</li>
+        </ul>
+        <div class="nlabel">Watch out</div>
+        <ul>
+          <li class="warn">The ring hero spends ~210&nbsp;px of a utilitarian scrolling surface on ceremony.</li>
+          <li class="warn">40&nbsp;px satellites sit near the camera badge — three small round targets in one cluster.</li>
+        </ul>
+        <div class="chips"><span class="chip">ring r78 · dash 8/4 teal</span><span class="chip">sats 40px @ 35° / 145°</span><span class="chip">196-C vocabulary</span></div>
+      </div>
+    </article>
+
+  </main>
+
+  <section class="verdict">
+    <div class="eyebrow">recommendation</div>
+    <h2>B's head on C's body — A if it must ship this week</h2>
+    <p><b>Identity Card</b> is the pick for the migration itself: the QR joins the peer ID and name it encodes, and the page gains a spine of named sections while every existing control ships untouched. When the page earns a real cleanup, <b>One Screen</b> is the end-state — and the two compose (B's card sitting on C's rows). <b>Twin Pills</b> is the calendar option: one Row in the profile section, nothing else moves. <b>Personal Orbit</b> is documented as considered-and-declined for this surface — the ring is beautiful continuity, but ceremony taxes a page people visit to flip a switch; spend it where the orbit already is.</p>
+  </section>
+
+  <div class="shared">
+    <div class="note"><b>Scanner is the heavy half</b> <code>QRScannerWired</code> takes ~30 deps mostly to rebuild a fresh <code>FeedWired</code> after the success dialog (<code>qr_scanner_wired.dart:384-434</code>). Hosted in Settings, prefer: pop back + <code>appShellController.switchTo(feed)</code> — shrinks the bundle instead of forwarding it.</div>
+    <div class="note"><b>Orbit still hears about scans</b> Orbit's <code>.then(_applyRouteChanges)</code> refresh dies with the entry point (<code>orbit_wired.dart:2341</code>). It already listens to <code>externalRouteChangesListenable</code> (:2253) — route scan results through that.</div>
+    <div class="note"><b>Migration QRs come free</b> The scanner's account-migration branch needs the Move-account deps — which <code>SettingsWired</code> already owns for "Start move" (:507-530). Settings is the natural host.</div>
+    <div class="note"><b>What retires</b> <code>OrbitQrChromeButtons</code> + its mount (<code>orbit_screen.dart:602</code>); keys <code>orbit-my-qr-button</code>/<code>orbit-scan-button</code> re-key to <code>settings-*</code>; dead pre-196 <code>qr_action_cards.dart</code> deletes in the same PR.</div>
+    <div class="note"><b>QR display is cheap — keep the loop</b> <code>QRDisplayWired</code> needs only identity + bridge. Its "Scan a friend's code" card must point at the new Settings scan action so scan⇄show cross-linking survives.</div>
+  </div>
+
+  <p class="colophon">209-settings-qr-scan-migration-mockups · values sourced from settings_screen.dart, settings_profile_section.dart, settings_peer_id_card.dart, image_quality_toggle.dart, settings_move_account_card.dart, background_readable_colors.dart, orbit_qr_chrome_buttons.dart, build_qr_payload_use_case.dart, nav_bar_theme.dart, orbital_ring_painter.dart · glass r16 rgba(10,10,15,.80) border .40 blur 24 · avatar 100 badge 32 #14B8A6 · phones 390×844 @ 0.727 · honors prefers-reduced-motion</p>
+</div>
+
+<script>
+/* ---------- icon set ---------- */
+const IC = {
+  qr: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 11h8V3H3v8zm2-6h4v4H5V5zM3 21h8v-8H3v8zm2-6h4v4H5v-4zM13 3v8h8V3h-8zm6 6h-4V5h4v4zM19 19h2v2h-2zM13 13h2v2h-2zM15 15h2v2h-2zM13 17h2v2h-2zM15 19h2v2h-2zM17 17h2v2h-2zM17 13h2v2h-2zM19 15h2v2h-2z"/></svg>',
+  cam: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 5h-3.17L15 3H9L7.17 5H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 14H4V7h4.05l1.83-2h4.24l1.83 2H20v12zM12 8c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zm0 8c-1.65 0-3-1.35-3-3s1.35-3 3-3 3 1.35 3 3-1.35 3-3 3z"/></svg>',
+  chat: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.17L4 17.17V4h16v12z"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>',
+  chevL: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
+  chevR: '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>',
+  edit: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>',
+  wall: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="9.8" r="1.5"/><path d="M4.5 17l4.3-4.3 2.8 2.8 3.6-3.6 4.3 4.3"/></svg>',
+  video: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/></svg>',
+  move: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7.5" y="2.8" width="9" height="18.4" rx="2"/><path d="M11 18.4h2M2.5 9.5 5 12l-2.5 2.5M5 12H7.5" transform="translate(-1.4,0)"/></svg>',
+  shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l7 2.8V11c0 4.6-3 8.6-7 10-4-1.4-7-5.4-7-10V5.8L12 3z"/></svg>',
+  pin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 21s-6.5-5.7-6.5-10.2A6.5 6.5 0 0 1 12 4.3a6.5 6.5 0 0 1 6.5 6.5C18.5 15.3 12 21 12 21z"/><circle cx="12" cy="10.8" r="2.2"/></svg>',
+  arrowR: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg>',
+  navFeed: '<svg viewBox="0 0 800 800" fill="none"><rect x="100" y="100" width="600" height="140" rx="24" stroke="currentColor" stroke-width="48"/><rect x="100" y="330" width="600" height="140" rx="24" stroke="currentColor" stroke-width="48"/><rect x="100" y="560" width="600" height="140" rx="24" stroke="currentColor" stroke-width="48"/></svg>',
+  navOrbit: '<svg viewBox="0 0 100 100" fill="none"><circle cx="50" cy="50" r="12" fill="currentColor"/><ellipse cx="50" cy="50" rx="40" ry="16" stroke="currentColor" stroke-width="4"/><ellipse cx="50" cy="50" rx="40" ry="16" stroke="currentColor" stroke-width="4" transform="rotate(60 50 50)"/><ellipse cx="50" cy="50" rx="40" ry="16" stroke="currentColor" stroke-width="4" transform="rotate(120 50 50)"/></svg>',
+};
+
+/* hydrate before-strip */
+document.querySelectorAll('[data-ic]').forEach(el=>{ el.innerHTML = IC[el.dataset.ic]; });
+
+/* ---------- deterministic rng + ring avatar (196 conventions) ---------- */
+function rng(seed){ let s = seed >>> 0; return () => (s = (s*1664525 + 1013904223) >>> 0) / 4294967296; }
+const PALETTE = ['#FF3B3B','#FFFFFF','#1A1A1A','#1DB954'];
+function ringAvatar(size, seed){
+  const r = size/2;
+  const order = [0,1,2,3].map(k => PALETTE[(seed*7 + k) % 4]);
+  const radii = [0.42,0.30,0.18].map(f => (size*f).toFixed(1));
+  let s = '<svg width="'+size+'" height="'+size+'" viewBox="0 0 '+size+' '+size+'" style="border-radius:50%;display:block">'
+        + '<circle cx="'+r+'" cy="'+r+'" r="'+r+'" fill="rgba(22,24,30,0.9)"/>';
+  radii.forEach((rr,i)=>{
+    const dash = (i===1) ? ' stroke-dasharray="3 2.2"' : '';
+    s += '<circle cx="'+r+'" cy="'+r+'" r="'+rr+'" stroke="'+order[i]+'" stroke-width="'+(size*0.055).toFixed(1)+'" fill="none" opacity="0.9"'+dash+'/>';
+  });
+  s += '<circle cx="'+r+'" cy="'+r+'" r="'+(size*0.07).toFixed(1)+'" fill="'+order[3]+'"/></svg>';
+  return s;
+}
+
+/* ---------- deterministic fake QR (21×21, finders at 3 corners) ---------- */
+function qrSvg(px){
+  const n = 21, m = px/(n+2), rand = rng(7);
+  let cells = '';
+  const inFinder = (x,y) => (x<7&&y<7)||(x>=n-7&&y<7)||(x<7&&y>=n-7);
+  for (let y=0;y<n;y++) for (let x=0;x<n;x++){
+    if (inFinder(x,y)) continue;
+    if (rand() < 0.44) cells += '<rect x="'+((x+1)*m).toFixed(2)+'" y="'+((y+1)*m).toFixed(2)+'" width="'+m.toFixed(2)+'" height="'+m.toFixed(2)+'"/>';
+  }
+  function finder(fx,fy){
+    return '<rect x="'+((fx+1)*m).toFixed(2)+'" y="'+((fy+1)*m).toFixed(2)+'" width="'+(7*m).toFixed(2)+'" height="'+(7*m).toFixed(2)+'" fill="none" stroke="#0B0E14" stroke-width="'+m.toFixed(2)+'"/>' +
+           '<rect x="'+((fx+3)*m).toFixed(2)+'" y="'+((fy+3)*m).toFixed(2)+'" width="'+(3*m).toFixed(2)+'" height="'+(3*m).toFixed(2)+'"/>';
+  }
+  return '<svg width="'+px+'" height="'+px+'" viewBox="0 0 '+px+' '+px+'" style="display:block;background:#fff;border-radius:'+(px*0.14).toFixed(0)+'px"><g fill="#0B0E14">'
+       + cells + finder(0,0) + finder(n-7,0) + finder(0,n-7) + '</g></svg>';
+}
+
+function dashedCircle(size){
+  const r = size/2 - 0.5;
+  return '<svg class="sat-dash" width="'+size+'" height="'+size+'" viewBox="0 0 '+size+' '+size+'"><circle cx="'+(size/2)+'" cy="'+(size/2)+'" r="'+r+'" stroke="rgba(255,255,255,0.32)" stroke-width="1" stroke-dasharray="4 3" fill="none"/></svg>';
+}
+
+/* ---------- shared phone pieces ---------- */
+const frame = () =>
+  '<div class="blob green"></div><div class="blob red"></div><div class="island"></div>'
+  + '<div class="statusbar"><span class="sb-time">9:41</span><span class="sb-icons">'
+  + '<svg width="17" height="11" viewBox="0 0 17 11" fill="#fff"><rect x="0" y="7" width="3" height="4" rx="0.8"/><rect x="4.5" y="5" width="3" height="6" rx="0.8"/><rect x="9" y="2.5" width="3" height="8.5" rx="0.8"/><rect x="13.5" y="0" width="3" height="11" rx="0.8"/></svg>'
+  + '<svg width="15" height="11" viewBox="0 0 15 11" fill="#fff"><path d="M7.5 11 L10 8 A4 4 0 0 0 5 8 Z"/><path d="M2.5 5.2 A7.5 7.5 0 0 1 12.5 5.2 L11 7 A5.2 5.2 0 0 0 4 7 Z" opacity="0.9"/><path d="M0 2.5 A11 11 0 0 1 15 2.5 L13.4 4.3 A8.7 8.7 0 0 0 1.6 4.3 Z" opacity="0.8"/></svg>'
+  + '<svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x="0.5" y="0.5" width="21" height="11" rx="3" stroke="rgba(255,255,255,0.5)"/><rect x="2" y="2" width="15" height="8" rx="1.6" fill="#fff"/><path d="M23 4v4a2.2 2.2 0 0 0 0-4z" fill="rgba(255,255,255,0.5)"/></svg>'
+  + '</span></div>';
+
+const sheader = () =>
+  '<div class="sheader"><div class="backbtn">'+IC.chevL+'</div><div class="stitle">Settings</div><div class="hsp"></div></div>';
+
+const navBar = () =>
+  '<div class="navbar"><div class="nav-pill">'
+  + '<div class="nav-btn">'+IC.navFeed+'<span>Feed</span><span class="nav-badge">2</span></div>'
+  + '<div class="nav-btn active">'+IC.navOrbit+'<span>Orbit</span></div>'
+  + '</div></div>';
+
+const avatar = (size, badge) =>
+  '<div class="avwrap"><div class="av-b">'+ringAvatar(size,13)+'</div>'
+  + (badge===false ? '' : '<div class="cambadge'+(size<90?' sm':'')+'">'+IC.cam+'</div>')
+  + '</div>';
+
+const nick = () =>
+  '<div class="nick"><span class="pre">mknoon/</span><b>@saleh</b>'+IC.edit+'</div>';
+
+const profile = (size, extra) =>
+  '<div class="profile">'+avatar(size)+nick()+(extra||'')+'</div>';
+
+const slabel = t => '<div class="slabel">'+t+'</div>';
+const card = inner => '<div class="sc">'+inner+'</div>';
+
+const peerInset = () =>
+  '<div style="display:flex;gap:10px;align-items:center">'
+  + '<div class="inset">12D3KooWQmT9pVxLbR4h3fJcE8kA…c7Ns</div>'
+  + '<div class="ibtn">'+IC.copy+'</div></div>';
+
+const peerCard = () => card(peerInset() + '<div class="helper">Your unique identifier on the network</div>');
+
+const bgCard = () => card(
+  '<div class="cardhead">'+IC.wall+'<span>Background</span></div>'
+  + '<div class="bgopt"><div><div class="t">Default</div><div class="d">The current ambient background.</div></div><svg class="chk" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-1.2 14.5-4-4 1.4-1.4 2.6 2.6 5.6-5.6 1.4 1.4-7 7z"/></svg></div>'
+  + '<div class="bgopt"><div><div class="t">Cosmic</div><div class="d">A deep starfield for Feed.</div></div></div>'
+  + '<div class="bgopt"><div><div class="t">Mirrored cosmic</div><div class="d">The cosmic starfield with mirrored color blooms.</div></div></div>'
+  + '<div class="bgopt"><div><div class="t">Daylight Lagoon</div><div class="d">A bright lagoon sky with soft pastel blooms.</div></div></div>');
+
+const qualityCard = (icon, label, sel, helper) => card(
+  '<div class="cardhead">'+icon+'<span>'+label+'</span></div>'
+  + '<div class="seg"><div class="'+(sel===0?'on':'')+'">Compressed</div><div class="'+(sel===1?'on':'')+'">Original</div></div>'
+  + '<div class="helper" style="font-size:11px">'+helper+'</div>');
+
+const row = (icon, cls, label, value, trail) =>
+  '<div class="row"><div class="ric '+(cls||'')+'">'+icon+'</div><span class="rl">'+label+'</span>'
+  + (value ? '<span class="rv">'+value+'</span>' : '')
+  + (trail||'') + '</div>';
+const rowsCard = rows => card('<div style="margin:-6px 0">'+rows.join('<div class="rowdiv"></div>')+'</div>');
+
+/* ---------- option bodies ---------- */
+
+/* A — twin pills under the nickname; page otherwise untouched */
+const bodyA =
+  profile(100,
+    '<div class="pillrow"><span class="qr-pill">'+IC.qr+'<span>My QR</span></span><span class="qr-pill">'+IC.cam+'<span>Scan</span></span></div>')
+  + slabel('Peer ID') + peerCard()
+  + '<div class="gap24"></div>' + bgCard()
+  + '<div class="gap24"></div>' + qualityCard(IC.wall,'Photo Quality',0,'Smaller file size, faster sending. Metadata is always removed.');
+
+/* B — identity card + named sections */
+const bodyB =
+  '<div class="gap14"></div>'
+  + card(
+      '<div style="display:flex;flex-direction:column;align-items:center;padding-top:4px">'+avatar(88)+nick()+'</div>'
+      + '<div style="display:flex;gap:10px;align-items:center;margin-top:14px">'
+      +   qrSvg(44)
+      +   '<div class="inset">12D3KooWQmT9pVxLbR4h…c7Ns</div>'
+      +   '<div class="ibtn">'+IC.copy+'</div></div>'
+      + '<div class="acts"><div class="act pri">'+IC.qr+'My QR</div><div class="act sec">'+IC.cam+'Scan</div></div>')
+  + '<div class="gap24"></div>'
+  + slabel('Appearance') + bgCard()
+  + '<div class="gap24"></div>'
+  + slabel('Media') + qualityCard(IC.wall,'Photo Quality',0,'Smaller file size, faster sending. Metadata is always removed.');
+
+/* C — one screen: tiles + grouped rows */
+const bodyC =
+  '<div class="profile" style="padding:10px 20px 14px">'+avatar(72)+nick()+'</div>'
+  + '<div class="tiles"><div class="tile">'+IC.qr+'<span>My QR</span></div><div class="tile">'+IC.cam+'<span>Scan</span></div></div>'
+  + '<div class="gap14"></div>'
+  + slabel('Identity')
+  + rowsCard([
+      row(IC.qr,'','Peer ID','12D3…c7Ns','<div class="ibtn" style="width:30px;height:30px;border-radius:8px">'+IC.copy+'</div>'),
+      row(IC.shield,'danger','Recovery phrase','', IC.chevR.replace('class="chev"','class="chev solo"')),
+    ])
+  + '<div class="gap14"></div>'
+  + slabel('Preferences')
+  + rowsCard([
+      row(IC.wall,'','Background','Default', IC.chevR),
+      row(IC.cam,'','Photo quality','Compressed', IC.chevR),
+      row(IC.video,'','Video quality','Original', IC.chevR),
+      row(IC.pin,'','Share people nearby','','<div class="sw off"></div>'),
+      row(IC.move,'accent','Move account to new phone','', IC.chevR.replace('class="chev"','class="chev solo"')),
+    ]);
+
+/* D — personal orbit ring + grouped rows */
+function ringHero(){
+  const cx=115, cy=96, r=78;
+  const pos = deg => { const a = deg*Math.PI/180; return [cx + r*Math.cos(a), cy + r*Math.sin(a)]; };
+  const [sx,sy] = pos(35), [qx,qy] = pos(145);
+  return '<div class="ringhero">'
+    + '<svg width="230" height="206" viewBox="0 0 230 206" style="position:absolute;inset:0;overflow:visible">'
+    + '<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" stroke="rgba(129,230,217,0.08)" stroke-width="8" fill="none" filter="blur(4px)"/>'
+    + '<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" stroke="rgba(129,230,217,0.25)" stroke-width="1.5" stroke-dasharray="8 4" fill="none"/>'
+    + '</svg>'
+    + '<div style="position:absolute;left:'+(cx-50)+'px;top:'+(cy-50)+'px">'+avatar(100)+'</div>'
+    + '<div class="sat" style="left:'+(qx-24).toFixed(0)+'px;top:'+(qy-20).toFixed(0)+'px"><div class="sat-core">'+dashedCircle(40)+IC.qr+'</div><div class="sat-label">My QR</div></div>'
+    + '<div class="sat" style="left:'+(sx-24).toFixed(0)+'px;top:'+(sy-20).toFixed(0)+'px"><div class="sat-core">'+dashedCircle(40)+IC.cam+'</div><div class="sat-label">Scan</div></div>'
+    + '</div>';
+}
+const bodyD =
+  ringHero()
+  + '<div style="display:flex;justify-content:center;margin:2px 0 16px">'+nick()+'</div>'
+  + slabel('Identity')
+  + rowsCard([
+      row(IC.qr,'','Peer ID','12D3…c7Ns','<div class="ibtn" style="width:30px;height:30px;border-radius:8px">'+IC.copy+'</div>'),
+      row(IC.shield,'danger','Recovery phrase','', IC.chevR.replace('class="chev"','class="chev solo"')),
+    ])
+  + '<div class="gap14"></div>'
+  + slabel('Preferences')
+  + rowsCard([
+      row(IC.wall,'','Background','Default', IC.chevR),
+      row(IC.cam,'','Photo quality','Compressed', IC.chevR),
+      row(IC.video,'','Video quality','Original', IC.chevR),
+      row(IC.pin,'','Share people nearby','','<div class="sw off"></div>'),
+      row(IC.move,'accent','Move account to new phone','', IC.chevR.replace('class="chev"','class="chev solo"')),
+    ]);
+
+/* ---------- render ---------- */
+function renderPhone(id, body){
+  document.getElementById(id).innerHTML =
+    frame() + '<div class="content">' + body + '</div>' + sheader() + navBar();
+}
+renderPhone('pa', bodyA);
+renderPhone('pb', bodyB);
+renderPhone('pc', bodyC);
+renderPhone('pd', bodyD);
+</script>
+</body>
+</html>
