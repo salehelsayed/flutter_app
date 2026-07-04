@@ -231,18 +231,6 @@ class OrbitalVisualization extends StatelessWidget {
 
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 24),
-          child: Text(
-            l10n.orbit_inner_circle_title,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: readableColors.textMuted,
-              letterSpacing: 1,
-            ),
-          ),
-        ),
         SizedBox(
           key: canvasKey,
           width: _size,

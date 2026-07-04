@@ -127,12 +127,13 @@ void main() {
       .toList();
 
   group('OrbitalVisualization', () {
-    testWidgets('renders "YOUR INNER CIRCLE" text', (tester) async {
+    testWidgets('TC-203-14 renders no inner-circle heading', (tester) async {
+      // 203 B5: the "YOUR INNER CIRCLE" title block was removed.
       await tester.pumpWidget(
         wrap(OrbitalVisualization(userPeerId: 'my-peer-id-123', items: const <OrbitItem>[])),
       );
       await pumpPastAnimations(tester);
-      expect(find.text('YOUR INNER CIRCLE'), findsOneWidget);
+      expect(find.text('YOUR INNER CIRCLE'), findsNothing);
     });
 
     testWidgets('renders center UserAvatar', (tester) async {
@@ -198,7 +199,7 @@ void main() {
       expect(find.byType(CustomPaint), findsWidgets);
     });
 
-    testWidgets('uses readable heading and overflow text on daylight', (
+    testWidgets('uses readable overflow text on daylight', (
       tester,
     ) async {
       const colors = BackgroundReadableColors.representativeLight;
@@ -212,12 +213,9 @@ void main() {
       );
       await pumpPastAnimations(tester);
 
-      final heading = tester.widget<Text>(find.text('YOUR INNER CIRCLE'));
       final overflow = tester.widget<Text>(find.text('+2'));
 
-      expect(heading.style!.color, colors.textMuted);
       expect(overflow.style!.color, colors.textMuted);
-      expectTextContrast(heading.style!.color!, colors.surfaceBase);
       expectTextContrast(overflow.style!.color!, colors.surfaceSubtle);
     });
 

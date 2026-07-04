@@ -736,7 +736,11 @@ void main() {
     testWidgets(
         'TC-198F-04 live drag never interrupted by re-seat/band-hide; yield gate held',
         (tester) async {
-      tester.view.physicalSize = const Size(800, 380);
+      // 340px band: 203 B5 removed the viz title (~41px above the canvas), so
+      // the top-anchored canvas — and with it the cv tip's whole sweep — sits
+      // that much higher. 380−41≈340 keeps the original crossing margin (the
+      // saturated arcWrap tip bottoms out at ~366).
+      tester.view.physicalSize = const Size(800, 340);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
       await tester.pumpWidget(host(_friends(20)));
@@ -746,18 +750,22 @@ void main() {
       await settle(tester);
 
       // Sweep the cv tip around the circle: the anchor crosses the bottom band
-      // edge mid-gesture while the SAME drag keeps delivering updates.
+      // edge mid-gesture while the SAME drag keeps delivering updates
+      // (bounded until-hidden sweep — the exact crossing step is
+      // layout-dependent).
       final g = await tester.startGesture(
           tester.getCenter(handleF(OrbitKnob.arcWrap)));
       await tester.pump(const Duration(milliseconds: 20));
-      for (var i = 0; i < 10; i++) {
+      var steps = 0;
+      while (handleF(OrbitKnob.arcWrap).evaluate().isNotEmpty && steps < 24) {
         await g.moveBy(const Offset(-7, 16));
         await tester.pump();
+        steps++;
       }
-      // The tip anchor is now below the 380px band → hidden but mounted, and
+      // The tip anchor is now below the 340px band → hidden but mounted, and
       // the gesture is still live.
       expect(handleF(OrbitKnob.arcWrap), findsNothing,
-          reason: 'cv handle band-hidden mid-drag');
+          reason: 'cv handle band-hidden mid-drag (crossed by step $steps)');
       expect(handleAnyF(OrbitKnob.arcWrap), findsOneWidget,
           reason: 'band-hide must never unmount (kills the recognizer)');
       final vHidden = bubbleValue(tester);

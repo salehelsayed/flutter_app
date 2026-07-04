@@ -772,12 +772,6 @@ abstract class AppLocalizations {
   /// **'Update your post'**
   String get edit_pinned_hint;
 
-  /// No description provided for @orbit_close_friends.
-  ///
-  /// In en, this message translates to:
-  /// **'Close Friends'**
-  String get orbit_close_friends;
-
   /// No description provided for @orbit_view_toggle_to_list.
   ///
   /// In en, this message translates to:
@@ -3685,12 +3679,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Inner Circle'**
   String get orbit_inner_circle_badge;
-
-  /// No description provided for @orbit_inner_circle_title.
-  ///
-  /// In en, this message translates to:
-  /// **'YOUR INNER CIRCLE'**
-  String get orbit_inner_circle_title;
 
   /// No description provided for @orbit_pending_items.
   ///

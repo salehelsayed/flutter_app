@@ -413,9 +413,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get edit_pinned_hint => 'Update your post';
 
   @override
-  String get orbit_close_friends => 'Close Friends';
-
-  @override
   String get orbit_view_toggle_to_list => 'Show all chats';
 
   @override
@@ -2208,9 +2205,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get orbit_inner_circle_badge => 'Inner Circle';
-
-  @override
-  String get orbit_inner_circle_title => 'YOUR INNER CIRCLE';
 
   @override
   String orbit_pending_items(int count) {

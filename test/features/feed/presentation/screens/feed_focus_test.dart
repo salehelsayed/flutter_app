@@ -286,9 +286,10 @@ void main() {
   bool flowEmitted(String event) =>
       flowEvents.any((e) => e['event'] == event);
 
-  // Mounting the Orbit host (tab switch) renders FriendsListHeader, which
-  // overflows at the test viewport — unrelated to the focus-clear behavior
-  // under test. Swallow only layout/asset noise (mirrors feed_swipe_test).
+  // Mounting the Orbit host (tab switch) renders the all-chats list chrome,
+  // which overflows at the test viewport — unrelated to the focus-clear
+  // behavior under test. Swallow only layout/asset noise (mirrors
+  // feed_swipe_test).
   void suppressFeedNavErrors() {
     final originalOnError = FlutterError.onError;
     FlutterError.onError = (details) {

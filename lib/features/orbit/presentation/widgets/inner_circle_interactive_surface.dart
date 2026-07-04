@@ -544,16 +544,6 @@ class _InnerCircleInteractiveSurfaceState
                               findActive: find.active,
                               canvasKey: _canvasKey,
                             ),
-                            Padding(
-                              padding: const EdgeInsets.only(top: 20),
-                              child: Text(
-                                l10n.orbit_close_friends,
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: readableColors.textMuted,
-                                ),
-                              ),
-                            ),
                             if (widget.items.isEmpty)
                               Padding(
                                 padding: const EdgeInsets.only(top: 12),

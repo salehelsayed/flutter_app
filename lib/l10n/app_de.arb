@@ -182,7 +182,6 @@
   "pinned_edit": "Bearbeiten",
   "pinned_remove": "Entfernen",
   "edit_pinned_hint": "Deinen Beitrag aktualisieren",
-  "orbit_close_friends": "Enge Freunde",
   "orbit_view_toggle_to_list": "Alle Chats anzeigen",
   "orbit_view_toggle_to_circle": "Engsten Kreis anzeigen",
   "orbit_inner_circle_empty_hint": "Füge Freunde hinzu, um deinen engsten Kreis zu sehen",
@@ -1200,7 +1199,6 @@
   "orbit_archived_empty_title": "Noch keine archivierten Freunde",
   "orbit_archived_empty_desc": "Wische bei einem Freund nach links, um ihn zu archivieren.",
   "orbit_inner_circle_badge": "Innerer Kreis",
-  "orbit_inner_circle_title": "DEIN INNERER KREIS",
   "orbit_pending_items": "{count, plural, =1{1 Element ausstehend} other{{count} Elemente ausstehend}}",
   "@orbit_pending_items": {
     "placeholders": {

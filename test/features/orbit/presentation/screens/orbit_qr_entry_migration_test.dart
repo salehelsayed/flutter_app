@@ -20,7 +20,6 @@ import 'package:flutter_app/features/orbit/presentation/screens/orbit_screen.dar
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friend_row.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friends_filter_toggle.dart';
-import 'package:flutter_app/features/orbit/presentation/widgets/friends_list_header.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -553,7 +552,7 @@ void main() {
       expect(find.byType(QRDisplayScreen), findsNothing);
     });
 
-    testWidgets('TC-13: all-chats header carries no QR pills', (tester) async {
+    testWidgets('TC-13: all-chats surface carries no QR pills', (tester) async {
       setLargeTestSurface(tester);
       suppressOverflowErrors();
       suppressNavAssetErrors();
@@ -564,7 +563,7 @@ void main() {
       await pumpOrbitFrames(tester, count: 4);
       await switchToAllChats(tester);
 
-      expect(find.byType(FriendsListHeader), findsOneWidget);
+      expect(find.byType(FriendsFilterToggle), findsOneWidget);
       // Pills are gone: Semantics labels create no Text nodes.
       expect(find.text('My QR'), findsNothing);
       expect(find.text('Scan'), findsNothing);

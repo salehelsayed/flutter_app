@@ -424,9 +424,6 @@ class AppLocalizationsAr extends AppLocalizations {
   String get edit_pinned_hint => 'حدّث منشورك';
 
   @override
-  String get orbit_close_friends => 'الأصدقاء المقرّبون';
-
-  @override
   String get orbit_view_toggle_to_list => 'عرض كل المحادثات';
 
   @override
@@ -2249,9 +2246,6 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get orbit_inner_circle_badge => 'الدائرة الداخلية';
-
-  @override
-  String get orbit_inner_circle_title => 'دائرتك الداخلية';
 
   @override
   String orbit_pending_items(int count) {

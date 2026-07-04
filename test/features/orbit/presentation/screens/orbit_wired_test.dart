@@ -590,7 +590,9 @@ void main() {
       );
     }
 
-    testWidgets('loads and displays identity in orbit header', (tester) async {
+    testWidgets(
+        'TC-203-17 loads identity in orbit header without Close Friends text',
+        (tester) async {
       setLargeTestSurface(tester);
       suppressOverflowErrors();
       identityRepo.seed(testIdentity);
@@ -600,10 +602,11 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
 
-      // OrbitScreen renders OrbitHeader with the identity's peerId for the avatar.
-      // It also renders the localized close-friends chrome in multiple places.
+      // 203 B5: the wired identity anchor is the visualization itself — the
+      // close-friends chrome strings are gone from every Orbit view.
       expect(find.byType(OrbitWired), findsOneWidget);
-      expect(find.text('Close Friends'), findsWidgets);
+      expect(find.byType(OrbitalVisualization), findsOneWidget);
+      expect(find.text('Close Friends'), findsNothing);
     });
 
     testWidgets('loads active friends list', (tester) async {

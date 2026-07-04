@@ -182,7 +182,6 @@
   "pinned_edit": "Edit",
   "pinned_remove": "Remove",
   "edit_pinned_hint": "Update your post",
-  "orbit_close_friends": "Close Friends",
   "orbit_view_toggle_to_list": "Show all chats",
   "orbit_view_toggle_to_circle": "Show inner circle",
   "orbit_inner_circle_empty_hint": "Add friends to see your inner circle",
@@ -1249,7 +1248,6 @@
   "orbit_archived_empty_title": "No archived friends yet",
   "orbit_archived_empty_desc": "Swipe left on a friend to archive them.",
   "orbit_inner_circle_badge": "Inner Circle",
-  "orbit_inner_circle_title": "YOUR INNER CIRCLE",
   "orbit_pending_items": "{count, plural, =1{1 item pending} other{{count} items pending}}",
   "@orbit_pending_items": {
     "placeholders": {

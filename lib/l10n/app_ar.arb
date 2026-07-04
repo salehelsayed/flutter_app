@@ -182,7 +182,6 @@
   "pinned_edit": "تعديل",
   "pinned_remove": "إزالة",
   "edit_pinned_hint": "حدّث منشورك",
-  "orbit_close_friends": "الأصدقاء المقرّبون",
   "orbit_view_toggle_to_list": "عرض كل المحادثات",
   "orbit_view_toggle_to_circle": "عرض الدائرة المقرّبة",
   "orbit_inner_circle_empty_hint": "أضِف أصدقاء لرؤية دائرتك المقرّبة",
@@ -1200,7 +1199,6 @@
   "orbit_archived_empty_title": "لا يوجد أصدقاء مؤرشفون بعد",
   "orbit_archived_empty_desc": "اسحب لليسار على صديق لأرشفته.",
   "orbit_inner_circle_badge": "الدائرة الداخلية",
-  "orbit_inner_circle_title": "دائرتك الداخلية",
   "orbit_pending_items": "{count, plural, =1{عنصر واحد قيد الانتظار} =2{عنصران قيد الانتظار} few{{count} عناصر قيد الانتظار} many{{count} عنصرًا قيد الانتظار} other{{count} عنصر قيد الانتظار}}",
   "@orbit_pending_items": {
     "placeholders": {

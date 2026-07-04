@@ -22,7 +22,6 @@ import 'package:flutter_app/features/orbit/presentation/widgets/friend_row.dart'
 import 'package:flutter_app/features/orbit/presentation/widgets/group_row.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friends_filter_toggle.dart';
-import 'package:flutter_app/features/orbit/presentation/widgets/friends_list_header.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -289,7 +288,6 @@ void main() {
       expect(find.byType(FriendRow), findsNothing);
       expect(find.byType(GroupRow), findsNothing);
       expect(find.byType(FriendsFilterToggle), findsNothing);
-      expect(find.byType(FriendsListHeader), findsNothing);
       expect(find.byType(OrbitSearchTrigger), findsNothing);
       // The intro banner (list-header sibling) is absent on the inner view.
       expect(find.text('1 item pending'), findsNothing);
@@ -410,7 +408,6 @@ void main() {
 
       expect(find.byType(FriendRow), findsWidgets);
       expect(find.byType(FriendsFilterToggle), findsOneWidget);
-      expect(find.byType(FriendsListHeader), findsOneWidget);
       expect(find.byType(OrbitalVisualization), findsNothing);
 
       final toggleRect = tester.getRect(
@@ -485,7 +482,9 @@ void main() {
       expect(toggleRect.right, lessThanOrEqualTo(fabRect.left));
     });
 
-    testWidgets('all-chats header clears the top chrome strip (LTR+RTL)', (
+    testWidgets(
+        'TC-203-18 all-chats FIRST CONTENT clears the top chrome strip '
+        '(LTR+RTL)', (
       tester,
     ) async {
       setLargeTestSurface(tester);
@@ -495,11 +494,11 @@ void main() {
       contactRepo.seed([testContact]);
 
       // 196: the QR entries left the header for the top-center chrome strip
-      // (toggle + pair), so the list header no longer needs the physical-left
-      // inset — it now clears the strip VERTICALLY instead. That invariant is
-      // font-independent (unlike the old left-edge assert whose pill
-      // justification died), so the Ahem width inflation cannot break it, and
-      // it holds in both directions.
+      // (toggle + pair), so the list's first content clears the strip
+      // VERTICALLY. 203 B5 deleted the title-only FriendsListHeader, so the
+      // first content is now the FriendsFilterToggle — the invariant is
+      // re-anchored, not weakened. Font-independent (Ahem inflation cannot
+      // break it), and it holds in both directions.
       for (final locale in const [Locale('en'), Locale('ar')]) {
         // Fully unmount first so each locale starts from a fresh Inner-Circle
         // default (a bare re-pump reuses OrbitWired's State, which would keep
@@ -513,7 +512,8 @@ void main() {
         final toggleRect = tester.getRect(
           find.byKey(const ValueKey('orbit-view-toggle')),
         );
-        final headerRect = tester.getRect(find.byType(FriendsListHeader));
+        final firstContentRect =
+            tester.getRect(find.byType(FriendsFilterToggle));
         final pairRect = tester
             .getRect(find.byKey(const ValueKey('orbit-my-qr-button')))
             .expandToInclude(
@@ -521,14 +521,14 @@ void main() {
             );
 
         expect(
-          headerRect.top,
+          firstContentRect.top,
           greaterThanOrEqualTo(toggleRect.bottom),
-          reason: '$locale: FriendsListHeader overlaps the top chrome strip',
+          reason: '$locale: first list content overlaps the top chrome strip',
         );
         expect(
-          headerRect.overlaps(pairRect),
+          firstContentRect.overlaps(pairRect),
           isFalse,
-          reason: '$locale: FriendsListHeader overlaps the QR chrome pair',
+          reason: '$locale: first list content overlaps the QR chrome pair',
         );
       }
     });
@@ -636,7 +636,7 @@ void main() {
 
       // The toggle still works from the empty inner view.
       await switchToAllChats(tester);
-      expect(find.byType(FriendsListHeader), findsOneWidget);
+      expect(find.byType(FriendsFilterToggle), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 

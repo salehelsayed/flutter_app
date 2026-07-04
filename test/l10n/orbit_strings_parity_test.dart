@@ -70,6 +70,27 @@ void main() {
       }
     });
 
+    test('TC-203-13 removed orbit keys are absent from every ARB locale', () {
+      // 203 B5 — permanent re-introduction guard: the ring-view title and the
+      // close-friends caption/header were removed from ALL render sites and
+      // all three ARBs atomically (near-miss keys like orbit_inner_circle_badge
+      // and orbit_inner_circle_empty_hint stay live with their consumers).
+      const removedOrbitKeys = <String>[
+        'orbit_close_friends',
+        'orbit_inner_circle_title',
+      ];
+      for (final locale in const ['en', 'ar', 'de']) {
+        final bundle = loadArb(locale);
+        for (final key in removedOrbitKeys) {
+          expect(
+            bundle.containsKey(key),
+            isFalse,
+            reason: '$locale ARB re-introduces removed orbit key "$key"',
+          );
+        }
+      }
+    });
+
     test('new orbit view-split keys are reachable through the generated API', () {
       // Instantiating each generated locale proves the key set compiled into
       // the AppLocalizations surface for en/ar/de (a missing key would not

@@ -23,7 +23,6 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_view_mode.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_close_button.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_qr_chrome_buttons.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_view_toggle_button.dart';
-import 'package:flutter_app/features/orbit/presentation/widgets/friends_list_header.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friend_row.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/group_row.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
@@ -590,7 +589,9 @@ class OrbitScreen extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const FriendsListHeader(),
+                          // 203 B5: the title-only FriendsListHeader was
+                          // removed with its 'Close Friends' string — the
+                          // filter toggle is the list's first content.
                           if (!projection.searchActive) ...[
                             const SizedBox(height: 8),
                             FriendsFilterToggle(

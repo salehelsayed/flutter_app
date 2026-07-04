@@ -295,7 +295,9 @@ void main() {
       },
     );
 
-    testWidgets('daylight lagoon keeps visible orbit content readable', (
+    testWidgets(
+        'daylight lagoon keeps visible orbit content readable and TC-203-16 '
+        'all-chats view renders no Close Friends header text', (
       tester,
     ) async {
       suppressOverflowErrors();
@@ -335,16 +337,9 @@ void main() {
         colors.surfaceSubtle,
       );
 
-      final closeFriendColors = tester
-          .widgetList<Text>(find.text('Close Friends'))
-          .map((text) => text.style?.color)
-          .whereType<Color>()
-          .toSet();
-      // 193: on the all-chats view 'Close Friends' is the FriendsListHeader
-      // title (textPrimary) only — the textMuted circle caption now lives on
-      // the Inner-Circle view (the companion test below).
-      expect(closeFriendColors, contains(colors.textPrimary));
-      expect(closeFriendColors, isNot(contains(colors.textMuted)));
+      // 203 B5: the 'Close Friends' header text was removed from the
+      // all-chats view (with the FriendsListHeader widget itself).
+      expect(find.text('Close Friends'), findsNothing);
 
       final chevronIcons = tester.widgetList<Icon>(
         find.byIcon(Icons.chevron_right),
@@ -355,7 +350,9 @@ void main() {
       );
     });
 
-    testWidgets('daylight lagoon keeps the Inner-Circle caption readable', (
+    testWidgets(
+        'TC-203-15 Inner-Circle view: no Close Friends caption, no search '
+        'affordance (daylight)', (
       tester,
     ) async {
       suppressOverflowErrors();
@@ -379,16 +376,9 @@ void main() {
 
       expect(find.byType(DaylightLagoonBackground), findsOneWidget);
 
-      // Inner-Circle view: 'Close Friends' is the textMuted caption only, and
-      // no all-chats search affordance is mounted.
-      final colors = BackgroundReadableColors.representativeLight;
-      final closeFriendColors = tester
-          .widgetList<Text>(find.text('Close Friends'))
-          .map((text) => text.style?.color)
-          .whereType<Color>()
-          .toSet();
-      expect(closeFriendColors, contains(colors.textMuted));
-      expect(closeFriendColors, isNot(contains(colors.textPrimary)));
+      // 203 B5: the Inner-Circle caption was removed with its ARB key, and
+      // still no all-chats search affordance is mounted on this view.
+      expect(find.text('Close Friends'), findsNothing);
       expect(find.byType(OrbitSearchTrigger), findsNothing);
     });
 
@@ -522,7 +512,6 @@ void main() {
         );
         await tester.pump(const Duration(milliseconds: 300));
 
-        expect(find.text('Close Friends'), findsWidgets);
         expect(find.byType(OrbitCloseButton), findsOneWidget);
         expect(find.byType(OrbitSearchTrigger), findsOneWidget);
         expect(find.byType(ExpandableFab), findsOneWidget);
