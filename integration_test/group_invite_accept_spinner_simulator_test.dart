@@ -39,6 +39,7 @@ import 'package:flutter_app/features/groups/application/group_invite_listener.da
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
+import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -284,7 +285,27 @@ void registerInviteAcceptSpinnerSim() {
         isNull,
         reason: 'pending invite should be cleared after successful accept',
       );
-      expect(find.text('Joined Writers Room'), findsOneWidget);
+      // 208 (1b737a98): a navigating accept opens the joined group's chat
+      // directly with NO "Joined <group>" confirmation snackbar — the old
+      // snackbar text was removed and the confirmation is now the group
+      // conversation screen itself opening. Let the accept-triggered
+      // MaterialPageRoute finish animating with fixed frames (not
+      // pumpAndSettle — orbit has perpetual animations that would hang settle),
+      // mirroring orbit_wired_test.dart's post-208 assertion.
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(
+        find.byType(SnackBar),
+        findsNothing,
+        reason: '208: navigating accept must not show a confirmation snackbar',
+      );
+      expect(
+        find.byType(GroupConversationWired),
+        findsOneWidget,
+        reason:
+            '208: a successful accept auto-opens the joined group conversation',
+      );
   });
 }
 
