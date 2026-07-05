@@ -7022,7 +7022,13 @@ void main() {
     );
 
     test(
-      'GIRD-001 reliable publish success with zero peers and no custody is in-doubt, not failed',
+      // 210b: this shape IS the real offline-device geometry (gossipsub publish
+      // "succeeds" locally with zero topic peers; relay custody fails). It must
+      // surface as the distinct queuedOffline result + durable 'queued_offline'
+      // row (clock, offline snackbar) — NOT the overloaded 'pending' in-doubt
+      // tick — while keeping the repush payload armed and staying non-failed.
+      'GIRD-001/210b reliable publish success with zero peers and no custody '
+      'is queued_offline (durably queued, not failed)',
       () async {
         await groupRepo.saveMember(
           GroupMember(
@@ -7068,11 +7074,11 @@ void main() {
           messageId: 'gird001-reliable-zero-peers',
         );
 
-        expect(result, SendGroupMessageResult.success);
+        expect(result, SendGroupMessageResult.queuedOffline);
         expect(message, isNotNull);
         expect(message!.id, 'gird001-reliable-zero-peers');
         expect(message.isIncoming, isFalse);
-        expect(message.status, 'pending');
+        expect(message.status, 'queued_offline');
         expect(message.wireEnvelope, isNull);
         expect(message.inboxRetryPayload, isNotNull);
         expect(message.inboxStored, isFalse);
@@ -7081,7 +7087,7 @@ void main() {
         expect(saved, isNotNull);
         expect(saved!.id, 'gird001-reliable-zero-peers');
         expect(saved.isIncoming, isFalse);
-        expect(saved.status, 'pending');
+        expect(saved.status, 'queued_offline');
         expect(saved.wireEnvelope, isNull);
         expect(saved.inboxRetryPayload, isNotNull);
         expect(saved.inboxStored, isFalse);
@@ -7157,17 +7163,20 @@ void main() {
           messageId: messageId,
         );
 
-        expect(result, SendGroupMessageResult.success);
+        // 210b: this zero-peers/no-custody shape is now the queuedOffline lane
+        // (the payload-composition substance of this test is unchanged — the
+        // queued_offline row is still selected by the repush pass below).
+        expect(result, SendGroupMessageResult.queuedOffline);
         expect(message, isNotNull);
         expect(message!.id, messageId);
-        expect(message.status, 'pending');
+        expect(message.status, 'queued_offline');
         expect(message.wireEnvelope, isNull);
         expect(message.inboxStored, isFalse);
         expect(message.inboxRetryPayload, isNotNull);
 
         final saved = await msgRepo.getMessage(messageId);
         expect(saved, isNotNull);
-        expect(saved!.status, 'pending');
+        expect(saved!.status, 'queued_offline');
         expect(saved.wireEnvelope, isNull);
         expect(saved.inboxStored, isFalse);
         expect(saved.inboxRetryPayload, isNotNull);

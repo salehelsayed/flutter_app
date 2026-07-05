@@ -553,8 +553,13 @@ Future<int> retryIncompleteGroupUploads({
           emitTimingEvent: false,
         );
 
+        // 210b: queuedOffline counts as completed upload work — the media is
+        // durably re-uploaded and the row is honestly queued (repush lane
+        // settles it), so the staging dir can go and the pass must not
+        // mislabel it SEND_FAILED.
         if (result == SendGroupMessageResult.success ||
-            result == SendGroupMessageResult.successNoPeers) {
+            result == SendGroupMessageResult.successNoPeers ||
+            result == SendGroupMessageResult.queuedOffline) {
           successCount++;
           if (mediaFileManager != null) {
             try {
@@ -571,6 +576,8 @@ Future<int> retryIncompleteGroupUploads({
               'attachmentCount': fullAttachmentList.length,
               if (result == SendGroupMessageResult.successNoPeers)
                 'topicPeers': 0,
+              if (result == SendGroupMessageResult.queuedOffline)
+                'queuedOffline': true,
             },
           );
         } else {

@@ -1330,11 +1330,18 @@ class MigrationPendingWorkManifestBuilder {
   }
 
   static bool _isGroupMessageRetryStatus(String? status) {
-    return status == 'failed' || status == 'sending' || status == 'pending';
+    // 210b: 'queued_offline' (durably queued while the sender was offline) is
+    // pending work a Move must carry — it re-drives on the new phone.
+    return status == 'failed' ||
+        status == 'sending' ||
+        status == 'pending' ||
+        status == 'queued_offline';
   }
 
   static bool _isGroupInboxRetryStatus(String? status) {
-    return status == 'sent' || status == 'pending';
+    // 210b: mirrors dbLoadGroupMessagesWithFailedInboxStore (the repush lane
+    // selects 'queued_offline' rows too).
+    return status == 'sent' || status == 'pending' || status == 'queued_offline';
   }
 
   static bool _isGroupReactionReplayStatus(String? status) {

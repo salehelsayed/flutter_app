@@ -460,6 +460,8 @@ class DefaultShareBatchDeliveryCoordinator
           SendGroupMessageResult.success => ShareBatchTargetStatus.sent,
           SendGroupMessageResult.successNoPeers =>
             ShareBatchTargetStatus.queued,
+          // 210b: durably queued while the sender is offline (self-healing).
+          SendGroupMessageResult.queuedOffline => ShareBatchTargetStatus.queued,
           _ when message != null => ShareBatchTargetStatus.queued,
           _ => ShareBatchTargetStatus.failed,
         },
@@ -469,6 +471,8 @@ class DefaultShareBatchDeliveryCoordinator
           SendGroupMessageResult.success => 'Sent.',
           SendGroupMessageResult.successNoPeers =>
             'Stored for offline group delivery.',
+          SendGroupMessageResult.queuedOffline =>
+            "Stored — will send when you're back online.",
           SendGroupMessageResult.groupNotFound => 'Group was not found.',
           SendGroupMessageResult.unauthorized =>
             'You no longer have permission to post there.',

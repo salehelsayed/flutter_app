@@ -171,7 +171,9 @@ abstract class GroupMessageRepository {
   /// Loads outgoing messages where inbox store failed and retry payload exists.
   ///
   /// Returns messages with `is_incoming = 0`, `inbox_stored = 0`,
-  /// `status IN ('sent', 'pending')`, and `inbox_retry_payload IS NOT NULL`.
+  /// `status IN ('sent', 'pending', 'queued_offline')`, and
+  /// `inbox_retry_payload IS NOT NULL` (210b: the repush lane also self-heals
+  /// queued-offline rows, settling them to 'sent').
   Future<List<GroupMessage>> getMessagesWithFailedInboxStore({int limit = 20});
 
   /// Updates the inbox_stored flag for a message.

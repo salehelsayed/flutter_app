@@ -261,6 +261,10 @@ readonly GROUP_TESTS=(
   # 'queued_offline' re-drive anchor). Auto-globs into feature-host-all, pinned
   # here so the curated groups gate also exercises the recovery change.
   "test/features/groups/domain/repositories/group_message_repository_impl_test.dart"
+  # 210b: the repush lane is the LIVE-app self-heal for 'queued_offline' rows
+  # (clock→tick on reconnect). Auto-globs into feature-host-all, pinned here so
+  # the curated groups gate exercises the queued_offline promote.
+  "test/features/groups/application/retry_failed_group_inbox_stores_use_case_test.dart"
 )
 
 readonly POSTS_TESTS=(

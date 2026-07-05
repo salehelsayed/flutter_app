@@ -1094,8 +1094,13 @@ void main() {
         initialState: const NodeState(isStarted: true, peerId: 'me'),
       );
 
-      // A bridge whose reliable send returns a connectivity-class failure, as the
-      // relay is unreachable while offline (NETWORK_DOWN is NOT a "bridge
+      // FALLBACK lane only (210b correction): a REAL offline device does NOT
+      // produce this error shape — go-mknoon has no NETWORK_DOWN code and its
+      // reliable send folds connectivity loss into ok:true publish-without-
+      // custody flags (pinned by the 210b group below and GIRD-001). These
+      // tests pin the SECONDARY lane: an outright bridge/exception `error`
+      // while offline must land in the same queued_offline UX via the
+      // `!relayReady` fallback branch (NETWORK_DOWN is NOT a "bridge
       // unavailable" code, so the use case returns `error` rather than falling
       // back to legacy publish).
       FakeBridge offlineFailingBridge() => FakeBridge(
@@ -1395,6 +1400,266 @@ void main() {
             ),
             hasLength(1),
           );
+        },
+      );
+    });
+
+    // ---- 210b: the REALISTIC offline contract (publish-without-custody) ----
+    // A real offline device does NOT get an error back from group:sendReliable:
+    // the gossipsub publish "succeeds" locally with zero topic peers and only
+    // the relay-inbox custody fails, so the bridge answers ok:true /
+    // publishSucceeded:true / inboxStored:false / topicPeerCount:0 (the shape
+    // pinned by GIRD-001 in the use-case suite). The 210 NETWORK_DOWN tests
+    // above pin the error-fallback lane only; these pin the PRIMARY lane: the
+    // use case must map this shape to queuedOffline + a durable 'queued_offline'
+    // row (clock) and the screen must surface the honest snackbar — keyed off
+    // the RESULT CONTRACT, not the stale-prone relayReady snapshot.
+    group('210b realistic offline send (publish-without-custody)', () {
+      FakeP2PService offlineP2pService() => FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'me'),
+      );
+
+      // The bridge shape a REAL offline (or relay-unreachable) device produces.
+      FakeBridge noCustodyBridge({int topicPeers = 0}) => FakeBridge(
+        initialResponses: {
+          'group:sendReliable': {
+            'ok': true,
+            'publishSucceeded': true,
+            'inboxStored': false,
+            'topicPeerCount': topicPeers,
+            'connectedTopicPeerCount': topicPeers,
+            'expectedRecipientCount': 2,
+            'recipientPeerIds': ['peer-2', 'peer-3'],
+            'deliveryMode': 'live_only',
+          },
+        },
+      );
+
+      Future<GroupMessage> rowFor(String text) async {
+        final rows = await msgRepo.getMessagesPage('group-1');
+        return rows.firstWhere((m) => m.text == text && !m.isIncoming);
+      }
+
+      // TC 210b-1: the primary device geometry — offline (relayReady false),
+      // realistic no-custody result → clock + wifi-off snackbar + durable
+      // queued_offline row with the repush payload armed. RED on HEAD: the
+      // ok:true shape returns success/'pending' → a tick and NO snackbar.
+      testWidgets(
+        'realistic offline text send shows wifi-off snackbar + clock, '
+        'row queued_offline with repush payload',
+        (tester) async {
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          p2pService = offlineP2pService();
+          bridge = noCustodyBridge();
+
+          await tester.pumpWidget(buildWidget(group: group));
+          await pumpFrames(tester);
+
+          await tester.enterText(find.byType(TextField), 'Real offline text');
+          await pumpFrames(tester);
+          await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+          await pumpFrames(tester, count: 20);
+
+          // Honest offline snackbar — mirrors 1:1 exactly.
+          expect(find.text("Will send when you're back online"), findsOneWidget);
+          expect(
+            find.descendant(
+              of: find.byType(SnackBar),
+              matching: find.byIcon(Icons.wifi_off_rounded),
+            ),
+            findsOneWidget,
+          );
+          expect(
+            tester.widget<SnackBar>(find.byType(SnackBar)).backgroundColor,
+            Colors.blueGrey[700],
+          );
+
+          // Clock, never a tick or an error.
+          expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+          expect(find.byIcon(Icons.done_rounded), findsNothing);
+          expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+
+          // Composer stays clear (no Retry resurrection).
+          expect(
+            tester.widget<TextField>(find.byType(TextField)).controller?.text ??
+                '',
+            isEmpty,
+          );
+
+          // Durable row: queued_offline with the self-heal repush lane armed.
+          final queued = await rowFor('Real offline text');
+          expect(queued.status, 'queued_offline');
+          expect(queued.inboxStored, isFalse);
+          expect(queued.inboxRetryPayload, isNotNull);
+          expect(
+            find.byKey(ValueKey('failed-message-retry-${queued.id}')),
+            findsNothing,
+          );
+        },
+      );
+
+      // TC 210b-2: the stale-online window (the 15-30s after losing internet
+      // where relayReady still reads TRUE). The lane must STILL queue (the
+      // result contract says nothing left the device); only the copy changes —
+      // the 192-style "Delivery delayed" names what is actually happening,
+      // because a "back online" promise would be dishonest while the phone
+      // believes it is online. RED on HEAD: tick + no snackbar.
+      testWidgets(
+        'stale-online no-custody send still queues with the delayed-retry '
+        'snackbar (192 copy) and a clock',
+        (tester) async {
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          // p2pService stays the setUp ONLINE default (relayReady TRUE).
+          bridge = noCustodyBridge();
+
+          await tester.pumpWidget(buildWidget(group: group));
+          await pumpFrames(tester);
+
+          await tester.enterText(find.byType(TextField), 'Stale online text');
+          await pumpFrames(tester);
+          await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+          await pumpFrames(tester, count: 20);
+
+          expect(
+            find.text('Delivery delayed — retrying automatically'),
+            findsOneWidget,
+          );
+          expect(find.text("Will send when you're back online"), findsNothing);
+          expect(
+            find.descendant(
+              of: find.byType(SnackBar),
+              matching: find.byIcon(Icons.schedule_send_rounded),
+            ),
+            findsOneWidget,
+          );
+          expect(
+            tester.widget<SnackBar>(find.byType(SnackBar)).backgroundColor,
+            Colors.blueGrey[700],
+          );
+
+          expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+          expect(find.byIcon(Icons.done_rounded), findsNothing);
+
+          final queued = await rowFor('Stale online text');
+          expect(queued.status, 'queued_offline');
+        },
+      );
+
+      // TC 210b-3 (guard, GREEN on HEAD and after): live peers WITHOUT custody
+      // is the pre-existing in-doubt lane — some recipients may have received
+      // the live publish, so it must KEEP its tick and show NO queued snackbar.
+      // Locks queuedOffline to the zero-peers-AND-no-custody geometry only.
+      testWidgets(
+        'live peers without custody keeps the in-doubt tick, no queued '
+        'snackbar (guard)',
+        (tester) async {
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          bridge = noCustodyBridge(topicPeers: 2);
+
+          await tester.pumpWidget(buildWidget(group: group));
+          await pumpFrames(tester);
+
+          await tester.enterText(find.byType(TextField), 'Live partial text');
+          await pumpFrames(tester);
+          await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+          await pumpFrames(tester, count: 20);
+
+          expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+          expect(find.byIcon(Icons.schedule_rounded), findsNothing);
+          expect(find.text("Will send when you're back online"), findsNothing);
+          expect(
+            find.text('Delivery delayed — retrying automatically'),
+            findsNothing,
+          );
+        },
+      );
+
+      // TC 210b-4: voice path parity for the realistic contract.
+      testWidgets(
+        'realistic offline voice send shows wifi-off snackbar + clock '
+        '(path parity)',
+        (tester) async {
+          final tempDir = Directory.systemTemp.createTempSync(
+            'group-voice-nocustody-',
+          );
+          addTearDown(() {
+            if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+          });
+          final recorder = FakeAudioRecorderService()..fakeDurationMs = 1500;
+          final voiceFile = File(p.join(tempDir.path, 'voice.m4a'))
+            ..writeAsStringSync('voice');
+          recorder.fakeOutputPath = voiceFile.path;
+          final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
+
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          p2pService = offlineP2pService();
+          bridge = noCustodyBridge();
+
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: mediaFileManager,
+              audioRecorderService: recorder,
+            ),
+          );
+          await pumpFrames(tester, count: 20);
+
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          final startRecording =
+              screen.onRecordStart! as Future<void> Function();
+          await startRecording();
+          await pumpUntil(
+            tester,
+            () =>
+                tester
+                    .widget<GroupConversationScreen>(
+                      find.byType(GroupConversationScreen),
+                    )
+                    .recordingState ==
+                VoiceRecordingState.recording,
+          );
+
+          final recordingScreen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          final stopRecording =
+              recordingScreen.onRecordStop! as Future<void> Function();
+          await tester.runAsync(() async {
+            await stopRecording();
+          });
+          await pumpFrames(tester, count: 20);
+
+          expect(find.text("Will send when you're back online"), findsOneWidget);
+          expect(
+            find.descendant(
+              of: find.byType(SnackBar),
+              matching: find.byIcon(Icons.wifi_off_rounded),
+            ),
+            findsOneWidget,
+          );
+          expect(find.byIcon(Icons.schedule_rounded), findsOneWidget);
+          expect(find.byIcon(Icons.done_rounded), findsNothing);
+          expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+
+          final after = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          final voiceRows = after.messages
+              .where((m) => !m.isIncoming && m.text.isEmpty)
+              .toList();
+          expect(voiceRows, hasLength(1));
+          expect(voiceRows.single.status, 'queued_offline');
         },
       );
     });

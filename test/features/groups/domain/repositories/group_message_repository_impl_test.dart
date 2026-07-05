@@ -86,6 +86,10 @@ void main() {
           dbLoadRetryableOutgoingGroupMessages(executor),
       dbRecoverStuckSendingGroupMessagesFn: ({DateTime? olderThan}) =>
           dbTransitionGroupSendingToFailed(executor, olderThan: olderThan),
+      // 210b: wire the real repush-candidate query so the queued_offline
+      // selection predicate is pinned against the actual SQL.
+      dbLoadGroupMessagesWithFailedInboxStore: ({int limit = 50}) =>
+          dbLoadGroupMessagesWithFailedInboxStore(executor, limit: limit),
       dbLoadGroupInboxCursorFn: (groupId) async {
         final row = await dbLoadGroupInboxCursor(executor, groupId);
         return row?['cursor'] as String?;
@@ -560,6 +564,94 @@ void main() {
       expect(again, 0);
       expect((await repo.getMessage('queued-offline-1'))!.status, 'failed');
     });
+
+    // 210b: the inbox-repush lane must also select 'queued_offline' rows — a
+    // real offline send persists queued_offline WITH a repush payload (the
+    // publish-without-custody contract), and the LIVE-app reconnect self-heal
+    // is the repush pass (which settles the row to 'sent'), not only the
+    // app-resume failed-transition sweep above.
+    test(
+      'getMessagesWithFailedInboxStore includes queued_offline rows',
+      () async {
+        await repo.saveMessage(
+          makeMessage(
+            id: 'qo-repush-1',
+            status: 'queued_offline',
+            isIncoming: false,
+          ).copyWith(
+            inboxStored: false,
+            inboxRetryPayload: '{"groupId":"group-1"}',
+          ),
+        );
+        // Controls: custody already stored / no payload → excluded.
+        await repo.saveMessage(
+          makeMessage(
+            id: 'qo-repush-2',
+            status: 'queued_offline',
+            isIncoming: false,
+          ).copyWith(
+            inboxStored: true,
+            inboxRetryPayload: '{"groupId":"group-1"}',
+          ),
+        );
+        await repo.saveMessage(
+          makeMessage(
+            id: 'qo-repush-3',
+            status: 'queued_offline',
+            isIncoming: false,
+          ),
+        );
+
+        final rows = await repo.getMessagesWithFailedInboxStore();
+        final ids = rows.map((m) => m.id).toList();
+        expect(ids, contains('qo-repush-1'));
+        expect(ids, isNot(contains('qo-repush-2')));
+        expect(ids, isNot(contains('qo-repush-3')));
+      },
+    );
+
+    // 210b (review F1): the recovery sweep runs BEFORE the repush pass in every
+    // live wiring (retrier tick, app resume, app pause), so it must NOT steal a
+    // payload-armed 'queued_offline' row from the repush lane — flipping it to
+    // 'failed' shows a dishonest red bubble after a pause/resume while still
+    // offline and bypasses the custody-first repush on reconnect. Only a
+    // payload-less queued_offline row (repush impossible) transitions.
+    test(
+      'recoverStuckSendingMessages leaves payload-armed queued_offline rows '
+      'to the repush lane',
+      () async {
+        final ts = DateTime.now().toUtc();
+        await repo.saveMessage(
+          makeMessage(
+            id: 'qo-armed',
+            status: 'queued_offline',
+            isIncoming: false,
+            timestamp: ts,
+            createdAt: ts,
+          ).copyWith(
+            inboxStored: false,
+            inboxRetryPayload: '{"groupId":"group-1"}',
+          ),
+        );
+        await repo.saveMessage(
+          makeMessage(
+            id: 'qo-bare',
+            status: 'queued_offline',
+            isIncoming: false,
+            timestamp: ts,
+            createdAt: ts,
+          ),
+        );
+
+        final recovered = await repo.recoverStuckSendingMessages(
+          olderThan: const Duration(seconds: 30),
+        );
+
+        expect(recovered, 1);
+        expect((await repo.getMessage('qo-armed'))!.status, 'queued_offline');
+        expect((await repo.getMessage('qo-bare'))!.status, 'failed');
+      },
+    );
   });
 
   group('pause recovery', () {

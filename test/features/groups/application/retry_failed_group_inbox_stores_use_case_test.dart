@@ -324,6 +324,26 @@ void main() {
     expect(saved.inboxRetryPayload, isNull);
   });
 
+  // 210b: a 'queued_offline' row (real offline send: publish-without-custody,
+  // repush payload armed) is picked up by the same repush pass and settles to
+  // 'sent' — this is the live-app clock→tick transition on reconnect.
+  test('retries queued_offline messages and promotes them to sent', () async {
+    final msg = _makeRetryEligible('msg-queued-offline', status: 'queued_offline');
+    await msgRepo.saveMessage(msg);
+
+    final retried = await retryFailedGroupInboxStores(
+      bridge: bridge,
+      msgRepo: msgRepo,
+    );
+
+    expect(retried, 1);
+    final saved = await msgRepo.getMessage('msg-queued-offline');
+    expect(saved, isNotNull);
+    expect(saved!.status, 'sent');
+    expect(saved.inboxStored, isTrue);
+    expect(saved.inboxRetryPayload, isNull);
+  });
+
   test(
     'IR-007 inbox retry sends same pending message id once without duplicate rows',
     () async {

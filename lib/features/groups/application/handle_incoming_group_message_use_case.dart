@@ -1060,7 +1060,13 @@ bool _isSenderDeviceBound({
 }
 
 bool _canReconcileOutgoingSelfEchoStatus(GroupMessage existing) {
-  if (existing.status == 'sending' || existing.status == 'pending') {
+  // 210b: 'queued_offline' included — a self echo is positive proof the
+  // message reached the network (e.g. a peer subscribed during the publish
+  // settle window echoes back before the repush pass settles the row), so the
+  // clock must yield to the tick instead of the echo being rejected.
+  if (existing.status == 'sending' ||
+      existing.status == 'pending' ||
+      existing.status == GroupMessage.statusQueuedOffline) {
     return true;
   }
   if (existing.status != 'failed') {

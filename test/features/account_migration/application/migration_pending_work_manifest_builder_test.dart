@@ -269,6 +269,60 @@ void main() {
       expect(manifest.items, isEmpty);
       expect(manifest.issues, isEmpty);
     });
+
+    // 210b: a group message durably queued while the sender was offline
+    // ('queued_offline', publish-without-custody) is pending work a Move must
+    // carry — both as a re-drivable message row and, when its repush payload
+    // is present, as an inbox-store retry.
+    test('queued_offline group rows classify as pending work (210b)', () {
+      final manifest = const MigrationPendingWorkManifestBuilder().build(
+        groupMessageRows: const [
+          {
+            'id': 'group-message-queued-offline',
+            'group_id': 'group-1',
+            'sender_peer_id': 'peer-alice',
+            'status': 'queued_offline',
+            'is_incoming': 0,
+            'key_generation': 9,
+            'logical_delivery_id': 'logical-queued-offline',
+            'created_at': '2026-07-05T12:00:00.000Z',
+          },
+        ],
+        groupInboxRetryRows: const [
+          {
+            'id': 'group-message-queued-offline',
+            'group_id': 'group-1',
+            'sender_peer_id': 'peer-alice',
+            'status': 'queued_offline',
+            'is_incoming': 0,
+            'inbox_stored': 0,
+            'inbox_retry_payload': '{"kind":"group-inbox","id":"qo-1"}',
+            'created_at': '2026-07-05T12:00:00.000Z',
+          },
+        ],
+      );
+
+      expect(manifest.issues, isEmpty);
+      expect(
+        manifest.items
+            .where(
+              (item) =>
+                  item.kind == MigrationPendingWorkItemKind.groupMessageRetry,
+            )
+            .map((item) => item.sourceId),
+        ['group-message-queued-offline'],
+      );
+      expect(
+        manifest.items
+            .where(
+              (item) =>
+                  item.kind ==
+                  MigrationPendingWorkItemKind.groupInboxStoreRetry,
+            )
+            .map((item) => item.sourceId),
+        ['group-message-queued-offline'],
+      );
+    });
   });
 }
 

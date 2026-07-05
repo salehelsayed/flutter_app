@@ -924,13 +924,20 @@ Future<void> dbResetGroupMessageRetryState(
 /// Loads outgoing group messages where inbox store failed (inbox_stored = 0)
 /// and an inbox retry payload is available.
 ///
+/// 210b: includes `queued_offline` — a real offline send persists that status
+/// with its repush payload armed (publish-without-custody), and this repush
+/// lane is its LIVE-app self-heal on reconnect (settling the row to 'sent',
+/// i.e. the clock→tick transition). The app-resume sweep
+/// ([dbTransitionGroupSendingToFailed]) remains the fallback for rows without
+/// a payload.
+///
 /// Returns raw row maps ordered by timestamp ASC, limited to [limit].
 Future<List<Map<String, dynamic>>> dbLoadGroupMessagesWithFailedInboxStore(
   DatabaseExecutor db, {
   int limit = 50,
 }) async {
   return db.rawQuery(
-    "SELECT * FROM group_messages WHERE is_incoming = 0 AND inbox_stored = 0 AND status IN ('sent', 'pending') AND inbox_retry_payload IS NOT NULL ORDER BY timestamp ASC, id ASC LIMIT ?",
+    "SELECT * FROM group_messages WHERE is_incoming = 0 AND inbox_stored = 0 AND status IN ('sent', 'pending', 'queued_offline') AND inbox_retry_payload IS NOT NULL ORDER BY timestamp ASC, id ASC LIMIT ?",
     [limit],
   );
 }
@@ -942,11 +949,15 @@ Future<List<Map<String, dynamic>>> dbLoadGroupMessagesWithFailedInboxStore(
 ///   provided, only rows older than the cutoff are transitioned (a fresh
 ///   in-flight send is not yet "stuck"); when omitted, all outgoing sending
 ///   rows are transitioned.
-/// - 210 `queued_offline`: a message composed while the sender was offline. It
-///   never left the device, so it is ALWAYS re-driven regardless of age — this
-///   is what keeps a queued offline send from being stranded across an
-///   app-resume recovery sweep. It re-enters the normal retry lane and settles
-///   to 'sent' (tick) once connectivity returns.
+/// - 210/210b `queued_offline`: a message composed while the sender was
+///   offline. Only a PAYLOAD-LESS row transitions (regardless of age) — a row
+///   with `inbox_retry_payload` is owned by the repush lane
+///   ([dbLoadGroupMessagesWithFailedInboxStore] → settles to 'sent' with a
+///   custody-first store, no re-publish), and this sweep runs BEFORE that lane
+///   in every live wiring (retrier tick, app resume, app pause). Flipping a
+///   payload-armed row to 'failed' here would show a dishonest red bubble
+///   after a pause/resume while still offline and bypass the custody-first
+///   repush on reconnect (review 210b-F1).
 ///
 /// Returns the number of rows affected.
 Future<int> dbTransitionGroupSendingToFailed(
@@ -956,7 +967,9 @@ Future<int> dbTransitionGroupSendingToFailed(
   if (olderThan == null) {
     return db.rawUpdate(
       "UPDATE group_messages SET status = 'failed' "
-      "WHERE status IN ('sending', 'queued_offline') AND is_incoming = 0",
+      "WHERE (status = 'sending' "
+      "OR (status = 'queued_offline' AND inbox_retry_payload IS NULL)) "
+      'AND is_incoming = 0',
     );
   }
 
@@ -966,7 +979,7 @@ Future<int> dbTransitionGroupSendingToFailed(
     'WHERE is_incoming = 0 '
     "AND ((status = 'sending' "
     'AND COALESCE(last_send_attempt_at, timestamp) < ?) '
-    "OR status = 'queued_offline')",
+    "OR (status = 'queued_offline' AND inbox_retry_payload IS NULL))",
     [threshold],
   );
 }

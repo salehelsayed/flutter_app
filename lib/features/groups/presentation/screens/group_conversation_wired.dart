@@ -2196,6 +2196,27 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             await widget.mediaFileManager?.deletePendingUploadDir(messageId);
           } catch (_) {}
         }
+      } else if (result == SendGroupMessageResult.queuedOffline &&
+          message != null) {
+        // 210b: the PRIMARY offline lane. A real offline send is NOT an error —
+        // the publish "succeeds" with zero live topic peers and no relay
+        // custody, and the use case has already persisted the durable
+        // 'queued_offline' row with its repush payload armed. Keyed off the
+        // RESULT CONTRACT, not the stale-prone relayReady snapshot (the 192
+        // lesson): reflect the clock on the on-screen row (it may have been
+        // inserted as 'sending' during the stale-online window), keep the
+        // composer clear (no Retry), and surface the honest snackbar. The
+        // repush lane settles the row to 'sent' (tick) on reconnect.
+        await _markOutgoingMessageQueuedOffline(messageId);
+        _showOfflineQueuedSnackBar();
+        // Same staging-dir cleanup as the happy branch: reaching the send with
+        // uploads meant they completed durably; the queued row's repush needs
+        // only the persisted payload, not the staging copies (review 210b-F6).
+        if (_supportsDurableGroupMediaUploads && mediaToUpload.isNotEmpty) {
+          try {
+            await widget.mediaFileManager?.deletePendingUploadDir(messageId);
+          } catch (_) {}
+        }
       } else if (result == SendGroupMessageResult.groupNotFound ||
           result == SendGroupMessageResult.groupDissolved ||
           result == SendGroupMessageResult.unauthorized) {
@@ -2670,27 +2691,50 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   /// The status write is the LAST write for this row, so it wins over the
   /// 'failed' the send use case stamped on the connectivity failure.
   Future<void> _markOutgoingMessageQueuedOffline(String messageId) async {
+    // 210b guard: never regress a row that already settled — e.g. a self echo
+    // reconciled it to 'sent' between the awaited send result and this write
+    // (review 210b-F5). The queued stamp is only valid over in-flight or
+    // failure states.
+    final current = await widget.msgRepo.getMessage(messageId);
+    if (current != null &&
+        (current.status == 'sent' ||
+            current.status == 'delivered' ||
+            current.status == 'inboxed')) {
+      return;
+    }
     _updateLocalMessageStatus(messageId, GroupMessage.statusQueuedOffline);
     await _persistMessageStatus(messageId, GroupMessage.statusQueuedOffline);
   }
 
-  /// 210: the offline queued-send informational snackbar. Mirrors the 1:1
-  /// `conversation_wired` offline copy EXACTLY — a wifi-off glyph + the
-  /// hardcoded "Will send when you're back online" const on the slate/blueGrey
-  /// floating surface (informational/self-healing tone, NOT error-red). The copy
-  /// is a hardcoded const to match 1:1; l10n is deferred debt for both paths.
+  /// 210/210b: the queued-send informational snackbar, mirroring the 1:1
+  /// `conversation_wired` copy EXACTLY. The LANE is decided by the send-result
+  /// custody contract (queuedOffline / the offline error fallback); relayReady
+  /// only picks the COPY — the 192 lesson: while the phone still believes it
+  /// is online (the 15-30s stale relay-state window after losing internet) a
+  /// "back online" promise would be dishonest, so the queued-retry copy names
+  /// what is actually happening. Slate/blueGrey floating surface
+  /// (informational/self-healing tone, NOT error-red). Copies are hardcoded
+  /// consts to match 1:1; l10n is deferred debt for both paths.
   void _showOfflineQueuedSnackBar() {
     if (!mounted) return;
     const senderOfflineCopy = "Will send when you're back online";
+    const queuedRetryCopy = 'Delivery delayed — retrying automatically';
+    final senderOffline = !widget.p2pService.currentState.relayReady;
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(
       SnackBar(
         content: Row(
           children: [
-            const Icon(Icons.wifi_off_rounded, color: Colors.white, size: 20),
+            Icon(
+              senderOffline
+                  ? Icons.wifi_off_rounded
+                  : Icons.schedule_send_rounded,
+              color: Colors.white,
+              size: 20,
+            ),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                senderOfflineCopy,
+                senderOffline ? senderOfflineCopy : queuedRetryCopy,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -4129,6 +4173,21 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
               await mediaFileManager.deletePendingUploadDir(messageId);
             } catch (_) {}
             _clearRestoredVoiceContinuationTracking(messageId: messageId);
+          } else if (result == SendGroupMessageResult.queuedOffline &&
+              message != null) {
+            // 210b (voice parity): the realistic offline contract — the use
+            // case already persisted the durable 'queued_offline' row. Keep the
+            // voice bubble on the clock (no failed continuation, no quote
+            // restore) and surface the honest snackbar, exactly as the text
+            // path does.
+            _clearRestoredVoiceContinuationTracking(messageId: messageId);
+            await _markOutgoingMessageQueuedOffline(messageId);
+            _showOfflineQueuedSnackBar();
+            // Staging cleanup mirrors the voice happy branch: the durable
+            // stable copy was persisted before the send (review 210b-F6).
+            try {
+              await mediaFileManager.deletePendingUploadDir(messageId);
+            } catch (_) {}
           } else if (result == SendGroupMessageResult.groupNotFound ||
               result == SendGroupMessageResult.groupDissolved ||
               result == SendGroupMessageResult.unauthorized) {

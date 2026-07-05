@@ -608,6 +608,64 @@ void main() {
   );
 
   test(
+    // 210b: a self echo is positive proof the message reached the network, so
+    // it must also settle a 'queued_offline' row (clock → tick) instead of
+    // being rejected as a duplicate — e.g. a peer that subscribed during the
+    // publish settle window echoes back before the repush pass settles the row.
+    'DE-005/210b self echo reconciles queued_offline outbound row to sent',
+    () async {
+      const messageId = 'de005-self-echo-queued-offline';
+      final localTimestamp = DateTime.utc(2026, 5, 11, 10);
+      final createdAt = localTimestamp.subtract(const Duration(seconds: 2));
+      await msgRepo.saveMessage(
+        GroupMessage(
+          id: messageId,
+          groupId: 'group-1',
+          senderPeerId: 'peer-sender',
+          transportPeerId: 'peer-sender',
+          senderUsername: 'Sender',
+          text: 'Local queued offline text',
+          timestamp: localTimestamp,
+          keyGeneration: 1,
+          status: 'queued_offline',
+          isIncoming: false,
+          createdAt: createdAt,
+          inboxStored: false,
+          inboxRetryPayload: '{"cmd":"group:inboxStore"}',
+        ),
+      );
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 1,
+        text: 'Local queued offline text',
+        timestamp: localTimestamp
+            .add(const Duration(seconds: 5))
+            .toIso8601String(),
+        selfPeerId: 'peer-sender',
+        transportPeerId: 'peer-sender',
+        messageId: messageId,
+      );
+
+      expect(result, isNotNull);
+      expect(result!.id, messageId);
+      expect(result.isIncoming, isFalse);
+      expect(result.status, 'sent');
+
+      final saved = await msgRepo.getMessage(messageId);
+      expect(saved, isNotNull);
+      expect(saved!.isIncoming, isFalse);
+      expect(saved.status, 'sent');
+      expect(msgRepo.count, 1);
+      expect(await msgRepo.getUnreadCount('group-1'), 0);
+    },
+  );
+
+  test(
     'DE-005 self echo ignores mismatched transport identity without promoting outbound row',
     () async {
       const messageId = 'de005-self-echo-transport-mismatch';

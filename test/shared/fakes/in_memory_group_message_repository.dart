@@ -444,7 +444,11 @@ class InMemoryGroupMessageRepository
           (m) =>
               !m.isIncoming &&
               !m.inboxStored &&
-              (m.status == 'sent' || m.status == 'pending') &&
+              // 210b: mirrors dbLoadGroupMessagesWithFailedInboxStore — the
+              // repush lane also self-heals 'queued_offline' rows.
+              (m.status == 'sent' ||
+                  m.status == 'pending' ||
+                  m.status == 'queued_offline') &&
               m.inboxRetryPayload != null,
         )
         .toList();

@@ -42,6 +42,17 @@ enum SendGroupMessageResult {
   /// The returned [GroupMessage] still has status `'sent'` because the
   /// relay inbox accepted custody for offline delivery.
   successNoPeers,
+
+  /// 210b: publish "succeeded" locally with ZERO live topic peers AND the
+  /// relay-inbox custody attempt failed — the realistic offline-device
+  /// geometry (gossipsub reports no error with an empty mesh; only the relay
+  /// connect fails). Nothing left the device in any meaningful sense. The
+  /// returned [GroupMessage] has the durable status `'queued_offline'`
+  /// (clock, offline snackbar) and keeps its `inboxRetryPayload`, so the
+  /// repush lane re-stores custody on reconnect and settles it to `'sent'`.
+  /// Distinct from [successNoPeers] (custody WAS accepted → tick) and from
+  /// the in-doubt `'pending'` (live peers may have received the publish).
+  queuedOffline,
 }
 
 Future<({List<GroupMember> members, List<String> recipientPeerIds})>
@@ -1142,8 +1153,17 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     );
 
     if (reliableTimedOut || publishWithoutCustody) {
+      // 210b: the two shapes are NOT the same lane. A bridge timeout is
+      // genuinely in-doubt (the publish may have gone out) → 'pending' (amber
+      // tick). Publish-without-custody is definitive — zero live topic peers
+      // AND no relay custody, i.e. the realistic offline-device geometry —
+      // → durable 'queued_offline' (clock + offline snackbar), self-healed by
+      // the repush lane on reconnect. The shapes are mutually exclusive
+      // (timeout ⇒ ok:false; without-custody ⇒ ok:true).
       final inDoubtMessage = prePersistMessage.copyWith(
-        status: 'pending',
+        status: publishWithoutCustody
+            ? GroupMessage.statusQueuedOffline
+            : 'pending',
         wireEnvelope: reliableTimedOut ? prePersistMessage.wireEnvelope : null,
         inboxStored: inboxOk,
         inboxRetryPayload: retryPayload,
@@ -1190,7 +1210,12 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
           ),
         },
       );
-      return (SendGroupMessageResult.success, inDoubtMessage);
+      return (
+        publishWithoutCustody
+            ? SendGroupMessageResult.queuedOffline
+            : SendGroupMessageResult.success,
+        inDoubtMessage,
+      );
     }
 
     if (!reliableOk || (!publishSucceeded && !inboxOk)) {

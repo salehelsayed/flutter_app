@@ -418,6 +418,59 @@ void main() {
   );
 
   test(
+    // 210b pin: an offline group share (publish-without-custody) reports the
+    // honest queued outcome — never 'Share failed.' — and the durable row is
+    // 'queued_offline' so the repush lane self-heals it on reconnect.
+    'group share queued offline reports queued with the back-online copy',
+    () async {
+      final identityRepository = FakeIdentityRepository()
+        ..seed(_makeIdentity());
+      final groupRepository = InMemoryGroupRepository();
+      final groupMessageRepository = InMemoryGroupMessageRepository();
+      final bridge = _GroupShareReliableNoCustodyBridge();
+
+      await groupRepository.saveGroup(_makeGroup('group-3', 'Offline Writers'));
+      await _seedGroupMembers(groupRepository, 'group-3');
+      await _saveLatestGroupKey(groupRepository, 'group-3');
+
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: identityRepository,
+        contactRepository: InMemoryContactRepository(),
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        groupRepository: groupRepository,
+        groupMessageRepository: groupMessageRepository,
+        bridge: bridge,
+        p2pService: FakeP2PService(),
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: _imageProcessor(),
+      );
+
+      final result = await coordinator.deliver(
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.text,
+          text: 'hello offline group',
+        ),
+        targets: [
+          ShareTargetSelection.group(_makeGroup('group-3', 'Offline Writers')),
+        ],
+      );
+
+      expect(result.queuedCount, 1);
+      expect(result.results.single.status, ShareBatchTargetStatus.queued);
+      expect(
+        result.results.single.detail,
+        "Stored — will send when you're back online.",
+      );
+
+      final saved = await groupMessageRepository.getMessagesPage('group-3');
+      expect(saved, isNotEmpty);
+      expect(saved.first.status, 'queued_offline');
+      expect(saved.first.inboxRetryPayload, isNotNull);
+    },
+  );
+
+  test(
     'group share treats live publish as sent while retaining inbox retry custody',
     () async {
       final identityRepository = FakeIdentityRepository()
@@ -756,6 +809,39 @@ Future<void> _seedGroupMembers(
       joinedAt: joinedAt.add(const Duration(seconds: 1)),
     ),
   );
+}
+
+/// 210b: the realistic offline-device reliable contract — publish "succeeds"
+/// with zero live topic peers and no relay custody, so the use case returns
+/// queuedOffline and persists a durable 'queued_offline' row.
+class _GroupShareReliableNoCustodyBridge extends FakeBridge {
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd == 'bg:begin') {
+      commandLog.add(cmd!);
+      return 'share-group-bg-task';
+    }
+    if (cmd == 'bg:end') {
+      commandLog.add(cmd!);
+      return '';
+    }
+    if (cmd == 'group:sendReliable') {
+      commandLog.add(cmd!);
+      return jsonEncode({
+        'ok': true,
+        'publishSucceeded': true,
+        'inboxStored': false,
+        'topicPeerCount': 0,
+        'connectedTopicPeerCount': 0,
+        'expectedRecipientCount': 2,
+        'recipientPeerIds': ['peer-writer', 'peer-reader'],
+        'deliveryMode': 'live_only',
+      });
+    }
+    return super.send(message);
+  }
 }
 
 class _GroupShareBgBridge extends FakeBridge {

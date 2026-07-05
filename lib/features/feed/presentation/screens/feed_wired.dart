@@ -2130,8 +2130,14 @@ class _FeedWiredState extends State<FeedWired>
         inviteDeliveryAttemptRepo: widget.groupInviteDeliveryAttemptRepository,
       );
       if (!mounted) return false;
+      // 210b: queuedOffline is durably accepted (self-healing 'queued_offline'
+      // row, repush lane settles it on reconnect) — treating it as a failure
+      // here would show a false red retry AND a manual retry would mint a
+      // duplicate row (this path sends without a messageId, so the id-reuse
+      // whitelist can never match the original).
       if (result == SendGroupMessageResult.success ||
-          result == SendGroupMessageResult.successNoPeers) {
+          result == SendGroupMessageResult.successNoPeers ||
+          result == SendGroupMessageResult.queuedOffline) {
         // B5: defer read-marking to leave-thread (symmetric with the 1:1 path)
         // — the incoming run must stay visible while replying.
         await _refreshGroupFeedItem(groupId);

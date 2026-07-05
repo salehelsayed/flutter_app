@@ -10,12 +10,14 @@ import 'package:flutter_app/features/groups/domain/repositories/group_reaction_r
 ///
 /// Queries rows where:
 ///   - `is_incoming = 0`
-///   - `status IN ('sent', 'pending')`
+///   - `status IN ('sent', 'pending', 'queued_offline')`
 ///   - `inbox_stored = 0`
 ///   - `inbox_retry_payload IS NOT NULL`
 ///
 /// For each, reconstructs the inbox store call from persisted JSON payload,
-/// calls `callGroupInboxStore`, and closes the row as fully sent on success.
+/// calls `callGroupInboxStore`, and closes the row as fully sent on success —
+/// for a 210b `queued_offline` row this IS the reconnect self-heal (the
+/// on-screen clock settles to a tick).
 ///
 /// When [reactionReplayOutboxRepo] is provided, the same retry pass also
 /// drains retryable sender-owned reaction replay rows after message rows.

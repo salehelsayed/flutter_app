@@ -392,6 +392,20 @@ _retryFailedGroupMessageCandidate({
       return (retried: true, skippedUnsupported: false);
     }
 
+    if (result == SendGroupMessageResult.queuedOffline) {
+      // 210b: the re-drive resolved to publish-without-custody — the row is
+      // now durably 'queued_offline' with its repush payload armed and has
+      // LEFT the failed/pending retry lane (the repush pass owns it until
+      // custody). Not a failure: no STILL_FAILED mislabel and no backoff
+      // bookkeeping (whose status predicate would no-op on this row anyway).
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RETRY_FAILED_GROUP_MESSAGES_MESSAGE_QUEUED_OFFLINE',
+        details: {'messageId': _shortId(msg.id), 'result': result.name},
+      );
+      return (retried: true, skippedUnsupported: false);
+    }
+
     emitFlowEvent(
       layer: 'FL',
       event: 'RETRY_FAILED_GROUP_MESSAGES_MESSAGE_STILL_FAILED',

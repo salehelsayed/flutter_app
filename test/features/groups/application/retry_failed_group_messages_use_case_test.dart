@@ -277,6 +277,65 @@ void main() {
     });
 
     test(
+      // 210b: a re-driven 'failed' row that resolves to publish-without-custody
+      // CONVERTS to the durable 'queued_offline' lane (the repush pass owns it
+      // from here) — the pass must count it as re-driven, must NOT mislabel it
+      // STILL_FAILED, and must not burn backoff bookkeeping on a row that has
+      // left the failed/pending retry lane.
+      'failed row converting to queued_offline counts as retried, '
+      'no STILL_FAILED mislabel',
+      () async {
+        identityRepo.seed(_makeIdentity());
+        await saveRetryGroupWithMembers();
+        bridge = FakeBridge(
+          initialResponses: {
+            'group:sendReliable': {
+              'ok': true,
+              'publishSucceeded': true,
+              'inboxStored': false,
+              'topicPeerCount': 0,
+              'connectedTopicPeerCount': 0,
+              'expectedRecipientCount': 1,
+              'recipientPeerIds': ['peer-2'],
+              'deliveryMode': 'live_only',
+            },
+          },
+        );
+        await msgRepo.saveMessage(
+          _makeFailedGroupMessage(
+            id: 'msg-queued-convert',
+            text: 'Convert me',
+            timestampIso: '2026-01-15T12:00:00.000Z',
+          ),
+        );
+
+        late int count;
+        final events = await captureFlowEvents(() async {
+          count = await retryFailedGroupMessages(
+            groupMsgRepo: msgRepo,
+            groupRepo: groupRepo,
+            identityRepo: identityRepo,
+            bridge: bridge,
+            mediaAttachmentRepo: mediaRepo,
+          );
+        });
+
+        expect(count, 1);
+        final saved = await msgRepo.getMessage('msg-queued-convert');
+        expect(saved!.status, 'queued_offline');
+        expect(saved.inboxRetryPayload, isNotNull);
+        expect(
+          events.map((e) => e['event']),
+          contains('RETRY_FAILED_GROUP_MESSAGES_MESSAGE_QUEUED_OFFLINE'),
+        );
+        expect(
+          events.map((e) => e['event']),
+          isNot(contains('RETRY_FAILED_GROUP_MESSAGES_MESSAGE_STILL_FAILED')),
+        );
+      },
+    );
+
+    test(
       'emits RETRY_FAILED_GROUP_MESSAGES_TIMING with total and skipped counts',
       () async {
         identityRepo.seed(_makeIdentity());
