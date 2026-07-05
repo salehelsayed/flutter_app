@@ -21,7 +21,6 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_view_mode.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_close_button.dart';
-import 'package:flutter_app/features/orbit/presentation/widgets/orbit_qr_chrome_buttons.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_view_toggle_button.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friend_row.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/group_row.dart';
@@ -202,8 +201,6 @@ class OrbitScreen extends StatefulWidget {
   /// Tapping a friend's avatar specifically (opens their contact profile).
   /// Optional so lightweight callers/tests can omit it.
   final void Function(OrbitFriend)? onFriendAvatarTap;
-  final VoidCallback onMyQR;
-  final VoidCallback onScanQR;
   final VoidCallback onSearchOpen;
   final VoidCallback onSearchClose;
   final void Function(String) onSearchChanged;
@@ -271,8 +268,6 @@ class OrbitScreen extends StatefulWidget {
     required this.onClose,
     required this.onFriendTap,
     this.onFriendAvatarTap,
-    required this.onMyQR,
-    required this.onScanQR,
     required this.onSearchOpen,
     required this.onSearchClose,
     required this.onSearchChanged,
@@ -312,10 +307,11 @@ class OrbitScreen extends StatefulWidget {
 }
 
 /// 205 item 6 — owns the transient "inner-circle is editing" flag so the view
-/// toggle (Layer 1b) and QR chrome (Layer 1c) unmount while the user sculpts the
-/// inner circle, then re-mount when the session ends. The flag is derived from
-/// the surface's own edit-active signal, which is ALSO forwarded upward to the
-/// 198 feed↔orbit swipe-yield gate (INV-7 preserved).
+/// toggle (Layer 1b) unmounts while the user sculpts the inner circle, then
+/// re-mounts when the session ends (209: the QR chrome that shared this gate
+/// retired to the Settings tiles). The flag is derived from the surface's own
+/// edit-active signal, which is ALSO forwarded upward to the 198 feed↔orbit
+/// swipe-yield gate (INV-7 preserved).
 class _OrbitScreenState extends State<OrbitScreen> {
   bool _innerEditing = false;
 
@@ -339,8 +335,6 @@ class _OrbitScreenState extends State<OrbitScreen> {
         onClose: widget.onClose,
         onFriendTap: widget.onFriendTap,
         onFriendAvatarTap: widget.onFriendAvatarTap,
-        onMyQR: widget.onMyQR,
-        onScanQR: widget.onScanQR,
         onSearchOpen: widget.onSearchOpen,
         onSearchClose: widget.onSearchClose,
         onSearchChanged: widget.onSearchChanged,
@@ -393,8 +387,6 @@ class _OrbitScreenView extends StatelessWidget {
   final VoidCallback onClose;
   final void Function(OrbitFriend) onFriendTap;
   final void Function(OrbitFriend)? onFriendAvatarTap;
-  final VoidCallback onMyQR;
-  final VoidCallback onScanQR;
   final VoidCallback onSearchOpen;
   final VoidCallback onSearchClose;
   final void Function(String) onSearchChanged;
@@ -447,8 +439,6 @@ class _OrbitScreenView extends StatelessWidget {
     required this.onClose,
     required this.onFriendTap,
     required this.onFriendAvatarTap,
-    required this.onMyQR,
-    required this.onScanQR,
     required this.onSearchOpen,
     required this.onSearchClose,
     required this.onSearchChanged,
@@ -591,16 +581,9 @@ class _OrbitScreenView extends StatelessWidget {
                 onToggle: onToggleView!,
               ),
 
-            // Layer 1c (196): twin "My QR" / "Scan" chrome buttons at
-            // top-center, on BOTH surfaces, fed by the existing onMyQR/onScanQR.
-            // Mounted UNCONDITIONALLY (not gated on onToggleView, unlike the
-            // toggle) and BEFORE the ExpandableFab so an open FAB scrim wins a
-            // tap over the chrome. Icon-only with l10n button Semantics; the
-            // full-width band is tap-transparent outside the two buttons.
-            // 205 item 6: also hidden during an inner-circle edit session so the
-            // centered edit banner clears the top-center QR band.
-            if (!innerEditing)
-              OrbitQrChromeButtons(onMyQR: onMyQR, onScanQR: onScanQR),
+            // (209: Layer 1c — the twin My QR / Scan chrome pair — retired.
+            // The entries live as labeled tiles on the Settings page, reached
+            // via the 206 center self-avatar.)
 
             // Layer 2: Close button — standalone mode only. When the
             // persistent Feed/Orbit nav is shown, the Feed tab is the way back,
@@ -783,12 +766,10 @@ class _OrbitScreenView extends StatelessWidget {
                 slivers: [
                   SliverToBoxAdapter(
                     child: Padding(
-                      // 196: the first sliver clears the top chrome strip
-                      // (toggle + QR pair, both at safeTop+8) VERTICALLY — top
-                      // padding 8 → 56 — now that the QR entries left the header
-                      // for OrbitQrChromeButtons. The old physical-left inset is
-                      // gone: the header is title-only, so nothing sits under
-                      // the top-left toggle in either direction.
+                      // The first sliver clears the top chrome strip (the
+                      // top-left toggle at safeTop+8) VERTICALLY — top padding
+                      // 56 (209: the QR pair retired to Settings; the toggle
+                      // still occupies the strip, so the clearance stays).
                       padding: const EdgeInsets.fromLTRB(16, 56, 16, 0),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,

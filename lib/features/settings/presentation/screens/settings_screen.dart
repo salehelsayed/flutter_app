@@ -6,42 +6,44 @@ import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
-import 'package:flutter_app/features/settings/presentation/widgets/settings_peer_id_card.dart';
-import 'package:flutter_app/features/settings/presentation/widgets/posts_nearby_settings_card.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/settings_group.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_profile_section.dart';
-import 'package:flutter_app/features/settings/presentation/widgets/settings_recovery_phrase_card.dart';
-import 'package:flutter_app/features/settings/presentation/widgets/settings_move_account_card.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/settings_qr_tiles.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
-import 'package:flutter_app/features/settings/presentation/widgets/background_choice_control.dart';
-import 'package:flutter_app/features/settings/presentation/widgets/image_quality_toggle.dart';
 
-/// Pure UI Settings screen.
+/// Pure UI Settings screen — 209 "One Screen" layout.
 ///
-/// Displays profile info, peer ID, and recovery phrase in glass cards
-/// over the ambient background.
+/// Profile header → My QR / Scan tiles → IDENTITY group (peer ID row with
+/// copy, recovery-phrase row) → PREFERENCES group (background / photo / video
+/// rows with at-rest values opening focused sub-sheets, inline nearby switch,
+/// move-account row) → optional debug section. The whole page fits a 390×844
+/// viewport with zero scroll at textScale 1.0 (debug cards excluded) — a
+/// pinned-constants contract: avatar 72, 44px custom rows, tiles ≤72px,
+/// shrink-wrapped nearby Switch (INV-209-3).
+///
+/// The QR tiles are a host-capability PAIR: they mount only when the host
+/// supplies BOTH [onMyQr] and [onScan] (INV-209-1 — the dead posts entry
+/// cannot supply the scanner bundle, spec §7.1).
 class SettingsScreen extends StatelessWidget {
   final String username;
   final String? peerId;
   final Uint8List? avatarBytes;
   final String? mnemonic;
-  final bool isMnemonicRevealed;
   final bool isPeerIdCopied;
-  final bool isMnemonicCopied;
   final VoidCallback? onBack;
   final VoidCallback? onPickAvatar;
   final ValueChanged<String>? onUsernameChanged;
   final VoidCallback? onCopyPeerId;
-  final VoidCallback? onToggleMnemonic;
-  final VoidCallback? onCopyMnemonic;
-  final VoidCallback? onHideMnemonic;
+  final VoidCallback? onMyQr;
+  final VoidCallback? onScan;
+  final VoidCallback? onOpenBackgroundSheet;
+  final VoidCallback? onOpenPhotoQualitySheet;
+  final VoidCallback? onOpenVideoQualitySheet;
+  final VoidCallback? onOpenRecoverySheet;
   final BackgroundPreference currentBackgroundPreference;
-  final ValueChanged<BackgroundPreference>? onBackgroundPreferenceChanged;
-  final String? backgroundPreferenceErrorText;
   final ImageQualityPreference currentQuality;
-  final ValueChanged<ImageQualityPreference>? onQualityChanged;
   final ImageQualityPreference currentVideoQuality;
-  final ValueChanged<ImageQualityPreference>? onVideoQualityChanged;
   final bool isNearbySharingEnabled;
   final ValueChanged<bool>? onNearbySharingChanged;
   final VoidCallback? onMoveAccountToNewPhone;
@@ -57,23 +59,20 @@ class SettingsScreen extends StatelessWidget {
     this.peerId,
     this.avatarBytes,
     this.mnemonic,
-    this.isMnemonicRevealed = false,
     this.isPeerIdCopied = false,
-    this.isMnemonicCopied = false,
     this.onBack,
     this.onPickAvatar,
     this.onUsernameChanged,
     this.onCopyPeerId,
-    this.onToggleMnemonic,
-    this.onCopyMnemonic,
-    this.onHideMnemonic,
+    this.onMyQr,
+    this.onScan,
+    this.onOpenBackgroundSheet,
+    this.onOpenPhotoQualitySheet,
+    this.onOpenVideoQualitySheet,
+    this.onOpenRecoverySheet,
     this.currentBackgroundPreference = BackgroundPreference.defaultBackground,
-    this.onBackgroundPreferenceChanged,
-    this.backgroundPreferenceErrorText,
     this.currentQuality = ImageQualityPreference.compressed,
-    this.onQualityChanged,
     this.currentVideoQuality = ImageQualityPreference.compressed,
-    this.onVideoQualityChanged,
     this.isNearbySharingEnabled = false,
     this.onNearbySharingChanged,
     this.onMoveAccountToNewPhone,
@@ -84,14 +83,105 @@ class SettingsScreen extends StatelessWidget {
     this.readableToneOverride,
   });
 
+  String _backgroundValueLabel(AppLocalizations l10n) => switch (
+    currentBackgroundPreference) {
+    BackgroundPreference.defaultBackground => l10n.settings_background_default,
+    BackgroundPreference.cosmic => l10n.settings_background_cosmic,
+    BackgroundPreference.cosmicMirrored =>
+      l10n.settings_background_cosmic_mirrored,
+    BackgroundPreference.daylightLagoon =>
+      l10n.settings_background_daylight_lagoon,
+  };
+
+  String _qualityValueLabel(
+    AppLocalizations l10n,
+    ImageQualityPreference quality,
+  ) => quality == ImageQualityPreference.original
+      ? l10n.settings_original
+      : l10n.settings_compressed;
+
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final words = mnemonic?.split(' ') ?? [];
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
     final readableColors = BackgroundReadableColors.resolve(
       currentBackgroundPreference,
       representativeToneOverride: readableToneOverride,
     );
+
+    // INV-209-1: the tiles gate as a PAIR — both callbacks or no tiles.
+    final showQrTiles = onMyQr != null && onScan != null;
+    final showRecoveryRow =
+        mnemonic != null && words.length == 12 && onOpenRecoverySheet != null;
+    final identityRows = <Widget>[
+      if (peerId != null)
+        SettingsListRow(
+          key: const ValueKey('settings-row-peer-id'),
+          icon: Icons.fingerprint,
+          label: l10n.settings_peer_id_title,
+          value: peerId,
+          trailing: _PeerIdCopyButton(
+            isCopied: isPeerIdCopied,
+            onCopy: onCopyPeerId,
+          ),
+        ),
+      if (showRecoveryRow)
+        SettingsListRow(
+          key: const ValueKey('settings-row-recovery'),
+          icon: Icons.key_outlined,
+          label: l10n.settings_recovery_title,
+          onTap: onOpenRecoverySheet,
+        ),
+    ];
+    final preferenceRows = <Widget>[
+      if (onOpenBackgroundSheet != null)
+        SettingsListRow(
+          key: const ValueKey('settings-row-background'),
+          icon: Icons.wallpaper,
+          label: l10n.settings_background,
+          value: _backgroundValueLabel(l10n),
+          onTap: onOpenBackgroundSheet,
+        ),
+      if (onOpenPhotoQualitySheet != null)
+        SettingsListRow(
+          key: const ValueKey('settings-row-photo-quality'),
+          icon: Icons.photo_size_select_large,
+          label: l10n.settings_photo_quality,
+          value: _qualityValueLabel(l10n, currentQuality),
+          onTap: onOpenPhotoQualitySheet,
+        ),
+      if (onOpenVideoQualitySheet != null)
+        SettingsListRow(
+          key: const ValueKey('settings-row-video-quality'),
+          icon: Icons.videocam,
+          label: l10n.settings_video_quality,
+          value: _qualityValueLabel(l10n, currentVideoQuality),
+          onTap: onOpenVideoQualitySheet,
+        ),
+      if (onNearbySharingChanged != null)
+        SettingsListRow(
+          key: const ValueKey('settings-row-nearby'),
+          icon: Icons.near_me_outlined,
+          label: l10n.settings_share_nearby,
+          subtitle: l10n.settings_share_nearby_desc,
+          value: isNearbySharingEnabled
+              ? l10n.settings_share_nearby_on
+              : l10n.settings_share_nearby_off,
+          trailing: Switch.adaptive(
+            value: isNearbySharingEnabled,
+            onChanged: onNearbySharingChanged,
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+        ),
+      if (onMoveAccountToNewPhone != null)
+        SettingsListRow(
+          key: const ValueKey('settings-move-account-action'),
+          icon: Icons.phonelink_setup_outlined,
+          label: l10n.settings_move_account_title,
+          onTap: onMoveAccountToNewPhone,
+        ),
+    ];
 
     return AmbientBackground(
       preference: currentBackgroundPreference,
@@ -143,7 +233,7 @@ class SettingsScreen extends StatelessWidget {
                           // Title
                           Expanded(
                             child: Text(
-                              AppLocalizations.of(context)!.settings_title,
+                              l10n.settings_title,
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 fontSize: 18,
@@ -159,7 +249,9 @@ class SettingsScreen extends StatelessWidget {
                     ),
                   ),
                 ),
-                // Scrollable content
+                // Scrollable content (zero scroll extent on the reference
+                // viewport — the One-Screen contract; shorter viewports and
+                // large text scales scroll normally).
                 Expanded(
                   child: SingleChildScrollView(
                     physics: const BouncingScrollPhysics(),
@@ -175,66 +267,23 @@ class SettingsScreen extends StatelessWidget {
                           onPickAvatar: onPickAvatar,
                           onUsernameChanged: onUsernameChanged,
                         ),
-                        if (peerId != null) ...[
-                          SettingsPeerIdCard(
-                            peerId: peerId!,
-                            isCopied: isPeerIdCopied,
-                            onCopy: onCopyPeerId,
-                          ),
-                          const SizedBox(height: 24),
+                        if (showQrTiles) ...[
+                          SettingsQrTiles(onMyQr: onMyQr!, onScan: onScan!),
+                          const SizedBox(height: 14),
                         ],
-                        if (onBackgroundPreferenceChanged != null) ...[
-                          BackgroundChoiceControl(
-                            value: currentBackgroundPreference,
-                            onChanged: onBackgroundPreferenceChanged!,
-                            errorText: backgroundPreferenceErrorText,
+                        if (identityRows.isNotEmpty) ...[
+                          SettingsGroupCard(
+                            label: l10n.settings_section_identity,
+                            children: identityRows,
                           ),
-                          const SizedBox(height: 24),
+                          const SizedBox(height: 14),
                         ],
-                        if (onQualityChanged != null) ...[
-                          ImageQualityToggle(
-                            value: currentQuality,
-                            onChanged: onQualityChanged!,
-                            label: AppLocalizations.of(
-                              context,
-                            )!.settings_photo_quality,
+                        if (preferenceRows.isNotEmpty) ...[
+                          SettingsGroupCard(
+                            label: l10n.settings_section_preferences,
+                            children: preferenceRows,
                           ),
-                          const SizedBox(height: 24),
-                        ],
-                        if (onVideoQualityChanged != null) ...[
-                          ImageQualityToggle(
-                            value: currentVideoQuality,
-                            onChanged: onVideoQualityChanged!,
-                            label: AppLocalizations.of(
-                              context,
-                            )!.settings_video_quality,
-                            icon: Icons.videocam,
-                          ),
-                          const SizedBox(height: 24),
-                        ],
-                        if (onNearbySharingChanged != null) ...[
-                          PostsNearbySettingsCard(
-                            sharingEnabled: isNearbySharingEnabled,
-                            onChanged: onNearbySharingChanged!,
-                          ),
-                          const SizedBox(height: 24),
-                        ],
-                        if (onMoveAccountToNewPhone != null) ...[
-                          SettingsMoveAccountCard(
-                            onPressed: onMoveAccountToNewPhone,
-                          ),
-                          const SizedBox(height: 24),
-                        ],
-                        if (mnemonic != null && words.length == 12) ...[
-                          SettingsRecoveryPhraseCard(
-                            words: words,
-                            isRevealed: isMnemonicRevealed,
-                            isCopied: isMnemonicCopied,
-                            onToggleReveal: onToggleMnemonic,
-                            onCopy: onCopyMnemonic,
-                            onHide: onHideMnemonic,
-                          ),
-                          const SizedBox(height: 24),
+                          const SizedBox(height: 14),
                         ],
                         ?debugSection,
                       ],
@@ -258,6 +307,47 @@ class SettingsScreen extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// The peer-id row's trailing copy affordance — same check-for-2s feedback the
+/// retired SettingsPeerIdCard carried (the full ID lands on the clipboard via
+/// the host's onCopyPeerId).
+class _PeerIdCopyButton extends StatelessWidget {
+  final bool isCopied;
+  final VoidCallback? onCopy;
+
+  const _PeerIdCopyButton({required this.isCopied, required this.onCopy});
+
+  @override
+  Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final copiedColor = readableColors.isLightSurface
+        ? const Color(0xFF0F766E)
+        : const Color(0xFF14B8A6);
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onCopy,
+      child: Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          color: readableColors.surfaceSubtle,
+          border: Border.all(color: readableColors.glassBorder),
+        ),
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 200),
+          child: Icon(
+            isCopied ? Icons.check : Icons.copy,
+            key: ValueKey(isCopied),
+            size: 15,
+            color: isCopied ? copiedColor : readableColors.iconSecondary,
+          ),
+        ),
       ),
     );
   }

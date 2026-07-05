@@ -92,8 +92,6 @@ void main() {
         searchTriggerAnimation: const AlwaysStoppedAnimation(1.0),
         onClose: () {},
         onFriendTap: (_) {},
-        onMyQR: () {},
-        onScanQR: () {},
         onSearchOpen: () {},
         onSearchClose: () {},
         onSearchChanged: (_) {},

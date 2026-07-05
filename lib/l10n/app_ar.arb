@@ -350,6 +350,8 @@
   "picker_search_contacts": "ابحث في جهات الاتصال...",
   "picker_search_all": "ابحث في جهات الاتصال والمجموعات",
   "settings_title": "الإعدادات",
+  "settings_section_identity": "الهوية",
+  "settings_section_preferences": "التفضيلات",
   "settings_background": "الخلفية",
   "settings_background_default": "الافتراضية",
   "settings_background_default_desc": "الخلفية المحيطة الحالية.",

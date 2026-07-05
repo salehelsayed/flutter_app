@@ -392,6 +392,8 @@
   "picker_search_contacts": "Search contacts...",
   "picker_search_all": "Search contacts & groups",
   "settings_title": "Settings",
+  "settings_section_identity": "IDENTITY",
+  "settings_section_preferences": "PREFERENCES",
   "settings_background": "Background",
   "settings_background_default": "Default",
   "settings_background_default_desc": "The current ambient background.",

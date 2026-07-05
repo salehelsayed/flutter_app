@@ -2038,8 +2038,6 @@ void main() {
           header:
               OrbitHeaderProjection(userPeerId: 'me', innerItems: _friends(friends)),
           onToggleView: onToggleView ?? () {},
-          onMyQR: () {},
-          onScanQR: () {},
           onInnerEdit: onInnerEdit,
         );
 
@@ -2065,26 +2063,24 @@ void main() {
     });
 
     testWidgets(
-        'TC-205-06 entering edit hides the toggle + QR chrome; Reset '
+        'TC-205-06 entering edit hides the toggle; Reset '
         'unobstructed', (tester) async {
       suppressAssetErrors(tester);
       await tester.pumpWidget(innerScreen(onInnerEdit: (_) {}));
       await settle(tester);
 
-      // Idle: the toggle + QR chrome are present.
+      // Idle: the toggle is present. (209: the QR chrome that shared this
+      // edit-gate retired to the Settings tiles — it must never resurface.)
       expect(find.byKey(const ValueKey('orbit-view-toggle')), findsOneWidget);
-      expect(find.byKey(const ValueKey('orbit-my-qr-button')), findsOneWidget);
-      expect(find.byKey(const ValueKey('orbit-scan-button')), findsOneWidget);
+      expect(find.byKey(const ValueKey('orbit-my-qr-button')), findsNothing);
+      expect(find.byKey(const ValueKey('orbit-scan-button')), findsNothing);
 
       await longPressBg(tester); // enter edit
       expect(bannerF(), findsOneWidget, reason: 'edit session active');
 
-      // Both the view toggle (Layer 1b) and the QR chrome (Layer 1c) unmount.
+      // The view toggle (Layer 1b) unmounts.
       expect(find.byKey(const ValueKey('orbit-view-toggle')), findsNothing,
           reason: 'toggle hidden while editing');
-      expect(find.byKey(const ValueKey('orbit-my-qr-button')), findsNothing,
-          reason: 'QR chrome hidden while editing');
-      expect(find.byKey(const ValueKey('orbit-scan-button')), findsNothing);
 
       // Reset is present and unobstructed — the toggle no longer wins its band.
       final resetF = find.byKey(const ValueKey('orbit-edit-reset'));

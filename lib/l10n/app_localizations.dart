@@ -1228,6 +1228,18 @@ abstract class AppLocalizations {
   /// **'Settings'**
   String get settings_title;
 
+  /// No description provided for @settings_section_identity.
+  ///
+  /// In en, this message translates to:
+  /// **'IDENTITY'**
+  String get settings_section_identity;
+
+  /// No description provided for @settings_section_preferences.
+  ///
+  /// In en, this message translates to:
+  /// **'PREFERENCES'**
+  String get settings_section_preferences;
+
   /// No description provided for @settings_background.
   ///
   /// In en, this message translates to:

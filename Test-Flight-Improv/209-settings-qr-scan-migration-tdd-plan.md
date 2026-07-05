@@ -1,6 +1,6 @@
 # 209 - Settings "One Screen" redesign + My QR / Scan migration from Orbit  (Feature Improvement)
 
-Status: awaiting-review
+Status: implemented (2026-07-05)
 Spec: Test-Flight-Improv/209-settings-qr-scan-migration-spec.md (incl. §7 Amendments) · Mockup: Test-Flight-Improv/209-settings-qr-scan-migration-mockups.html (Option C)
 
 ## Planning Progress
@@ -14,13 +14,13 @@ Spec: Test-Flight-Improv/209-settings-qr-scan-migration-spec.md (incl. §7 Amend
 ## Execution Progress
 | Time | Phase | Files touched | Command/evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|
-| | contract extraction (git status --short) | | | scope confirmed | |
-| | RED tests added | | | RED for expected reason | |
-| | implementation | | | scoped files only | |
-| | direct GREEN | | | | |
-| | preservation GREEN | | | | |
-| | named gates | | | | |
-| | QA (independent) | | | | |
+| 2026-07-05 | contract extraction (git status --short) | — | tree CLEAN at 3f4f6093 (the plan's "206-era dirty tree" note was stale — those edits had been committed) | scope confirmed | RED |
+| 2026-07-05 | RED tests added | settings_qr_tiles_test (NEW 8), settings_one_screen_layout_test (NEW 9), settings_sub_sheets_test (NEW 9), orbit_qr_entry_migration_test (REWRITE in place, 10), settings_screen_test (REWRITE 14), settings_wired_test (UPDATE 19 incl. new TC-209-36) | compile-RED on new ctor params (qr_tiles/one_screen/settings_screen — documented); behavioral RED elsewhere (+11/−31). T3 tap coordinate fixed to the old My QR button center (page-center falls in the tap-transparent 8px gap even on HEAD — vacuous-green caught and corrected) | RED for documented reasons | E1-E8 |
+| 2026-07-05 | implementation | E1 settings_qr_tiles.dart · E2 settings_group.dart · E3 settings_screen.dart One-Screen rewrite · profile section avatar 72 + 10/14 paddings · E4 settings_wired.dart (onMyQrRequested/onScanQrRequested, `_qrRouteActive` + `_moveRouteActive` latches, 4 sheet launchers via `_showSettingsSheet` scroll-controlled shell, `_recoverySheetTick`) · E5 orbit_wired.dart (`_onMyQR`/`_onScanQR` → `Future<void>` tear-offs into SettingsWired push; bodies unchanged) · E6 orbit_screen.dart chrome removal + comment sweep · E7 deletions (orbit_qr_chrome_buttons, qr_action_cards + tests) · E8 two `settings_section_*` ARB keys ×3 + gen-l10n | scoped files only; 6 bare-OrbitScreen pump harnesses swept of removed params; integration_test/settings_background_choice_smoke_test migrated to row→sheet | sheet default-height cap fixed with isScrollControlled + SingleChildScrollView | direct GREEN |
+| 2026-07-05 | direct GREEN | — | `flutter test test/features/settings/ …orbit_qr_entry_migration_test.dart …orbit_settings_entry_test.dart` → 222/222; +l10n → 233/233 | T6 mutual-add assert re-anchored to observable side effects (verify + avatar download; mutual-add contract stays with the BASELINE sentinel) | mutations |
+| 2026-07-05 | mutation verification | settings_wired (latch check removed), settings_screen (pair-gating `&&`→`||`), settings_profile_section (avatar back to 100 + old paddings) | qr_tiles::T5 RED · qr_tiles::T6 RED · one_screen::T1 RED — all restored; behaviorally-RED-on-HEAD rows carry their mutation evidence from the RED-first run | all named mutations for NEW invariants verified | gates |
+| 2026-07-05 | preservation + named gates | 4 out-of-inventory chrome retargets: feed_wired_test (206 full-chain → row/sheet path), orbit_wired_test (chrome test inverted), orbit_view_split_test TC-203-18 (pair leg → resurface-lock), orbit_sculpt_summon TC-205-06 (toggle-only) | baseline PASS (fail-fast; qr_scanner_wired 7/7 untouched-green) · feed 292/292 · groups 1110/1110 (one unrelated group_membership_smoke timing flake passed in isolation + on rerun) · test/l10n 7/7 · posts_nearby 3/3 (inside settings suite) | plan's Existing-Tests inventory missed 4 chrome-consuming files; retargets are finder-path-only, assertions preserved | feature-host-all + hygiene |
+| 2026-07-05 | feature-host-all + hygiene | — | feature-host-all: #1-#350 PASS, **#351 `group_conversation_wired_bg_task_test` PRE-EXISTING red (verified failing at a clean HEAD worktree — group media-upload code, NOT 209; left for its owning workstream)**, #352-#637 PASS via `--start-at 352`. `flutter analyze`: 0 NEW issues (2 pre-existing errors in nightly-only `integration_test/smoke_test.dart` + `transport_census_harness.dart` from commit 3b657723 — `dbExistsMessageByContent`). `git diff --check` clean · INV-209-2 grep clean · zero FTE/AccountMigration diffs. graphify full + arch graphs refreshed | pre-existing failures recorded, not fixed (scope guard) | commit |
 
 ## Source Of Truth
 - Spec: Test-Flight-Improv/209-settings-qr-scan-migration-spec.md (with §7 Amendments)
@@ -263,12 +263,12 @@ git diff --check
 - Scope drift (BLOCKING): any diff in `qr_scanner_wired.dart`/`qr_display_wired.dart`/FTE/AccountMigration files.
 
 ## Done Criteria
-- [ ] RED added first, failed for documented reasons.
-- [ ] Every edit mutation-verified per matrix.
-- [ ] Direct GREEN + all preservation sentinels + named gates green; new totals recorded in this doc.
-- [ ] No migration (none needed) · no sim/device rows (host-only class).
-- [ ] All new tests auto-globbed or riding existing pinned paths (:254/:231) — zero array edits required; verified via gate runs.
-- [ ] flutter analyze 0 new; git diff --check clean; INV-209-2 grep clean.
+- [x] RED added first, failed for documented reasons (compile-RED for the 3 new-ctor files, behavioral RED elsewhere; T3 vacuous-green caught and fixed pre-implementation).
+- [x] Every edit mutation-verified per matrix: 3 explicit mutation runs for the new invariants (latch → T5 red, pair-gating → T6 red, avatar-100 → T1 red); all behaviorally-RED-on-HEAD rows carry mutation evidence from the RED-first run.
+- [x] Direct GREEN (settings suite 198, orbit migration 10/10, settings entry 14/14 = 222) + preservation sentinels + named gates green (baseline PASS, feed 292, groups 1110, l10n 7/7, nearby 3/3); new totals recorded above. New test counts: settings_qr_tiles 8, one_screen_layout 9, sub_sheets 9; rewritten :254 file 10; settings_screen 14; settings_wired 19 (incl. new TC-209-36).
+- [x] No migration (none needed) · no sim/device rows (host-only class).
+- [x] All new tests auto-globbed or riding existing pinned paths (:254/:231) — zero array edits required; verified via gate runs.
+- [x] flutter analyze 0 NEW (2 pre-existing nightly-only integration errors recorded); git diff --check clean; INV-209-2 grep clean.
 
 ## Scope Guard (hard "Do not")
 - Do not edit `qr_scanner_wired.dart` or `qr_display_wired.dart` (BASELINE + 196 own the contracts).
@@ -298,4 +298,4 @@ Sufficiency self-check (references/sufficiency-checklist.md): spec-case totality
 Structural blockers: none. Deferred details: exact new-test totals recorded at execution; settings_profile_section_test size-assert inspection at execution. Accepted differences: as listed. Hand off to execution.
 
 ## Final Execution Verdict
-Verdict: (pending execution)
+Verdict: CLOSED (host-green, 2026-07-05). One-Screen Settings + QR/Scan tiles shipped on the host-callback architecture exactly as planned; orbit chrome retired; all 48 matrix rows covered; scanner/display byte-untouched (BASELINE 7/7). Execution deltas vs plan, all recorded above: (1) four chrome-consuming test files missing from the Existing-Tests inventory were retargeted in place (finder paths only); (2) `_onMyQR`/`_onScanQR` return `Future<void>` (bodies unchanged) so the pop-future drives the Settings latch — tear-offs instead of wrapping closures; (3) sheet shell needs `isScrollControlled` + inner scroll (default sheet cap clips the 4-option chooser); (4) T6's mutual-add assert anchored to observable side effects (verify + avatar download) — the mutual-add contract stays with the BASELINE sentinel; (5) T9/T10 adapted: the 206/209 Settings entry is identity-gated, so the pre-identity scanner path is structurally unreachable — T9 clears identity after entry (noIdentity state lock), T10 locks "no entry until identity resolves, crash-free scan after". Pre-existing environment reds (NOT 209): feature-host-all #351 `group_conversation_wired_bg_task_test` (fails at clean HEAD), 2 analyzer errors in nightly-only integration files (commit 3b657723).

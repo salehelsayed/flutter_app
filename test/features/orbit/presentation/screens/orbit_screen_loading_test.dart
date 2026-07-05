@@ -154,8 +154,6 @@ void main() {
         searchTriggerAnimation: searchTriggerAnimation,
         onClose: () {},
         onFriendTap: (_) {},
-        onMyQR: () {},
-        onScanQR: () {},
         onSearchOpen: () {},
         onSearchClose: () {},
         onSearchChanged: (_) {},

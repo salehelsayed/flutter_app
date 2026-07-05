@@ -29,17 +29,20 @@ class SettingsProfileSection extends StatelessWidget {
         ? const Color(0xFF0F766E)
         : const Color(0xFF14B8A6);
 
+    // 209 One-Screen fit budget (INV-209-3): avatar 72 + 10/14 paddings — the
+    // pre-209 100px avatar + 32/24 paddings blow the 390×844 zero-scroll
+    // ceiling (spec §7.2).
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 32, 20, 24),
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 14),
       child: Column(
         children: [
           // Avatar with camera overlay
           SizedBox(
-            width: 100,
-            height: 100,
+            width: 72,
+            height: 72,
             child: Stack(
               children: [
-                UserAvatar(peerId: peerId, avatarBytes: avatarBytes, size: 100),
+                UserAvatar(peerId: peerId, avatarBytes: avatarBytes, size: 72),
                 Positioned(
                   bottom: 0,
                   right: 0,
@@ -67,7 +70,7 @@ class SettingsProfileSection extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
           // Editable username
           EditableUsernameWidget(
             username: username,

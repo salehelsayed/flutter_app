@@ -434,13 +434,17 @@ void main() {
         await pumpFeedFrames(tester, count: 10);
 
         expect(find.text('Settings'), findsOneWidget);
-        await tester.ensureVisible(
-          find.byKey(const ValueKey('background-choice-cosmic')),
+        // 209: the background options live behind the row's focused sheet.
+        await tester.tap(
+          find.byKey(const ValueKey('settings-row-background')),
         );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
         await tester.tap(
           find.byKey(const ValueKey('background-choice-cosmic')),
         );
         await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 400));
 
         expect(
           await secureKeyStore.read(BackgroundPreference.storageKey),

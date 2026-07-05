@@ -715,6 +715,12 @@ class AppLocalizationsAr extends AppLocalizations {
   String get settings_title => 'الإعدادات';
 
   @override
+  String get settings_section_identity => 'الهوية';
+
+  @override
+  String get settings_section_preferences => 'التفضيلات';
+
+  @override
   String get settings_background => 'الخلفية';
 
   @override

@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -32,7 +33,10 @@ import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_set
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 import 'package:flutter_app/features/settings/application/upload_profile_picture_use_case.dart';
 import 'package:flutter_app/features/settings/presentation/navigation/settings_route_transition.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/background_choice_control.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/image_quality_toggle.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_introduction_debug_card.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/settings_recovery_phrase_card.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_transport_diagnostics_card.dart';
 import 'settings_screen.dart';
 
@@ -56,6 +60,14 @@ class SettingsWired extends StatefulWidget {
   final AccountMigrationSizeGate? accountMigrationSizeGate;
   final bool showNavigationBar;
 
+  /// 209 — host-built QR entries (the orbit host wraps its existing
+  /// `_onMyQR`/`_onScanQR`; the returned Future completes when the pushed QR
+  /// route pops, releasing the single-flight latch). The tiles render ONLY
+  /// when BOTH are supplied (INV-209-1) — a host that cannot supply the
+  /// scanner dependency bundle simply gets no tiles (spec §7.1).
+  final Future<void> Function()? onMyQrRequested;
+  final Future<void> Function()? onScanQrRequested;
+
   const SettingsWired({
     super.key,
     required this.identityRepo,
@@ -73,6 +85,8 @@ class SettingsWired extends StatefulWidget {
     this.accountMigrationRunTransfer,
     this.accountMigrationSizeGate,
     this.showNavigationBar = true,
+    this.onMyQrRequested,
+    this.onScanQrRequested,
   });
 
   @override
@@ -97,6 +111,19 @@ class _SettingsWiredState extends State<SettingsWired> {
   List<IntroductionModel> _debugIntroductions = const [];
   bool _isLoadingDebugIntroductions = false;
   String? _debugIntroductionsError;
+
+  // 209 — single-flight latch for the host-built QR entries (mirrors orbit's
+  // `_settingsRouteActive`): held while the pushed QR route is up, released
+  // when the host's Future completes (route pop / stack teardown).
+  bool _qrRouteActive = false;
+
+  // 209 TC-209-36 — single-flight latch for the move-account route.
+  bool _moveRouteActive = false;
+
+  // 209 — rebuilds the open recovery sheet when page-owned mnemonic state
+  // changes outside a sheet gesture (the 2s copy-revert timer). Null when no
+  // recovery sheet is open.
+  VoidCallback? _recoverySheetTick;
 
   @override
   void initState() {
@@ -168,6 +195,9 @@ class _SettingsWiredState extends State<SettingsWired> {
 
     _mnemonicCopyTimer = Timer(const Duration(seconds: 2), () {
       if (mounted) setState(() => _isMnemonicCopied = false);
+      // 209: the card now lives inside a modal sheet whose StatefulBuilder
+      // does not see page setState — poke it so "Copied!" reverts in place.
+      _recoverySheetTick?.call();
     });
   }
 
@@ -504,7 +534,161 @@ class _SettingsWiredState extends State<SettingsWired> {
     Navigator.of(context).pop();
   }
 
+  // 209 — funnels both QR tiles through the single-flight latch: a second tap
+  // (same tile or the sibling) is swallowed while the pushed route is up.
+  Future<void> _runQrEntry(Future<void> Function() entry) async {
+    if (_qrRouteActive) return;
+    _qrRouteActive = true;
+    try {
+      await entry();
+    } finally {
+      _qrRouteActive = false;
+    }
+  }
+
+  /// 209 — shared modal-sheet shell for the row sub-surfaces: `surfaceBase`
+  /// panel with a 16px top radius, re-providing the readable-tone Theme
+  /// extension (a modal route does not inherit AmbientBackground's — the
+  /// FriendPicker precedent).
+  Future<void> _showSettingsSheet({
+    required Widget Function(BuildContext sheetContext, StateSetter setSheetState)
+        builder,
+  }) {
+    return showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      // The hosted controls (4-option background chooser, recovery card) are
+      // taller than the default sheet cap — size to content, scroll past it.
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          final theme = Theme.of(context);
+          final readableColors = BackgroundReadableColors.resolve(
+            _currentBackgroundPreference,
+          );
+          return Theme(
+            data: theme.copyWith(
+              extensions: [
+                ...theme.extensions.values.where(
+                  (extension) => extension is! BackgroundReadableColors,
+                ),
+                readableColors,
+              ],
+            ),
+            child: Container(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.85,
+              ),
+              decoration: BoxDecoration(
+                color: readableColors.surfaceBase,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(16),
+                ),
+                border: Border(
+                  top: BorderSide(color: readableColors.divider),
+                ),
+              ),
+              padding: const EdgeInsets.only(top: 16, bottom: 16),
+              child: SafeArea(
+                top: false,
+                child: SingleChildScrollView(
+                  child: builder(sheetContext, setSheetState),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _openBackgroundSheet() {
+    return _showSettingsSheet(
+      builder: (sheetContext, setSheetState) => BackgroundChoiceControl(
+        value: _currentBackgroundPreference,
+        errorText: _backgroundPreferenceError,
+        onChanged: (newPreference) async {
+          // The EXISTING handler is the single mechanism (persist + shell
+          // propagation + failure revert + telemetry). On success the sheet
+          // closes to the updated row; on failure it stays up with the error.
+          await _onBackgroundPreferenceChanged(newPreference);
+          if (!mounted || !sheetContext.mounted) return;
+          if (_backgroundPreferenceError != null) {
+            setSheetState(() {});
+            return;
+          }
+          Navigator.of(sheetContext).pop();
+        },
+      ),
+    );
+  }
+
+  Future<void> _openPhotoQualitySheet() {
+    final l10n = AppLocalizations.of(context)!;
+    return _showSettingsSheet(
+      builder: (sheetContext, setSheetState) => ImageQualityToggle(
+        value: _currentQuality,
+        label: l10n.settings_photo_quality,
+        onChanged: (newQuality) async {
+          await _onQualityChanged(newQuality);
+          if (!mounted || !sheetContext.mounted) return;
+          Navigator.of(sheetContext).pop();
+        },
+      ),
+    );
+  }
+
+  Future<void> _openVideoQualitySheet() {
+    final l10n = AppLocalizations.of(context)!;
+    return _showSettingsSheet(
+      builder: (sheetContext, setSheetState) => ImageQualityToggle(
+        value: _currentVideoQuality,
+        label: l10n.settings_video_quality,
+        icon: Icons.videocam,
+        onChanged: (newQuality) async {
+          await _onVideoQualityChanged(newQuality);
+          if (!mounted || !sheetContext.mounted) return;
+          Navigator.of(sheetContext).pop();
+        },
+      ),
+    );
+  }
+
+  Future<void> _openRecoverySheet() {
+    final words = _identity?.mnemonic12.split(' ') ?? const <String>[];
+    if (words.length != 12) return Future.value();
+    return _showSettingsSheet(
+      builder: (sheetContext, setSheetState) {
+        _recoverySheetTick = () => setSheetState(() {});
+        return SettingsRecoveryPhraseCard(
+          words: words,
+          isRevealed: _isMnemonicRevealed,
+          isCopied: _isMnemonicCopied,
+          onToggleReveal: () {
+            _onToggleMnemonic();
+            setSheetState(() {});
+          },
+          onCopy: () {
+            _onCopyMnemonic();
+            setSheetState(() {});
+          },
+          onHide: () {
+            _onHideMnemonic();
+            setSheetState(() {});
+          },
+        );
+      },
+    ).whenComplete(() {
+      _recoverySheetTick = null;
+      // Session hygiene: re-blur for the next open — the phrase is NEVER
+      // rendered on the One-Screen page itself (TC-209-29).
+      if (mounted) _onHideMnemonic();
+    });
+  }
+
   void _onMoveAccountToNewPhone() {
+    if (_moveRouteActive) return;
+    _moveRouteActive = true;
     emitFlowEvent(
       layer: 'FL',
       event: 'SETTINGS_FL_MOVE_ACCOUNT_NAVIGATE',
@@ -513,20 +697,24 @@ class _SettingsWiredState extends State<SettingsWired> {
       },
     );
 
-    Navigator.of(context).push(
-      buildSettingsSlideUpRoute<void>(
-        builder:
-            widget.moveAccountRouteBuilder ??
-            (_) => AccountMigrationJourneyWired.oldPhone(
-              secureKeyStore: widget.secureKeyStore,
-              identityRepository: widget.identityRepo,
-              runTransfer: widget.accountMigrationRunTransfer,
-              sizeGate: widget.accountMigrationSizeGate,
-              backgroundPreference: _currentBackgroundPreference,
-            ),
-        settings: const RouteSettings(name: 'account-migration-old-phone'),
-      ),
-    );
+    Navigator.of(context)
+        .push(
+          buildSettingsSlideUpRoute<void>(
+            builder:
+                widget.moveAccountRouteBuilder ??
+                (_) => AccountMigrationJourneyWired.oldPhone(
+                  secureKeyStore: widget.secureKeyStore,
+                  identityRepository: widget.identityRepo,
+                  runTransfer: widget.accountMigrationRunTransfer,
+                  sizeGate: widget.accountMigrationSizeGate,
+                  backgroundPreference: _currentBackgroundPreference,
+                ),
+            settings: const RouteSettings(name: 'account-migration-old-phone'),
+          ),
+        )
+        .whenComplete(() {
+      _moveRouteActive = false;
+    });
   }
 
   /// Builds the debug-only settings section. Only rendered in [kDebugMode].
@@ -582,6 +770,10 @@ class _SettingsWiredState extends State<SettingsWired> {
   @override
   Widget build(BuildContext context) {
     final identity = _identity;
+    // INV-209-1: the tiles are a capability PAIR — a host supplying only one
+    // entry gets no tiles at all (no asymmetric single tile).
+    final canHostQr =
+        widget.onMyQrRequested != null && widget.onScanQrRequested != null;
 
     return Scaffold(
       body: SettingsScreen(
@@ -589,23 +781,24 @@ class _SettingsWiredState extends State<SettingsWired> {
         peerId: identity?.peerId,
         avatarBytes: _pickedAvatarBytes ?? identity?.avatarBlob,
         mnemonic: identity?.mnemonic12,
-        isMnemonicRevealed: _isMnemonicRevealed,
         isPeerIdCopied: _isPeerIdCopied,
-        isMnemonicCopied: _isMnemonicCopied,
         onBack: _onBack,
         onPickAvatar: _onPickAvatar,
         onUsernameChanged: _onUsernameChanged,
         onCopyPeerId: _onCopyPeerId,
-        onToggleMnemonic: _onToggleMnemonic,
-        onCopyMnemonic: _onCopyMnemonic,
-        onHideMnemonic: _onHideMnemonic,
+        onMyQr: canHostQr
+            ? () => _runQrEntry(widget.onMyQrRequested!)
+            : null,
+        onScan: canHostQr
+            ? () => _runQrEntry(widget.onScanQrRequested!)
+            : null,
+        onOpenBackgroundSheet: _openBackgroundSheet,
+        onOpenPhotoQualitySheet: _openPhotoQualitySheet,
+        onOpenVideoQualitySheet: _openVideoQualitySheet,
+        onOpenRecoverySheet: _openRecoverySheet,
         currentBackgroundPreference: _currentBackgroundPreference,
-        onBackgroundPreferenceChanged: _onBackgroundPreferenceChanged,
-        backgroundPreferenceErrorText: _backgroundPreferenceError,
         currentQuality: _currentQuality,
-        onQualityChanged: _onQualityChanged,
         currentVideoQuality: _currentVideoQuality,
-        onVideoQualityChanged: _onVideoQualityChanged,
         isNearbySharingEnabled: _postsPrivacySettings.sharingEnabled,
         onNearbySharingChanged: _onNearbySharingChanged,
         onMoveAccountToNewPhone: identity == null

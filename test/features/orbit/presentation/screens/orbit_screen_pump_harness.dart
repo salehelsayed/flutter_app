@@ -14,8 +14,6 @@ Widget buildOrbitScreenHarness({
   OrbitHeaderProjection header = const OrbitHeaderProjection(),
   OrbitViewProjection list = const OrbitViewProjection(),
   VoidCallback? onToggleView,
-  VoidCallback? onMyQR,
-  VoidCallback? onScanQR,
   ValueChanged<bool>? onInnerEdit,
   Locale locale = const Locale('en'),
 }) {
@@ -37,8 +35,6 @@ Widget buildOrbitScreenHarness({
       searchTriggerAnimation: const AlwaysStoppedAnimation<double>(0),
       onClose: () {},
       onFriendTap: (_) {},
-      onMyQR: onMyQR ?? () {},
-      onScanQR: onScanQR ?? () {},
       onSearchOpen: () {},
       onSearchClose: () {},
       onSearchChanged: (_) {},

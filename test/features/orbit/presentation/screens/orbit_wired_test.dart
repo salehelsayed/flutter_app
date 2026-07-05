@@ -863,7 +863,7 @@ void main() {
     );
 
     testWidgets(
-      'orbit chrome exposes QR entries on both surfaces; the header has no pills',
+      'orbit surfaces carry no QR chrome and no header pills (209 retirement)',
       (tester) async {
         setLargeTestSurface(tester);
         suppressOverflowErrors();
@@ -875,17 +875,17 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
         await tester.pump(const Duration(milliseconds: 100));
 
-        // 196: the QR entries are top chrome (not header pills), present on the
-        // Inner-Circle default surface...
-        expect(find.byKey(const ValueKey('orbit-my-qr-button')), findsOneWidget);
-        expect(find.byKey(const ValueKey('orbit-scan-button')), findsOneWidget);
+        // 209: the 196 chrome pair retired to the Settings tiles — absent on
+        // the Inner-Circle default surface...
+        expect(find.byKey(const ValueKey('orbit-my-qr-button')), findsNothing);
+        expect(find.byKey(const ValueKey('orbit-scan-button')), findsNothing);
 
         await switchToAllChats(tester);
 
-        // ...and on the all-chats surface too. The header carries NO QR pills
-        // (Semantics labels create no Text nodes).
-        expect(find.byKey(const ValueKey('orbit-my-qr-button')), findsOneWidget);
-        expect(find.byKey(const ValueKey('orbit-scan-button')), findsOneWidget);
+        // ...and on the all-chats surface too, where the header also carries
+        // NO QR pills (196 INV-196-2 outcome preserved).
+        expect(find.byKey(const ValueKey('orbit-my-qr-button')), findsNothing);
+        expect(find.byKey(const ValueKey('orbit-scan-button')), findsNothing);
         expect(find.text('My QR'), findsNothing);
         expect(find.text('Scan'), findsNothing);
       },

@@ -249,8 +249,6 @@ class _OrbitRouteScreenState extends State<_OrbitRouteScreen> {
       viewMode: OrbitViewMode.innerCircle,
       onClose: () => Navigator.of(context).maybePop(),
       onFriendTap: (_) {},
-      onMyQR: () {},
-      onScanQR: () {},
       onSearchOpen: () {},
       onSearchClose: () {},
       onSearchChanged: (_) {},

@@ -9,6 +9,7 @@ import 'package:flutter_app/features/identity/presentation/widgets/daylight_lago
 import 'package:flutter_app/features/settings/application/background_preference_use_cases.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_screen.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/background_choice_control.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -55,12 +56,31 @@ void main() {
               username: 'Alice',
               peerId: '12D3KooWSmokePeer',
               currentBackgroundPreference: currentPreference,
-              onBackgroundPreferenceChanged: (preference) async {
-                await saveBackgroundPreference(
-                  secureKeyStore: secureKeyStore,
-                  preference: preference,
+              // 209: the inline chooser retired — the row opens a focused
+              // sheet hosting the same BackgroundChoiceControl (mirrors the
+              // SettingsWired sheet wiring at the pure-UI level).
+              onOpenBackgroundSheet: () {
+                showModalBottomSheet<void>(
+                  context: context,
+                  backgroundColor: Colors.transparent,
+                  builder: (sheetContext) => Container(
+                    color: Colors.black,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    child: BackgroundChoiceControl(
+                      value: currentPreference,
+                      onChanged: (preference) async {
+                        await saveBackgroundPreference(
+                          secureKeyStore: secureKeyStore,
+                          preference: preference,
+                        );
+                        setRouteState(() => currentPreference = preference);
+                        if (sheetContext.mounted) {
+                          Navigator.of(sheetContext).pop();
+                        }
+                      },
+                    ),
+                  ),
                 );
-                setRouteState(() => currentPreference = preference);
               },
               onBack: () => Navigator.of(context).pop(),
               onSwitchView: (_) {},
@@ -113,22 +133,56 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 100));
 
+    Future<void> openSettingsPage() async {
+      await tester.tap(find.byKey(const ValueKey('open-settings-smoke')));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 80));
+      }
+    }
+
+    Future<void> openBackgroundSheet() async {
+      await tester.tap(find.byKey(const ValueKey('settings-row-background')));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 80));
+      }
+    }
+
+    Future<void> selectBackground(String optionKey) async {
+      await openBackgroundSheet();
+      await tester.ensureVisible(find.byKey(ValueKey(optionKey)));
+      await tester.tap(find.byKey(ValueKey(optionKey)));
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 80));
+      }
+    }
+
+    Future<void> popToFeed() async {
+      await tester.tap(find.byIcon(Icons.chevron_left));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 80));
+      }
+    }
+
     expect(find.byType(FeedScreen), findsOneWidget);
     expect(find.byType(AmbientBackground), findsOneWidget);
     expect(find.byType(CosmicBackground), findsNothing);
     expect(find.byType(CosmicBackgroundMirrored), findsNothing);
 
-    await tester.tap(find.byKey(const ValueKey('open-settings-smoke')));
-    for (var i = 0; i < 10; i++) {
-      await tester.pump(const Duration(milliseconds: 80));
-    }
+    await openSettingsPage();
 
     expect(find.text('Settings'), findsOneWidget);
     expect(find.text('Background'), findsOneWidget);
     expect(find.text('Default'), findsOneWidget);
+
+    // The options live behind the row's focused sheet now.
+    await openBackgroundSheet();
     expect(find.text('Cosmic'), findsOneWidget);
     expect(find.text('Mirrored cosmic'), findsOneWidget);
     expect(find.text('Daylight Lagoon'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('background-choice-default-selected-icon')),
+      findsOneWidget,
+    );
 
     await tester.ensureVisible(
       find.byKey(const ValueKey('background-choice-daylight-lagoon')),
@@ -136,23 +190,17 @@ void main() {
     await tester.tap(
       find.byKey(const ValueKey('background-choice-daylight-lagoon')),
     );
-    await tester.pump(const Duration(milliseconds: 100));
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 80));
+    }
     expect(
       await secureKeyStore.read(BackgroundPreference.storageKey),
       'daylight_lagoon',
     );
-    expect(
-      find.byKey(
-        const ValueKey('background-choice-daylight-lagoon-selected-icon'),
-      ),
-      findsOneWidget,
-    );
+    expect(find.text('Daylight Lagoon'), findsOneWidget); // row value
     expect(find.byType(DaylightLagoonBackground), findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.chevron_left));
-    for (var i = 0; i < 10; i++) {
-      await tester.pump(const Duration(milliseconds: 80));
-    }
+    await popToFeed();
 
     expect(find.byType(FeedScreen), findsOneWidget);
     expect(find.byType(AmbientBackground), findsOneWidget);
@@ -160,108 +208,60 @@ void main() {
     expect(find.byType(CosmicBackground), findsNothing);
     expect(find.byType(CosmicBackgroundMirrored), findsNothing);
 
-    await tester.tap(find.byKey(const ValueKey('open-settings-smoke')));
-    for (var i = 0; i < 10; i++) {
-      await tester.pump(const Duration(milliseconds: 80));
-    }
-
+    await openSettingsPage();
     expect(find.text('Background'), findsOneWidget);
+    await openBackgroundSheet();
     expect(
       find.byKey(
         const ValueKey('background-choice-daylight-lagoon-selected-icon'),
       ),
       findsOneWidget,
     );
-
     await tester.ensureVisible(
       find.byKey(const ValueKey('background-choice-cosmic-mirrored')),
     );
     await tester.tap(
       find.byKey(const ValueKey('background-choice-cosmic-mirrored')),
     );
-    await tester.pump(const Duration(milliseconds: 100));
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 80));
+    }
     expect(
       await secureKeyStore.read(BackgroundPreference.storageKey),
       'cosmic_mirrored',
     );
-    expect(
-      find.byKey(
-        const ValueKey('background-choice-cosmic-mirrored-selected-icon'),
-      ),
-      findsOneWidget,
-    );
+    expect(find.text('Mirrored cosmic'), findsOneWidget); // row value
 
-    await tester.tap(find.byIcon(Icons.chevron_left));
-    for (var i = 0; i < 10; i++) {
-      await tester.pump(const Duration(milliseconds: 80));
-    }
+    await popToFeed();
 
     expect(find.byType(FeedScreen), findsOneWidget);
     expect(find.byType(AmbientBackground), findsOneWidget);
     expect(find.byType(CosmicBackground), findsNothing);
     expect(find.byType(CosmicBackgroundMirrored), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('open-settings-smoke')));
-    for (var i = 0; i < 10; i++) {
-      await tester.pump(const Duration(milliseconds: 80));
-    }
-
+    await openSettingsPage();
     expect(find.text('Background'), findsOneWidget);
-    expect(
-      find.byKey(
-        const ValueKey('background-choice-cosmic-mirrored-selected-icon'),
-      ),
-      findsOneWidget,
-    );
-
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('background-choice-cosmic')),
-    );
-    await tester.tap(find.byKey(const ValueKey('background-choice-cosmic')));
-    await tester.pump(const Duration(milliseconds: 100));
+    await selectBackground('background-choice-cosmic');
     expect(
       await secureKeyStore.read(BackgroundPreference.storageKey),
       'cosmic',
     );
-    expect(
-      find.byKey(const ValueKey('background-choice-cosmic-selected-icon')),
-      findsOneWidget,
-    );
+    expect(find.text('Cosmic'), findsOneWidget); // row value
 
-    await tester.tap(find.byIcon(Icons.chevron_left));
-    for (var i = 0; i < 10; i++) {
-      await tester.pump(const Duration(milliseconds: 80));
-    }
+    await popToFeed();
 
     expect(find.byType(FeedScreen), findsOneWidget);
     expect(find.byType(CosmicBackground), findsOneWidget);
     expect(find.byType(CosmicBackgroundMirrored), findsNothing);
 
-    await tester.tap(find.byKey(const ValueKey('open-settings-smoke')));
-    for (var i = 0; i < 10; i++) {
-      await tester.pump(const Duration(milliseconds: 80));
-    }
-
-    expect(find.text('Background'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('background-choice-cosmic-selected-icon')),
-      findsOneWidget,
-    );
-
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('background-choice-default')),
-    );
-    await tester.tap(find.byKey(const ValueKey('background-choice-default')));
-    await tester.pump(const Duration(milliseconds: 100));
+    await openSettingsPage();
+    await selectBackground('background-choice-default');
     expect(
       await secureKeyStore.read(BackgroundPreference.storageKey),
       'default',
     );
 
-    await tester.tap(find.byIcon(Icons.chevron_left));
-    for (var i = 0; i < 10; i++) {
-      await tester.pump(const Duration(milliseconds: 80));
-    }
+    await popToFeed();
 
     expect(find.byType(FeedScreen), findsOneWidget);
     expect(find.byType(CosmicBackground), findsNothing);

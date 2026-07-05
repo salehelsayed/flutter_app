@@ -7,10 +7,7 @@ import 'package:flutter_app/features/identity/presentation/widgets/daylight_lago
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_screen.dart';
-import 'package:flutter_app/features/settings/presentation/widgets/background_choice_control.dart';
-import 'package:flutter_app/features/settings/presentation/widgets/settings_peer_id_card.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_profile_section.dart';
-import 'package:flutter_app/features/settings/presentation/widgets/settings_recovery_phrase_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 
 void main() {
@@ -18,18 +15,20 @@ void main() {
     String username = 'Alice',
     String? peerId,
     String? mnemonic,
-    bool isMnemonicRevealed = false,
     bool isPeerIdCopied = false,
-    bool isMnemonicCopied = false,
     VoidCallback? onBack,
     BackgroundPreference backgroundPreference =
         BackgroundPreference.defaultBackground,
     BackgroundReadableTone? readableToneOverride,
-    ValueChanged<BackgroundPreference>? onBackgroundPreferenceChanged,
-    bool showBackgroundChoice = true,
-    String? backgroundPreferenceErrorText,
-    ValueChanged<ImageQualityPreference>? onQualityChanged,
-    ValueChanged<ImageQualityPreference>? onVideoQualityChanged,
+    VoidCallback? onMyQr,
+    VoidCallback? onScan,
+    VoidCallback? onOpenBackgroundSheet,
+    VoidCallback? onOpenPhotoQualitySheet,
+    VoidCallback? onOpenVideoQualitySheet,
+    VoidCallback? onOpenRecoverySheet,
+    ImageQualityPreference currentQuality = ImageQualityPreference.compressed,
+    ImageQualityPreference currentVideoQuality =
+        ImageQualityPreference.original,
     bool isNearbySharingEnabled = false,
     ValueChanged<bool>? onNearbySharingChanged,
     VoidCallback? onMoveAccountToNewPhone,
@@ -44,19 +43,17 @@ void main() {
           username: username,
           peerId: peerId,
           mnemonic: mnemonic,
-          isMnemonicRevealed: isMnemonicRevealed,
           isPeerIdCopied: isPeerIdCopied,
-          isMnemonicCopied: isMnemonicCopied,
           onBack: onBack,
           currentBackgroundPreference: backgroundPreference,
-          onBackgroundPreferenceChanged: showBackgroundChoice
-              ? onBackgroundPreferenceChanged ?? (_) {}
-              : null,
-          backgroundPreferenceErrorText: backgroundPreferenceErrorText,
-          currentQuality: ImageQualityPreference.compressed,
-          onQualityChanged: onQualityChanged,
-          currentVideoQuality: ImageQualityPreference.original,
-          onVideoQualityChanged: onVideoQualityChanged,
+          onMyQr: onMyQr,
+          onScan: onScan,
+          onOpenBackgroundSheet: onOpenBackgroundSheet,
+          onOpenPhotoQualitySheet: onOpenPhotoQualitySheet,
+          onOpenVideoQualitySheet: onOpenVideoQualitySheet,
+          onOpenRecoverySheet: onOpenRecoverySheet,
+          currentQuality: currentQuality,
+          currentVideoQuality: currentVideoQuality,
           isNearbySharingEnabled: isNearbySharingEnabled,
           onNearbySharingChanged: onNearbySharingChanged,
           onMoveAccountToNewPhone: onMoveAccountToNewPhone,
@@ -69,13 +66,12 @@ void main() {
     );
   }
 
+  const twelveWords =
+      'one two three four five six seven eight nine ten eleven twelve';
+
   testWidgets('renders "Settings" title', (tester) async {
     await tester.pumpWidget(
-      wrap(
-        peerId: '12D3KooWTestPeer123',
-        mnemonic:
-            'one two three four five six seven eight nine ten eleven twelve',
-      ),
+      wrap(peerId: '12D3KooWTestPeer123', mnemonic: twelveWords),
     );
 
     expect(find.text('Settings'), findsOneWidget);
@@ -114,42 +110,38 @@ void main() {
     expect(backed, isTrue);
   });
 
-  testWidgets('renders profile section, peer ID card, recovery phrase card', (
-    tester,
-  ) async {
+  testWidgets('renders profile section and identity rows', (tester) async {
     await tester.pumpWidget(
       wrap(
         peerId: '12D3KooWTestPeer123',
-        mnemonic:
-            'one two three four five six seven eight nine ten eleven twelve',
+        mnemonic: twelveWords,
+        onOpenRecoverySheet: () {},
       ),
     );
 
     expect(find.byType(SettingsProfileSection), findsOneWidget);
-    expect(find.byType(SettingsPeerIdCard), findsOneWidget);
-    expect(find.byType(SettingsRecoveryPhraseCard), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-row-peer-id')), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-row-recovery')), findsOneWidget);
   });
 
-  testWidgets('hides peer ID card when peerId is null', (tester) async {
+  testWidgets('hides peer ID row when peerId is null', (tester) async {
+    await tester.pumpWidget(
+      wrap(peerId: null, mnemonic: twelveWords, onOpenRecoverySheet: () {}),
+    );
+
+    expect(find.byKey(const ValueKey('settings-row-peer-id')), findsNothing);
+  });
+
+  testWidgets('hides recovery row when mnemonic is null', (tester) async {
     await tester.pumpWidget(
       wrap(
-        peerId: null,
-        mnemonic:
-            'one two three four five six seven eight nine ten eleven twelve',
+        peerId: '12D3KooWTestPeer123',
+        mnemonic: null,
+        onOpenRecoverySheet: () {},
       ),
     );
 
-    expect(find.byType(SettingsPeerIdCard), findsNothing);
-  });
-
-  testWidgets('hides recovery phrase card when mnemonic is null', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      wrap(peerId: '12D3KooWTestPeer123', mnemonic: null),
-    );
-
-    expect(find.byType(SettingsRecoveryPhraseCard), findsNothing);
+    expect(find.byKey(const ValueKey('settings-row-recovery')), findsNothing);
   });
 
   testWidgets('renders FeedNavigationBar', (tester) async {
@@ -158,35 +150,34 @@ void main() {
     expect(find.byType(FeedNavigationBar), findsOneWidget);
   });
 
-  testWidgets('renders background choice with default selected', (
+  testWidgets('background row shows the active choice at rest', (
     tester,
   ) async {
-    await tester.pumpWidget(wrap(peerId: '12D3KooWTestPeer123'));
+    await tester.pumpWidget(
+      wrap(peerId: '12D3KooWTestPeer123', onOpenBackgroundSheet: () {}),
+    );
 
-    expect(find.byType(BackgroundChoiceControl), findsOneWidget);
-    expect(find.text('Background'), findsOneWidget);
-    expect(find.text('Default'), findsOneWidget);
-    expect(find.text('Cosmic'), findsOneWidget);
     expect(
-      find.byKey(const ValueKey('background-choice-default-selected-icon')),
+      find.byKey(const ValueKey('settings-row-background')),
       findsOneWidget,
     );
+    expect(find.text('Background'), findsOneWidget);
+    expect(find.text('Default'), findsOneWidget);
+    // The always-expanded inline chooser is retired: no other option labels.
+    expect(find.text('Cosmic'), findsNothing);
   });
 
-  testWidgets('renders cosmic selected in picker', (tester) async {
+  testWidgets('background row tap opens the sheet callback', (tester) async {
+    var opened = 0;
     await tester.pumpWidget(
       wrap(
         peerId: '12D3KooWTestPeer123',
-        backgroundPreference: BackgroundPreference.cosmic,
+        onOpenBackgroundSheet: () => opened++,
       ),
     );
 
-    expect(find.byType(BackgroundChoiceControl), findsOneWidget);
-    expect(find.text('Cosmic'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('background-choice-cosmic-selected-icon')),
-      findsOneWidget,
-    );
+    await tester.tap(find.byKey(const ValueKey('settings-row-background')));
+    expect(opened, 1);
   });
 
   testWidgets('renders selected cosmic as the full-screen background', (
@@ -196,14 +187,12 @@ void main() {
       wrap(
         peerId: '12D3KooWTestPeer123',
         backgroundPreference: BackgroundPreference.cosmic,
+        onOpenBackgroundSheet: () {},
       ),
     );
 
     expect(find.byType(CosmicBackground), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('background-choice-cosmic-selected-icon')),
-      findsOneWidget,
-    );
+    expect(find.text('Cosmic'), findsOneWidget);
   });
 
   testWidgets(
@@ -213,16 +202,12 @@ void main() {
         wrap(
           peerId: '12D3KooWTestPeer123',
           backgroundPreference: BackgroundPreference.daylightLagoon,
+          onOpenBackgroundSheet: () {},
         ),
       );
 
       expect(find.byType(DaylightLagoonBackground), findsOneWidget);
-      expect(
-        find.byKey(
-          const ValueKey('background-choice-daylight-lagoon-selected-icon'),
-        ),
-        findsOneWidget,
-      );
+      expect(find.text('Daylight Lagoon'), findsOneWidget);
 
       final title = tester.widget<Text>(find.text('Settings'));
       expect(
@@ -232,7 +217,7 @@ void main() {
     },
   );
 
-  testWidgets('daylight full page includes every normal Settings section', (
+  testWidgets('daylight full page includes every One-Screen section', (
     tester,
   ) async {
     const peerId =
@@ -245,40 +230,38 @@ void main() {
         mnemonic:
             'abandon ability able about above absent absorb abstract absurd abuse access accident',
         backgroundPreference: BackgroundPreference.daylightLagoon,
-        isMnemonicRevealed: true,
         isPeerIdCopied: true,
-        isMnemonicCopied: true,
-        onQualityChanged: (_) {},
-        onVideoQualityChanged: (_) {},
+        onMyQr: () {},
+        onScan: () {},
+        onOpenBackgroundSheet: () {},
+        onOpenPhotoQualitySheet: () {},
+        onOpenVideoQualitySheet: () {},
+        onOpenRecoverySheet: () {},
         isNearbySharingEnabled: true,
         onNearbySharingChanged: (_) {},
+        onMoveAccountToNewPhone: () {},
       ),
     );
 
     expect(find.byType(DaylightLagoonBackground), findsOneWidget);
     expect(find.byType(SettingsProfileSection), findsOneWidget);
-    expect(find.byType(BackgroundChoiceControl), findsOneWidget);
-    expect(find.byType(SettingsPeerIdCard), findsOneWidget);
-    expect(find.byType(SettingsRecoveryPhraseCard), findsOneWidget);
     expect(find.byType(FeedNavigationBar), findsOneWidget);
     expect(find.text('@AliceTheLightThemeTester'), findsOneWidget);
     expect(find.text(peerId), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-my-qr-tile')), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings-scan-tile')), findsOneWidget);
+    expect(find.text('IDENTITY'), findsOneWidget);
+    expect(find.text('PREFERENCES'), findsOneWidget);
     expect(find.text('Photo Quality'), findsOneWidget);
     expect(find.text('Video Quality'), findsOneWidget);
     expect(find.text('Share People Nearby'), findsOneWidget);
     expect(find.text('On'), findsOneWidget);
     expect(find.text('RECOVERY PHRASE'), findsOneWidget);
-    expect(find.text('Copied!'), findsOneWidget);
-    expect(find.text('Hide'), findsOneWidget);
-    expect(
-      find.byKey(
-        const ValueKey('background-choice-daylight-lagoon-selected-icon'),
-      ),
-      findsOneWidget,
-    );
+    // The peer-id copy trailing reflects the copied state.
+    expect(find.byIcon(Icons.check), findsOneWidget);
   });
 
-  testWidgets('renders move account action when callback is supplied', (
+  testWidgets('renders move account row when callback is supplied', (
     tester,
   ) async {
     var movePressed = false;
@@ -291,14 +274,6 @@ void main() {
     );
 
     expect(find.text('Move account to new phone'), findsOneWidget);
-    expect(
-      find.text(
-        'Scan the migration QR shown on your new phone to move this account.',
-      ),
-      findsOneWidget,
-    );
-    expect(find.text('Start move'), findsOneWidget);
-    expect(find.textContaining('Show a migration QR'), findsNothing);
 
     await tester.ensureVisible(
       find.byKey(const ValueKey('settings-move-account-action')),
@@ -311,7 +286,7 @@ void main() {
     expect(movePressed, isTrue);
   });
 
-  testWidgets('daylight full page handles optional Settings sections absent', (
+  testWidgets('daylight full page handles optional sections absent', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -319,18 +294,15 @@ void main() {
         peerId: null,
         mnemonic: null,
         backgroundPreference: BackgroundPreference.daylightLagoon,
-        showBackgroundChoice: false,
-        onQualityChanged: null,
-        onVideoQualityChanged: null,
-        onNearbySharingChanged: null,
       ),
     );
 
     expect(find.byType(DaylightLagoonBackground), findsOneWidget);
     expect(find.byType(SettingsProfileSection), findsOneWidget);
-    expect(find.byType(SettingsPeerIdCard), findsNothing);
-    expect(find.byType(SettingsRecoveryPhraseCard), findsNothing);
-    expect(find.byType(BackgroundChoiceControl), findsNothing);
+    expect(find.byKey(const ValueKey('settings-row-peer-id')), findsNothing);
+    expect(find.byKey(const ValueKey('settings-row-recovery')), findsNothing);
+    expect(find.byKey(const ValueKey('settings-row-background')), findsNothing);
+    expect(find.byKey(const ValueKey('settings-my-qr-tile')), findsNothing);
     expect(find.text('Photo Quality'), findsNothing);
     expect(find.text('Video Quality'), findsNothing);
     expect(find.text('Share People Nearby'), findsNothing);

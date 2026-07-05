@@ -697,6 +697,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settings_title => 'Settings';
 
   @override
+  String get settings_section_identity => 'IDENTITY';
+
+  @override
+  String get settings_section_preferences => 'PREFERENCES';
+
+  @override
   String get settings_background => 'Background';
 
   @override

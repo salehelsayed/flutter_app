@@ -493,10 +493,10 @@ void main() {
       identityRepo.seed(testIdentity);
       contactRepo.seed([testContact]);
 
-      // 196: the QR entries left the header for the top-center chrome strip
-      // (toggle + pair), so the list's first content clears the strip
-      // VERTICALLY. 203 B5 deleted the title-only FriendsListHeader, so the
-      // first content is now the FriendsFilterToggle — the invariant is
+      // The list's first content clears the top chrome strip VERTICALLY (the
+      // top-left toggle at safeTop+8; 209 retired the QR pair that used to
+      // share the strip). 203 B5 deleted the title-only FriendsListHeader, so
+      // the first content is now the FriendsFilterToggle — the invariant is
       // re-anchored, not weakened. Font-independent (Ahem inflation cannot
       // break it), and it holds in both directions.
       for (final locale in const [Locale('en'), Locale('ar')]) {
@@ -514,21 +514,17 @@ void main() {
         );
         final firstContentRect =
             tester.getRect(find.byType(FriendsFilterToggle));
-        final pairRect = tester
-            .getRect(find.byKey(const ValueKey('orbit-my-qr-button')))
-            .expandToInclude(
-              tester.getRect(find.byKey(const ValueKey('orbit-scan-button'))),
-            );
 
         expect(
           firstContentRect.top,
           greaterThanOrEqualTo(toggleRect.bottom),
           reason: '$locale: first list content overlaps the top chrome strip',
         );
+        // 209: the QR chrome pair retired — it must not resurface in the strip.
         expect(
-          firstContentRect.overlaps(pairRect),
-          isFalse,
-          reason: '$locale: first list content overlaps the QR chrome pair',
+          find.byKey(const ValueKey('orbit-my-qr-button')),
+          findsNothing,
+          reason: '$locale: retired QR chrome resurfaced',
         );
       }
     });

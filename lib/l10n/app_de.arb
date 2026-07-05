@@ -350,6 +350,8 @@
   "picker_search_contacts": "Kontakte suchen...",
   "picker_search_all": "Kontakte & Gruppen durchsuchen",
   "settings_title": "Einstellungen",
+  "settings_section_identity": "IDENTITÄT",
+  "settings_section_preferences": "PRÄFERENZEN",
   "settings_background": "Hintergrund",
   "settings_background_default": "Standard",
   "settings_background_default_desc": "Der aktuelle Umgebungs-Hintergrund.",

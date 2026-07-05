@@ -11,14 +11,14 @@
 ## Metrics
 | Metric | Full | Architecture | Delta |
 | --- | ---: | ---: | ---: |
-| nodes | 108385 | 42954 | -60.37% |
-| edges | 182964 | 67218 | -63.26% |
-| communities | 4677 | 921 | -80.31% |
-| source files | 5723 | 2229 | -61.05% |
-| avg edges per node | 1.6881 | 1.5649 | -7.30% |
-| avg nodes per community | 23.17 | 46.64 | +101.29% |
-| app-owned ratio | 0.4413 | 0.9621 | +118.01% |
-| noise ratio | 0.2066 | 0.0 | -100.00% |
+| nodes | 108461 | 43002 | -60.35% |
+| edges | 183127 | 67315 | -63.24% |
+| communities | 4705 | 919 | -80.47% |
+| source files | 5724 | 2230 | -61.04% |
+| avg edges per node | 1.6884 | 1.5654 | -7.29% |
+| avg nodes per community | 23.05 | 46.79 | +102.99% |
+| app-owned ratio | 0.4416 | 0.9621 | +117.87% |
+| noise ratio | 0.2065 | 0.0 | -100.00% |
 | unknown-source ratio | 0.0189 | 0.0379 | +100.53% |
 | top-10 hub noise ratio | 0.5 | 0.0 | -100.00% |
 
@@ -27,21 +27,21 @@ Full graph top hubs:
 - `sqlite3.c` (4359 edges, noise) `ios/Pods/SQLCipher/sqlite3.c`
 - `sqlite3.c` (4359 edges, noise) `macos/Pods/SQLCipher/sqlite3.c`
 - `_` (2064 edges, noise) `integration_test/group_multi_party_device_real_harness.dart`
-- `package:flutter_test/flutter_test.dart` (1055 edges, signal) ``
+- `package:flutter_test/flutter_test.dart` (1056 edges, signal) ``
 - `SQLITE_PRIVATE` (1036 edges, noise) `ios/Pods/SQLCipher/sqlite3.c`
 - `SQLITE_PRIVATE` (1036 edges, noise) `macos/Pods/SQLCipher/sqlite3.c`
-- `app_localizations.dart` (794 edges, signal) `lib/l10n/app_localizations.dart`
-- `app_localizations_ar.dart` (776 edges, signal) `lib/l10n/app_localizations_ar.dart`
-- `app_localizations_de.dart` (776 edges, signal) `lib/l10n/app_localizations_de.dart`
-- `app_localizations_en.dart` (776 edges, signal) `lib/l10n/app_localizations_en.dart`
+- `app_localizations.dart` (796 edges, signal) `lib/l10n/app_localizations.dart`
+- `app_localizations_ar.dart` (778 edges, signal) `lib/l10n/app_localizations_ar.dart`
+- `app_localizations_de.dart` (778 edges, signal) `lib/l10n/app_localizations_de.dart`
+- `app_localizations_en.dart` (778 edges, signal) `lib/l10n/app_localizations_en.dart`
 
 Architecture graph top hubs:
 - `group_multi_party_device_real_harness.dart` (2029 edges, signal) `integration_test/group_multi_party_device_real_harness.dart`
-- `package:flutter_test/flutter_test.dart` (1055 edges, signal) ``
+- `package:flutter_test/flutter_test.dart` (1056 edges, signal) ``
 - `group_multi_party_device_criteria.dart` (684 edges, signal) `integration_test/scripts/group_multi_party_device_criteria.dart`
 - `main.dart` (597 edges, signal) `lib/main.dart`
-- `dart:convert` (424 edges, signal) ``
-- `package:flutter/material.dart` (416 edges, signal) ``
+- `dart:convert` (425 edges, signal) ``
+- `package:flutter/material.dart` (417 edges, signal) ``
 - `group_multi_party_device_criteria_test.dart` (398 edges, signal) `test/integration/group_multi_party_device_criteria_test.dart`
 - `group_conversation_wired.dart` (373 edges, signal) `lib/features/groups/presentation/screens/group_conversation_wired.dart`
 - `package:flutter_app/core/utils/flow_event_emitter.dart` (360 edges, signal) ``

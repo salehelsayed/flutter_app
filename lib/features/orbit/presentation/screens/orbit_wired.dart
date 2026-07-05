@@ -635,6 +635,11 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               transportMetrics: widget.transportMetrics,
               accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
               accountMigrationSizeGate: widget.accountMigrationSizeGate,
+              // 209 — the Settings QR tiles run the SAME handlers the retired
+              // orbit chrome fed (bodies unchanged → INV-196-7 verbatim); the
+              // returned pop-futures drive Settings' single-flight latch.
+              onMyQrRequested: _onMyQR,
+              onScanQrRequested: _onScanQR,
             ),
           ),
         )
@@ -2217,8 +2222,11 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
   }
 
-  void _onMyQR() {
-    Navigator.of(context).push(
+  // 209: returns the push future (completes on pop) so the Settings-host
+  // latch can single-flight the entry; still assignable where a VoidCallback
+  // is expected (the display→scan cross-link).
+  Future<void> _onMyQR() {
+    return Navigator.of(context).push(
       buildConversationRoute(
         builder: (_) => QRDisplayWired(
           repo: widget.identityRepo,
@@ -2268,8 +2276,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     unawaited(_applyRouteChanges(changes));
   }
 
-  void _onScanQR() {
-    Navigator.of(context)
+  // 209: same Future-returning contract as [_onMyQR]; the `.then` keeps the
+  // post-scan `_applyRouteChanges` refresh and completes on scanner pop.
+  Future<void> _onScanQR() {
+    return Navigator.of(context)
         .push(
           buildConversationRoute(
             builder: (scannerContext) => QRScannerWired(
@@ -2436,8 +2446,6 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onClose: _onClose,
       onFriendTap: _onFriendTap,
       onFriendAvatarTap: _onFriendAvatarTap,
-      onMyQR: _onMyQR,
-      onScanQR: _onScanQR,
       onSearchOpen: _onSearchOpen,
       onSearchClose: _onSearchClose,
       onSearchChanged: _onSearchChanged,

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -321,6 +322,20 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
   }
 
+  // 209: rows open focused sub-sheets; helper mirrors the user gesture.
+  Future<void> openSheet(WidgetTester tester, String rowKey) async {
+    await tester.ensureVisible(find.byKey(ValueKey(rowKey)));
+    await tester.pump();
+    await tester.tap(find.byKey(ValueKey(rowKey)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+  }
+
+  Future<void> settleSheetClose(WidgetTester tester) async {
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 400));
+  }
+
   testWidgets('loads identity on init, displays peerId and username', (
     tester,
   ) async {
@@ -396,41 +411,61 @@ void main() {
     );
   });
 
-  testWidgets('copy peer ID: sets clipboard, shows check for 2s then reverts', (
+  testWidgets(
+    'copy peer ID: full ID on clipboard, shows check for 2s then reverts',
+    (tester) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final clipboardWrites = <String?>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (MethodCall call) async {
+          if (call.method == 'Clipboard.setData') {
+            clipboardWrites.add(
+              (call.arguments as Map<Object?, Object?>)['text'] as String?,
+            );
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+      await pumpScreen(tester, identityRepo: identityRepo);
+
+      // Initially shows copy icon (the peer-id row trailing).
+      expect(find.byIcon(Icons.copy), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.copy).first);
+      await tester.pump();
+
+      // TC-209-33: the FULL peer ID landed on the clipboard.
+      expect(clipboardWrites, ['12D3KooWMyPeer123']);
+
+      // Check icon appears, then reverts after the 2s timer.
+      expect(find.byIcon(Icons.check), findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byIcon(Icons.copy), findsOneWidget);
+      expect(find.byIcon(Icons.check), findsNothing);
+    },
+  );
+
+  testWidgets('reveal/hide mnemonic toggles visibility inside the sheet', (
     tester,
   ) async {
     final identityRepo = FakeIdentityRepository(makeIdentity());
     await pumpScreen(tester, identityRepo: identityRepo);
 
-    // Initially shows copy icon
-    expect(find.byIcon(Icons.copy), findsOneWidget);
-
-    // Tap copy
-    await tester.tap(find.byIcon(Icons.copy).first);
-    await tester.pump();
-
-    // Check icon appears
-    expect(find.byIcon(Icons.check), findsOneWidget);
-
-    // After 2 seconds timer fires, then pump for AnimatedSwitcher
-    await tester.pump(const Duration(seconds: 2));
-    await tester.pump(const Duration(milliseconds: 300));
-    expect(find.byIcon(Icons.copy), findsOneWidget);
-    expect(find.byIcon(Icons.check), findsNothing);
-  });
-
-  testWidgets('reveal/hide mnemonic toggles visibility', (tester) async {
-    final identityRepo = FakeIdentityRepository(makeIdentity());
-    await pumpScreen(tester, identityRepo: identityRepo);
-
-    // Scroll to make "Tap to reveal" visible
-    await tester.ensureVisible(find.text('Tap to reveal'));
-    await tester.pump();
+    // The phrase lives behind the recovery row's sub-sheet now.
+    expect(find.text('Tap to reveal'), findsNothing);
+    await openSheet(tester, 'settings-row-recovery');
 
     // Initially hidden
     expect(find.text('Tap to reveal'), findsOneWidget);
 
-    // Tap to reveal
     await tester.tap(find.text('Tap to reveal'));
     await tester.pump();
 
@@ -438,13 +473,7 @@ void main() {
     expect(find.text('Tap to reveal'), findsNothing);
     expect(find.text('abandon'), findsOneWidget);
 
-    // Scroll to make Hide button visible
-    await tester.ensureVisible(find.text('Hide'));
-    await tester.pump();
-
     expect(find.text('Hide'), findsOneWidget);
-
-    // Tap hide
     await tester.tap(find.text('Hide'));
     await tester.pump();
 
@@ -452,23 +481,16 @@ void main() {
     expect(find.text('Tap to reveal'), findsOneWidget);
   });
 
-  testWidgets('copy mnemonic: shows Copied! for 2s then reverts', (
+  testWidgets('copy mnemonic in sheet: shows Copied! for 2s then reverts', (
     tester,
   ) async {
     final identityRepo = FakeIdentityRepository(makeIdentity());
     await pumpScreen(tester, identityRepo: identityRepo);
 
-    // Scroll to and reveal
-    await tester.ensureVisible(find.text('Tap to reveal'));
-    await tester.pump();
+    await openSheet(tester, 'settings-row-recovery');
     await tester.tap(find.text('Tap to reveal'));
     await tester.pump();
 
-    // Scroll to Copy button
-    await tester.ensureVisible(find.text('Copy to clipboard'));
-    await tester.pump();
-
-    // Tap copy
     await tester.tap(find.text('Copy to clipboard'));
     await tester.pump();
 
@@ -503,7 +525,7 @@ void main() {
     expect(find.text('@Bob'), findsOneWidget);
   });
 
-  testWidgets('renders both Photo Quality and Video Quality toggles', (
+  testWidgets('renders both Photo Quality and Video Quality rows', (
     tester,
   ) async {
     final identityRepo = FakeIdentityRepository(makeIdentity());
@@ -511,6 +533,14 @@ void main() {
 
     expect(find.text('Photo Quality'), findsOneWidget);
     expect(find.text('Video Quality'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('settings-row-photo-quality')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('settings-row-video-quality')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('move account action opens old-phone migration route', (
@@ -534,6 +564,40 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
 
+    expect(find.text('Old-phone migration flow'), findsOneWidget);
+  });
+
+  testWidgets('TC-209-36 move-account double-tap pushes exactly one route', (
+    tester,
+  ) async {
+    final identityRepo = FakeIdentityRepository(makeIdentity());
+    var routeBuilds = 0;
+
+    await pumpScreen(
+      tester,
+      identityRepo: identityRepo,
+      moveAccountRouteBuilder: (_) {
+        routeBuilds++;
+        return const Scaffold(
+          body: Center(child: Text('Old-phone migration flow')),
+        );
+      },
+    );
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('settings-move-account-action')),
+    );
+    await tester.pump();
+    // Two taps within one frame budget (double-tap cadence).
+    await tester.tap(find.byKey(const ValueKey('settings-move-account-action')));
+    await tester.tap(
+      find.byKey(const ValueKey('settings-move-account-action')),
+      warnIfMissed: false,
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(routeBuilds, 1);
     expect(find.text('Old-phone migration flow'), findsOneWidget);
   });
 
@@ -599,38 +663,20 @@ void main() {
     final store = FakeSecureKeyStore();
     await store.write('video_quality_preference', 'original');
 
-    await tester.pumpWidget(
-      MaterialApp(
-        locale: const Locale('en'),
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: SettingsWired(
-          identityRepo: identityRepo,
-          bridge: _FakeBridge(),
-          contactRepo: _FakeContactRepo(),
-          p2pService: _FakeP2PService(),
-          secureKeyStore: store,
-          imageProcessor: ImageProcessor(compressFile: _noOpCompress),
-          appShellController: AppShellController(),
-          postsPrivacySettingsRepository:
-              InMemoryPostsPrivacySettingsRepository(),
-        ),
-      ),
-    );
-    await tester.pump(const Duration(milliseconds: 100));
+    await pumpScreen(tester, identityRepo: identityRepo, secureKeyStore: store);
 
-    // Find the Video Quality section and check that "Original" is selected
-    // The second "Original" text (in Video Quality) should have bold weight
-    final originalTexts = tester
-        .widgetList<Text>(find.text('Original'))
-        .toList();
-    // There are 2 Original texts: one in Photo Quality, one in Video Quality
-    expect(originalTexts.length, 2);
-    // Video quality toggle is second — its Original should be bold (w600)
-    expect(originalTexts[1].style?.fontWeight, FontWeight.w600);
+    // 209: the at-rest row values carry the loaded preference — the video row
+    // reads Original while the photo row stays Compressed.
+    expect(find.text('Original'), findsOneWidget);
+    expect(find.text('Compressed'), findsOneWidget);
+    final videoRow = find.byKey(const ValueKey('settings-row-video-quality'));
+    expect(
+      find.descendant(of: videoRow, matching: find.text('Original')),
+      findsOneWidget,
+    );
   });
 
-  testWidgets('shows background choice and persists default selection', (
+  testWidgets('shows background row and persists default selection via sheet', (
     tester,
   ) async {
     final identityRepo = FakeIdentityRepository(makeIdentity());
@@ -640,19 +686,18 @@ void main() {
 
     expect(find.text('Background'), findsOneWidget);
     expect(find.text('Default'), findsOneWidget);
-    expect(find.text('Cosmic'), findsOneWidget);
     expect(await store.read('background_preference'), isNull);
 
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('background-choice-default')),
-    );
+    await openSheet(tester, 'settings-row-background');
     await tester.tap(find.byKey(const ValueKey('background-choice-default')));
-    await tester.pump(const Duration(milliseconds: 100));
+    await settleSheetClose(tester);
 
     expect(await store.read('background_preference'), 'default');
   });
 
-  testWidgets('loads and persists cosmic background selection', (tester) async {
+  testWidgets('loads and persists cosmic background selection via sheet', (
+    tester,
+  ) async {
     final identityRepo = FakeIdentityRepository(makeIdentity());
     final store = FakeSecureKeyStore();
     final appShellController = AppShellController();
@@ -666,21 +711,20 @@ void main() {
       appShellController: appShellController,
     );
 
-    expect(
-      find.byKey(const ValueKey('background-choice-cosmic-selected-icon')),
-      findsOneWidget,
-    );
+    expect(find.text('Cosmic'), findsOneWidget);
     expect(find.byType(CosmicBackground), findsOneWidget);
     expect(
       appShellController.backgroundPreference,
       BackgroundPreference.cosmic,
     );
 
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('background-choice-default')),
+    await openSheet(tester, 'settings-row-background');
+    expect(
+      find.byKey(const ValueKey('background-choice-cosmic-selected-icon')),
+      findsOneWidget,
     );
     await tester.tap(find.byKey(const ValueKey('background-choice-default')));
-    await tester.pump(const Duration(milliseconds: 100));
+    await settleSheetClose(tester);
 
     expect(await store.read('background_preference'), 'default');
     expect(find.byType(CosmicBackground), findsNothing);
@@ -689,11 +733,9 @@ void main() {
       BackgroundPreference.defaultBackground,
     );
 
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('background-choice-cosmic')),
-    );
+    await openSheet(tester, 'settings-row-background');
     await tester.tap(find.byKey(const ValueKey('background-choice-cosmic')));
-    await tester.pump(const Duration(milliseconds: 100));
+    await settleSheetClose(tester);
 
     expect(await store.read('background_preference'), 'cosmic');
     expect(find.byType(CosmicBackground), findsOneWidget);
@@ -701,10 +743,7 @@ void main() {
       appShellController.backgroundPreference,
       BackgroundPreference.cosmic,
     );
-    expect(
-      find.byKey(const ValueKey('background-choice-cosmic-selected-icon')),
-      findsOneWidget,
-    );
+    expect(find.text('Cosmic'), findsOneWidget);
   });
 
   testWidgets('background selection does not restart p2p service', (
@@ -721,13 +760,11 @@ void main() {
       p2pService: p2pService,
     );
 
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('background-choice-daylight-lagoon')),
-    );
+    await openSheet(tester, 'settings-row-background');
     await tester.tap(
       find.byKey(const ValueKey('background-choice-daylight-lagoon')),
     );
-    await tester.pump(const Duration(milliseconds: 100));
+    await settleSheetClose(tester);
 
     expect(await store.read('background_preference'), 'daylight_lagoon');
     expect(p2pService.startNodeCalls, 0);
@@ -749,11 +786,9 @@ void main() {
 
     await pumpScreen(tester, identityRepo: identityRepo, secureKeyStore: store);
 
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('background-choice-cosmic')),
-    );
+    await openSheet(tester, 'settings-row-background');
     await tester.tap(find.byKey(const ValueKey('background-choice-cosmic')));
-    await tester.pump(const Duration(milliseconds: 100));
+    await settleSheetClose(tester);
 
     expect(
       events,
@@ -810,11 +845,9 @@ void main() {
         appShellController: appShellController,
       );
 
-      await tester.ensureVisible(
-        find.byKey(const ValueKey('background-choice-cosmic')),
-      );
+      await openSheet(tester, 'settings-row-background');
       await tester.tap(find.byKey(const ValueKey('background-choice-cosmic')));
-      await tester.pump(const Duration(milliseconds: 100));
+      await settleSheetClose(tester);
 
       expect(await store.read('background_preference'), isNull);
       expect(find.byType(CosmicBackground), findsNothing);
@@ -941,18 +974,24 @@ void main() {
       appShellController: controller,
     );
 
-    final photoToggle = find.byType(ImageQualityToggle).at(0);
-    final videoToggle = find.byType(ImageQualityToggle).at(1);
+    // 209: the segmented controls live inside the quality sub-sheets.
+    await openSheet(tester, 'settings-row-photo-quality');
+    await tester.tap(
+      find.descendant(
+        of: find.byType(ImageQualityToggle),
+        matching: find.text('Original'),
+      ),
+    );
+    await settleSheetClose(tester);
 
-    await tester.ensureVisible(photoToggle);
-    await tester
-        .tap(find.descendant(of: photoToggle, matching: find.text('Original')));
-    await tester.pump(const Duration(milliseconds: 100));
-
-    await tester.ensureVisible(videoToggle);
-    await tester
-        .tap(find.descendant(of: videoToggle, matching: find.text('Original')));
-    await tester.pump(const Duration(milliseconds: 100));
+    await openSheet(tester, 'settings-row-video-quality');
+    await tester.tap(
+      find.descendant(
+        of: find.byType(ImageQualityToggle),
+        matching: find.text('Original'),
+      ),
+    );
+    await settleSheetClose(tester);
 
     expect(
       kinds.where((k) => k == AppShellChangeKind.mediaQuality).length,
