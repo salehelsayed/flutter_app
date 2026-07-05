@@ -2350,6 +2350,25 @@ class AppLocalizationsEn extends AppLocalizations {
       'Review and accept introductions to start chatting';
 
   @override
+  String orbit_intro_dock_label(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count new',
+      one: '1 new',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String orbit_intro_dock_semantics(int count) {
+    return 'Open introductions review, $count new';
+  }
+
+  @override
+  String get orbit_intro_remnant_semantics => 'Open introductions review';
+
+  @override
   String group_member_invited_count(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,

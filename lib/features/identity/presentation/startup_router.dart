@@ -64,6 +64,7 @@ import 'package:flutter_app/features/groups/application/reconcile_missed_group_d
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
+import 'package:flutter_app/features/introduction/domain/repositories/intro_review_seen_repository.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
@@ -182,6 +183,9 @@ class StartupRouter extends StatefulWidget {
   /// The introduction repository for managing introductions.
   final IntroductionRepository? introductionRepository;
 
+  /// Device-local seen set for the Orbit intro dock and nav badge.
+  final IntroReviewSeenRepository? introReviewSeenRepository;
+
   /// The introduction listener for incoming introductions.
   final IntroductionListener? introductionListener;
 
@@ -255,6 +259,7 @@ class StartupRouter extends StatefulWidget {
     this.waitForGroupMembershipUpdateIdle,
     this.groupConversationTracker,
     this.introductionRepository,
+    this.introReviewSeenRepository,
     this.introductionListener,
     this.shareIntentService,
     this.initialShareIntentCapture,
@@ -382,6 +387,7 @@ class _StartupRouterState extends State<StartupRouter> {
                 widget.waitForGroupMembershipUpdateIdle,
             groupConversationTracker: widget.groupConversationTracker,
             introductionRepository: widget.introductionRepository,
+            introReviewSeenRepository: widget.introReviewSeenRepository,
             introductionListener: widget.introductionListener,
             appShellController: widget.appShellController,
             pendingPostTargetStore: widget.pendingPostTargetStore,
@@ -505,6 +511,7 @@ class _StartupRouterState extends State<StartupRouter> {
             groupInviteListener: widget.groupInviteListener,
             groupConversationTracker: widget.groupConversationTracker,
             introductionRepository: widget.introductionRepository,
+            introReviewSeenRepository: widget.introReviewSeenRepository,
             introductionListener: widget.introductionListener,
             shareIntentService: widget.shareIntentService,
           );
@@ -574,6 +581,8 @@ class _StartupRouterState extends State<StartupRouter> {
                       groupInviteListener: widget.groupInviteListener,
                       groupConversationTracker: widget.groupConversationTracker,
                       introductionRepository: widget.introductionRepository,
+                      introReviewSeenRepository:
+                          widget.introReviewSeenRepository,
                       introductionListener: widget.introductionListener,
                       shareIntentService: widget.shareIntentService,
                       appShellController: widget.appShellController,
@@ -1110,6 +1119,7 @@ class _StartupRouterState extends State<StartupRouter> {
       waitForGroupMembershipUpdateIdle: widget.waitForGroupMembershipUpdateIdle,
       groupConversationTracker: widget.groupConversationTracker,
       introductionRepository: widget.introductionRepository,
+      introReviewSeenRepository: widget.introReviewSeenRepository,
       introductionListener: widget.introductionListener,
       shareIntentService: widget.shareIntentService,
       initialShareIntentCapture: widget.initialShareIntentCapture,

@@ -1371,6 +1371,23 @@
     }
   },
   "orbit_intro_banner_intros": "Review and accept introductions to start chatting",
+  "orbit_intro_dock_label": "{count, plural, =1{1 new} other{{count} new}}",
+  "@orbit_intro_dock_label": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_intro_dock_semantics": "Open introductions review, {count} new",
+  "@orbit_intro_dock_semantics": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_intro_remnant_semantics": "Open introductions review",
   "group_member_invited_count": "{count, plural, =1{Member invited} other{{count} members invited}}",
   "@group_member_invited_count": {
     "placeholders": {

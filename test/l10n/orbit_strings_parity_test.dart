@@ -54,6 +54,10 @@ void main() {
     // sibling; the dock's `orbit_search` hint is placeholder copy, not a
     // button label — V4).
     'orbit_search_trigger_semantics',
+    // 207 TC-207-21 — top-row intro dock/remnant entry point labels.
+    'orbit_intro_dock_label',
+    'orbit_intro_dock_semantics',
+    'orbit_intro_remnant_semantics',
   ];
 
   Map<String, Object?> loadArb(String locale) {

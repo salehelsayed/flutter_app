@@ -6,10 +6,9 @@ import 'package:flutter_app/features/home/presentation/widgets/editable_username
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_indicator.dart';
 
-import '../../../../core/services/fake_p2p_service.dart';
-
-/// 206 — the Feed header avatar was removed (the settings entry migrated to the
-/// Orbit center avatar). The header keeps the username editor + connection dot.
+/// 211 — the connection dot migrated to the Orbit top-right chrome; the Feed
+/// header keeps ONLY the username editor. 206 locks re-asserted: no avatar
+/// (the settings entry lives on the Orbit center avatar), editing works.
 void main() {
   Widget wrap(Widget child, {double width = 390}) => MaterialApp(
         locale: const Locale('en'),
@@ -22,32 +21,32 @@ void main() {
         ),
       );
 
-  testWidgets('TC-206-13 header renders username + connection dot, NO avatar',
+  testWidgets('TC-211-24/26 header has NO connection dot, keeps 206 locks',
       (tester) async {
-    final p2p = FakeP2PService();
+    // RED phase pumped `p2pService: FakeP2PService()` to prove the HEAD
+    // header still mounted the dot; 211-E4 deleted the param, so the header
+    // can no longer even accept a service (single layout path — TC-211-26).
     await tester.pumpWidget(
       wrap(FeedHeader(
         username: 'Alice',
         onUsernameChanged: (_) {},
-        p2pService: p2p,
       )),
     );
     await tester.pump();
 
-    // The avatar (and therefore any avatar-based settings entry) is gone.
+    // 211: the dot now lives on Orbit — never on the Feed header.
+    expect(find.byType(ConnectionStatusIndicator), findsNothing);
+    // 206 locks preserved: no avatar, username editor present.
     expect(find.byType(UserAvatar), findsNothing);
-    // Username editor + connection dot are preserved.
     expect(find.byType(EditableUsernameWidget), findsOneWidget);
-    expect(find.byType(ConnectionStatusIndicator), findsOneWidget);
   });
 
-  testWidgets('TC-206-15 username editing still works', (tester) async {
+  testWidgets('TC-211-25 username editing still works', (tester) async {
     String? changed;
     await tester.pumpWidget(
       wrap(FeedHeader(
         username: 'Alice',
         onUsernameChanged: (value) => changed = value,
-        p2pService: FakeP2PService(),
       )),
     );
     await tester.pump();
@@ -61,14 +60,13 @@ void main() {
     expect(changed, 'Bob');
   });
 
-  testWidgets('TC-206-16 narrow width + long username, no overflow',
+  testWidgets('TC-211-25 narrow width + long username, no overflow',
       (tester) async {
     await tester.pumpWidget(
       wrap(
         FeedHeader(
           username: 'AVeryLongUsernameThatCouldOverflowTheHeader',
           onUsernameChanged: (_) {},
-          p2pService: FakeP2PService(),
         ),
         width: 320,
       ),

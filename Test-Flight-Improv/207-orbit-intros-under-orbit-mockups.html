@@ -104,10 +104,8 @@ article.card{background:var(--card-bg);border:1px solid var(--hairline);border-r
 @keyframes driftA{to{transform:translate(30px,20px)}}
 @keyframes driftB{to{transform:translate(-25px,-30px)}}
 
-/* top chrome (orbit_screen.dart L1b/L1c/L5, safeTop 54 + 8) */
+/* top chrome (orbit_screen.dart L1b/L5, safeTop 54 + 8; QR/scan center buttons migrated to Settings, 209) */
 .chrome-btn{position:absolute;top:62px;width:40px;height:40px;border-radius:50%;background:rgba(16,18,24,0.75);border:0.5px solid rgba(255,255,255,0.50);display:flex;align-items:center;justify-content:center;z-index:40}
-.chrome-center{position:absolute;top:62px;left:50%;transform:translateX(-50%);display:flex;gap:8px;z-index:40}
-.chrome-center .cbtn{width:40px;height:40px;border-radius:50%;background:rgba(16,18,24,0.75);border:0.5px solid rgba(255,255,255,0.50);display:flex;align-items:center;justify-content:center}
 .glow-fab{position:absolute;top:62px;right:16px;width:40px;height:40px;border-radius:50%;background:#1A1A2E;border:2px solid #64B5F6;box-shadow:0 0 12px 1px rgba(100,181,246,0.8);display:flex;align-items:center;justify-content:center;z-index:40}
 
 /* orbit canvas */
@@ -149,15 +147,16 @@ article.card{background:var(--card-bg);border:1px solid var(--hairline);border-r
 .frow .fs{font-size:12px;color:rgba(201,206,214,0.6)}
 .frow .ft{margin-left:auto;font-size:11px;color:rgba(201,206,214,0.5);align-self:flex-start;padding-top:2px}
 
-/* ---------- Option A: intro dock ---------- */
-.intro-dock{position:absolute;top:612px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:10px;white-space:nowrap;width:max-content;background:rgba(29,185,84,0.10);border:1px solid rgba(29,185,84,0.40);border-radius:24px;padding:8px 16px 8px 10px;box-shadow:0 0 18px rgba(29,185,84,0.15);z-index:35}
+/* ---------- Option A: intro dock (top row, beside the view toggle — QR/scan slot freed by 209) ---------- */
+.intro-dock{position:absolute;top:62px;left:64px;height:40px;display:flex;align-items:center;gap:8px;white-space:nowrap;width:max-content;max-width:258px;background:rgba(29,185,84,0.10);border:1px solid rgba(29,185,84,0.40);border-radius:20px;padding:0 12px 0 7px;box-shadow:0 0 18px rgba(29,185,84,0.15);z-index:40}
 .dock-avs{display:flex}
 .dock-avs .dav{width:26px;height:26px;border-radius:50%;border:1.5px dashed rgba(29,185,84,0.7);overflow:hidden;background:#16181E}
+.dock-avs .dav.grp{border-color:rgba(78,205,196,0.85)}
 .dock-avs .dav+.dav{margin-left:-8px}
 .dock-label{font-size:13px;font-weight:600;color:#E5F4EA}
 
-/* ---------- dismissed-state remnant (ignore path) ---------- */
-.intro-remnant{position:absolute;top:618px;left:50%;transform:translateX(-50%);width:32px;height:32px;border-radius:50%;background:rgba(10,10,15,0.8);border:1.5px dashed rgba(255,255,255,0.32);display:flex;align-items:center;justify-content:center;z-index:35}
+/* ---------- dismissed-state remnant (ignore path — parks in the dock's top-row slot) ---------- */
+.intro-remnant{position:absolute;top:66px;left:64px;width:32px;height:32px;border-radius:50%;background:rgba(10,10,15,0.8);border:1.5px dashed rgba(255,255,255,0.32);display:flex;align-items:center;justify-content:center;z-index:40}
 
 /* ---------- Option B: ghost hint ---------- */
 .ghost-hint{position:absolute;top:648px;left:0;right:0;text-align:center;font-size:11px;color:rgba(201,206,214,0.72);z-index:30}
@@ -171,7 +170,7 @@ article.card{background:var(--card-bg);border:1px solid var(--hairline);border-r
 /* ---------- Option D: intro tray ---------- */
 .tray-handle{position:absolute;bottom:96px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:7px;background:rgba(29,185,84,0.10);border:1px solid rgba(29,185,84,0.40);border-radius:16px;padding:6px 14px;z-index:46;cursor:pointer}
 .tray-handle .th-label{font-size:12px;font-weight:600;color:#E5F4EA}
-.tray-sheet{position:absolute;left:0;right:0;bottom:0;height:430px;background:rgba(10,12,16,0.97);border-top:1px solid rgba(255,255,255,0.12);border-radius:24px 24px 0 0;padding:14px 16px;z-index:50}
+.tray-sheet{position:absolute;left:0;right:0;bottom:0;height:462px;background:rgba(10,12,16,0.97);border-top:1px solid rgba(255,255,255,0.12);border-radius:24px 24px 0 0;padding:14px 16px;z-index:50}
 .grabber{width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,0.25);margin:0 auto 12px;cursor:pointer}
 .tray-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
 .tray-title{font-size:17px;font-weight:700;color:#F8FAFC}
@@ -218,7 +217,7 @@ section.verdict{border:1px solid rgba(29,185,84,0.3);background:linear-gradient(
   </svg>
   <div class="eyebrow">mknoon · orbit screen · exploration 207</div>
   <h1>Where should Intro live under Orbit?</h1>
-  <p class="brief">The red badge on the <b>Orbit</b> nav button counts pending introductions — but the default Orbit view (the Inner-Circle rings) renders <b>nothing</b> about them. The review surface hides on the all-chats <b>list</b> view, behind the top-left toggle. This exploration moves the Intro affordance onto the default orbit surface: four placements, one recommendation. Sending an intro (from the 1:1 chat) is untouched — this is only about <b>seeing and reviewing</b> pending intros.</p>
+  <p class="brief">The red badge on the <b>Orbit</b> nav button counts pending introductions <b>and pending group invitations</b> — but the default Orbit view (the Inner-Circle rings) renders <b>nothing</b> about them. The review surface hides on the all-chats <b>list</b> view, behind the top-left toggle. This exploration moves the Intro affordance onto the default orbit surface: four placements, one recommendation. Sending an intro (from the 1:1 chat) is untouched — this is only about <b>seeing and reviewing</b> pending intros.</p>
 </header>
 
 <section class="before">
@@ -248,26 +247,26 @@ section.verdict{border:1px solid rgba(29,185,84,0.3);background:linear-gradient(
   <article class="card">
     <div>
       <div class="phone-wrap"><div class="phone" id="phone-a"></div></div>
-      <div class="try">the dock sits in the free band below the rings</div>
+      <div class="try">the dock rides the top row, beside the view toggle</div>
     </div>
     <div class="notes">
       <div class="opt-eyebrow">Option A <span class="tag pick">design pick</span></div>
-      <div class="opt-name">Intro dock — under the rings</div>
-      <p class="thesis">A compact green capsule floats in the empty band directly beneath the orbit canvas: the <b>pending people’s own faces</b>, a count, one tap to review. Literally “Intro, under Orbit.”</p>
+      <div class="opt-name">Intro dock — top row, beside the toggle</div>
+      <p class="thesis">A compact green capsule sits in the top chrome row, immediately right of the view-toggle button: the <b>pending people’s — and groups’ — own faces</b>, a count, one tap to review. It folds <b>friend intros and pending group invitations</b> (the badge’s reviewCount). The QR/scan buttons that used to hold this band moved to Settings (209) — the slot is free.</p>
       <div class="nlabel">Why it works</div>
       <ul>
-        <li>Occupies the only reliably free region of the inner-circle view — between the canvas bottom (≈y590) and the find pill (≈y696). Collides with nothing.</li>
-        <li>Intro identity reads instantly: green vocabulary + dashed rings = “not yet in your orbit.”</li>
-        <li>Avatar faces create a curiosity pull a generic banner never will — these are real people waiting.</li>
+        <li>Claims the band the 209 QR/scan → Settings migration just vacated — 40px tall like its chrome-row neighbors, clear of the canvas, the find pill and the nav band.</li>
+        <li>Identity reads instantly: green vocabulary + dashed rings = “not yet in your orbit”; a teal group face marks a pending <b>group invite</b> among the intros.</li>
+        <li>Avatar faces create a curiosity pull a generic banner never will — these are real people (and groups) waiting.</li>
         <li>Tap reuses today’s banner wiring (<b>onIntroBannerTap → Intros review</b>); zero new review UI to ship.</li>
       </ul>
       <div class="nlabel">Watch out</div>
       <ul>
         <li class="warn">Must hide during sculpt-edit, like all orbit chrome.</li>
-        <li class="warn">Overflow arcs expand downward into this band — the dock should fade while arcs are open.</li>
+        <li class="warn">Width is bounded by the “+” FAB on the right — cap the label and let it truncate before ~x322 (≈258px of capsule).</li>
         <li class="warn">Strictly count-gated: renders nothing at 0 pending.</li>
       </ul>
-      <div class="chips"><span>y≈612 · centered</span><span>radius 24</span><span>fill rgba(29,185,84,.10)</span><span>border @.40</span><span>avatars 26px ×3, dashed</span><span>tap → Intros review</span></div>
+      <div class="chips"><span>top:62 · left:64 (toggle+8)</span><span>height 40 · radius 20</span><span>fill rgba(29,185,84,.10)</span><span>border @.40</span><span>avatars 26px ×3, dashed</span><span>folds intros + group invites</span><span>tap → Intros review</span></div>
     </div>
   </article>
 
@@ -332,7 +331,7 @@ section.verdict{border:1px solid rgba(29,185,84,0.3);background:linear-gradient(
     <div class="notes">
       <div class="opt-eyebrow">Option D <span class="tag">fullest review</span></div>
       <div class="opt-name">Intro tray — review in place</div>
-      <p class="thesis">A slim handle above the nav opens a glass tray of <b>Accept/Pass cards</b> — the whole review loop happens on Orbit, no surface switch, no view toggle.</p>
+      <p class="thesis">A slim handle above the nav opens a glass tray of <b>Accept/Pass cards — friend intros and group-invite Join/Decline alike</b> — the whole review loop happens on Orbit, no surface switch, no view toggle.</p>
       <div class="nlabel">Why it works</div>
       <ul>
         <li>Closes the loop where the badge points: badge → handle → Accept, all in place.</li>
@@ -368,7 +367,7 @@ section.verdict{border:1px solid rgba(29,185,84,0.3);background:linear-gradient(
     <h2>The ignore path: quiet by default, loud only on news</h2>
     <p>Not every intro deserves an answer — and <span class="bad">Pass is not a quiet escape</span>: passing sends a notification to the introducer (pass_introduction_use_case.dart:12-13). Users who’d rather not reject anyone will simply ignore, and an ignored intro lives for <b>30 days</b> before auto-expiring (introduction_model.dart:138). Whichever option ships must respect ignoring as a first-class choice:</p>
     <ul>
-      <li class="ok"><b>Dismissal demotes, it doesn’t delete:</b> swipe the dock away and it collapses into a calm remnant — a 32px dashed chip, monochrome, <i>no count</i> — the same “folded content” vocabulary as the rings’ “+N” overflow badge. Furniture, not notification.</li>
+      <li class="ok"><b>Dismissal demotes, it doesn’t delete:</b> swipe the dock away and it collapses into a calm remnant — a 32px dashed chip, monochrome, <i>no count</i>, parked in the dock’s own top-row slot beside the toggle — the same “folded content” vocabulary as the rings’ “+N” overflow badge. Furniture, not notification.</li>
       <li class="ok"><b>Changed your mind? One tap back:</b> tap the remnant any time and the review reopens — no waiting for news, no hunting through the view toggle. (An Undo snackbar also covers accidental swipes.)</li>
       <li class="ok"><b>Badge counts unseen, not pending:</b> dismissing clears the red nav badge too. Pending-but-seen intros also stay listed in the Intros tab — the always-on fallback surface.</li>
       <li class="ok"><b>Only news re-inflates it:</b> a genuinely new intro brings the full dock back at the size of the news (“1 new introduction”), not the backlog.</li>
@@ -382,7 +381,7 @@ section.verdict{border:1px solid rgba(29,185,84,0.3);background:linear-gradient(
 <section class="verdict">
   <div class="eyebrow">recommendation</div>
   <h2>A now — D when the tray earns it</h2>
-  <p><b>Ship Option A.</b> It puts intros literally under the orbit, in the one band nothing else claims, and uses the pending people’s own faces as the affordance. Its tap can reuse the existing banner jump to the Intros review list (<b>onIntroBannerTap</b> wiring), so the first ship is one small component with the full discoverability payoff. Pair it with the <b>ignore path</b> above — dismissing collapses the dock to a calm dashed remnant (tap to come back any time, long-press for total silence), badge = unseen, 30-day expiry — so a user who never wants to answer never feels nagged, and one who changes their mind is one tap away. When in-place review is worth the build, <b>Option D’s tray slots in behind A’s dock unchanged</b> — the dock becomes the handle, the tap opens the tray instead of switching views. <b>C</b> works but crowds the busiest strip of the screen, forces the find pill to move, and double-mounts a component that already struggles for attention. <b>B</b> is the most charming and the most dangerous — the canvas already juggles groups, overflow arcs, unread satellites and sculpt handles; parking tappable people among them buys delight at the price of ambiguity. Keep B as a later delighter once the canvas census calms down.</p>
+  <p><b>Ship Option A.</b> It puts intros in the top chrome row, right beside the view toggle — the slot the 209 QR/scan → Settings migration freed — and uses the pending people’s own faces as the affordance. Its tap can reuse the existing banner jump to the Intros review list (<b>onIntroBannerTap</b> wiring), so the first ship is one small component with the full discoverability payoff. Pair it with the <b>ignore path</b> above — dismissing collapses the dock to a calm dashed remnant (tap to come back any time, long-press for total silence), badge = unseen, 30-day expiry — so a user who never wants to answer never feels nagged, and one who changes their mind is one tap away. When in-place review is worth the build, <b>Option D’s tray slots in behind A’s dock unchanged</b> — the dock becomes the handle, the tap opens the tray instead of switching views. <b>C</b> works but crowds the busiest strip of the screen, forces the find pill to move, and double-mounts a component that already struggles for attention. <b>B</b> is the most charming and the most dangerous — the canvas already juggles groups, overflow arcs, unread satellites and sculpt handles; parking tappable people among them buys delight at the price of ambiguity. Keep B as a later delighter once the canvas census calms down.</p>
 </section>
 
 <section class="shared">
@@ -459,8 +458,8 @@ function frame(inner){
   ${inner}`;
 }
 function topChrome(view){
+  /* QR + scan center buttons migrated to Settings (209) — the center band is free */
   return `<div class="chrome-btn" style="left:16px">${view==='inner'?IC.list:IC.orbit}</div>
-  <div class="chrome-center"><div class="cbtn">${IC.qr}</div><div class="cbtn">${IC.scan}</div></div>
   <div class="glow-fab">${IC.plus}</div>`;
 }
 function navBar(badge){
@@ -525,9 +524,14 @@ function orbitCanvas(cfg){
 
 /* ---------- option overlays ---------- */
 function introDock(n,label){
-  n=n||3;label=label||'3 waiting to meet you';
+  /* folds friend intros AND pending group invites (reviewCount) — last face = group invite */
+  n=n||3;label=label||'3 waiting for you';
   let avs='';
-  for(let i=0;i<n;i++)avs+=`<div class="dav">${ringAvatar(23,301+i)}</div>`;
+  for(let i=0;i<n;i++){
+    avs+=(n>=3&&i===n-1)
+      ?`<div class="dav grp">${groupFace(23)}</div>`
+      :`<div class="dav">${ringAvatar(23,301+i)}</div>`;
+  }
   return `<div class="intro-dock">
     <div class="dock-avs">${avs}</div>
     <span class="dock-label">${label}</span>${IC.chevR}
@@ -537,17 +541,19 @@ function bottomBanner(){
   return `<div class="bottom-banner">${IC.people}<div class="bt"><div class="bt1">3 items pending</div><div class="bt2">Review and accept introductions to start chatting</div></div>${IC.chevR}</div>`;
 }
 function trayHandle(){
-  return `<div class="tray-handle" id="tray-handle" onclick="toggleTray()">${IC.caretUp}<span class="th-label">Intros · 3</span></div>`;
+  return `<div class="tray-handle" id="tray-handle" onclick="toggleTray()">${IC.caretUp}<span class="th-label">Waiting · 3</span></div>`;
 }
 function traySheet(){
   const card=(seed,name,by)=>`<div class="icard"><div class="irow">${ringAvatar(42,seed)}<div><div class="iname">${name}</div><div class="isub">Introduced by ${by}</div></div></div>
     <div class="ibtns"><div class="ibtn-accept">Accept</div><div class="ibtn-pass">Pass</div></div></div>`;
   return `<div class="tray-sheet" id="tray-sheet">
     <div class="grabber" onclick="toggleTray()"></div>
-    <div class="tray-head"><span class="tray-title">Introductions</span><span class="tray-cnt">3</span><div class="tray-x" onclick="toggleTray()">${IC.x}</div></div>
+    <div class="tray-head"><span class="tray-title">Waiting for you</span><span class="tray-cnt">3</span><div class="tray-x" onclick="toggleTray()">${IC.x}</div></div>
     <div class="tray-sec">From Sara</div>
     ${card(301,'Layla','Sara')}
-    ${card(302,'Omar','Sara')}
+    <div class="tray-sec">Group invites</div>
+    <div class="icard"><div class="irow">${groupFace(42)}<div><div class="iname">Hiking crew</div><div class="isub">Invited by Omar</div></div></div>
+    <div class="ibtns"><div class="ibtn-accept">Join</div><div class="ibtn-pass">Decline</div></div></div>
     <div class="tray-sec">From Kareem</div>
     <div class="iwait">${ringAvatar(42,303)}<div><div class="iname">Nadia</div><div class="iws">Waiting for Nadia to accept…</div></div></div>
   </div>`;

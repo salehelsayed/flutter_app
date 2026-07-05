@@ -176,6 +176,20 @@ int countFoldedPendingIntroductionTargets({
   required List<IntroductionModel> introductions,
   required String ownPeerId,
 }) {
+  return foldedPendingIntroductionTargetPeerIds(
+    introductions: introductions,
+    ownPeerId: ownPeerId,
+  ).length;
+}
+
+/// The distinct target peer ids behind [countFoldedPendingIntroductionTargets]
+/// — the fold identity the 207 seen-set keys (`intro:<targetPeerId>`) must
+/// match exactly, so badge unseen math subtracts the same units the review
+/// surfaces render.
+Set<String> foldedPendingIntroductionTargetPeerIds({
+  required List<IntroductionModel> introductions,
+  required String ownPeerId,
+}) {
   final targetPeerIds = <String>{};
 
   for (final intro in introductions) {
@@ -191,7 +205,7 @@ int countFoldedPendingIntroductionTargets({
     targetPeerIds.add(targetPeerId);
   }
 
-  return targetPeerIds.length;
+  return targetPeerIds;
 }
 
 /// Groups a list of introductions by their introducer ID.

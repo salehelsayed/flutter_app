@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_view_mode.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_screen.dart';
@@ -26,6 +27,7 @@ Widget buildOrbitScreenHarness({
   ValueListenable<int>? feedUnreadCountListenable,
   Animation<double> searchTriggerAnimation =
       const AlwaysStoppedAnimation<double>(0),
+  P2PService? p2pService,
 }) {
   final headerVN = ValueNotifier<OrbitHeaderProjection>(header);
   final listVN = ValueNotifier<OrbitViewProjection>(list);
@@ -67,6 +69,7 @@ Widget buildOrbitScreenHarness({
       onSwitchView: onSwitchView,
       feedUnreadCountListenable: feedUnreadCountListenable,
       onInnerCircleEditSessionChanged: onInnerEdit,
+      p2pService: p2pService,
     ),
   );
 }

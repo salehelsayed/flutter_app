@@ -2402,6 +2402,28 @@ class AppLocalizationsAr extends AppLocalizations {
   String get orbit_intro_banner_intros => 'راجع التعارفات واقبلها لبدء الدردشة';
 
   @override
+  String orbit_intro_dock_label(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count جديد',
+      many: '$count جديدًا',
+      few: '$count جدد',
+      two: 'اثنان جديدان',
+      one: 'واحد جديد',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String orbit_intro_dock_semantics(int count) {
+    return 'فتح مراجعة التعارفات، $count جديد';
+  }
+
+  @override
+  String get orbit_intro_remnant_semantics => 'فتح مراجعة التعارفات';
+
+  @override
   String group_member_invited_count(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,

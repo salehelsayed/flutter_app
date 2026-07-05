@@ -2400,6 +2400,26 @@ class AppLocalizationsDe extends AppLocalizations {
       'Prüfe und akzeptiere Einführungen, um zu chatten';
 
   @override
+  String orbit_intro_dock_label(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count neu',
+      one: '1 neu',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String orbit_intro_dock_semantics(int count) {
+    return 'Überprüfung der Einführungen öffnen, $count neu';
+  }
+
+  @override
+  String get orbit_intro_remnant_semantics =>
+      'Überprüfung der Einführungen öffnen';
+
+  @override
   String group_member_invited_count(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,

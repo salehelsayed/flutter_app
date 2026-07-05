@@ -517,8 +517,8 @@ void main() {
     );
 
     testWidgets(
-      'TC-212-12 persistent nav centers the bar; the search trigger floats '
-      'in the bottom-right corner band, with content above the nav',
+      'TC-212-12 persistent nav centers the bar; the search trigger rides '
+      'the nav line at the right edge, with content above the nav',
       (tester) async {
         suppressOverflowErrors();
         suppressNavAssetErrors();
@@ -554,13 +554,10 @@ void main() {
         // The redundant X close button is removed in persistent mode — the
         // Feed tab is the way back.
         expect(find.byType(OrbitCloseButton), findsNothing);
-        // 212: the trigger owns the bottom-right corner band — the same band
-        // the Inner-Circle find pill uses (max(16, sb - 14) + 84, sb=0 here) —
-        // instead of riding the nav bar's vertical level.
+        // The trigger rides the nav bar's vertical level at the physical
+        // right edge (inset 16), beside the centered bar.
         expect(searchRect.right, screen.width - 16);
-        expect(searchRect.bottom, screen.height - 100);
-        expect((searchRect.center.dy - navRect.center.dy).abs(),
-            greaterThan(10));
+        expect(searchRect.center.dy, closeTo(navRect.center.dy, 1.0));
         // The bar keeps the horizontal center without the inline trigger slot.
         expect(navRect.center.dx, closeTo(screen.width / 2, 1.0));
         // Scrolled content stays above the nav bar.

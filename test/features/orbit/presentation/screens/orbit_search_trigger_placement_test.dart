@@ -11,12 +11,10 @@ import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_tri
 
 import 'orbit_screen_pump_harness.dart';
 
-/// 212 — the all-chats search trigger leaves the persistent nav Row and floats
-/// at the bottom-right corner, in the SAME band the Inner-Circle find pill
-/// owns (INV-212-1): right 16, bottom = navBottomOffset + 84, 52px circle.
-/// With the test surface's zero safe-area inset that band bottom is
-/// max(16, 0 - 14) + 84 = 100 from the screen's bottom edge.
-const double _bandBottomOffset = 100.0;
+/// Persistent mode seats BOTH bottom-right search affordances ON the nav
+/// line: the all-chats search trigger and the Inner-Circle collapsed find
+/// pill (re-seated as nav-band chrome) share one slot — right inset 16,
+/// vertically centered on the Feed/Orbit bar, 52px circle.
 
 OrbitItem _friend(int i) => OrbitFriendItem(OrbitFriend(
       contact: ContactModel(
@@ -81,8 +79,8 @@ void main() {
 
   group('212 search trigger placement', () {
     testWidgets(
-        'TC-212-01 persistent all-chats floats the trigger bottom-right in '
-        'the find-pill band', (tester) async {
+        'TC-212-01 persistent all-chats seats the trigger on the nav line, '
+        'right edge', (tester) async {
       suppressChromeErrors();
       setPhoneSurface(tester);
 
@@ -94,12 +92,12 @@ void main() {
       final navRect = tester.getRect(find.byType(FeedNavigationBar));
 
       expect(rect.right, screen.width - 16,
-          reason: 'the trigger owns the physical bottom-right corner');
-      expect(rect.bottom, screen.height - _bandBottomOffset,
-          reason: 'the trigger sits in the find-pill band (navOffset + 84)');
+          reason: 'the trigger keeps the physical right edge (inset 16)');
+      expect(rect.center.dy, closeTo(navRect.center.dy, 1.0),
+          reason: 'the trigger rides the nav bar\'s vertical level');
       expect(rect.height, 52, reason: '212 visual upgrade: 44 → 52');
-      expect((rect.center.dy - navRect.center.dy).abs(), greaterThan(10),
-          reason: 'no longer riding the nav bar\'s vertical level');
+      expect(rect.left, greaterThan(navRect.right),
+          reason: 'the trigger sits beside the centered bar, not over it');
     });
 
     testWidgets(
@@ -118,8 +116,8 @@ void main() {
     });
 
     testWidgets(
-        'TC-212-03 rings pill and list trigger share one bottom-right band '
-        '(INV-212-1)', (tester) async {
+        'TC-212-03 rings pill and list trigger share ONE nav-line seat',
+        (tester) async {
       suppressChromeErrors();
       setPhoneSurface(tester);
 
@@ -140,11 +138,12 @@ void main() {
 
       final pillF = find.byKey(const ValueKey('orbit-find-pill'));
       final pillRect = tester.getRect(pillF);
+      final navRect = tester.getRect(find.byType(FeedNavigationBar));
       expect(tester.getSize(pillF), const Size(52, 52));
-      expect(pillRect.bottom, triggerRect.bottom,
-          reason: 'one band on both surfaces');
-      expect(pillRect.right, triggerRect.right,
-          reason: 'one right edge on both surfaces');
+      expect(pillRect, triggerRect,
+          reason: 'one seat on both surfaces — same rect, on the nav line');
+      expect(pillRect.center.dy, closeTo(navRect.center.dy, 1.0),
+          reason: 'and that seat rides the nav bar\'s vertical level');
     });
 
     testWidgets('TC-212-04 RTL keeps the physical bottom-right corner',
@@ -157,10 +156,52 @@ void main() {
 
       final screen = screenSize(tester);
       final rect = tester.getRect(find.byType(OrbitSearchTrigger));
+      final navRect = tester.getRect(find.byType(FeedNavigationBar));
       expect(rect.right, screen.width - 16,
           reason: 'physical-right stance survives RTL (no Directional swap)');
-      expect(rect.bottom, screen.height - _bandBottomOffset);
+      expect(rect.center.dy, closeTo(navRect.center.dy, 1.0),
+          reason: 'the nav-line seat survives RTL too');
       expect(rect.height, 52);
+    });
+
+    testWidgets(
+        'TC-212-06 nav-line rings pill opens the find bar and hides; '
+        'toggling the surface away and back restores it', (tester) async {
+      suppressChromeErrors();
+      setPhoneSurface(tester);
+
+      Widget ringsPump() => persistentPump(
+            viewMode: OrbitViewMode.innerCircle,
+            header: OrbitHeaderProjection(
+              userPeerId: 'me',
+              innerItems: _friends(8),
+            ),
+          );
+
+      await tester.pumpWidget(ringsPump());
+      await settle(tester);
+
+      final pillF = find.byKey(const ValueKey('orbit-find-pill'));
+      await tester.tap(pillF);
+      await tester.pump();
+
+      // Open: the expanded find bar owns the key (full-width, above the
+      // nav); the nav-band collapsed pill is hidden, so ONE key remains.
+      expect(pillF, findsOneWidget);
+      expect(find.byType(TextField), findsOneWidget);
+      expect(tester.getRect(pillF).width, greaterThan(52),
+          reason: 'the key now belongs to the expanded in-surface bar');
+
+      // Toggle away while open (unmounts the find session), then back:
+      // the collapsed pill must be back on the nav line, not stuck hidden.
+      await tester.pumpWidget(persistentPump());
+      await settle(tester);
+      await tester.pumpWidget(ringsPump());
+      await settle(tester);
+
+      expect(pillF, findsOneWidget);
+      expect(tester.getSize(pillF), const Size(52, 52),
+          reason: 'the collapsed nav-band pill returned with the rings');
     });
 
     testWidgets('TC-212-05 standalone geometry frozen (sentinel)',

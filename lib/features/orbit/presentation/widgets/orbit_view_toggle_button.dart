@@ -33,7 +33,12 @@ class OrbitViewToggleButton extends StatelessWidget {
     final semanticsLabel = isInnerCircle
         ? l10n.orbit_view_toggle_to_list
         : l10n.orbit_view_toggle_to_circle;
-    final icon = isInnerCircle ? Icons.chat_bubble_outline : Icons.blur_on;
+    // 211 — the 207-mockup chrome vocabulary: a bullet-list glyph when the
+    // destination is the all-chats LIST, a dot-in-dashed-ring glyph when the
+    // destination is the inner CIRCLE (closest stock glyphs to IC.list /
+    // IC.orbit).
+    final icon =
+        isInnerCircle ? Icons.format_list_bulleted : Icons.motion_photos_on;
 
     return Positioned(
       top: MediaQuery.of(context).padding.top + 8,

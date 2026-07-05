@@ -289,7 +289,11 @@ void main() {
       expect(find.byType(GroupRow), findsNothing);
       expect(find.byType(FriendsFilterToggle), findsNothing);
       expect(find.byType(OrbitSearchTrigger), findsNothing);
-      // The intro banner (list-header sibling) is absent on the inner view.
+      // TC-207-22 (supersedes the pre-207 intro-absence lock): the seeded
+      // pending intro now surfaces as the top-row intro dock — the inner
+      // view's OWN affordance — while the list-coupled banner copy stays off
+      // this surface.
+      expect(find.byKey(const ValueKey('orbit-intro-dock')), findsOneWidget);
       expect(find.text('1 item pending'), findsNothing);
     });
 

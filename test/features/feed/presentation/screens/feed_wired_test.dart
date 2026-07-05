@@ -36,6 +36,7 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_app/features/introduction/domain/repositories/intro_review_seen_repository.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
@@ -186,6 +187,7 @@ void main() {
     GroupInviteListener? groupInviteListener,
     InMemoryIntroductionRepository? introductionRepository,
     IntroductionListener? introductionListener,
+    IntroReviewSeenRepository? introReviewSeenRepository,
     InMemoryFeedClearedRepository? feedClearedRepository,
     List<NavigatorObserver>? navigatorObservers,
   }) {
@@ -240,6 +242,7 @@ void main() {
         groupInviteListener: groupInviteListener,
         introductionRepository: introductionRepository,
         introductionListener: introductionListener,
+        introReviewSeenRepository: introReviewSeenRepository,
         appShellController: appShellController,
         pendingPostTargetStore: pendingPostTargetStore,
         postsPrivacySettingsRepository: postsPrivacySettingsRepository,
@@ -634,6 +637,169 @@ void main() {
       expect(find.text('Decline'), findsOneWidget);
     });
 
+    // 215 TC-03: accepting an in-app contact request from the Feed dialog opens
+    // the 1:1 chat for the new contact.
+    testWidgets('accepting a contact request opens the 1:1 conversation', (
+      tester,
+    ) async {
+      identityRepo.seed(testIdentity);
+
+      final request = ContactRequestModel(
+        peerId: 'requester-peer-id',
+        publicKey: 'requester-pk',
+        rendezvous: '/dns4/relay',
+        username: 'Charlie',
+        signature: 'req-sig',
+        receivedAt: DateTime.now().toUtc().toIso8601String(),
+        status: ContactRequestStatus.pending,
+      );
+      // PRE-SEED so acceptContactRequest.getRequest resolves the pending request
+      // (unseeded → notFound → no push → false-negative RED).
+      contactRequestRepo.seed([request]);
+
+      final fakeRequestListener = _FakeContactRequestListener(
+        requestRepo: contactRequestRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+      );
+
+      await tester.pumpWidget(
+        buildFeedWired(contactRequestListener: fakeRequestListener),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      fakeRequestListener.emitRequest(request);
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(find.text('Accept'), findsOneWidget);
+      await tester.tap(find.text('Accept'));
+      await tester.pump();
+      // Drain the 5s profile-download retry timer + flush the async push.
+      await tester.pump(const Duration(seconds: 6));
+      await tester.pump();
+
+      expect(find.byType(ConversationWired), findsOneWidget);
+      expect(
+        tester
+            .widget<ConversationWired>(find.byType(ConversationWired))
+            .contact
+            .peerId,
+        'requester-peer-id',
+      );
+    });
+
+    // 215 TC-04: opening the chat must NOT drop the ConnectionFeedItem upsert —
+    // popping back from the chat still shows the connection.
+    testWidgets('accept keeps the connection in the feed after popping the chat', (
+      tester,
+    ) async {
+      identityRepo.seed(testIdentity);
+
+      final request = ContactRequestModel(
+        peerId: 'requester-peer-id',
+        publicKey: 'requester-pk',
+        rendezvous: '/dns4/relay',
+        username: 'Charlie',
+        signature: 'req-sig',
+        receivedAt: DateTime.now().toUtc().toIso8601String(),
+        status: ContactRequestStatus.pending,
+      );
+      contactRequestRepo.seed([request]);
+
+      final fakeRequestListener = _FakeContactRequestListener(
+        requestRepo: contactRequestRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+      );
+
+      await tester.pumpWidget(
+        buildFeedWired(contactRequestListener: fakeRequestListener),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      fakeRequestListener.emitRequest(request);
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      await tester.tap(find.text('Accept'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 6));
+      await tester.pump();
+
+      expect(find.byType(ConversationWired), findsOneWidget);
+
+      // The ConnectionFeedItem upserted during accept lives in the Feed shell,
+      // now offstage beneath the chat. Assert on the live feedItemsListenable
+      // (the FeedScreen.feedItems prop is only the build-time snapshot) BEFORE
+      // the pop-triggered refresh — this is what catches the "drop the upsert
+      // while adding nav" mutation.
+      bool feedHasConnection() => tester
+          .widget<FeedScreen>(find.byType(FeedScreen, skipOffstage: false))
+          .feedItemsListenable!
+          .value
+          .whereType<ConnectionFeedItem>()
+          .any((c) => c.contactPeerId == 'requester-peer-id');
+
+      expect(feedHasConnection(), isTrue);
+
+      // Pop the chat via its OWN hosting navigator (FeedWired embeds a nested
+      // Navigator, so find.byType(Navigator).first is not the route host). The
+      // Feed shell returns and the connection is still present.
+      Navigator.of(tester.element(find.byType(ConversationWired))).pop();
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+
+      expect(find.byType(ConversationWired), findsNothing);
+      expect(feedHasConnection(), isTrue);
+    });
+
+    // 215 TC-05: a FAILED accept shows the error snackbar and opens NO chat.
+    testWidgets('accept failure shows error and does NOT open a conversation', (
+      tester,
+    ) async {
+      identityRepo.seed(testIdentity);
+
+      final request = ContactRequestModel(
+        peerId: 'requester-peer-id',
+        publicKey: 'requester-pk',
+        rendezvous: '/dns4/relay',
+        username: 'Charlie',
+        signature: 'req-sig',
+        receivedAt: DateTime.now().toUtc().toIso8601String(),
+        status: ContactRequestStatus.pending,
+      );
+      contactRequestRepo.seed([request]);
+      contactRepo.throwOnAddContact = true;
+
+      final fakeRequestListener = _FakeContactRequestListener(
+        requestRepo: contactRequestRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+      );
+
+      await tester.pumpWidget(
+        buildFeedWired(contactRequestListener: fakeRequestListener),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      fakeRequestListener.emitRequest(request);
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      await tester.tap(find.text('Accept'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump();
+
+      expect(find.byType(SnackBar), findsOneWidget);
+      expect(find.byType(ConversationWired), findsNothing);
+    });
+
     testWidgets('orbit navigation bar button exists', (tester) async {
       identityRepo.seed(testIdentity);
 
@@ -780,6 +946,80 @@ void main() {
         expect(navButton(tester, 'Orbit').badgeCount, 1);
       },
     );
+
+    testWidgets('TC-207-19 Orbit badge uses unseen review count', (
+      tester,
+    ) async {
+      suppressFeedNavErrors();
+      identityRepo.seed(testIdentity);
+
+      final introRepo = InMemoryIntroductionRepository();
+      await introRepo.saveIntroduction(
+        pendingIntroduction(
+          id: 'intro-seen',
+          ownPeerId: testIdentity.peerId,
+          otherPeerId: 'seen-peer-id',
+          createdAt: freshPendingIntroductionCreatedAt(),
+        ),
+      );
+      final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+      await pendingInviteRepo.savePendingInvite(
+        makePendingInvite(groupId: 'grp-seen'),
+      );
+      final fakeGroupInviteListener = _FakeGroupInviteListener(
+        pendingInviteRepo: pendingInviteRepo,
+      );
+      final seenRepo = _InMemoryIntroReviewSeenRepository({
+        'intro:seen-peer-id',
+        'invite:grp-seen',
+      });
+
+      await tester.pumpWidget(
+        buildFeedWired(
+          introductionRepository: introRepo,
+          groupInviteListener: fakeGroupInviteListener,
+          introReviewSeenRepository: seenRepo,
+        ),
+      );
+      await pumpFeedFrames(tester, count: 8);
+
+      expect(navButton(tester, 'Orbit').badgeCount, 0);
+    });
+
+    testWidgets('TC-207-20 empty seen set preserves raw Orbit badge count', (
+      tester,
+    ) async {
+      suppressFeedNavErrors();
+      identityRepo.seed(testIdentity);
+
+      final introRepo = InMemoryIntroductionRepository();
+      await introRepo.saveIntroduction(
+        pendingIntroduction(
+          id: 'intro-unseen',
+          ownPeerId: testIdentity.peerId,
+          otherPeerId: 'unseen-peer-id',
+          createdAt: freshPendingIntroductionCreatedAt(),
+        ),
+      );
+      final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+      await pendingInviteRepo.savePendingInvite(
+        makePendingInvite(groupId: 'grp-unseen'),
+      );
+      final fakeGroupInviteListener = _FakeGroupInviteListener(
+        pendingInviteRepo: pendingInviteRepo,
+      );
+
+      await tester.pumpWidget(
+        buildFeedWired(
+          introductionRepository: introRepo,
+          groupInviteListener: fakeGroupInviteListener,
+          introReviewSeenRepository: _InMemoryIntroReviewSeenRepository(),
+        ),
+      );
+      await pumpFeedFrames(tester, count: 8);
+
+      expect(navButton(tester, 'Orbit').badgeCount, 2);
+    });
 
     testWidgets(
       'refreshes the Orbit badge on intro receipt and remote status changes',
@@ -2658,6 +2898,21 @@ class _FakeIntroductionListener extends IntroductionListener {
   @override
   void emitIntroStatusChanged(IntroductionModel intro) =>
       _introStatusController.add(intro);
+}
+
+class _InMemoryIntroReviewSeenRepository implements IntroReviewSeenRepository {
+  final Set<String> _seenKeys;
+
+  _InMemoryIntroReviewSeenRepository([Set<String>? seenKeys])
+    : _seenKeys = {...?seenKeys};
+
+  @override
+  Future<Set<String>> loadSeenKeys() async => {..._seenKeys};
+
+  @override
+  Future<void> markAllSeen(Set<String> itemKeys) async {
+    _seenKeys.addAll(itemKeys);
+  }
 }
 
 /// Fake [GroupMessageListener] exposing a controllable [groupMessageStream] so

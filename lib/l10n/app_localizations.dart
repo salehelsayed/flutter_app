@@ -3878,6 +3878,24 @@ abstract class AppLocalizations {
   /// **'Review and accept introductions to start chatting'**
   String get orbit_intro_banner_intros;
 
+  /// No description provided for @orbit_intro_dock_label.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 new} other{{count} new}}'**
+  String orbit_intro_dock_label(int count);
+
+  /// No description provided for @orbit_intro_dock_semantics.
+  ///
+  /// In en, this message translates to:
+  /// **'Open introductions review, {count} new'**
+  String orbit_intro_dock_semantics(int count);
+
+  /// No description provided for @orbit_intro_remnant_semantics.
+  ///
+  /// In en, this message translates to:
+  /// **'Open introductions review'**
+  String get orbit_intro_remnant_semantics;
+
   /// No description provided for @group_member_invited_count.
   ///
   /// In en, this message translates to:

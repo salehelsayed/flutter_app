@@ -91,6 +91,8 @@ import 'package:flutter_app/core/database/migrations/091_pending_group_invites_i
 import 'package:flutter_app/core/database/migrations/092_feed_cleared_threads.dart';
 import 'package:flutter_app/core/database/migrations/093_messages_contact_ts_index.dart';
 import 'package:flutter_app/core/database/migrations/094_group_messages_group_ts_index.dart';
+import 'package:flutter_app/core/database/migrations/095_intro_review_seen.dart';
+import 'package:flutter_app/core/database/helpers/intro_review_seen_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_sibling_devices_db_helpers.dart';
 import 'package:flutter_app/features/groups/application/manage_pending_sibling_device.dart';
 import 'package:flutter_app/core/secure_storage/ml_kem_secret_ring.dart';
@@ -154,6 +156,7 @@ import 'package:flutter_app/core/database/helpers/post_repost_state_db_helpers.d
 import 'package:flutter_app/core/database/helpers/post_recipients_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/posts_db_helpers.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository_impl.dart';
+import 'package:flutter_app/features/introduction/domain/repositories/intro_review_seen_repository_impl.dart';
 import 'package:flutter_app/features/introduction/application/introduction_outbound_delivery.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/introduction/application/resolve_unknown_inbox_sender_use_case.dart';
@@ -575,6 +578,7 @@ void main() async {
       // 156 QW-5/QW-6: composite indices for the hot 1:1 + group page queries.
       await runMessagesContactTsIndexMigration(db);
       await runGroupMessagesGroupTsIndexMigration(db);
+      await runIntroReviewSeenMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -872,6 +876,9 @@ void main() async {
       // query (two-term ORDER BY) — removes the temp b-tree sort. Index-only.
       if (oldVersion < 94) {
         await runGroupMessagesGroupTsIndexMigration(db);
+      }
+      if (oldVersion < 95) {
+        await runIntroReviewSeenMigration(db);
       }
     },
   );
@@ -1833,6 +1840,11 @@ void main() async {
         dbDeleteIntroductionOutboxDelivery(db, deliveryId),
     dbDeleteIntroductionOutboxDeliveriesForIntroduction: (introductionId) =>
         dbDeleteIntroductionOutboxDeliveriesForIntroduction(db, introductionId),
+  );
+  final introReviewSeenRepository = IntroReviewSeenRepositoryImpl(
+    dbLoadSeenKeys: () => dbLoadIntroReviewSeenKeys(db),
+    dbMarkAllSeen: (itemKeys, seenAt) =>
+        dbMarkIntroReviewItemsSeen(db, itemKeys, seenAt),
   );
 
   // Create media file manager
@@ -3289,6 +3301,7 @@ void main() async {
       groupMembershipUpdateListener: groupMembershipUpdateListener,
       groupConversationTracker: groupConversationTracker,
       introductionRepository: introductionRepository,
+      introReviewSeenRepository: introReviewSeenRepository,
       introductionListener: introductionListener,
       shareIntentService: shareIntentService,
       pushRegistrationCoordinator: pushRegistrationCoordinator,
@@ -3497,6 +3510,7 @@ class MyApp extends StatefulWidget {
   final GroupMembershipUpdateListener groupMembershipUpdateListener;
   final ActiveConversationTracker groupConversationTracker;
   final IntroductionRepositoryImpl introductionRepository;
+  final IntroReviewSeenRepositoryImpl introReviewSeenRepository;
   final IntroductionListener introductionListener;
   final ShareIntentService shareIntentService;
   final PushRegistrationCoordinator? pushRegistrationCoordinator;
@@ -3590,6 +3604,7 @@ class MyApp extends StatefulWidget {
     required this.groupMembershipUpdateListener,
     required this.groupConversationTracker,
     required this.introductionRepository,
+    required this.introReviewSeenRepository,
     required this.introductionListener,
     required this.shareIntentService,
     this.pushRegistrationCoordinator,
@@ -4287,6 +4302,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             widget.groupMembershipUpdateListener.waitForIdle,
         groupConversationTracker: widget.groupConversationTracker,
         introductionRepository: widget.introductionRepository,
+        introReviewSeenRepository: widget.introReviewSeenRepository,
         introductionListener: widget.introductionListener,
         appShellController: widget.appShellController,
         feedUnreadCountListenable: feedUnreadCountListenable,
@@ -4877,6 +4893,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             widget.groupMembershipUpdateListener.waitForIdle,
         groupConversationTracker: widget.groupConversationTracker,
         introductionRepository: widget.introductionRepository,
+        introReviewSeenRepository: widget.introReviewSeenRepository,
         introductionListener: widget.introductionListener,
         requestGroupKeyRepair: widget.requestGroupKeyRepair,
         shareIntentService: widget.shareIntentService,

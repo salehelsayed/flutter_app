@@ -184,7 +184,8 @@ readonly FEED_TESTS=(
   "test/features/feed/presentation/screens/feed_reduced_motion_test.dart"
   "test/features/feed/presentation/screens/feed_screen_test.dart"
   "test/features/feed/presentation/screens/feed_wired_test.dart"
-  # 206: Feed header avatar removal (username + connection dot preserved).
+  # 206 avatar removal + 211 connection dot migrated to Orbit top-right
+  # (header keeps only the username editor).
   "test/features/feed/presentation/widgets/feed_header_test.dart"
   # 134-P8 additive guards: l10n parity, shared-widget survival, contract.
   "test/l10n/feed_strings_parity_test.dart"
@@ -257,14 +258,19 @@ readonly GROUP_TESTS=(
   # here so it also runs in the curated groups gate + completeness-check.
   "test/features/orbit/presentation/screens/orbit_qr_entry_migration_test.dart"
   # 198 orbit Sculpt & Summon: the headline wired surface suite (edit session,
-  # geometry handles, find, labels, persistence, reset seam). The glob does NOT
-  # add it, so it is pinned here to run under the curated groups gate.
+  # geometry handles, find, labels, persistence, reset seam). Auto-globs into
+  # feature-host-all, pinned here so it also runs in the curated groups gate.
   "test/features/orbit/presentation/screens/orbit_sculpt_summon_wired_test.dart"
   # 212 orbit search-trigger placement: floated bottom-right band (INV-212-1
   # one band across both surfaces, RTL physical-right, standalone freeze).
   # Auto-globs into feature-host-all, pinned here so the curated groups gate
   # also locks the placement contract.
   "test/features/orbit/presentation/screens/orbit_search_trigger_placement_test.dart"
+  # 211 orbit connection indicator: the pill migrated from the Feed header to
+  # the Orbit top-right chrome (Layer 4b before the FAB scrim, both views,
+  # edit-hide, seed/telemetry-once). Auto-globs into feature-host-all, pinned
+  # here so the curated groups gate also locks the placement contract.
+  "test/features/orbit/presentation/screens/orbit_connection_indicator_test.dart"
   "test/l10n/orbit_strings_parity_test.dart"
   # 210 group offline-send: the real-SQLCipher recovery-predicate test (the
   # 'queued_offline' re-drive anchor). Auto-globs into feature-host-all, pinned
@@ -274,6 +280,10 @@ readonly GROUP_TESTS=(
   # (clock→tick on reconnect). Auto-globs into feature-host-all, pinned here so
   # the curated groups gate exercises the queued_offline promote.
   "test/features/groups/application/retry_failed_group_inbox_stores_use_case_test.dart"
+  # 207 orbit intro dock: inner-circle top-row review entry (placement, count
+  # gate, edit-hide, RTL, scrim/identity). Auto-globs into feature-host-all,
+  # pinned here so the curated groups gate also locks the dock chrome.
+  "test/features/orbit/presentation/screens/orbit_intro_dock_test.dart"
 )
 
 readonly POSTS_TESTS=(

@@ -73,6 +73,8 @@ import 'package:flutter_app/features/introduction/domain/repositories/introducti
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/introduction/application/expire_old_introductions_use_case.dart';
 import 'package:flutter_app/features/introduction/application/load_introductions_use_case.dart';
+import 'package:flutter_app/features/introduction/application/unseen_review_count.dart';
+import 'package:flutter_app/features/introduction/domain/repositories/intro_review_seen_repository.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
@@ -163,6 +165,9 @@ class FeedWired extends StatefulWidget {
   final Future<void> Function()? waitForGroupMembershipUpdateIdle;
   final ActiveConversationTracker? groupConversationTracker;
   final IntroductionRepository? introductionRepository;
+  // 207: nullable → raw badge semantics when absent, so every existing
+  // construction keeps its behavior; the app shell injects the real store.
+  final IntroReviewSeenRepository? introReviewSeenRepository;
   final IntroductionListener? introductionListener;
   final AppShellController appShellController;
   final PendingPostTargetStore pendingPostTargetStore;
@@ -205,6 +210,7 @@ class FeedWired extends StatefulWidget {
     this.waitForGroupMembershipUpdateIdle,
     this.groupConversationTracker,
     this.introductionRepository,
+    this.introReviewSeenRepository,
     this.introductionListener,
     required this.appShellController,
     required this.pendingPostTargetStore,
@@ -538,7 +544,7 @@ class _FeedWiredState extends State<FeedWired>
     final requestId = ++_orbitBadgeLoadRequestId;
 
     try {
-      var introCount = 0;
+      var introTargetPeerIds = const <String>{};
       if (introRepo != null && ownPeerId != null) {
         await expireOldIntroductions(
           introRepo: introRepo,
@@ -551,34 +557,56 @@ class _FeedWiredState extends State<FeedWired>
           introRepo: introRepo,
           peerId: ownPeerId,
         );
-        introCount = countFoldedPendingIntroductionTargets(
+        introTargetPeerIds = foldedPendingIntroductionTargetPeerIds(
           introductions: pendingIntroductions,
           ownPeerId: ownPeerId,
         );
       }
 
-      var pendingInviteCount = 0;
+      var actionableInviteGroupIds = const <String>{};
       if (pendingInviteRepo != null) {
         final invites = await pendingInviteRepo.getPendingInvites();
         // Mirror the list surfaces' B2 materialized filter so the badge equals
         // the number of actionable (not-already-joined) invites rendered.
         final groupRepo = widget.groupRepository;
+        Iterable<PendingGroupInvite> actionable = invites;
         if (groupRepo != null) {
           final joinedGroupIds = (await groupRepo.getActiveGroups())
               .map((group) => group.id)
               .toSet();
-          pendingInviteCount = invites
-              .where((invite) => !joinedGroupIds.contains(invite.groupId))
-              .length;
-        } else {
-          pendingInviteCount = invites.length;
+          actionable = invites.where(
+            (invite) => !joinedGroupIds.contains(invite.groupId),
+          );
         }
+        actionableInviteGroupIds = actionable
+            .map((invite) => invite.groupId)
+            .toSet();
+      }
+
+      // 207: badge = unseen (dock-dismissed items drop out); repo absent →
+      // empty seen set → unseen == raw, the INV-4 parity every legacy badge
+      // lock rides on.
+      var badgeCount =
+          introTargetPeerIds.length + actionableInviteGroupIds.length;
+      final seenRepo = widget.introReviewSeenRepository;
+      if (seenRepo != null) {
+        final currentKeys = <String>{
+          for (final peerId in introTargetPeerIds)
+            introReviewKeyForIntroTarget(peerId),
+          for (final groupId in actionableInviteGroupIds)
+            introReviewKeyForGroupInvite(groupId),
+        };
+        final seenKeys = await seenRepo.loadSeenKeys();
+        badgeCount = computeUnseenReviewKeys(
+          currentKeys: currentKeys,
+          seenKeys: seenKeys,
+        ).length;
       }
 
       if (!mounted || requestId != _orbitBadgeLoadRequestId) {
         return;
       }
-      _orbitBadgeCountNotifier.value = introCount + pendingInviteCount;
+      _orbitBadgeCountNotifier.value = badgeCount;
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',

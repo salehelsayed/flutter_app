@@ -72,12 +72,14 @@ import 'package:flutter_app/features/groups/domain/repositories/group_pending_ke
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
+import 'package:flutter_app/features/introduction/domain/repositories/intro_review_seen_repository.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/introduction/application/accept_introduction_use_case.dart';
 import 'package:flutter_app/features/introduction/application/folded_introduction_response_use_case.dart';
 import 'package:flutter_app/features/introduction/application/pass_introduction_use_case.dart';
 import 'package:flutter_app/features/introduction/application/expire_old_introductions_use_case.dart';
 import 'package:flutter_app/features/introduction/application/load_introductions_use_case.dart';
+import 'package:flutter_app/features/introduction/application/unseen_review_count.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/groups/presentation/screens/create_group_picker_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
@@ -136,6 +138,7 @@ class OrbitWired extends StatefulWidget {
   final Future<void> Function()? waitForGroupMembershipUpdateIdle;
   final ActiveConversationTracker? groupConversationTracker;
   final IntroductionRepository? introductionRepository;
+  final IntroReviewSeenRepository? introReviewSeenRepository;
   final IntroductionListener? introductionListener;
   final AppShellController? appShellController;
   final ValueListenable<int>? feedUnreadCountListenable;
@@ -191,6 +194,7 @@ class OrbitWired extends StatefulWidget {
     this.waitForGroupMembershipUpdateIdle,
     this.groupConversationTracker,
     this.introductionRepository,
+    this.introReviewSeenRepository,
     this.introductionListener,
     this.appShellController,
     this.feedUnreadCountListenable,
@@ -281,6 +285,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   List<FoldedIntroductionReviewItem> _foldedReviewItems = const [];
   Map<String, String> _introducerUsernames = {};
   List<PendingGroupInvite> _pendingGroupInvites = [];
+  Set<String> _seenReviewKeys = const {};
   final Set<String> _processingIntroductionIds = <String>{};
   final Set<String> _processingPendingInviteIds = <String>{};
   // 153: parity with group_list — invites optimistically hidden while their
@@ -346,6 +351,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       _ => !_activeFriendsLoaded || !_activeGroupsLoaded,
     };
 
+    final currentReviewKeys = _currentReviewKeys();
+    final unseenReviewCount = _unseenReviewKeys(currentReviewKeys).length;
+
     return OrbitViewProjection(
       allFriends: List<OrbitFriend>.unmodifiable(_activeFriends),
       displayedFriends: List<OrbitFriend>.unmodifiable(displayedFriends),
@@ -356,6 +364,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       introCount: _introsCount,
       pendingGroupInviteCount: _pendingGroupInvites.length,
       reviewCount: _introsCount + _pendingGroupInvites.length,
+      unseenReviewCount: unseenReviewCount,
       introsData: OrbitIntrosViewData(
         groupedIntros: _groupedIntros,
         foldedReviewItems: List<FoldedIntroductionReviewItem>.unmodifiable(
@@ -380,6 +389,25 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       searchQuery: _searchQuery,
       filterTab: _filterTab,
       showLoadingPlaceholders: showLoadingPlaceholders,
+    );
+  }
+
+  Set<String> _currentReviewKeys() {
+    return {
+      for (final item in _foldedReviewItems)
+        introReviewKeyForIntroTarget(item.targetPeerId),
+      for (final invite in _pendingGroupInvites)
+        introReviewKeyForGroupInvite(invite.groupId),
+    };
+  }
+
+  Set<String> _unseenReviewKeys(Set<String> currentKeys) {
+    if (widget.introReviewSeenRepository == null) {
+      return currentKeys;
+    }
+    return computeUnseenReviewKeys(
+      currentKeys: currentKeys,
+      seenKeys: _seenReviewKeys,
     );
   }
 
@@ -454,6 +482,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _loadVideoQualityPreference();
     _loadOrbitData();
     _loadGroupData();
+    _loadIntroReviewSeenKeys();
     _loadPendingGroupInvites();
     _loadIntroductions();
     _startListeningForChatMessages();
@@ -833,6 +862,24 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       emitFlowEvent(
         layer: 'FL',
         event: 'ORBIT_FL_LOAD_PENDING_GROUP_INVITES_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
+  Future<void> _loadIntroReviewSeenKeys() async {
+    final repository = widget.introReviewSeenRepository;
+    if (repository == null) return;
+
+    try {
+      final seenKeys = await repository.loadSeenKeys();
+      if (!mounted) return;
+      _seenReviewKeys = seenKeys;
+      _publishListProjection();
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_LOAD_INTRO_REVIEW_SEEN_ERROR',
         details: {'error': e.toString()},
       );
     }
@@ -2016,6 +2063,40 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _publishListProjection();
   }
 
+  void _onIntroDockTap() {
+    setState(() {
+      _viewMode = OrbitViewMode.allChats;
+    });
+    _onFilterChanged('intros');
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'ORBIT_INTRO_DOCK_TAP',
+      details: {},
+    );
+  }
+
+  Future<void> _onIntroDockDismissed() async {
+    final currentKeys = _currentReviewKeys();
+    if (currentKeys.isEmpty) return;
+
+    _seenReviewKeys = {..._seenReviewKeys, ...currentKeys};
+    _publishListProjection();
+    try {
+      await widget.introReviewSeenRepository?.markAllSeen(currentKeys);
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_INTRO_DOCK_DISMISSED',
+        details: {'count': currentKeys.length},
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_INTRO_DOCK_DISMISS_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
   // 193: flip the Orbit view surface. Leaving the all-chats view force-closes
   // search so its dock/trigger don't dangle over the Inner-Circle surface.
   void _onToggleView() {
@@ -2474,6 +2555,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           ? widget.feedUnreadCountListenable
           : null,
       onIntroBannerTap: () => _onFilterChanged('intros'),
+      onIntroDockTap: _onIntroDockTap,
+      onIntroDockDismissed: _onIntroDockDismissed,
       onHeaderBuild: widget.debugOnHeaderBuild,
       onListBuild: widget.debugOnListBuild,
       backgroundPreference:
@@ -2483,6 +2566,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onInnerCircleEditSessionChanged: widget.onEditSessionActiveChanged,
       innerCircleResetListenable: _innerCircleResetTick,
       onSelfAvatarTap: _onSelfAvatarTap,
+      p2pService: widget.p2pService,
     );
   }
 

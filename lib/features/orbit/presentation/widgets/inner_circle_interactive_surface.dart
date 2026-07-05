@@ -54,6 +54,18 @@ class InnerCircleInteractiveSurface extends StatefulWidget {
   /// Host pokes this on the Feed→Orbit rising edge to reset the transient state.
   final Listenable? resetSignal;
 
+  /// Nav-line find seat: non-null when the HOST renders the collapsed find
+  /// pill in its own chrome (the persistent Feed/Orbit nav band) and pokes
+  /// this to open the find bar. While wired, the surface renders NO collapsed
+  /// pill of its own — only the expanded bar + chips, which stay
+  /// surface-internal. Null (bare pumps / standalone) keeps the in-surface
+  /// collapsed pill exactly as before.
+  final Listenable? findOpenSignal;
+
+  /// Fired on find-session open/close TRANSITIONS (true/false), so a host
+  /// that owns the collapsed pill can hide it while the expanded bar is up.
+  final ValueChanged<bool>? onFindSessionActiveChanged;
+
   /// 201: extra bottom reservation (logical px) the host needs the find pill /
   /// chip strip / corner steppers to clear — e.g. the persistent Feed/Orbit nav
   /// band. Default 0 (bare-screen pumps); each bottom band takes
@@ -77,6 +89,8 @@ class InnerCircleInteractiveSurface extends StatefulWidget {
     this.secureKeyStore,
     this.onEditSessionActiveChanged,
     this.resetSignal,
+    this.findOpenSignal,
+    this.onFindSessionActiveChanged,
     this.bottomClearance = 0,
     this.debugOnSurfaceBuild,
   });
@@ -146,6 +160,7 @@ class _InnerCircleInteractiveSurfaceState
   void initState() {
     super.initState();
     widget.resetSignal?.addListener(_onResetSignal);
+    widget.findOpenSignal?.addListener(_onFindOpenSignal);
     _restoreGeometry();
   }
 
@@ -155,6 +170,10 @@ class _InnerCircleInteractiveSurfaceState
     if (oldWidget.resetSignal != widget.resetSignal) {
       oldWidget.resetSignal?.removeListener(_onResetSignal);
       widget.resetSignal?.addListener(_onResetSignal);
+    }
+    if (oldWidget.findOpenSignal != widget.findOpenSignal) {
+      oldWidget.findOpenSignal?.removeListener(_onFindOpenSignal);
+      widget.findOpenSignal?.addListener(_onFindOpenSignal);
     }
   }
 
@@ -169,6 +188,7 @@ class _InnerCircleInteractiveSurfaceState
   @override
   void dispose() {
     widget.resetSignal?.removeListener(_onResetSignal);
+    widget.findOpenSignal?.removeListener(_onFindOpenSignal);
     _dimFlashTimer?.cancel();
     _scroll.dispose();
     _findController.dispose();
@@ -510,16 +530,31 @@ class _InnerCircleInteractiveSurfaceState
 
   // ---- find ----
   void _openFind() {
+    final wasOpen = _findOpen;
     setState(() => _findOpen = true);
     _findFocus.requestFocus();
+    if (!wasOpen) widget.onFindSessionActiveChanged?.call(true);
+  }
+
+  // The host's nav-band pill pokes this to open the find bar (the collapsed
+  // pill lives in host chrome when [findOpenSignal] is wired).
+  void _onFindOpenSignal() {
+    if (!mounted) return;
+    if (_findOpen) {
+      _findFocus.requestFocus();
+      return;
+    }
+    _openFind();
   }
 
   void _onFindChanged(String _) => setState(() {});
 
   void _closeFindInternal() {
+    final wasOpen = _findOpen;
     _findOpen = false;
     _findController.clear();
     if (_findFocus.hasFocus) _findFocus.unfocus();
+    if (wasOpen) widget.onFindSessionActiveChanged?.call(false);
   }
 
   // 205 item 1: the find pill's trailing X — collapse the pill AND dismiss the
@@ -973,7 +1008,11 @@ class _InnerCircleInteractiveSurfaceState
       // shadowed like every chrome sibling, but NO BackdropFilter — a
       // permanently-mounted blur over the continuously-animating rings would
       // re-sample per frame (INV-212-3, 202 perf class).
-      Positioned(
+      // Nav-line seat: when the HOST owns the collapsed pill (findOpenSignal
+      // wired), the surface contributes only the EXPANDED bar; a closed find
+      // renders nothing here.
+      if (_findOpen || widget.findOpenSignal == null)
+        Positioned(
         key: const ValueKey('orbit-slot-find-pill'),
         left: _findOpen ? 16 : null,
         right: 16,

@@ -14,6 +14,8 @@ import 'package:flutter_app/features/conversation/application/chat_message_liste
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_thread_summary.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart'
+    show ConversationWired;
 import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
@@ -43,15 +45,19 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_outbox_delivery.dart';
+import 'package:flutter_app/features/introduction/domain/repositories/intro_review_seen_repository.dart';
+import 'package:flutter_app/features/introduction/presentation/widgets/intro_row.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friend_row.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/group_row.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_close_button.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/pending_group_invite_card.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friends_filter_toggle.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_indicator.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
@@ -258,6 +264,7 @@ void main() {
     FakeReactionRepository? reactionRepository,
     IntroductionListener? introductionListener,
     InMemoryIntroductionRepository? introductionRepository,
+    IntroReviewSeenRepository? introReviewSeenRepository,
     GroupInviteListener? groupInviteListener,
     FakeContactRepository? contactRepository,
     InMemoryMessageRepository? messageRepository,
@@ -325,6 +332,7 @@ void main() {
       groupInviteListener: groupInviteListener,
       waitForGroupMembershipUpdateIdle: waitForGroupMembershipUpdateIdle,
       introductionRepository: introductionRepository,
+      introReviewSeenRepository: introReviewSeenRepository,
       introductionListener: introductionListener,
       appShellController: appShellController,
       postsPrivacySettingsRepository: postsPrivacySettingsRepository,
@@ -1761,6 +1769,166 @@ void main() {
       expect(find.text('Accept'), findsOneWidget);
       expect(find.text('Decline'), findsOneWidget);
     });
+
+    // 215 TC-01: accepting an in-app contact request must open the 1:1 chat for
+    // the newly-accepted peer (mirrors the notification-tap materializer).
+    testWidgets(
+      'accepting a contact request opens the 1:1 conversation for the new contact',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        final request = ContactRequestModel(
+          peerId: 'requester-peer-id',
+          publicKey: 'requester-pk',
+          rendezvous: '/dns4/relay',
+          username: 'Charlie',
+          signature: 'req-sig',
+          receivedAt: DateTime.now().toUtc().toIso8601String(),
+          status: ContactRequestStatus.pending,
+        );
+        // PRE-SEED so acceptContactRequest.getRequest resolves the pending
+        // request (unseeded → notFound → neither success nor notPending → the
+        // push branch never runs → false-negative RED).
+        contactRequestRepo.seed([request]);
+
+        final fakeRequestListener = _FakeContactRequestListener(
+          requestRepo: contactRequestRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(contactRequestListener: fakeRequestListener),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        fakeRequestListener.emitRequest(request);
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(find.text('Accept'), findsOneWidget);
+        await tester.tap(find.text('Accept'));
+        await tester.pump();
+        // Drain the fire-and-forget 5s profile-download retry timer AND flush
+        // the async accept → getContact → push hops + the route transition.
+        await tester.pump(const Duration(seconds: 6));
+        await tester.pump();
+
+        expect(find.byType(ConversationWired), findsOneWidget);
+        expect(
+          tester
+              .widget<ConversationWired>(find.byType(ConversationWired))
+              .contact
+              .peerId,
+          'requester-peer-id',
+        );
+      },
+    );
+
+    // 215 TC-02: a FAILED accept (addContact throws) must NOT open a chat —
+    // navigation is gated on success/notPending.
+    testWidgets('accept failure (addContact error) does NOT open a conversation', (
+      tester,
+    ) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+
+      final request = ContactRequestModel(
+        peerId: 'requester-peer-id',
+        publicKey: 'requester-pk',
+        rendezvous: '/dns4/relay',
+        username: 'Charlie',
+        signature: 'req-sig',
+        receivedAt: DateTime.now().toUtc().toIso8601String(),
+        status: ContactRequestStatus.pending,
+      );
+      contactRequestRepo.seed([request]);
+      contactRepo.throwOnAddContact = true;
+
+      final fakeRequestListener = _FakeContactRequestListener(
+        requestRepo: contactRequestRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+      );
+
+      await tester.pumpWidget(
+        buildOrbitWired(contactRequestListener: fakeRequestListener),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      fakeRequestListener.emitRequest(request);
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      await tester.tap(find.text('Accept'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump();
+
+      // The accept RAN (dialog dismissed) but no chat opened — distinguishes
+      // "no-nav" from "accept never fired".
+      expect(find.text('Accept'), findsNothing);
+      expect(find.byType(ConversationWired), findsNothing);
+    });
+
+    // 215 TC-08: an already-accepted request (notPending) still opens the chat,
+    // falling back to request.toContactModel() when the contact isn't cached.
+    testWidgets(
+      'accepting an already-accepted request still opens the conversation',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        final request = ContactRequestModel(
+          peerId: 'requester-peer-id',
+          publicKey: 'requester-pk',
+          rendezvous: '/dns4/relay',
+          username: 'Charlie',
+          signature: 'req-sig',
+          receivedAt: DateTime.now().toUtc().toIso8601String(),
+          status: ContactRequestStatus.accepted,
+        );
+        // Seeded as already-accepted → acceptContactRequest returns notPending;
+        // contact intentionally NOT cached → getContact null → toContactModel().
+        contactRequestRepo.seed([request]);
+
+        final fakeRequestListener = _FakeContactRequestListener(
+          requestRepo: contactRequestRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(contactRequestListener: fakeRequestListener),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        fakeRequestListener.emitRequest(request);
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+
+        await tester.tap(find.text('Accept'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pump();
+
+        expect(find.byType(ConversationWired), findsOneWidget);
+        expect(
+          tester
+              .widget<ConversationWired>(find.byType(ConversationWired))
+              .contact
+              .peerId,
+          'requester-peer-id',
+        );
+      },
+    );
 
     testWidgets('disposes stream subscriptions without errors', (tester) async {
       setLargeTestSurface(tester);
@@ -4550,6 +4718,468 @@ void main() {
         await pumpOrbitFrames(tester);
       },
     );
+
+    // ── 207: intro dock — wired behavior (tap flip, dismissal, unseen) ──────
+    group('207 intro dock (wired)', () {
+      final dockF = find.byKey(const ValueKey('orbit-intro-dock'));
+      final remnantF = find.byKey(const ValueKey('orbit-intro-remnant'));
+
+      _FakeGroupInviteListener makeInviteListener() => _FakeGroupInviteListener(
+        joinedStream: joinedGroupInviteController.stream,
+        pendingStream: pendingInviteController.stream,
+        pendingInviteRepo: pendingInviteRepo,
+      );
+
+      Future<void> dismissDock(WidgetTester tester) async {
+        await tester.fling(dockF, const Offset(0, -80), 1000);
+        await pumpOrbitFrames(tester, count: 6);
+      }
+
+      List<NavBarButton> navButtons(WidgetTester tester) =>
+          tester.widgetList<NavBarButton>(find.byType(NavBarButton)).toList();
+
+      testWidgets(
+        'TC-207-10 dock tap flips to all-chats Intros reviewing BOTH folds and '
+        'emits ORBIT_INTRO_DOCK_TAP once; the initialFilterTab route does not '
+        'emit',
+        (tester) async {
+          setLargeTestSurface(tester);
+          suppressOverflowErrors();
+          suppressNavAssetErrors();
+          identityRepo.seed(testIdentity);
+
+          final introRepo = InMemoryIntroductionRepository();
+          await introRepo.saveIntroduction(
+            pendingIntroduction(
+              ownPeerId: testIdentity.peerId,
+              otherPeerId: 'intro-peer-dock',
+              createdAt: freshPendingIntroductionCreatedAt(),
+            ),
+          );
+          await pendingInviteRepo.savePendingInvite(
+            makePendingInvite(groupId: 'grp-dock', groupName: 'Dock Group'),
+          );
+
+          await tester.pumpWidget(
+            buildOrbitWired(
+              introductionRepository: introRepo,
+              groupInviteListener: makeInviteListener(),
+              introReviewSeenRepository: _InMemoryIntroReviewSeenRepository(),
+            ),
+          );
+          await pumpOrbitFrames(tester, count: 6);
+
+          // Default entry = inner rings; the dock folds intro + invite.
+          expect(dockF, findsOneWidget);
+          expect(find.text('2 new'), findsOneWidget);
+
+          await tester.tap(dockF);
+          await pumpOrbitFrames(tester, count: 6);
+
+          // One tap → all-chats surface, Intros tab, BOTH item kinds.
+          expect(find.byType(FriendsFilterToggle), findsOneWidget);
+          expect(find.byType(IntroRow), findsOneWidget);
+          expect(find.byType(PendingGroupInviteCard), findsOneWidget);
+          expect(dockF, findsNothing);
+          expect(
+            flowEvents.where((e) => e['event'] == 'ORBIT_INTRO_DOCK_TAP'),
+            hasLength(1),
+          );
+
+          // Discriminator: the 193 notification route (initialFilterTab) lands
+          // on the same surface WITHOUT the dock-tap event.
+          final feedUnread = ValueNotifier<int>(0);
+          addTearDown(feedUnread.dispose);
+          await tester.pumpWidget(
+            buildOrbitWired(
+              introductionRepository: introRepo,
+              groupInviteListener: makeInviteListener(),
+              initialFilterTab: 'intros',
+              appShellController: AppShellController(
+                initialTab: AppShellTab.orbit,
+              ),
+              feedUnreadCountListenable: feedUnread,
+            ),
+          );
+          await pumpOrbitFrames(tester, count: 6);
+          expect(find.byType(IntroRow), findsOneWidget);
+          expect(
+            flowEvents.where((e) => e['event'] == 'ORBIT_INTRO_DOCK_TAP'),
+            hasLength(1),
+            reason: 'route path must NOT emit the dock-tap discriminator',
+          );
+        },
+      );
+
+      testWidgets('TC-207-11 remnant tap opens the same review', (
+        tester,
+      ) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        suppressNavAssetErrors();
+        identityRepo.seed(testIdentity);
+
+        final introRepo = InMemoryIntroductionRepository();
+        await introRepo.saveIntroduction(
+          pendingIntroduction(
+            ownPeerId: testIdentity.peerId,
+            otherPeerId: 'intro-peer-remnant',
+            createdAt: freshPendingIntroductionCreatedAt(),
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            introductionRepository: introRepo,
+            introReviewSeenRepository: _InMemoryIntroReviewSeenRepository(),
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+        expect(dockF, findsOneWidget);
+
+        await dismissDock(tester);
+        expect(remnantF, findsOneWidget);
+        expect(dockF, findsNothing);
+
+        await tester.tap(remnantF);
+        await pumpOrbitFrames(tester, count: 6);
+        expect(find.byType(FriendsFilterToggle), findsOneWidget);
+        expect(find.byType(IntroRow), findsOneWidget);
+      });
+
+      testWidgets(
+        'TC-207-12 dock count = folded intro targets + joined-filtered invites',
+        (tester) async {
+          setLargeTestSurface(tester);
+          suppressOverflowErrors();
+          suppressNavAssetErrors();
+          identityRepo.seed(testIdentity);
+
+          final introRepo = InMemoryIntroductionRepository();
+          // Two intros for the SAME target fold to one review item.
+          await introRepo.saveIntroduction(
+            pendingIntroduction(
+              id: 'intro-dup-1',
+              ownPeerId: testIdentity.peerId,
+              otherPeerId: 'intro-peer-dup',
+              createdAt: freshPendingIntroductionCreatedAt(),
+            ),
+          );
+          await introRepo.saveIntroduction(
+            pendingIntroduction(
+              id: 'intro-dup-2',
+              ownPeerId: testIdentity.peerId,
+              otherPeerId: 'intro-peer-dup',
+              createdAt: freshPendingIntroductionCreatedAt(),
+            ),
+          );
+          // Two pending invites — 'grp-joined' becomes a materialized orphan
+          // (B2) when its join completes below.
+          await pendingInviteRepo.savePendingInvite(
+            makePendingInvite(groupId: 'grp-live', groupName: 'Live Group'),
+          );
+          await pendingInviteRepo.savePendingInvite(
+            makePendingInvite(groupId: 'grp-joined', groupName: 'Joined'),
+          );
+
+          await tester.pumpWidget(
+            buildOrbitWired(
+              introductionRepository: introRepo,
+              groupInviteListener: makeInviteListener(),
+              introReviewSeenRepository: _InMemoryIntroReviewSeenRepository(),
+            ),
+          );
+          await pumpOrbitFrames(tester, count: 6);
+
+          // Duplicate-target intros fold to ONE review item: 1 + 2 invites.
+          expect(dockF, findsOneWidget);
+          expect(find.text('3 new'), findsOneWidget);
+
+          // The 'grp-joined' join completes → its invite is a materialized
+          // orphan and drops out of the fold (B2 filter, join-event path).
+          final joinedGroup = GroupModel(
+            id: 'grp-joined',
+            name: 'Joined',
+            type: GroupType.chat,
+            topicName: 'topic-grp-joined',
+            createdAt: DateTime.utc(2026, 3, 1),
+            createdBy: 'peer-admin',
+            myRole: GroupRole.member,
+          );
+          await groupRepo.saveGroup(joinedGroup);
+          joinedGroupInviteController.add(joinedGroup);
+          await pumpOrbitFrames(tester, count: 6);
+          // The orphan invite is re-delivered post-join (the cross-device B2
+          // scenario) → the reload now sees the joined group and filters it.
+          pendingInviteController.add(
+            makePendingInvite(groupId: 'grp-joined', groupName: 'Joined'),
+          );
+          await pumpOrbitFrames(tester, count: 6);
+
+          // 1 folded target + 1 actionable invite — NOT 2 intros + 2 invites.
+          expect(dockF, findsOneWidget);
+          expect(find.text('2 new'), findsOneWidget);
+        },
+      );
+
+      testWidgets(
+        'TC-207-13 swipe-dismiss → remnant; badge clears; rows preserved; '
+        'no pass/decline side-effects',
+        (tester) async {
+          setLargeTestSurface(tester);
+          suppressOverflowErrors();
+          suppressNavAssetErrors();
+          identityRepo.seed(testIdentity);
+
+          final introRepo = InMemoryIntroductionRepository();
+          await introRepo.saveIntroduction(
+            pendingIntroduction(
+              ownPeerId: testIdentity.peerId,
+              otherPeerId: 'intro-peer-dock',
+              createdAt: freshPendingIntroductionCreatedAt(),
+            ),
+          );
+          await pendingInviteRepo.savePendingInvite(
+            makePendingInvite(groupId: 'grp-dock', groupName: 'Dock Group'),
+          );
+          final seenRepo = _InMemoryIntroReviewSeenRepository();
+          final feedUnread = ValueNotifier<int>(0);
+          addTearDown(feedUnread.dispose);
+
+          await tester.pumpWidget(
+            buildOrbitWired(
+              introductionRepository: introRepo,
+              groupInviteListener: makeInviteListener(),
+              introReviewSeenRepository: seenRepo,
+              appShellController: AppShellController(
+                initialTab: AppShellTab.orbit,
+              ),
+              feedUnreadCountListenable: feedUnread,
+            ),
+          );
+          await pumpOrbitFrames(tester, count: 6);
+          expect(dockF, findsOneWidget);
+          expect(navButtons(tester)[1].badgeCount, 2,
+              reason: 'orbit nav badge = unseen (raw before dismissal)');
+
+          await dismissDock(tester);
+
+          // Calm 32px remnant in the same slot; badge cleared.
+          expect(remnantF, findsOneWidget);
+          final remnantRect = tester.getRect(remnantF);
+          expect(remnantRect.height, 32);
+          expect(remnantRect.width, 32);
+          expect(navButtons(tester)[1].badgeCount, 0);
+
+          // Dismissal wrote ONLY seen keys — exactly the current fold.
+          expect(seenRepo.markAllSeenCalls, 1);
+          expect(seenRepo.markedKeyBatches.single, {
+            'intro:intro-peer-dock',
+            'invite:grp-dock',
+          });
+
+          // Pending rows preserved; dismiss is silent (no pass/decline).
+          final intros = await introRepo.getPendingIntroductionsForUser(
+            testIdentity.peerId,
+          );
+          expect(intros, hasLength(1));
+          expect(intros.single.status, IntroductionOverallStatus.pending);
+          expect(await pendingInviteRepo.getPendingInvite('grp-dock'),
+              isNotNull);
+        },
+      );
+
+      testWidgets(
+        'TC-207-14 dismissal survives a full remount; no store write until '
+        'first dismissal',
+        (tester) async {
+          setLargeTestSurface(tester);
+          suppressOverflowErrors();
+          suppressNavAssetErrors();
+          identityRepo.seed(testIdentity);
+
+          final introRepo = InMemoryIntroductionRepository();
+          await introRepo.saveIntroduction(
+            pendingIntroduction(
+              ownPeerId: testIdentity.peerId,
+              otherPeerId: 'intro-peer-persist',
+              createdAt: freshPendingIntroductionCreatedAt(),
+            ),
+          );
+          final seenRepo = _InMemoryIntroReviewSeenRepository();
+
+          await tester.pumpWidget(
+            buildOrbitWired(
+              introductionRepository: introRepo,
+              introReviewSeenRepository: seenRepo,
+            ),
+          );
+          await pumpOrbitFrames(tester, count: 6);
+          expect(dockF, findsOneWidget);
+          expect(seenRepo.markAllSeenCalls, 0,
+              reason: 'mounting alone must not write the store');
+
+          await dismissDock(tester);
+          expect(remnantF, findsOneWidget);
+          expect(seenRepo.markAllSeenCalls, 1);
+
+          // Hard unmount, then a FRESH mount sharing the same store: the
+          // remnant reconstructs from persistence, not widget state.
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+          await tester.pumpWidget(
+            buildOrbitWired(
+              introductionRepository: introRepo,
+              introReviewSeenRepository: seenRepo,
+            ),
+          );
+          await pumpOrbitFrames(tester, count: 6);
+          expect(remnantF, findsOneWidget);
+          expect(dockF, findsNothing);
+          expect(seenRepo.markAllSeenCalls, 1,
+              reason: 'remount must not re-write the store');
+        },
+      );
+
+      testWidgets(
+        'TC-207-15 only news re-inflates: dock at unseen=1, tab + banner keep '
+        'the raw backlog, badge=1',
+        (tester) async {
+          setLargeTestSurface(tester);
+          suppressOverflowErrors();
+          suppressNavAssetErrors();
+          identityRepo.seed(testIdentity);
+
+          final introRepo = InMemoryIntroductionRepository();
+          final fakeIntroListener = _FakeIntroductionListener(
+            introRepo: introRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            messageRepo: messageRepo,
+          );
+          await introRepo.saveIntroduction(
+            pendingIntroduction(
+              id: 'intro-a',
+              ownPeerId: testIdentity.peerId,
+              otherPeerId: 'intro-peer-a',
+              createdAt: freshPendingIntroductionCreatedAt(),
+            ),
+          );
+          await pendingInviteRepo.savePendingInvite(
+            makePendingInvite(groupId: 'grp-dock', groupName: 'Dock Group'),
+          );
+          final seenRepo = _InMemoryIntroReviewSeenRepository();
+          final feedUnread = ValueNotifier<int>(0);
+          addTearDown(feedUnread.dispose);
+
+          await tester.pumpWidget(
+            buildOrbitWired(
+              introductionRepository: introRepo,
+              introductionListener: fakeIntroListener,
+              groupInviteListener: makeInviteListener(),
+              introReviewSeenRepository: seenRepo,
+              appShellController: AppShellController(
+                initialTab: AppShellTab.orbit,
+              ),
+              feedUnreadCountListenable: feedUnread,
+            ),
+          );
+          await pumpOrbitFrames(tester, count: 6);
+          expect(find.text('2 new'), findsOneWidget);
+
+          await dismissDock(tester);
+          expect(remnantF, findsOneWidget);
+          expect(navButtons(tester)[1].badgeCount, 0);
+
+          // A genuinely NEW intro (different target) arrives live.
+          final newIntro = pendingIntroduction(
+            id: 'intro-b',
+            ownPeerId: testIdentity.peerId,
+            otherPeerId: 'intro-peer-b',
+            createdAt: freshPendingIntroductionCreatedAt(),
+          );
+          await introRepo.saveIntroduction(newIntro);
+          fakeIntroListener.emitIntroReceived(newIntro);
+          await pumpOrbitFrames(tester, count: 6);
+
+          // FULL post-transition state: dock re-inflates at unseen=1 (not the
+          // raw 3), remnant gone, badge 1.
+          expect(dockF, findsOneWidget);
+          expect(find.text('1 new'), findsOneWidget);
+          expect(remnantF, findsNothing);
+          expect(navButtons(tester)[1].badgeCount, 1);
+
+          // The always-on fallback keeps the RAW backlog: intros tab count 3.
+          await switchToAllChats(tester);
+          final toggle = tester.widget<FriendsFilterToggle>(
+            find.byType(FriendsFilterToggle),
+          );
+          expect(toggle.introsCount, 3);
+          expect(find.text('3 items pending'), findsOneWidget,
+              reason: 'list banner copy stays raw');
+        },
+      );
+
+      testWidgets(
+        'TC-207-20 empty seen set ⇒ unseen == raw (INV-4); after dismissal the '
+        'tab + banner stay raw',
+        (tester) async {
+          setLargeTestSurface(tester);
+          suppressOverflowErrors();
+          suppressNavAssetErrors();
+          identityRepo.seed(testIdentity);
+
+          final introRepo = InMemoryIntroductionRepository();
+          await introRepo.saveIntroduction(
+            pendingIntroduction(
+              ownPeerId: testIdentity.peerId,
+              otherPeerId: 'intro-peer-parity',
+              createdAt: freshPendingIntroductionCreatedAt(),
+            ),
+          );
+          await pendingInviteRepo.savePendingInvite(
+            makePendingInvite(groupId: 'grp-parity', groupName: 'Parity'),
+          );
+
+          final feedUnread = ValueNotifier<int>(0);
+          addTearDown(feedUnread.dispose);
+          await tester.pumpWidget(
+            buildOrbitWired(
+              introductionRepository: introRepo,
+              groupInviteListener: makeInviteListener(),
+              introReviewSeenRepository: _InMemoryIntroReviewSeenRepository(),
+              appShellController: AppShellController(
+                initialTab: AppShellTab.orbit,
+              ),
+              feedUnreadCountListenable: feedUnread,
+            ),
+          );
+          await pumpOrbitFrames(tester, count: 6);
+
+          // INV-4 at the wired tier: no dismissal → unseen == raw everywhere.
+          expect(find.text('2 new'), findsOneWidget);
+          expect(navButtons(tester)[1].badgeCount, 2);
+
+          await dismissDock(tester);
+          expect(navButtons(tester)[1].badgeCount, 0);
+
+          // Deliberate asymmetry (test-locked): the Intros tab count and the
+          // list banner keep the RAW backlog after dismissal.
+          await switchToAllChats(tester);
+          final toggle = tester.widget<FriendsFilterToggle>(
+            find.byType(FriendsFilterToggle),
+          );
+          expect(toggle.introsCount, 2);
+          expect(find.text('2 items pending'), findsOneWidget);
+
+          // The review surface still lists BOTH item kinds.
+          await tester.tap(find.text('Intros'));
+          await pumpOrbitFrames(tester, count: 4);
+          expect(find.byType(IntroRow), findsOneWidget);
+          expect(find.byType(PendingGroupInviteCard), findsOneWidget);
+        },
+      );
+    });
   });
 
   group('163 off-screen orbit subscription gate', () {
@@ -5126,6 +5756,26 @@ void main() {
       expect(find.byType(FriendRow), findsNothing);
     });
   });
+
+  group('211 orbit connection indicator (wired)', () {
+    testWidgets(
+      'TC-211-34 OrbitWired threads its p2pService into the Orbit pill',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+
+        await tester.pumpWidget(buildOrbitWired());
+        await pumpOrbitFrames(tester, count: 4);
+
+        // PROD-CRITICAL wiring leg: OrbitWired → OrbitScreen → indicator.
+        expect(find.byType(ConnectionStatusIndicator), findsOneWidget);
+        // Seeded from the fixture FakeP2PService.currentState (stopped).
+        expect(find.text('Offline'), findsOneWidget);
+      },
+    );
+  });
 }
 
 /// Identity repo whose [loadIdentity] resolves slowly — holds a deferred
@@ -5460,6 +6110,30 @@ class _FakeIntroductionListener extends IntroductionListener {
   @override
   void emitIntroStatusChanged(IntroductionModel intro) =>
       _introStatusController.add(intro);
+
+  void emitIntroReceived(IntroductionModel intro) =>
+      _introReceivedController.add(intro);
+}
+
+/// 207: in-memory seen-set store — records every markAllSeen batch so tests
+/// can pin "no store write until first dismissal" and the exact keys written.
+class _InMemoryIntroReviewSeenRepository implements IntroReviewSeenRepository {
+  final Set<String> seenKeys;
+  int markAllSeenCalls = 0;
+  final List<Set<String>> markedKeyBatches = [];
+
+  _InMemoryIntroReviewSeenRepository([Set<String>? seenKeys])
+    : seenKeys = {...?seenKeys};
+
+  @override
+  Future<Set<String>> loadSeenKeys() async => {...seenKeys};
+
+  @override
+  Future<void> markAllSeen(Set<String> itemKeys) async {
+    markAllSeenCalls++;
+    markedKeyBatches.add({...itemKeys});
+    seenKeys.addAll(itemKeys);
+  }
 }
 
 class _SequencedIntroductionRepository extends InMemoryIntroductionRepository {

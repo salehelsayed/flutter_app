@@ -1277,6 +1277,23 @@
     }
   },
   "orbit_intro_banner_intros": "Prüfe und akzeptiere Einführungen, um zu chatten",
+  "orbit_intro_dock_label": "{count, plural, =1{1 neu} other{{count} neu}}",
+  "@orbit_intro_dock_label": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_intro_dock_semantics": "Überprüfung der Einführungen öffnen, {count} neu",
+  "@orbit_intro_dock_semantics": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_intro_remnant_semantics": "Überprüfung der Einführungen öffnen",
   "group_member_invited_count": "{count, plural, =1{Mitglied eingeladen} other{{count} Mitglieder eingeladen}}",
   "@group_member_invited_count": {
     "placeholders": {

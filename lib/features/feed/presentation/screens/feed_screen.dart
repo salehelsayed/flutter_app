@@ -204,10 +204,13 @@ class _FeedScreenState extends State<FeedScreen> {
                           horizontalPadding,
                           0,
                         ),
+                        // 211: the connection dot now lives on the Orbit
+                        // top-right chrome (FeedScreen.p2pService is kept for
+                        // its other consumers/callers; the header no longer
+                        // takes it).
                         child: FeedHeader(
                           username: widget.username,
                           onUsernameChanged: widget.onUsernameChanged,
-                          p2pService: widget.p2pService,
                         ),
                       ),
                       const SizedBox(height: 10),

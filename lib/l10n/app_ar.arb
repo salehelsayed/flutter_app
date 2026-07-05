@@ -1277,6 +1277,23 @@
     }
   },
   "orbit_intro_banner_intros": "راجع التعارفات واقبلها لبدء الدردشة",
+  "orbit_intro_dock_label": "{count, plural, =1{واحد جديد} =2{اثنان جديدان} few{{count} جدد} many{{count} جديدًا} other{{count} جديد}}",
+  "@orbit_intro_dock_label": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_intro_dock_semantics": "فتح مراجعة التعارفات، {count} جديد",
+  "@orbit_intro_dock_semantics": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "orbit_intro_remnant_semantics": "فتح مراجعة التعارفات",
   "group_member_invited_count": "{count, plural, =1{تمت دعوة عضو واحد} =2{تمت دعوة عضوين} few{تمت دعوة {count} أعضاء} many{تمت دعوة {count} عضوًا} other{تمت دعوة {count} عضو}}",
   "@group_member_invited_count": {
     "placeholders": {
