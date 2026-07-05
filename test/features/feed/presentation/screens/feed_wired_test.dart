@@ -22,6 +22,7 @@ import 'package:flutter_app/features/conversation/presentation/screens/conversat
 import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_screen.dart';
@@ -116,7 +117,9 @@ void main() {
     mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
     postRepository = InMemoryPostRepository();
     postsPrivacySettingsRepository = InMemoryPostsPrivacySettingsRepository();
-    appShellController = AppShellController();
+    // 214: this suite ARRANGES feed-first behavior (swipe/scroll/bg cases
+    // start on the Feed pane); the orbit-as-home default is locked elsewhere.
+    appShellController = AppShellController(initialTab: AppShellTab.feed);
     pendingPostTargetStore = PendingPostTargetStore();
     mediaFileManager = FakeMediaFileManager();
     imageProcessor = ImageProcessor(
@@ -2496,6 +2499,50 @@ void main() {
         );
       },
     );
+
+    testWidgets(
+      '214: cold start on orbit applies off-screen pause to the feed pane',
+      (tester) async {
+        // Orbit-INITIAL mount (the 214 cold-start state): the hidden feed pane
+        // must be ticker-muted from the FIRST resting frame, not only after a
+        // feed→orbit round trip.
+        setPhoneViewport(tester);
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+        appShellController = AppShellController(
+          initialTab: AppShellTab.orbit,
+        );
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester, count: 8);
+
+        expect(appShellController.activeTab, AppShellTab.orbit);
+        expect(find.byType(OrbitWired), findsOneWidget);
+        expect(tickerEnabled(tester, 'orbit-pane-ticker-mode'), isTrue);
+        expect(tickerEnabled(tester, 'feed-pane-ticker-mode'), isFalse);
+      },
+    );
+
+    testWidgets('214: initial-orbit mount swipes back to feed', (
+      tester,
+    ) async {
+      // The orbit exit action must be registered from an orbit-INITIAL mount
+      // so the right swipe works from the first frame.
+      setPhoneViewport(tester);
+      suppressFeedNavErrors();
+      identityRepo.seed(testIdentity);
+      appShellController = AppShellController(initialTab: AppShellTab.orbit);
+
+      await tester.pumpWidget(buildFeedWired());
+      await pumpFeedFrames(tester, count: 8);
+      expect(find.byType(OrbitWired), findsOneWidget);
+
+      await tester.drag(feedOrbitSwipeHost(), const Offset(170, 0));
+      await pumpFeedFrames(tester, count: 8);
+
+      expect(appShellController.activeTab, AppShellTab.feed);
+      expect(find.byType(FeedScreen), findsOneWidget);
+    });
   });
 }
 

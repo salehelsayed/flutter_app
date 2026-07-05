@@ -12,7 +12,9 @@ import 'package:flutter_app/features/account_migration/domain/models/migration_q
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
+import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
@@ -165,6 +167,24 @@ void main() {
     }
   }
 
+  // 214: the post-scan landing now mounts the embedded Orbit pane, whose
+  // chrome raises the same benign asset/overflow noise feed_wired_test
+  // suppresses when it pumps OrbitWired.
+  void suppressShellRenderErrors() {
+    final originalOnError = FlutterError.onError;
+    FlutterError.onError = (details) {
+      final message = details.exceptionAsString();
+      if (details.toString().contains('overflowed') ||
+          message.contains('Unable to load asset') ||
+          message.contains('SvgPicture') ||
+          message.contains('ImageFilter')) {
+        return;
+      }
+      originalOnError?.call(details);
+    };
+    addTearDown(() => FlutterError.onError = originalOnError);
+  }
+
   testWidgets('contact scanner keeps default contact copy', (tester) async {
     await tester.pumpWidget(buildScanner());
     await pumpFrames(tester);
@@ -290,8 +310,9 @@ void main() {
   );
 
   testWidgets(
-    '5q: QR scan success without buffered intent navigates to feed only',
+    '5q: QR scan success without buffered intent lands on the Orbit surface',
     (tester) async {
+      suppressShellRenderErrors();
       final shareIntentService = ShareIntentService(resetShareIntent: () {});
 
       await tester.pumpWidget(
@@ -313,7 +334,11 @@ void main() {
 
       expect(shareIntentService.isSettled, isTrue);
       expect(shareIntentService.hasPendingIntent, isFalse);
+      // 214 discriminating triple: the shell root survives the stack nuke AND
+      // it renders the Orbit pane (Orbit is the main screen).
       expect(find.byType(FeedWired), findsOneWidget);
+      expect(appShellController.activeTab, AppShellTab.orbit);
+      expect(find.byType(OrbitWired), findsOneWidget);
       expect(find.text('Share with...'), findsNothing);
     },
   );

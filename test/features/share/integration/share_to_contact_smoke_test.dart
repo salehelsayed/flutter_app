@@ -13,6 +13,7 @@ import 'package:flutter_app/features/contact_request/domain/models/contact_reque
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -120,7 +121,9 @@ void main() {
       groupRepo: groupRepository,
       msgRepo: groupMessageRepository,
     );
-    appShellController = AppShellController();
+    // 214: this suite arranges feed-first behavior; pin the start tab now that
+    // the bare default is orbit (orbit-as-home locked elsewhere).
+    appShellController = AppShellController(initialTab: AppShellTab.feed);
     pendingPostTargetStore = PendingPostTargetStore();
     chatMessageListener = ChatMessageListener(
       chatMessageStream: const Stream<ChatMessage>.empty(),

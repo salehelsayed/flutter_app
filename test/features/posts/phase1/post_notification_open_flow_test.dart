@@ -30,7 +30,9 @@ void main() {
       );
 
       expect(harness.pendingTargetStore.target?.postId, 'post-local');
-      expect(harness.appShellController.activeTab, AppShellTab.feed);
+      // 214: still on the orbit resting default — no navigation before the
+      // post arrives (the forced feed switch happens only at reveal).
+      expect(harness.appShellController.activeTab, AppShellTab.orbit);
       expect(harness.revealPostsSurfaceCalls, 0);
       expect(harness.drainOfflineInboxCalls, 1);
     });
@@ -43,7 +45,8 @@ void main() {
 
       expect(harness.pendingTargetStore.target?.postId, 'post-local');
       expect(harness.pendingTargetStore.target?.commentId, 'comment-1');
-      expect(harness.appShellController.activeTab, AppShellTab.feed);
+      // 214: no navigation before the post arrives (orbit resting default).
+      expect(harness.appShellController.activeTab, AppShellTab.orbit);
       expect(harness.revealPostsSurfaceCalls, 0);
       expect(harness.drainOfflineInboxCalls, 1);
     });
@@ -59,7 +62,8 @@ void main() {
       );
 
       expect(harness.pendingTargetStore.target?.postId, 'post-opened-app');
-      expect(harness.appShellController.activeTab, AppShellTab.feed);
+      // 214: no navigation before the post arrives (orbit resting default).
+      expect(harness.appShellController.activeTab, AppShellTab.orbit);
       expect(harness.drainOfflineInboxCalls, 1);
     });
 
@@ -76,7 +80,8 @@ void main() {
 
       expect(harness.pendingTargetStore.target?.postId, 'post-opened-app');
       expect(harness.pendingTargetStore.target?.commentId, 'comment-1');
-      expect(harness.appShellController.activeTab, AppShellTab.feed);
+      // 214: no navigation before the post arrives (orbit resting default).
+      expect(harness.appShellController.activeTab, AppShellTab.orbit);
       expect(harness.drainOfflineInboxCalls, 1);
     });
 
@@ -96,7 +101,8 @@ void main() {
         harness.pendingTargetStore.target?.postId,
         'post-initial-remote',
       );
-      expect(harness.appShellController.activeTab, AppShellTab.feed);
+      // 214: no navigation before the post arrives (orbit resting default).
+      expect(harness.appShellController.activeTab, AppShellTab.orbit);
       expect(harness.drainOfflineInboxCalls, 1);
     });
 
@@ -110,7 +116,8 @@ void main() {
         harness.pendingTargetStore.target?.postId,
         'post-initial-local',
       );
-      expect(harness.appShellController.activeTab, AppShellTab.feed);
+      // 214: no navigation before the post arrives (orbit resting default).
+      expect(harness.appShellController.activeTab, AppShellTab.orbit);
       expect(harness.drainOfflineInboxCalls, 1);
     });
 

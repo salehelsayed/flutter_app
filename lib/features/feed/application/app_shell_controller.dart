@@ -13,18 +13,23 @@ import 'package:flutter_app/features/settings/domain/models/background_preferenc
 /// Feed-only `.then`-continuation reload the removed header avatar carried.
 enum AppShellChangeKind { tab, background, identity, mediaQuality }
 
+/// 214 — Orbit is the main screen: the default (and invalid-id fallback) tab
+/// is orbit, so every landing that constructs the controller bare — cold
+/// start with contacts, post-QR-scan, post-first-accept — renders the Orbit
+/// pane. The tab is deliberately NOT persisted: every process restart lands
+/// back on Orbit.
 class AppShellController extends ChangeNotifier {
   String _activeTab;
   BackgroundPreference _backgroundPreference;
   AppShellChangeKind _lastChangeKind = AppShellChangeKind.tab;
 
   AppShellController({
-    String initialTab = AppShellTab.feed,
+    String initialTab = AppShellTab.orbit,
     BackgroundPreference initialBackgroundPreference =
         BackgroundPreference.defaultBackground,
   }) : _activeTab = AppShellTab.isValid(initialTab)
            ? initialTab
-           : AppShellTab.feed,
+           : AppShellTab.orbit,
        _backgroundPreference = initialBackgroundPreference;
 
   String get activeTab => _activeTab;

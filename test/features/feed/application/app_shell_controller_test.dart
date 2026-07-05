@@ -8,7 +8,9 @@ void main() {
     test(
       'TC-163-01: setBackgroundPreference and switchTo notify DISTINCT change kinds',
       () {
-        final controller = AppShellController();
+        // 214: pin a feed start so switchTo(orbit) is a REAL tab change (the
+        // bare default is now orbit, which would make it a same-tab no-op).
+        final controller = AppShellController(initialTab: AppShellTab.feed);
         final kinds = <AppShellChangeKind>[];
         controller.addListener(() => kinds.add(controller.lastChangeKind));
 

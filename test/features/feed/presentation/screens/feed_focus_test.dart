@@ -9,6 +9,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_screen.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
@@ -99,7 +100,9 @@ void main() {
     mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
     postRepository = InMemoryPostRepository();
     postsPrivacySettingsRepository = InMemoryPostsPrivacySettingsRepository();
-    appShellController = AppShellController();
+    // 214: this suite arranges feed-first behavior; pin the start tab now that
+    // the bare default is orbit (orbit-as-home locked elsewhere).
+    appShellController = AppShellController(initialTab: AppShellTab.feed);
     pendingPostTargetStore = PendingPostTargetStore();
     mediaFileManager = FakeMediaFileManager();
     groupRepo = InMemoryGroupRepository();

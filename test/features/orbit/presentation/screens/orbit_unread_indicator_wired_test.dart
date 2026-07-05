@@ -338,7 +338,10 @@ void main() {
         identityRepo.seed(testIdentity);
         contactRepo.seed([bob]);
 
-        final shell = AppShellController();
+        // 214: this case ARRANGES a feed-active shell (orbit off-screen) so
+        // the dirty replay fires on Orbit ENTRY; pin the start tab now that
+        // the bare default is orbit.
+        final shell = AppShellController(initialTab: AppShellTab.feed);
         final feedUnread = ValueNotifier<int>(0);
         addTearDown(feedUnread.dispose);
         final listener = _FakeChatMessageListener(

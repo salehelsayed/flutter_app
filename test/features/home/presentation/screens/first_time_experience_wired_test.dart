@@ -15,7 +15,9 @@ import 'package:flutter_app/features/account_migration/application/account_migra
 import 'package:flutter_app/features/account_migration/domain/models/migration_qr_payload.dart';
 import 'package:flutter_app/features/account_migration/presentation/screens/account_migration_journey_wired.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
+import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_screen.dart';
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_wired.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
@@ -138,6 +140,24 @@ void main() {
           null,
         );
   });
+
+  // 214: the post-accept landing now mounts the embedded Orbit pane, whose
+  // chrome raises the same benign asset/overflow noise feed_wired_test
+  // suppresses when it pumps OrbitWired.
+  void suppressShellRenderErrors() {
+    final originalOnError = FlutterError.onError;
+    FlutterError.onError = (details) {
+      final message = details.exceptionAsString();
+      if (details.toString().contains('overflowed') ||
+          message.contains('Unable to load asset') ||
+          message.contains('SvgPicture') ||
+          message.contains('ImageFilter')) {
+        return;
+      }
+      originalOnError?.call(details);
+    };
+    addTearDown(() => FlutterError.onError = originalOnError);
+  }
 
   Widget buildFTE({
     ContactRequestListener? overrideListener,
@@ -565,12 +585,17 @@ void main() {
       expect(find.text('Share with...'), findsOneWidget);
       expect(find.text('already added'), findsOneWidget);
 
+      // 214: the shell underneath now mounts the Orbit pane, whose avatars
+      // schedule zero-duration timers on mount — flush them before teardown.
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pump();
       await requestController.close();
     });
 
     testWidgets(
-      '5o: accept success without buffered intent navigates to feed only',
+      '5o: accept success without buffered intent lands on the Orbit surface',
       (tester) async {
+        suppressShellRenderErrors();
         identityRepo.seed(testIdentity);
         bridge.responses['payload.sign'] = {
           'ok': true,
@@ -620,7 +645,11 @@ void main() {
 
         expect(shareIntentService.isSettled, isTrue);
         expect(shareIntentService.hasPendingIntent, isFalse);
-        expect(find.text('Feed'), findsOneWidget);
+        // 214 discriminating triple: the shell replaces the FTE route AND it
+        // renders the Orbit pane (Orbit is the main screen).
+        expect(find.byType(FeedWired), findsOneWidget);
+        expect(appShellController.activeTab, AppShellTab.orbit);
+        expect(find.byType(OrbitWired), findsOneWidget);
         expect(find.text('Share with...'), findsNothing);
 
         await tester.pump(const Duration(seconds: 5));
@@ -632,6 +661,7 @@ void main() {
     testWidgets('accept success forwards nearby dependencies into feed', (
       tester,
     ) async {
+      suppressShellRenderErrors();
       identityRepo.seed(testIdentity);
       bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
       bridge.responses['contactrequest.encrypt'] = {
@@ -690,6 +720,9 @@ void main() {
       );
       expect(feedWired.nearbyLocationService, same(nearbyLocationService));
       expect(feedWired.accountMigrationRunTransfer, same(runner));
+      // 214: the forwarded shell lands on the Orbit surface.
+      expect(appShellController.activeTab, AppShellTab.orbit);
+      expect(find.byType(OrbitWired), findsOneWidget);
 
       await tester.pump(const Duration(seconds: 5));
       await tester.pump();

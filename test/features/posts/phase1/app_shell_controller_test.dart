@@ -4,15 +4,27 @@ import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 
 void main() {
-  test('defaults to feed and accepts orbit as a first-class tab', () {
+  test('defaults to orbit and accepts feed as a first-class tab', () {
+    // 214: Orbit is the main screen — a bare-constructed controller must land
+    // every surface (cold start, post-scan, post-accept) on the Orbit pane.
     final controller = AppShellController();
     addTearDown(controller.dispose);
 
-    expect(controller.activeTab, AppShellTab.feed);
-
-    controller.switchTo(AppShellTab.orbit);
-
     expect(controller.activeTab, AppShellTab.orbit);
+
+    controller.switchTo(AppShellTab.feed);
+
+    expect(controller.activeTab, AppShellTab.feed);
+  });
+
+  test('214: invalid initial tab ids coerce to orbit; explicit feed honored', () {
+    final coerced = AppShellController(initialTab: 'not-a-tab');
+    addTearDown(coerced.dispose);
+    expect(coerced.activeTab, AppShellTab.orbit);
+
+    final explicitFeed = AppShellController(initialTab: AppShellTab.feed);
+    addTearDown(explicitFeed.dispose);
+    expect(explicitFeed.activeTab, AppShellTab.feed);
   });
 
   test('ignores invalid tab ids and duplicate switches', () {

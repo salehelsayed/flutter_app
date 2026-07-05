@@ -20,7 +20,9 @@ void main() {
   late FakeMessageRepository messageRepository;
 
   setUp(() {
-    appShellController = AppShellController();
+    // 214: these cases arrange a FEED-resting shell (returnTab restore back to
+    // feed) — pin it explicitly now that the bare default is orbit.
+    appShellController = AppShellController(initialTab: AppShellTab.feed);
     messageRepository = FakeMessageRepository()
       ..seed([
         _unreadMessage(id: 'm-1', contactPeerId: 'peer-a'),
@@ -139,6 +141,49 @@ void main() {
 
       expect(appShellController.activeTab, AppShellTab.feed);
       expect(find.text('Open intro orbit'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'orbit resting tab: intro route returns to orbit without a spurious switch',
+    (tester) async {
+      // 214 sentinel: with orbit as home this is the COMMON resting tab. The
+      // route's switchTo(orbit) is guarded and switchTo early-returns on
+      // same-tab, so the whole open→pop cycle must fire ZERO tab changes and
+      // end back on orbit.
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      suppressNavAssetErrors();
+
+      final orbitRestingController = AppShellController(
+        initialTab: AppShellTab.orbit,
+      );
+      addTearDown(orbitRestingController.dispose);
+      var notifications = 0;
+      orbitRestingController.addListener(() => notifications++);
+
+      await tester.pumpWidget(
+        _RouteHarnessApp(
+          appShellController: orbitRestingController,
+          messageRepository: messageRepository,
+        ),
+      );
+
+      await tester.tap(find.text('Open intro orbit'));
+      await pumpRouteTransition(tester);
+
+      expect(orbitRestingController.activeTab, AppShellTab.orbit);
+      expect(find.byType(OrbitScreen), findsOneWidget);
+      expect(notifications, 0);
+
+      // Pop the route without touching the controller (system back / close):
+      // the finally-restore must be a same-tab no-op, not a switch to feed.
+      Navigator.of(tester.element(find.byType(OrbitScreen))).pop();
+      await pumpRouteTransition(tester);
+
+      expect(find.text('Open intro orbit'), findsOneWidget);
+      expect(orbitRestingController.activeTab, AppShellTab.orbit);
+      expect(notifications, 0);
     },
   );
 }

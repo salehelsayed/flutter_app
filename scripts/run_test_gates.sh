@@ -12,6 +12,10 @@ readonly BASELINE_TESTS=(
   "integration_test/loading_states_smoke_test.dart"
   "integration_test/posts_phase1_fake_test.dart"
   "test/features/groups/integration/group_messaging_smoke_test.dart"
+  # 214: Orbit-as-home landing locks (post-accept, cold start, full journey).
+  "test/features/home/presentation/screens/first_time_experience_wired_test.dart"
+  "test/features/identity/presentation/screens/startup_router_home_surface_test.dart"
+  "test/features/home/integration/onboarding_landing_surface_test.dart"
 )
 
 readonly ONE_TO_ONE_TESTS=(

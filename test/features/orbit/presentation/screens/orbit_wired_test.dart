@@ -4595,8 +4595,11 @@ void main() {
         identityRepo.seed(testIdentity);
 
         // Explicitly non-null controller starting on the Feed tab → orbit is
-        // mounted but off-screen.
-        final shellController = AppShellController();
+        // mounted but off-screen. (214: the bare default is orbit now, so the
+        // feed start must be pinned.)
+        final shellController = AppShellController(
+          initialTab: AppShellTab.feed,
+        );
         final spyContactRepo = _SpyContactRepository();
         final spyMessageRepo = _SpyMessageRepository();
         final spyGroupRepo = _SpyGroupRepository();
@@ -4736,8 +4739,12 @@ void main() {
         suppressOverflowErrors();
         identityRepo.seed(testIdentity);
 
-        // Non-null controller starting on Feed → Orbit is mounted but off-screen.
-        final shellController = AppShellController();
+        // Non-null controller starting on Feed → Orbit is mounted but
+        // off-screen. (214: the bare default is orbit now, so the feed start
+        // must be pinned.)
+        final shellController = AppShellController(
+          initialTab: AppShellTab.feed,
+        );
         final spyContactRepo = _SpyContactRepository();
         final spyMessageRepo = _SpyMessageRepository();
         spyContactRepo.seed([testContact]);

@@ -29,10 +29,11 @@ void main() {
           reason: 'no orbit3_prototype import remains');
     });
 
-    test('TC-205-12 AppShellController degrades a stale orbit3 tab to feed', () {
+    test('TC-205-12 AppShellController degrades a stale orbit3 tab to orbit', () {
+      // 214: the invalid-id fallback is orbit (orbit is the main screen).
       final controller = AppShellController(initialTab: 'orbit3');
-      expect(controller.activeTab, AppShellTab.feed,
-          reason: 'orbit3 is no longer valid → graceful fallback to feed');
+      expect(controller.activeTab, AppShellTab.orbit,
+          reason: 'orbit3 is no longer valid → graceful fallback to orbit');
       expect(AppShellTab.isValid('orbit3'), isFalse);
     });
   });
