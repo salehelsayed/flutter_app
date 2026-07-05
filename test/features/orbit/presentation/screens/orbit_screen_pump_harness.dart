@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_view_mode.dart';
@@ -9,6 +10,10 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 /// builds the real production widget with ValueNotifier-backed projections and
 /// no-op callbacks, so no repository/wiring stack is needed. NOT a `_test.dart`
 /// file, so `feature-host-all`'s glob never runs it as a suite.
+///
+/// 212 — the persistent-mode knobs ([activeTab] + [onSwitchView], plus a
+/// drivable [searchTriggerAnimation]) exist for the trigger-placement rows;
+/// their defaults keep every existing standalone pump unchanged.
 Widget buildOrbitScreenHarness({
   required OrbitViewMode viewMode,
   OrbitHeaderProjection header = const OrbitHeaderProjection(),
@@ -16,6 +21,11 @@ Widget buildOrbitScreenHarness({
   VoidCallback? onToggleView,
   ValueChanged<bool>? onInnerEdit,
   Locale locale = const Locale('en'),
+  String? activeTab,
+  void Function(String)? onSwitchView,
+  ValueListenable<int>? feedUnreadCountListenable,
+  Animation<double> searchTriggerAnimation =
+      const AlwaysStoppedAnimation<double>(0),
 }) {
   final headerVN = ValueNotifier<OrbitHeaderProjection>(header);
   final listVN = ValueNotifier<OrbitViewProjection>(list);
@@ -32,7 +42,7 @@ Widget buildOrbitScreenHarness({
       searchFocusNode: FocusNode(),
       collapseAnimation: const AlwaysStoppedAnimation<double>(0),
       searchDockAnimation: const AlwaysStoppedAnimation<double>(0),
-      searchTriggerAnimation: const AlwaysStoppedAnimation<double>(0),
+      searchTriggerAnimation: searchTriggerAnimation,
       onClose: () {},
       onFriendTap: (_) {},
       onSearchOpen: () {},
@@ -53,6 +63,9 @@ Widget buildOrbitScreenHarness({
       onDeleteGroup: (_) {},
       viewMode: viewMode,
       onToggleView: onToggleView,
+      activeTab: activeTab,
+      onSwitchView: onSwitchView,
+      feedUnreadCountListenable: feedUnreadCountListenable,
       onInnerCircleEditSessionChanged: onInnerEdit,
     ),
   );

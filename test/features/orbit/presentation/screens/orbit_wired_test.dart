@@ -2172,6 +2172,118 @@ void main() {
           reason: 'searchTriggerAnimation is per-State');
     });
 
+    testWidgets(
+        'TC-212-06 floated trigger is tap-inert while the dock is open',
+        (tester) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      suppressNavAssetErrors();
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+      final shell = AppShellController();
+      await tester.pumpWidget(buildOrbitWired(
+        appShellController: shell,
+        feedUnreadCountListenable: ValueNotifier<int>(0),
+      ));
+      await pumpOrbitFrames(tester, count: 6);
+      shell.switchTo(AppShellTab.orbit);
+      await pumpOrbitFrames(tester, count: 6);
+      await switchToAllChats(tester);
+
+      await tester.tap(find.byType(OrbitSearchTrigger));
+      // Dock slide 560ms + trigger reverse 340ms.
+      await pumpOrbitFrames(tester, count: 8);
+
+      final dockField = find.byType(TextField);
+      expect(dockField, findsOneWidget, reason: 'the search dock opened');
+      expect(
+        tester.widget<TextField>(dockField).focusNode!.hasFocus,
+        isTrue,
+        reason: 'the dock field took focus',
+      );
+
+      // The trigger stays mounted but fully faded...
+      expect(find.byType(OrbitSearchTrigger), findsOneWidget);
+      final fade = tester.widget<Opacity>(find
+          .ancestor(
+            of: find.byType(OrbitSearchTrigger),
+            matching: find.byType(Opacity),
+          )
+          .first);
+      expect(fade.opacity, 0.0, reason: 'the trigger fades out as the dock opens');
+
+      // ...and tap-inert: the floated builder keeps the IgnorePointer(t < 0.5)
+      // clause at the new home, so the invisible trigger never swallows taps.
+      // (While the dock is open it also paints OVER the corner band — trigger
+      // layer declared before the dock layer — so those pixels belong to the
+      // dock's own controls; the inertness lock is this structural clause.)
+      final ignore = tester.widget<IgnorePointer>(find
+          .ancestor(
+            of: find.byType(OrbitSearchTrigger),
+            matching: find.byType(IgnorePointer),
+          )
+          .first);
+      expect(ignore.ignoring, isTrue,
+          reason: 'the hidden trigger must not swallow taps');
+
+      // A tap at the faded trigger passes through without touching it: no
+      // exception, trigger untouched and still mounted.
+      await tester.tap(find.byType(OrbitSearchTrigger), warnIfMissed: false);
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(find.byType(OrbitSearchTrigger), findsOneWidget);
+    });
+
+    testWidgets(
+        'TC-212-07 scroll-down hides the floated trigger; scroll-up restores '
+        'it', (tester) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      suppressNavAssetErrors();
+      identityRepo.seed(testIdentity);
+      contactRepo.seed(List.generate(
+        24,
+        (i) => testContact.copyWith(
+          peerId: 'scroll-peer-$i',
+          username: 'Friend$i',
+        ),
+      ));
+      final shell = AppShellController();
+      await tester.pumpWidget(buildOrbitWired(
+        appShellController: shell,
+        feedUnreadCountListenable: ValueNotifier<int>(0),
+      ));
+      await pumpOrbitFrames(tester, count: 6);
+      shell.switchTo(AppShellTab.orbit);
+      await pumpOrbitFrames(tester, count: 6);
+      await switchToAllChats(tester);
+
+      double triggerOpacity() => tester
+          .widget<Opacity>(find
+              .ancestor(
+                of: find.byType(OrbitSearchTrigger),
+                matching: find.byType(Opacity),
+              )
+              .first)
+          .opacity;
+
+      expect(triggerOpacity(), 1.0, reason: 'visible before any scroll');
+
+      // Scroll down past the 100px threshold → the trigger fades out (the
+      // AnimatedBuilder(searchTriggerAnimation) wrapper drives the floated
+      // layer exactly as it drove the inline slot).
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, -300));
+      await tester.pump();
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, -300));
+      await pumpOrbitFrames(tester, count: 6);
+      expect(triggerOpacity(), 0.0, reason: 'hidden after down-scroll');
+
+      // Scroll back up → restored.
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, 600));
+      await pumpOrbitFrames(tester, count: 6);
+      expect(triggerOpacity(), 1.0, reason: 'restored after up-scroll');
+    });
+
     testWidgets('create-group route result refreshes only the affected group', (
       tester,
     ) async {

@@ -596,8 +596,8 @@ class _OrbitScreenView extends StatelessWidget {
               ),
 
             // Layer 3: Search trigger — standalone mode floats above the close
-            // button. In persistent mode the trigger sits inline with the
-            // Feed/Orbit nav bar (built below) instead. Search is an all-chats
+            // button. In persistent mode the trigger floats at the bottom-right
+            // corner band instead (Layer 3b). Search is an all-chats
             // affordance — never shown on the Inner-Circle surface.
             if (!_showsPersistentNav && viewMode == OrbitViewMode.allChats)
               AnimatedBuilder(
@@ -615,6 +615,34 @@ class _OrbitScreenView extends StatelessWidget {
                           offset: Offset(0, (1 - t) * 14),
                           child: IgnorePointer(ignoring: t < 0.5, child: child),
                         ),
+                      ),
+                    ),
+                  );
+                },
+                child: OrbitSearchTrigger(onSearchTap: onSearchOpen),
+              ),
+
+            // Layer 3b (212): persistent mode floats the trigger at the
+            // bottom-right corner, in the SAME band the Inner-Circle find pill
+            // owns (navBottomOffset + 84 ≡ the pill's safeBottom + 40 +
+            // bandLift, see _innerCircleBottomClearance) — one search
+            // affordance, one bottom-right home, both surfaces (INV-212-1).
+            // Declared BEFORE the Layer 4 dock so the rising dock paints over
+            // the fading trigger mid-transit. Keeps the persistent transform
+            // set (opacity + scale, no translate) and the t<0.5 tap-inertness.
+            if (_showsPersistentNav && viewMode == OrbitViewMode.allChats)
+              AnimatedBuilder(
+                animation: searchTriggerAnimation,
+                builder: (context, child) {
+                  final t = searchTriggerAnimation.value;
+                  return Positioned(
+                    right: 16,
+                    bottom: _persistentNavBottomOffset(context) + 84,
+                    child: Opacity(
+                      opacity: t,
+                      child: Transform.scale(
+                        scale: 0.985 + 0.015 * t,
+                        child: IgnorePointer(ignoring: t < 0.5, child: child),
                       ),
                     ),
                   );
@@ -660,38 +688,10 @@ class _OrbitScreenView extends StatelessWidget {
                 bottom: _persistentNavBottomOffset(context),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(
-                    children: [
-                      // Left spacer balances the search trigger on the right so
-                      // the Feed/Orbit nav bar stays horizontally centered.
-                      const Spacer(),
-                      _buildNavigationBar(),
-                      Expanded(
-                        child: Align(
-                          alignment: Alignment.centerRight,
-                          child: AnimatedBuilder(
-                            animation: searchTriggerAnimation,
-                            builder: (context, child) {
-                              final t = searchTriggerAnimation.value;
-                              return Opacity(
-                                opacity: t,
-                                child: Transform.scale(
-                                  scale: 0.985 + 0.015 * t,
-                                  child: IgnorePointer(
-                                    ignoring: t < 0.5,
-                                    child: child,
-                                  ),
-                                ),
-                              );
-                            },
-                            child: viewMode == OrbitViewMode.allChats
-                                ? OrbitSearchTrigger(onSearchTap: onSearchOpen)
-                                : const SizedBox.shrink(),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                  // 212: the search trigger left this Row for the floated
+                  // bottom-right band (Layer 3b); Center keeps the Feed/Orbit
+                  // bar horizontally centered without flex balancing.
+                  child: Center(child: _buildNavigationBar()),
                 ),
               ),
 

@@ -256,6 +256,11 @@ readonly GROUP_TESTS=(
   # geometry handles, find, labels, persistence, reset seam). The glob does NOT
   # add it, so it is pinned here to run under the curated groups gate.
   "test/features/orbit/presentation/screens/orbit_sculpt_summon_wired_test.dart"
+  # 212 orbit search-trigger placement: floated bottom-right band (INV-212-1
+  # one band across both surfaces, RTL physical-right, standalone freeze).
+  # Auto-globs into feature-host-all, pinned here so the curated groups gate
+  # also locks the placement contract.
+  "test/features/orbit/presentation/screens/orbit_search_trigger_placement_test.dart"
   "test/l10n/orbit_strings_parity_test.dart"
   # 210 group offline-send: the real-SQLCipher recovery-predicate test (the
   # 'queued_offline' re-drive anchor). Auto-globs into feature-host-all, pinned

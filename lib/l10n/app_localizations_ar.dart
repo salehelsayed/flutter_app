@@ -494,6 +494,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get orbit_open_settings => 'فتح الإعدادات';
 
   @override
+  String get orbit_search_trigger_semantics => 'البحث في الدردشات';
+
+  @override
   String orbit_chip_provenance_ring(int ring) {
     return 'حلقة $ring';
   }

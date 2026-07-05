@@ -880,6 +880,12 @@ abstract class AppLocalizations {
   /// **'Open settings'**
   String get orbit_open_settings;
 
+  /// No description provided for @orbit_search_trigger_semantics.
+  ///
+  /// In en, this message translates to:
+  /// **'Search chats'**
+  String get orbit_search_trigger_semantics;
+
   /// No description provided for @orbit_chip_provenance_ring.
   ///
   /// In en, this message translates to:

@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>212 · Where should Search live on Orbit?</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ------------------------------------------------------------------
+   Palette & geometry provenance (read from app source, 2026-07-05):
+   - search trigger (all-chats): orbit_search_trigger.dart:20-32 —
+     44×44 glass circle, icon 22, inline right of the nav band
+     (orbit_screen.dart:656-696, right-aligned Expanded slot)
+   - find pill (inner-circle): inner_circle_interactive_surface.dart:
+     973-1048 — 44px collapsed circle right:16, icon 20, expands to a
+     full-width (16/16) ≥56-high bar; chip strip rides above
+   - rings: orbital_ring_painter.dart — teal rgba(129,230,217,.25) r62,
+     purple rgba(167,139,250,.20) r108, dash 8/4, glow underlay
+   - seats: orbit_arc_layout.dart — ring1 5×38 r62, ring2 8×30 r108,
+     center self-avatar 48px (opens Settings, 206)
+   - top chrome today (post-209): view toggle top-left 40px
+     (orbit_view_toggle_button.dart:39-40), create + FAB top-right 40px;
+     QR/Scan center pair RETIRED to Settings (209)
+   - nav band: nav_bar_theme.dart — glass pill, blur 28, radius 30;
+     bottom offset max(16, safeBottom-14) ⇒ 20 on notched phones
+   - ambient bg: ambient_background.dart — #000 + green/red blobs
+   ------------------------------------------------------------------ */
+:root{
+  --display:'Space Grotesk',sans-serif;
+  --body:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  --mono:ui-monospace,'SF Mono',Menlo,monospace;
+  --page-bg:#0C0E13;
+  --card-bg:#12151C;
+  --ink:#F2F5F8;
+  --muted:#9AA3B2;
+  --faint:#6B7382;
+  --hairline:rgba(255,255,255,0.08);
+  --green:#1DB954;
+  --teal:#4ECDC4;
+  --red:#FF6B6B;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--page-bg);color:var(--ink);font-family:var(--body);-webkit-font-smoothing:antialiased;line-height:1.5}
+.wrap{max-width:1280px;margin:0 auto;padding:56px 32px 80px}
+
+/* ---------- hero ---------- */
+header.hero{position:relative;margin-bottom:44px}
+.hero-orbit{position:absolute;top:-24px;right:0;opacity:.5;pointer-events:none}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:2.5px;text-transform:uppercase;color:var(--green);margin-bottom:14px}
+h1{font-family:var(--display);font-weight:700;font-size:clamp(30px,4vw,44px);line-height:1.12;max-width:720px}
+.brief{margin-top:16px;font-size:15px;color:var(--muted);max-width:740px}
+.brief b{color:var(--ink);font-weight:600}
+
+/* ---------- before/today strip ---------- */
+section.before{background:#0A0C10;border:1px solid var(--hairline);border-radius:20px;padding:26px;margin-bottom:40px;display:flex;gap:30px;flex-wrap:wrap;align-items:flex-start}
+.before .notes{flex:1;min-width:300px}
+.before h2{font-family:var(--display);font-size:20px;font-weight:600;margin-bottom:10px}
+.before p{font-size:14px;color:var(--muted);margin-bottom:10px}
+.bad{color:var(--red);font-weight:600}
+.before ul{list-style:none;margin-top:8px}
+.before li{font-size:13.5px;color:var(--muted);padding-left:18px;position:relative;margin-bottom:8px}
+.before li::before{content:'';position:absolute;left:2px;top:8px;width:6px;height:6px;border-radius:50%;background:rgba(255,107,107,0.55)}
+.before li.ok::before{background:rgba(129,230,217,0.5)}
+.phone-cap{font-family:var(--mono);font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--faint);text-align:center;margin-top:10px}
+
+/* ---------- option grid & cards ---------- */
+main.grid{display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-bottom:44px}
+article.card{background:var(--card-bg);border:1px solid var(--hairline);border-radius:20px;padding:26px;display:flex;gap:26px}
+.card .notes{flex:1;min-width:0}
+.opt-eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--faint);display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.tag{font-family:var(--mono);font-size:10px;letter-spacing:1px;padding:3px 9px;border-radius:20px;border:1px solid rgba(255,255,255,0.16);color:var(--muted)}
+.tag.pick{color:var(--green);border-color:rgba(29,185,84,0.4);background:rgba(29,185,84,0.08)}
+.opt-name{font-family:var(--display);font-size:24px;font-weight:600;margin-bottom:10px}
+.thesis{font-size:14px;color:var(--muted);margin-bottom:16px}
+.thesis b{color:var(--ink);font-weight:600}
+.nlabel{font-family:var(--mono);font-size:10.5px;letter-spacing:1.6px;text-transform:uppercase;color:var(--faint);margin:14px 0 7px}
+.card ul{list-style:none}
+.card li{font-size:13px;color:var(--muted);padding-left:16px;position:relative;margin-bottom:7px}
+.card li::before{content:'';position:absolute;left:1px;top:7px;width:5px;height:5px;border-radius:50%;background:rgba(129,230,217,0.5)}
+.card li.warn::before{background:rgba(255,107,107,0.55)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
+.chips span{font-family:var(--mono);font-size:10px;color:var(--muted);border:1px solid var(--hairline);border-radius:6px;padding:3px 8px;white-space:nowrap}
+.try{font-size:12px;color:var(--faint);margin-top:10px;text-align:center}
+.demo-btn{display:block;margin:8px auto 0;font-family:var(--mono);font-size:11px;color:var(--teal);background:rgba(78,205,196,0.08);border:1px solid rgba(78,205,196,0.35);border-radius:8px;padding:6px 14px;cursor:pointer}
+.demo-btn:hover{background:rgba(78,205,196,0.16)}
+
+/* ---------- phone frame (390×844 @ .727 => 285×616) ---------- */
+.phone-wrap{flex:0 0 285px;width:285px;height:616px;position:relative}
+.phone{width:390px;height:844px;transform:scale(0.727);transform-origin:top left;background:#000;border-radius:54px;border:1.5px solid rgba(255,255,255,0.10);overflow:hidden;position:relative;box-shadow:0 30px 70px rgba(0,0,0,0.55)}
+.phone-wrap.sm{flex:0 0 234px;width:234px;height:508px}
+.phone-wrap.sm .phone{transform:scale(0.6)}
+.island{position:absolute;top:12px;left:50%;transform:translateX(-50%);width:112px;height:32px;background:#000;border-radius:20px;z-index:60}
+.statusbar{position:absolute;top:0;left:0;right:0;height:54px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 32px 6px;z-index:55}
+.sb-time{font-size:15px;font-weight:600;color:#fff}
+.sb-icons{display:flex;align-items:center;gap:6px}
+
+/* in-phone ambient background (ambient_background.dart) */
+.blob{position:absolute;border-radius:50%;pointer-events:none}
+.blob.green{width:300px;height:300px;top:-100px;left:-100px;background:radial-gradient(circle,rgba(29,185,84,0.30) 0%,rgba(29,185,84,0) 70%);animation:driftA 8s ease-in-out infinite alternate}
+.blob.red{width:350px;height:350px;bottom:-100px;right:-100px;background:radial-gradient(circle,rgba(255,50,50,0.25) 0%,rgba(255,50,50,0) 70%);animation:driftB 9s ease-in-out infinite alternate}
+@keyframes driftA{to{transform:translate(30px,20px)}}
+@keyframes driftB{to{transform:translate(-25px,-30px)}}
+
+/* top chrome (post-209: toggle left, + FAB right — no center pair) */
+.chrome-btn{position:absolute;top:62px;width:40px;height:40px;border-radius:50%;background:rgba(16,18,24,0.75);border:0.5px solid rgba(255,255,255,0.50);display:flex;align-items:center;justify-content:center;z-index:40}
+.glow-fab{position:absolute;top:62px;right:16px;width:40px;height:40px;border-radius:50%;background:#1A1A2E;border:2px solid #64B5F6;box-shadow:0 0 12px 1px rgba(100,181,246,0.8);display:flex;align-items:center;justify-content:center;z-index:40}
+
+/* orbit canvas */
+.orbit-box{position:absolute;left:35px;top:271px;width:320px;height:320px}
+.ring-glow{position:absolute;inset:0;filter:blur(4px)}
+.node{position:absolute;border-radius:50%;overflow:hidden}
+.node-wrap{position:absolute}
+.spin{animation:spin 9s linear infinite;transform-origin:center}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* bottom nav (nav_bar_theme.dart) */
+.navbar{position:absolute;bottom:20px;left:0;right:0;display:flex;justify-content:center;z-index:45}
+.nav-pill{display:flex;align-items:center;gap:5px;padding:5px 6px;border-radius:30px;background:linear-gradient(180deg,rgba(255,255,255,0.18),rgba(255,255,255,0.10));border:1px solid rgba(255,255,255,0.30);backdrop-filter:blur(28px);box-shadow:0 4px 16px rgba(0,0,0,0.12)}
+.nav-btn{width:70px;border-radius:19px;display:flex;flex-direction:column;align-items:center;gap:1px;padding:6px 0;color:rgba(255,255,255,0.60);position:relative}
+.nav-btn .nl{font-size:11px}
+.nav-btn.active{background:linear-gradient(180deg,rgba(255,255,255,0.25),rgba(255,255,255,0.12));color:#fff}
+
+/* ---------- TODAY: the two 44px orphans ---------- */
+.find-pill{position:absolute;right:16px;bottom:104px;width:44px;height:44px;border-radius:50%;background:rgba(10,10,15,0.8);display:flex;align-items:center;justify-content:center;z-index:44}
+.search-trigger{position:absolute;right:16px;bottom:30px;width:44px;height:44px;border-radius:50%;background:rgba(10,10,15,0.8);border:0.5px solid rgba(255,255,255,0.40);display:flex;align-items:center;justify-content:center;z-index:44}
+.callout{position:absolute;border:2px dashed rgba(255,107,107,0.85);border-radius:50%;z-index:48;pointer-events:none;animation:breathe 2.4s ease-in-out infinite}
+@keyframes breathe{0%,100%{box-shadow:0 0 0 0 rgba(255,107,107,0.0)}50%{box-shadow:0 0 0 8px rgba(255,107,107,0.12)}}
+.callout-label{position:absolute;font-family:var(--mono);font-size:11px;color:#FF9B9B;background:rgba(30,10,10,0.85);border:1px solid rgba(255,107,107,0.4);border-radius:8px;padding:4px 9px;z-index:48;white-space:nowrap}
+
+/* ---------- Option A: labeled Find pill, bottom-center ---------- */
+.find-capsule{position:absolute;left:50%;transform:translateX(-50%);bottom:96px;height:48px;display:flex;align-items:center;gap:8px;padding:0 20px 0 16px;border-radius:24px;background:rgba(10,10,15,0.82);border:1px solid rgba(255,255,255,0.35);box-shadow:0 4px 18px rgba(0,0,0,0.4);z-index:44;cursor:pointer}
+.find-capsule .fc-label{font-size:14.5px;font-weight:600;color:#F8FAFC;letter-spacing:0.2px}
+.find-bar{position:absolute;left:16px;right:16px;bottom:301px;min-height:56px;display:flex;align-items:center;gap:10px;padding:12px 16px;border-radius:24px;background:rgba(10,10,15,0.88);border:1px solid rgba(255,255,255,0.30);z-index:44}
+.find-bar .fb-text{flex:1;font-size:16px;color:#F8FAFC}
+.find-bar .fb-text .caret{display:inline-block;width:1.5px;height:18px;background:#4ECDC4;vertical-align:-3px;margin-left:1px;animation:blink 1.1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.chip-strip{position:absolute;left:12px;right:12px;bottom:368px;display:flex;justify-content:center;gap:8px;z-index:44}
+.fchip{display:flex;align-items:center;gap:7px;background:rgba(24,26,32,0.92);border:1px solid rgba(255,255,255,0.14);border-radius:18px;padding:5px 13px 5px 6px}
+.fchip .fc-n{font-size:13px;font-weight:600;color:#F8FAFC}
+.fchip .fc-p{font-size:10.5px;color:rgba(201,206,214,0.6)}
+/* mock iOS keyboard for the expanded state */
+.kb{position:absolute;left:0;right:0;bottom:0;height:291px;background:rgba(30,30,32,0.96);z-index:43;padding:10px 3px 0}
+.kb-row{display:flex;justify-content:center;gap:6px;margin-bottom:11px}
+.key{height:42px;flex:0 0 33px;border-radius:5px;background:#6B6B6E;box-shadow:0 1px 0 rgba(0,0,0,0.35)}
+.key.wide{flex:0 0 44px;background:#494A4C}
+.key.space{flex:0 0 182px}
+.key.ret{flex:0 0 90px;background:#494A4C}
+
+/* ---------- Option B: search slot fused into the nav pill ---------- */
+.nav-divider{width:1px;height:30px;background:rgba(255,255,255,0.22);margin:0 3px}
+.nav-search{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.85)}
+.nav-search:hover{background:rgba(255,255,255,0.10)}
+
+/* ---------- Option C: top chrome slot ---------- */
+.top-search{position:absolute;top:62px;right:64px;width:40px;height:40px;border-radius:50%;background:rgba(16,18,24,0.75);border:0.5px solid rgba(255,255,255,0.50);display:flex;align-items:center;justify-content:center;z-index:40}
+
+/* ---------- Option D: persistent top search bar ---------- */
+.top-bar{position:absolute;top:112px;left:16px;right:16px;height:44px;display:flex;align-items:center;gap:10px;padding:0 14px;border-radius:14px;background:rgba(16,18,24,0.75);border:1px solid rgba(255,255,255,0.14);z-index:40}
+.top-bar .tb-hint{font-size:14px;color:rgba(201,206,214,0.55)}
+
+/* ---------- verdict / shared / colophon ---------- */
+section.verdict{border:1px solid rgba(29,185,84,0.3);background:linear-gradient(180deg,rgba(29,185,84,0.06),rgba(29,185,84,0.02));border-radius:20px;padding:28px 30px;margin-bottom:36px}
+.verdict .eyebrow{margin-bottom:10px}
+.verdict h2{font-family:var(--display);font-size:26px;font-weight:700;margin-bottom:12px}
+.verdict p{font-size:14.5px;color:var(--muted);max-width:980px}
+.verdict b{color:var(--ink)}
+.shared{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-bottom:44px}
+.shared .snote{border:1px solid var(--hairline);border-radius:14px;padding:16px 18px;background:#0E1117}
+.snote h3{font-family:var(--display);font-size:14.5px;font-weight:600;margin-bottom:6px}
+.snote p{font-size:12.5px;color:var(--muted)}
+.snote code{font-family:var(--mono);font-size:11px;color:#81E6D9}
+.colophon{font-family:var(--mono);font-size:11px;color:var(--faint);border-top:1px solid var(--hairline);padding-top:20px;line-height:1.8}
+
+@media (max-width:1120px){main.grid{grid-template-columns:1fr}}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <svg class="hero-orbit" width="220" height="150" viewBox="0 0 220 150" fill="none">
+    <circle cx="150" cy="60" r="46" stroke="rgba(129,230,217,0.25)" stroke-width="1.5" stroke-dasharray="8 4"/>
+    <circle cx="150" cy="60" r="80" stroke="rgba(167,139,250,0.20)" stroke-width="1.5" stroke-dasharray="8 4"/>
+    <circle cx="150" cy="60" r="7" fill="rgba(29,185,84,0.6)"/>
+    <circle cx="196" cy="60" r="6" stroke="rgba(129,230,217,0.7)" stroke-width="1.4" fill="none"/>
+    <line x1="200" y1="64" x2="208" y2="72" stroke="rgba(129,230,217,0.7)" stroke-width="1.4" stroke-linecap="round"/>
+  </svg>
+  <div class="eyebrow">mknoon · orbit screen · exploration 212</div>
+  <h1>Where should Search live on Orbit?</h1>
+  <p class="brief">Finding a friend is one of the two things people <i>do</i> on Orbit — yet its entry is a <b>44px unlabeled glass circle hiding in the bottom-right corner</b>, the busiest strip of the screen. This exploration relocates and re-weights that affordance: four placements, one recommendation. The <b>expanded search experience</b> (full-width field, live match chips) already works well and is untouched — this is only about the <b>closed, discoverable state</b>: where it sits, how big it is, and what it says.</p>
+</header>
+
+<section class="before">
+  <div>
+    <div class="phone-wrap sm"><div class="phone" id="phone-t1"></div></div>
+    <div class="phone-cap">today · orbit rings — find pill in the corner</div>
+  </div>
+  <div>
+    <div class="phone-wrap sm"><div class="phone" id="phone-t2"></div></div>
+    <div class="phone-cap">today · all-chats list — trigger crammed by the nav</div>
+  </div>
+  <div class="notes">
+    <h2>Today: a key action dressed as furniture</h2>
+    <p>The search entry is <span class="bad">44×44 with a 20px glyph, no label, no border on the rings view</span> — visually the quietest element on a screen full of glowing avatars. And it lives in the one strip that everything else also wants.</p>
+    <ul>
+      <li><b>Corner orphan:</b> on the rings view it floats at right:16, ~104px up — off the natural sightline, unattached to any cluster, easy to read as decoration.</li>
+      <li><b>Undersized presence:</b> 44px is Apple's bare tap minimum; with dark glass on a dark cosmos and a 20px icon it <i>reads</i> smaller than it hits.</li>
+      <li><b>Unlabeled:</b> nothing says "find your friends" — icon-only affordances in non-standard positions are the classic discoverability miss.</li>
+      <li><b>Two homes, one job:</b> the rings view floats it mid-air while the list view tucks a twin beside the nav (~30px up) — same glyph, two different corners.</li>
+      <li><b>Crowded band:</b> that strip already juggles the nav pill, the edit steppers (198), the chip-strip lift rules (201/205), and the proposed intro dock (207).</li>
+      <li class="ok">What already works: the <b>expanded</b> state — full-width field, live avatar chips with ring provenance, matched-node highlighting. The destination is great; the door is hidden.</li>
+    </ul>
+  </div>
+</section>
+
+<main class="grid">
+
+  <!-- ============ OPTION A ============ -->
+  <article class="card">
+    <div>
+      <div class="phone-wrap"><div class="phone" id="phone-a"></div></div>
+      <div class="try">labeled capsule, dead-center in the thumb zone</div>
+      <button class="demo-btn" onclick="toggleFind()">tap to expand / collapse</button>
+    </div>
+    <div class="notes">
+      <div class="opt-eyebrow">Option A <span class="tag pick">design pick</span></div>
+      <div class="opt-name">"Find" capsule — bottom-center</div>
+      <p class="thesis">The 44px orphan becomes a <b>labeled glass capsule floating centered above the nav band</b>: search glyph + the word "Find", 48px tall. Tap → it stretches into the existing full-width search bar, in place. Same widget, new closed state.</p>
+      <div class="nlabel">Why it works</div>
+      <ul>
+        <li><b>Thumb-zone bullseye:</b> bottom-center is the easiest one-handed reach on any hand, any size phone — and RTL-neutral for free.</li>
+        <li><b>A label is the affordance:</b> "Find" answers <i>what does this do</i> before the tap; discoverability jumps without any onboarding.</li>
+        <li><b>Morph, don't teleport:</b> the capsule expands into the full-width bar it already becomes today — one continuous element, no new mental model.</li>
+        <li><b>One home on both surfaces:</b> the identical capsule sits in the identical spot on the rings and the list view, replacing both 44px twins.</li>
+      </ul>
+      <div class="nlabel">Watch out</div>
+      <ul>
+        <li class="warn">Shares the under-rings band with 207's proposed intro dock — if that ships, the dock rides <i>above</i> the capsule (stacked), or the two fuse into one bar.</li>
+        <li class="warn">Hides during sculpt-edit like all orbit chrome; keeps today's lift rules when armed.</li>
+        <li class="warn">Keep it a capsule, not a full-width bar — the rings must stay the hero.</li>
+      </ul>
+      <div class="chips"><span>h 48 · radius 24</span><span>icon 22 + "Find" 14.5/600</span><span>bottom:96 · centered</span><span>border white@.35</span><span>expand = same widget</span><span>replaces both 44px twins</span></div>
+    </div>
+  </article>
+
+  <!-- ============ OPTION B ============ -->
+  <article class="card">
+    <div>
+      <div class="phone-wrap"><div class="phone" id="phone-b"></div></div>
+      <div class="try">search docked inside the nav pill — one bottom cluster</div>
+    </div>
+    <div class="notes">
+      <div class="opt-eyebrow">Option B <span class="tag">runner-up</span></div>
+      <div class="opt-name">Fused into the nav pill</div>
+      <p class="thesis">The glass nav pill grows a third slot: <b>Feed · Orbit · | · search</b>, separated by a hairline divider. Search becomes a first-class citizen of the one piece of chrome users already touch constantly.</p>
+      <div class="nlabel">Why it works</div>
+      <ul>
+        <li><b>Zero orphans:</b> the whole bottom strip collapses into a single glass cluster — calmer screen, no floating mystery circles.</li>
+        <li><b>Learned once, found forever:</b> the nav pill is the most-touched, most-looked-at element in the app; anything inside it is discovered by osmosis.</li>
+        <li><b>Familiar pattern:</b> search-in-the-tab-bar is a pattern users bring from Instagram / App Store — no teaching needed.</li>
+        <li><b>Stable across surfaces:</b> the pill (and its search slot) is identical on rings and list views by construction.</li>
+      </ul>
+      <div class="nlabel">Watch out</div>
+      <ul>
+        <li class="warn">Search is an <i>action</i>, not a destination — the divider + circular slot (no label, no active state) must keep it reading as a button, never a third tab.</li>
+        <li class="warn">Pill widens ~55px; verify the Orbit badge and RTL spacing still breathe.</li>
+        <li class="warn">On the rings view the tap opens the find bar; on the list view, the search dock — one slot, two docks to wire.</li>
+      </ul>
+      <div class="chips"><span>slot 44px circle</span><span>divider 1×30 white@.22</span><span>icon 20</span><span>pressed ≠ selected</span><span>pill stays centered</span></div>
+    </div>
+  </article>
+
+  <!-- ============ OPTION C ============ -->
+  <article class="card">
+    <div>
+      <div class="phone-wrap"><div class="phone" id="phone-c"></div></div>
+      <div class="try">search joins the top chrome row, beside create</div>
+    </div>
+    <div class="notes">
+      <div class="opt-eyebrow">Option C <span class="tag">most conventional</span></div>
+      <div class="opt-name">Top chrome — beside create</div>
+      <p class="thesis">Search moves to the top row where users <i>expect</i> it: a 40px glass circle next to the + FAB, matching the view toggle's vocabulary. The bottom strip empties completely.</p>
+      <div class="nlabel">Why it works</div>
+      <ul>
+        <li><b>Convention:</b> two decades of apps put search top-right; users scan there first when they want to find something.</li>
+        <li><b>Frees the bottom band</b> entirely for the nav, the edit steppers, and a future intro dock — the collision choreography (lift rules) mostly disappears.</li>
+        <li><b>Symmetry:</b> toggle left · search + create right — a balanced, legible chrome row in the existing 40px vocabulary.</li>
+      </ul>
+      <div class="nlabel">Watch out</div>
+      <ul>
+        <li class="warn"><b>Reach:</b> top-right is the worst one-handed zone on 6.1–6.7" phones — the most-used verb ends up in the hardest spot. The expanded field would also anchor top while the keyboard is bottom.</li>
+        <li class="warn">Still icon-only, still 40px — solves position, not presence.</li>
+        <li class="warn">Three glass circles up top begins to crowd; the + FAB's glow must stay the loudest (creation > search in that row).</li>
+      </ul>
+      <div class="chips"><span>40px circle · top:62 right:64</span><span>icon 20</span><span>physical right (RTL rule)</span><span>bottom strip freed</span></div>
+    </div>
+  </article>
+
+  <!-- ============ OPTION D ============ -->
+  <article class="card">
+    <div>
+      <div class="phone-wrap"><div class="phone" id="phone-d"></div></div>
+      <div class="try">always-visible field under the chrome — zero taps to see it</div>
+    </div>
+    <div class="notes">
+      <div class="opt-eyebrow">Option D <span class="tag">max discoverability</span></div>
+      <div class="opt-name">Persistent search bar — top</div>
+      <p class="thesis">The messaging-app classic: a slim, always-visible <b>"Find friends…" field pinned under the top chrome</b>. Nothing to discover — the search UI simply <i>is there</i>, like WhatsApp or Telegram.</p>
+      <div class="nlabel">Why it works</div>
+      <ul>
+        <li><b>Zero discovery cost:</b> the placeholder text is permanent instruction; even first-run users can't miss it.</li>
+        <li><b>No morph choreography:</b> tap, keyboard up, type — the closed and open states are the same element.</li>
+        <li><b>Doubles as a header,</b> giving the rings view the top anchor it currently lacks.</li>
+      </ul>
+      <div class="nlabel">Watch out</div>
+      <ul>
+        <li class="warn"><b>Permanent tax for an occasional verb:</b> ~56px of vertical is spent forever on something used a few times a day; the rings shift down and the cosmos loses its emptiness — the screen's whole identity.</li>
+        <li class="warn">Fights the minimal, chrome-less aesthetic the Orbit surface is built on; heaviest visual change of the four.</li>
+        <li class="warn">Top field + bottom keyboard = maximum finger travel during use.</li>
+      </ul>
+      <div class="chips"><span>h 44 · radius 14 · 16/16</span><span>placeholder "Find friends…"</span><span>rings shift +20</span><span>always mounted</span></div>
+    </div>
+  </article>
+
+</main>
+
+<section class="verdict">
+  <div class="eyebrow">recommendation</div>
+  <h2>A — a labeled capsule in the thumb zone; B if the bottom band gets crowded</h2>
+  <p><b>Ship Option A.</b> It fixes all three complaints at once — position (corner → bottom-center thumb zone), size (44px circle → 48px labeled capsule with real presence), and discoverability (icon-only → the word "Find") — while reusing the morph the pill already performs: the capsule is just a better closed state for the exact widget that exists today, on both surfaces. <b>B is the strong runner-up</b> and the right fallback if the under-rings band gets claimed by the 207 intro dock: fusing search into the nav pill also kills the orphan and is trivially consistent across surfaces, at the cost of a subtler action-vs-tab distinction. <b>C</b> is the safe conventional answer but moves the most-used verb to the hardest-to-reach zone and keeps it icon-only — it solves where, not what. <b>D</b> buys discoverability the expensive way, permanently spending the emptiness that makes the Orbit screen feel like space. Whichever ships, <b>both of today's 44px twins retire together</b> — one search affordance, one home, both surfaces.</p>
+</section>
+
+<section class="shared">
+  <div class="snote"><h3>One affordance, two docks</h3><p>The rings view opens the in-place find bar (chips + node highlighting, <code>inner_circle_interactive_surface.dart:928</code>); the list view opens the search dock (<code>orbit_search_dock.dart</code>). The new entry replaces <b>both</b> triggers but keeps each surface's expanded behavior.</p></div>
+  <div class="snote"><h3>Edit &amp; band etiquette</h3><p>Sculpt-edit hides all orbit chrome — the new entry hides too. Armed-edit lift rules (TC-198F-17/18) and the 201 <code>bottomClearance</code> floor carry over unchanged for A/B; C/D exit the band entirely.</p></div>
+  <div class="snote"><h3>RTL &amp; a11y</h3><p>Top/bottom-center placements are RTL-neutral; C follows the physical-corner rule (<code>orbit_view_toggle_button.dart:9-12</code>). All options keep ≥44pt targets and the existing <code>orbit_find_pill_semantics</code> label; A adds a visible one.</p></div>
+  <div class="snote"><h3>Standalone mode</h3><p>When Orbit runs without the persistent nav (X-to-close mode), A's capsule keeps bottom-center above the close button; B falls back to A's capsule since there is no nav pill to fuse into.</p></div>
+</section>
+
+<footer class="colophon">
+  geometry &amp; palette lifted from source · trigger 44px/icon 22 orbit_search_trigger.dart:20-32 · list-view slot orbit_screen.dart:656-696 · standalone float orbit_screen.dart:598-623 · find pill 44px/icon 20, right:16 inner_circle_interactive_surface.dart:973-1048 · expanded bar ≥56h + chip strip ibid:928-1049 · rings orbital_ring_painter.dart (teal .25 r62 / purple .20 r108, dash 8 4) · seats orbit_arc_layout.dart (5×38 r62, 8×30 r108, center 48) · nav band nav_bar_theme.dart, bottom max(16, safe−14) · top chrome post-209 (QR/Scan retired to Settings) · ambient blobs ambient_background.dart · phones 390×844 @ 0.727 · honors prefers-reduced-motion
+</footer>
+
+</div>
+
+<script>
+/* ---------- deterministic PRNG (stable screenshots) ---------- */
+function rng(seed){let s=seed%2147483647;if(s<=0)s+=2147483646;return function(){s=s*16807%2147483647;return (s-1)/2147483646}}
+
+/* ---------- icons ---------- */
+const IC={
+  search:(s,c)=>`<svg width="${s||20}" height="${s||20}" viewBox="0 0 24 24" fill="none" stroke="${c||'#F8FAFC'}" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>`,
+  list:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F8FAFC" stroke-width="1.8" stroke-linecap="round"><line x1="8" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="8" y1="18" x2="20" y2="18"/><circle cx="4" cy="6" r="1" fill="#F8FAFC"/><circle cx="4" cy="12" r="1" fill="#F8FAFC"/><circle cx="4" cy="18" r="1" fill="#F8FAFC"/></svg>',
+  orbit:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F8FAFC" stroke-width="1.6"><circle cx="12" cy="12" r="3" fill="#F8FAFC" stroke="none"/><circle cx="12" cy="12" r="9" stroke-dasharray="4 3"/></svg>',
+  plus:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F8FAFC" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+  x:'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#C9CED6" stroke-width="2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>',
+  feed:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="4" y="4" width="16" height="16" rx="3"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="12" y2="17"/></svg>',
+  orbitNav:'<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="8.5" stroke-dasharray="4 3"/></svg>',
+  sb:'<svg width="62" height="12" viewBox="0 0 62 12" fill="#fff"><rect x="0" y="7" width="3" height="5" rx="1"/><rect x="4.5" y="5" width="3" height="7" rx="1"/><rect x="9" y="3" width="3" height="9" rx="1"/><rect x="13.5" y="1" width="3" height="11" rx="1"/><path d="M27 4.5a8 8 0 0 1 9.6 0l-1.4 1.8a5.7 5.7 0 0 0-6.8 0zM29.3 7.4a4.6 4.6 0 0 1 5 0L31.8 10z"/><rect x="42" y="2.5" width="16" height="8" rx="2.4" fill="none" stroke="rgba(255,255,255,0.5)"/><rect x="43.5" y="4" width="10" height="5" rx="1.2"/><rect x="59" y="5" width="1.8" height="3" rx="0.9" fill="rgba(255,255,255,0.5)"/></svg>'
+};
+
+/* ---------- generative ring avatar (home ring_avatar convention) ---------- */
+const PALETTE=['#FF3B3B','#FFFFFF','#1A1A1A','#1DB954'];
+function ringAvatar(size,seed){
+  const r=rng(seed);
+  const hue=Math.floor(r()*360);
+  const c1=PALETTE[Math.floor(r()*4)],c2=PALETTE[Math.floor(r()*4)],c3=PALETTE[Math.floor(r()*4)];
+  const sw=(size*0.055).toFixed(1),h=size/2;
+  return `<div style="width:${size}px;height:${size}px;border-radius:50%;background:#16181E;box-shadow:0 0 ${(size*0.35).toFixed(0)}px ${(size*0.05).toFixed(1)}px hsla(${hue},70%,50%,0.35)">`+
+    `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`+
+    `<circle cx="${h}" cy="${h}" r="${(size*0.42).toFixed(1)}" fill="none" stroke="${c1}" stroke-width="${sw}"/>`+
+    `<circle cx="${h}" cy="${h}" r="${(size*0.30).toFixed(1)}" fill="none" stroke="${c2}" stroke-width="${sw}" stroke-dasharray="3 2.2"/>`+
+    `<circle cx="${h}" cy="${h}" r="${(size*0.18).toFixed(1)}" fill="none" stroke="${c3}" stroke-width="${sw}"/>`+
+    `<circle cx="${h}" cy="${h}" r="${(size*0.07).toFixed(1)}" fill="hsl(${hue},70%,55%)"/>`+
+    `</svg></div>`;
+}
+function groupFace(size){
+  return `<div style="width:${size}px;height:${size}px;border-radius:50%;background:rgba(78,205,196,0.18);display:flex;align-items:center;justify-content:center">`+
+    `<svg width="${size*0.62}" height="${size*0.62}" viewBox="0 0 24 24" fill="none" stroke="#4ECDC4" stroke-width="1.8" stroke-linecap="round"><circle cx="9" cy="9" r="3"/><path d="M4 19c.5-2.8 2.4-4.2 5-4.2s4.5 1.4 5 4.2"/><circle cx="16.5" cy="10" r="2.4"/><path d="M16.8 14.9c2 .3 3.2 1.5 3.7 3.6"/></svg></div>`;
+}
+
+/* ---------- shared phone scaffolding ---------- */
+function frame(inner){
+  return `<div class="blob green"></div><div class="blob red"></div>
+  <div class="island"></div>
+  <div class="statusbar"><span class="sb-time">9:41</span><span class="sb-icons">${IC.sb}</span></div>
+  ${inner}`;
+}
+/* post-209 chrome: toggle left, + FAB right; opt.topSearch adds Option C slot */
+function topChrome(view,opt){
+  opt=opt||{};
+  return `<div class="chrome-btn" style="left:16px">${view==='inner'?IC.list:IC.orbit}</div>
+  ${opt.topSearch?`<div class="top-search">${IC.search(20)}</div>`:''}
+  <div class="glow-fab">${IC.plus}</div>`;
+}
+function navBar(opt){
+  opt=opt||{};
+  return `<div class="navbar"><div class="nav-pill">
+    <div class="nav-btn">${IC.feed}<span class="nl">Feed</span></div>
+    <div class="nav-btn active">${IC.orbitNav}<span class="nl">Orbit</span></div>
+    ${opt.searchSlot?`<div class="nav-divider"></div><div class="nav-search">${IC.search(20)}</div>`:''}
+  </div></div>`;
+}
+
+/* ---------- orbit canvas ---------- */
+function orbitCanvas(top,dim){
+  const seat=(deg,rad,size,html)=>{
+    const a=deg*Math.PI/180;
+    const x=160+rad*Math.cos(a),y=160+rad*Math.sin(a);
+    return `<div class="node-wrap" style="left:${(x-size/2).toFixed(1)}px;top:${(y-size/2).toFixed(1)}px;width:${size}px;height:${size}px">${html}</div>`;
+  };
+  /* dim: while the find bar is open, non-matching nodes fade (203/201 behavior) */
+  const HITS=[0];      /* ring-1 index 0 = "Sara" */
+  const HITS2=[4];     /* ring-2 index 4 = "Samir" */
+  let nodes='';
+  for(let i=0;i<5;i++){
+    const hit=!dim||HITS.includes(i);
+    const av=`<div class="node" style="width:38px;height:38px;border:1.5px solid rgba(255,255,255,${hit?'0.20':'0.08'});${hit?'':'opacity:.3'}${dim&&hit?';box-shadow:0 0 14px 3px rgba(78,205,196,0.45);border-color:rgba(78,205,196,0.8)':''}">${ringAvatar(35,101+i)}</div>`;
+    nodes+=seat(i*72-90,62,38,av);
+  }
+  for(let i=0;i<8;i++){
+    const hit=!dim||HITS2.includes(i);
+    let av;
+    if(i===2){av=`<div class="node" style="width:30px;height:30px;border:1px solid rgba(78,205,196,0.9);${hit?'':'opacity:.3'}">${groupFace(28)}</div>`;}
+    else{av=`<div class="node" style="width:30px;height:30px;border:1px solid rgba(255,255,255,${hit?'0.14':'0.06'});${hit?'':'opacity:.3'}${dim&&hit?';box-shadow:0 0 12px 3px rgba(78,205,196,0.45);border-color:rgba(78,205,196,0.8)':''}">${ringAvatar(28,201+i)}</div>`;}
+    nodes+=seat(i*45-75,108,30,av);
+  }
+  return `<div class="orbit-box" style="top:${top||271}px">
+    <svg class="ring-glow" width="320" height="320" viewBox="0 0 320 320">
+      <circle cx="160" cy="160" r="62" fill="none" stroke="rgba(129,230,217,0.08)" stroke-width="8"/>
+      <circle cx="160" cy="160" r="108" fill="none" stroke="rgba(129,230,217,0.08)" stroke-width="8"/>
+    </svg>
+    <svg width="320" height="320" viewBox="0 0 320 320" style="position:absolute;inset:0">
+      <circle cx="160" cy="160" r="62" fill="none" stroke="rgba(129,230,217,0.25)" stroke-width="1.5" stroke-dasharray="8 4"/>
+      <circle cx="160" cy="160" r="108" fill="none" stroke="rgba(167,139,250,0.20)" stroke-width="1.5" stroke-dasharray="8 4"/>
+    </svg>
+    <div class="node-wrap" style="left:136px;top:136px;width:48px;height:48px">
+      <div class="node" style="width:48px;height:48px;border:1px solid rgba(255,255,255,0.35);box-shadow:0 0 16.8px 2.4px hsla(141,70%,45%,0.35)${dim?';opacity:.35':''}">${ringAvatar(46,7)}</div>
+    </div>
+    ${nodes}
+  </div>`;
+}
+
+/* ---------- option overlays ---------- */
+function findCapsule(){
+  return `<div class="find-capsule" onclick="toggleFind()">${IC.search(22)}<span class="fc-label">Find</span></div>`;
+}
+function mockKeyboard(){
+  const row=(n,pre,post)=>{let k='';for(let i=0;i<n;i++)k+='<div class="key"></div>';return `<div class="kb-row">${pre||''}${k}${post||''}</div>`};
+  return `<div class="kb">${row(10)}${row(9)}${row(7,'<div class="key wide"></div>','<div class="key wide"></div>')}
+    <div class="kb-row"><div class="key wide"></div><div class="key space"></div><div class="key ret"></div></div></div>`;
+}
+function findBarExpanded(){
+  const chip=(seed,n,p)=>`<div class="fchip">${ringAvatar(26,seed)}<div><div class="fc-n">${n}</div><div class="fc-p">${p}</div></div></div>`;
+  return `<div class="chip-strip">${chip(101,'Sara','Ring 1')}${chip(205,'Samir','Ring 2')}</div>
+  <div class="find-bar">${IC.search(22)}<span class="fb-text">sa<span class="caret"></span></span>${IC.x}</div>
+  ${mockKeyboard()}`;
+}
+function topBar(){
+  return `<div class="top-bar">${IC.search(18,'rgba(201,206,214,0.55)')}<span class="tb-hint">Find friends…</span></div>`;
+}
+/* today's two orphans, with red callouts */
+function cornerPillWithCallout(){
+  return `<div class="find-pill">${IC.search(20)}</div>
+  <div class="callout" style="right:8px;bottom:96px;width:60px;height:60px"></div>
+  <div class="callout-label" style="right:78px;bottom:114px">44px · icon 20 · no label</div>`;
+}
+function navTriggerWithCallout(){
+  return `<div class="search-trigger">${IC.search(22)}</div>
+  <div class="callout" style="right:8px;bottom:22px;width:60px;height:60px"></div>
+  <div class="callout-label" style="right:78px;bottom:40px">44px · crammed by the nav</div>`;
+}
+
+/* ---------- all-chats list view (before exhibit) ---------- */
+function listView(){
+  const row=(seed,name,sub,time)=>`<div style="display:flex;align-items:center;gap:12px;background:rgba(20,22,28,0.6);border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:11px 12px">${ringAvatar(42,seed)}<div><div style="font-size:15px;font-weight:600;color:#F8FAFC">${name}</div><div style="font-size:12px;color:rgba(201,206,214,0.6)">${sub}</div></div><span style="margin-left:auto;font-size:11px;color:rgba(201,206,214,0.5);align-self:flex-start;padding-top:2px">${time}</span></div>`;
+  return `${topChrome('list')}
+  <div style="position:absolute;top:118px;left:16px;right:16px;display:flex;flex-direction:column;gap:8px;z-index:25">
+    ${row(101,'Sara','sent a photo','2m')}
+    ${row(102,'Kareem','voice message · 0:12','1h')}
+    ${row(201,'Hiking crew','Omar: trail on Friday?','3h')}
+    ${row(103,'Mona','ok see you then 👋','1d')}
+    ${row(104,'Adel','typing…','2d')}
+    ${row(105,'Nadia','sounds good!','3d')}
+  </div>
+  ${navBar()}
+  ${navTriggerWithCallout()}`;
+}
+
+/* ---------- inner-circle view renderer ---------- */
+function innerView(cfg){
+  cfg=cfg||{};
+  let extras='';
+  if(cfg.todayPill)extras+=cornerPillWithCallout();
+  if(cfg.capsule)extras+=findCapsule();
+  if(cfg.expanded)extras+=findBarExpanded();
+  if(cfg.topBar)extras+=topBar();
+  return `${topChrome('inner',{topSearch:!!cfg.topSearch})}
+  ${orbitCanvas(cfg.orbitTop,!!cfg.expanded)}
+  ${extras}
+  ${cfg.expanded?'':navBar({searchSlot:!!cfg.navSearch})}`;
+}
+
+/* ---------- hydrate ---------- */
+function renderPhone(id,html){document.getElementById(id).innerHTML=frame(html)}
+renderPhone('phone-t1',innerView({todayPill:true}));
+renderPhone('phone-t2',listView());
+renderPhone('phone-b',innerView({navSearch:true}));
+renderPhone('phone-c',innerView({topSearch:true}));
+renderPhone('phone-d',innerView({topBar:true,orbitTop:300}));
+
+/* Option A demo toggle: collapsed capsule ⇄ expanded bar (chips + keyboard).
+   Open #find-open to load with the expanded state shown. */
+let findOpen=location.hash==='#find-open';
+function applyFind(){renderPhone('phone-a',innerView(findOpen?{expanded:true}:{capsule:true}))}
+function toggleFind(){findOpen=!findOpen;applyFind()}
+applyFind();
+</script>
+</body>
+</html>

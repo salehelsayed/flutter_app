@@ -221,6 +221,7 @@
   "orbit_find_pill_semantics": "Find someone in your circle",
   "orbit_find_close": "Close search",
   "orbit_open_settings": "Open settings",
+  "orbit_search_trigger_semantics": "Search chats",
   "orbit_chip_provenance_ring": "Ring {ring}",
   "@orbit_chip_provenance_ring": {
     "placeholders": {

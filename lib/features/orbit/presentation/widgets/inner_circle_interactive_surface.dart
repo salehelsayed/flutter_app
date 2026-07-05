@@ -967,9 +967,12 @@ class _InnerCircleInteractiveSurfaceState
           ),
         ),
 
-      // Pill: a 44px collapsed circle (bottom-right) that expands to a
+      // Pill: a 52px collapsed circle (bottom-right) that expands to a
       // full-width (left/right 16) >=48-high search bar. Bottom band clears any
-      // host chrome via bottomClearance (persistent nav).
+      // host chrome via bottomClearance (persistent nav). 212: bordered +
+      // shadowed like every chrome sibling, but NO BackdropFilter — a
+      // permanently-mounted blur over the continuously-animating rings would
+      // re-sample per frame (INV-212-3, 202 perf class).
       Positioned(
         key: const ValueKey('orbit-slot-find-pill'),
         left: _findOpen ? 16 : null,
@@ -1034,14 +1037,22 @@ class _InnerCircleInteractiveSurfaceState
                   behavior: HitTestBehavior.opaque,
                   onTap: _openFind,
                   child: Container(
-                    width: 44,
-                    height: 44,
+                    width: 52,
+                    height: 52,
                     decoration: BoxDecoration(
                       color: colors.glassSurface,
                       shape: BoxShape.circle,
+                      border: Border.all(color: colors.glassBorder),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x59000000),
+                          blurRadius: 18,
+                          offset: Offset(0, 6),
+                        ),
+                      ],
                     ),
                     child:
-                        Icon(Icons.search, size: 20, color: colors.iconPrimary),
+                        Icon(Icons.search, size: 24, color: colors.iconPrimary),
                   ),
                 ),
               ),

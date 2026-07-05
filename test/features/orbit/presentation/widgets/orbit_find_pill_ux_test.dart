@@ -102,13 +102,52 @@ void main() {
 
       await tester.tap(closeF);
       await tester.pump();
-      // Discriminator: the pill reverts to the 44px collapsed circle AND the
+      // Discriminator: the pill reverts to the 52px collapsed circle AND the
       // TextField is gone (keyboard-dismiss proxy) — distinguishes "closed"
       // from "cleared but still open".
       expect(find.byType(TextField), findsNothing,
           reason: 'field gone → keyboard dismissed');
-      expect(tester.getSize(pillF()), const Size(44, 44),
-          reason: 'reverted to the collapsed 44px circle');
+      expect(tester.getSize(pillF()), const Size(52, 52),
+          reason: 'reverted to the collapsed 52px circle (212)');
+      await settle(tester);
+    });
+
+    testWidgets(
+        'TC-212-11 collapsed pill is a 52px bordered, shadowed glass circle '
+        'with NO BackdropFilter', (tester) async {
+      suppressAssetErrors(tester);
+      await tester.pumpWidget(host(_friends(8)));
+      await settle(tester);
+
+      expect(tester.getSize(pillF()), const Size(52, 52),
+          reason: '212 visual upgrade: 44 → 52');
+
+      final circle = tester.widget<Container>(find.descendant(
+        of: pillF(),
+        matching: find.byType(Container),
+      ));
+      final decoration = circle.decoration as BoxDecoration;
+      expect(decoration.border, isNotNull,
+          reason: 'the pill joins the glass-border vocabulary');
+      expect((decoration.border as Border).top.color,
+          BackgroundReadableColors.dark.glassBorder);
+      expect(decoration.boxShadow, isNotNull);
+      expect(decoration.boxShadow, isNotEmpty,
+          reason: 'the pill gains the shared soft drop shadow');
+
+      final lens = tester.widget<Icon>(find.descendant(
+        of: pillF(),
+        matching: find.byIcon(Icons.search),
+      ));
+      expect(lens.size, 24, reason: '212 visual upgrade: 20 → 24');
+
+      // INV-212-3: the collapsed pill must NEVER re-sample the continuously
+      // animating rings — no BackdropFilter anywhere inside it (V3 refuted,
+      // 202 perf class).
+      expect(
+        find.descendant(of: pillF(), matching: find.byType(BackdropFilter)),
+        findsNothing,
+      );
       await settle(tester);
     });
 

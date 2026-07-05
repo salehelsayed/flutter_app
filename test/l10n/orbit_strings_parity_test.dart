@@ -49,6 +49,11 @@ void main() {
     // label (the migrated settings entry point). A hardcoded literal would trip
     // l10n_integrity_test, so this key is mandatory across every locale.
     'orbit_open_settings',
+    // 212 TC-212-10 — the all-chats floated search trigger's Semantics label
+    // (the find pill has had one since 198; the trigger was the unlabeled
+    // sibling; the dock's `orbit_search` hint is placeholder copy, not a
+    // button label — V4).
+    'orbit_search_trigger_semantics',
   ];
 
   Map<String, Object?> loadArb(String locale) {
@@ -154,6 +159,8 @@ void main() {
         expect(l10n.orbit_chip_open('Alice').trim(), isNotEmpty);
         // 206 — the center self-avatar settings-entry Semantics label.
         expect(l10n.orbit_open_settings.trim(), isNotEmpty);
+        // 212 — the all-chats floated search trigger's Semantics label.
+        expect(l10n.orbit_search_trigger_semantics.trim(), isNotEmpty);
       }
     });
 
@@ -185,6 +192,8 @@ void main() {
       expect(en.orbit_chip_open('Alice'), 'Open Alice');
       // 206 baseline.
       expect(en.orbit_open_settings, 'Open settings');
+      // 212 baseline (TC-212-09 finds the trigger by this exact label).
+      expect(en.orbit_search_trigger_semantics, 'Search chats');
     });
   });
 }

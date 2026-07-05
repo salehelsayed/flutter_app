@@ -517,7 +517,8 @@ void main() {
     );
 
     testWidgets(
-      'persistent nav inlines the search trigger with the bar and keeps content above it',
+      'TC-212-12 persistent nav centers the bar; the search trigger floats '
+      'in the bottom-right corner band, with content above the nav',
       (tester) async {
         suppressOverflowErrors();
         suppressNavAssetErrors();
@@ -544,6 +545,8 @@ void main() {
         await tester.pump(const Duration(milliseconds: 600));
         await tester.pump(const Duration(milliseconds: 600));
 
+        final screen =
+            tester.view.physicalSize / tester.view.devicePixelRatio;
         final navRect = tester.getRect(find.byType(FeedNavigationBar));
         final searchRect = tester.getRect(find.byType(OrbitSearchTrigger));
         final lastGroupRect = tester.getRect(find.text('Group 15'));
@@ -551,10 +554,15 @@ void main() {
         // The redundant X close button is removed in persistent mode — the
         // Feed tab is the way back.
         expect(find.byType(OrbitCloseButton), findsNothing);
-        // The search trigger sits inline with the Feed/Orbit bar (same level),
-        // to its right rather than floating above it.
-        expect(searchRect.left, greaterThanOrEqualTo(navRect.right));
-        expect((searchRect.center.dy - navRect.center.dy).abs(), lessThan(2));
+        // 212: the trigger owns the bottom-right corner band — the same band
+        // the Inner-Circle find pill uses (max(16, sb - 14) + 84, sb=0 here) —
+        // instead of riding the nav bar's vertical level.
+        expect(searchRect.right, screen.width - 16);
+        expect(searchRect.bottom, screen.height - 100);
+        expect((searchRect.center.dy - navRect.center.dy).abs(),
+            greaterThan(10));
+        // The bar keeps the horizontal center without the inline trigger slot.
+        expect(navRect.center.dx, closeTo(screen.width / 2, 1.0));
         // Scrolled content stays above the nav bar.
         expect(lastGroupRect.bottom, lessThanOrEqualTo(navRect.top));
       },
