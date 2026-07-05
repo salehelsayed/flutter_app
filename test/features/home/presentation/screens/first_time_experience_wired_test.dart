@@ -16,6 +16,8 @@ import 'package:flutter_app/features/account_migration/domain/models/migration_q
 import 'package:flutter_app/features/account_migration/presentation/screens/account_migration_journey_wired.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart'
+    show ConversationWired;
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_screen.dart';
@@ -651,6 +653,80 @@ void main() {
         expect(appShellController.activeTab, AppShellTab.orbit);
         expect(find.byType(OrbitWired), findsOneWidget);
         expect(find.text('Share with...'), findsNothing);
+
+        await tester.pump(const Duration(seconds: 5));
+        await tester.pump();
+        await requestController.close();
+      },
+    );
+
+    // 215 TC-06: accepting the first request establishes the Feed shell AND
+    // pushes the new contact's 1:1 chat ON TOP (two-push, not a shell-replace),
+    // then settles the share flow last.
+    testWidgets(
+      'accepting the first request lands on Feed AND opens the new contact chat on top',
+      (tester) async {
+        suppressShellRenderErrors();
+        identityRepo.seed(testIdentity);
+        bridge.responses['payload.sign'] = {
+          'ok': true,
+          'signature': 'test-sig',
+        };
+        bridge.responses['contactrequest.encrypt'] = {
+          'ok': true,
+          'ephemeralPublicKey': 'ephemeral-pk',
+          'ciphertext': 'ciphertext',
+          'nonce': 'nonce',
+        };
+
+        final request = ContactRequestModel(
+          peerId: 'sender-peer-id-chat',
+          publicKey: 'sender-pub-key',
+          rendezvous: '/p2p-circuit/relay',
+          username: 'Charlie',
+          signature: 'sender-sig',
+          receivedAt: DateTime.now().toUtc().toIso8601String(),
+        );
+        contactRequestRepo.seed([request]);
+
+        final requestController =
+            StreamController<ContactRequestModel>.broadcast();
+        final customListener = _FakeContactRequestListener(
+          requestStream: requestController.stream,
+        );
+        final shareIntentService = ShareIntentService(resetShareIntent: () {});
+
+        await tester.pumpWidget(
+          buildFTE(
+            overrideListener: customListener,
+            shareIntentService: shareIntentService,
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+
+        requestController.add(request);
+        await tester.pump();
+        await tester.pump();
+
+        await tester.tap(find.text('Accept'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pump();
+
+        // The chat rides ON TOP of the established Feed shell.
+        expect(find.byType(ConversationWired), findsOneWidget);
+        expect(
+          tester
+              .widget<ConversationWired>(find.byType(ConversationWired))
+              .contact
+              .peerId,
+          request.peerId,
+        );
+        // Feed shell preserved underneath (offstage under the opaque chat
+        // route) — proves two-push, not a shell-replacing chat.
+        expect(find.byType(FeedWired, skipOffstage: false), findsOneWidget);
+        expect(appShellController.activeTab, AppShellTab.orbit);
 
         await tester.pump(const Duration(seconds: 5));
         await tester.pump();

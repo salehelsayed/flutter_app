@@ -33,6 +33,8 @@ import 'package:flutter_app/features/conversation/application/reaction_listener.
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
+import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
@@ -240,6 +242,13 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
       final postRepository = widget.postRepository;
       final appShellController = widget.appShellController;
       final pendingPostTargetStore = widget.pendingPostTargetStore;
+      // 215: resolve the accepted contact BEFORE navigating so the 1:1 chat can
+      // ride on top of the Feed shell (capture navigator first; re-check
+      // mounted after the await).
+      final contact =
+          await widget.contactRepository.getContact(request.peerId) ??
+          request.toContactModel();
+      if (!mounted) return;
       navigator.pushReplacement(
         buildFeedSlideUpRoute(
           builder: (_) => FeedWired(
@@ -286,6 +295,33 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
             transportMetrics: widget.transportMetrics,
             accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
             accountMigrationSizeGate: widget.accountMigrationSizeGate,
+          ),
+        ),
+      );
+      // 215: push the 1:1 chat ON TOP of the freshly-established Feed shell
+      // (back-stack [FeedWired, ConversationWired]) so back-nav returns to the
+      // home shell, not a dead chat. Kept BEFORE settleShareIntentFlow so a
+      // buffered share sheet still lands on top of everything.
+      navigator.push(
+        buildConversationRoute(
+          builder: (_) => ConversationWired(
+            contact: contact,
+            identityRepo: widget.repository,
+            messageRepo: widget.messageRepository,
+            chatMessageListener: widget.chatMessageListener,
+            p2pService: widget.p2pService,
+            bridge: widget.bridge,
+            contactRepo: widget.contactRepository,
+            mediaAttachmentRepo: widget.mediaAttachmentRepository,
+            mediaFileManager: widget.mediaFileManager,
+            imageProcessor: widget.imageProcessor,
+            conversationTracker: widget.conversationTracker,
+            audioRecorderService: widget.audioRecorderService,
+            reactionRepo: widget.reactionRepository,
+            reactionListener: widget.reactionListener,
+            introductionRepository: widget.introductionRepository,
+            appShellController: widget.appShellController,
+            transportMetrics: widget.transportMetrics,
           ),
         ),
       );

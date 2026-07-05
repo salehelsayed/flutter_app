@@ -1405,6 +1405,13 @@ class _FeedWiredState extends State<FeedWired>
         final item = ConnectionFeedItem.fromContact(contact);
         _feedStore.upsertConnection(item);
       }
+      // 215: mirror the notification-tap accept — open the 1:1 chat for the
+      // newly-accepted peer. Popping back reveals the connection card upserted
+      // above, so the Feed presence is preserved.
+      final openContact =
+          await widget.contactRepository.getContact(request.peerId) ?? contact;
+      if (!mounted) return;
+      _openConversationForContact(openContact);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1618,7 +1625,14 @@ class _FeedWiredState extends State<FeedWired>
       item.contactPeerId,
     );
     if (contact == null || !mounted) return;
+    _openConversationForContact(contact);
+  }
 
+  /// Opens the 1:1 [ConversationWired] for [contact] and restores the
+  /// per-conversation reply state + feed-item refresh on pop. Shared by the
+  /// send-message affordance and the contact-request accept flow (215) so the
+  /// deps block lives in exactly one place.
+  void _openConversationForContact(ContactModel contact) {
     _clearFeedComposerFocus();
     Navigator.of(context)
         .push(
@@ -1647,8 +1661,8 @@ class _FeedWiredState extends State<FeedWired>
           ),
         )
         .then((_) {
-          _sessionReplies.clear(item.contactPeerId);
-          unawaited(_refreshContactFeedItem(item.contactPeerId));
+          _sessionReplies.clear(contact.peerId);
+          unawaited(_refreshContactFeedItem(contact.peerId));
         });
   }
 

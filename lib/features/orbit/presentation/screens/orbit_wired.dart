@@ -1993,6 +1993,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         result == AcceptContactRequestResult.notPending) {
       _markContactChanged(request.peerId);
       await _refreshOrbitFriend(request.peerId);
+      // 215: mirror the notification-tap accept — drop straight into the 1:1
+      // chat for the newly-accepted peer so "say hi" is one tap, not three.
+      final contact =
+          await widget.contactRepo.getContact(request.peerId) ??
+          request.toContactModel();
+      if (!mounted) return;
+      _openConversationForContact(contact);
     }
   }
 
@@ -2215,15 +2222,23 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   }
 
   void _onFriendTap(OrbitFriend friend) {
+    _openConversationForContact(friend.contact);
+  }
+
+  /// Opens the 1:1 [ConversationWired] for [contact], guarded against a
+  /// double-push and restoring the post-close refresh on pop. Shared by the
+  /// friend-row tap and the contact-request accept flow (215) so the deps
+  /// block lives in exactly one place.
+  void _openConversationForContact(ContactModel contact) {
     if (!mounted) return;
-    if (!_openingFriendPeerIds.add(friend.peerId)) return;
+    if (!_openingFriendPeerIds.add(contact.peerId)) return;
 
     late final Future<Object?> pushedRoute;
     try {
       pushedRoute = Navigator.of(context).push(
         buildConversationRoute(
           builder: (_) => ConversationWired(
-            contact: friend.contact,
+            contact: contact,
             identityRepo: widget.identityRepo,
             messageRepo: widget.messageRepo,
             chatMessageListener: widget.chatMessageListener,
@@ -2246,20 +2261,20 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         ),
       );
     } catch (_) {
-      _openingFriendPeerIds.remove(friend.peerId);
+      _openingFriendPeerIds.remove(contact.peerId);
       rethrow;
     }
 
     pushedRoute.whenComplete(() {
-      _openingFriendPeerIds.remove(friend.peerId);
+      _openingFriendPeerIds.remove(contact.peerId);
       if (!mounted) return;
-      _markContactChanged(friend.peerId);
-      unawaited(_refreshOrbitFriend(friend.peerId));
+      _markContactChanged(contact.peerId);
+      unawaited(_refreshOrbitFriend(contact.peerId));
     });
 
     // Push first, then let the conversation route perform its own initial
     // read-marking without blocking the transition.
-    unawaited(_markConversationReadInBackground(friend.peerId));
+    unawaited(_markConversationReadInBackground(contact.peerId));
   }
 
   /// Opens the contact profile for [friend]; "Message" jumps into the chat.
