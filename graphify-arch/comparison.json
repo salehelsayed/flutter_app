@@ -1,13 +1,13 @@
 {
   "full": {
     "graph": "graphify-out/graph.json",
-    "nodes": 108461,
-    "edges": 183127,
-    "communities": 4705,
+    "nodes": 108465,
+    "edges": 183133,
+    "communities": 4655,
     "source_files": 5724,
     "avg_edges_per_node": 1.6884,
-    "avg_nodes_per_community": 23.05,
-    "app_owned_nodes": 47900,
+    "avg_nodes_per_community": 23.3,
+    "app_owned_nodes": 47903,
     "app_owned_ratio": 0.4416,
     "noise_nodes": 22394,
     "noise_ratio": 0.2065,
@@ -18,7 +18,7 @@
     "top_source_dirs": [
       [
         "Test-Flight-Improv",
-        32379
+        32380
       ],
       [
         "lib",
@@ -26,7 +26,7 @@
       ],
       [
         "test",
-        14889
+        14892
       ],
       [
         "ios/Pods",
@@ -140,13 +140,13 @@
   },
   "architecture": {
     "graph": "graphify-arch/graphify-out/graph.json",
-    "nodes": 43002,
-    "edges": 67315,
-    "communities": 919,
+    "nodes": 43005,
+    "edges": 67320,
+    "communities": 916,
     "source_files": 2230,
     "avg_edges_per_node": 1.5654,
-    "avg_nodes_per_community": 46.79,
-    "app_owned_nodes": 41373,
+    "avg_nodes_per_community": 46.95,
+    "app_owned_nodes": 41376,
     "app_owned_ratio": 0.9621,
     "noise_nodes": 0,
     "noise_ratio": 0.0,
@@ -161,7 +161,7 @@
       ],
       [
         "test",
-        14732
+        14735
       ],
       [
         "integration_test",
@@ -260,7 +260,7 @@
   "deltas": {
     "nodes": -0.6035,
     "edges": -0.6324,
-    "communities": -0.8047,
+    "communities": -0.8032,
     "app_owned_ratio": 1.1787,
     "noise_ratio": -1.0,
     "top_hub_noise_ratio": -1.0
