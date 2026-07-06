@@ -79,6 +79,20 @@ readonly GO_NODE_KEYROTATION_TEST="go-mknoon/node"
 # above lack (Go 1.26.x quic-go panic — see go.mod). Fork-module unit tests
 # (third_party/go-multiaddr/net) are a separate module, run via their own gate.
 readonly GO_NODE_ADDR_VISIBILITY_TEST="go-mknoon/node/addr_visibility_denial_test.go"
+# 219 (feature-flag decode-seam merge guard): B01/B02 pin the new
+# MergeFeatureFlagsOverDefaults helper (partial map => omitted key keeps the Go
+# default, never zero-value false). -run 'FeatureFlag' sweeps that superset plus
+# the existing TestFeatureFlags_* fallback pins for free. GOTOOLCHAIN-pinned like
+# the addr-visibility target above (Go 1.26.x quic-go panic — see go.mod).
+readonly GO_NODE_FEATUREFLAGS_TEST="go-mknoon/node/feature_flags_merge_test.go"
+readonly GO_NODE_FEATUREFLAGS_RUN='FeatureFlag'
+# 219 B04 (the ONLY behavioural test on the real bridge.go decode seam): drives
+# node:start with a PARTIAL featureFlags JSON and asserts an omitted graduated
+# flag stays at its Go default. Separate package (./bridge) AND separate -run
+# pattern from the ./node target above, so it registers as its OWN synthetic
+# path (NOT folded into the ./node FeatureFlag branch). GOTOOLCHAIN-pinned.
+readonly GO_BRIDGE_FEATUREFLAGS_TEST="go-mknoon/bridge/feature_flags_partial_map_test.go"
+readonly GO_BRIDGE_FEATUREFLAGS_RUN='PartialFeatureFlags'
 
 usage() {
   cat <<'EOF'
@@ -183,6 +197,8 @@ case "$scope" in
       printf '%s\n' "$GO_BRIDGE_CONNECTED_PEER_TEST"
       printf '%s\n' "$GO_NODE_KEYROTATION_TEST"
       printf '%s\n' "$GO_NODE_ADDR_VISIBILITY_TEST"
+      printf '%s\n' "$GO_NODE_FEATUREFLAGS_TEST"
+      printf '%s\n' "$GO_BRIDGE_FEATUREFLAGS_TEST"
     } >"$plan_file"
     ;;
   feature-host-all)
@@ -261,6 +277,14 @@ is_go_node_addr_visibility_test() {
   [ "$1" = "$GO_NODE_ADDR_VISIBILITY_TEST" ]
 }
 
+is_go_node_featureflags_test() {
+  [ "$1" = "$GO_NODE_FEATUREFLAGS_TEST" ]
+}
+
+is_go_bridge_featureflags_test() {
+  [ "$1" = "$GO_BRIDGE_FEATUREFLAGS_TEST" ]
+}
+
 readonly GO_NODE_ADDR_VISIBILITY_RUN='AnnouncedAddrsSurvive|SignedPeerRecord|IdentifyLearnedAddr|InterfaceChangeUpdates|Fdc11PortMining|NoEnumerationErrorSpam|NotSuppressed|HolePunchInputAddrs|DoesNotLeakNonRoutable'
 
 print_command_for_path() {
@@ -275,6 +299,14 @@ print_command_for_path() {
   fi
   if is_go_node_addr_visibility_test "$path"; then
     printf "(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node/ -run '%s' -count=1)" "$GO_NODE_ADDR_VISIBILITY_RUN"
+    return
+  fi
+  if is_go_node_featureflags_test "$path"; then
+    printf "(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run '%s' -count=1)" "$GO_NODE_FEATUREFLAGS_RUN"
+    return
+  fi
+  if is_go_bridge_featureflags_test "$path"; then
+    printf "(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge -run '%s' -count=1)" "$GO_BRIDGE_FEATUREFLAGS_RUN"
     return
   fi
   printf 'flutter test %s' "$(quote_for_display "$path")"
@@ -292,6 +324,14 @@ run_path() {
   fi
   if is_go_node_addr_visibility_test "$path"; then
     (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node/ -run "$GO_NODE_ADDR_VISIBILITY_RUN" -count=1)
+    return
+  fi
+  if is_go_node_featureflags_test "$path"; then
+    (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run "$GO_NODE_FEATUREFLAGS_RUN" -count=1)
+    return
+  fi
+  if is_go_bridge_featureflags_test "$path"; then
+    (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge -run "$GO_BRIDGE_FEATUREFLAGS_RUN" -count=1)
     return
   fi
   flutter test "$path"

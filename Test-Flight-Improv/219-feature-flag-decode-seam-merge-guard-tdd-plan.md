@@ -14,13 +14,14 @@ Spec: free-text intent (no formal spec) — split out of 217 per the 217 review 
 ## Execution Progress
 | Time | Phase | Files touched | Command/evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|
-| | contract extraction (git status --short) | | | scope confirmed | |
-| | RED tests added | | (cmd proving they FAIL) | RED for expected reason | |
-| | implementation | | | scoped files only | |
-| | direct GREEN | | (exact cmd) | reds now green | |
-| | preservation GREEN | | (exact cmd) | sentinels green | |
-| | named gates | | (exact cmd + counts) | gate green | |
-| | QA (independent) | | (re-run cmds) | blocking: none/list | verdict |
+| 2026-07-06 | contract extraction (git status --short) | — | only graphify-arch auto-refresh noise dirty; source tree clean | scope confirmed | RED first |
+| 2026-07-06 | RED tests added | feature_flags_merge_test.go (B01/B02), feature_flags_partial_map_test.go (B04), p2p_bridge_client_test.dart (B03) | B01/B02 compile-RED (`undefined: MergeFeatureFlagsOverDefaults`); B04 behavioural-RED (`omitted enableLibp2pLANDial…got false (partial map silently darkened it)`); B03 green sentinel (57 pass) | RED for expected reason | implement |
+| 2026-07-06 | implementation | node/feature_flags.go (+MergeFeatureFlagsOverDefaults, 9 cases), bridge/bridge.go (:572 field→map[string]bool, :592 nil→nil / else &merged) | gofmt clean, go vet clean; config.go EffectiveFlags untouched | scoped files only | GREEN |
+| 2026-07-06 | direct GREEN | — | `go test ./node -run FeatureFlag` ok (7 tests: B01/B02 + 5 TestFeatureFlags_*); `go test ./bridge -run PartialFeatureFlags` ok; `flutter test p2p_bridge_client_test.dart` 57 pass | reds now green | preservation |
+| 2026-07-06 | preservation GREEN | — | `go test ./node -run TestFeatureFlags_` → 5/5 PASS (Go fallback pins intact) | sentinels green | gates |
+| 2026-07-06 | named gates | scripts/run_host_test_gates.sh (6 edit sites) | `--only` exec of both synthetic paths → #962 ./node ok + #963 ./bridge ok (both GOTOOLCHAIN-pinned); core-host-all in-gate (B03 auto-glob) | gate green | mutation + QA |
+| 2026-07-06 | mutation-verified | (temp, reverted) | B01 re-reds under FeatureFlags{}-start; B02 re-reds under add-unhandled-field; B03 re-reds under enableLibp2pLANDial true→false flip; B04 RED-on-HEAD = revert-merge mutation | all mutations caught | QA |
+| 2026-07-06 | QA (independent) | — | flutter analyze 0 new (24 pre-existing info lints outside edits); git diff --check clean; 4-lens adversarial verify workflow | blocking: none | verdict |
 
 ## Source Of Truth
 - Spec / intent: inline below (go-libp2p connectivity survival audit landmine #1).
@@ -148,12 +149,12 @@ git diff --check
 - Scope drift (BLOCKING): any change to `config.go EffectiveFlags`, or editing `testpeer` here (follow-up owns it), or any Part A / wake-token edit.
 
 ## Done Criteria
-- [ ] RED added first; B01/B02 compile-RED, B04 behavioural-RED for the documented reason.
-- [ ] Mutation-verified (start-from-`FeatureFlags{}` re-reds B01; add-field re-reds B02; drop-key/flip re-reds B03).
-- [ ] Direct GREEN + Go fallback pins preserved + core-host-all pass.
-- [ ] Go merge test (B01/B02, `./node`) registered via the **pinned** synthetic-path (verified `GOTOOLCHAIN=go1.25.0` in both print/run branches); **B04 registered via its OWN `./bridge` pinned const+branch**.
-- [ ] B04 (mandatory) RED on HEAD, green after the bridge merge; both print/run branches carry `GOTOOLCHAIN=go1.25.0`.
-- [ ] `flutter analyze` 0 new; `git diff --check` clean.
+- [x] RED added first; B01/B02 compile-RED, B04 behavioural-RED for the documented reason.
+- [x] Mutation-verified (start-from-`FeatureFlags{}` re-reds B01; add-field re-reds B02; drop-key/flip re-reds B03; B04's revert-merge = its RED-on-HEAD state).
+- [x] Direct GREEN + Go fallback pins preserved + core-host-all pass (all confirmed).
+- [x] Go merge test (B01/B02, `./node`) registered via the **pinned** synthetic-path (verified `GOTOOLCHAIN=go1.25.0` in both print/run branches); **B04 registered via its OWN `./bridge` pinned const+branch**.
+- [x] B04 (mandatory) RED on HEAD, green after the bridge merge; both print/run branches carry `GOTOOLCHAIN=go1.25.0`.
+- [x] `flutter analyze` 0 new; `git diff --check` clean.
 
 ## Scope Guard (hard "Do not")
 - **Do not** touch `config.go EffectiveFlags` (presence already lost there — wrong layer).
@@ -176,4 +177,8 @@ From 217 review fix-list §E1 (split), §E2 (B02 behavioural not "switch-count r
 Structural blockers: none. Host-only, fully live, immediately shippable. Verdict: **structurally sufficient — ready for execution.**
 
 ## Final Execution Verdict
-Verdict: (pending execution) | Files changed: … | Tests run (+counts): … | Blocking: … | QA verdict: … | Non-blocking follow-ups (owner): testpeer merge-routing (sim-harness).
+Verdict: **CLOSED (host-only, 2026-07-06)** — partial-map⇒silent-false is now structurally impossible at the production decode seam; producer drift reds host-side.
+Files changed: `go-mknoon/node/feature_flags.go` (+`MergeFeatureFlagsOverDefaults`, 9 cases), `go-mknoon/bridge/bridge.go` (:572 field `*node.FeatureFlags`→`map[string]bool`, :592 nil→nil / else `&merged`), `scripts/run_host_test_gates.sh` (6 edit sites: `GO_NODE_FEATUREFLAGS`+`GO_BRIDGE_FEATUREFLAGS`, both GOTOOLCHAIN-pinned in print+run), `test/core/bridge/p2p_bridge_client_test.dart` (+B03 pin); NEW `go-mknoon/node/feature_flags_merge_test.go` (B01/B02), NEW `go-mknoon/bridge/feature_flags_partial_map_test.go` (B04). `config.go EffectiveFlags` + `cmd/testpeer` untouched.
+Tests run (+counts): `go test ./node -run FeatureFlag` 7/7 ok (B01/B02 + 5 `TestFeatureFlags_*`); `go test ./bridge -run PartialFeatureFlags` ok; `go test ./node -run TestFeatureFlags_` 5/5 (preservation); `flutter test p2p_bridge_client_test.dart` 57/57; `core-host-all` 277/277 (B03 in-gate); mutation reverts re-red B01/B02/B03; B04 RED-on-HEAD = revert-merge mutation.
+Blocking: none. QA verdict: 4-lens adversarial verify workflow (blast-radius, RED-authenticity, scope-guard/harness, cross-lang parity) → **0 blocking**; `flutter analyze` 0 new; `git diff --check` clean; gofmt/vet clean.
+Non-blocking follow-ups (owner): testpeer merge-routing (sim-harness — route `cmd/testpeer/commands.go` through `MergeFeatureFlagsOverDefaults`; note its effective darkening is 2 true-defaulted keys — `enableLibp2pLANDial`,`enableDeferredDirectAck` — not 4, since DcutrUpgrade/LANMedia default false anyway). Dart↔Go default lockstep on flag graduation (manual).

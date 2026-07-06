@@ -90,3 +90,48 @@ func DefaultFeatureFlags() FeatureFlags {
 		EnableLibp2pLANMedia:         false, // FDC-15: off until D1 two-phone media gate is GREEN
 	}
 }
+
+// MergeFeatureFlagsOverDefaults returns a FeatureFlags that starts from
+// DefaultFeatureFlags() and overwrites ONLY the keys PRESENT in the given map.
+//
+// This is the decode-seam merge that makes "partial map => silent false"
+// structurally impossible (219). The plain-bool FeatureFlags struct cannot
+// distinguish absent-from-false, so a wholesale JSON decode of a PARTIAL map
+// darkens every omitted key to the zero-value false — not the intended Go
+// default. Presence is therefore resolved HERE, against the raw map, before the
+// struct loses it: an omitted key keeps its Go default (which mirrors the
+// load-bearing Dart default), while a present key — INCLUDING an explicit false
+// — overrides it. When Dart sends the full 9-key map (the live path) every key
+// is present, so the merge is behaviour-identical to wholesale replace.
+//
+// Callers that decode the Dart featureFlags JSON into a map[string]bool (see
+// bridge.StartNode) route through this helper so a dropped/omitted key can never
+// silently darken a graduated flag fleet-wide. Every FeatureFlags field must be
+// reachable here (locked by TestMergeFeatureFlags_EveryStructFieldIsMergeable);
+// add a case whenever a struct field is added.
+func MergeFeatureFlagsOverDefaults(present map[string]bool) FeatureFlags {
+	flags := DefaultFeatureFlags()
+	for key, value := range present {
+		switch key {
+		case "enableSharedRelayBackend":
+			flags.EnableSharedRelayBackend = value
+		case "enableMultiRelayRouting":
+			flags.EnableMultiRelayRouting = value
+		case "enableReservationAwareHealth":
+			flags.EnableReservationAwareHealth = value
+		case "enableInPlaceRelayRecovery":
+			flags.EnableInPlaceRelayRecovery = value
+		case "enableResumeGroupRecovery":
+			flags.EnableResumeGroupRecovery = value
+		case "enableDeferredDirectAck":
+			flags.EnableDeferredDirectAck = value
+		case "enableLibp2pLANDial":
+			flags.EnableLibp2pLANDial = value
+		case "enableDcutrUpgrade":
+			flags.EnableDcutrUpgrade = value
+		case "enableLibp2pLANMedia":
+			flags.EnableLibp2pLANMedia = value
+		}
+	}
+	return flags
+}

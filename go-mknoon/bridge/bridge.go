@@ -563,14 +563,14 @@ func StartNode(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		PrivateKeyHex            string             `json:"privateKeyHex"`
-		RelayAddresses           []string           `json:"relayAddresses"`
-		Namespace                string             `json:"namespace"`
-		AutoRegister             bool               `json:"autoRegister"`
-		ListenPort               int                `json:"listenPort"`
-		KeyRotationGracePeriodMs int64              `json:"keyRotationGracePeriodMs"`
-		FeatureFlags             *node.FeatureFlags `json:"featureFlags"`
-		ProcessStartEpochMs      int64              `json:"processStartEpochMs"` // FDC-S1: Dart process-start epoch (observation-only)
+		PrivateKeyHex            string          `json:"privateKeyHex"`
+		RelayAddresses           []string        `json:"relayAddresses"`
+		Namespace                string          `json:"namespace"`
+		AutoRegister             bool            `json:"autoRegister"`
+		ListenPort               int             `json:"listenPort"`
+		KeyRotationGracePeriodMs int64           `json:"keyRotationGracePeriodMs"`
+		FeatureFlags             map[string]bool `json:"featureFlags"`        // 219: decode as a raw map so key-presence survives to the merge seam
+		ProcessStartEpochMs      int64           `json:"processStartEpochMs"` // FDC-S1: Dart process-start epoch (observation-only)
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -589,8 +589,18 @@ func StartNode(paramsJSON string) (result string) {
 		AutoRegister:           params.AutoRegister,
 		ListenPort:             params.ListenPort,
 		KeyRotationGracePeriod: time.Duration(params.KeyRotationGracePeriodMs) * time.Millisecond,
-		FeatureFlags:           params.FeatureFlags,
 		ProcessStartEpochMs:    params.ProcessStartEpochMs,
+	}
+	// 219: merge the partial Dart featureFlags map over the Go defaults at the
+	// decode seam — the ONLY layer where key-presence is still observable. An
+	// omitted key keeps its Go default (never the JSON zero-value false), so a
+	// dropped/regressed Dart key can no longer silently darken a graduated flag
+	// fleet-wide. A nil map (featureFlags absent) leaves cfg.FeatureFlags nil so
+	// EffectiveFlags falls back to DefaultFeatureFlags() — the unchanged
+	// nil->DefaultFeatureFlags contract.
+	if params.FeatureFlags != nil {
+		merged := node.MergeFeatureFlagsOverDefaults(params.FeatureFlags)
+		cfg.FeatureFlags = &merged
 	}
 
 	_, err := n.Start(cfg)

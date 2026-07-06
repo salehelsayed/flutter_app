@@ -277,6 +277,57 @@ void main() {
   });
 
   // ---------------------------------------------------------------------------
+  // 219: defaultResilienceFeatureFlags producer-drift pin (B03)
+  //
+  // The Dart map is the LOAD-BEARING production default: it is sent in full to
+  // node:start and the Go decode-seam merge overwrites only present keys. If a
+  // key is dropped here, the Go merge keeps that key's Go default — but a
+  // POLARITY drift (e.g. flipping enableLibp2pLANDial to false) would darken it
+  // fleet-wide. This pins the exact 9-key set and each key's intended polarity
+  // against an INDEPENDENT literal (deliberately NOT derived from the function),
+  // so a dropped key (set mismatch) or a flipped default (value mismatch) reds
+  // host-side — the partial-map silent-false landmine surfaces before device.
+  // The prior `payload == defaultResilienceFeatureFlags()` assert is tautological
+  // (both sides share a dropped key) and cannot catch this.
+  // ---------------------------------------------------------------------------
+  group('defaultResilienceFeatureFlags producer pin', () {
+    test('pins exactly the 9 canonical keys with intended polarity', () {
+      final flags = defaultResilienceFeatureFlags();
+
+      // INDEPENDENT literal — not `defaultResilienceFeatureFlags()`. FDC-11
+      // enableLibp2pLANDial graduated TRUE at CV-09; FDC-12 enableDcutrUpgrade
+      // and FDC-15 enableLibp2pLANMedia ship DARK (false) until their device
+      // gates close. The remaining six are default-on.
+      const expected = <String, bool>{
+        'enableSharedRelayBackend': true,
+        'enableMultiRelayRouting': true,
+        'enableReservationAwareHealth': true,
+        'enableInPlaceRelayRecovery': true,
+        'enableResumeGroupRecovery': true,
+        'enableDeferredDirectAck': true,
+        'enableLibp2pLANDial': true,
+        'enableDcutrUpgrade': false,
+        'enableLibp2pLANMedia': false,
+      };
+
+      // Exact key-set match: a dropped or added key reds here.
+      expect(flags, hasLength(9));
+      expect(flags.keys.toSet(), equals(expected.keys.toSet()));
+
+      // Exact polarity match, key by key: a flipped default reds here.
+      for (final entry in expected.entries) {
+        expect(
+          flags[entry.key],
+          equals(entry.value),
+          reason:
+              '${entry.key} must ship ${entry.value} — the load-bearing Dart '
+              'default sent wholesale to node:start',
+        );
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // callP2PNodeStop
   // ---------------------------------------------------------------------------
   group('callP2PNodeStop', () {
