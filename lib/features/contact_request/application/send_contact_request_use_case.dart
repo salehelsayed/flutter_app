@@ -64,6 +64,13 @@ Future<SendContactRequestResult> sendContactRequest({
   required String targetPeerId,
   String? recipientPublicKey,
   ContactRequestSendIntent intent = ContactRequestSendIntent.newRequest,
+  // FDC-09 §12 / CV-14: read-only per-send resolver for the wake-token THIS node
+  // minted for [targetPeerId] (distributing to a contact the token it should
+  // present to wake us). Emitted — signed, inside the v2 encrypted envelope —
+  // ONLY when it returns non-null AND [recipientPublicKey] != null (v2). It NEVER
+  // mints/registers (INV-5: that is once-per-cycle) and NEVER rides v1 (INV-6).
+  // Null / gated-off ⇒ no `wt` (the dark-landing default).
+  Future<String?> Function(String peerId)? resolveWakeToken,
 }) async {
   final targetPrefix = targetPeerId.length > 10
       ? targetPeerId.substring(0, 10)
@@ -99,6 +106,12 @@ Future<SendContactRequestResult> sendContactRequest({
   // 3. Build unsigned payload (same format as QR, plus mlkem key)
   final timestamp = DateTime.now().toUtc().toIso8601String();
   final sanitizedUsername = sanitizeUsername(identity.username);
+  // FDC-09 §12 / CV-14: resolve the wake-token to distribute — v2 (encrypted,
+  // per-contact-private) ONLY, read-only. It MUST be added BEFORE dataToSign so
+  // the recipient's signature covers it (their reconstruction re-includes `wt`).
+  final wakeToken = (recipientPublicKey != null && resolveWakeToken != null)
+      ? await resolveWakeToken(targetPeerId)
+      : null;
   final unsignedPayload = SplayTreeMap<String, dynamic>.from({
     if (identity.mlKemPublicKey != null) 'mlkem': identity.mlKemPublicKey,
     'ns': identity.peerId,
@@ -106,6 +119,7 @@ Future<SendContactRequestResult> sendContactRequest({
     'rv': RENDEZVOUS_ADDRESS,
     'ts': timestamp,
     'un': sanitizedUsername,
+    if (wakeToken != null && wakeToken.isNotEmpty) 'wt': wakeToken,
   });
   final dataToSign = jsonEncode(unsignedPayload);
 

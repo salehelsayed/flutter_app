@@ -637,4 +637,66 @@ void main() {
     expect(bridge.lastEncryptPayload!['msgId'], equals(sent['msgId']));
     expect(bridge.lastEncryptPayload!['ts'], equals(sent['ts']));
   });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 217 / CV-14 wake-token send leg (A01). INV-6: `wt` rides ONLY the v2
+  // encrypted, signed envelope — never v1. INV-5: the per-send resolver is
+  // READ-ONLY (it never mints/registers).
+  // ───────────────────────────────────────────────────────────────────────────
+  group('217 CV-14 wake-token send', () {
+    test(
+      'v2 embeds signed wt inside the encrypted envelope; v1 never carries wt; '
+      'the per-send resolver is read-only',
+      () async {
+        var resolverCalls = 0;
+        Future<String?> resolver(String peerId) async {
+          resolverCalls++;
+          return 'tok-for-$peerId';
+        }
+
+        // v2: recipientPublicKey != null → wt is signed (present in the
+        // plaintext the encrypt step wraps, i.e. covered by the signature).
+        final v2 = await sendContactRequest(
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          targetPeerId: 'targetPeer123456789',
+          recipientPublicKey: 'recipientPubKey',
+          resolveWakeToken: resolver,
+        );
+        expect(v2, equals(SendContactRequestResult.success));
+        final signedPlaintext =
+            bridge.lastEncryptPayload!['plaintext'] as String;
+        expect(
+          signedPlaintext,
+          contains('"wt":"tok-for-targetPeer123456789"'),
+        );
+        // Read once, per-send (not per-retry) — the resolver is a pure read.
+        expect(resolverCalls, 1);
+
+        // v1: recipientPublicKey == null → NO wt (INV-6); the resolver is not
+        // even consulted (gated on recipientPublicKey).
+        resolverCalls = 0;
+        final v1Bridge = _FakeBridge();
+        final v1p2p = _FakeP2PService()
+          ..discoveredPeer = DiscoveredPeer(
+            id: 'targetPeer123456789',
+            addresses: ['/ip4/127.0.0.1/tcp/4001'],
+          );
+        final v1 = await sendContactRequest(
+          p2pService: v1p2p,
+          identityRepo: identityRepo,
+          bridge: v1Bridge,
+          targetPeerId: 'targetPeer123456789',
+          resolveWakeToken: resolver,
+        );
+        expect(v1, equals(SendContactRequestResult.success));
+        final v1Sent =
+            jsonDecode(v1p2p.lastSentMessage!) as Map<String, dynamic>;
+        expect((v1Sent['payload'] as Map).containsKey('wt'), isFalse);
+        expect(v1p2p.lastSentMessage, isNot(contains('wt')));
+        expect(resolverCalls, 0);
+      },
+    );
+  });
 }

@@ -67,6 +67,9 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/application/media_download_slow_transfer_simulator_test.dart"
   "test/features/contact_request/application/handle_incoming_message_use_case_test.dart"
   "test/features/contact_request/application/retry_incomplete_key_exchanges_use_case_test.dart"
+  # 217 CV-14 wake-token send leg (A01) — curated into the 1to1 gate alongside
+  # the receive (handle) + backfill (retry) files already listed above.
+  "test/features/contact_request/application/send_contact_request_use_case_test.dart"
   "test/features/conversation/application/post_restore_stale_key_recovery_test.dart"
   "test/features/contact_request/application/contact_request_listener_test.dart"
   # 171: one-scan mutual contact add (auto-add v2 + deferred-ack + staged inbox

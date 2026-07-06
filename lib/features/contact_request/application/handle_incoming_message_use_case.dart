@@ -8,6 +8,7 @@ import 'package:flutter_app/features/contact_request/domain/models/contact_reque
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/push/domain/received_wake_token_store.dart';
 
 /// Result of handling an incoming P2P message.
 enum HandleMessageResult {
@@ -63,6 +64,10 @@ handleIncomingMessage({
   String? ownPrivateKey,
   Set<String>? seenMessageIds,
   AttemptSilentIntroContactRequestRecovery? attemptSilentIntroRecovery,
+  // FDC-09 §12 / CV-14: when present, the recipient-issued `wt` distributed
+  // inside this signed contact_request is persisted here (keyed by the sender's
+  // peerId), so our later `inbox:store` frames to that peer can present it.
+  ReceivedWakeTokenStore? receivedWakeTokenStore,
 }) async {
   // Safe prefix for logging (handles short strings like "unknown")
   String safePrefix(String s) => s.length > 10 ? s.substring(0, 10) : s;
@@ -281,6 +286,11 @@ handleIncomingMessage({
     'rv': payload['rv'],
     'ts': payload['ts'],
     if (payload['un'] != null) 'un': payload['un'],
+    // FDC-09 §12 / CV-14: `wt` is a conditionally-included SIGNED field (same
+    // idiom as `mlkem`/`un`). It MUST be reconstructed here or a wt-carrying
+    // request's signature fails to verify — after backfill that would drop every
+    // contact-add + key rotation (INV-1). A no-`wt` request keeps the old shape.
+    if (payload['wt'] != null) 'wt': payload['wt'],
   });
   final dataToVerify = jsonEncode(unsignedPayload);
 
@@ -298,6 +308,36 @@ handleIncomingMessage({
       details: {'peerId': peerIdPrefix},
     );
     return (HandleMessageResult.invalidMessage, null, null);
+  }
+
+  // FDC-09 §12 / CV-14: extract + persist the recipient-issued `wt` NOW —
+  // immediately after the signature check and BEFORE the silent-intro-recovery
+  // early-return below — so it is captured on ALL verified paths (new contact,
+  // already-contact key rotation, AND silent-intro-recovered, which returns
+  // before the contact checks). Anti-rollback: the signed `ts` must be strictly
+  // newer than the stored ts (own comparison — the ML-KEM anti-rollback guard is
+  // keyed off contact-table state absent on the new-contact / intro paths).
+  if (receivedWakeTokenStore != null) {
+    final wt = payload['wt'] as String?;
+    final wtTs = payload['ts'] as String?;
+    if (wt != null && wt.isNotEmpty && wtTs != null) {
+      final existing = await receivedWakeTokenStore.readTokenFor(peerId);
+      final storedTs = existing?['ts'];
+      if (storedTs == null || wtTs.compareTo(storedTs) > 0) {
+        await receivedWakeTokenStore.writeTokenFor(peerId, wt, wtTs);
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'WAKE_TOKEN_RECEIVED_STORED',
+          details: {'peerId': peerIdPrefix},
+        );
+      } else {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'WAKE_TOKEN_RECEIVED_ROLLBACK_IGNORED',
+          details: {'peerId': peerIdPrefix},
+        );
+      }
+    }
   }
 
   if (attemptSilentIntroRecovery != null) {

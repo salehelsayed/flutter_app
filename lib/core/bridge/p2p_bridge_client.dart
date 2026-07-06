@@ -740,6 +740,11 @@ Future<Map<String, dynamic>> callP2PInboxStore(
   required String toPeerId,
   required String message,
   int? timeoutMs,
+  // FDC-09 §12 / CV-14: the recipient-issued opaque wake-token to present so the
+  // relay's access-token gate authorizes waking [toPeerId]. Absent/empty ⇒ the
+  // key is omitted entirely so the store frame stays byte-identical to the
+  // pre-FDC-09 frame (NET-REL-07); the Go bridge mirrors this with `omitempty`.
+  String? wakeToken,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -753,6 +758,7 @@ Future<Map<String, dynamic>> callP2PInboxStore(
       'toPeerId': toPeerId,
       'message': message,
       if (timeoutMs != null) 'timeoutMs': timeoutMs,
+      if (wakeToken != null && wakeToken.isNotEmpty) 'wakeToken': wakeToken,
     },
   };
 

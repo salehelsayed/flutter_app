@@ -142,6 +142,10 @@ classify_path() {
       record "1to1" "$path" "test" "iOS app-group notification dedupe simulator proof"
       return
       ;;
+    integration_test/wake_token_distribution_proof_test.dart)
+      record "1to1" "$path" "test" "217 CV-14 wake-token distribute→store→attach directionality proof (A13a; sim-local --dart-define=MKNOON_EMIT_WAKE_TOKEN=true, relay gate stays OFF)"
+      return
+      ;;
     integration_test/benchmark_harness.dart|\
     integration_test/performance_harness.dart)
       record "ignored" "$path" "ignored" "single dispatched benchmark/performance entrypoint (BENCHMARK/PERF_TARGET=<key>) outside reliability simulation discovery"

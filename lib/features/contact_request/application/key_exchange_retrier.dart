@@ -36,6 +36,9 @@ class KeyExchangeRetrier {
     SecureKeyStore? secureKeyStore,
     this.accountMigrationNetworkGate = allowAccountMigrationNetworkSideEffects,
     KeyExchangeRetryCoordinator? coordinator,
+    // FDC-09 §12 / CV-14: read-only wake-token resolver for the backfill drain
+    // (emission-gated OFF by default). Never mints/registers.
+    Future<String?> Function(String peerId)? resolveWakeToken,
   }) : _coordinator =
            coordinator ??
            KeyExchangeRetryCoordinator(
@@ -45,6 +48,7 @@ class KeyExchangeRetrier {
                p2pService: p2pService,
                bridge: bridge,
                secureKeyStore: secureKeyStore,
+               resolveWakeToken: resolveWakeToken,
              ),
            );
 

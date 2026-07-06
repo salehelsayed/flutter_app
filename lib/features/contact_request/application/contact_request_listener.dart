@@ -15,6 +15,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/push/domain/received_wake_token_store.dart';
 import 'package:flutter_app/features/settings/application/download_profile_picture_use_case.dart';
 
 /// Bounded replay cache that stores message IDs with timestamps.
@@ -74,6 +75,11 @@ class ContactRequestListener {
   final AttemptSilentIntroContactRequestRecovery? attemptSilentIntroRecovery;
   final void Function(IntroductionModel intro)? emitRecoveredIntroductionStatus;
 
+  /// FDC-09 §12 / CV-14: when wired, an incoming signed contact_request's `wt`
+  /// is persisted here (both the live broadcast AND the inbox-replay path funnel
+  /// through [processIncomingMessage]).
+  final ReceivedWakeTokenStore? receivedWakeTokenStore;
+
   /// 171: when wired (non-null), a v2 [HandleMessageResult.contactAutoAdded]
   /// result is added tap-free by invoking this — it adds the scanner as a
   /// contact AND fires the reciprocal request (acceptAndReciprocate). When
@@ -103,6 +109,7 @@ class ContactRequestListener {
     this.shouldSuppressPresentationForPeerId,
     this.attemptSilentIntroRecovery,
     this.emitRecoveredIntroductionStatus,
+    this.receivedWakeTokenStore,
     this.autoAcceptAndReciprocate,
     ContactAutoAddRateLimiter? autoAddRateLimiter,
   }) : downloadProfilePictureFn =
@@ -233,6 +240,7 @@ class ContactRequestListener {
         ownPeerId: getOwnPeerId(),
         ownPrivateKey: ownPrivateKey,
         seenMessageIds: _replayCache.ids,
+        receivedWakeTokenStore: receivedWakeTokenStore,
         attemptSilentIntroRecovery: attemptSilentIntroRecovery == null
             ? null
             : (verifiedRequest) async {

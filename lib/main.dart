@@ -333,6 +333,11 @@ import 'package:flutter_app/features/push/application/request_push_permission_us
 import 'package:flutter_app/features/push/application/set_presence_use_case.dart';
 import 'package:flutter_app/core/services/active_peer_keepalive_use_case.dart';
 import 'package:flutter_app/features/push/infrastructure/push_token_store_impl.dart';
+import 'package:flutter_app/features/push/infrastructure/received_wake_token_store_impl.dart';
+import 'package:flutter_app/features/push/infrastructure/wake_token_store_impl.dart';
+import 'package:flutter_app/features/push/application/issue_wake_tokens_use_case.dart';
+import 'package:flutter_app/features/push/application/wake_token_wiring.dart';
+import 'package:flutter_app/features/push/application/wake_token_reissue_coalescer.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/application/download_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
@@ -467,6 +472,16 @@ void main() async {
       ? FlutterSecureKeyStore(appleAccessGroup: mknoonSharedAppleAccessGroup)
       : null;
   final pushTokenStore = PushTokenStoreImpl(secureKeyStore: secureKeyStore);
+  // FDC-09 §12 / CV-14: ONE shared sender-side received-wake-token store — the
+  // receive leg (ContactRequestListener → handleIncomingMessage) writes it and
+  // the send funnel (P2PServiceImpl.storeInInboxDetailed) reads it, so its
+  // in-memory cache stays coherent across both.
+  final receivedWakeTokenStore = ReceivedWakeTokenStoreImpl(
+    secureKeyStore: secureKeyStore,
+  );
+  // FDC-09 §12 / CV-14 recipient leg: the {contact -> minted token} store this
+  // node registers with the relay + distributes to contacts (send half).
+  final wakeTokenStore = WakeTokenStoreImpl(secureKeyStore: secureKeyStore);
   final accountMigrationAuthorityRepository =
       SecureKeyStoreAccountMigrationAuthorityRepository(
         secureKeyStore: secureKeyStore,
@@ -2191,11 +2206,41 @@ void main() async {
   // builder — nothing between here and there references it.)
   final conversationTracker = ActiveConversationTracker();
 
+  // FDC-09 §12 / CV-14 recipient leg (217 §A1): once-per-cycle mint+register with
+  // a TOTAL callback wrapper (a throwing/old relay degrades to false, never
+  // spams — NET-REL-07). The register set is not relay-durable, so this re-runs
+  // on each node-start (StartupRouter) + coalesced contact-change bursts.
+  final issueWakeTokensUseCase = IssueWakeTokensUseCase(
+    wakeTokenStore: wakeTokenStore,
+    registerWakeTokens: (tokens) => registerWakeTokensViaBridge(bridge, tokens),
+  );
+  // Read-only per-send resolver — null-yielding (DARK) unless a build passes
+  // --dart-define=MKNOON_EMIT_WAKE_TOKEN=true (§C2). Never mints/registers.
+  final wakeTokenResolver = buildWakeTokenResolver(wakeTokenStore);
+  // Coalesce contact-add / key-rotation bursts into ONE re-issue per window
+  // (INV-5: register once-per-cycle, never per-event).
+  final wakeTokenReissueCoalescer = WakeTokenReissueCoalescer(
+    reissue: () async {
+      final contacts = await contactRepository.getActiveContacts();
+      // Exclude BLOCKED contacts (getActiveContacts filters archived only) so a
+      // blocked peer's token is pruned (reconcile-down) and never re-registered.
+      await issueWakeTokensUseCase.issueForContacts(
+        contacts
+            .where((c) => !c.isBlocked)
+            .map((c) => c.peerId)
+            .toList(growable: false),
+      );
+    },
+  );
+
   // Create P2P service (uses the same bridge + local P2P)
   p2pService = P2PServiceImpl(
     bridge: bridge,
     localP2PService: localP2PService,
     pushTokenStore: pushTokenStore,
+    // FDC-09 §12 / CV-14: the send funnel attaches received[toPeerId] on
+    // `inbox:store` (1:1 contacts only). Inert until a peer distributes a `wt`.
+    receivedWakeTokenStore: receivedWakeTokenStore,
     // 182: wire the OS connectivity source (FDC-04's anticipated "bounded
     // follow-up") so a foreground connectivity restore drains the offline inbox
     // immediately — instead of waiting for the next ~30s health-check poll or an
@@ -2360,6 +2405,9 @@ void main() async {
     ),
     emitRecoveredIntroductionStatus: (intro) =>
         introductionListener.emitIntroStatusChanged(intro),
+    // FDC-09 §12 / CV-14: persist a distributed `wt` on the receive leg (live +
+    // inbox-replay both funnel through processIncomingMessage).
+    receivedWakeTokenStore: receivedWakeTokenStore,
     shouldSuppressPresentationForPeerId:
         contactRequestPresentationGate.shouldSuppress,
     // 171 follow-up (user decision): the scanned user is notified via the
@@ -3154,6 +3202,9 @@ void main() async {
     secureKeyStore: secureKeyStore,
     accountMigrationNetworkGate:
         accountMigrationRuntimeNetworkGate.allowsAccountNetworkSideEffects,
+    // FDC-09 §12 / CV-14: the backfill drain distributes wake-tokens (DARK until
+    // the emission define flips) — read-only, never mints/registers.
+    resolveWakeToken: wakeTokenResolver,
   );
 
   var liveServicesStarted = false;
@@ -3216,6 +3267,9 @@ void main() async {
     // ConversationWired/FeedWired pick up the new encryption key.
     contactRequestListener.contactKeyUpdatedStream.listen((contact) {
       chatMessageListener.emitContactUpdate(contact);
+      // FDC-09 §12 / CV-14: a key rotation changed the recipient set — coalesce
+      // a single re-mint+register (INV-5).
+      wakeTokenReissueCoalescer.trigger();
     });
 
     // 171: a one-scan tap-free auto-add — refresh the UI so the new mutual
@@ -3223,6 +3277,8 @@ void main() async {
     // surfaces listening to contact changes render the non-modal update).
     contactRequestListener.autoAddedStream.listen((contact) {
       chatMessageListener.emitContactUpdate(contact);
+      // FDC-09 §12 / CV-14: a new mutual contact — coalesce a single re-issue.
+      wakeTokenReissueCoalescer.trigger();
     });
     StartupTiming.instance.mark('runtime_services_ready');
   }
@@ -3245,6 +3301,9 @@ void main() async {
       contactRepository: contactRepository,
       contactRequestRepository: contactRequestRepository,
       contactRequestListener: contactRequestListener,
+      // FDC-09 §12 / CV-14 (217 §A1): once-per-cycle mint+register hook, invoked
+      // by StartupRouter after node-start with all active contact peerIds.
+      issueWakeTokensForContacts: issueWakeTokensUseCase.issueForContacts,
       contactRequestPresentationGate: contactRequestPresentationGate,
       messageRepository: messageRepository,
       postRepository: postRepository,
@@ -3454,6 +3513,9 @@ class MyApp extends StatefulWidget {
   final ContactRequestRepositoryImpl contactRequestRepository;
   final ContactRequestListener contactRequestListener;
   final ContactRequestPresentationGate contactRequestPresentationGate;
+  // FDC-09 §12 / CV-14 (217 §A1): once-per-cycle wake-token mint+register hook.
+  final Future<bool> Function(List<String> contactPeerIds)?
+  issueWakeTokensForContacts;
   final MessageRepositoryImpl messageRepository;
   final PostRepositoryImpl postRepository;
   final PostsPrivacySettingsRepositoryImpl postsPrivacySettingsRepository;
@@ -3550,6 +3612,7 @@ class MyApp extends StatefulWidget {
     required this.contactRequestRepository,
     required this.contactRequestListener,
     required this.contactRequestPresentationGate,
+    this.issueWakeTokensForContacts,
     required this.messageRepository,
     required this.postRepository,
     required this.postsPrivacySettingsRepository,
@@ -4866,6 +4929,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         contactRepository: widget.contactRepository,
         contactRequestRepository: widget.contactRequestRepository,
         contactRequestListener: widget.contactRequestListener,
+        issueWakeTokensForContacts: widget.issueWakeTokensForContacts,
         contactRequestPresentationGate: widget.contactRequestPresentationGate,
         messageRepository: widget.messageRepository,
         postRepository: widget.postRepository,

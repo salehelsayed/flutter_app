@@ -47,6 +47,9 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/features/conversation/application/media_download_slow_transfer_simulator_test.dart"
   "test/features/contact_request/application/handle_incoming_message_use_case_test.dart"
   "test/features/contact_request/application/retry_incomplete_key_exchanges_use_case_test.dart"
+  # 217 CV-14 wake-token: send leg (A01) + the bridge attach/omit lock (A06).
+  "test/features/contact_request/application/send_contact_request_use_case_test.dart"
+  "test/core/bridge/p2p_bridge_client_wake_attach_test.dart"
   "test/features/conversation/application/post_restore_stale_key_recovery_test.dart"
   "test/features/contact_request/application/contact_request_listener_test.dart"
   # 171: one-scan mutual contact add — two-party convergence host lock.
@@ -93,6 +96,13 @@ readonly GO_NODE_FEATUREFLAGS_RUN='FeatureFlag'
 # path (NOT folded into the ./node FeatureFlag branch). GOTOOLCHAIN-pinned.
 readonly GO_BRIDGE_FEATUREFLAGS_TEST="go-mknoon/bridge/feature_flags_partial_map_test.go"
 readonly GO_BRIDGE_FEATUREFLAGS_RUN='PartialFeatureFlags'
+# 217 A11/A12 (CV-14 wake-token store frame): the send-side attach + NET-REL-07
+# byte-identity locks + the new byte-equal round-trip. -run 'WakeToken' sweeps
+# TestInboxStore_WakeTokenRoundTripsByteEqual, ...WithWakeToken_AttachesTokenToStoreFrame,
+# and ...OmitsWakeTokenWhenAbsent. GOTOOLCHAIN-pinned like the targets above
+# (Go 1.26.x quic-go panic — see go.mod).
+readonly GO_NODE_WAKETOKEN_TEST="go-mknoon/node/inbox_wake_token_test.go"
+readonly GO_NODE_WAKETOKEN_RUN='WakeToken'
 
 usage() {
   cat <<'EOF'
@@ -199,6 +209,7 @@ case "$scope" in
       printf '%s\n' "$GO_NODE_ADDR_VISIBILITY_TEST"
       printf '%s\n' "$GO_NODE_FEATUREFLAGS_TEST"
       printf '%s\n' "$GO_BRIDGE_FEATUREFLAGS_TEST"
+      printf '%s\n' "$GO_NODE_WAKETOKEN_TEST"
     } >"$plan_file"
     ;;
   feature-host-all)
@@ -285,6 +296,10 @@ is_go_bridge_featureflags_test() {
   [ "$1" = "$GO_BRIDGE_FEATUREFLAGS_TEST" ]
 }
 
+is_go_node_waketoken_test() {
+  [ "$1" = "$GO_NODE_WAKETOKEN_TEST" ]
+}
+
 readonly GO_NODE_ADDR_VISIBILITY_RUN='AnnouncedAddrsSurvive|SignedPeerRecord|IdentifyLearnedAddr|InterfaceChangeUpdates|Fdc11PortMining|NoEnumerationErrorSpam|NotSuppressed|HolePunchInputAddrs|DoesNotLeakNonRoutable'
 
 print_command_for_path() {
@@ -307,6 +322,10 @@ print_command_for_path() {
   fi
   if is_go_bridge_featureflags_test "$path"; then
     printf "(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge -run '%s' -count=1)" "$GO_BRIDGE_FEATUREFLAGS_RUN"
+    return
+  fi
+  if is_go_node_waketoken_test "$path"; then
+    printf "(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run '%s' -count=1)" "$GO_NODE_WAKETOKEN_RUN"
     return
   fi
   printf 'flutter test %s' "$(quote_for_display "$path")"
@@ -332,6 +351,10 @@ run_path() {
   fi
   if is_go_bridge_featureflags_test "$path"; then
     (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge -run "$GO_BRIDGE_FEATUREFLAGS_RUN" -count=1)
+    return
+  fi
+  if is_go_node_waketoken_test "$path"; then
+    (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run "$GO_NODE_WAKETOKEN_RUN" -count=1)
     return
   fi
   flutter test "$path"

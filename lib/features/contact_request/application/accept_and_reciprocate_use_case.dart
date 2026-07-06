@@ -27,6 +27,9 @@ Future<AcceptContactRequestResult> acceptAndReciprocateContactRequest({
   required Bridge bridge,
   DownloadProfilePictureFn downloadProfilePictureFn = downloadProfilePicture,
   void Function(ContactModel)? onProfileDownloaded,
+  // FDC-09 §12 / CV-14: read-only wake-token resolver threaded into the
+  // reciprocal send (emission-gated OFF by default). Never mints/registers.
+  Future<String?> Function(String peerId)? resolveWakeToken,
 }) async {
   // 1. Delegate local accept to existing use case
   final result = await acceptContactRequest(
@@ -81,6 +84,7 @@ Future<AcceptContactRequestResult> acceptAndReciprocateContactRequest({
       bridge: bridge,
       targetPeerId: peerId,
       recipientPublicKey: recipientPublicKey,
+      resolveWakeToken: resolveWakeToken,
     ).then((sendResult) {
       emitFlowEvent(
         layer: 'FL',

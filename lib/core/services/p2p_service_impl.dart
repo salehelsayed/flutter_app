@@ -26,6 +26,7 @@ import '../../features/p2p/domain/models/discovered_peer.dart';
 import '../../features/p2p/domain/models/send_message_result.dart';
 import '../../features/p2p/domain/models/connection_state.dart';
 import '../../features/push/domain/push_token_store.dart';
+import '../../features/push/domain/received_wake_token_store.dart';
 
 enum RecoveredInboxChatDisposition {
   committed,
@@ -107,6 +108,11 @@ class P2PServiceImpl
   final Bridge _bridge;
   final LocalP2PService? _localP2P;
   final PushTokenStore? _pushTokenStore;
+  // FDC-09 §12 / CV-14: the sender-side received wake-token store. Nullable and
+  // ctor-injected (mirrors [_pushTokenStore]) — NOT on the P2PService interface,
+  // so the ~31 fakes are untouched. When present, storeInInboxDetailed attaches
+  // received[toPeerId] on the `inbox:store` frame (1:1 contacts only).
+  final ReceivedWakeTokenStore? _receivedWakeTokenStore;
   final AccountMigrationNetworkGate _accountMigrationNetworkGate;
   final InboxStagingRepository _inboxStagingRepository;
   final ReplayRecoveredInboxChatMessage? _replayRecoveredInboxChatMessage;
@@ -383,6 +389,7 @@ class P2PServiceImpl
     required Bridge bridge,
     LocalP2PService? localP2PService,
     PushTokenStore? pushTokenStore,
+    ReceivedWakeTokenStore? receivedWakeTokenStore,
     AccountMigrationNetworkGate accountMigrationNetworkGate =
         allowAccountMigrationNetworkSideEffects,
     required InboxStagingRepository inboxStagingRepository,
@@ -404,6 +411,7 @@ class P2PServiceImpl
   }) : _bridge = bridge,
        _localP2P = localP2PService,
        _pushTokenStore = pushTokenStore,
+       _receivedWakeTokenStore = receivedWakeTokenStore,
        _accountMigrationNetworkGate = accountMigrationNetworkGate,
        _inboxStagingRepository = inboxStagingRepository,
        _replayRecoveredInboxChatMessage = replayRecoveredInboxChatMessage,
@@ -4654,12 +4662,26 @@ class P2PServiceImpl
       details: {'toPeerId': toPeerId},
     );
 
+    // FDC-09 §12 / CV-14: attach the recipient-issued wake-token for this peer,
+    // if one was distributed to us (i.e. toPeerId is a 1:1 contact). The lookup
+    // is served from the store's in-memory cache (loaded once), so the hot 1:1
+    // send path never pays a per-message SecureKeyStore read. A peer with no
+    // received token ⇒ null ⇒ the key is omitted (NET-REL-07). Deliberately
+    // asymmetric: the ~13 non-1:1 funnel callers (group/intro/post/receipt)
+    // present no token — correct pre-enforcement (all fail-open).
+    String? wakeToken;
+    final receivedWakeTokenStore = _receivedWakeTokenStore;
+    if (receivedWakeTokenStore != null) {
+      wakeToken = (await receivedWakeTokenStore.readTokenFor(toPeerId))?['tok'];
+    }
+
     try {
       final response = await callP2PInboxStore(
         _bridge,
         toPeerId: toPeerId,
         message: message,
         timeoutMs: timeoutMs,
+        wakeToken: wakeToken,
       );
       final outcome = InboxStoreOutcome.fromBridgeResponse(response);
       emitFlowEvent(

@@ -36,13 +36,30 @@ class IssueWakeTokensUseCase {
   /// then (re-)registers the full set with the relay. Returns the relay's
   /// acceptance (false = unsupported/failed → graceful degrade). Never throws.
   Future<bool> issueForContacts(List<String> contactPeerIds) async {
+    final activeSet = contactPeerIds.where((c) => c.isNotEmpty).toSet();
     final tokens = Map<String, String>.from(await wakeTokenStore.readTokens());
-    var minted = false;
-    for (final contact in contactPeerIds) {
-      if (contact.isEmpty) continue;
+    var changed = false;
+
+    // Reconcile DOWN: drop tokens for contacts no longer active (archived /
+    // blocked / removed) so a stale token is neither persisted nor re-registered
+    // with the relay. There is no contact-removed stream, so each cycle prunes
+    // the persisted map down to the active list.
+    final stale = tokens.keys.where((c) => !activeSet.contains(c)).toList();
+    for (final contact in stale) {
+      tokens.remove(contact);
+      changed = true;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'WAKE_TOKEN_PRUNED',
+        details: {'contact': contact},
+      );
+    }
+
+    // Mint UP: ensure every active contact has a minted+persisted token.
+    for (final contact in activeSet) {
       if (!tokens.containsKey(contact)) {
         tokens[contact] = _mint();
-        minted = true;
+        changed = true;
         emitFlowEvent(
           layer: 'FL',
           event: 'WAKE_TOKEN_ISSUED',
@@ -50,7 +67,7 @@ class IssueWakeTokensUseCase {
         );
       }
     }
-    if (minted) {
+    if (changed) {
       await wakeTokenStore.writeTokens(tokens);
     }
     if (tokens.isEmpty) {

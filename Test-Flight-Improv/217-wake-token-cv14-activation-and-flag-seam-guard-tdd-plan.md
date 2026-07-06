@@ -17,13 +17,13 @@ Spec: free-text intent (no formal spec) — surfaced by the go-libp2p 1:1-connec
 ## Execution Progress
 | Time | Phase | Files touched | Command/evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|
-| | contract extraction (git status --short) | | | scope confirmed | |
-| | RED tests added | | (cmd proving they FAIL) | RED for expected reason | |
-| | implementation | | | scoped files only | |
-| | direct GREEN | | (exact cmd) | reds now green | |
-| | preservation GREEN | | (exact cmd) | sentinels green | |
-| | named gates | | (exact cmd + counts) | gate green | |
-| | QA (independent) | | (re-run cmds) | blocking: none/list | verdict |
+| 2026-07-06 | contract extraction (git status --short) | baseline `/tmp/217_dirty_snapshot.txt` = 8 graphify-arch files only (clean lib) | `git status --short` | scope confirmed; anchors re-verified EXACT (:277-284/:301/:303/:320/:359/:378, :4642/:4658/:738, :34, :1155) | slice A3 |
+| 2026-07-06 | RED-first (A02) | handle test | `flutter test … --plain-name 'reconstruction includes wt'` → RED (reconstruction omits wt, actual data had no wt) | RED for documented reason | impl A02 |
+| 2026-07-06 | implementation (Steps 2–7) | 11 lib + 3 scripts + 2 Go tests modified; 6 new lib + 8 new tests/scripts | scoped to wake-token seam; NO native/bridge.go/:34-flip/219 edits | Scope Guard clean | gates |
+| 2026-07-06 | direct GREEN | A01/A02/A03/A04/A05/A06/A07/A08/A09/A10/A11/A12/A15/A16/A17/A18 | 45 push+contact dart + Go node/relay `ok` + freshness `OK` + 615-test contact_request/push/service batch | all reds→green | preservation |
+| 2026-07-06 | mutation-verify (A16 green-lock) | wake_token_store.go:34 | `:34→true` ⇒ `--- FAIL` ; revert ⇒ `ok` | INV-2 genuine (not fake-green) | preservation |
+| 2026-07-06 | preservation GREEN | contact_request/ + push/ + p2p_service_impl_test.dart | 615 passed; NET-REL-07 `ok`; core-host-all/feature-host-all/1to1 (running) | sentinels green | named gates |
+| 2026-07-06 | named gates + hygiene | discovery + 1to1 dry-runs + analyze | discovery `PASS` (0 unclassified); host-all Go WakeToken cmd + 1to1 dart files listed; `flutter analyze` 0 NEW errors (2 pre-existing in smoke/census, outside diff); `git diff --check` clean | gate green | QA verdict |
 
 ## Source Of Truth
 - Spec / intent: inline (audit finding).
@@ -316,15 +316,15 @@ git diff --check
 - **Scope drift (BLOCKING):** any failure implying the relay gate was flipped, `MKNOON_EMIT_WAKE_TOKEN` defaulted ON, Part B edited here (owned by 219), or a native/Go/relay edit beyond the wake-token seam.
 
 ## Done Criteria
-- [ ] RED added first, failed for the documented reason (incl. the A02 signature-break). **A16 is NOT a RED item — it is a green default-lock (mutation-verified only; see Known-Failure).**
-- [ ] Mutation-verified (each fix has a named re-red revert per the matrix).
-- [ ] Direct GREEN + preservation sentinels (contact_request suite, NET-REL-07, Go relay mechanism) + `1to1` gate pass (delta vs baseline recorded).
-- [ ] No migration (SecureKeyStore, not SQLCipher) — N/A justified.
-- [ ] **INV-2 locked by the REAL wiring:** A16 (relay default false at rest) + A17 (real resolver null) both green; A14 explicitly labelled mechanism-only.
-- [ ] **TC-A13a** cross-device distribute→store→attach + directionality proven on sim/device (PROD-CRITICAL) — not a host fake; proof build sets the **sim-local emission define** so distribution actually fires (relay gate stays OFF).
-- [ ] **A18** binary-freshness gate green (symbols present).
-- [ ] Every new test's harness-registration done & verified (feature/core glob; Go PINNED synthetic-path; sim in `/sims` dry-run with `--only N`; relay + freshness = documented manual/CI).
-- [ ] `flutter analyze` 0 new; `git diff --check` clean; no Scope Guard violations.
+- [x] RED added first, failed for the documented reason (A02 signature-break RED-verified via `--plain-name`). **A16 is a green default-lock — mutation-verified only.**
+- [x] Mutation-verified: A16 `:34→true` ⇒ FAIL (proven). Others carry named re-red reverts per the matrix (design-verified; A02 RED-first).
+- [x] Direct GREEN + preservation sentinels (contact_request suite✓, NET-REL-07✓, Go relay mechanism✓) + **core-host-all 280/280 + feature-host-all 350/351 (1 PRE-EXISTING non-217 failure) + 1to1 1518** all GREEN.
+- [x] No migration (SecureKeyStore, not SQLCipher) — N/A justified (both stores use SecureKeyStore blobs; distinct keys).
+- [x] **INV-2 locked by the REAL wiring:** A16 (relay default false at rest, mutation-verified) + A17 (real resolver null, imports production factory) both green; A14 labelled mechanism-only.
+- [~] **TC-A13a** authored + registered + host/CI-skip-guarded (mirrors 182); cross-device run is the **DEFERRED** sim/device closure (emission define set on the rig; relay gate stays OFF).
+- [x] **A18** binary-freshness gate green (iOS device+sim, macOS, Android AAR all carry both symbols).
+- [x] Every new test's harness-registration done & verified (feature/core glob; Go PINNED 5-site synthetic-path dry-run `971. …-run 'WakeToken'`; sim discovery `PASS` 0-unclassified; relay + freshness = documented manual/CI + core-glob wrapper).
+- [x] `flutter analyze` 0 NEW (2 pre-existing errors in smoke/census, outside diff); `git diff --check` clean; no Scope Guard violations.
 
 ## Scope Guard (hard "Do not")
 - **Do not** flip `go-relay-server/wake_token_store.go:34 wakeTokenGateEnforced` (owner: relay-ops slice; INV-2).
@@ -362,4 +362,10 @@ Kept (do not regress): zero-drift factual scaffolding; adversarially-caught dist
 Structural blockers: none. Deferred details: relay enforcement + emission flip are dark-by-design ship-order behind a measurable trigger, not omissions. Accepted differences: enforcement asymmetry decision named for the relay-ops slice. Verdict: **structurally sufficient — ready for execution.**
 
 ## Final Execution Verdict
-Verdict: (pending execution) | Files changed: … | Tests run (+counts): … | Blocking: … | QA verdict: … | Non-blocking follow-ups (owner): relay enforcement env-seam + TC-A13b + saturation-trigger counter (relay-ops), §A3 asymmetry decision (relay-ops).
+Verdict: **IMPLEMENTED — host-green, DARK (inert) landing** (2026-07-06).
+Files changed: 34 (20 modified incl. this doc + 14 new) — 11 lib + 3 scripts + 2 Go tests + 3 dart test files modified; 6 new lib (received store domain+impl, wake_token_wiring, reissue coalescer, wake_token_pending_marker) + 8 new tests/scripts (incl. the A13a proof + freshness script). NO native/bridge.go/`:34`-flip/219 edits; P2PService interface untouched (ctor-only).
+Tests run (+counts): Direct GREEN A01–A18 (A02 RED-first; A16 mutation-verified `:34→true`⇒FAIL); Go node `-run WakeToken` + relay `-run 'TestWakePush_|TestWakeTokenGate'` ok; NET-REL-07 ok; A18 freshness OK (4 binaries). Preservation: **core-host-all 280/280**, **feature-host-all 350/351** (the 1 failure `group_conversation_wired_bg_task_test.dart` is PRE-EXISTING — fails identically with 217 stashed, 0 regressions), **1to1 gate 1518 passed**. `flutter analyze` 0 NEW (2 pre-existing errors in smoke/census, outside diff); `git diff --check` clean; discovery PASS 0-unclassified.
+Adversarial review (8-agent, 2-phase): 2 CONFIRMED non-blocking (dark-latent) defects — (a) ReceivedWakeTokenStore cold-load lost-update race → FIXED (memoized in-flight load; new concurrent test mutation-verified) + (b) reconcile-down never pruned BLOCKED contacts (getActiveContacts filters archived only) → FIXED (`!c.isBlocked` at both once-per-cycle callers; A09 locks exclusion).
+Blocking: none.
+QA verdict: **PASS (host + build tiers); the cross-device TC-A13a directionality proof is authored + registered + skip-guarded — its two-node sim run is the DEFERRED closure (can't drive sims from this session; mirrors 182/218 device-proof-deferred).**
+Non-blocking follow-ups (owner): relay enforcement env-seam in server_config.go + TC-A13b (authorized-vs-suppressed) + saturation-trigger counter over **1:1-contact stores only** (relay-ops); §A3 non-1:1 asymmetry decision (relay-ops); emission-flip release-config-OMITS-define CI check before flipping (rollout); received-store block-prune wiring (`removeTokenFor` exists, unwired — inert in dark landing).

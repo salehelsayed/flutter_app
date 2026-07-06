@@ -6,6 +6,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/mlkem_reannounce_marker.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
+import 'package:flutter_app/features/contact_request/application/wake_token_pending_marker.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 
@@ -26,6 +27,10 @@ Future<int> retryIncompleteKeyExchanges({
   required P2PService p2pService,
   required Bridge bridge,
   SecureKeyStore? secureKeyStore,
+  // FDC-09 §12 / CV-14: the read-only wake-token resolver threaded into each
+  // (emission-gated) send. This is a DISTRIBUTION path only — it never mints or
+  // registers (that is once-per-cycle, INV-5).
+  Future<String?> Function(String peerId)? resolveWakeToken,
 }) async {
   // 1. Guard: own ML-KEM key must exist (resend would be pointless without it)
   final identity = await identityRepo.loadIdentity();
@@ -54,11 +59,19 @@ Future<int> retryIncompleteKeyExchanges({
   var reannouncePending = markerStore != null
       ? await readMlKemReannounceMarker(markerStore)
       : const <String>[];
+  // FDC-09 §12 / CV-14 backfill: a contact pending wake-token distribution is
+  // eligible for a (re-)send even when its ML-KEM key is already complete. This
+  // is a DISTINCT marker from the ML-KEM re-announce — drained in its own block.
+  var wakeTokenPending = markerStore != null
+      ? await readWakeTokenPendingMarker(markerStore)
+      : const <String>[];
   final eligible = contacts
       .where(
         (c) =>
             !c.isBlocked &&
-            (c.mlKemPublicKey == null || reannouncePending.contains(c.peerId)),
+            (c.mlKemPublicKey == null ||
+                reannouncePending.contains(c.peerId) ||
+                wakeTokenPending.contains(c.peerId)),
       )
       .toList();
 
@@ -83,6 +96,7 @@ Future<int> retryIncompleteKeyExchanges({
         targetPeerId: contact.peerId,
         recipientPublicKey: contact.publicKey,
         intent: ContactRequestSendIntent.keyExchangeRetry,
+        resolveWakeToken: resolveWakeToken,
       );
 
       if (result == SendContactRequestResult.success) {
@@ -102,6 +116,25 @@ Future<int> retryIncompleteKeyExchanges({
                   ? contact.peerId.substring(0, 10)
                   : contact.peerId,
               'remaining': reannouncePending.length,
+            },
+          );
+        }
+        // FDC-09 §12 / CV-14 wake-token distribution drain — its OWN block, keyed
+        // off the DISTINCT wake marker. Drain a peerId only after its send
+        // succeeded; a partial failure keeps the remainder for the next trigger.
+        if (markerStore != null && wakeTokenPending.contains(contact.peerId)) {
+          wakeTokenPending = wakeTokenPending
+              .where((peerId) => peerId != contact.peerId)
+              .toList();
+          await writeWakeTokenPendingMarker(markerStore, wakeTokenPending);
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'WAKE_TOKEN_DISTRIBUTED',
+            details: {
+              'peerId': contact.peerId.length > 10
+                  ? contact.peerId.substring(0, 10)
+                  : contact.peerId,
+              'remaining': wakeTokenPending.length,
             },
           );
         }

@@ -4,6 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contact_request/application/mlkem_reannounce_marker.dart';
 import 'package:flutter_app/features/contact_request/application/retry_incomplete_key_exchanges_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
+import 'package:flutter_app/features/contact_request/application/wake_token_pending_marker.dart';
+import 'package:flutter_app/features/push/application/wake_token_reissue_coalescer.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
@@ -388,6 +390,85 @@ void main() {
         isFalse,
       );
     });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 217 / CV-14 wake-token re-issue coalescing (A15) and backfill drain (A10).
+  // ───────────────────────────────────────────────────────────────────────────
+  group('217 CV-14 wake-token re-issue coalescing', () {
+    test(
+      'A15: N stream events within one window ⇒ re-issue registers exactly once',
+      () async {
+        var reissueCalls = 0;
+        final coalescer = WakeTokenReissueCoalescer(
+          reissue: () async => reissueCalls++,
+          window: const Duration(milliseconds: 20),
+        );
+
+        // A burst of 5 contact-key/auto-add events.
+        for (var i = 0; i < 5; i++) {
+          coalescer.trigger();
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 80));
+
+        expect(reissueCalls, 1);
+        coalescer.dispose();
+      },
+    );
+  });
+
+  group('217 CV-14 wake-token backfill drain', () {
+    test(
+      'A10: wake_token_pending (distinct key) contacts drained only after send '
+      'success; partial failure keeps the remainder',
+      () async {
+        // Distinct-key guard: the wake marker must NOT reuse the mlkem key.
+        expect(kWakeTokenPendingKey, 'wake_token_pending');
+        expect(kWakeTokenPendingKey, isNot(kMlKemReannouncePendingKey));
+
+        // Both already have ML-KEM keys, so ONLY the wake marker makes them
+        // eligible — proving the wake drain is its OWN block (not the mlkem one).
+        contactRepo.seed([
+          _makeContact('wake-a-1234567890', mlKemPublicKey: 'key-a'),
+          _makeContact('wake-b-1234567890', mlKemPublicKey: 'key-b'),
+        ]);
+        final secureKeyStore = FakeSecureKeyStore();
+        await writeWakeTokenPendingMarker(secureKeyStore, [
+          'wake-a-1234567890',
+          'wake-b-1234567890',
+        ]);
+
+        // First contact's sign call fails → its send fails; second succeeds.
+        final failingBridge = _FailOnNthBridge(failOnCall: 1);
+        failingBridge.responses['payload.sign'] = {
+          'ok': true,
+          'signature': 'test-sig',
+        };
+        failingBridge.responses['contactrequest.encrypt'] = {
+          'ok': true,
+          'ephemeralPublicKey': 'ephPub',
+          'ciphertext': 'ct',
+          'nonce': 'nonce',
+        };
+
+        await retryIncompleteKeyExchanges(
+          contactRepo: contactRepo,
+          identityRepo: identityRepo,
+          p2pService: p2pService,
+          bridge: failingBridge,
+          secureKeyStore: secureKeyStore,
+        );
+
+        // wake-b drained on success; wake-a retained for the next trigger.
+        // The mlkem marker was never touched (distinct block).
+        final remaining = await readWakeTokenPendingMarker(secureKeyStore);
+        expect(remaining, ['wake-a-1234567890']);
+        expect(
+          await secureKeyStore.containsKey(kMlKemReannouncePendingKey),
+          isFalse,
+        );
+      },
+    );
   });
 }
 

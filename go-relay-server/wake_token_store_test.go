@@ -50,6 +50,21 @@ func TestWakeTokenStore_FailOpenUntilRegisteredThenMemberOnly(t *testing.T) {
 	}
 }
 
+// 217 A16 (§C1a) — ship-order default lock: on a fresh process (NO in-test
+// flip), the §12 access-token wake gate MUST be disabled at rest (INV-2). A true
+// default would hard-silence EVERY 1:1 push the instant a recipient registered a
+// set, because real senders don't present tokens until emission saturates.
+//
+// This is a GREEN default-lock, mutation-verified ONLY: setting
+// wake_token_store.go:34 `wakeTokenGateEnforced = true` reds it. It is NOT
+// RED-first (on HEAD the var is already false / this test does not exist).
+func TestWakeTokenGate_DefaultDisabledAtRest(t *testing.T) {
+	if wakeTokenGateEnforced {
+		t.Fatal("wakeTokenGateEnforced must ship OFF at rest (INV-2) — a true " +
+			"default hard-silences 1:1 pushes fleet-wide until senders saturate")
+	}
+}
+
 // Concurrency: register/authorize/clear race must be -race clean.
 func TestWakeTokenStore_RaceClean(t *testing.T) {
 	s := newMemoryWakeTokenStore()

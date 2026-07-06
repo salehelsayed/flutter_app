@@ -227,6 +227,13 @@ class StartupRouter extends StatefulWidget {
   // — and losing to — the home's pushReplacement).
   final VoidCallback? onStartupHomeReady;
 
+  /// FDC-09 §12 / CV-14 (217 §A1): once-per-cycle wake-token mint+register.
+  /// Invoked EXACTLY ONCE with all active contact peerIds after a successful
+  /// node start (INV-5: never per-contact / per-send). Null in tests that don't
+  /// exercise it. Returns the relay ack (false = graceful degrade, NET-REL-07).
+  final Future<bool> Function(List<String> contactPeerIds)?
+  issueWakeTokensForContacts;
+
   const StartupRouter({
     super.key,
     required this.repository,
@@ -284,6 +291,7 @@ class StartupRouter extends StatefulWidget {
     this.accountMigrationReceiverEvents,
     this.onAccountMigrationReceiverActivated,
     this.onStartupHomeReady,
+    this.issueWakeTokensForContacts,
   });
 
   @override
@@ -684,6 +692,29 @@ class _StartupRouterState extends State<StartupRouter> {
       final pushRegistrationCoordinator = widget.pushRegistrationCoordinator;
       if (pushRegistrationCoordinator != null) {
         unawaited(pushRegistrationCoordinator.ensureStarted());
+      }
+
+      // FDC-09 §12 / CV-14 (217 §A1): mint+register this node's wake-token SET
+      // ONCE per node-start with all active contacts (whole-cycle; the relay set
+      // is not durable, so re-register after a bounce/restart). Fire-and-forget,
+      // total (never throws — the callback wrapper degrades to false). Coalesced
+      // stream re-issue (main.dart) + the read-only per-send resolver keep this
+      // the ONLY mint/register trigger (INV-5).
+      final issueWakeTokens = widget.issueWakeTokensForContacts;
+      if (issueWakeTokens != null) {
+        unawaited(() async {
+          final contacts = await widget.contactRepository.getActiveContacts();
+          // Exclude BLOCKED contacts (getActiveContacts filters archived only) —
+          // a blocked peer must NOT keep a valid registered wake-token, and
+          // reconcile-down prunes any it already minted. Mirrors the retry
+          // distribution path's `!c.isBlocked`.
+          await issueWakeTokens(
+            contacts
+                .where((c) => !c.isBlocked)
+                .map((c) => c.peerId)
+                .toList(growable: false),
+          );
+        }());
       }
 
       // Now that the Go node is running (pubsub initialized), rejoin group
@@ -1147,6 +1178,7 @@ class _StartupRouterState extends State<StartupRouter> {
       accountMigrationReceiverEvents: widget.accountMigrationReceiverEvents,
       onAccountMigrationReceiverActivated:
           widget.onAccountMigrationReceiverActivated,
+      issueWakeTokensForContacts: widget.issueWakeTokensForContacts,
     );
   }
 

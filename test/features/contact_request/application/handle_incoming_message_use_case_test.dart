@@ -10,7 +10,27 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
+import 'package:flutter_app/features/push/domain/received_wake_token_store.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+
+/// Minimal in-memory [ReceivedWakeTokenStore] for the A03/A04 receive tests.
+class _FakeReceivedWakeTokenStore implements ReceivedWakeTokenStore {
+  final Map<String, Map<String, String>> tokens = {};
+
+  @override
+  Future<Map<String, String>?> readTokenFor(String peerId) async =>
+      tokens[peerId] == null ? null : Map<String, String>.from(tokens[peerId]!);
+
+  @override
+  Future<void> writeTokenFor(String peerId, String token, String ts) async =>
+      tokens[peerId] = {'tok': token, 'ts': ts};
+
+  @override
+  Future<void> removeTokenFor(String peerId) async => tokens.remove(peerId);
+
+  @override
+  Future<void> clear() async => tokens.clear();
+}
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -24,6 +44,10 @@ class _FakeBridge extends Bridge {
   };
   bool decryptCalled = false;
   bool verifyCalled = false;
+
+  /// The exact reconstructed `data` string the use-case asked us to verify —
+  /// lets A02 assert the reconstruction allowlist included (or omitted) `wt`.
+  String? lastVerifyData;
 
   @override
   bool get isInitialized => true;
@@ -41,6 +65,7 @@ class _FakeBridge extends Bridge {
     final req = jsonDecode(message) as Map<String, dynamic>;
     if (req['cmd'] == 'payload.verify') {
       verifyCalled = true;
+      lastVerifyData = (req['payload'] as Map<String, dynamic>)['data'] as String?;
       return jsonEncode({'ok': true, 'valid': verifyResult});
     }
     if (req['cmd'] == 'contactrequest.decrypt') {
@@ -1243,6 +1268,152 @@ void main() {
 
       expect(result, equals(HandleMessageResult.alreadyContact));
       expect(result, isNot(equals(HandleMessageResult.contactAutoAdded)));
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 217 / CV-14 wake-token receive leg (A02 reconstruction, A03 store, A04
+  // anti-rollback). INV-1 (no-break): a signed `wt` must never invalidate a
+  // no-`wt` or old-peer request. INV-4 directionality is proven on device (A13a).
+  // ─────────────────────────────────────────────────────────────────────────
+  group('217 CV-14 wake-token receive', () {
+    test('reconstruction includes wt', () async {
+      // A request whose Ed25519 signature COVERED `wt`. The receiver must add
+      // `wt` back to the reconstructed data or the signature check fails and the
+      // request is dropped. (The fake verify captures the exact reconstructed
+      // string; verifyResult stays true so the discriminator is the data.)
+      final payload = _validPayload();
+      payload['wt'] = 'wake-tok-for-me';
+      final message = _makeChatMessage(_contactRequestMessage(payload));
+
+      final (result, _, _) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+      );
+
+      expect(bridge.lastVerifyData, contains('"wt":"wake-tok-for-me"'));
+      // A wt-carrying request still verifies and proceeds (not dropped).
+      expect(result, isNot(equals(HandleMessageResult.invalidMessage)));
+    });
+
+    test('a no-wt legacy request still verifies (PROD-CRITICAL preservation)',
+        () async {
+      final payload = _validPayload(); // no wt
+      final message = _makeChatMessage(_contactRequestMessage(payload));
+
+      final (result, _, _) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+      );
+
+      // Conditional inclusion preserves the old shape: no `wt` in the data,
+      // and the request still verifies (contact-add / key-rotation unbroken).
+      expect(bridge.lastVerifyData, isNot(contains('wt')));
+      expect(result, isNot(equals(HandleMessageResult.invalidMessage)));
+    });
+
+    test('stores wt for new, already-contact, AND silent-intro-recovered peers',
+        () async {
+      // (a) New-contact verified request → stored.
+      final storeNew = _FakeReceivedWakeTokenStore();
+      final pNew = _validPayload()..['wt'] = 'wt-new';
+      await handleIncomingMessage(
+        message: _makeChatMessage(_contactRequestMessage(pNew)),
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        receivedWakeTokenStore: storeNew,
+      );
+      expect((await storeNew.readTokenFor(_senderPeerId))?['tok'], 'wt-new');
+
+      // (b) Already-contact (key-rotation branch) → still stored.
+      contactRepo._contacts[_senderPeerId] = ContactModel(
+        peerId: _senderPeerId,
+        publicKey: 'senderPublicKey',
+        rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
+        username: 'Alice',
+        signature: 'sig',
+        scannedAt: '2024-01-01T00:00:00.000Z',
+        mlKemPublicKey: 'oldKey',
+      );
+      final storeContact = _FakeReceivedWakeTokenStore();
+      final pRot = _validPayload()
+        ..['wt'] = 'wt-rot'
+        ..['mlkem'] = 'newKey';
+      await handleIncomingMessage(
+        message: _makeChatMessage(_contactRequestMessage(pRot)),
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        receivedWakeTokenStore: storeContact,
+      );
+      expect((await storeContact.readTokenFor(_senderPeerId))?['tok'], 'wt-rot');
+
+      // (c) Silent-intro-recovered → the function returns at the recovery block
+      // BEFORE the contact checks; the wt must already have been stored.
+      final storeIntro = _FakeReceivedWakeTokenStore();
+      final pIntro = _validPayload()..['wt'] = 'wt-intro';
+      final (result, _, _) = await handleIncomingMessage(
+        message: _makeChatMessage(_contactRequestMessage(pIntro)),
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        receivedWakeTokenStore: storeIntro,
+        attemptSilentIntroRecovery: (_) async =>
+            IntroContactRequestRecoveryResult.recovered(
+              introduction: _introModel(),
+            ),
+      );
+      expect(result, HandleMessageResult.silentIntroRecovered);
+      expect((await storeIntro.readTokenFor(_senderPeerId))?['tok'], 'wt-intro');
+    });
+
+    test('anti-rollback: an older-ts wt does not overwrite a newer stored token',
+        () async {
+      final store = _FakeReceivedWakeTokenStore();
+      // Stored: {tok-current, ts=T2}.
+      await store.writeTokenFor(
+        _senderPeerId,
+        'tok-current',
+        '2026-07-06T12:00:00.000Z',
+      );
+
+      // Inbound ts=T1 < T2 → unchanged.
+      final pOld = _validPayload()
+        ..['wt'] = 'tok-old'
+        ..['ts'] = '2026-07-06T10:00:00.000Z';
+      await handleIncomingMessage(
+        message: _makeChatMessage(_contactRequestMessage(pOld)),
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        receivedWakeTokenStore: store,
+      );
+      expect((await store.readTokenFor(_senderPeerId))?['tok'], 'tok-current');
+
+      // Inbound ts=T3 > T2 → overwrites.
+      final pNew = _validPayload()
+        ..['wt'] = 'tok-new'
+        ..['ts'] = '2026-07-06T14:00:00.000Z';
+      await handleIncomingMessage(
+        message: _makeChatMessage(_contactRequestMessage(pNew)),
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        receivedWakeTokenStore: store,
+      );
+      expect((await store.readTokenFor(_senderPeerId))?['tok'], 'tok-new');
     });
   });
 }
