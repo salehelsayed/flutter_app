@@ -281,6 +281,35 @@ GroupMessageNotificationDisplayEligibility groupMemberMessageDisplayEligibility(
   return const GroupMessageNotificationDisplayEligibility.allowCurrentMember();
 }
 
+/// 218 Phase A — read-tolerant identity.db open for the background isolate's
+/// group-eligibility read (the 5th identity.db open site). Tries the raw-key
+/// literal first (post-Phase-B raw DBs, PBKDF2 skipped), falls back to
+/// passphrase for legacy DBs. Always readOnly + singleInstance:false (this runs
+/// in a separate Android background process). Extracted as a testable seam so
+/// SC-B can prove the raw-read path against a manufactured raw fixture without
+/// standing up the full FCM push machinery.
+@visibleForTesting
+Future<Database> openBackgroundIdentityDbReadTolerant({
+  required String path,
+  required String key,
+}) async {
+  try {
+    return await openDatabase(
+      path,
+      password: "x'$key'", // RAW_KEY
+      readOnly: true,
+      singleInstance: false,
+    );
+  } catch (_) {
+    return await openDatabase(
+      path,
+      password: key, // LEGACY_PASSPHRASE_FALLBACK
+      readOnly: true,
+      singleInstance: false,
+    );
+  }
+}
+
 Future<GroupMessageNotificationDisplayEligibility>
 _resolveGroupMessageNotificationDisplayEligibilityFromEncryptedDb(
   String groupId,
@@ -295,11 +324,9 @@ _resolveGroupMessageNotificationDisplayEligibilityFromEncryptedDb(
     }
 
     final dbPath = await getDatabasesPath();
-    db = await openDatabase(
-      '$dbPath/identity.db',
-      password: key,
-      readOnly: true,
-      singleInstance: false,
+    db = await openBackgroundIdentityDbReadTolerant(
+      path: '$dbPath/identity.db',
+      key: key,
     );
 
     final identityRow = await dbLoadIdentityRow(db);

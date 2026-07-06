@@ -161,7 +161,7 @@ class MigrationDatabaseSnapshotExporter {
       await _deleteIfExists(exportedPath);
       sourceDb = await sqlcipher.openDatabase(
         sourcePath,
-        password: key,
+        password: key, // SNAPSHOT_PASSPHRASE
         version: 1,
         singleInstance: false,
       );
@@ -272,7 +272,7 @@ class DefaultMigrationSqlCipherExportAdapter
     }
     return sqlcipher.openDatabase(
       path,
-      password: key,
+      password: key, // SNAPSHOT_PASSPHRASE
       readOnly: true,
       singleInstance: false,
       onConfigure: (db) => _applyCipherPragmas(db, cipherMetadata),

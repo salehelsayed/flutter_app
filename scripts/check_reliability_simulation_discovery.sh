@@ -134,6 +134,10 @@ classify_path() {
       record "move-feature" "$path" "test" "Move Account SQLCipher migration capability companion"
       return
       ;;
+    integration_test/db_raw_key_migration_proof_test.dart)
+      record "move-feature" "$path" "test" "218 SQLCipher raw-key cold-start migration device proof (SC-8/R/1-9/B/F1)"
+      return
+      ;;
     integration_test/app_group_path_simulator_test.dart)
       record "1to1" "$path" "test" "iOS app-group notification dedupe simulator proof"
       return

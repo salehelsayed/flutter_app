@@ -182,7 +182,7 @@ class DefaultMigrationStagedDatabaseOpener
     }
     return sqlcipher.openDatabase(
       path,
-      password: key,
+      password: key, // SNAPSHOT_PASSPHRASE
       readOnly: false,
       singleInstance: false,
       onConfigure: (db) async {
