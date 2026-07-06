@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart'
+    show debugSetFlowEventSink;
 import 'package:flutter_app/features/push/application/background_message_handler.dart'
     show openBackgroundIdentityDbReadTolerant;
 import 'package:flutter_test/flutter_test.dart';
@@ -74,6 +76,40 @@ Future<void> _writeIdentityFixture(String path, String openPassword) async {
     await db.execute('PRAGMA user_version = 1');
   } finally {
     await db.close();
+  }
+}
+
+/// Seed a legacy PASSPHRASE identity.db at [path] (user_version 95 + rows) —
+/// the "existing user" state Phase B must rekey.
+Future<void> _seedLegacyPassphraseDb(String path, String hexKey) async {
+  await sqlcipher.deleteDatabase(path);
+  await _deleteRekeyArtifacts(path);
+  final db = await sqlcipher.openDatabase(
+    path,
+    password: hexKey, // passphrase mode (legacy)
+    singleInstance: false,
+  );
+  try {
+    await db.execute(
+      'CREATE TABLE identity (id INTEGER PRIMARY KEY, peer_id TEXT)',
+    );
+    await db.execute('CREATE TABLE messages (id TEXT PRIMARY KEY, body TEXT)');
+    await db.insert('identity', {'id': 1, 'peer_id': 'legacy-peer'});
+    for (var i = 0; i < 20; i++) {
+      await db.insert('messages', {'id': 'm$i', 'body': 'msg-$i'});
+    }
+    await db.execute('PRAGMA user_version = 95');
+  } finally {
+    await db.close();
+  }
+}
+
+Future<void> _deleteRekeyArtifacts(String fullPath) async {
+  for (final base in ['$fullPath.pre-raw.bak', '$fullPath.rekey-tmp']) {
+    for (final s in ['', '-wal', '-shm', '-journal']) {
+      final f = File('$base$s');
+      if (await f.exists()) await f.delete();
+    }
   }
 }
 
@@ -363,5 +399,369 @@ void main() {
         }
       },
     );
+
+    // -----------------------------------------------------------------------
+    // SC-1 (device, PHASE B/4a): a fresh install creates identity.db in RAW-key
+    // mode and persists marker=raw. No-op discriminator (§F2): the created
+    // on-disk file opens RAW but FAILS to open with the 64-hex as a plain
+    // passphrase — proving the create path really wrote raw mode (not a
+    // passphrase DB that would silently no-op the speed win).
+    // -----------------------------------------------------------------------
+    testWidgets('SC-1 fresh install creates raw identity.db + marker=raw; '
+        'passphrase-of-the-key fails on the created file', (_) async {
+      final dbDir = await sqlcipher.getDatabasesPath();
+      const dbName = 'sc_1_fresh.db';
+      final fullPath = p.join(dbDir, dbName);
+      await sqlcipher.deleteDatabase(fullPath);
+      final store = _InMemorySecureKeyStore({}); // empty → fresh install
+      try {
+        final db = await openEncryptedDatabase(
+          secureKeyStore: store,
+          dbName: dbName,
+          version: 1,
+          onCreate: (db, v) async {
+            await db.execute(
+              'CREATE TABLE identity (id INTEGER PRIMARY KEY, v TEXT)',
+            );
+            await db.insert('identity', {'id': 1, 'v': 'fresh'});
+          },
+          onUpgrade: (db, o, n) async {},
+        );
+        expect((await db.query('identity')).single['v'], 'fresh');
+        await db.close();
+
+        // marker persisted as raw:<64hex>
+        final stored = await store.read('db_encryption_key');
+        expect(stored, isNotNull);
+        expect(
+          stored!.startsWith('raw:'),
+          isTrue,
+          reason: 'fresh install must persist cipher-mode marker=raw',
+        );
+        final hex = stored.substring('raw:'.length);
+        expect(hex.length, 64);
+
+        // §F2 discriminator: opens RAW, does NOT open as a plain passphrase.
+        final rawOpen = await sqlcipher.openDatabase(
+          fullPath,
+          password: "x'$hex'", // RAW_KEY
+          singleInstance: false,
+        );
+        expect((await rawOpen.query('identity')).single['v'], 'fresh');
+        await rawOpen.close();
+        await expectLater(
+          () async {
+            final wrong = await sqlcipher.openDatabase(
+              fullPath,
+              password: hex, // plain passphrase of the same hex → must FAIL
+              singleInstance: false,
+            );
+            try {
+              await wrong.query('identity');
+            } finally {
+              await wrong.close();
+            }
+          }(),
+          throwsA(anything),
+          reason: 'a freshly created raw DB must NOT open as a passphrase DB',
+        );
+      } finally {
+        await sqlcipher.deleteDatabase(fullPath);
+      }
+    });
+
+    // -----------------------------------------------------------------------
+    // SC-4 (device, PHASE B/4a): the marker survives a real restart (fresh
+    // opener re-reads the persisted record) and the 2nd launch opens raw
+    // DIRECTLY — no rekey, no read-only probe/fallback, no marker re-write.
+    // -----------------------------------------------------------------------
+    testWidgets('SC-4 marker durable; 2nd launch opens raw directly with no '
+        'rekey/probe', (_) async {
+      final dbDir = await sqlcipher.getDatabasesPath();
+      const dbName = 'sc_4_durable.db';
+      final fullPath = p.join(dbDir, dbName);
+      await sqlcipher.deleteDatabase(fullPath);
+      final store = _InMemorySecureKeyStore({});
+      final events = <String>[];
+      debugSetFlowEventSink((payload) {
+        final name = payload['event'];
+        if (name is String) events.add(name);
+      });
+      try {
+        // 1st launch — creates raw + persists marker
+        final db1 = await openEncryptedDatabase(
+          secureKeyStore: store,
+          dbName: dbName,
+          version: 1,
+          onCreate: (db, v) async {
+            await db.execute('CREATE TABLE t (id INTEGER PRIMARY KEY)');
+          },
+          onUpgrade: (db, o, n) async {},
+        );
+        await db1.close();
+        expect(
+          (await store.read('db_encryption_key'))!.startsWith('raw:'),
+          isTrue,
+        );
+
+        // 2nd launch — a fresh opener reads the persisted marker (real restart).
+        events.clear();
+        final db2 = await openEncryptedDatabase(
+          secureKeyStore: store,
+          dbName: dbName,
+          version: 1,
+          onCreate: (db, v) async {},
+          onUpgrade: (db, o, n) async {},
+        );
+        await db2.close();
+
+        expect(events, contains('ENCRYPTED_DB_OPEN_SUCCESS'));
+        expect(
+          events,
+          isNot(contains('DB_REKEY_TO_RAW_KEY')),
+          reason: 'a marked raw DB must not rekey on the steady launch',
+        );
+        expect(
+          events,
+          isNot(contains('ENCRYPTED_DB_RAW_OPEN_FALLBACK')),
+          reason: '(raw, exists) must open raw DIRECTLY — no probe/fallback',
+        );
+        expect(
+          events,
+          isNot(contains('ENCRYPTED_DB_CIPHER_MARKER_RAW')),
+          reason: 'marker already raw — no re-write on the steady launch',
+        );
+      } finally {
+        debugSetFlowEventSink(null);
+        await sqlcipher.deleteDatabase(fullPath);
+      }
+    });
+
+    // -----------------------------------------------------------------------
+    // SC-2 (device, PHASE B/4b): a legacy passphrase DB rekeys to raw with FULL
+    // preservation — user_version==95 (§E1), all rows across tables, marker
+    // flips to raw, opens raw but NOT as a passphrase of the same hex (§F2),
+    // and no leftover .bak/.rekey-tmp artifacts remain.
+    // -----------------------------------------------------------------------
+    testWidgets('SC-2 legacy passphrase DB rekeys to raw; user_version==95 + '
+        'rows preserved', (_) async {
+      final dbDir = await sqlcipher.getDatabasesPath();
+      const dbName = 'sc_2_rekey.db';
+      final fullPath = p.join(dbDir, dbName);
+      await _seedLegacyPassphraseDb(fullPath, _hexKey);
+      // stored key = bare hex (absent marker == legacy passphrase)
+      final store = _InMemorySecureKeyStore({'db_encryption_key': _hexKey});
+      try {
+        final db = await openEncryptedDatabase(
+          secureKeyStore: store,
+          dbName: dbName,
+          version: 95,
+          onCreate: (db, v) async {},
+          onUpgrade: (db, o, n) async {},
+        );
+        expect((await db.query('identity')).single['peer_id'], 'legacy-peer');
+        expect((await db.query('messages')).length, 20);
+        expect(
+          (await db.rawQuery('PRAGMA user_version')).first.values.first,
+          95,
+          reason: 'user_version must be preserved through the rekey (§E1)',
+        );
+        await db.close();
+
+        // marker flipped to raw
+        expect(
+          (await store.read('db_encryption_key'))!.startsWith('raw:'),
+          isTrue,
+          reason: 'rekey must persist marker=raw',
+        );
+
+        // §F2: opens raw, NOT as a plain passphrase of the same hex.
+        final rawOpen = await sqlcipher.openDatabase(
+          fullPath,
+          password: "x'$_hexKey'", // RAW_KEY
+          singleInstance: false,
+        );
+        expect((await rawOpen.query('messages')).length, 20);
+        await rawOpen.close();
+        await expectLater(
+          () async {
+            final w = await sqlcipher.openDatabase(
+              fullPath,
+              password: _hexKey, // passphrase of the same hex → must FAIL
+              singleInstance: false,
+            );
+            try {
+              await w.query('identity');
+            } finally {
+              await w.close();
+            }
+          }(),
+          throwsA(anything),
+          reason: 'a rekeyed DB must NOT open as a passphrase DB',
+        );
+
+        // no leftover rekey artifacts
+        expect(await File('$fullPath.pre-raw.bak').exists(), isFalse);
+        expect(await File('$fullPath.rekey-tmp').exists(), isFalse);
+      } finally {
+        await sqlcipher.deleteDatabase(fullPath);
+        await _deleteRekeyArtifacts(fullPath);
+      }
+    });
+
+    // -----------------------------------------------------------------------
+    // SC-3 (device, PHASE B/4b): the rekey is ATOMIC. A @visibleForTesting fault
+    // injector throws at the swap boundary so the interrupted-rename branches
+    // are driven deterministically. In every case the next open recovers an
+    // OPENABLE DB with data intact — never a brick (§E2/§F4).
+    // -----------------------------------------------------------------------
+    testWidgets('SC-3 rekey atomic — interrupted swap recovers an openable DB, '
+        'data preserved', (_) async {
+      final dbDir = await sqlcipher.getDatabasesPath();
+      const dbName = 'sc_3_atomic.db';
+      final fullPath = p.join(dbDir, dbName);
+
+      Future<sqlcipher.Database> openOnce() => openEncryptedDatabase(
+            secureKeyStore: _InMemorySecureKeyStore({
+              'db_encryption_key': _hexKey,
+            }),
+            dbName: dbName,
+            version: 95,
+            onCreate: (db, v) async {},
+            onUpgrade: (db, o, n) async {},
+          );
+
+      try {
+        // (a) fault AFTER backup (original→.bak done, tmp not yet swapped in →
+        //     main missing): recovery restores the passphrase original.
+        await _seedLegacyPassphraseDb(fullPath, _hexKey);
+        debugRekeyFaultInjector = (stage) {
+          if (stage == 'afterBackup') throw StateError('inject-afterBackup');
+        };
+        final dbA = await openOnce();
+        expect(
+          (await dbA.query('identity')).single['peer_id'],
+          'legacy-peer',
+          reason: 'afterBackup interruption must restore the original, intact',
+        );
+        expect((await dbA.query('messages')).length, 20);
+        await dbA.close();
+
+        // (b) fault AFTER swap (main = raw, .bak present): recovery finishes the
+        //     cleanup and the DB opens raw with data intact.
+        await _seedLegacyPassphraseDb(fullPath, _hexKey);
+        debugRekeyFaultInjector = (stage) {
+          if (stage == 'afterSwap') throw StateError('inject-afterSwap');
+        };
+        final dbB = await openOnce();
+        expect(
+          (await dbB.query('identity')).single['peer_id'],
+          'legacy-peer',
+          reason: 'afterSwap interruption must leave an openable raw DB, intact',
+        );
+        await dbB.close();
+        final rawOpen = await sqlcipher.openDatabase(
+          fullPath,
+          password: "x'$_hexKey'", // RAW_KEY
+          singleInstance: false,
+        );
+        expect((await rawOpen.query('messages')).length, 20);
+        await rawOpen.close();
+
+        // (c) no fault → clean rekey, no leftover artifacts.
+        await _seedLegacyPassphraseDb(fullPath, _hexKey);
+        debugRekeyFaultInjector = null;
+        final dbC = await openOnce();
+        expect((await dbC.query('identity')).single['peer_id'], 'legacy-peer');
+        await dbC.close();
+        expect(await File('$fullPath.pre-raw.bak').exists(), isFalse);
+        expect(await File('$fullPath.rekey-tmp').exists(), isFalse);
+      } finally {
+        debugRekeyFaultInjector = null;
+        await sqlcipher.deleteDatabase(fullPath);
+        await _deleteRekeyArtifacts(fullPath);
+      }
+    });
+
+    // -----------------------------------------------------------------------
+    // SC-9 (device, PHASE B/4b): a pre-encryption PLAINTEXT identity.db migrates
+    // DIRECTLY to raw-key (one export, not plaintext→passphrase→raw), preserving
+    // user_version==95 and all rows. Opens raw; no longer opens as plaintext.
+    // -----------------------------------------------------------------------
+    testWidgets('SC-9 pre-encryption plaintext DB migrates directly to raw; '
+        'user_version + rows preserved', (_) async {
+      final dbDir = await sqlcipher.getDatabasesPath();
+      const dbName = 'sc_9_plaintext.db';
+      final fullPath = p.join(dbDir, dbName);
+      await sqlcipher.deleteDatabase(fullPath);
+      await _deleteRekeyArtifacts(fullPath);
+      // Seed a PLAINTEXT DB (no password) with user_version 95 + rows.
+      final seed = await sqlcipher.openDatabase(fullPath, singleInstance: false);
+      await seed.execute(
+        'CREATE TABLE identity (id INTEGER PRIMARY KEY, peer_id TEXT)',
+      );
+      await seed.insert('identity', {'id': 1, 'peer_id': 'plaintext-peer'});
+      await seed.execute('PRAGMA user_version = 95');
+      await seed.close();
+
+      final store = _InMemorySecureKeyStore({}); // fresh key → plaintext branch
+      try {
+        final db = await openEncryptedDatabase(
+          secureKeyStore: store,
+          dbName: dbName,
+          version: 95,
+          onCreate: (db, v) async {},
+          onUpgrade: (db, o, n) async {},
+        );
+        expect(
+          (await db.query('identity')).single['peer_id'],
+          'plaintext-peer',
+        );
+        expect(
+          (await db.rawQuery('PRAGMA user_version')).first.values.first,
+          95,
+          reason: 'user_version must be preserved through plaintext→raw (§E1)',
+        );
+        await db.close();
+
+        final stored = await store.read('db_encryption_key');
+        expect(stored, isNotNull);
+        expect(stored!.startsWith('raw:'), isTrue);
+        final hex = stored.substring('raw:'.length);
+
+        // opens raw
+        final rawOpen = await sqlcipher.openDatabase(
+          fullPath,
+          password: "x'$hex'", // RAW_KEY
+          singleInstance: false,
+        );
+        expect(
+          (await rawOpen.query('identity')).single['peer_id'],
+          'plaintext-peer',
+        );
+        await rawOpen.close();
+
+        // no longer plaintext-openable
+        await expectLater(
+          () async {
+            final w = await sqlcipher.openDatabase(
+              fullPath,
+              singleInstance: false,
+            );
+            try {
+              await w.query('identity');
+            } finally {
+              await w.close();
+            }
+          }(),
+          throwsA(anything),
+          reason: 'the migrated DB must no longer open as plaintext',
+        );
+        expect(await File('$fullPath.pre-raw.bak').exists(), isFalse);
+      } finally {
+        await sqlcipher.deleteDatabase(fullPath);
+        await _deleteRekeyArtifacts(fullPath);
+      }
+    });
   });
 }

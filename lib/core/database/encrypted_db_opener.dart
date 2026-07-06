@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
@@ -7,6 +8,75 @@ import '../secure_storage/secure_key_store.dart';
 import '../utils/flow_event_emitter.dart';
 
 const String _kDbEncryptionKey = 'db_encryption_key';
+
+/// 218 Phase B — the cipher-mode marker is a PREFIX on the `db_encryption_key`
+/// record, domain {absent, raw} (§G1/SC-6):
+///  - a bare `<hex>` == `absent` == legacy passphrase mode, not yet rekeyed
+///    (this is exactly the pre-218 write format, so existing records need no
+///    migration);
+///  - `raw:<hex>` == the DB is raw-key mode.
+/// There is deliberately NO `pass:` value — `(pass,*)` states do not exist.
+@visibleForTesting
+const String kRawKeyMarkerPrefix = 'raw:';
+
+@visibleForTesting
+enum CipherKeyMode { absent, raw }
+
+@visibleForTesting
+class CipherKeyRecord {
+  const CipherKeyRecord(this.mode, this.hex);
+  final CipherKeyMode mode;
+  final String hex;
+}
+
+/// Parse a stored `db_encryption_key` value into (mode, hex).
+@visibleForTesting
+CipherKeyRecord parseCipherKeyRecord(String stored) {
+  if (stored.startsWith(kRawKeyMarkerPrefix)) {
+    return CipherKeyRecord(
+      CipherKeyMode.raw,
+      stored.substring(kRawKeyMarkerPrefix.length),
+    );
+  }
+  return CipherKeyRecord(CipherKeyMode.absent, stored);
+}
+
+/// Format a (mode, hex) pair back into the stored record string.
+@visibleForTesting
+String formatCipherKeyRecord(CipherKeyMode mode, String hex) =>
+    mode == CipherKeyMode.raw ? '$kRawKeyMarkerPrefix$hex' : hex;
+
+/// A full-entropy key is exactly 64 hex chars (256 bits). A stored value that
+/// isn't (after stripping the marker) is a FAILING signal, never a silent
+/// passphrase-fallback (§I2).
+@visibleForTesting
+bool isValid256BitHexKey(String hex) =>
+    hex.length == 64 && RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(hex);
+
+@visibleForTesting
+enum CipherOpenAction { openRaw, createRaw, rekeyToRaw }
+
+/// §G2 decision table over (marker mode, on-disk DB file exists):
+///   (raw,    T) -> openRaw       (2nd steady launch — the SC-5 fast path)
+///   (raw,    F) -> createRaw     (reinstall; key survived in the keystore)
+///   (absent, T) -> rekeyToRaw    (legacy passphrase DB — migrate once)
+///   (absent, F) -> createRaw     (fresh install)
+@visibleForTesting
+CipherOpenAction decideCipherOpenAction({
+  required CipherKeyMode mode,
+  required bool dbFileExists,
+}) {
+  switch (mode) {
+    case CipherKeyMode.raw:
+      return dbFileExists
+          ? CipherOpenAction.openRaw
+          : CipherOpenAction.createRaw;
+    case CipherKeyMode.absent:
+      return dbFileExists
+          ? CipherOpenAction.rekeyToRaw
+          : CipherOpenAction.createRaw;
+  }
+}
 
 /// Generates a random 256-bit hex key (64 hex characters).
 String _generateRandomKey() {
@@ -36,18 +106,35 @@ Future<Database> openEncryptedDatabase({
     details: {'dbName': dbName},
   );
 
-  // 1. Get or generate encryption key
-  String? key = await secureKeyStore.read(_kDbEncryptionKey);
-  final isNewKey = key == null;
+  // 1. Load the stored key record + its cipher-mode marker (§G1). A bare hex
+  //    value is the legacy `absent` (passphrase) state; `raw:<hex>` is raw mode.
+  final storedValue = await secureKeyStore.read(_kDbEncryptionKey);
+  final isNewKey = storedValue == null;
+  final String key;
+  var mode = CipherKeyMode.absent;
   if (isNewKey) {
     key = _generateRandomKey();
     if (kDebugMode) {
       print('[EAR] DB encryption key: GENERATED NEW (256-bit random)');
     }
   } else {
-    if (kDebugMode) {
-      print('[EAR] DB encryption key: LOADED FROM SECURE STORAGE');
+    final record = parseCipherKeyRecord(storedValue);
+    key = record.hex;
+    mode = record.mode;
+    if (!isValid256BitHexKey(key)) {
+      // §I2 — a malformed stored key is a FAILING signal, never a silent
+      // passphrase-fallback that could mask a corrupted/attacker-substituted
+      // record.
+      emitFlowEvent(
+        layer: 'DB',
+        event: 'ENCRYPTED_DB_KEY_MALFORMED',
+        details: {'dbName': dbName},
+      );
+      throw StateError(
+        'db_encryption_key is not a 64-hex key (mode=${mode.name})',
+      );
     }
+    if (kDebugMode) print('[EAR] DB encryption key: LOADED (mode=${mode.name})');
   }
 
   // 2. Resolve full path
@@ -55,47 +142,106 @@ Future<Database> openEncryptedDatabase({
   final fullPath = '$dbPath/$dbName';
   if (kDebugMode) print('[EAR] DB path: $fullPath');
 
-  // 3. If we have a new key, check if a plaintext DB already exists
-  if (isNewKey) {
-    final exists = await databaseExists(fullPath);
-    if (kDebugMode) print('[EAR] Existing DB file found: $exists');
+  // 2b. Recover any interrupted rekey (leftover .rekey-tmp / .pre-raw.bak)
+  //     BEFORE any existence checks so the decision below sees a consistent
+  //     on-disk file (§F4).
+  await _recoverInterruptedRekey(fullPath, dbName, keyPersisted: !isNewKey);
 
-    if (exists) {
-      // Existing plaintext DB — encrypt it
-      if (kDebugMode) print('[EAR] MIGRATING plaintext DB → encrypted...');
+  // 3. Key persistence + legacy plaintext migration (isNewKey only).
+  if (isNewKey) {
+    final plaintextExists = await databaseExists(fullPath);
+    if (kDebugMode) print('[EAR] Existing DB file found: $plaintextExists');
+    if (plaintextExists) {
+      // Legacy pre-encryption plaintext DB → migrate DIRECTLY to raw-key mode in
+      // one atomic export (SC-9), NOT plaintext→passphrase→raw (which would pay
+      // PBKDF2 once for nothing). Persist the raw marker so the decision below
+      // takes the fast (raw, exists)→openRaw path.
+      if (kDebugMode) print('[EAR] MIGRATING plaintext DB → raw-key...');
       emitFlowEvent(
         layer: 'DB',
         event: 'ENCRYPTED_DB_MIGRATING_PLAINTEXT',
         details: {'dbName': dbName},
       );
-
-      await _encryptExistingDatabase(fullPath, key);
-      if (kDebugMode) print('[EAR] Plaintext → encrypted migration DONE');
+      await _exportToRawAtomic(fullPath, key, dbName, sourcePassword: null);
+      await secureKeyStore.write(
+        _kDbEncryptionKey,
+        formatCipherKeyRecord(CipherKeyMode.raw, key),
+      );
+      mode = CipherKeyMode.raw;
+      emitFlowEvent(
+        layer: 'DB',
+        event: 'ENCRYPTED_DB_PLAINTEXT_MIGRATED',
+        details: {'dbName': dbName},
+      );
+      if (kDebugMode) print('[EAR] Plaintext → raw-key migration DONE');
+    } else {
+      // Fresh install → will create a RAW DB below. Persist the raw marker
+      // FIRST so a crash between persist and create recovers via
+      // (raw, dbAbsent)→createRaw rather than being mistaken for a plaintext DB.
+      await secureKeyStore.write(
+        _kDbEncryptionKey,
+        formatCipherKeyRecord(CipherKeyMode.raw, key),
+      );
+      mode = CipherKeyMode.raw;
+      if (kDebugMode) print('[EAR] Fresh install — key stored, marker=raw');
     }
-
-    // Persist key after successful encryption (or for fresh DB)
-    await secureKeyStore.write(_kDbEncryptionKey, key);
-    if (kDebugMode) print('[EAR] Encryption key stored in secure storage');
   }
 
-  // 4. Open the (now encrypted) database.
-  //
-  // 218 Phase A — read-tolerant open via a READ-ONLY probe. An EXISTING
-  // identity.db may be legacy passphrase-mode OR (post-Phase-B) raw-key mode.
-  // We DETECT the mode with a throwaway read-only, singleInstance:false probe
-  // that validates the raw-key literal, then do the SINGLE real open with the
-  // correct key. We must NOT do a wrong-key read-WRITE open on the real path:
-  // on iOS (FMDB) a failed read-write open leaves a dangling `BEGIN EXCLUSIVE`
-  // that poisons the immediate passphrase re-open ("out of memory") and bricks
-  // cold start — SC-R caught this on device; the read-only path (bg 5th site /
-  // SC-B) was already clean. Fresh installs are created in PASSPHRASE mode here
-  // ON PURPOSE — creating raw before this floor is the shipped-and-soaked
-  // default would brick a rollback to a pre-floor, passphrase-only reader
-  // (raw-on-create is deferred to Phase B / SC-1).
+  // 4. Decide the open action from (marker mode, on-disk DB exists) — §G2.
   final dbFileExists = await databaseExists(fullPath);
-  final useRawKey =
-      dbFileExists && await _isRawKeyDatabase(fullPath, key, dbName);
-  final openPassword = useRawKey ? "x'$key'" : key;
+  final action = decideCipherOpenAction(mode: mode, dbFileExists: dbFileExists);
+
+  // 5. Resolve the open password + whether we open raw.
+  //  - openRaw / createRaw → raw literal (marker authoritative; NO probe, so the
+  //    2nd steady launch stays on the SC-5 fast path).
+  //  - rekeyToRaw → 4a: read-tolerant passphrase open via the read-only probe
+  //    (an EXISTING legacy DB opens without a rekey); the probe also self-heals
+  //    a marker=absent record that already points at a raw DB (a Phase-B
+  //    crash-before-marker or a rollback return). 4b replaces this branch with
+  //    the atomic passphrase→raw rekey.
+  String openPassword;
+  bool openedRaw;
+  switch (action) {
+    case CipherOpenAction.openRaw:
+    case CipherOpenAction.createRaw:
+      openPassword = "x'$key'"; // RAW_KEY
+      openedRaw = true;
+      break;
+    case CipherOpenAction.rekeyToRaw:
+      // marker=absent + DB exists. Either a legacy PASSPHRASE DB (rekey it) or
+      // already RAW (a Phase-B crash-before-marker / rollback return → self-heal
+      // via the marker write in step 6). §E2/§F4.
+      final alreadyRaw = await _isRawKeyDatabase(fullPath, key, dbName);
+      if (alreadyRaw) {
+        openPassword = "x'$key'"; // RAW_KEY
+        openedRaw = true;
+      } else {
+        // Atomic passphrase→raw rekey. On ANY failure the original passphrase DB
+        // is intact (verify-before-swap), so fall back to opening passphrase and
+        // retry next launch — NEVER brick.
+        try {
+          await _exportToRawAtomic(fullPath, key, dbName, sourcePassword: key);
+          openPassword = "x'$key'"; // RAW_KEY
+          openedRaw = true;
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'DB',
+            event: 'DB_REKEY_TO_RAW_KEY_ABORTED',
+            details: {'dbName': dbName, 'error': e.toString()},
+          );
+          // The rekey may have failed BEFORE or AFTER the swap → recover any
+          // interrupted swap and re-probe the actual on-disk mode. Assuming
+          // passphrase would fail (and could create a fresh empty DB) if the
+          // swap had already made the file raw.
+          await _recoverInterruptedRekey(fullPath, dbName, keyPersisted: !isNewKey);
+          final nowRaw = await _isRawKeyDatabase(fullPath, key, dbName);
+          openPassword = nowRaw ? "x'$key'" : key; // RAW_KEY / LEGACY_PASSPHRASE_FALLBACK
+          openedRaw = nowRaw;
+        }
+      }
+      break;
+  }
+
   // 218 Step 0a — bracket ONLY the real openDatabase call (probe excluded) so
   // the passphrase baseline (denominator) and the raw-key fix (numerator) read
   // the SAME `elapsedMs` field on ENCRYPTED_DB_OPEN_SUCCESS. Mirrors
@@ -110,6 +256,27 @@ Future<Database> openEncryptedDatabase({
     onUpgrade: onUpgrade,
   );
   openStopwatch.stop();
+
+  // 6. Persist the raw marker once, after a successful raw open, if not already
+  //    recorded — makes the mode durable so the next launch takes the fast
+  //    openRaw path (SC-4) and self-heals an absent record over a raw DB.
+  if (openedRaw && mode != CipherKeyMode.raw) {
+    await secureKeyStore.write(
+      _kDbEncryptionKey,
+      formatCipherKeyRecord(CipherKeyMode.raw, key),
+    );
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'ENCRYPTED_DB_CIPHER_MARKER_RAW',
+      details: {'dbName': dbName},
+    );
+    if (kDebugMode) print('[EAR] Cipher-mode marker persisted: raw');
+  }
+
+  // Post-commit cleanup: the key/marker is now durable, so drop the rekey
+  // backup (a no-op unless a rekey/migration ran this launch). Recovery cleans
+  // up any lingering .bak across launches.
+  await _deleteDbAndSidecars(_preRawBakPath(fullPath));
 
   // 5. Validate encryption is active
   try {
@@ -183,58 +350,178 @@ Future<bool> _isRawKeyDatabase(
   }
 }
 
-/// Encrypts an existing plaintext SQLite database in-place.
-///
-/// 1. Opens the plaintext DB (no password)
-/// 2. Attaches a new encrypted DB
-/// 3. Exports all data via sqlcipher_export
-/// 4. Closes both, replaces the original file
-Future<void> _encryptExistingDatabase(String fullPath, String key) async {
-  final encryptedPath = '$fullPath.encrypted';
+String _rekeyTmpPath(String fullPath) => '$fullPath.rekey-tmp';
+String _preRawBakPath(String fullPath) => '$fullPath.pre-raw.bak';
 
-  // Open the plaintext database
-  final plaintextDb = await openDatabase(fullPath);
+const List<String> _dbSidecarSuffixes = ['-wal', '-shm', '-journal'];
 
-  try {
-    // Attach new encrypted database
-    await plaintextDb.execute(
-      "ATTACH DATABASE '$encryptedPath' AS encrypted KEY '$key'",
-    );
+/// 218 SC-3 — deterministic fault injection for the rekey swap. Tests set this
+/// to throw at a named stage ('afterExport' | 'afterVerify' | 'afterBackup' |
+/// 'afterSwap') to drive the interrupted-rename branches without file surgery.
+@visibleForTesting
+void Function(String stage)? debugRekeyFaultInjector;
 
-    // Export all data to the encrypted database
-    await plaintextDb.rawQuery("SELECT sqlcipher_export('encrypted')");
+void _rekeyFaultPoint(String stage) {
+  final injector = debugRekeyFaultInjector;
+  if (injector != null) injector(stage);
+}
 
-    // Detach
-    await plaintextDb.execute('DETACH DATABASE encrypted');
-  } finally {
-    await plaintextDb.close();
+Future<void> _deleteFileIfExists(String path) async {
+  final f = File(path);
+  if (await f.exists()) await f.delete();
+}
+
+/// Delete a DB file AND its SQLite sidecars (-wal/-shm/-journal).
+Future<void> _deleteDbAndSidecars(String path) async {
+  await _deleteFileIfExists(path);
+  for (final s in _dbSidecarSuffixes) {
+    await _deleteFileIfExists('$path$s');
   }
+}
 
-  // Replace original with encrypted version
-  await deleteDatabase(fullPath);
-
-  // Rename encrypted to original path
-  final encryptedDb =
-      await openDatabase(encryptedPath, password: key); // PLAINTEXT_MIGRATION
-  await encryptedDb.close();
-
-  // Use file operations via sqflite: delete old, rename new
-  // Since sqflite doesn't expose rename, we re-export
-  final tempDb =
-      await openDatabase(encryptedPath, password: key); // PLAINTEXT_MIGRATION
-  try {
-    await tempDb.execute("ATTACH DATABASE '$fullPath' AS newdb KEY '$key'");
-    await tempDb.rawQuery("SELECT sqlcipher_export('newdb')");
-    await tempDb.execute('DETACH DATABASE newdb');
-  } finally {
-    await tempDb.close();
+/// §F4 — restore a consistent identity.db after an interrupted rekey/migration
+/// swap. Idempotent, so it is safe to run at launch AND again after an abort.
+/// [keyPersisted] distinguishes the two post-swap cases: a passphrase→raw rekey
+/// keeps its key throughout (persisted), so a completed swap is kept; a
+/// plaintext→raw migration commits a NEW key only AFTER the swap, so a completed
+/// swap whose key was never persisted is unreadable → discard the raw file and
+/// restore the plaintext original to retry cleanly.
+Future<void> _recoverInterruptedRekey(
+  String fullPath,
+  String dbName, {
+  required bool keyPersisted,
+}) async {
+  final tmpPath = _rekeyTmpPath(fullPath);
+  final bakPath = _preRawBakPath(fullPath);
+  if (await File(bakPath).exists()) {
+    final mainExists = await File(fullPath).exists();
+    if (!mainExists) {
+      // Swap interrupted between (original→.bak) and (tmp→original): the main
+      // file is missing → restore the original from the backup.
+      await File(bakPath).rename(fullPath);
+      emitFlowEvent(
+        layer: 'DB',
+        event: 'DB_REKEY_RECOVERED_RESTORED_ORIGINAL',
+        details: {'dbName': dbName},
+      );
+    } else if (keyPersisted) {
+      // Swap completed and the key is committed → main (raw) is the good DB.
+      await _deleteDbAndSidecars(bakPath);
+      emitFlowEvent(
+        layer: 'DB',
+        event: 'DB_REKEY_RECOVERED_POST_SWAP',
+        details: {'dbName': dbName},
+      );
+    } else {
+      // Swap completed but the new key was NEVER persisted (interrupted
+      // plaintext→raw migration): the raw main is unreadable → discard it and
+      // restore the plaintext original to retry.
+      await _deleteDbAndSidecars(fullPath);
+      await File(bakPath).rename(fullPath);
+      emitFlowEvent(
+        layer: 'DB',
+        event: 'DB_REKEY_RECOVERED_RESTORED_ORIGINAL',
+        details: {'dbName': dbName},
+      );
+    }
   }
+  // Always discard a partial/complete export tmp that no longer has a role.
+  await _deleteDbAndSidecars(tmpPath);
+}
 
-  await deleteDatabase(encryptedPath);
+Future<int> _readUserVersion(Database db) async {
+  final r = await db.rawQuery('PRAGMA user_version');
+  final v = r.isNotEmpty ? r.first.values.first : null;
+  return v is int ? v : 0;
+}
 
+/// §E2 — atomic export of the identity.db at [fullPath] to raw-key mode via a
+/// side file. Used for BOTH the legacy passphrase→raw rekey (`sourcePassword` =
+/// the key) and the pre-encryption plaintext→raw migration (`sourcePassword` =
+/// null, SC-9). Side-path export → verify (raw-open + quick_check +
+/// user_version) → back up original → evict its sidecars → atomic rename tmp in
+/// → (marker written by the caller). On ANY failure the error propagates and the
+/// caller re-runs recovery + re-probes the on-disk mode, so a legacy identity is
+/// NEVER bricked. Preserves `user_version` (§E1) — `sqlcipher_export` does not
+/// copy it. §H3 raw KEY form: KEY "x'<64hex>'".
+Future<void> _exportToRawAtomic(
+  String fullPath,
+  String key,
+  String dbName, {
+  required String? sourcePassword,
+}) async {
   emitFlowEvent(
     layer: 'DB',
-    event: 'ENCRYPTED_DB_PLAINTEXT_MIGRATED',
-    details: {},
+    event: 'DB_REKEY_TO_RAW_KEY_START',
+    details: {'dbName': dbName},
+  );
+  final tmpPath = _rekeyTmpPath(fullPath);
+  final bakPath = _preRawBakPath(fullPath);
+  await _deleteDbAndSidecars(tmpPath); // clear any stale tmp
+
+  // 1. Export the source (passphrase OR plaintext) to a raw-keyed side file,
+  //    preserving user_version (§E1).
+  final source = sourcePassword == null
+      ? await openDatabase(fullPath, singleInstance: false) // plaintext source
+      : await openDatabase(
+          fullPath,
+          password: sourcePassword, // LEGACY_PASSPHRASE_FALLBACK
+          singleInstance: false,
+        );
+  int userVersion;
+  try {
+    userVersion = await _readUserVersion(source);
+    await source.execute(
+      'ATTACH DATABASE \'$tmpPath\' AS rawdb KEY "x\'$key\'"',
+    );
+    await source.rawQuery("SELECT sqlcipher_export('rawdb')");
+    await source.execute('PRAGMA rawdb.user_version = $userVersion');
+    await source.execute('DETACH DATABASE rawdb');
+  } finally {
+    await source.close();
+  }
+  _rekeyFaultPoint('afterExport');
+
+  // 2. Verify the tmp raw DB: opens raw, is intact, and kept user_version.
+  final verify = await openDatabase(
+    tmpPath,
+    password: "x'$key'", // RAW_KEY
+    singleInstance: false,
+  );
+  try {
+    final qc = await verify.rawQuery('PRAGMA quick_check');
+    final quickOk = qc.isNotEmpty &&
+        qc.first.values.first.toString().toLowerCase() == 'ok';
+    final tmpVersion = await _readUserVersion(verify);
+    if (!quickOk || tmpVersion != userVersion) {
+      throw StateError(
+        'rekey verify failed (quick_check=$quickOk, '
+        'version=$tmpVersion expected=$userVersion)',
+      );
+    }
+  } finally {
+    await verify.close();
+  }
+  _rekeyFaultPoint('afterVerify');
+
+  // 3. Atomic swap: back up original → evict its sidecars → rename tmp in.
+  await _deleteDbAndSidecars(bakPath);
+  await File(fullPath).rename(bakPath);
+  _rekeyFaultPoint('afterBackup');
+  for (final s in _dbSidecarSuffixes) {
+    await _deleteFileIfExists('$fullPath$s');
+  }
+  await File(tmpPath).rename(fullPath);
+  _rekeyFaultPoint('afterSwap');
+
+  // 4. Success — the backup (.bak) is RETAINED until the caller commits the
+  //    key/marker (the opener deletes it at the end; recovery cleans up any
+  //    lingering .bak). This preserves a restore point across the swap→key
+  //    commit window for the plaintext→raw migration (its new key is persisted
+  //    only after this returns).
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'DB_REKEY_TO_RAW_KEY',
+    details: {'dbName': dbName, 'userVersion': userVersion},
   );
 }
