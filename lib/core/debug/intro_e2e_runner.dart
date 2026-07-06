@@ -298,7 +298,20 @@ Future<Map<String, dynamic>?> _openConversationIfRequested({
     );
   }
 
-  final opened = await openConversationByPeerId(requestedPeerId);
+  // Cross-sim introduction acceptance can take tens of seconds to propagate
+  // under 4-simulator load, and the app-side opener only polls ~7.5s for the
+  // contact row to exist. Retry inside a bounded budget instead of failing on
+  // the first attempt — a genuine wiring failure still fails once the budget
+  // is exhausted, well inside the orchestrator's 240s per-step deadline.
+  final retryCycles =
+      (config['open_conversation_retry_cycles'] as num?)?.toInt() ?? 10;
+  final retryIntervalMs =
+      (config['open_conversation_retry_interval_ms'] as num?)?.toInt() ?? 2000;
+  var opened = await openConversationByPeerId(requestedPeerId);
+  for (var attempt = 0; !opened && attempt < retryCycles; attempt++) {
+    await Future<void>.delayed(Duration(milliseconds: retryIntervalMs));
+    opened = await openConversationByPeerId(requestedPeerId);
+  }
   if (!opened) {
     throw StateError(
       'Failed to open intro E2E conversation for $requestedPeerId',

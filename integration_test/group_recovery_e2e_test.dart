@@ -17,6 +17,7 @@ import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_wired.dart';
@@ -441,7 +442,18 @@ void main() {
               bridge: alice.bridge,
               identityRepo: identityRepo,
               contactRepo: InMemoryContactRepository(),
-              p2pService: FakeP2PService(),
+              // 210 alignment: this scenario exercises the ONLINE hard-failure
+              // lane (PUBLISH_FAILED → 'failed' → manual retry keeps the row
+              // id). The bare FakeP2PService() is relayReady==false, which
+              // routes the error through the queued-offline branch instead
+              // ('queued_offline' is repush-owned and not manually retriable).
+              p2pService: FakeP2PService(
+                initialState: const NodeState(
+                  isStarted: true,
+                  peerId: 'alice-text-continuation-peer',
+                  relayState: 'online',
+                ),
+              ),
               mediaAttachmentRepo: alice.mediaAttachmentRepo,
             ),
           ),
@@ -602,7 +614,16 @@ void main() {
               bridge: alice.bridge,
               identityRepo: identityRepo,
               contactRepo: InMemoryContactRepository(),
-              p2pService: FakeP2PService(),
+              // 210 alignment: ONLINE relay so the failed voice send stays
+              // 'failed' and arms the re-record continuation (a queued_offline
+              // row deliberately does not — it self-heals via repush).
+              p2pService: FakeP2PService(
+                initialState: const NodeState(
+                  isStarted: true,
+                  peerId: 'alice-voice-continuation-peer',
+                  relayState: 'online',
+                ),
+              ),
               mediaAttachmentRepo: alice.mediaAttachmentRepo,
               mediaFileManager: mediaFileManager,
               audioRecorderService: recorder,

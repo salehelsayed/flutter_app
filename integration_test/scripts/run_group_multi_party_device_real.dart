@@ -393,6 +393,19 @@ Future<void> _ensureIosHarnessBuilt(String relayAddresses) async {
       runnerApp.existsSync()) {
     return;
   }
+  // One-invocation-per-scenario drivers (external chunked sweeps) set this to
+  // reuse a Runner.app built by an earlier invocation: the in-memory
+  // built-once flag above cannot see across processes, and rebuilding per
+  // scenario costs a full xcodebuild + repo-wide xattr scan each time.
+  if (Platform.environment['GMP_SKIP_HARNESS_BUILD'] == '1' &&
+      runnerApp.existsSync()) {
+    _log(
+      'ORCH',
+      'GMP_SKIP_HARNESS_BUILD=1: reusing existing $_iosRunnerAppPath',
+    );
+    _iosHarnessBuiltForRelayAddresses = relayAddresses;
+    return;
+  }
 
   final args = <String>[
     'build',
