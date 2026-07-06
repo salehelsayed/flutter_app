@@ -3178,6 +3178,21 @@ class P2PServiceImpl
           trigger: 'system_action',
           sendPath: 'inbox',
         );
+        // 216: mirror the inbox→send readiness kick (`_recordSuccessfulInboxProof`
+        // tail-calls `_retryProactiveSendProofIfNeeded('inbox_proof_success')`
+        // above) in the send→inbox direction. On a real cold start the startup
+        // drain races ahead of the relay reservation and records an inbox proof
+        // FAILURE, so `inboxCapabilityReady` would otherwise wait for the first
+        // 30s periodic health-check tick. The self-proof envelope we just stored
+        // is guaranteed retrievable, so prove inbox capability now. Guarded on
+        // `!inboxCapabilityReady` (mirrors the send side's `!sendCapabilityReady`
+        // guard above) → fires at most once per readiness window, re-arms per
+        // `_beginReadinessProofWindow`, and stays a no-op when the startup drain
+        // already proved inbox (the fast-relay/sim case). Fire-and-forget so it
+        // never blocks the send-proof `finally` retry chain below.
+        if (!_currentState.inboxCapabilityReady) {
+          unawaited(_drainOfflineInbox());
+        }
       } else {
         _proactiveSendProofAttemptedInWindow = false;
         _recordCapabilityProofFailure(

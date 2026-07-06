@@ -147,6 +147,12 @@ readonly ONE_TO_ONE_TESTS=(
   # is NOT auto-globbed into the curated 1to1 gate, so appended explicitly (it
   # also auto-globs into core-host-all).
   "test/core/services/p2p_service_impl_health_drain_test.dart"
+  # 216: cold-start connecting→online inbox-proof kick — the send-proof store
+  # mirrors the send→inbox readiness kick so inboxCapabilityReady flips off the
+  # store instead of waiting for the first 30s health-check tick (badge ~30s→~1.5s
+  # on device). Locks the store-seam kick + its once-per-window / re-arm guard.
+  # Auto-globs into core-host-all; pinned here for the curated 1to1 gate.
+  "test/core/services/p2p_service_impl_inbox_proof_kick_test.dart"
   # 191: iOS foreground-push forwarding hardening — Dart half. FirebaseReadiness
   # (latch-on-success retry, no more one-failure permanent push deafness) +
   # PushListenerArmer (observable PUSH_LISTENERS_ARMED, readiness-driven third
