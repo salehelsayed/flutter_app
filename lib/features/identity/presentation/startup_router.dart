@@ -941,6 +941,7 @@ class _StartupRouterState extends State<StartupRouter> {
     GroupInviteListener? groupInviteListener,
     ActiveConversationTracker? groupConversationTracker,
     IntroductionRepository? introductionRepository,
+    IntroReviewSeenRepository? introReviewSeenRepository,
     IntroductionListener? introductionListener,
     ShareIntentService? shareIntentService,
   }) async {
@@ -971,6 +972,7 @@ class _StartupRouterState extends State<StartupRouter> {
         groupInviteListener: groupInviteListener,
         groupConversationTracker: groupConversationTracker,
         introductionRepository: introductionRepository,
+        introReviewSeenRepository: introReviewSeenRepository,
         introductionListener: introductionListener,
         shareIntentService: shareIntentService,
         appShellController: widget.appShellController,

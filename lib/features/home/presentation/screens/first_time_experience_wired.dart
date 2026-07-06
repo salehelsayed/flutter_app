@@ -41,6 +41,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_invite_del
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
+import 'package:flutter_app/features/introduction/domain/repositories/intro_review_seen_repository.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
@@ -92,6 +93,7 @@ class FirstTimeExperienceWired extends StatefulWidget {
   final GroupInviteListener? groupInviteListener;
   final ActiveConversationTracker? groupConversationTracker;
   final IntroductionRepository? introductionRepository;
+  final IntroReviewSeenRepository? introReviewSeenRepository;
   final IntroductionListener? introductionListener;
   final ShareIntentService? shareIntentService;
   final AppShellController? appShellController;
@@ -131,6 +133,7 @@ class FirstTimeExperienceWired extends StatefulWidget {
     this.groupInviteListener,
     this.groupConversationTracker,
     this.introductionRepository,
+    this.introReviewSeenRepository,
     this.introductionListener,
     this.shareIntentService,
     this.appShellController,
@@ -279,6 +282,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
             groupInviteListener: widget.groupInviteListener,
             groupConversationTracker: widget.groupConversationTracker,
             introductionRepository: widget.introductionRepository,
+            introReviewSeenRepository: widget.introReviewSeenRepository,
             introductionListener: widget.introductionListener,
             appShellController:
                 appShellController ?? _missingAppShellController(),
