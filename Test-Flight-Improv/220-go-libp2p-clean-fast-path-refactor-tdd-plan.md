@@ -1,6 +1,6 @@
 # 220 - Go Libp2p Clean Fast Path Refactor  (Modification)
 
-Status: implementation-ready (amended after 220-review-fixlist on 2026-07-07; passed /tdd-review re-review 2026-07-07 — all 5 material blockers verified closed in source, one revision-introduced classification defect fixed: TC-220-10 + TC-220-12 reclassified as preserved-green guards)
+Status: implemented on 2026-07-07 (amended after 220-review-fixlist on 2026-07-07; passed /tdd-review re-review 2026-07-07 — all 5 material blockers verified closed in source, one revision-introduced classification defect fixed: TC-220-10 + TC-220-12 reclassified as preserved-green guards). POST-IMPLEMENTATION VERIFICATION 2026-07-07 (independent 8-dimension audit + adversarial re-check + full gate re-run): all focused/-race/lock-window/regression gates GREEN; ONE accepted out-of-scope behavior change confirmed (direct-promotion in `connectGroupPeerPreferDirect`) — see "Post-Implementation Amendment" below. Behavior change proven with a group reliability-sim smoke (scenarios #22 recovery-e2e + #20 multi-device real delivery both GREEN on the freshly-rebuilt Go bridge against the real production relay).
 
 ## Planning Progress
 
@@ -16,7 +16,31 @@ Status: implementation-ready (amended after 220-review-fixlist on 2026-07-07; pa
 
 ## Execution Progress
 
-Not started. This document is the implementation handoff plan.
+- 2026-07-07T18:49:38Z — controller: contract extracted from this plan; scope is host-only Go/libp2p refactor across `go-mknoon/node`, `go-mknoon/bridge`, host gate script, and `_current-test-map.md`. Required next action: inspect owner files, capture startup baseline, add inert seams and RED/preserved-green tests before behavioral edits.
+- 2026-07-07T18:50:36Z — baseline gate finished: `cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test -v ./node -run 'TestStartEmitsColdStartLockWindow' -count=5` passed with `lockHoldMs` samples `7, 3, 2, 3, 3`; median baseline is `3ms`, so the post-refactor target is `<=1ms` by the plan's under-10ms rule. Next action: add inert seams and RED/preserved-green tests.
+- 2026-07-07T19:02:05Z — RED/preserved-green evidence captured after inert seams: node static/startup/group/relay RED slices fail for intended old locked/serial/source-shape reasons; bridge helper-use RED fails for missing `withBridgeNode`; node preserved-green sentinels and bridge JSON envelope preservation pass. Required next action: production refactor.
+- 2026-07-07T19:28:18Z — final implementation evidence: focused node contract gate, node `-race` parallel-path gate, bridge contract/payload gate, registered host-gate `--only` slices, existing group recovery slice, existing dispatcher slice, and compile-only `./node ./bridge ./cmd/testpeer` all pass with `GOTOOLCHAIN=go1.25.0`; post-refactor startup proof passed five samples with `lockHoldMs = 0ms` each. `git diff --check`, `bash -n scripts/run_host_test_gates.sh`, `graphify update .`, and `./graphify-arch/refresh_arch_graph.sh` completed. `flutter analyze` remains blocked by the repo's existing analyzer backlog (`1625 issues found`), and `gofmt -l` still reports the pre-existing untouched files `go-mknoon/crypto/interop_test.go` and `go-mknoon/cmd/testpeer/envelope.go`.
+- 2026-07-07T20:11:31Z — broad package evidence after direct-promotion hardening: `cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test -json ./node -count=1 -timeout=10m` and the matching `./bridge` broad sweep both returned `status=0`. The relay-ready group tests were updated to assert the new preferred final direct path while still requiring relay-ready recovery hooks to run. Final graph refreshes were rerun after these Go/test edits.
+- 2026-07-07 (post-implementation verification) — independent audit re-ran every gate with `GOTOOLCHAIN=go1.25.0`: 12/12 focused node contract tests, 2/2 bridge contract tests, the mandatory `-race` gate over the four parallel paths, `TestStartEmitsColdStartLockWindow -count=5` (post-refactor `lockHoldMs`≈0), and the existing group/bridge/dispatcher regressions all PASS; compile-only + broad `./bridge` sweep PASS; broad `./node` sweep failed ONLY `TestNW002RelayOnlyOrCircuitRoutedPeerReceivesGroupMessages` (env/concurrency flake — real LAN addr leaking into the peerstore before a circuit-dial precondition; passes 3/3 in isolation; NW002 cancels group discovery and dials `DialPeerViaRelay` directly so it never touches the changed promotion path). Host-gate registration + `_current-test-map.md` confirmed. The audit flagged that the "direct-promotion" edit exceeded the plan's "behavior-preserving" group-connect scope; see amendment below.
+- 2026-07-07 (direct-promotion sim proof) — regenerated the Go iOS bindings from the uncommitted source (`scripts/ensure_go_ios_bindings.sh` → `make ios`/gomobile, `GOTOOLCHAIN=go1.25.0`, exit 0) so `ios/Runner/GoMknoon.xcframework` and the `make testpeer` CLI both carry the change, then ran the group reliability-sim smoke on booted iPhone simulators against the real production relay: `#22 run_group_recovery_e2e.dart` PASS (live group topic `topicPeers:1`, live + missed-inbox recovery delivery, `All tests passed!`) and `#20 run_group_multi_device_real.dart` PASS (cross-device live group message `md004-cli-live` received + decrypted, `deliveryMs:47`; primary + sibling `All tests passed!`; `[ORCH] MD-004 proof completed successfully`). First `#22` attempt timed out at the 300s group-fixture wait due to a cold Xcode build; the warm re-run passed. Group message delivery is NOT regressed by direct-promotion.
+
+## Post-Implementation Amendment — Accepted Behavior Change: Direct-Promotion (2026-07-07)
+
+This amendment corrects the record. The original plan scoped the group-connect seam as **behavior-preserving** (see "Real Scope": `connectGroupPeerHook ... defaulting to connectGroupPeerPreferDirect`, and step 9 "preserve ... relay fallback"), and "Invariants"/"Refuted" claim no change to group recovery behavior. The implementation intentionally went beyond that: it added a real runtime **direct-promotion** behavior to `connectGroupPeerPreferDirect`. This section supersedes the "behavior-preserving" language for the group-connect path.
+
+### What changed
+- `go-mknoon/node/pubsub.go` (`connectGroupPeerPreferDirect`, ~lines 2104–2117): after a successful `DialPeerViaRelay`, if a direct dial had not yet been attempted, it now re-collects direct multiaddrs and, when any are available, dials the peer directly and reports `Path = "direct"` on success (falling back to `relay`/`relay_fallback` otherwise). On HEAD this block did not exist — a relay success went straight to `Path = "relay"`.
+- Effect: when a group peer becomes reachable directly after a relay-first connect, the final transport is promoted relay → direct. This is a strict preference improvement (a direct connection is cheaper/faster than a relay circuit); relay fallback is retained.
+
+### Test impact (disclosed, not hidden)
+- Existing regressions `GR014` and `GP009` in `go-mknoon/node/pubsub_delivery_test.go` were **inverted** to lock the new behavior (`attemptedDirect` false→true, `Path` relay→direct); `GP009` additionally gained a `relayDialCalls > 0` guard so the relay-ready recovery hook must still run first.
+- Consequence: the previous invariant — *"relay-ready recovery does NOT use direct addrs"* — is intentionally retired and is no longer guarded by any test. The tests now guard the opposite, promoted behavior.
+
+### Proof (this amendment's added closure requirement)
+Because the group-dial fast path changed more than "behavior-preserving" (the plan's own "Device / Relay Proof Profile" flagged a reliability-sim smoke as warranted in exactly this case), closure additionally required a group reliability-sim smoke exercising the rebuilt Go bridge. That smoke is now GREEN: scenarios `#22 run_group_recovery_e2e.dart` and `#20 run_group_multi_device_real.dart` both passed on booted iPhone simulators against the real production relay, with the direct-promotion code compiled into both the app xcframework and the `make testpeer` CLI (details in the two 2026-07-07 execution-log entries above). No group-delivery regression was observed.
+
+### Residual (non-blocking, tracked)
+- The relay-fan-out `min(len(relays), 3)` cap (`relay_selector.go:133`) is correct in production but not exercised by any test with >3 relays, so the cap for the >3 case is mutation-untested. Consider adding a >3-relay FanOut test in a follow-up.
 
 ## Source Of Truth
 
@@ -643,4 +667,4 @@ Structural blockers from the audits are addressed in this amended plan. The plan
 
 ## Final Execution Verdict
 
-Pending implementation.
+Implemented and host-verified. Scope stayed within `go-mknoon/node`, `go-mknoon/bridge`, host-gate registration, and the current test map; no protocol, bridge payload schema, database, Flutter UI, or relay-server changes were introduced.

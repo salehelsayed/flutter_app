@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -2101,6 +2102,19 @@ func (n *Node) connectGroupPeerPreferDirect(
 	}
 
 	if err := n.DialPeerViaRelay(peerIdStr); err == nil {
+		if !result.AttemptedDirect {
+			directAddrs = collectDirectMultiaddrs(h, pid, candidateAddrs)
+			result.DirectAddrCount = len(directAddrs)
+			if len(directAddrs) > 0 {
+				result.AttemptedDirect = true
+				if directErr := n.DialPeerWithTimeout(peerIdStr, multiaddrsToStrings(directAddrs), 0); directErr == nil {
+					result.Path = "direct"
+					return result, nil
+				} else {
+					result.DirectError = directErr.Error()
+				}
+			}
+		}
 		if result.AttemptedDirect {
 			result.Path = "relay_fallback"
 			result.UsedRelayFallback = true
@@ -2115,6 +2129,17 @@ func (n *Node) connectGroupPeerPreferDirect(
 		}
 		return result, err
 	}
+}
+
+func (n *Node) connectGroupPeer(
+	peerIdStr string,
+	candidateAddrs []ma.Multiaddr,
+	allowRelayFallback bool,
+) (groupPeerConnectResult, error) {
+	if n.connectGroupPeerHook != nil {
+		return n.connectGroupPeerHook(peerIdStr, candidateAddrs, allowRelayFallback)
+	}
+	return n.connectGroupPeerPreferDirect(peerIdStr, candidateAddrs, allowRelayFallback)
 }
 
 type groupMemberDialTarget struct {
@@ -2309,114 +2334,135 @@ func (n *Node) discoverAndConnectGroupPeers(groupId string) {
 
 	log.Printf("[PUBSUB] Group %s: discovered %d peers, %d new — dialing", groupId, len(peers), len(newPeers))
 
+	jobs := make([]func(), 0, len(newPeers))
 	for _, p := range newPeers {
-		pidStr := p.ID.String()
-		pidShort := pidStr
-		if len(pidShort) > 16 {
-			pidShort = pidShort[:16]
-		}
+		p := p
+		jobs = append(jobs, func() {
+			n.dialDiscoveredGroupPeer(groupId, h, p)
+		})
+	}
+	n.runGroupDialJobs(jobs)
+}
 
-		if !n.isCurrentActiveGroupDialTarget(groupId, pidStr) {
-			continue
-		}
+func (n *Node) dialDiscoveredGroupPeer(groupId string, h host.Host, p peer.AddrInfo) {
+	pidStr := p.ID.String()
+	pidShort := pidStr
+	if len(pidShort) > 16 {
+		pidShort = pidShort[:16]
+	}
 
-		// Add discovered addresses to peerstore so h.Connect can use them.
-		if len(p.Addrs) > 0 {
-			h.Peerstore().AddAddrs(p.ID, p.Addrs, time.Hour)
-			log.Printf("[PUBSUB] Group %s: added %d discovered addrs for %s", groupId, len(p.Addrs), pidShort)
-		}
+	if !n.isCurrentActiveGroupDialTarget(groupId, pidStr) {
+		return
+	}
 
-		if allowed, retryIn, blockedByInFlight := n.beginGroupPeerDial(pidStr, time.Now()); !allowed {
-			if blockedByInFlight {
-				log.Printf("[PUBSUB] Group %s: skipping discovered dial to %s while another group dial is in flight",
-					groupId, pidShort)
-				n.emitEvent("group:discovery", map[string]interface{}{
-					"groupId": groupId,
-					"step":    "dial_skipped_inflight",
-					"peerId":  pidShort,
-				})
-			} else {
-				log.Printf(
-					"[PUBSUB] Group %s: skipping discovered dial to %s during cooldown (%v remaining)",
-					groupId,
-					pidShort,
-					retryIn.Truncate(time.Second),
-				)
-				n.emitEvent("group:discovery", map[string]interface{}{
-					"groupId": groupId,
-					"step":    "dial_skipped_cooldown",
-					"peerId":  pidShort,
-					"retryIn": retryIn.String(),
-				})
-			}
-			continue
-		}
+	if len(p.Addrs) > 0 {
+		h.Peerstore().AddAddrs(p.ID, p.Addrs, time.Hour)
+		log.Printf("[PUBSUB] Group %s: added %d discovered addrs for %s", groupId, len(p.Addrs), pidShort)
+	}
 
-		if !n.isCurrentActiveGroupDialTarget(groupId, pidStr) {
-			n.finishGroupPeerDial(pidStr, false, time.Now())
-			continue
-		}
-		connectResult, err := n.connectGroupPeerPreferDirect(pidStr, p.Addrs, true)
-		if err != nil {
-			n.finishGroupPeerDial(pidStr, false, time.Now())
-			log.Printf("[PUBSUB] Group %s: dial %s failed (attemptedDirect=%t, directAddrs=%d): %v",
-				groupId, pidShort, connectResult.AttemptedDirect, connectResult.DirectAddrCount, err)
-			n.emitEvent("group:discovery", map[string]interface{}{
-				"groupId":           groupId,
-				"step":              "dial_failed",
-				"peerId":            pidShort,
-				"attemptedDirect":   connectResult.AttemptedDirect,
-				"directAddrCount":   connectResult.DirectAddrCount,
-				"usedRelayFallback": connectResult.UsedRelayFallback,
-				"error":             err.Error(),
-			})
+	if allowed, retryIn, blockedByInFlight := n.beginGroupPeerDial(pidStr, time.Now()); !allowed {
+		n.emitGroupDialSkipped(groupId, pidShort, retryIn, blockedByInFlight, "dial_skipped")
+		return
+	}
+
+	if !n.isCurrentActiveGroupDialTarget(groupId, pidStr) {
+		n.finishGroupPeerDial(pidStr, false, time.Now())
+		return
+	}
+	connectResult, err := n.connectGroupPeer(pidStr, p.Addrs, true)
+	if err != nil {
+		n.finishGroupPeerDial(pidStr, false, time.Now())
+		log.Printf("[PUBSUB] Group %s: dial %s failed (attemptedDirect=%t, directAddrs=%d): %v",
+			groupId, pidShort, connectResult.AttemptedDirect, connectResult.DirectAddrCount, err)
+		n.emitEvent("group:discovery", map[string]interface{}{
+			"groupId":           groupId,
+			"step":              "dial_failed",
+			"peerId":            pidShort,
+			"attemptedDirect":   connectResult.AttemptedDirect,
+			"directAddrCount":   connectResult.DirectAddrCount,
+			"usedRelayFallback": connectResult.UsedRelayFallback,
+			"error":             err.Error(),
+		})
+		return
+	}
+	n.finishDiscoveredGroupPeerDial(groupId, pidStr, pidShort, connectResult)
+}
+
+func (n *Node) finishDiscoveredGroupPeerDial(
+	groupId string,
+	pidStr string,
+	pidShort string,
+	connectResult groupPeerConnectResult,
+) {
+	livePeerReady := n.waitForLiveGroupTopicPeer(groupId, pidStr, GroupPublishPartialPeerSettleWait)
+	if !livePeerReady && connectResult.Path == "direct" {
+		if relayErr := n.DialPeerViaRelay(pidStr); relayErr != nil {
+			connectResult.RelayError = relayErr.Error()
 		} else {
-			livePeerReady := n.waitForLiveGroupTopicPeer(groupId, pidStr, GroupPublishPartialPeerSettleWait)
-			if !livePeerReady && connectResult.Path == "direct" {
-				if relayErr := n.DialPeerViaRelay(pidStr); relayErr != nil {
-					connectResult.RelayError = relayErr.Error()
-				} else {
-					connectResult.Path = "relay_fallback"
-					connectResult.UsedRelayFallback = true
-					livePeerReady = n.waitForLiveGroupTopicPeer(groupId, pidStr, GroupPublishPartialPeerSettleWait)
-				}
-			}
-			if !livePeerReady {
-				n.finishGroupPeerDial(pidStr, false, time.Now())
-				log.Printf(
-					"[PUBSUB] Group %s: dial %s connected via %s but did not become a live topic peer",
-					groupId,
-					pidShort,
-					connectResult.Path,
-				)
-				n.emitEvent("group:discovery", map[string]interface{}{
-					"groupId":           groupId,
-					"step":              "dial_connected_but_topic_missing",
-					"peerId":            pidShort,
-					"peerIdPrefix":      peerIDDiagnosticPrefix(pidStr),
-					"path":              connectResult.Path,
-					"attemptedDirect":   connectResult.AttemptedDirect,
-					"directAddrCount":   connectResult.DirectAddrCount,
-					"usedRelayFallback": connectResult.UsedRelayFallback,
-					"relayError":        connectResult.RelayError,
-				})
-				continue
-			}
-
-			n.finishGroupPeerDial(pidStr, true, time.Now())
-			log.Printf("[PUBSUB] Group %s: connected to %s via %s", groupId, pidShort, connectResult.Path)
-			n.emitEvent("group:discovery", map[string]interface{}{
-				"groupId":           groupId,
-				"step":              "dial_success",
-				"peerId":            pidShort,
-				"peerIdPrefix":      peerIDDiagnosticPrefix(pidStr),
-				"path":              connectResult.Path,
-				"attemptedDirect":   connectResult.AttemptedDirect,
-				"directAddrCount":   connectResult.DirectAddrCount,
-				"usedRelayFallback": connectResult.UsedRelayFallback,
-			})
+			connectResult.Path = "relay_fallback"
+			connectResult.UsedRelayFallback = true
+			livePeerReady = n.waitForLiveGroupTopicPeer(groupId, pidStr, GroupPublishPartialPeerSettleWait)
 		}
 	}
+	if !livePeerReady {
+		n.finishGroupPeerDial(pidStr, false, time.Now())
+		log.Printf(
+			"[PUBSUB] Group %s: dial %s connected via %s but did not become a live topic peer",
+			groupId,
+			pidShort,
+			connectResult.Path,
+		)
+		n.emitEvent("group:discovery", map[string]interface{}{
+			"groupId":           groupId,
+			"step":              "dial_connected_but_topic_missing",
+			"peerId":            pidShort,
+			"peerIdPrefix":      peerIDDiagnosticPrefix(pidStr),
+			"path":              connectResult.Path,
+			"attemptedDirect":   connectResult.AttemptedDirect,
+			"directAddrCount":   connectResult.DirectAddrCount,
+			"usedRelayFallback": connectResult.UsedRelayFallback,
+			"relayError":        connectResult.RelayError,
+		})
+		return
+	}
+
+	n.finishGroupPeerDial(pidStr, true, time.Now())
+	log.Printf("[PUBSUB] Group %s: connected to %s via %s", groupId, pidShort, connectResult.Path)
+	n.emitEvent("group:discovery", map[string]interface{}{
+		"groupId":           groupId,
+		"step":              "dial_success",
+		"peerId":            pidShort,
+		"peerIdPrefix":      peerIDDiagnosticPrefix(pidStr),
+		"path":              connectResult.Path,
+		"attemptedDirect":   connectResult.AttemptedDirect,
+		"directAddrCount":   connectResult.DirectAddrCount,
+		"usedRelayFallback": connectResult.UsedRelayFallback,
+	})
+}
+
+func (n *Node) emitGroupDialSkipped(groupId, pidShort string, retryIn time.Duration, blockedByInFlight bool, stepPrefix string) {
+	if blockedByInFlight {
+		log.Printf("[PUBSUB] Group %s: skipping dial to %s while another group dial is in flight",
+			groupId, pidShort)
+		n.emitEvent("group:discovery", map[string]interface{}{
+			"groupId": groupId,
+			"step":    stepPrefix + "_inflight",
+			"peerId":  pidShort,
+		})
+		return
+	}
+	log.Printf(
+		"[PUBSUB] Group %s: skipping dial to %s during cooldown (%v remaining)",
+		groupId,
+		pidShort,
+		retryIn.Truncate(time.Second),
+	)
+	n.emitEvent("group:discovery", map[string]interface{}{
+		"groupId": groupId,
+		"step":    stepPrefix + "_cooldown",
+		"peerId":  pidShort,
+		"retryIn": retryIn.String(),
+	})
 }
 
 // dialKnownGroupMembers dials all group members, preferring existing direct or
@@ -2441,145 +2487,155 @@ func (n *Node) dialKnownGroupMembers(groupId string, ignoreCooldown bool) {
 	// is not enough if the peer has not become a live topic peer yet.
 	connectedSet := n.liveGroupTopicPeerSet(groupId)
 
-	dialed := 0
-	connected := 0
-	cooldownSkipped := 0
-	directConnected := 0
-	relayFallbackConnected := 0
-	relayOnlyConnected := 0
+	var summary groupDialSummary
 	targetSummary := activeGroupMemberDialTargetSummary(config, selfId)
 	targets := targetSummary.targets
+	jobs := make([]func(), 0, len(targets))
 	for _, target := range targets {
-		if !n.isCurrentActiveGroupDialTarget(groupId, target.PeerId) {
-			continue
-		}
-		if _, alreadyConnected := connectedSet[target.PeerId]; alreadyConnected {
-			connected++
-			n.finishGroupPeerDial(target.PeerId, true, time.Now())
-			continue
-		}
-
-		pidShort := target.PeerId
-		if len(pidShort) > 16 {
-			pidShort = pidShort[:16]
-		}
-
-		if allowed, retryIn, blockedByInFlight := n.beginGroupPeerDialWithMode(target.PeerId, time.Now(), ignoreCooldown); !allowed {
-			if blockedByInFlight {
-				log.Printf("[PUBSUB] Group %s: skipping direct dial to %s while another group dial is in flight",
-					groupId, pidShort)
-				n.emitEvent("group:discovery", map[string]interface{}{
-					"groupId": groupId,
-					"step":    "direct_dial_skipped_inflight",
-					"peerId":  pidShort,
-				})
-			} else {
-				cooldownSkipped++
-				log.Printf(
-					"[PUBSUB] Group %s: skipping direct dial to %s during cooldown (%v remaining)",
-					groupId,
-					pidShort,
-					retryIn.Truncate(time.Second),
-				)
-				n.emitEvent("group:discovery", map[string]interface{}{
-					"groupId": groupId,
-					"step":    "direct_dial_skipped_cooldown",
-					"peerId":  pidShort,
-					"retryIn": retryIn.String(),
-				})
-			}
-			continue
-		}
-
-		dialed++
-		if !n.isCurrentActiveGroupDialTarget(groupId, target.PeerId) {
-			n.finishGroupPeerDial(target.PeerId, false, time.Now())
-			continue
-		}
-		connectResult, err := n.connectGroupPeerPreferDirect(target.PeerId, nil, true)
-		if err != nil {
-			n.finishGroupPeerDial(target.PeerId, false, time.Now())
-			log.Printf("[PUBSUB] Group %s: dial %s (%s) failed (attemptedDirect=%t, directAddrs=%d): %v",
-				groupId, target.Username, pidShort, connectResult.AttemptedDirect, connectResult.DirectAddrCount, err)
-			n.emitEvent("group:discovery", map[string]interface{}{
-				"groupId":           groupId,
-				"step":              "known_member_dial_failed",
-				"peerId":            pidShort,
-				"attemptedDirect":   connectResult.AttemptedDirect,
-				"directAddrCount":   connectResult.DirectAddrCount,
-				"usedRelayFallback": connectResult.UsedRelayFallback,
-				"error":             err.Error(),
-			})
-		} else {
-			livePeerReady := n.waitForLiveGroupTopicPeer(groupId, target.PeerId, GroupPublishPartialPeerSettleWait)
-			if !livePeerReady && connectResult.Path == "direct" {
-				if relayErr := n.DialPeerViaRelay(target.PeerId); relayErr != nil {
-					connectResult.RelayError = relayErr.Error()
-				} else {
-					connectResult.Path = "relay_fallback"
-					connectResult.UsedRelayFallback = true
-					livePeerReady = n.waitForLiveGroupTopicPeer(groupId, target.PeerId, GroupPublishPartialPeerSettleWait)
-				}
-			}
-			if !livePeerReady {
-				n.finishGroupPeerDial(target.PeerId, false, time.Now())
-				log.Printf(
-					"[PUBSUB] Group %s: dial %s (%s) connected via %s but did not become a live topic peer",
-					groupId,
-					target.Username,
-					pidShort,
-					connectResult.Path,
-				)
-				n.emitEvent("group:discovery", map[string]interface{}{
-					"groupId":           groupId,
-					"step":              "known_member_topic_missing",
-					"peerId":            pidShort,
-					"peerIdPrefix":      peerIDDiagnosticPrefix(target.PeerId),
-					"path":              connectResult.Path,
-					"attemptedDirect":   connectResult.AttemptedDirect,
-					"directAddrCount":   connectResult.DirectAddrCount,
-					"usedRelayFallback": connectResult.UsedRelayFallback,
-					"relayError":        connectResult.RelayError,
-				})
-				continue
-			}
-
-			n.finishGroupPeerDial(target.PeerId, true, time.Now())
-			connected++
-			switch connectResult.Path {
-			case "direct":
-				directConnected++
-			case "relay_fallback":
-				relayFallbackConnected++
-			default:
-				relayOnlyConnected++
-			}
-			log.Printf("[PUBSUB] Group %s: connected to %s (%s) via %s",
-				groupId, target.Username, pidShort, connectResult.Path)
-			n.emitEvent("group:discovery", map[string]interface{}{
-				"groupId":           groupId,
-				"step":              "known_member_dial_success",
-				"peerId":            pidShort,
-				"peerIdPrefix":      peerIDDiagnosticPrefix(target.PeerId),
-				"path":              connectResult.Path,
-				"attemptedDirect":   connectResult.AttemptedDirect,
-				"directAddrCount":   connectResult.DirectAddrCount,
-				"usedRelayFallback": connectResult.UsedRelayFallback,
-			})
-		}
+		target := target
+		jobs = append(jobs, func() {
+			n.dialKnownGroupMember(groupId, target, connectedSet, ignoreCooldown, &summary)
+		})
 	}
+	n.runGroupDialJobs(jobs)
 
 	n.emitEvent("group:discovery", map[string]interface{}{
 		"groupId":                   groupId,
 		"step":                      "direct_dial",
-		"membersDialed":             dialed,
-		"membersConnected":          connected,
-		"cooldownSkipped":           cooldownSkipped,
-		"directConnected":           directConnected,
-		"relayFallbackConnected":    relayFallbackConnected,
-		"relayOnlyConnected":        relayOnlyConnected,
+		"membersDialed":             summary.dialed.Load(),
+		"membersConnected":          summary.connected.Load(),
+		"cooldownSkipped":           summary.cooldownSkipped.Load(),
+		"directConnected":           summary.directConnected.Load(),
+		"relayFallbackConnected":    summary.relayFallbackConnected.Load(),
+		"relayOnlyConnected":        summary.relayOnlyConnected.Load(),
 		"totalMembers":              len(targets),
 		"ignoredInvalidConfigPeers": targetSummary.ignoredInvalidConfigPeer,
+	})
+}
+
+type groupDialSummary struct {
+	dialed                 atomic.Int64
+	connected              atomic.Int64
+	cooldownSkipped        atomic.Int64
+	directConnected        atomic.Int64
+	relayFallbackConnected atomic.Int64
+	relayOnlyConnected     atomic.Int64
+}
+
+func (n *Node) dialKnownGroupMember(
+	groupId string,
+	target groupMemberDialTarget,
+	connectedSet map[string]struct{},
+	ignoreCooldown bool,
+	summary *groupDialSummary,
+) {
+	if !n.isCurrentActiveGroupDialTarget(groupId, target.PeerId) {
+		return
+	}
+	if _, alreadyConnected := connectedSet[target.PeerId]; alreadyConnected {
+		summary.connected.Add(1)
+		n.finishGroupPeerDial(target.PeerId, true, time.Now())
+		return
+	}
+
+	pidShort := target.PeerId
+	if len(pidShort) > 16 {
+		pidShort = pidShort[:16]
+	}
+
+	if allowed, retryIn, blockedByInFlight := n.beginGroupPeerDialWithMode(target.PeerId, time.Now(), ignoreCooldown); !allowed {
+		if !blockedByInFlight {
+			summary.cooldownSkipped.Add(1)
+		}
+		n.emitGroupDialSkipped(groupId, pidShort, retryIn, blockedByInFlight, "direct_dial_skipped")
+		return
+	}
+
+	summary.dialed.Add(1)
+	if !n.isCurrentActiveGroupDialTarget(groupId, target.PeerId) {
+		n.finishGroupPeerDial(target.PeerId, false, time.Now())
+		return
+	}
+	connectResult, err := n.connectGroupPeer(target.PeerId, nil, true)
+	if err != nil {
+		n.finishGroupPeerDial(target.PeerId, false, time.Now())
+		log.Printf("[PUBSUB] Group %s: dial %s (%s) failed (attemptedDirect=%t, directAddrs=%d): %v",
+			groupId, target.Username, pidShort, connectResult.AttemptedDirect, connectResult.DirectAddrCount, err)
+		n.emitEvent("group:discovery", map[string]interface{}{
+			"groupId":           groupId,
+			"step":              "known_member_dial_failed",
+			"peerId":            pidShort,
+			"attemptedDirect":   connectResult.AttemptedDirect,
+			"directAddrCount":   connectResult.DirectAddrCount,
+			"usedRelayFallback": connectResult.UsedRelayFallback,
+			"error":             err.Error(),
+		})
+		return
+	}
+	n.finishKnownGroupMemberDial(groupId, target, pidShort, connectResult, summary)
+}
+
+func (n *Node) finishKnownGroupMemberDial(
+	groupId string,
+	target groupMemberDialTarget,
+	pidShort string,
+	connectResult groupPeerConnectResult,
+	summary *groupDialSummary,
+) {
+	livePeerReady := n.waitForLiveGroupTopicPeer(groupId, target.PeerId, GroupPublishPartialPeerSettleWait)
+	if !livePeerReady && connectResult.Path == "direct" {
+		if relayErr := n.DialPeerViaRelay(target.PeerId); relayErr != nil {
+			connectResult.RelayError = relayErr.Error()
+		} else {
+			connectResult.Path = "relay_fallback"
+			connectResult.UsedRelayFallback = true
+			livePeerReady = n.waitForLiveGroupTopicPeer(groupId, target.PeerId, GroupPublishPartialPeerSettleWait)
+		}
+	}
+	if !livePeerReady {
+		n.finishGroupPeerDial(target.PeerId, false, time.Now())
+		log.Printf(
+			"[PUBSUB] Group %s: dial %s (%s) connected via %s but did not become a live topic peer",
+			groupId,
+			target.Username,
+			pidShort,
+			connectResult.Path,
+		)
+		n.emitEvent("group:discovery", map[string]interface{}{
+			"groupId":           groupId,
+			"step":              "known_member_topic_missing",
+			"peerId":            pidShort,
+			"peerIdPrefix":      peerIDDiagnosticPrefix(target.PeerId),
+			"path":              connectResult.Path,
+			"attemptedDirect":   connectResult.AttemptedDirect,
+			"directAddrCount":   connectResult.DirectAddrCount,
+			"usedRelayFallback": connectResult.UsedRelayFallback,
+			"relayError":        connectResult.RelayError,
+		})
+		return
+	}
+
+	n.finishGroupPeerDial(target.PeerId, true, time.Now())
+	summary.connected.Add(1)
+	switch connectResult.Path {
+	case "direct":
+		summary.directConnected.Add(1)
+	case "relay_fallback":
+		summary.relayFallbackConnected.Add(1)
+	default:
+		summary.relayOnlyConnected.Add(1)
+	}
+	log.Printf("[PUBSUB] Group %s: connected to %s (%s) via %s",
+		groupId, target.Username, pidShort, connectResult.Path)
+	n.emitEvent("group:discovery", map[string]interface{}{
+		"groupId":           groupId,
+		"step":              "known_member_dial_success",
+		"peerId":            pidShort,
+		"peerIdPrefix":      peerIDDiagnosticPrefix(target.PeerId),
+		"path":              connectResult.Path,
+		"attemptedDirect":   connectResult.AttemptedDirect,
+		"directAddrCount":   connectResult.DirectAddrCount,
+		"usedRelayFallback": connectResult.UsedRelayFallback,
 	})
 }
 
@@ -2892,6 +2948,46 @@ func (n *Node) acquireGroupRecoverySlot(ctx context.Context) (func(), error) {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+func (n *Node) acquireGroupDialSlot() func() {
+	n.mu.Lock()
+	sem := n.groupDialSem
+	if sem == nil {
+		sem = make(chan struct{}, GroupDiscoveryConcurrency)
+		n.groupDialSem = sem
+	}
+	n.mu.Unlock()
+
+	sem <- struct{}{}
+	return func() { <-sem }
+}
+
+func (n *Node) runGroupDialJobs(jobs []func()) {
+	if len(jobs) == 0 {
+		return
+	}
+	workers := min(GroupDiscoveryConcurrency, len(jobs))
+	jobCh := make(chan func())
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			for job := range jobCh {
+				func() {
+					release := n.acquireGroupDialSlot()
+					defer release()
+					job()
+				}()
+			}
+		}()
+	}
+	for _, job := range jobs {
+		jobCh <- job
+	}
+	close(jobCh)
+	wg.Wait()
 }
 
 func (n *Node) beginGroupPeerDial(peerId string, now time.Time) (bool, time.Duration, bool) {

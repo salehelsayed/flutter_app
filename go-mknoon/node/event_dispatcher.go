@@ -34,6 +34,7 @@ type EventDispatcher struct {
 	// FIFO queue for events that cannot be coalesced. Critical message-bearing
 	// events may exceed maxMessageQueueSize; non-critical events are capped.
 	messageQueue []eventItem
+	messageHead  int
 
 	// Coalesced status events — only the latest of each type is kept.
 	statusLatest map[string]eventItem
@@ -122,7 +123,7 @@ func (d *EventDispatcher) Emit(eventName string, data map[string]interface{}) {
 	if coalescedEventTypes[eventName] {
 		d.setStatusLatestLocked(item)
 	} else {
-		if len(d.messageQueue) >= d.maxMessageQueueSize {
+		if d.messageQueueLenLocked() >= d.maxMessageQueueSize {
 			if criticalEventTypes[eventName] {
 				d.recordOverflowDiagnosticLocked(item, "preserved_critical")
 				d.messageQueue = append(d.messageQueue, item)
@@ -177,7 +178,7 @@ func (d *EventDispatcher) maybeRecordPressureLocked(eventName string) {
 	if threshold <= 0 {
 		threshold = 1
 	}
-	if len(d.messageQueue) < threshold {
+	if d.messageQueueLenLocked() < threshold {
 		return
 	}
 
@@ -211,7 +212,7 @@ func (d *EventDispatcher) dispatcherDiagnosticDataLocked(
 ) map[string]interface{} {
 	return map[string]interface{}{
 		"state":          state,
-		"queueDepth":     len(d.messageQueue),
+		"queueDepth":     d.messageQueueLenLocked(),
 		"statusCount":    len(d.statusLatest),
 		"maxQueueSize":   d.maxMessageQueueSize,
 		"droppedCount":   d.dropped,
@@ -278,7 +279,7 @@ func (d *EventDispatcher) Diagnostics() (delivered, coalesced, dropped int64) {
 func (d *EventDispatcher) QueueDepth() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return len(d.messageQueue) + len(d.statusLatest)
+	return d.messageQueueLenLocked() + len(d.statusLatest)
 }
 
 // dispatchLoop runs on a dedicated goroutine and delivers events to the callback.
@@ -315,9 +316,12 @@ func (d *EventDispatcher) dequeue() (eventItem, bool) {
 	defer d.mu.Unlock()
 
 	// Non-coalesced events first (FIFO).
-	if len(d.messageQueue) > 0 {
-		item := d.messageQueue[0]
-		d.messageQueue = d.messageQueue[1:]
+	if d.messageQueueLenLocked() > 0 {
+		item := d.messageQueue[d.messageHead]
+		var zero eventItem
+		d.messageQueue[d.messageHead] = zero
+		d.messageHead++
+		d.compactMessageQueueLocked()
 		return item, true
 	}
 
@@ -328,6 +332,31 @@ func (d *EventDispatcher) dequeue() (eventItem, bool) {
 	}
 
 	return eventItem{}, false
+}
+
+func (d *EventDispatcher) messageQueueLenLocked() int {
+	return len(d.messageQueue) - d.messageHead
+}
+
+func (d *EventDispatcher) compactMessageQueueLocked() {
+	if d.messageHead == 0 {
+		return
+	}
+	if d.messageHead == len(d.messageQueue) {
+		d.messageQueue = d.messageQueue[:0]
+		d.messageHead = 0
+		return
+	}
+	if d.messageHead < 64 || d.messageHead*2 < len(d.messageQueue) {
+		return
+	}
+	remaining := copy(d.messageQueue, d.messageQueue[d.messageHead:])
+	var zero eventItem
+	for i := remaining; i < len(d.messageQueue); i++ {
+		d.messageQueue[i] = zero
+	}
+	d.messageQueue = d.messageQueue[:remaining]
+	d.messageHead = 0
 }
 
 // deliver marshals and sends the event to the callback. Panics from the

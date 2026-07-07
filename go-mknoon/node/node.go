@@ -37,19 +37,20 @@ type EventCallback interface {
 
 // Node wraps a go-libp2p host with mknoon protocol handlers.
 type Node struct {
-	mu             sync.RWMutex
-	host           host.Host
-	ctx            context.Context
-	cancel         context.CancelFunc
-	peerId         string
-	isStarted      bool
-	relayAddresses []string
-	relayPeerOrder []peer.ID
-	featureFlags   *FeatureFlags
-	namespace      string
-	eventCallback  EventCallback
-	eventSub       event.Subscription
-	connections    map[string]connectionInfo
+	mu              sync.RWMutex
+	host            host.Host
+	ctx             context.Context
+	cancel          context.CancelFunc
+	peerId          string
+	isStarted       bool
+	startInProgress bool
+	relayAddresses  []string
+	relayPeerOrder  []peer.ID
+	featureFlags    *FeatureFlags
+	namespace       string
+	eventCallback   EventCallback
+	eventSub        event.Subscription
+	connections     map[string]connectionInfo
 	// peerSession is the FDC-12 network.Notifiee that keeps connections[peer] on
 	// the BEST live conn across a DCUtR relay->direct upgrade (and back). It is
 	// registered in Start (after n.host is set) and removed in Stop. nil before
@@ -81,6 +82,7 @@ type Node struct {
 	groupDiscoveryCtx    map[string]context.CancelFunc // per-group rendezvous discovery loop cancellation
 	groupDialBackoff     map[string]groupPeerDialState
 	groupRecoverySem     chan struct{}
+	groupDialSem         chan struct{}
 	pubsubRejectDiagMu   sync.Mutex
 	pubsubRejectDiagLast map[string]time.Time
 	pubsubRejectDiagNow  func() time.Time
@@ -100,6 +102,8 @@ type Node struct {
 	recoverPeerForSendHook             func(host.Host, peer.ID, string, time.Duration) error
 	joinGroupTopicSubscribeHook        func(*pubsub.Topic) (*pubsub.Subscription, error)
 	groupInboxRecoverHook              func(error) error
+	newHost                            func(NodeConfig, []libp2p.Option) (host.Host, error)
+	connectGroupPeerHook               func(peerId string, candidateAddrs []ma.Multiaddr, allowRelayFallback bool) (groupPeerConnectResult, error)
 
 	// Personal rendezvous refresh state.
 	personalRendezvousRefreshCancel context.CancelFunc
@@ -223,8 +227,10 @@ func NewNode() *Node {
 		relayReadyOnce:        &sync.Once{},
 		groupDialBackoff:      make(map[string]groupPeerDialState),
 		groupRecoverySem:      make(chan struct{}, GroupDiscoveryConcurrency),
+		groupDialSem:          make(chan struct{}, GroupDiscoveryConcurrency),
 		pubsubRejectDiagLast:  make(map[string]time.Time),
 		pendingDirectConfirms: make(map[string]chan bool),
+		newHost:               defaultNewHost,
 	}
 }
 
@@ -237,68 +243,99 @@ func New(cb EventCallback) *Node {
 		relayReadyOnce:        &sync.Once{},
 		groupDialBackoff:      make(map[string]groupPeerDialState),
 		groupRecoverySem:      make(chan struct{}, GroupDiscoveryConcurrency),
+		groupDialSem:          make(chan struct{}, GroupDiscoveryConcurrency),
 		pubsubRejectDiagLast:  make(map[string]time.Time),
 		pendingDirectConfirms: make(map[string]chan bool),
+		newHost:               defaultNewHost,
 	}
+}
+
+func defaultNewHost(_ NodeConfig, opts []libp2p.Option) (host.Host, error) {
+	return libp2p.New(opts...)
 }
 
 // Start initializes the libp2p host and connects to the relay.
 // Accepts a NodeConfig and returns the initial NodeState on success.
-func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
+func (n *Node) Start(cfg NodeConfig) (state *NodeState, err error) {
+	initialLockAt := time.Now()
 	n.mu.Lock()
-	defer n.mu.Unlock()
-
-	// FDC-S5 (M2): the write lock acquired here is held (via the deferred
-	// Unlock) across the entire bootstrap below. It is the one real Go-level
-	// serialization point: any concurrent SendMessage/DialPeer/NodeStatus that
-	// takes n.mu.RLock() blocks until Start returns. We stamp the acquire time
-	// here and emit the hold window just before returning, to quantify that
-	// cold-start head-of-line block.
-	startLockAcquiredAt := time.Now()
-
 	if n.isStarted {
+		n.mu.Unlock()
 		return nil, fmt.Errorf("node already started")
 	}
+	if n.startInProgress {
+		n.mu.Unlock()
+		return nil, fmt.Errorf("node start in progress")
+	}
+	n.startInProgress = true
+	hostFactory := n.newHost
+	holePunchTracer := n.holePunchTracerForTests
+	forcePublicReachability := n.forcePublicReachabilityForTests
+	eventCallback := n.eventCallback
+	n.mu.Unlock()
+	lockHeld := time.Since(initialLockAt)
 
-	// Save config for Restart().
-	cfgCopy := cfg
-	cfgCopy.PersonalRendezvousRefreshInterval = cfgCopy.PersonalRendezvousRefreshEvery()
-	n.lastConfig = &cfgCopy
-	// FDC-S1 (observation-only): capture the Dart process-start epoch so the
-	// startup_timing / reservation / circuit emits can report sinceProcessStartMs.
-	n.processStartEpochMs.Store(cfg.ProcessStartEpochMs)
-	flags := cfg.EffectiveFlags()
-	n.featureFlags = &flags
-
-	// Decode private key from hex
-	keyBytes, err := hex.DecodeString(cfg.PrivateKeyHex)
-	if err != nil {
-		return nil, fmt.Errorf("invalid private key hex: %w", err)
+	if hostFactory == nil {
+		hostFactory = defaultNewHost
 	}
 
+	var localHost host.Host
+	var localCancel context.CancelFunc
+	startCommitted := false
+	rollbackStart := func() {
+		if localHost != nil {
+			_ = localHost.Close()
+			localHost = nil
+		}
+		if localCancel != nil {
+			localCancel()
+			localCancel = nil
+		}
+		n.mu.Lock()
+		n.startInProgress = false
+		n.mu.Unlock()
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			if startCommitted {
+				panic(r)
+			}
+			rollbackStart()
+			state = nil
+			err = fmt.Errorf("node start panic: %v", r)
+		}
+	}()
+
+	cfgCopy := cfg
+	cfgCopy.PersonalRendezvousRefreshInterval = cfgCopy.PersonalRendezvousRefreshEvery()
+	flags := cfg.EffectiveFlags()
+
+	keyBytes, err := hex.DecodeString(cfg.PrivateKeyHex)
+	if err != nil {
+		rollbackStart()
+		return nil, fmt.Errorf("invalid private key hex: %w", err)
+	}
 	privKey, err := crypto.UnmarshalEd25519PrivateKey(keyBytes)
 	if err != nil {
+		rollbackStart()
 		return nil, fmt.Errorf("invalid Ed25519 key: %w", err)
 	}
 
-	n.ctx, n.cancel = context.WithCancel(context.Background())
+	localCtx, cancel := context.WithCancel(context.Background())
+	localCancel = cancel
 
-	// Connection manager
 	cm, err := connmgr.NewConnManager(10, 100, connmgr.WithGracePeriod(time.Minute))
 	if err != nil {
+		rollbackStart()
 		return nil, fmt.Errorf("connection manager: %w", err)
 	}
 
-	// Parse relay addresses
 	relayAddresses := cfg.RelayAddresses
 	if relayAddresses == nil {
 		relayAddresses = DefaultRelayAddresses()
 	}
 	relayAddresses = limitRelayAddresses(relayAddresses, flags)
-	n.relayAddresses = relayAddresses
 
-	// Parse relay multiaddrs into AddrInfo for AutoRelay.
-	// Merge addresses for the same peer ID (e.g. WSS + QUIC for the same relay).
 	relayInfoMap := make(map[peer.ID]*peer.AddrInfo)
 	relayPeerOrder := make([]peer.ID, 0, len(relayAddresses))
 	seenRelayPeers := make(map[peer.ID]struct{})
@@ -327,14 +364,7 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	for _, info := range relayInfoMap {
 		relayInfos = append(relayInfos, *info)
 	}
-	n.relayPeerOrder = relayPeerOrder
-	if n.relaySessionMgr != nil {
-		for _, relayPeerID := range relayPeerOrder {
-			n.relaySessionMgr.InitRelayPeer(relayPeerID)
-		}
-	}
 
-	// Build listen addresses (dual-stack: IPv4 + IPv6)
 	listenAddrs := []string{
 		"/ip4/0.0.0.0/udp/0/quic-v1",
 		"/ip4/0.0.0.0/tcp/0/ws",
@@ -354,30 +384,17 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 		}
 	}
 
-	// NET-REL-02 Option A (instrument-only): install a holepunch EventTracer so
-	// DCUtR attempt/success/failure telemetry flows through emitEvent. In
-	// production we default to the real emitting tracer (pure observation — it
-	// changes no connection policy); tests may inject their own collector via
-	// SetHolePunchTracerForTests. n.mu is held here (Lock at top of Start).
 	holeOpts := []holepunch.Option{}
-	if n.holePunchTracerForTests != nil {
-		holeOpts = append(holeOpts, holepunch.WithTracer(n.holePunchTracerForTests))
+	if holePunchTracer != nil {
+		holeOpts = append(holeOpts, holepunch.WithTracer(holePunchTracer))
 	} else {
 		holeOpts = append(holeOpts, holepunch.WithTracer(newNodeHolePunchTracer(n)))
 	}
-	// Reachability stays ForceReachabilityPrivate() in production; the test seam
-	// may swap to ForceReachabilityPublic() for PROTOCOL-feasibility tests only.
-	// FDC-12: EnableDcutrUpgrade ALSO opts into public reachability so the DCUtR
-	// holepuncher can actively upgrade relay->direct. Flag OFF (the default) is
-	// byte-identical to HEAD (ForceReachabilityPrivate, zero punches).
 	reachabilityOpt := libp2p.ForceReachabilityPrivate()
-	if dcutrReachabilityMode(flags.EnableDcutrUpgrade, n.forcePublicReachabilityForTests) == "public" {
+	if dcutrReachabilityMode(flags.EnableDcutrUpgrade, forcePublicReachability) == "public" {
 		reachabilityOpt = libp2p.ForceReachabilityPublic()
 	}
 
-	// Create the libp2p host with AutoRelay for circuit address management.
-	// ForceReachabilityPrivate tells AutoRelay to always seek relay reservations,
-	// which is correct for mobile devices that are always behind NAT.
 	hostOpts := []libp2p.Option{
 		libp2p.Identity(privKey),
 		libp2p.ListenAddrStrings(listenAddrs...),
@@ -391,167 +408,162 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	if len(relayInfos) > 0 {
 		hostOpts = append(hostOpts,
 			libp2p.EnableAutoRelayWithStaticRelays(relayInfos,
-				autorelay.WithBootDelay(0), // Static relays known; skip candidate wait
-				// Phase 3b experiment: lower the retry cadence from the
-				// instrumentation baseline so foreground recovery gets an
-				// earlier AutoRelay retry window after a warm dial.
+				autorelay.WithBootDelay(0),
 				autorelay.WithBackoff(ForegroundAutoRelayRetryCadence),
 				autorelay.WithMinInterval(ForegroundAutoRelayRetryCadence),
 			),
 		)
 	}
 	libp2pStart := time.Now()
-	h, err := libp2p.New(hostOpts...)
+	h, err := hostFactory(cfgCopy, hostOpts)
 	libp2pNewMs := time.Since(libp2pStart).Milliseconds()
 	if err != nil {
+		rollbackStart()
 		return nil, fmt.Errorf("create host: %w", err)
 	}
+	localHost = h
 
-	n.host = h
-	n.peerId = h.ID().String()
+	pubsubStart := time.Now()
+	ps, err := pubsub.NewGossipSub(localCtx, h, pubsub.WithFloodPublish(true))
+	if err != nil {
+		rollbackStart()
+		return nil, fmt.Errorf("init pubsub: %w", err)
+	}
+	pubsubInitMs := time.Since(pubsubStart).Milliseconds()
 
-	// FDC-11: wire the bonsoir-fed LAN-direct dial handler now that n.host is set.
-	// Wired unconditionally (holds the per-peer cooldown state); the actual dial
-	// is gated on EnableLibp2pLANDial inside HandleLANPeerFound.
-	n.lanDialHandler = newLANDialHandler(n)
+	peerSession := newPeerSessionNotifiee(n)
+	h.Network().Notify(peerSession)
+	lanDialHandler := newLANDialHandler(n)
 
-	// FDC-12: register the per-conn session Notifiee so connections[peer] tracks
-	// the BEST live conn across a relay->direct DCUtR upgrade (and back). libp2p
-	// does NOT re-fire EvtPeerConnectednessChanged when a punch opens a SECOND
-	// (direct) conn to an already-connected peer, so the EventBus-driven
-	// watchConnectionEvents path alone would keep pointing at the stale
-	// /p2p-circuit leg. Wired unconditionally (it only corrects an already-opened
-	// conn — EnableDcutrUpgrade controls whether a direct conn is opened at all).
-	// Removed in Stop via StopNotify.
-	n.peerSession = newPeerSessionNotifiee(n)
-	h.Network().Notify(n.peerSession)
-
-	// Log announced addresses (post-filter).
 	announceAddrs := h.Addrs()
 	log.Printf("[NODE] Announcing %d addresses (loopback/link-local filtered out)", len(announceAddrs))
 	for _, a := range announceAddrs {
 		log.Printf("[NODE]   %s", a.String())
 	}
 
-	// Initialize PubSub (GossipSub) for group messaging.
-	pubsubStart := time.Now()
-	if err := n.initPubSub(); err != nil {
-		h.Close()
-		return nil, fmt.Errorf("init pubsub: %w", err)
-	}
-	pubsubInitMs := time.Since(pubsubStart).Milliseconds()
-
-	n.namespace = cfg.Namespace
-	if n.namespace == "" {
-		n.namespace = RendezvousPrefix + n.peerId
+	namespace := cfg.Namespace
+	if namespace == "" {
+		namespace = RendezvousPrefix + h.ID().String()
 	}
 
-	// Register chat message handler
 	h.SetStreamHandler(ChatProtocol, n.handleIncomingMessage)
 	h.SetStreamHandler(GroupValidationFeedbackProtocol, n.handleGroupValidationFeedback)
-
-	// FDC-15: register the peer-direct LAN media handler only when the flag is on
-	// (additive byte lane over FDC-11's direct conn; default-off until D1 device-
-	// proven). When off, the node accepts no MediaLANProtocol stream and the lane
-	// is inert end-to-end (the Dart send leg is gated by the same flag).
 	if flags.EnableLibp2pLANMedia {
 		h.SetStreamHandler(MediaLANProtocol, n.handleIncomingLANMedia)
 	}
 
-	// Subscribe to connection and address events
-	sub, err := h.EventBus().Subscribe([]interface{}{
+	var sub event.Subscription
+	sub, err = h.EventBus().Subscribe([]interface{}{
 		new(event.EvtPeerConnectednessChanged),
 		new(event.EvtLocalAddressesUpdated),
 	})
 	if err != nil {
 		log.Printf("[NODE] Failed to subscribe to events: %v", err)
-	} else {
-		n.eventSub = sub
-		go n.watchConnectionEvents(sub)
 	}
 
+	relayReady := make(chan struct{})
+	relayReadyOnce := &sync.Once{}
+	var dispatcher *EventDispatcher
+	if eventCallback != nil {
+		dispatcher = NewEventDispatcher(eventCallback, 1024)
+	}
+
+	commitLockAt := time.Now()
+	n.mu.Lock()
+	n.lastConfig = &cfgCopy
+	n.processStartEpochMs.Store(cfg.ProcessStartEpochMs)
+	n.featureFlags = &flags
+	n.ctx = localCtx
+	n.cancel = cancel
+	n.relayAddresses = relayAddresses
+	n.relayPeerOrder = relayPeerOrder
+	if n.relaySessionMgr != nil {
+		for _, relayPeerID := range relayPeerOrder {
+			n.relaySessionMgr.InitRelayPeer(relayPeerID)
+		}
+	}
+	n.host = h
+	n.peerId = h.ID().String()
+	n.lanDialHandler = lanDialHandler
+	n.peerSession = peerSession
+	n.pubsub = ps
+	n.groupTopics = make(map[string]*pubsub.Topic)
+	n.groupSubs = make(map[string]*pubsub.Subscription)
+	n.groupConfigs = make(map[string]*GroupConfig)
+	n.groupKeys = make(map[string]*GroupKeyInfo)
+	n.groupSubCtx = make(map[string]context.CancelFunc)
+	n.groupDiscoveryCtx = make(map[string]context.CancelFunc)
+	n.namespace = namespace
+	n.eventSub = sub
 	n.isStarted = true
 	n.startedAt = time.Now()
-	n.relayReady = make(chan struct{})
-	n.relayReadyOnce = &sync.Once{}
+	n.relayReady = relayReady
+	n.relayReadyOnce = relayReadyOnce
 	n.personalRendezvousRegistering.Store(false)
+	if n.eventDispatcher != nil {
+		n.eventDispatcher.Stop()
+	}
+	n.eventDispatcher = dispatcher
+	n.startInProgress = false
+	state = n.stateLocked()
+	n.mu.Unlock()
+	startCommitted = true
+	lockHeld += time.Since(commitLockAt)
 
-	// Phase 4: Initialize event dispatcher for async delivery.
-	if n.eventCallback != nil && n.eventDispatcher == nil {
-		n.eventDispatcher = NewEventDispatcher(n.eventCallback, 1024)
+	localHost = nil
+	localCancel = nil
+
+	if sub != nil {
+		go n.watchConnectionEvents(sub)
 	}
 
 	n.emitEvent("node:startup_timing", map[string]interface{}{
 		"phase":               "host_ready",
 		"libp2pNewMs":         libp2pNewMs,
 		"pubsubInitMs":        pubsubInitMs,
-		"sinceProcessStartMs": n.sinceProcessStartMs(), // FDC-S1 (a)
+		"sinceProcessStartMs": n.sinceProcessStartMs(),
 	})
-
-	// FDC-07: emit the dispatch-time reserve anchor BEFORE kicking off the
-	// relay-warm / auto-register goroutines, so it is ordered strictly ahead of
-	// the completion-time relay_warm_done below. Observability only (S1: the
-	// dispatch is already as early as Start allows).
 	n.emitReserveDispatchAnchor()
 
-	// Warm relay connections concurrently in background.
-	// Each relayInfo may contain multiple addresses (e.g. WSS + QUIC) for
-	// the same peer — host.Connect() tries all addresses internally.
 	relayWarmStart := time.Now()
-	relayReadyCh := n.relayReady
-	relayReadyOnce := n.relayReadyOnce
 	go func() {
 		for _, info := range relayInfos {
 			go func(ri peer.AddrInfo) {
 				if err := n.warmRelayConnectionForStart(ri); err != nil {
 					log.Printf("[NODE] relay dial FAILED (%s): %v", ri.ID.String()[:min(20, len(ri.ID.String()))], err)
 				} else {
-					relayReadyOnce.Do(func() { close(relayReadyCh) })
+					relayReadyOnce.Do(func() { close(relayReady) })
 				}
 			}(info)
 		}
 	}()
 
-	// Emit relay_warm_done when first relay connection succeeds.
-	// Capture channel and context locally so a Stop/Start cycle doesn't
-	// cause this goroutine to reference the next cycle's channel.
 	if len(relayInfos) > 0 {
-		relayReadyCh := n.relayReady
-		ctx := n.ctx
-		go func() {
+		go func(ctx context.Context) {
 			select {
-			case <-relayReadyCh:
+			case <-relayReady:
 				n.emitEvent("node:startup_timing", map[string]interface{}{
 					"phase":               "relay_warm_done",
 					"relayWarmMs":         time.Since(relayWarmStart).Milliseconds(),
 					"relaysAttempted":     len(relayInfos),
-					"sinceProcessStartMs": n.sinceProcessStartMs(), // FDC-S1 (b) sub-phase
+					"sinceProcessStartMs": n.sinceProcessStartMs(),
 				})
 			case <-ctx.Done():
-				// Node stopped before relay connected — no event
 			}
-		}()
+		}(localCtx)
 	}
 
-	// Auto-register as soon as the first relay path yields a discoverable
-	// circuit address. Do not wait for slower warm attempts to settle.
 	if cfg.AutoRegister {
 		go n.autoRegisterPersonalNamespaceForStart()
 	}
 
-	// FDC-S5 (M2): emit the cold-start write-lock hold window. Emitted while the
-	// lock is still held (the deferred Unlock fires on return), so the measured
-	// window covers the whole bootstrap a concurrent RLock waiter would block on.
-	// Surfaced through the existing node:startup_timing raw passthrough, so no
-	// Dart-side change is required to read it on the device M2 run. emitEvent and
-	// the two helpers below never re-acquire n.mu, so this is deadlock-safe.
 	n.emitEvent("node:startup_timing", map[string]interface{}{
 		"phase":               "start_lock_window",
-		"lockHoldMs":          time.Since(startLockAcquiredAt).Milliseconds(),
+		"lockHoldMs":          lockHeld.Milliseconds(),
 		"sinceProcessStartMs": n.sinceProcessStartMs(),
 	})
 
-	return n.stateLocked(), nil
+	return state, nil
 }
 
 // Stop shuts down the libp2p host.
@@ -559,6 +571,9 @@ func (n *Node) Stop() error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
+	if n.startInProgress {
+		return fmt.Errorf("node start in progress")
+	}
 	if !n.isStarted {
 		return nil
 	}
@@ -630,6 +645,7 @@ func (n *Node) Stop() error {
 	n.lanMediaSeenIdsMu.Unlock()
 	n.groupDialBackoff = make(map[string]groupPeerDialState)
 	n.groupRecoverySem = make(chan struct{}, GroupDiscoveryConcurrency)
+	n.groupDialSem = make(chan struct{}, GroupDiscoveryConcurrency)
 	n.relayReadyOnce = &sync.Once{} // reset so next Start() can use it
 	n.featureFlags = nil
 	n.personalRendezvousRegistering.Store(false)
@@ -914,151 +930,11 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 		reservationWinnerPeer := ""
 		foregroundRecoveryPath := "background_fallback"
 
-		// Build relay AddrInfos for warm connection.
-		if len(relayAddrs) == 0 {
-			relayAddrs = DefaultRelayAddresses()
-		}
-
-		relayInfoMap := make(map[peer.ID]*peer.AddrInfo)
-		for _, addr := range relayAddrs {
-			maddr, err := ma.NewMultiaddr(addr)
-			if err != nil {
-				continue
-			}
-			info, err := peer.AddrInfoFromP2pAddr(maddr)
-			if err != nil {
-				continue
-			}
-			if existing, ok := relayInfoMap[info.ID]; ok {
-				existing.Addrs = append(existing.Addrs, info.Addrs...)
-			} else {
-				relayInfoMap[info.ID] = info
-			}
-		}
-
-		warmInfos := make([]peer.AddrInfo, 0, len(relayInfoMap))
-		for _, relayPeerID := range relayPeerOrder {
-			if info, ok := relayInfoMap[relayPeerID]; ok {
-				warmInfos = append(warmInfos, *info)
-			}
-		}
-		if len(warmInfos) == 0 {
-			for _, info := range relayInfoMap {
-				warmInfos = append(warmInfos, *info)
-			}
-		}
-
-		// Attempt to reconnect to each relay peer in parallel so one slow dial
-		// does not serialize the whole foreground recovery attempt.
-		warmStart := time.Now()
-		relayWarmParallelism = len(warmInfos)
-		type relayWarmAttempt struct {
-			peerID peer.ID
-			err    error
-		}
-		attempts := make(chan relayWarmAttempt, max(1, relayWarmParallelism))
-		var warmWG sync.WaitGroup
-		for _, info := range warmInfos {
-			info := info
-			warmWG.Add(1)
-			go func() {
-				defer warmWG.Done()
-				attempts <- relayWarmAttempt{
-					peerID: info.ID,
-					err:    n.warmRelayConnectionWithTimeout(info, ForegroundRelayDialTimeout),
-				}
-			}()
-		}
-		warmWG.Wait()
-		close(attempts)
-		relayWarmMs = time.Since(warmStart).Milliseconds()
-
-		warmSucceeded := false
-		var lastWarmErr error
-		successfulWarmInfos := make([]peer.AddrInfo, 0, len(warmInfos))
-		for attempt := range attempts {
-			peerLabel := attempt.peerID.String()[:min(20, len(attempt.peerID.String()))]
-			if attempt.err != nil {
-				log.Printf("[NODE] RefreshRelaySession: warm %s failed: %v", peerLabel, attempt.err)
-				lastWarmErr = attempt.err
-				continue
-			}
-			warmSucceeded = true
-			if info, ok := relayInfoMap[attempt.peerID]; ok {
-				successfulWarmInfos = append(successfulWarmInfos, *info)
-			}
-			log.Printf("[NODE] RefreshRelaySession: warm %s success", peerLabel)
-		}
-
-		reserveSucceeded := false
-		var lastReserveErr error
-		if warmSucceeded && len(successfulWarmInfos) > 0 {
-			reserveStart := time.Now()
-			type reserveAttempt struct {
-				peerID      peer.ID
-				err         error
-				reservation *relayclient.Reservation
-			}
-			reserveAttempts := make(chan reserveAttempt, len(successfulWarmInfos))
-			var reserveWG sync.WaitGroup
-			for _, info := range successfulWarmInfos {
-				info := info
-				reserveWG.Add(1)
-				go func() {
-					defer reserveWG.Done()
-					reserveCtx, cancel := context.WithTimeout(n.ctx, ForegroundRelayReserveTimeout)
-					defer cancel()
-					res, err := n.reserveRelaySlot(reserveCtx, h, info)
-					reserveAttempts <- reserveAttempt{
-						peerID:      info.ID,
-						err:         err,
-						reservation: res,
-					}
-				}()
-			}
-			reserveWG.Wait()
-			close(reserveAttempts)
-			reserveRpcMs = time.Since(reserveStart).Milliseconds()
-
-			for attempt := range reserveAttempts {
-				peerLabel := attempt.peerID.String()[:min(20, len(attempt.peerID.String()))]
-				if attempt.err != nil {
-					lastReserveErr = attempt.err
-					log.Printf("[NODE] RefreshRelaySession: reserve %s failed: %v", peerLabel, attempt.err)
-					if mgr != nil {
-						mgr.OnRequestFailed(attempt.peerID, attempt.err)
-					}
-					n.emitEvent("relay:reservation_timing", map[string]interface{}{
-						"elapsedMs":           reserveRpcMs,
-						"outcome":             "failed",
-						"relayId":             peerLabel,
-						"error":               attempt.err.Error(),
-						"sinceProcessStartMs": n.sinceProcessStartMs(), // FDC-S1 (b)
-					})
-					continue
-				}
-				reserveSucceeded = true
-				reservationPath = "explicit_reserve"
-				reservationWinnerPeer = attempt.peerID.String()
-				// 189 reservation-truth: record the explicit reservation with
-				// its own expiration so the session survives address syncs
-				// that see no advertised /p2p-circuit addr.
-				if mgr != nil {
-					var expiry time.Time
-					if attempt.reservation != nil {
-						expiry = attempt.reservation.Expiration
-					}
-					mgr.OnManualReservationOpened(attempt.peerID, expiry)
-				}
-				log.Printf("[NODE] RefreshRelaySession: reserve %s success", peerLabel)
-				n.emitEvent("relay:reservation_timing", map[string]interface{}{
-					"elapsedMs":           reserveRpcMs,
-					"outcome":             "success",
-					"relayId":             peerLabel,
-					"sinceProcessStartMs": n.sinceProcessStartMs(), // FDC-S1 (b)
-				})
-			}
-		}
+		warmInfos, relayInfoMap := relayWarmPlan(relayAddrs, relayPeerOrder)
+		warmSucceeded, lastWarmErr, successfulWarmInfos, relayWarmParallelism, relayWarmMs :=
+			n.warmRelayInfos(warmInfos, relayInfoMap)
+		reserveSucceeded, lastReserveErr, reserveRpcMs, reservationPath, reservationWinnerPeer :=
+			n.reserveWarmedRelays(h, mgr, successfulWarmInfos, reservationPath, reservationWinnerPeer)
 
 		// Give the faster foreground path a short chance to win first, then keep
 		// the existing long wait budget as fallback safety behavior.
@@ -1144,6 +1020,162 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 	return result
 }
 
+func relayWarmPlan(relayAddrs []string, relayPeerOrder []peer.ID) ([]peer.AddrInfo, map[peer.ID]*peer.AddrInfo) {
+	if len(relayAddrs) == 0 {
+		relayAddrs = DefaultRelayAddresses()
+	}
+	relayInfoMap := make(map[peer.ID]*peer.AddrInfo)
+	for _, addr := range relayAddrs {
+		maddr, err := ma.NewMultiaddr(addr)
+		if err != nil {
+			continue
+		}
+		info, err := peer.AddrInfoFromP2pAddr(maddr)
+		if err != nil {
+			continue
+		}
+		if existing, ok := relayInfoMap[info.ID]; ok {
+			existing.Addrs = append(existing.Addrs, info.Addrs...)
+		} else {
+			relayInfoMap[info.ID] = info
+		}
+	}
+	warmInfos := make([]peer.AddrInfo, 0, len(relayInfoMap))
+	for _, relayPeerID := range relayPeerOrder {
+		if info, ok := relayInfoMap[relayPeerID]; ok {
+			warmInfos = append(warmInfos, *info)
+		}
+	}
+	if len(warmInfos) == 0 {
+		for _, info := range relayInfoMap {
+			warmInfos = append(warmInfos, *info)
+		}
+	}
+	return warmInfos, relayInfoMap
+}
+
+type relayWarmAttempt struct {
+	peerID peer.ID
+	err    error
+}
+
+func (n *Node) warmRelayInfos(
+	warmInfos []peer.AddrInfo,
+	relayInfoMap map[peer.ID]*peer.AddrInfo,
+) (bool, error, []peer.AddrInfo, int, int64) {
+	warmStart := time.Now()
+	parallelism := len(warmInfos)
+	attempts := make(chan relayWarmAttempt, max(1, parallelism))
+	var warmWG sync.WaitGroup
+	for _, info := range warmInfos {
+		info := info
+		warmWG.Add(1)
+		go func() {
+			defer warmWG.Done()
+			attempts <- relayWarmAttempt{
+				peerID: info.ID,
+				err:    n.warmRelayConnectionWithTimeout(info, ForegroundRelayDialTimeout),
+			}
+		}()
+	}
+	warmWG.Wait()
+	close(attempts)
+
+	warmSucceeded := false
+	var lastWarmErr error
+	successfulWarmInfos := make([]peer.AddrInfo, 0, len(warmInfos))
+	for attempt := range attempts {
+		peerLabel := attempt.peerID.String()[:min(20, len(attempt.peerID.String()))]
+		if attempt.err != nil {
+			log.Printf("[NODE] RefreshRelaySession: warm %s failed: %v", peerLabel, attempt.err)
+			lastWarmErr = attempt.err
+			continue
+		}
+		warmSucceeded = true
+		if info, ok := relayInfoMap[attempt.peerID]; ok {
+			successfulWarmInfos = append(successfulWarmInfos, *info)
+		}
+		log.Printf("[NODE] RefreshRelaySession: warm %s success", peerLabel)
+	}
+	return warmSucceeded, lastWarmErr, successfulWarmInfos, parallelism, time.Since(warmStart).Milliseconds()
+}
+
+type reserveAttempt struct {
+	peerID      peer.ID
+	err         error
+	reservation *relayclient.Reservation
+}
+
+func (n *Node) reserveWarmedRelays(
+	h host.Host,
+	mgr *RelaySessionManager,
+	successfulWarmInfos []peer.AddrInfo,
+	reservationPath string,
+	reservationWinnerPeer string,
+) (bool, error, int64, string, string) {
+	if len(successfulWarmInfos) == 0 {
+		return false, nil, 0, reservationPath, reservationWinnerPeer
+	}
+	reserveStart := time.Now()
+	reserveAttempts := make(chan reserveAttempt, len(successfulWarmInfos))
+	var reserveWG sync.WaitGroup
+	for _, info := range successfulWarmInfos {
+		info := info
+		reserveWG.Add(1)
+		go func() {
+			defer reserveWG.Done()
+			reserveCtx, cancel := context.WithTimeout(n.ctx, ForegroundRelayReserveTimeout)
+			defer cancel()
+			res, err := n.reserveRelaySlot(reserveCtx, h, info)
+			reserveAttempts <- reserveAttempt{peerID: info.ID, err: err, reservation: res}
+		}()
+	}
+	reserveWG.Wait()
+	close(reserveAttempts)
+
+	reserveSucceeded := false
+	var lastReserveErr error
+	reserveRpcMs := time.Since(reserveStart).Milliseconds()
+	for attempt := range reserveAttempts {
+		peerLabel := attempt.peerID.String()[:min(20, len(attempt.peerID.String()))]
+		if attempt.err != nil {
+			lastReserveErr = attempt.err
+			log.Printf("[NODE] RefreshRelaySession: reserve %s failed: %v", peerLabel, attempt.err)
+			if mgr != nil {
+				mgr.OnRequestFailed(attempt.peerID, attempt.err)
+			}
+			n.emitRelayReservationTiming(reserveRpcMs, "failed", peerLabel, attempt.err)
+			continue
+		}
+		reserveSucceeded = true
+		reservationPath = "explicit_reserve"
+		reservationWinnerPeer = attempt.peerID.String()
+		if mgr != nil {
+			var expiry time.Time
+			if attempt.reservation != nil {
+				expiry = attempt.reservation.Expiration
+			}
+			mgr.OnManualReservationOpened(attempt.peerID, expiry)
+		}
+		log.Printf("[NODE] RefreshRelaySession: reserve %s success", peerLabel)
+		n.emitRelayReservationTiming(reserveRpcMs, "success", peerLabel, nil)
+	}
+	return reserveSucceeded, lastReserveErr, reserveRpcMs, reservationPath, reservationWinnerPeer
+}
+
+func (n *Node) emitRelayReservationTiming(elapsedMs int64, outcome string, relayID string, err error) {
+	data := map[string]interface{}{
+		"elapsedMs":           elapsedMs,
+		"outcome":             outcome,
+		"relayId":             relayID,
+		"sinceProcessStartMs": n.sinceProcessStartMs(),
+	}
+	if err != nil {
+		data["error"] = err.Error()
+	}
+	n.emitEvent("relay:reservation_timing", data)
+}
+
 func (n *Node) closeRelayReadyIfCurrent(expectedHost host.Host, expectedReady chan struct{}, expectedOnce *sync.Once) {
 	if expectedHost == nil || expectedReady == nil || expectedOnce == nil {
 		return
@@ -1170,6 +1202,10 @@ func (n *Node) closeRelayReadyIfCurrent(expectedHost host.Host, expectedReady ch
 // The return value now includes structured recovery fields.
 func (n *Node) ReconnectRelays() (*RecoveryResult, error) {
 	n.mu.RLock()
+	if n.startInProgress {
+		n.mu.RUnlock()
+		return nil, fmt.Errorf("node start in progress")
+	}
 	mgr := n.relaySessionMgr
 	n.mu.RUnlock()
 

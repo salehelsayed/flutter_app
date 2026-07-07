@@ -939,6 +939,33 @@ func TestGP006PublishWithPartialPeersRefreshesKnownMembersBeforeSend(t *testing.
 		t.Fatalf("timed out waiting for group %s discovery step %s peer %s after publish; events=%v", groupID, step, peerID, nodeACapture.snapshot()[senderBaseline:])
 		return nil
 	}
+	waitDirectDialSummaryAfter := func() map[string]interface{} {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) {
+			for _, raw := range nodeACapture.snapshot()[senderBaseline:] {
+				var payload map[string]interface{}
+				if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+					continue
+				}
+				if payload["event"] != "group:discovery" {
+					continue
+				}
+				data, _ := payload["data"].(map[string]interface{})
+				if data["groupId"] != groupID || data["step"] != "direct_dial" {
+					continue
+				}
+				membersDialed, dialedOK := data["membersDialed"].(float64)
+				totalMembers, totalOK := data["totalMembers"].(float64)
+				if dialedOK && totalOK && int(membersDialed) >= 1 && int(totalMembers) == 2 {
+					return data
+				}
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		t.Fatalf("timed out waiting for publish direct_dial summary; events=%v", nodeACapture.snapshot()[senderBaseline:])
+		return nil
+	}
 	assertNumericAtLeast := func(data map[string]interface{}, field string, wantMin int) {
 		t.Helper()
 		got, ok := data[field].(float64)
@@ -965,7 +992,7 @@ func TestGP006PublishWithPartialPeersRefreshesKnownMembersBeforeSend(t *testing.
 	if successData["path"] != "direct" {
 		t.Fatalf("known_member_dial_success path = %v, want direct", successData["path"])
 	}
-	directData := waitDiscoveryStepAfter("direct_dial")
+	directData := waitDirectDialSummaryAfter()
 	assertNumericAtLeast(directData, "membersDialed", 1)
 	assertNumericEquals(directData, "totalMembers", 2)
 	doneData := waitDiscoveryStepAfter("publish_peer_refresh_done")
@@ -6161,8 +6188,11 @@ func TestGP009GroupDiscoveryRegistersAndDiscoversAfterRelayReady(t *testing.T) {
 		return data["groupId"] == groupId &&
 			data["step"] == "known_member_dial_success" &&
 			data["peerId"] == nodeBShort &&
-			data["path"] == "relay"
+			data["path"] == "direct"
 	}, 5*time.Second)
+	if got := relayDialCalls.Load(); got == 0 {
+		t.Fatal("relay-assisted discovery dial did not run after relayReady closed")
+	}
 	waitForCollectedEventData(t, nodeACapture, "group:discovery", func(data map[string]interface{}) bool {
 		return data["groupId"] == groupId && data["step"] == "registered"
 	}, 8*time.Second)
@@ -6268,10 +6298,10 @@ func TestGR014GroupDiscoveryResumesAfterRelayReadyClosesLate(t *testing.T) {
 		return data["groupId"] == groupId &&
 			data["step"] == "known_member_dial_success" &&
 			data["peerId"] == nodeBShort &&
-			data["path"] == "relay"
+			data["path"] == "direct"
 	}, 5*time.Second)
-	if dialSuccess["attemptedDirect"] != false {
-		t.Fatalf("GR-014 relay-ready recovery should not use preseeded direct addrs, got attemptedDirect=%v", dialSuccess["attemptedDirect"])
+	if dialSuccess["attemptedDirect"] != true {
+		t.Fatalf("GR-014 relay-ready recovery should promote available direct addrs, got attemptedDirect=%v", dialSuccess["attemptedDirect"])
 	}
 	if got := relayDialCalls.Load(); got == 0 {
 		t.Fatal("relay-assisted discovery dial did not run after relayReady closed")

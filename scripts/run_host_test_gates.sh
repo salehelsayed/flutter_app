@@ -103,6 +103,14 @@ readonly GO_BRIDGE_FEATUREFLAGS_RUN='PartialFeatureFlags'
 # (Go 1.26.x quic-go panic — see go.mod).
 readonly GO_NODE_WAKETOKEN_TEST="go-mknoon/node/inbox_wake_token_test.go"
 readonly GO_NODE_WAKETOKEN_RUN='WakeToken'
+# 220 (Go libp2p cleanup / fast-path refactor): host-only source-shape,
+# startup lifecycle, bounded group/relay fan-out, dispatcher queue shape, and
+# bridge entrypoint helper contracts. GOTOOLCHAIN-pinned for the documented
+# Go 1.26.x quic-go incompatibility.
+readonly GO_NODE_LIBP2P_REFACTOR_TEST="go-mknoon/node/libp2p_refactor_contract_test.go"
+readonly GO_NODE_LIBP2P_REFACTOR_RUN='TestGoLibp2pProductionShapeBudget|TestStartDoesNotHoldNodeLockAcrossHostCreation|TestStartRejectsConcurrentStartWhileHostCreationInProgress|TestStartHostCreationFailureRollsBackPublishedState|TestStartHostCreationPanicClearsInProgressAndAllowsRetry|TestStopDuringStartInProgressIsExplicitAndNonMutating|TestReconnectRelaysDuringStartInProgressFailsFast|TestGroupDialKnownMembersRunsBoundedParallel|TestDiscoverAndConnectGroupPeersRunsBoundedParallel|TestRunGroupDiscoveryCycleBoundsGlobalGroupDialConcurrency|TestRelaySelectorFanOutRunsDistinctRelaysInParallel|TestRelaySelectorFanOutAllFailPreservesAggregateError'
+readonly GO_BRIDGE_ENTRYPOINT_REFACTOR_TEST="go-mknoon/bridge/bridge_entrypoint_contract_test.go"
+readonly GO_BRIDGE_ENTRYPOINT_REFACTOR_RUN='TestBridgeExportedHandlersUseSharedEntrypoint|TestBridgeGroupPublishContractsPreservedAfterHelperExtraction'
 
 usage() {
   cat <<'EOF'
@@ -210,6 +218,8 @@ case "$scope" in
       printf '%s\n' "$GO_NODE_FEATUREFLAGS_TEST"
       printf '%s\n' "$GO_BRIDGE_FEATUREFLAGS_TEST"
       printf '%s\n' "$GO_NODE_WAKETOKEN_TEST"
+      printf '%s\n' "$GO_NODE_LIBP2P_REFACTOR_TEST"
+      printf '%s\n' "$GO_BRIDGE_ENTRYPOINT_REFACTOR_TEST"
     } >"$plan_file"
     ;;
   feature-host-all)
@@ -300,6 +310,14 @@ is_go_node_waketoken_test() {
   [ "$1" = "$GO_NODE_WAKETOKEN_TEST" ]
 }
 
+is_go_node_libp2p_refactor_test() {
+  [ "$1" = "$GO_NODE_LIBP2P_REFACTOR_TEST" ]
+}
+
+is_go_bridge_entrypoint_refactor_test() {
+  [ "$1" = "$GO_BRIDGE_ENTRYPOINT_REFACTOR_TEST" ]
+}
+
 readonly GO_NODE_ADDR_VISIBILITY_RUN='AnnouncedAddrsSurvive|SignedPeerRecord|IdentifyLearnedAddr|InterfaceChangeUpdates|Fdc11PortMining|NoEnumerationErrorSpam|NotSuppressed|HolePunchInputAddrs|DoesNotLeakNonRoutable'
 
 print_command_for_path() {
@@ -326,6 +344,14 @@ print_command_for_path() {
   fi
   if is_go_node_waketoken_test "$path"; then
     printf "(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run '%s' -count=1)" "$GO_NODE_WAKETOKEN_RUN"
+    return
+  fi
+  if is_go_node_libp2p_refactor_test "$path"; then
+    printf "(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run '%s' -count=1)" "$GO_NODE_LIBP2P_REFACTOR_RUN"
+    return
+  fi
+  if is_go_bridge_entrypoint_refactor_test "$path"; then
+    printf "(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge -run '%s' -count=1)" "$GO_BRIDGE_ENTRYPOINT_REFACTOR_RUN"
     return
   fi
   printf 'flutter test %s' "$(quote_for_display "$path")"
@@ -355,6 +381,14 @@ run_path() {
   fi
   if is_go_node_waketoken_test "$path"; then
     (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run "$GO_NODE_WAKETOKEN_RUN" -count=1)
+    return
+  fi
+  if is_go_node_libp2p_refactor_test "$path"; then
+    (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run "$GO_NODE_LIBP2P_REFACTOR_RUN" -count=1)
+    return
+  fi
+  if is_go_bridge_entrypoint_refactor_test "$path"; then
+    (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge -run "$GO_BRIDGE_ENTRYPOINT_REFACTOR_RUN" -count=1)
     return
   fi
   flutter test "$path"

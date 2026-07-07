@@ -126,33 +126,59 @@ func (rs *RelaySelector) FanOut(fn func(relay RelayInfo) error) error {
 		return fmt.Errorf("no relays configured")
 	}
 
-	var (
-		lastErr      error
-		successCount int
-	)
-	for i, relay := range relays {
-		candidates := relayInfoAttemptCandidates(relay)
-		var relaySucceeded bool
-		for j, candidate := range candidates {
-			err := fn(candidate)
-			if err == nil {
-				relaySucceeded = true
-				break
-			}
-			lastErr = err
-			log.Printf("[RELAY_SELECTOR] Relay %d/%d addr %d/%d (%s) failed: %v",
-				i+1, len(relays), j+1, len(candidates), relay.ID.String()[:min(20, len(relay.ID.String()))], err)
-		}
-		if relaySucceeded {
-			successCount++
-		}
+	type relayJob struct {
+		index int
+		relay RelayInfo
 	}
+	workers := min(len(relays), 3)
+	jobs := make(chan relayJob)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var lastErr error
+	successCount := 0
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range jobs {
+				if err := fanOutRelay(job.relay, job.index, len(relays), fn); err != nil {
+					mu.Lock()
+					lastErr = err
+					mu.Unlock()
+					continue
+				}
+				mu.Lock()
+				successCount++
+				mu.Unlock()
+			}
+		}()
+	}
+	for i, relay := range relays {
+		jobs <- relayJob{index: i, relay: relay}
+	}
+	close(jobs)
+	wg.Wait()
 
 	if successCount > 0 {
 		return nil
 	}
 
 	return fmt.Errorf("all %d relays failed, last error: %w", len(relays), lastErr)
+}
+
+func fanOutRelay(relay RelayInfo, index int, relayCount int, fn func(relay RelayInfo) error) error {
+	candidates := relayInfoAttemptCandidates(relay)
+	var lastErr error
+	for j, candidate := range candidates {
+		err := fn(candidate)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		log.Printf("[RELAY_SELECTOR] Relay %d/%d addr %d/%d (%s) failed: %v",
+			index+1, relayCount, j+1, len(candidates), relay.ID.String()[:min(20, len(relay.ID.String()))], err)
+	}
+	return lastErr
 }
 
 // ForEachWithResult calls fn for each relay address in configured order. If fn

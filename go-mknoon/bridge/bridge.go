@@ -548,68 +548,46 @@ func Initialize(cb EventCallback) {
 // Input JSON: { "privateKeyHex": "...", "relayAddresses": [...], "namespace": "...", "autoRegister": true, "listenPort": 0, "keyRotationGracePeriodMs": 0 }
 // Returns JSON: { "ok": true, "peerId": "...", "isStarted": true, "addresses": [...], "connections": 0 }
 func StartNode(paramsJSON string) (result string) {
-	defer func() {
-		if r := recover(); r != nil {
-			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+	return withBridgeNode(func(n *node.Node) string {
+		var params struct {
+			PrivateKeyHex            string          `json:"privateKeyHex"`
+			RelayAddresses           []string        `json:"relayAddresses"`
+			Namespace                string          `json:"namespace"`
+			AutoRegister             bool            `json:"autoRegister"`
+			ListenPort               int             `json:"listenPort"`
+			KeyRotationGracePeriodMs int64           `json:"keyRotationGracePeriodMs"`
+			FeatureFlags             map[string]bool `json:"featureFlags"`
+			ProcessStartEpochMs      int64           `json:"processStartEpochMs"`
 		}
-	}()
+		if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+			return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+		}
+		if params.PrivateKeyHex == "" {
+			return errJSON("INVALID_INPUT", "missing privateKeyHex")
+		}
+		if params.KeyRotationGracePeriodMs < 0 {
+			return errJSON("INVALID_INPUT", "keyRotationGracePeriodMs must be >= 0")
+		}
 
-	nodeMu.Lock()
-	n := singletonNode
-	nodeMu.Unlock()
+		cfg := node.NodeConfig{
+			PrivateKeyHex:          params.PrivateKeyHex,
+			RelayAddresses:         params.RelayAddresses,
+			Namespace:              params.Namespace,
+			AutoRegister:           params.AutoRegister,
+			ListenPort:             params.ListenPort,
+			KeyRotationGracePeriod: time.Duration(params.KeyRotationGracePeriodMs) * time.Millisecond,
+			ProcessStartEpochMs:    params.ProcessStartEpochMs,
+		}
+		if params.FeatureFlags != nil {
+			merged := node.MergeFeatureFlagsOverDefaults(params.FeatureFlags)
+			cfg.FeatureFlags = &merged
+		}
 
-	if n == nil {
-		return errJSON("NOT_INITIALIZED", "call Initialize first")
-	}
-
-	var params struct {
-		PrivateKeyHex            string          `json:"privateKeyHex"`
-		RelayAddresses           []string        `json:"relayAddresses"`
-		Namespace                string          `json:"namespace"`
-		AutoRegister             bool            `json:"autoRegister"`
-		ListenPort               int             `json:"listenPort"`
-		KeyRotationGracePeriodMs int64           `json:"keyRotationGracePeriodMs"`
-		FeatureFlags             map[string]bool `json:"featureFlags"`        // 219: decode as a raw map so key-presence survives to the merge seam
-		ProcessStartEpochMs      int64           `json:"processStartEpochMs"` // FDC-S1: Dart process-start epoch (observation-only)
-	}
-	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
-		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
-	}
-	if params.PrivateKeyHex == "" {
-		return errJSON("INVALID_INPUT", "missing privateKeyHex")
-	}
-	if params.KeyRotationGracePeriodMs < 0 {
-		return errJSON("INVALID_INPUT", "keyRotationGracePeriodMs must be >= 0")
-	}
-
-	cfg := node.NodeConfig{
-		PrivateKeyHex:          params.PrivateKeyHex,
-		RelayAddresses:         params.RelayAddresses,
-		Namespace:              params.Namespace,
-		AutoRegister:           params.AutoRegister,
-		ListenPort:             params.ListenPort,
-		KeyRotationGracePeriod: time.Duration(params.KeyRotationGracePeriodMs) * time.Millisecond,
-		ProcessStartEpochMs:    params.ProcessStartEpochMs,
-	}
-	// 219: merge the partial Dart featureFlags map over the Go defaults at the
-	// decode seam — the ONLY layer where key-presence is still observable. An
-	// omitted key keeps its Go default (never the JSON zero-value false), so a
-	// dropped/regressed Dart key can no longer silently darken a graduated flag
-	// fleet-wide. A nil map (featureFlags absent) leaves cfg.FeatureFlags nil so
-	// EffectiveFlags falls back to DefaultFeatureFlags() — the unchanged
-	// nil->DefaultFeatureFlags contract.
-	if params.FeatureFlags != nil {
-		merged := node.MergeFeatureFlagsOverDefaults(params.FeatureFlags)
-		cfg.FeatureFlags = &merged
-	}
-
-	_, err := n.Start(cfg)
-	if err != nil {
-		return errJSON("NODE_START_ERROR", err.Error())
-	}
-
-	// Return same shape as NodeStatus so Dart can parse uniformly.
-	return okJSON(n.Status())
+		if _, err := n.Start(cfg); err != nil {
+			return errJSON("NODE_START_ERROR", err.Error())
+		}
+		return okJSON(n.Status())
+	})
 }
 
 // StopNode stops the libp2p node.
@@ -2011,56 +1989,43 @@ func GroupLeaveTopic(paramsJSON string) (result string) {
 	})
 }
 
-// GroupPublish encrypts, signs, and publishes a message to a group topic.
-// Input JSON: { "groupId": "...", "text": "...", "senderPeerId": "...", "senderPublicKey": "...", "senderPrivateKey": "...", "senderUsername": "..." }
-// Returns JSON: { "ok": true, "messageId": "...", "topicPeers": N }
-func GroupPublish(paramsJSON string) (result string) {
-	defer func() {
-		if r := recover(); r != nil {
-			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
-		}
-	}()
+type groupBridgeMessageParams struct {
+	GroupId                  string                   `json:"groupId"`
+	Text                     string                   `json:"text"`
+	SenderPeerId             string                   `json:"senderPeerId"`
+	SenderPublicKey          string                   `json:"senderPublicKey"`
+	SenderPrivateKey         string                   `json:"senderPrivateKey"`
+	SenderUsername           string                   `json:"senderUsername"`
+	SenderDeviceId           string                   `json:"senderDeviceId,omitempty"`
+	SenderTransportPeerId    string                   `json:"senderTransportPeerId,omitempty"`
+	SenderDevicePublicKey    string                   `json:"senderDevicePublicKey,omitempty"`
+	SenderKeyPackageId       string                   `json:"senderKeyPackageId,omitempty"`
+	MessageId                string                   `json:"messageId,omitempty"`
+	LogicalDeliveryId        string                   `json:"logicalDeliveryId,omitempty"`
+	GroupName                string                   `json:"groupName,omitempty"`
+	Timestamp                string                   `json:"timestamp,omitempty"`
+	QuotedMessageId          string                   `json:"quotedMessageId,omitempty"`
+	Media                    []map[string]interface{} `json:"media,omitempty"`
+	RecipientPeerIds         []string                 `json:"recipientPeerIds,omitempty"`
+	PreserveRecipientPeerIds bool                     `json:"preserveRecipientPeerIds,omitempty"`
+}
 
-	nodeMu.Lock()
-	n := singletonNode
-	nodeMu.Unlock()
-
-	if n == nil {
-		return errJSON("NOT_INITIALIZED", "call Initialize first")
-	}
-
-	var params struct {
-		GroupId                  string                   `json:"groupId"`
-		Text                     string                   `json:"text"`
-		SenderPeerId             string                   `json:"senderPeerId"`
-		SenderPublicKey          string                   `json:"senderPublicKey"`
-		SenderPrivateKey         string                   `json:"senderPrivateKey"`
-		SenderUsername           string                   `json:"senderUsername"`
-		SenderDeviceId           string                   `json:"senderDeviceId,omitempty"`
-		SenderTransportPeerId    string                   `json:"senderTransportPeerId,omitempty"`
-		SenderDevicePublicKey    string                   `json:"senderDevicePublicKey,omitempty"`
-		SenderKeyPackageId       string                   `json:"senderKeyPackageId,omitempty"`
-		MessageId                string                   `json:"messageId,omitempty"`
-		LogicalDeliveryId        string                   `json:"logicalDeliveryId,omitempty"`
-		GroupName                string                   `json:"groupName,omitempty"`
-		Timestamp                string                   `json:"timestamp,omitempty"`
-		QuotedMessageId          string                   `json:"quotedMessageId,omitempty"`
-		Media                    []map[string]interface{} `json:"media,omitempty"`
-		RecipientPeerIds         []string                 `json:"recipientPeerIds,omitempty"`
-		PreserveRecipientPeerIds bool                     `json:"preserveRecipientPeerIds,omitempty"`
-	}
+func decodeGroupBridgeMessageParams(paramsJSON string) (groupBridgeMessageParams, string) {
+	var params groupBridgeMessageParams
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
-		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+		return params, errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
 	}
-
 	if params.GroupId == "" || params.SenderPeerId == "" ||
 		params.SenderPublicKey == "" || params.SenderPrivateKey == "" {
-		return errJSON("INVALID_INPUT", "missing groupId, senderPeerId, senderPublicKey, or senderPrivateKey")
+		return params, errJSON("INVALID_INPUT", "missing groupId, senderPeerId, senderPublicKey, or senderPrivateKey")
 	}
 	if strings.TrimSpace(params.Text) == "" && len(params.Media) == 0 {
-		return errJSON("INVALID_INPUT", "either text or media is required")
+		return params, errJSON("INVALID_INPUT", "either text or media is required")
 	}
+	return params, ""
+}
 
+func buildGroupBridgeMessageOpts(params groupBridgeMessageParams, includeRecipients bool) map[string]interface{} {
 	opts := buildGroupPublishOpts(params.Media, params.QuotedMessageId)
 	if opts == nil {
 		opts = make(map[string]interface{}, 4)
@@ -2086,134 +2051,85 @@ func GroupPublish(paramsJSON string) (result string) {
 	if params.GroupName != "" {
 		opts["groupName"] = params.GroupName
 	}
-
-	msgId, topicPeers, err := n.PublishGroupMessage(
-		params.GroupId,
-		params.SenderPrivateKey,
-		params.SenderPeerId,
-		params.SenderPublicKey,
-		params.SenderUsername,
-		params.Text,
-		params.MessageId,
-		opts,
-	)
-	if err != nil {
-		return errJSON("GROUP_ERROR", err.Error())
+	if includeRecipients && params.PreserveRecipientPeerIds {
+		opts["recipientPeerIds"] = params.RecipientPeerIds
+		opts["preserveRecipientPeerIds"] = true
+	} else if includeRecipients && len(params.RecipientPeerIds) > 0 {
+		opts["recipientPeerIds"] = params.RecipientPeerIds
 	}
+	return opts
+}
 
-	return okJSON(map[string]interface{}{
-		"ok":         true,
-		"messageId":  msgId,
-		"topicPeers": topicPeers,
+// GroupPublish encrypts, signs, and publishes a message to a group topic.
+// Input JSON: { "groupId": "...", "text": "...", "senderPeerId": "...", "senderPublicKey": "...", "senderPrivateKey": "...", "senderUsername": "..." }
+// Returns JSON: { "ok": true, "messageId": "...", "topicPeers": N }
+func GroupPublish(paramsJSON string) (result string) {
+	return withBridgeNode(func(n *node.Node) string {
+		params, errorJSON := decodeGroupBridgeMessageParams(paramsJSON)
+		if errorJSON != "" {
+			return errorJSON
+		}
+		opts := buildGroupBridgeMessageOpts(params, false)
+
+		msgId, topicPeers, err := n.PublishGroupMessage(
+			params.GroupId,
+			params.SenderPrivateKey,
+			params.SenderPeerId,
+			params.SenderPublicKey,
+			params.SenderUsername,
+			params.Text,
+			params.MessageId,
+			opts,
+		)
+		if err != nil {
+			return errJSON("GROUP_ERROR", err.Error())
+		}
+
+		return okJSON(map[string]interface{}{
+			"ok":         true,
+			"messageId":  msgId,
+			"topicPeers": topicPeers,
+		})
 	})
 }
 
 // GroupSendReliable builds one native group envelope, stores it in group inbox,
 // publishes it live, and returns both delivery outcomes.
 func GroupSendReliable(paramsJSON string) (result string) {
-	defer func() {
-		if r := recover(); r != nil {
-			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+	return withBridgeNode(func(n *node.Node) string {
+		params, errorJSON := decodeGroupBridgeMessageParams(paramsJSON)
+		if errorJSON != "" {
+			return errorJSON
 		}
-	}()
+		opts := buildGroupBridgeMessageOpts(params, true)
 
-	nodeMu.Lock()
-	n := singletonNode
-	nodeMu.Unlock()
+		sendResult, err := n.SendGroupMessageReliable(
+			params.GroupId,
+			params.SenderPrivateKey,
+			params.SenderPeerId,
+			params.SenderPublicKey,
+			params.SenderUsername,
+			params.Text,
+			params.MessageId,
+			opts,
+		)
+		if err != nil {
+			return errJSON("GROUP_ERROR", err.Error())
+		}
 
-	if n == nil {
-		return errJSON("NOT_INITIALIZED", "call Initialize first")
-	}
-
-	var params struct {
-		GroupId                  string                   `json:"groupId"`
-		Text                     string                   `json:"text"`
-		SenderPeerId             string                   `json:"senderPeerId"`
-		SenderPublicKey          string                   `json:"senderPublicKey"`
-		SenderPrivateKey         string                   `json:"senderPrivateKey"`
-		SenderUsername           string                   `json:"senderUsername"`
-		SenderDeviceId           string                   `json:"senderDeviceId,omitempty"`
-		SenderTransportPeerId    string                   `json:"senderTransportPeerId,omitempty"`
-		SenderDevicePublicKey    string                   `json:"senderDevicePublicKey,omitempty"`
-		SenderKeyPackageId       string                   `json:"senderKeyPackageId,omitempty"`
-		MessageId                string                   `json:"messageId,omitempty"`
-		LogicalDeliveryId        string                   `json:"logicalDeliveryId,omitempty"`
-		GroupName                string                   `json:"groupName,omitempty"`
-		Timestamp                string                   `json:"timestamp,omitempty"`
-		QuotedMessageId          string                   `json:"quotedMessageId,omitempty"`
-		Media                    []map[string]interface{} `json:"media,omitempty"`
-		RecipientPeerIds         []string                 `json:"recipientPeerIds,omitempty"`
-		PreserveRecipientPeerIds bool                     `json:"preserveRecipientPeerIds,omitempty"`
-	}
-	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
-		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
-	}
-	if params.GroupId == "" || params.SenderPeerId == "" ||
-		params.SenderPublicKey == "" || params.SenderPrivateKey == "" {
-		return errJSON("INVALID_INPUT", "missing groupId, senderPeerId, senderPublicKey, or senderPrivateKey")
-	}
-	if strings.TrimSpace(params.Text) == "" && len(params.Media) == 0 {
-		return errJSON("INVALID_INPUT", "either text or media is required")
-	}
-
-	opts := buildGroupPublishOpts(params.Media, params.QuotedMessageId)
-	if opts == nil {
-		opts = make(map[string]interface{}, 4)
-	}
-	if params.SenderDeviceId != "" {
-		opts["senderDeviceId"] = params.SenderDeviceId
-	}
-	if params.SenderTransportPeerId != "" {
-		opts["senderTransportPeerId"] = params.SenderTransportPeerId
-	}
-	if params.SenderDevicePublicKey != "" {
-		opts["senderDevicePublicKey"] = params.SenderDevicePublicKey
-	}
-	if params.SenderKeyPackageId != "" {
-		opts["senderKeyPackageId"] = params.SenderKeyPackageId
-	}
-	if params.Timestamp != "" {
-		opts["timestamp"] = params.Timestamp
-	}
-	if params.LogicalDeliveryId != "" {
-		opts["logicalDeliveryId"] = params.LogicalDeliveryId
-	}
-	if params.GroupName != "" {
-		opts["groupName"] = params.GroupName
-	}
-	if params.PreserveRecipientPeerIds {
-		opts["recipientPeerIds"] = params.RecipientPeerIds
-		opts["preserveRecipientPeerIds"] = true
-	} else if len(params.RecipientPeerIds) > 0 {
-		opts["recipientPeerIds"] = params.RecipientPeerIds
-	}
-
-	sendResult, err := n.SendGroupMessageReliable(
-		params.GroupId,
-		params.SenderPrivateKey,
-		params.SenderPeerId,
-		params.SenderPublicKey,
-		params.SenderUsername,
-		params.Text,
-		params.MessageId,
-		opts,
-	)
-	if err != nil {
-		return errJSON("GROUP_ERROR", err.Error())
-	}
-
-	return okJSON(map[string]interface{}{
-		"ok":                      true,
-		"messageId":               sendResult.MessageId,
-		"topicPeerCount":          sendResult.TopicPeerCount,
-		"topicPeers":              sendResult.TopicPeerCount,
-		"connectedTopicPeerCount": sendResult.ConnectedTopicPeerCount,
-		"expectedRecipientCount":  sendResult.ExpectedRecipientCount,
-		"recipientPeerIds":        sendResult.RecipientPeerIds,
-		"inboxStored":             sendResult.InboxStored,
-		"publishSucceeded":        sendResult.PublishSucceeded,
-		"deliveryMode":            sendResult.DeliveryMode,
-		"envelope":                sendResult.Envelope,
+		return okJSON(map[string]interface{}{
+			"ok":                      true,
+			"messageId":               sendResult.MessageId,
+			"topicPeerCount":          sendResult.TopicPeerCount,
+			"topicPeers":              sendResult.TopicPeerCount,
+			"connectedTopicPeerCount": sendResult.ConnectedTopicPeerCount,
+			"expectedRecipientCount":  sendResult.ExpectedRecipientCount,
+			"recipientPeerIds":        sendResult.RecipientPeerIds,
+			"inboxStored":             sendResult.InboxStored,
+			"publishSucceeded":        sendResult.PublishSucceeded,
+			"deliveryMode":            sendResult.DeliveryMode,
+			"envelope":                sendResult.Envelope,
+		})
 	})
 }
 
@@ -2867,6 +2783,24 @@ func BlobDecrypt(paramsJSON string) (result string) {
 }
 
 // --- Helpers ---
+
+func withBridgeNode(fn func(*node.Node) string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	return fn(n)
+}
 
 // identityMap converts an identity.Identity to the JSON-compatible map format.
 func identityMap(id *identity.Identity) map[string]interface{} {
