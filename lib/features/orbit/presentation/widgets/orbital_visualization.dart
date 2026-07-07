@@ -115,11 +115,13 @@ class OrbitalVisualization extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     final innerBorderColor = readableColors.border.withValues(alpha: 0.20);
     final outerBorderColor = readableColors.border.withValues(alpha: 0.14);
+    final showSignalNodeHalo = readableColors.isLightSurface;
     // 194/198 reduce-motion seam. Freezes the unread rotation AND (198) makes
     // the NEW arc entrance instant under OS reduce-motion (INV-7).
     final mediaQuery = MediaQuery.maybeOf(context);
-    final motionEnabled = !((mediaQuery?.disableAnimations ?? false) ||
-        (mediaQuery?.accessibleNavigation ?? false));
+    final motionEnabled =
+        !((mediaQuery?.disableAnimations ?? false) ||
+            (mediaQuery?.accessibleNavigation ?? false));
     final mirrored = Directionality.of(context) == TextDirection.rtl;
 
     final layout = computeOrbitLayout(
@@ -149,11 +151,13 @@ class OrbitalVisualization extends StatelessWidget {
       for (final s in layout.seats) {
         if (s.kind != OrbitSeatKind.arc || !seen.add(s.arcIndex!)) continue;
         final r = orbitArcRadius(geometry, s.arcIndex!);
-        arcRings.add(OrbitArcRing(
-          radius: r,
-          phiMax: orbitArcPhi(r, geometry.arcWrap),
-          arcIndex: s.arcIndex!,
-        ));
+        arcRings.add(
+          OrbitArcRing(
+            radius: r,
+            phiMax: orbitArcPhi(r, geometry.arcWrap),
+            arcIndex: s.arcIndex!,
+          ),
+        );
       }
     }
 
@@ -174,6 +178,9 @@ class OrbitalVisualization extends StatelessWidget {
                 ring1Radius: layout.ring1Radius,
                 ring2Radius: layout.ring2Radius,
                 arcs: arcRings,
+                ring1Color: readableColors.ring1,
+                ring2Color: readableColors.ring2,
+                glowColor: readableColors.ringGlow,
               ),
             ),
           ),
@@ -186,10 +193,17 @@ class OrbitalVisualization extends StatelessWidget {
           left: cx - 24,
           top: cy - 24,
           child: onSelfAvatarTap == null
-              ? UserAvatar(
-                  peerId: userPeerId,
-                  avatarBytes: userAvatarBytes,
-                  size: 48,
+              ? _buildNodeWithHalo(
+                  haloKey: const ValueKey('orbit-node-halo-self'),
+                  boxSize: 48,
+                  haloDiameter: 48,
+                  glowColor: readableColors.nodeSelfGlow,
+                  showHalo: showSignalNodeHalo,
+                  child: UserAvatar(
+                    peerId: userPeerId,
+                    avatarBytes: userAvatarBytes,
+                    size: 48,
+                  ),
                 )
               : Semantics(
                   button: true,
@@ -201,10 +215,17 @@ class OrbitalVisualization extends StatelessWidget {
                     onLongPressStart: onSelfAvatarLongPress == null
                         ? null
                         : (_) => onSelfAvatarLongPress!(),
-                    child: UserAvatar(
-                      peerId: userPeerId,
-                      avatarBytes: userAvatarBytes,
-                      size: 48,
+                    child: _buildNodeWithHalo(
+                      haloKey: const ValueKey('orbit-node-halo-self'),
+                      boxSize: 48,
+                      haloDiameter: 48,
+                      glowColor: readableColors.nodeSelfGlow,
+                      showHalo: showSignalNodeHalo,
+                      child: UserAvatar(
+                        peerId: userPeerId,
+                        avatarBytes: userAvatarBytes,
+                        size: 48,
+                      ),
                     ),
                   ),
                 ),
@@ -222,41 +243,50 @@ class OrbitalVisualization extends StatelessWidget {
         OrbitSeatKind.ring2 => (1.0, outerBorderColor),
         OrbitSeatKind.arc => (1.0, outerBorderColor),
       };
-      children.add(Positioned(
-        // 201 INV-201-2: a stable slot key on the node Positioned so a label
-        // insertion / arc reveal cannot re-slot it (positional matching would
-        // otherwise re-inflate every following node → entrance replay "blink").
-        key: ValueKey('orbit-node-${seat.index}'),
-        left: cx + seat.dx - tapTargetSize / 2,
-        top: cy + seat.dy - tapTargetSize / 2,
-        // Keyed so tests can read THIS dim (OrbitalAvatar has its own inner
-        // entrance Opacity) — INV-5 asserts go through it.
-        child: Opacity(
-          key: ValueKey('orbit-node-dim-${seat.index}'),
-          opacity: _dimFor(seat.index),
-          // 202 INV-202-1: isolate each node's raster INSIDE its dim layer so a
-          // dim tick recomposites the cached raster instead of re-rasterizing
-          // it, and the unread satellite rotation invalidates only its own node.
-          child: RepaintBoundary(
-            child: _buildNode(
-              item,
-              avatarSize: seat.avatarSize,
-              globalIndex: seat.index,
-              borderWidth: borderWidth,
-              borderColor: borderColor,
-              l10n: l10n,
-              unreadMotionEnabled: motionEnabled,
-              // Ring entrance keeps the pre-198 stagger; arc entrance uses the
-              // layout stagger and honors reduce-motion (INV-7).
-              entranceDelayMs: isArc ? seat.entranceDelayMs : null,
-              // 201 INV-201-4: ring entrances honor OS reduce-motion too. The
-              // pre-201 `: true` hard-code animated rings even under
-              // reduce-motion (documented by the arcs_test ":196 drain").
-              entranceMotionEnabled: motionEnabled,
+      children.add(
+        Positioned(
+          // 201 INV-201-2: a stable slot key on the node Positioned so a label
+          // insertion / arc reveal cannot re-slot it (positional matching would
+          // otherwise re-inflate every following node → entrance replay "blink").
+          key: ValueKey('orbit-node-${seat.index}'),
+          left: cx + seat.dx - tapTargetSize / 2,
+          top: cy + seat.dy - tapTargetSize / 2,
+          // Keyed so tests can read THIS dim (OrbitalAvatar has its own inner
+          // entrance Opacity) — INV-5 asserts go through it.
+          child: Opacity(
+            key: ValueKey('orbit-node-dim-${seat.index}'),
+            opacity: _dimFor(seat.index),
+            // 202 INV-202-1: isolate each node's raster INSIDE its dim layer so a
+            // dim tick recomposites the cached raster instead of re-rasterizing
+            // it, and the unread satellite rotation invalidates only its own node.
+            child: RepaintBoundary(
+              child: _buildNodeWithHalo(
+                haloKey: ValueKey('orbit-node-halo-${seat.index}'),
+                boxSize: tapTargetSize,
+                haloDiameter: seat.avatarSize,
+                glowColor: readableColors.nodeContactGlow,
+                showHalo: showSignalNodeHalo,
+                child: _buildNode(
+                  item,
+                  avatarSize: seat.avatarSize,
+                  globalIndex: seat.index,
+                  borderWidth: borderWidth,
+                  borderColor: borderColor,
+                  l10n: l10n,
+                  unreadMotionEnabled: motionEnabled,
+                  // Ring entrance keeps the pre-198 stagger; arc entrance uses the
+                  // layout stagger and honors reduce-motion (INV-7).
+                  entranceDelayMs: isArc ? seat.entranceDelayMs : null,
+                  // 201 INV-201-4: ring entrances honor OS reduce-motion too. The
+                  // pre-201 `: true` hard-code animated rings even under
+                  // reduce-motion (documented by the arcs_test ":196 drain").
+                  entranceMotionEnabled: motionEnabled,
+                ),
+              ),
             ),
           ),
         ),
-      ));
+      );
       if (labelsVisible) {
         children.add(_buildLabel(item, seat, cx, cy, readableColors));
       }
@@ -267,19 +297,21 @@ class OrbitalVisualization extends StatelessWidget {
     if (layout.badge != null) {
       final badge = layout.badge!;
       final badgeHalf = onBadgeTap != null ? 22.0 : 14.0;
-      children.add(Positioned(
-        // 201 INV-201-2: the single badge keeps a stable slot key so node/label
-        // insertions before it (label toggle, arc expand/collapse) never
-        // re-inflate it (which replayed its 1.5s entrance / blanked it).
-        key: const ValueKey('orbit-overflow-badge-seat'),
-        left: cx + badge.dx - badgeHalf,
-        top: cy + badge.dy - badgeHalf,
-        child: OverflowBadge(
-          count: badge.overflowCount,
-          expanded: overflowExpanded,
-          onTap: onBadgeTap,
+      children.add(
+        Positioned(
+          // 201 INV-201-2: the single badge keeps a stable slot key so node/label
+          // insertions before it (label toggle, arc expand/collapse) never
+          // re-inflate it (which replayed its 1.5s entrance / blanked it).
+          key: const ValueKey('orbit-overflow-badge-seat'),
+          left: cx + badge.dx - badgeHalf,
+          top: cy + badge.dy - badgeHalf,
+          child: OverflowBadge(
+            count: badge.overflowCount,
+            expanded: overflowExpanded,
+            onTap: onBadgeTap,
+          ),
         ),
-      ));
+      );
     }
 
     return Column(
@@ -342,10 +374,7 @@ class OrbitalVisualization extends StatelessWidget {
           borderColor: borderColor,
           onTap: onGroupTap == null ? null : () => onGroupTap!(group),
           semanticLabel: group.unreadCount > 0
-              ? l10n.orbit_node_unread_open_group(
-                  group.name,
-                  group.unreadCount,
-                )
+              ? l10n.orbit_node_unread_open_group(group.name, group.unreadCount)
               : l10n.orbit_node_open_group(group.name),
           unreadCount: group.unreadCount,
           unreadMotionEnabled: unreadMotionEnabled,
@@ -361,6 +390,29 @@ class OrbitalVisualization extends StatelessWidget {
           ),
         );
     }
+  }
+
+  Widget _buildNodeWithHalo({
+    required Key haloKey,
+    required double boxSize,
+    required double haloDiameter,
+    required Color glowColor,
+    required bool showHalo,
+    required Widget child,
+  }) {
+    if (!showHalo) return child;
+    return SizedBox(
+      width: boxSize,
+      height: boxSize,
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.center,
+        children: [
+          _OrbitNodeHalo(key: haloKey, size: haloDiameter, color: glowColor),
+          Center(child: child),
+        ],
+      ),
+    );
   }
 
   /// A name label under a node (198 double-tap labels). Arc labels alternate a
@@ -396,9 +448,7 @@ class OrbitalVisualization extends StatelessWidget {
             fontWeight: FontWeight.w600,
             color: readableColors.textPrimary,
             height: 1,
-            shadows: const [
-              Shadow(blurRadius: 3, color: Color(0xCC000000)),
-            ],
+            shadows: const [Shadow(blurRadius: 3, color: Color(0xCC000000))],
           ),
         ),
       ),
@@ -406,19 +456,59 @@ class OrbitalVisualization extends StatelessWidget {
   }
 
   String _displayName(OrbitItem item) => switch (item) {
-        OrbitFriendItem(:final friend) => friend.username,
-        OrbitGroupItem(:final group) => group.name,
-      };
+    OrbitFriendItem(:final friend) => friend.username,
+    OrbitGroupItem(:final group) => group.name,
+  };
 
   bool _itemHasTap(OrbitItem item) => switch (item) {
-        OrbitFriendItem() => onFriendTap != null,
-        OrbitGroupItem() => onGroupTap != null,
-      };
+    OrbitFriendItem() => onFriendTap != null,
+    OrbitGroupItem() => onGroupTap != null,
+  };
 
   double _tapTargetSize(double avatarSize, OrbitItem item) {
     if (!_itemHasTap(item) || avatarSize >= _minTapTargetSize) {
       return avatarSize;
     }
     return _minTapTargetSize;
+  }
+}
+
+class _OrbitNodeHalo extends StatelessWidget {
+  final double size;
+  final Color color;
+
+  /// Paper White light-node treatment. Only mounted on light surfaces
+  /// (`showHalo == isLightSurface`), so this never touches the dark presets.
+  ///
+  /// The old primitive was a soft translucent bloom (blur `size*0.45`), which
+  /// over a near-white ground read as a pale, washed-out cloud. It is replaced
+  /// by a CRISP 2px solid accent ring hugging the node ([color], now opaque —
+  /// drawn as a zero-blur spread shadow so it peeks out around the ClipOval'd
+  /// avatar sitting on top) plus a soft neutral downward lift shadow for real
+  /// physical elevation instead of a colored haze.
+  static const Color _lift = Color(0x24141A2E);
+  static const double _ringWidth = 2.0;
+
+  const _OrbitNodeHalo({super.key, required this.size, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            boxShadow: [
+              // crisp accent ring (blurRadius defaults to 0)
+              BoxShadow(color: color, spreadRadius: _ringWidth),
+              // soft neutral lift
+              const BoxShadow(color: _lift, blurRadius: 12, offset: Offset(0, 4)),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

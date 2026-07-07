@@ -405,7 +405,7 @@ void main() {
       find.byKey(const ValueKey('daylight-lagoon-background-root')),
     );
     final decoration = root.decoration as BoxDecoration;
-    expect(decoration.color, Colors.white);
+    expect(decoration.color, const Color(0xFFFFFFFF));
   });
 
   testWidgets('Feed surface with default preference stays default', (

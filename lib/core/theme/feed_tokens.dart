@@ -103,6 +103,35 @@ class FeedTokens extends ThemeExtension<FeedTokens> {
     ),
   );
 
+  /// Light Signal token set used only when AmbientBackground resolves the
+  /// daylight-lagoon storage key to the representative light tone.
+  static const FeedTokens light = FeedTokens(
+    teal400: Color(0xFF5A24E0),
+    tealFill08: Color(0x145A24E0),
+    green500: Color(0xFF0C7C46),
+    greenFill15: Color(0xFFDFF3E9),
+    surfaceSubtle: Color(0xFFF7F8FB),
+    surfaceRaised: Color(0xFFFFFFFF),
+    borderSoft: Color(0x33463A96),
+    canvas: Color(0xFFF4F6FA),
+    blurLetter: 14.0,
+    blurNav: 24.0,
+    radiusFull: 16.0,
+    space3: 12.0,
+    textMessage: TextStyle(
+      fontSize: 15.5,
+      fontWeight: FontWeight.w400,
+      color: Color(0xFF16181F),
+      height: 1.4,
+    ),
+    leadingMessage: 1.4,
+    textMeta: TextStyle(
+      fontSize: 12.5,
+      fontWeight: FontWeight.w400,
+      color: Color(0xFF4A4E5C),
+    ),
+  );
+
   @override
   FeedTokens copyWith({
     Color? teal400,

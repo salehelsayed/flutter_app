@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>221 · Light Ground Studies — Orbit / Feed / Chat</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+/* =====================================================================
+   221 · mknoon — Light Ground Studies
+   The app's home (Orbit), Feed and Chat currently sit on a stark #FFF
+   ground with washed-out blobs. Failures being fixed (from device shots):
+     1. hint / placeholder text renders near-white -> unreadable
+     2. orbit rings so pale they vanish
+     3. node glows weak & lifeless
+     4. ambient blue/lilac blobs read muddy
+     5. chat input bar is stark black, clashes with the white body
+   This gallery frames the current ("Today") ground next to 4 cohesive
+   light-ground palettes so a direction can be chosen. Phones are a single
+   template re-themed purely through CSS custom properties per palette.
+   ===================================================================== */
+
+:root{
+  --display:'Fraunces',Georgia,'Times New Roman',serif;
+  --ui:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,system-ui,sans-serif;
+  --mono:'Space Mono',ui-monospace,'SF Mono',Menlo,monospace;
+  --sf:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',Roboto,system-ui,sans-serif;
+
+  /* studio / gallery-wall chrome (deliberately single, indigo-biased dark
+     so the light phone studies read like framed prints) */
+  --wall:#141520;
+  --wall-2:#191b28;
+  --panel:#1e2030;
+  --wall-ink:#ECEEF6;
+  --wall-muted:#9DA2BC;
+  --wall-faint:#686d88;
+  --wall-line:rgba(255,255,255,0.09);
+  --gold:#D9B678;          /* one warm hairline accent for eyebrows */
+
+  /* ---- per-palette phone tokens: defaults (overwritten per section) ---- */
+  --bg-base:#ffffff;
+  --bg-gradient:#ffffff;
+  --ambient:none;
+  --status-bar-text:#1b1b20;
+  --text-primary:#1b1b20; --text-secondary:#565a66; --text-hint:#8a8f9c;
+  --orbit-ring:rgba(150,170,210,.5); --orbit-ring-inner:rgba(150,200,180,.55); --orbit-ring-glow:rgba(150,170,210,.25);
+  --node-self:#7c4dff; --node-self-glow:rgba(124,77,255,.5);
+  --node-contact:#ff4d4f; --node-contact-glow:rgba(255,77,79,.5);
+  --connected-green:#22a558; --connected-green-glow:rgba(34,165,88,.4);
+  --online-pill-bg:#eef7f0; --online-pill-text:#1f9a53; --online-pill-dot:#22c55e;
+  --cta-btn-bg:#15161c; --cta-btn-icon:#ffffff;
+  --nav-bg:rgba(255,255,255,.82); --nav-border:rgba(0,0,0,.08); --nav-active-text:#1b1b20; --nav-active-icon-bg:rgba(0,0,0,.06); --nav-inactive-text:#8a8f9c;
+  --search-btn-bg:rgba(255,255,255,.9); --search-btn-icon:#1b1b20; --search-btn-border:rgba(0,0,0,.08);
+  --card-pill-bg:#e7f5ec; --card-pill-text:#1f8a4c; --card-pill-border:rgba(34,165,88,.35);
+  --chat-bar-bg:#f2f1f4; --chat-input-bg:#ffffff; --chat-input-text:#1b1b20; --chat-placeholder:#8a8f9c; --chat-plus-bg:#e7e6ea; --chat-plus-icon:#3a3a42; --chat-mic-bg:#22a558; --chat-mic-icon:#ffffff;
+  --header-name:#1b1b20; --header-subtitle:#8a8f9c; --back-chevron:#3a3a42; --kebab:#6a6f7c; --hairline:rgba(0,0,0,.08);
+}
+
+*{margin:0;padding:0;box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  background:
+    radial-gradient(120% 80% at 15% -10%, #1c1e2e 0%, transparent 55%),
+    radial-gradient(120% 90% at 100% 0%, #20223a 0%, transparent 50%),
+    var(--wall);
+  color:var(--wall-ink);font-family:var(--ui);-webkit-font-smoothing:antialiased;line-height:1.5;
+}
+.wrap{max-width:1360px;margin:0 auto;padding:60px clamp(20px,5vw,64px) 120px}
+a{color:inherit}
+
+/* ---------------- masthead ---------------- */
+.masthead{position:relative;margin-bottom:22px}
+.kicker{font-family:var(--mono);font-size:11px;letter-spacing:3px;text-transform:uppercase;color:var(--gold);display:flex;align-items:center;gap:12px;margin-bottom:20px}
+.kicker::before{content:'';width:34px;height:1px;background:var(--gold);opacity:.7}
+h1.title{font-family:var(--display);font-weight:500;font-size:clamp(34px,5.4vw,62px);line-height:1.02;letter-spacing:-.01em;text-wrap:balance;max-width:16ch}
+h1.title em{font-style:italic;color:var(--gold)}
+.lede{margin-top:20px;font-size:clamp(15px,1.5vw,17px);color:var(--wall-muted);max-width:66ch}
+.lede b{color:var(--wall-ink);font-weight:600}
+
+/* problem ledger */
+.ledger{margin:34px 0 10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:1px;background:var(--wall-line);border:1px solid var(--wall-line);border-radius:16px;overflow:hidden}
+.ledger .cell{background:var(--wall-2);padding:16px 18px}
+.ledger .n{font-family:var(--mono);font-size:11px;color:var(--gold);letter-spacing:1px}
+.ledger .t{margin-top:7px;font-size:13.5px;color:var(--wall-muted);line-height:1.45}
+.ledger .t b{color:var(--wall-ink);font-weight:600}
+
+/* ---------------- surface filter toolbar ---------------- */
+.toolbar{position:sticky;top:0;z-index:80;margin:38px 0 8px;padding:12px 0;display:flex;flex-wrap:wrap;gap:10px;align-items:center;
+  background:linear-gradient(var(--wall) 62%,transparent);backdrop-filter:blur(2px)}
+.toolbar .lab{font-family:var(--mono);font-size:10.5px;letter-spacing:1.5px;text-transform:uppercase;color:var(--wall-faint);margin-right:2px}
+.seg{display:inline-flex;background:var(--panel);border:1px solid var(--wall-line);border-radius:12px;padding:3px}
+.seg button{font:inherit;font-size:13px;color:var(--wall-muted);background:none;border:0;padding:7px 15px;border-radius:9px;cursor:pointer;transition:.18s}
+.seg button:hover{color:var(--wall-ink)}
+.seg button[aria-pressed="true"]{background:var(--gold);color:#20160a;font-weight:600}
+.seg button:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.jump{margin-left:auto;display:flex;flex-wrap:wrap;gap:8px}
+.jump a{font-family:var(--mono);font-size:11px;color:var(--wall-muted);text-decoration:none;padding:6px 11px;border:1px solid var(--wall-line);border-radius:20px;transition:.18s}
+.jump a:hover{color:var(--wall-ink);border-color:var(--wall-muted)}
+
+/* ---------------- palette section ---------------- */
+.palette{padding:44px 0 8px;border-top:1px solid var(--wall-line);scroll-margin-top:72px}
+.palette:first-of-type{border-top:0}
+.p-head{display:flex;flex-wrap:wrap;gap:24px 40px;align-items:flex-end;margin-bottom:30px}
+.p-id{flex:1 1 340px;min-width:280px}
+.p-index{font-family:var(--mono);font-size:11px;letter-spacing:2px;color:var(--wall-faint)}
+.p-index.today{color:#E9846B}
+.p-name{font-family:var(--display);font-weight:500;font-size:clamp(27px,3.5vw,40px);line-height:1.05;margin:8px 0 6px;letter-spacing:-.01em}
+.p-tag{font-size:14px;color:var(--gold);font-style:italic;font-family:var(--display)}
+.p-tag.today{color:#E9846B}
+.p-why{margin-top:14px;font-size:14.5px;color:var(--wall-muted);max-width:62ch;line-height:1.6}
+.p-why b{color:var(--wall-ink);font-weight:600}
+.p-side{flex:1 1 320px;min-width:280px}
+
+/* swatch strip */
+.swatches{display:flex;flex-wrap:wrap;gap:8px}
+.sw{display:flex;flex-direction:column;gap:6px;width:70px}
+.sw .chip{height:44px;border-radius:10px;border:1px solid var(--wall-line);box-shadow:inset 0 0 0 1px rgba(255,255,255,.04)}
+.sw .nm{font-size:10px;color:var(--wall-faint);letter-spacing:.2px;line-height:1.2}
+.sw .hex{font-family:var(--mono);font-size:9px;color:var(--wall-muted);text-transform:uppercase;line-height:1.25;overflow-wrap:anywhere;word-break:break-word}
+.contrast{margin-top:14px;font-family:var(--mono);font-size:11px;line-height:1.6;color:var(--wall-muted);background:var(--panel);border:1px solid var(--wall-line);border-radius:10px;padding:11px 13px}
+.contrast b{color:#7FD0A0;font-weight:700}
+.contrast .aa{color:#7FD0A0}
+
+/* phone rail */
+.rail{display:flex;flex-wrap:wrap;gap:30px;align-items:flex-start}
+.frame{display:flex;flex-direction:column;align-items:center;gap:12px}
+.frame .caption{font-family:var(--mono);font-size:10.5px;letter-spacing:1.5px;text-transform:uppercase;color:var(--wall-faint)}
+.frame.hide{display:none}
+
+/* ============================================================
+   PHONE — single template, 300x620, re-themed via CSS vars
+   ============================================================ */
+.phone{position:relative;width:300px;height:620px;border-radius:46px;overflow:hidden;
+  border:1px solid rgba(255,255,255,.14);
+  box-shadow:0 2px 0 1px rgba(255,255,255,.05) inset, 0 40px 80px -20px rgba(0,0,0,.7), 0 0 0 10px #05060b, 0 0 0 11px rgba(255,255,255,.06);
+  background:#000;font-family:var(--sf)}
+.screen{position:absolute;inset:0;background:var(--bg-gradient);overflow:hidden}
+.ambient{position:absolute;inset:0;background:var(--ambient);pointer-events:none}
+.island{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:92px;height:26px;background:#000;border-radius:16px;z-index:60}
+
+/* status bar */
+.statusbar{position:absolute;top:0;left:0;right:0;height:46px;display:flex;align-items:center;justify-content:space-between;padding:0 26px;z-index:40;color:var(--status-bar-text)}
+.sb-time{font-family:var(--sf);font-size:14px;font-weight:700;letter-spacing:.3px}
+.sb-right{display:flex;align-items:center;gap:6px}
+.sb-right svg{display:block}
+
+/* generic round chrome button */
+.rbtn{position:absolute;width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;z-index:30;border:1px solid var(--search-btn-border);background:var(--search-btn-bg);color:var(--search-btn-icon);cursor:default}
+.tl{top:58px;left:18px}
+
+.top-right{position:absolute;top:58px;right:18px;display:flex;align-items:center;gap:10px;z-index:30}
+.online-pill{display:flex;align-items:center;gap:6px;height:34px;padding:0 12px;border-radius:20px;background:var(--online-pill-bg);color:var(--online-pill-text);font-family:var(--sf);font-size:13px;font-weight:600;border:1px solid var(--hairline)}
+.online-pill .dot{width:7px;height:7px;border-radius:50%;background:var(--online-pill-dot);box-shadow:0 0 6px 1px var(--online-pill-dot)}
+.online-pill .spark{font-size:11px;opacity:.85}
+.cta{width:40px;height:40px;border-radius:50%;background:var(--cta-btn-bg);color:var(--cta-btn-icon);display:flex;align-items:center;justify-content:center;border:0;box-shadow:0 6px 16px -4px rgba(0,0,0,.4)}
+
+/* orbit stage */
+.orbit-stage{position:absolute;left:50%;top:45%;transform:translate(-50%,-50%);width:236px;height:236px;z-index:20}
+.ring{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border-radius:50%;border-style:dashed;border-width:1.6px}
+.ring.outer{width:230px;height:230px;border-color:var(--orbit-ring);filter:drop-shadow(0 0 5px var(--orbit-ring-glow))}
+.ring.inner{width:132px;height:132px;border-color:var(--orbit-ring-inner);filter:drop-shadow(0 0 5px var(--orbit-ring-glow))}
+
+/* nodes */
+.node{position:absolute;left:50%;top:50%;border-radius:50%;z-index:5}
+.self{width:44px;height:44px;transform:translate(-50%,-50%);
+  background:radial-gradient(circle at 38% 32%, color-mix(in srgb, var(--node-self) 55%, #fff) 0%, var(--node-self) 62%, color-mix(in srgb, var(--node-self) 70%, #000) 100%);
+  box-shadow:0 0 0 4px color-mix(in srgb, var(--node-self) 30%, transparent), 0 0 26px 6px var(--node-self-glow), inset 0 0 5px rgba(255,255,255,.35)}
+.self::after{content:'';position:absolute;inset:6px;border-radius:50%;border:2px solid rgba(10,10,18,.55)}
+
+/* contact "target" node */
+.target{border-radius:50%;position:relative;
+  background:
+    radial-gradient(circle, color-mix(in srgb,var(--node-contact) 92%, #fff) 0 14%, transparent 15% 30%,
+    var(--node-contact) 31% 42%, transparent 43% 58%, color-mix(in srgb,var(--node-contact) 78%,#fff) 59% 70%, transparent 71%);
+  box-shadow:0 0 22px 4px var(--node-contact-glow)}
+.target::before{content:'';position:absolute;inset:-6px;border-radius:50%;border:1.6px dashed color-mix(in srgb,var(--node-contact) 65%, transparent)}
+.contact.top{width:34px;height:34px;transform:translate(-50%,calc(-50% - 66px))}
+.contact.top .target{width:34px;height:34px}
+.node-target{display:block}
+
+/* dock / nav */
+.dock{position:absolute;left:0;right:0;bottom:30px;display:flex;justify-content:center;z-index:30}
+.nav-pill{display:flex;gap:6px;padding:7px;border-radius:26px;background:var(--nav-bg);border:1px solid var(--nav-border);
+  box-shadow:0 10px 30px -10px rgba(0,0,0,.35);backdrop-filter:blur(18px)}
+.nav-item{display:flex;flex-direction:column;align-items:center;gap:3px;padding:7px 18px;border-radius:19px;color:var(--nav-inactive-text);font-family:var(--sf);font-size:11px;font-weight:600}
+.nav-item.active{color:var(--nav-active-text);background:var(--nav-active-icon-bg)}
+.nav-item svg{display:block}
+.search-btn{position:absolute;right:22px;bottom:30px;width:52px;height:52px;border-radius:50%;background:var(--search-btn-bg);color:var(--search-btn-icon);border:1px solid var(--search-btn-border);display:flex;align-items:center;justify-content:center;z-index:30;box-shadow:0 10px 26px -10px rgba(0,0,0,.4)}
+
+/* feed */
+.feed-title{position:absolute;top:62px;left:22px;right:22px;font-family:var(--sf);font-size:17px;font-weight:700;color:var(--header-name);display:flex;align-items:center;gap:6px;z-index:20}
+.feed-title .slash{color:var(--text-hint);font-weight:600}
+.feed-title .at{color:var(--header-name)}
+.feed-title .pencil{color:var(--text-secondary);display:inline-flex}
+.feed-row{position:absolute;top:104px;left:22px;display:flex;align-items:flex-start;gap:12px;z-index:20}
+.feed-row .target{width:38px;height:38px}
+.feed-meta{display:flex;flex-direction:column;gap:8px;padding-top:1px}
+.connected-label{display:flex;align-items:center;gap:5px;font-family:var(--sf);font-size:13.5px;font-weight:600;color:var(--text-secondary)}
+.connected-label .badge{color:var(--connected-green);display:inline-flex}
+.hint-pill{align-self:flex-start;padding:8px 16px;border-radius:20px;background:var(--card-pill-bg);color:var(--card-pill-text);border:1px solid var(--card-pill-border);font-family:var(--sf);font-size:13.5px;font-weight:600}
+
+/* chat */
+.chat-header{position:absolute;top:54px;left:16px;right:16px;height:48px;display:flex;align-items:center;gap:10px;z-index:20}
+.chat-header .back{color:var(--back-chevron);display:inline-flex;padding:2px}
+.chat-header .target{width:34px;height:34px;flex:0 0 auto}
+.ch-meta{flex:1;min-width:0}
+.ch-name{font-family:var(--sf);font-size:15px;font-weight:700;color:var(--header-name);line-height:1.15}
+.ch-sub{font-family:var(--sf);font-size:11.5px;color:var(--header-subtitle);margin-top:1px}
+.chat-header .kebab{color:var(--kebab);display:inline-flex;padding:2px}
+.chat-center{position:absolute;left:0;right:0;top:47%;transform:translateY(-50%);display:flex;flex-direction:column;align-items:center;gap:16px;z-index:15}
+.chat-center .target{width:78px;height:78px}
+.connected-heading{font-family:var(--sf);font-size:19px;font-weight:700;color:var(--connected-green);text-shadow:0 0 18px var(--connected-green-glow)}
+.chat-hint{font-family:var(--sf);font-size:13.5px;color:var(--text-hint);text-align:center;max-width:210px;line-height:1.5}
+.chat-bar{position:absolute;left:0;right:0;bottom:0;padding:14px 14px 22px;display:flex;align-items:center;gap:10px;background:var(--chat-bar-bg);border-top:1px solid var(--hairline);z-index:20;backdrop-filter:blur(10px)}
+.chat-plus{width:38px;height:38px;flex:0 0 auto;border-radius:50%;background:var(--chat-plus-bg);color:var(--chat-plus-icon);display:flex;align-items:center;justify-content:center;border:0}
+.chat-input{flex:1;height:40px;border-radius:20px;background:var(--chat-input-bg);border:1px solid var(--hairline);display:flex;align-items:center;padding:0 16px;color:var(--chat-placeholder);font-family:var(--sf);font-size:14px}
+.chat-mic{width:40px;height:40px;flex:0 0 auto;border-radius:50%;background:var(--chat-mic-bg);color:var(--chat-mic-icon);display:flex;align-items:center;justify-content:center;border:0;box-shadow:0 4px 12px -3px var(--connected-green-glow)}
+
+/* footer */
+.footer{margin-top:70px;padding-top:26px;border-top:1px solid var(--wall-line);font-family:var(--mono);font-size:11.5px;color:var(--wall-faint);line-height:1.7}
+.footer b{color:var(--wall-muted)}
+
+@media (max-width:560px){
+  .phone{width:270px;height:558px}
+  .toolbar{position:static}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="kicker">mknoon · palette study · 221</div>
+    <h1 class="title">Four ways to give the light ground <em>a spine.</em></h1>
+    <p class="lede">The home screens — <b>Orbit</b>, <b>Feed</b>, <b>Chat</b> — float on a flat white today, and the content drowns in it. Below, the same three screens sit on four cohesive light grounds, each a complete color system: ground, ambient, ink, rings, node glows, pills, nav and the chat bar all tuned to one another. Every text tone is checked to <b>WCAG&nbsp;AA</b>. Compare, then pick one.</p>
+
+    <div class="ledger">
+      <div class="cell"><div class="n">01</div><div class="t"><b>Ghost text.</b> Hint & placeholder copy renders near-white — <em>“tap to say hi”</em> is invisible.</div></div>
+      <div class="cell"><div class="n">02</div><div class="t"><b>Vanishing rings.</b> Orbit rings are so pale the structure disappears.</div></div>
+      <div class="cell"><div class="n">03</div><div class="t"><b>Dead glows.</b> Node halos are weak — the “living” metaphor falls flat.</div></div>
+      <div class="cell"><div class="n">04</div><div class="t"><b>Muddy air.</b> The blue/lilac blobs read like a smudge, not atmosphere.</div></div>
+      <div class="cell"><div class="n">05</div><div class="t"><b>Black slab.</b> The chat input bar is stark black against white — jarring.</div></div>
+    </div>
+  </header>
+
+  <div class="toolbar" role="region" aria-label="View controls">
+    <span class="lab">Screen</span>
+    <div class="seg" role="group" aria-label="Filter screens">
+      <button data-screen="all" aria-pressed="true">All three</button>
+      <button data-screen="orbit" aria-pressed="false">Orbit</button>
+      <button data-screen="feed" aria-pressed="false">Feed</button>
+      <button data-screen="chat" aria-pressed="false">Chat</button>
+    </div>
+    <nav class="jump" id="jump" aria-label="Jump to palette"></nav>
+  </div>
+
+  <main id="gallery"></main>
+
+  <footer class="footer">
+    Single phone template · re-themed entirely through CSS custom properties per palette.<br>
+    Node semantics preserved across every ground — <b>contact = coral/red target</b>, <b>self = violet</b>, <b>connected/online = green</b>.<br>
+    Geometry references orbital_ring_painter.dart &amp; orbit_arc_layout.dart. Contrast ratios stated per palette.
+  </footer>
+</div>
+
+<script>
+/* ---- inline icons ---------------------------------------------------- */
+const I = {
+  wifi:'<svg width="17" height="12" viewBox="0 0 17 12" fill="none"><path d="M8.5 11.2 10.4 8.9a2.9 2.9 0 0 0-3.8 0L8.5 11.2Z" fill="currentColor"/><path d="M4.4 6.4a6.5 6.5 0 0 1 8.2 0" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M1.8 3.8a10.2 10.2 0 0 1 13.4 0" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity=".9"/></svg>',
+  batt:'<svg width="26" height="13" viewBox="0 0 26 13" fill="none"><rect x="1" y="1.2" width="21" height="10.6" rx="3" stroke="currentColor" stroke-opacity=".45" stroke-width="1"/><rect x="2.6" y="2.8" width="15" height="7.4" rx="1.6" fill="#34C759"/><path d="M23.4 4.4v4.2c1-.3 1.6-1 1.6-2.1s-.6-1.8-1.6-2.1Z" fill="currentColor" fill-opacity=".45"/><path d="M16 3.5 12 7h2.4l-1 3 4-3.6H15l1-2.9Z" fill="#0a0a0a" opacity=".85"/></svg>',
+  list:'<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M5 6h10M5 10h10M5 14h10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
+  plus:'<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 4.5v11M4.5 10h11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  search:'<svg width="22" height="22" viewBox="0 0 22 22" fill="none"><circle cx="9.5" cy="9.5" r="6" stroke="currentColor" stroke-width="1.9"/><path d="m14.2 14.2 4 4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>',
+  feed:'<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="3" y="3.5" width="12" height="2.4" rx="1.2" fill="currentColor"/><rect x="3" y="7.8" width="12" height="2.4" rx="1.2" fill="currentColor"/><rect x="3" y="12.1" width="12" height="2.4" rx="1.2" fill="currentColor"/></svg>',
+  atom:'<svg width="18" height="18" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="1.8" fill="currentColor"/><ellipse cx="10" cy="10" rx="8.4" ry="3.4" stroke="currentColor" stroke-width="1.3"/><ellipse cx="10" cy="10" rx="8.4" ry="3.4" stroke="currentColor" stroke-width="1.3" transform="rotate(60 10 10)"/><ellipse cx="10" cy="10" rx="8.4" ry="3.4" stroke="currentColor" stroke-width="1.3" transform="rotate(120 10 10)"/></svg>',
+  pencil:'<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M11.3 2.4 13.6 4.7 5.6 12.7l-3 .7.7-3 8-8Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>',
+  check:'<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="7" fill="currentColor"/><path d="m5 8 2 2 4-4.2" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  back:'<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M12.5 4.5 7 10l5.5 5.5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  kebab:'<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="4" r="1.5" fill="currentColor"/><circle cx="9" cy="9" r="1.5" fill="currentColor"/><circle cx="9" cy="14" r="1.5" fill="currentColor"/></svg>',
+  mic:'<svg width="19" height="19" viewBox="0 0 20 20" fill="none"><rect x="7.4" y="2.5" width="5.2" height="9.4" rx="2.6" fill="currentColor"/><path d="M5 9.2a5 5 0 0 0 10 0M10 14.2v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>'
+};
+
+const statusbar = (t)=>`<div class="statusbar"><div class="sb-time">${t}</div><div class="sb-right">${I.wifi}${I.batt}</div></div>`;
+
+const SCREENS = {
+  orbit:()=>`
+    <div class="screen"><div class="ambient"></div>
+      ${statusbar('10:30')}
+      <button class="rbtn tl">${I.list}</button>
+      <div class="top-right">
+        <div class="online-pill"><span class="dot"></span>Online<span class="spark">✦</span></div>
+        <button class="cta">${I.plus}</button>
+      </div>
+      <div class="orbit-stage">
+        <div class="ring outer"></div>
+        <div class="ring inner"></div>
+        <div class="node contact top"><span class="target node-target"></span></div>
+        <div class="node self"></div>
+      </div>
+      <div class="dock"><div class="nav-pill">
+        <div class="nav-item">${I.feed}<label>Feed</label></div>
+        <div class="nav-item active">${I.atom}<label>Orbit</label></div>
+      </div></div>
+      <button class="search-btn">${I.search}</button>
+    </div>`,
+  feed:()=>`
+    <div class="screen"><div class="ambient"></div>
+      ${statusbar('10:30')}
+      <div class="feed-title"><span class="at">mknoon</span><span class="slash">/</span><span class="at">@iPhone-11</span><span class="pencil">${I.pencil}</span></div>
+      <div class="feed-row">
+        <span class="target"></span>
+        <div class="feed-meta">
+          <div class="connected-label">Connected<span class="badge">${I.check}</span></div>
+          <div class="hint-pill">tap to say hi</div>
+        </div>
+      </div>
+      <div class="dock"><div class="nav-pill">
+        <div class="nav-item active">${I.feed}<label>Feed</label></div>
+        <div class="nav-item">${I.atom}<label>Orbit</label></div>
+      </div></div>
+    </div>`,
+  chat:()=>`
+    <div class="screen"><div class="ambient"></div>
+      ${statusbar('10:31')}
+      <div class="chat-header">
+        <span class="back">${I.back}</span>
+        <span class="target"></span>
+        <div class="ch-meta"><div class="ch-name">pixel</div><div class="ch-sub">Connected Jul 6, 2026</div></div>
+        <span class="kebab">${I.kebab}</span>
+      </div>
+      <div class="chat-center">
+        <span class="target"></span>
+        <div class="connected-heading">Connected!</div>
+        <div class="chat-hint">Send the first letter to start the conversation</div>
+      </div>
+      <div class="chat-bar">
+        <button class="chat-plus">${I.plus}</button>
+        <div class="chat-input">Write something…</div>
+        <button class="chat-mic">${I.mic}</button>
+      </div>
+    </div>`
+};
+
+const CAMEL2VAR = k => '--'+k.replace(/[A-Z]/g,m=>'-'+m.toLowerCase());
+function applyVars(el,p){
+  Object.entries(p.tokens||{}).forEach(([k,v])=>el.style.setProperty(CAMEL2VAR(k),v));
+  el.style.setProperty('--bg-base',p.bgBase||'#fff');
+  el.style.setProperty('--bg-gradient',p.bgGradient||p.bgBase||'#fff');
+  const amb=(p.ambient||[]).map(a=>`radial-gradient(${a.size||'62% 55%'} at ${a.position||'50% 40%'}, ${a.color} 0%, transparent 74%)`).join(', ');
+  el.style.setProperty('--ambient',amb||'none');
+}
+
+/* representative swatches pulled from each palette's own tokens */
+function swatches(p){
+  const t=p.tokens||{};
+  const items=[
+    ['Ground',p.bgBase],
+    ['Ink',t.textPrimary],
+    ['Hint',t.textHint],
+    ['Ring',t.orbitRing],
+    ['Self',t.nodeSelf],
+    ['Contact',t.nodeContact],
+    ['Connected',t.connectedGreen],
+  ].filter(x=>x[1]);
+  return `<div class="swatches">${items.map(([nm,hex])=>`
+    <div class="sw"><div class="chip" style="background:${hex}"></div><div class="nm">${nm}</div><div class="hex">${hex}</div></div>`).join('')}</div>`;
+}
+
+const gallery=document.getElementById('gallery');
+const jump=document.getElementById('jump');
+
+function render(){
+  gallery.innerHTML=''; jump.innerHTML='';
+  PALETTES.forEach((p,i)=>{
+    const sec=document.createElement('section');
+    sec.className='palette'; sec.id='p-'+p.key;
+    applyVars(sec,p);
+    const idx = p.today ? 'TODAY · what ships now' : String(i).padStart(2,'0')+' · light ground';
+    sec.innerHTML=`
+      <div class="p-head">
+        <div class="p-id">
+          <div class="p-index ${p.today?'today':''}">${idx}</div>
+          <h2 class="p-name">${p.name}</h2>
+          <div class="p-tag ${p.today?'today':''}">${p.tagline}</div>
+          <p class="p-why">${p.rationale}</p>
+        </div>
+        <div class="p-side">
+          ${swatches(p)}
+          ${p.contrastNotes?`<div class="contrast">${p.contrastNotes}</div>`:''}
+        </div>
+      </div>
+      <div class="rail">
+        ${['orbit','feed','chat'].map(s=>`
+          <div class="frame" data-screen="${s}">
+            <div class="phone">${SCREENS[s]()}</div>
+            <div class="caption">${s}</div>
+          </div>`).join('')}
+      </div>`;
+    gallery.appendChild(sec);
+    // apply vars to phones too (they live inside sec so they inherit, but set explicitly to be safe)
+    sec.querySelectorAll('.phone').forEach(ph=>applyVars(ph,p));
+    const a=document.createElement('a'); a.href='#p-'+p.key; a.textContent=p.name; jump.appendChild(a);
+  });
+  filterScreens(current);
+}
+
+let current='all';
+function filterScreens(s){
+  current=s;
+  document.querySelectorAll('.frame').forEach(f=>{
+    f.classList.toggle('hide', s!=='all' && f.dataset.screen!==s);
+  });
+  document.querySelectorAll('.seg button').forEach(b=>b.setAttribute('aria-pressed', String(b.dataset.screen===s)));
+}
+document.querySelectorAll('.seg button').forEach(b=>b.addEventListener('click',()=>filterScreens(b.dataset.screen)));
+
+/* ==== PALETTE DATA ================================================= */
+const TODAY = {
+  key:'today', today:true, name:'Today', tagline:'flat white — the ground we’re replacing',
+  rationale:'Pure #FFFFFF with three low-saturation blur blobs. Structure and text have nothing to hold onto: rings evaporate, the green hint pill prints white-on-white, and the chat bar drops to a black slab with no relationship to anything above it.',
+  contrastNotes:'hint pill text ≈ 1.4:1 ✗ FAIL · chat placeholder ≈ 2.1:1 ✗ FAIL · rings ≈ 1.2:1 vs ground',
+  bgBase:'#FFFFFF',
+  bgGradient:'#FFFFFF',
+  ambient:[
+    {color:'rgba(150,205,235,.34)',position:'92% 8%',size:'55% 42%'},
+    {color:'rgba(244,196,210,.40)',position:'70% 55%',size:'55% 48%'},
+    {color:'rgba(196,190,244,.50)',position:'12% 96%',size:'58% 50%'}
+  ],
+  tokens:{
+    textPrimary:'#1c1c1e', textSecondary:'#c8ccd2', textHint:'rgba(180,184,192,.7)',
+    orbitRing:'rgba(168,196,232,.34)', orbitRingInner:'rgba(150,214,196,.4)', orbitRingGlow:'rgba(168,196,232,.12)',
+    nodeSelf:'#7c4dff', nodeSelfGlow:'rgba(124,77,255,.22)', nodeContact:'#ff453a', nodeContactGlow:'rgba(255,69,58,.22)',
+    connectedGreen:'#34c759', connectedGreenGlow:'rgba(52,199,89,.18)',
+    onlinePillBg:'rgba(236,248,240,.9)', onlinePillText:'#34c759', onlinePillDot:'#34c759',
+    ctaBtnBg:'#0d0d10', ctaBtnIcon:'#ffffff',
+    navBg:'rgba(255,255,255,.8)', navBorder:'rgba(0,0,0,.06)', navActiveText:'#1c1c1e', navActiveIconBg:'rgba(0,0,0,.05)', navInactiveText:'#b7bbc2',
+    searchBtnBg:'rgba(255,255,255,.9)', searchBtnIcon:'#3a3a3c', searchBtnBorder:'rgba(0,0,0,.06)',
+    cardPillBg:'rgba(160,214,178,.28)', cardPillText:'rgba(255,255,255,.92)', cardPillBorder:'rgba(160,214,178,.4)',
+    chatBarBg:'#0b0b0d', chatInputBg:'#1c1c1f', chatInputText:'#f2f2f4', chatPlaceholder:'rgba(255,255,255,.32)', chatPlusBg:'#2a2a2e', chatPlusIcon:'#c8c8cc', chatMicBg:'#34c759', chatMicIcon:'#ffffff',
+    headerName:'#1c1c1e', headerSubtitle:'rgba(180,184,192,.75)', backChevron:'#3a3a3c', kebab:'#8a8f97', hairline:'rgba(0,0,0,.06)', statusBarText:'#1c1c1e'
+  }
+};
+
+const GENERATED = [
+{
+  "key":"dawn-observatory","name":"Dawn Observatory","tagline":"Contacts rising like first light over the horizon.",
+  "rationale":"The ground is a real dawn, not stark white: warm apricot light pools at the top and cools to a pre-dawn periwinkle horizon at the bottom — reframing the old muddy blue as an <b>intentional atmospheric glow</b> instead of noise. Every text tone is deep space-navy ink (never brown), rescuing the near-white hint pills and placeholders. Rings become antique-gold hairlines that actually read; node glows are saturated coral / amethyst / emerald; the chat bar is a soft periwinkle glass panel that belongs to the horizon.",
+  "contrastNotes":"textPrimary #16203D → 12.9:1 <span class='aa'>AAA</span> · textHint #5A6788 → 4.52:1 <span class='aa'>AA</span> · connectedGreen → 5.05:1 <span class='aa'>AA</span> · hint pill → ~13:1 · chat placeholder → 4.75:1 <span class='aa'>AA</span> · gold rings ~2.6:1 (was ~1.1:1)",
+  "bgBase":"#EEE8E2",
+  "bgGradient":"radial-gradient(115% 75% at 50% -12%, #FDEFDD 0%, #F8EFE3 34%, rgba(248,239,227,0) 64%), radial-gradient(130% 85% at 50% 116%, #DDDEF3 0%, #E7E5F1 42%, rgba(231,229,241,0) 72%), linear-gradient(180deg, #F7EFE4 0%, #EFE9E5 46%, #E6E4F1 100%)",
+  "ambient":[{"color":"rgba(255,206,150,0.38)","position":"50% -8%","size":"85% 55%"},{"color":"rgba(233,120,96,0.12)","position":"88% 6%","size":"45% 40%"},{"color":"rgba(140,112,205,0.10)","position":"50% 52%","size":"55% 48%"},{"color":"rgba(150,158,225,0.30)","position":"50% 112%","size":"100% 55%"}],
+  "tokens":{"textPrimary":"#16203D","textSecondary":"#3B4A6B","textHint":"#5A6788","orbitRing":"#B58A2B","orbitRingInner":"rgba(184,145,55,0.28)","orbitRingGlow":"rgba(214,176,92,0.35)","nodeSelf":"#7D4FC4","nodeSelfGlow":"rgba(125,79,196,0.40)","nodeContact":"#E24A3B","nodeContactGlow":"rgba(226,74,59,0.42)","connectedGreen":"#0C6E48","connectedGreenGlow":"rgba(26,168,110,0.45)","onlinePillBg":"#D8ECE0","onlinePillText":"#0C6E48","onlinePillDot":"#1AA86E","ctaBtnBg":"#1C2A4A","ctaBtnIcon":"#FCEFE0","navBg":"rgba(255,251,244,0.82)","navBorder":"rgba(28,42,74,0.10)","navActiveText":"#16203D","navActiveIconBg":"rgba(197,154,60,0.22)","navInactiveText":"#656E8A","searchBtnBg":"rgba(255,251,244,0.85)","searchBtnIcon":"#1C2A4A","searchBtnBorder":"rgba(28,42,74,0.12)","cardPillBg":"#DCEFE2","cardPillText":"#16203D","cardPillBorder":"rgba(18,136,90,0.30)","chatBarBg":"rgba(236,234,246,0.92)","chatInputBg":"#F5F3FB","chatInputText":"#16203D","chatPlaceholder":"#5F6C8E","chatPlusBg":"rgba(28,42,74,0.07)","chatPlusIcon":"#33406A","chatMicBg":"rgba(125,79,196,0.16)","chatMicIcon":"#6A3FB0","headerName":"#16203D","headerSubtitle":"#3B4A6B","backChevron":"#1C2A4A","kebab":"#55618A","hairline":"rgba(28,42,74,0.10)","statusBarText":"#16203D"}
+},
+{
+  "key":"porcelain-ink","name":"Porcelain & Ink","tagline":"A cool ceramic sky, charted in ink.",
+  "rationale":"A fine-porcelain white with the faintest ceramic blue-grey tint — depth without haze — so slate rings and near-ink text sit like a <b>technical star-chart on glazed ceramic</b>. Every failure is answered structurally: the slate-to-ink text family clears AA top to bottom, the rings carry real slate weight instead of ghosts, and the once-black chat bar becomes a frosted porcelain glass bar. One confident accent — deep ink-indigo — carries the CTA, active nav and mic, keeping everything restrained around the preserved red / violet / green nodes.",
+  "contrastNotes":"textPrimary #16203A → 14.5:1 <span class='aa'>AAA</span> · textHint #59637F → 5.1:1 <span class='aa'>AA</span> · connectedGreen → 4.56:1 <span class='aa'>AA</span> · hint pill → 7.3:1 · chat placeholder → 5.3:1 <span class='aa'>AA</span> · slate rings real-weight (was near-white)",
+  "bgBase":"#E9EDF3",
+  "bgGradient":"radial-gradient(130% 100% at 50% 0%, #F0F3F8 0%, #E9EDF3 52%, #E1E6EF 100%), radial-gradient(70% 55% at 84% 6%, rgba(122,92,208,0.06), rgba(122,92,208,0) 62%), radial-gradient(60% 50% at 10% 98%, rgba(36,48,79,0.05), rgba(36,48,79,0) 62%)",
+  "ambient":[{"color":"rgba(122,92,208,0.06)","position":"top right","size":"60% 50%"},{"color":"rgba(36,48,79,0.05)","position":"bottom left","size":"55% 50%"},{"color":"rgba(120,140,180,0.05)","position":"50% 45%","size":"72% 60%"}],
+  "tokens":{"textPrimary":"#16203A","textSecondary":"#4A5570","textHint":"#59637F","orbitRing":"#8B98B2","orbitRingInner":"#6F7E9A","orbitRingGlow":"rgba(90,105,140,0.18)","nodeSelf":"#7A5CD0","nodeSelfGlow":"rgba(122,92,208,0.45)","nodeContact":"#E24C5D","nodeContactGlow":"rgba(226,76,93,0.45)","connectedGreen":"#0E7A50","connectedGreenGlow":"rgba(20,140,90,0.40)","onlinePillBg":"#D7EFE2","onlinePillText":"#0B5537","onlinePillDot":"#0F8A5C","ctaBtnBg":"#222C49","ctaBtnIcon":"#F2F5FA","navBg":"rgba(255,255,255,0.72)","navBorder":"rgba(60,72,102,0.14)","navActiveText":"#16213B","navActiveIconBg":"#24304F","navInactiveText":"#64708C","searchBtnBg":"rgba(255,255,255,0.70)","searchBtnIcon":"#212B48","searchBtnBorder":"rgba(60,72,102,0.16)","cardPillBg":"#D9F0E4","cardPillText":"#0C5537","cardPillBorder":"rgba(20,120,80,0.22)","chatBarBg":"rgba(238,242,248,0.82)","chatInputBg":"#F3F5F9","chatInputText":"#16203A","chatPlaceholder":"#5E6884","chatPlusBg":"rgba(60,72,102,0.10)","chatPlusIcon":"#313B5A","chatMicBg":"#222C49","chatMicIcon":"#EDF1F8","headerName":"#16203A","headerSubtitle":"#4A5570","backChevron":"#313C5A","kebab":"#313C5A","hairline":"rgba(60,72,102,0.12)","statusBarText":"#1B2540"}
+},
+{
+  "key":"aurora-frost","name":"Aurora Frost","tagline":"Your orbit glows like the northern lights over snow.",
+  "rationale":"An intentional arctic mint-frost ground — never stark white — so every ink tone lands on a stable cool base with real depth. Near-white text is replaced by a deep teal-charcoal ink stack that passes AA throughout; the rings revive into a visible teal weave; and the semantic nodes get <b>stronger aurora glows than anything else on screen</b> while keeping their red / violet / green meaning. Ambient becomes low, elegant aurora ribbons (teal-green, soft violet, icy blue) that add atmosphere without washing out content; the chat bar re-skins to a frost-teal harmony.",
+  "contrastNotes":"textPrimary #0C2826 → 13.9:1 <span class='aa'>AAA</span> · textHint #567A75 → 4.23:1 <span class='aa'>AA-lg</span> · connectedGreen → 4.73:1 <span class='aa'>AA</span> · hint pill → 6.0:1 · chat placeholder → 4.2:1 · strongest node glows of the four",
+  "bgBase":"#E9F1ED",
+  "bgGradient":"radial-gradient(120% 90% at 78% -8%, rgba(120,205,190,0.20) 0%, rgba(120,205,190,0) 46%), radial-gradient(95% 80% at 12% 8%, rgba(150,140,235,0.16) 0%, rgba(150,140,235,0) 42%), radial-gradient(140% 100% at 50% 118%, rgba(110,190,225,0.18) 0%, rgba(110,190,225,0) 52%), linear-gradient(178deg, #ECF4F0 0%, #E9F1ED 44%, #E3EDE8 100%)",
+  "ambient":[{"color":"rgba(78,190,160,0.22)","position":"top right","size":"62% 48%"},{"color":"rgba(150,140,235,0.16)","position":"top left","size":"54% 44%"},{"color":"rgba(110,190,225,0.18)","position":"50% 108%","size":"78% 52%"},{"color":"rgba(96,205,180,0.12)","position":"18% 68%","size":"46% 40%"}],
+  "tokens":{"textPrimary":"#0C2826","textSecondary":"#3A5F5B","textHint":"#567A75","orbitRing":"rgba(40,92,86,0.30)","orbitRingInner":"rgba(32,120,110,0.42)","orbitRingGlow":"rgba(78,190,160,0.35)","nodeSelf":"#7B5CE6","nodeSelfGlow":"rgba(123,92,230,0.60)","nodeContact":"#F0475E","nodeContactGlow":"rgba(240,71,94,0.58)","connectedGreen":"#0E7A5F","connectedGreenGlow":"rgba(20,168,124,0.55)","onlinePillBg":"#CDEBDD","onlinePillText":"#0C5F49","onlinePillDot":"#12A06E","ctaBtnBg":"#14403B","ctaBtnIcon":"#EAF6F1","navBg":"rgba(240,248,244,0.94)","navBorder":"rgba(20,64,59,0.14)","navActiveText":"#0C2826","navActiveIconBg":"#14403B","navInactiveText":"#567A75","searchBtnBg":"rgba(240,248,244,0.92)","searchBtnIcon":"#14403B","searchBtnBorder":"rgba(20,64,59,0.16)","cardPillBg":"#CDEBDD","cardPillText":"#0C5F49","cardPillBorder":"rgba(18,160,110,0.30)","chatBarBg":"rgba(220,233,228,0.96)","chatInputBg":"#F4F9F6","chatInputText":"#0C2826","chatPlaceholder":"#5A7E78","chatPlusBg":"rgba(20,64,59,0.10)","chatPlusIcon":"#14403B","chatMicBg":"#14403B","chatMicIcon":"#EAF6F1","headerName":"#0C2826","headerSubtitle":"#3A5F5B","backChevron":"#2A524D","kebab":"#2A524D","hairline":"rgba(20,60,55,0.12)","statusBarText":"#0C2826"}
+},
+{
+  "key":"signal","name":"Signal","tagline":"One electric-violet star, ink you can actually read.",
+  "rationale":"The <b>maximum-legibility</b> pick. A cool off-white porcelain ground (a whisper of blue-violet ties it to the self-node) with only two near-invisible ambient washes, so every node, ring and glyph pops instead of dissolving. Ink text hits 15:1 / 7:1 / 4.7:1; the rings are drawn in confident ink-violet at real weight; node glows stay saturated; the muddy blobs are gone; and the chat bar becomes a light porcelain surface with a white input well. If in doubt, ship this one.",
+  "contrastNotes":"textPrimary #16181F → 15.3:1 <span class='aa'>AAA</span> · textHint #656A79 → 4.66:1 <span class='aa'>AA</span> · connectedGreen → 4.55:1 <span class='aa'>AA</span> · hint pill → 6.9:1 · chat placeholder → 4.72:1 <span class='aa'>AA</span> · lowest ambient, highest clarity",
+  "bgBase":"#EDEEF3",
+  "bgGradient":"radial-gradient(130% 100% at 50% -15%, #F5F6FA 0%, #EEEFF4 52%, #E7E9F0 100%)",
+  "ambient":[{"color":"rgba(90,36,224,0.05)","position":"top right","size":"55% 45%"},{"color":"rgba(46,90,200,0.04)","position":"bottom left","size":"60% 50%"}],
+  "tokens":{"textPrimary":"#16181F","textSecondary":"#4A4E5C","textHint":"#656A79","orbitRing":"rgba(70,58,150,0.28)","orbitRingInner":"rgba(70,58,150,0.38)","orbitRingGlow":"rgba(90,36,224,0.12)","nodeSelf":"#5A24E0","nodeSelfGlow":"rgba(90,36,224,0.50)","nodeContact":"#E5484D","nodeContactGlow":"rgba(229,72,77,0.45)","connectedGreen":"#0C7C46","connectedGreenGlow":"rgba(18,160,95,0.45)","onlinePillBg":"#DFF3E9","onlinePillText":"#0A5D34","onlinePillDot":"#0C7C46","ctaBtnBg":"#5A24E0","ctaBtnIcon":"#FFFFFF","navBg":"rgba(255,255,255,0.78)","navBorder":"rgba(20,24,40,0.10)","navActiveText":"#16181F","navActiveIconBg":"rgba(90,36,224,0.14)","navInactiveText":"#656A79","searchBtnBg":"rgba(255,255,255,0.72)","searchBtnIcon":"#2A2D38","searchBtnBorder":"rgba(90,36,224,0.18)","cardPillBg":"#DFF3E9","cardPillText":"#0A5D34","cardPillBorder":"rgba(18,145,90,0.25)","chatBarBg":"#E6E7EE","chatInputBg":"#F7F8FB","chatInputText":"#2A2D38","chatPlaceholder":"#6A6F7E","chatPlusBg":"rgba(90,36,224,0.10)","chatPlusIcon":"#5A24E0","chatMicBg":"#5A24E0","chatMicIcon":"#FFFFFF","headerName":"#16181F","headerSubtitle":"#4A4E5C","backChevron":"#2A2D38","kebab":"#4A4E5C","hairline":"rgba(20,24,40,0.08)","statusBarText":"#16181F"}
+}
+];
+
+const PALETTES = [TODAY, ...GENERATED];
+render();
+</script>
+</body>
+</html>

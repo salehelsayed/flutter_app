@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 
 /// Mic button for voice recording. Replaces the send button when text is empty.
 ///
@@ -23,7 +24,6 @@ class VoiceRecordButton extends StatefulWidget {
 }
 
 class _VoiceRecordButtonState extends State<VoiceRecordButton> {
-  static const _accentColor = Color(0xFF1DB954);
   bool _isPressed = false;
   bool _startedRecordingWithThisTap = false;
 
@@ -68,13 +68,16 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> {
   @override
   Widget build(BuildContext context) {
     final isRecording = widget.isRecording;
+    final readableColors = context.backgroundReadableColors;
     final buttonColor = isRecording
-        ? _accentColor
-        : const Color.fromRGBO(29, 185, 84, 0.15);
+        ? readableColors.accent
+        : readableColors.micBg;
     final borderColor = isRecording
         ? Colors.transparent
-        : const Color.fromRGBO(29, 185, 84, 0.3);
-    final iconColor = isRecording ? Colors.white : _accentColor;
+        : readableColors.micBorder;
+    final iconColor = isRecording
+        ? readableColors.accentIcon
+        : readableColors.micIcon;
     final label = isRecording ? 'Stop recording' : 'Start voice recording';
     final hint = isRecording
         ? 'Tap to stop recording'
@@ -106,9 +109,9 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> {
                 shape: BoxShape.circle,
                 border: Border.all(color: borderColor),
                 boxShadow: isRecording
-                    ? const [
+                    ? [
                         BoxShadow(
-                          color: Color.fromRGBO(29, 185, 84, 0.24),
+                          color: readableColors.micShadow,
                           blurRadius: 12,
                           offset: Offset(0, 4),
                         ),

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/core/theme/feed_tokens.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background_mirrored.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/daylight_lagoon_background.dart';
@@ -95,7 +96,8 @@ class _AmbientBackgroundState extends State<AmbientBackground>
   /// and are intentionally NOT gated here (user-required).
   void _syncMotionPreference() {
     final mediaQuery = MediaQuery.maybeOf(context);
-    _motionDisabled = (mediaQuery?.disableAnimations ?? false) ||
+    _motionDisabled =
+        (mediaQuery?.disableAnimations ?? false) ||
         (mediaQuery?.accessibleNavigation ?? false);
 
     if (_shouldAnimate && !_controller.isAnimating) {
@@ -115,6 +117,9 @@ class _AmbientBackgroundState extends State<AmbientBackground>
       widget.preference,
       representativeToneOverride: widget.readableToneOverride,
     );
+    final feedTokens = readableColors.isLightSurface
+        ? FeedTokens.light
+        : FeedTokens.dark;
     final theme = Theme.of(context);
     final themedBackground = switch (widget.preference) {
       BackgroundPreference.defaultBackground => _DefaultAmbientBackground(
@@ -136,9 +141,12 @@ class _AmbientBackgroundState extends State<AmbientBackground>
         data: theme.copyWith(
           extensions: [
             ...theme.extensions.values.where(
-              (extension) => extension is! BackgroundReadableColors,
+              (extension) =>
+                  extension is! BackgroundReadableColors &&
+                  extension is! FeedTokens,
             ),
             readableColors,
+            feedTokens,
           ],
         ),
         child: themedBackground,

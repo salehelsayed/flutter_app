@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
@@ -196,29 +197,39 @@ class _ComposeAreaState extends State<ComposeArea>
   /// 117 Session 3: read-only preview of the auto-stopped recording held for
   /// review (a voice glyph + its duration), shown in place of the text input.
   Widget _buildReviewPreview(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
     return Container(
       constraints: const BoxConstraints(minHeight: 44),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color.fromRGBO(255, 255, 255, 0.06),
+        color: isLightSurface
+            ? readableColors.composerInputFill
+            : const Color.fromRGBO(255, 255, 255, 0.06),
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: const Color.fromRGBO(255, 255, 255, 0.10)),
+        border: Border.all(
+          color: isLightSurface
+              ? readableColors.inputBorder
+              : const Color.fromRGBO(255, 255, 255, 0.10),
+        ),
       ),
       child: Row(
         children: [
-          const Icon(
+          Icon(
             Icons.graphic_eq_rounded,
             size: 20,
-            color: Color(0xFF4ecdc4),
+            color: readableColors.sendIcon,
           ),
           const SizedBox(width: 10),
           Text(
             _formatDuration(widget.recordingDuration),
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 14,
-              color: Color.fromRGBO(255, 255, 255, 0.95),
+              color: isLightSurface
+                  ? readableColors.textPrimary
+                  : const Color.fromRGBO(255, 255, 255, 0.95),
               fontWeight: FontWeight.w600,
-              fontFeatures: [FontFeature.tabularFigures()],
+              fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
           const Spacer(),
@@ -229,6 +240,7 @@ class _ComposeAreaState extends State<ComposeArea>
 
   /// 117 Session 3: discard / send controls for the held review recording.
   Widget _buildReviewActions(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -262,15 +274,15 @@ class _ComposeAreaState extends State<ComposeArea>
             width: 36,
             height: 36,
             decoration: BoxDecoration(
-              color: const Color.fromRGBO(29, 185, 84, 0.15),
+              color: readableColors.sendBg,
               borderRadius: BorderRadius.circular(100),
-              border: Border.all(color: const Color.fromRGBO(29, 185, 84, 0.3)),
+              border: Border.all(color: readableColors.micBorder),
             ),
-            child: const Center(
+            child: Center(
               child: Icon(
                 Icons.arrow_upward_rounded,
                 size: 20,
-                color: Color(0xFF1DB954),
+                color: readableColors.sendIcon,
               ),
             ),
           ),
@@ -308,18 +320,20 @@ class _ComposeAreaState extends State<ComposeArea>
     final quotePreviewText = widget.isQuoteUnavailable
         ? 'Message unavailable'
         : widget.quotedText;
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
 
     return ClipRect(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
         child: Container(
           padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + bottomPadding),
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              colors: [Colors.transparent, Color.fromRGBO(10, 10, 15, 0.95)],
-              stops: [0.0, 0.2],
+              colors: [Colors.transparent, readableColors.composerBarColor],
+              stops: const [0.0, 0.2],
             ),
           ),
           child: Column(
@@ -349,32 +363,65 @@ class _ComposeAreaState extends State<ComposeArea>
                         width: 48,
                         height: 48,
                         decoration: BoxDecoration(
-                          color: Color.fromRGBO(
-                            255,
-                            255,
-                            255,
-                            widget.isProcessing ? 0.04 : 0.08,
-                          ),
+                          color: widget.isProcessing
+                              ? (isLightSurface
+                                    ? readableColors.composerInputFill
+                                          .withValues(alpha: 0.55)
+                                    : const Color.fromRGBO(255, 255, 255, 0.04))
+                              : (isLightSurface
+                                    ? readableColors.composerInputFill
+                                    : const Color.fromRGBO(
+                                        255,
+                                        255,
+                                        255,
+                                        0.08,
+                                      )),
                           borderRadius: BorderRadius.circular(100),
                           border: Border.all(
-                            color: Color.fromRGBO(
-                              255,
-                              255,
-                              255,
-                              widget.isProcessing ? 0.06 : 0.15,
-                            ),
+                            color: widget.isProcessing
+                                ? (isLightSurface
+                                      ? readableColors.inputBorder.withValues(
+                                          alpha: 0.18,
+                                        )
+                                      : const Color.fromRGBO(
+                                          255,
+                                          255,
+                                          255,
+                                          0.06,
+                                        ))
+                                : (isLightSurface
+                                      ? readableColors.inputBorder
+                                      : const Color.fromRGBO(
+                                          255,
+                                          255,
+                                          255,
+                                          0.15,
+                                        )),
                           ),
                         ),
                         child: Center(
                           child: Icon(
                             Icons.add_rounded,
                             size: 20,
-                            color: Color.fromRGBO(
-                              255,
-                              255,
-                              255,
-                              widget.isProcessing ? 0.15 : 0.5,
-                            ),
+                            color: widget.isProcessing
+                                ? (isLightSurface
+                                      ? readableColors.iconMuted.withValues(
+                                          alpha: 0.55,
+                                        )
+                                      : const Color.fromRGBO(
+                                          255,
+                                          255,
+                                          255,
+                                          0.15,
+                                        ))
+                                : (isLightSurface
+                                      ? readableColors.iconMuted
+                                      : const Color.fromRGBO(
+                                          255,
+                                          255,
+                                          255,
+                                          0.5,
+                                        )),
                           ),
                         ),
                       ),
@@ -398,26 +445,46 @@ class _ComposeAreaState extends State<ComposeArea>
                               maxHeight: 160,
                             ),
                             decoration: BoxDecoration(
-                              color: const Color.fromRGBO(255, 255, 255, 0.06),
+                              color: isLightSurface
+                                  ? readableColors.composerInputFill
+                                  : const Color.fromRGBO(255, 255, 255, 0.06),
                               borderRadius: BorderRadius.circular(22),
                               border: Border.all(
                                 color: _hasFocus
-                                    ? const Color.fromRGBO(255, 255, 255, 0.20)
-                                    : const Color.fromRGBO(255, 255, 255, 0.10),
+                                    ? (isLightSurface
+                                          ? readableColors.accent
+                                          : const Color.fromRGBO(
+                                              255,
+                                              255,
+                                              255,
+                                              0.20,
+                                            ))
+                                    : (isLightSurface
+                                          ? readableColors.inputBorder
+                                          : const Color.fromRGBO(
+                                              255,
+                                              255,
+                                              255,
+                                              0.10,
+                                            )),
                               ),
                               boxShadow: _hasFocus
-                                  ? const [
+                                  ? [
                                       BoxShadow(
-                                        color: Color.fromRGBO(
-                                          255,
-                                          255,
-                                          255,
-                                          0.08,
-                                        ),
+                                        color: isLightSurface
+                                            ? readableColors.accent.withValues(
+                                                alpha: 0.10,
+                                              )
+                                            : const Color.fromRGBO(
+                                                255,
+                                                255,
+                                                255,
+                                                0.08,
+                                              ),
                                         blurRadius: 0,
                                         spreadRadius: 1,
                                       ),
-                                      BoxShadow(
+                                      const BoxShadow(
                                         color: Color.fromRGBO(0, 0, 0, 0.3),
                                         blurRadius: 20,
                                         offset: Offset(0, 4),
@@ -432,9 +499,11 @@ class _ComposeAreaState extends State<ComposeArea>
                               maxLines: null,
                               maxLength: maxMessageLength,
                               enabled: !_isRecording,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 15,
-                                color: Color.fromRGBO(255, 255, 255, 0.95),
+                                color: isLightSurface
+                                    ? readableColors.textPrimary
+                                    : const Color.fromRGBO(255, 255, 255, 0.95),
                                 height: 1.5,
                               ),
                               decoration: InputDecoration(
@@ -443,12 +512,16 @@ class _ComposeAreaState extends State<ComposeArea>
                                 )!.conversation_hint,
                                 hintStyle: TextStyle(
                                   fontSize: 15,
-                                  color: Color.fromRGBO(
-                                    255,
-                                    255,
-                                    255,
-                                    _hasFocus ? 0.2 : 0.3,
-                                  ),
+                                  color: isLightSurface
+                                      ? readableColors.composerHint
+                                      : (_hasFocus
+                                            ? const Color.fromRGBO(
+                                                255,
+                                                255,
+                                                255,
+                                                0.2,
+                                              )
+                                            : readableColors.composerHint),
                                 ),
                                 border: InputBorder.none,
                                 counterText: '',
@@ -499,27 +572,17 @@ class _ComposeAreaState extends State<ComposeArea>
                                 width: 48,
                                 height: 48,
                                 decoration: BoxDecoration(
-                                  color: const Color.fromRGBO(
-                                    29,
-                                    185,
-                                    84,
-                                    0.15,
-                                  ),
+                                  color: readableColors.sendBg,
                                   borderRadius: BorderRadius.circular(100),
                                   border: Border.all(
-                                    color: const Color.fromRGBO(
-                                      29,
-                                      185,
-                                      84,
-                                      0.3,
-                                    ),
+                                    color: readableColors.micBorder,
                                   ),
                                 ),
-                                child: const Center(
+                                child: Center(
                                   child: Icon(
                                     Icons.arrow_upward_rounded,
                                     size: 20,
-                                    color: Color(0xFF1DB954),
+                                    color: readableColors.sendIcon,
                                   ),
                                 ),
                               ),

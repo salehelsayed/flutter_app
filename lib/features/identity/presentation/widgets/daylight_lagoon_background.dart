@@ -8,18 +8,26 @@ class DaylightLagoonBackground extends StatefulWidget {
   final Widget child;
   final Duration driftPeriod;
   final Color baseColor;
-  final Color violetBloom;
-  final Color tealBloom;
-  final Color pinkBloom;
+  final List<Color> groundGradientColors;
+  final Color violetWash;
+  final Color blueWash;
 
   const DaylightLagoonBackground({
     super.key,
     required this.child,
     this.driftPeriod = const Duration(seconds: 18),
-    this.baseColor = Colors.white,
-    this.violetBloom = const Color(0xFF818CF8),
-    this.tealBloom = const Color(0xFF81E6D9),
-    this.pinkBloom = const Color(0xFFF472B6),
+    // Paper White: a genuinely white ground. Pure white through the center
+    // (where the orbit sits) easing to a barely-there cool grey at the extreme
+    // edges — structure without ever reading as tinted. The old porcelain
+    // #EDEEF3 + violet/blue washes are gone (they muddied the light ground).
+    this.baseColor = const Color(0xFFFFFFFF),
+    this.groundGradientColors = const [
+      Color(0xFFFFFFFF),
+      Color(0xFFFFFFFF),
+      Color(0xFFF0F1F4),
+    ],
+    this.violetWash = const Color(0x00FFFFFF),
+    this.blueWash = const Color(0x00FFFFFF),
   });
 
   @override
@@ -84,7 +92,15 @@ class _DaylightLagoonBackgroundState extends State<DaylightLagoonBackground>
   Widget build(BuildContext context) {
     return DecoratedBox(
       key: const ValueKey('daylight-lagoon-background-root'),
-      decoration: BoxDecoration(color: widget.baseColor),
+      decoration: BoxDecoration(
+        color: widget.baseColor,
+        gradient: RadialGradient(
+          center: const Alignment(0.0, -0.06),
+          radius: 1.15,
+          colors: widget.groundGradientColors,
+          stops: const [0.0, 0.62, 1.0],
+        ),
+      ),
       child: Stack(
         children: [
           Positioned.fill(
@@ -94,9 +110,8 @@ class _DaylightLagoonBackgroundState extends State<DaylightLagoonBackground>
                 painter: _DaylightLagoonPainter(
                   animation: _motionDisabled ? null : _controller,
                   motionDisabled: _motionDisabled,
-                  violet: widget.violetBloom,
-                  teal: widget.tealBloom,
-                  pink: widget.pinkBloom,
+                  violet: widget.violetWash,
+                  blue: widget.blueWash,
                 ),
                 isComplex: true,
                 willChange: !_motionDisabled,
@@ -114,15 +129,13 @@ class _DaylightLagoonPainter extends CustomPainter {
   final Animation<double>? animation;
   final bool motionDisabled;
   final Color violet;
-  final Color teal;
-  final Color pink;
+  final Color blue;
 
   _DaylightLagoonPainter({
     required this.animation,
     required this.motionDisabled,
     required this.violet,
-    required this.teal,
-    required this.pink,
+    required this.blue,
   }) : super(repaint: motionDisabled ? null : animation);
 
   double get _driftT => motionDisabled ? 0 : animation?.value ?? 0;
@@ -143,7 +156,6 @@ class _DaylightLagoonPainter extends CustomPainter {
       canvas,
       size,
       color: violet,
-      opacity: 0.30,
       cx: 0.20,
       cy: 0.90,
       rx: 0.60,
@@ -153,24 +165,12 @@ class _DaylightLagoonPainter extends CustomPainter {
     _paintBloom(
       canvas,
       size,
-      color: teal,
-      opacity: 0.22,
+      color: blue,
       cx: 0.85,
       cy: 0.10,
       rx: 0.50,
       ry: 0.40,
       stop: 0.62,
-    );
-    _paintBloom(
-      canvas,
-      size,
-      color: pink,
-      opacity: 0.18,
-      cx: 0.70,
-      cy: 0.60,
-      rx: 0.40,
-      ry: 0.32,
-      stop: 0.60,
     );
 
     canvas.restore();
@@ -180,7 +180,6 @@ class _DaylightLagoonPainter extends CustomPainter {
     Canvas canvas,
     Size size, {
     required Color color,
-    required double opacity,
     required double cx,
     required double cy,
     required double rx,
@@ -199,7 +198,7 @@ class _DaylightLagoonPainter extends CustomPainter {
     final shader = ui.Gradient.radial(
       Offset.zero,
       1.0,
-      [color.withValues(alpha: opacity), color.withValues(alpha: 0)],
+      [color, color.withValues(alpha: 0)],
       [0.0, stop],
     );
     canvas.drawCircle(Offset.zero, 1.0, Paint()..shader = shader);
@@ -212,7 +211,6 @@ class _DaylightLagoonPainter extends CustomPainter {
     return oldDelegate.animation != animation ||
         oldDelegate.motionDisabled != motionDisabled ||
         oldDelegate.violet != violet ||
-        oldDelegate.teal != teal ||
-        oldDelegate.pink != pink;
+        oldDelegate.blue != blue;
   }
 }

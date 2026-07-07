@@ -736,15 +736,14 @@ class AppLocalizationsEn extends AppLocalizations {
       'Mirrored cosmic selected';
 
   @override
-  String get settings_background_daylight_lagoon => 'Daylight Lagoon';
+  String get settings_background_daylight_lagoon => 'Signal';
 
   @override
   String get settings_background_daylight_lagoon_desc =>
-      'A bright lagoon sky with soft pastel blooms.';
+      'A cool porcelain sky with one electric-violet star.';
 
   @override
-  String get settings_background_daylight_lagoon_selected =>
-      'Daylight Lagoon selected';
+  String get settings_background_daylight_lagoon_selected => 'Signal selected';
 
   @override
   String get settings_background_save_fail =>

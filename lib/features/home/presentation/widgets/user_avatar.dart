@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/ring_avatar_generator.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
 import 'package:flutter_app/shared/widgets/media/avatar_image_provider.dart';
@@ -122,6 +123,7 @@ class UserAvatar extends StatelessWidget {
     if (avatarBytes != null) {
       return _wrapWithGlow(
         _buildPhotoAvatar(
+          context,
           Image(
             // Avatar bytes are jpg/png (no GIF) — aspect-safe sized decode.
             image: avatarResizedProvider(MemoryImage(avatarBytes!), cacheSize),
@@ -148,12 +150,16 @@ class UserAvatar extends StatelessWidget {
           final realPath = avatarPath.split('?').first;
           return _wrapWithGlow(
             _buildPhotoAvatar(
+              context,
               Image(
                 // 156 QW-4: decode at display size; .gif is exempt because
                 // ResizeImage collapses an animated GIF to its first frame.
                 image: realPath.toLowerCase().endsWith('.gif')
                     ? FileImage(File(realPath))
-                    : avatarResizedProvider(FileImage(File(realPath)), cacheSize),
+                    : avatarResizedProvider(
+                        FileImage(File(realPath)),
+                        cacheSize,
+                      ),
                 key: ValueKey(avatarPath), // unique key forces reload
                 fit: BoxFit.cover,
                 width: size,
@@ -174,7 +180,7 @@ class UserAvatar extends StatelessWidget {
     }
 
     // Priority 4: Generic fallback
-    return _buildFallbackIcon();
+    return _buildFallbackIcon(context);
   }
 
   Widget _wrapWithGlow(Widget child) {
@@ -200,7 +206,7 @@ class UserAvatar extends StatelessWidget {
     );
   }
 
-  Widget _buildPhotoAvatar(Widget imageWidget) {
+  Widget _buildPhotoAvatar(BuildContext context, Widget imageWidget) {
     if (!showPhotoFrame) {
       return SizedBox(
         width: size,
@@ -208,13 +214,14 @@ class UserAvatar extends StatelessWidget {
         child: ClipOval(child: imageWidget),
       );
     }
+    final readableColors = context.backgroundReadableColors;
     return Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        border: Border.all(color: const Color.fromRGBO(255, 255, 255, 0.35)),
-        color: const Color.fromRGBO(22, 24, 30, 0.7),
+        border: Border.all(color: readableColors.avatarFrameBorder),
+        color: readableColors.avatarFrameFill,
       ),
       child: ClipOval(child: imageWidget),
     );
@@ -228,25 +235,24 @@ class UserAvatar extends StatelessWidget {
     if (peerId != null) {
       return RingAvatar(peerId: peerId!, size: size);
     }
-    return Icon(
-      Icons.person_outline_rounded,
-      color: const Color.fromRGBO(255, 255, 255, 0.8),
-      size: size * 0.48,
-    );
+    return _buildFallbackIcon(context);
   }
 
-  Widget _buildFallbackIcon() {
+  Widget _buildFallbackIcon(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     return Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        border: Border.all(color: const Color.fromRGBO(255, 255, 255, 0.35)),
-        color: const Color.fromRGBO(22, 24, 30, 0.7),
+        border: Border.all(color: readableColors.avatarFrameBorder),
+        color: readableColors.avatarFrameFill,
       ),
       child: Icon(
         Icons.person_outline_rounded,
-        color: const Color.fromRGBO(255, 255, 255, 0.8),
+        color: readableColors.isLightSurface
+            ? readableColors.iconMuted
+            : const Color.fromRGBO(255, 255, 255, 0.8),
         size: size * 0.48,
       ),
     );

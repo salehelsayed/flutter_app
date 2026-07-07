@@ -186,6 +186,8 @@ readonly FEED_TESTS=(
   "test/features/feed/presentation/widgets/letter_card_group_test.dart"
   "test/features/feed/presentation/widgets/letter_card_one_to_one_test.dart"
   "test/features/feed/presentation/widgets/letter_card_system_test.dart"
+  "test/features/feed/presentation/widgets/letter_card_system_signal_test.dart"
+  "test/features/feed/presentation/widgets/feed_tokens_tone_test.dart"
   # Screen behaviors: focus/compose, swipe-dismiss, caught-up, reduced-motion.
   "test/features/feed/presentation/screens/feed_focus_test.dart"
   "test/features/feed/presentation/screens/feed_swipe_test.dart"
@@ -697,7 +699,7 @@ classify_path() {
     return 0
   fi
 
-  if [[ "$path" =~ ^test/core/(bridge|constants|database|device|inbox|local_discovery|media|permissions|secure_storage|theme|utils)/.*_test\.dart$ ]]; then
+  if [[ "$path" =~ ^test/core/(bridge|constants|database|device|inbox|l10n|local_discovery|media|permissions|secure_storage|theme|utils)/.*_test\.dart$ ]]; then
     printf 'core component direct suite'
     return 0
   fi

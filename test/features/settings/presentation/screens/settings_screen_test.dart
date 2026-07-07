@@ -150,9 +150,7 @@ void main() {
     expect(find.byType(FeedNavigationBar), findsOneWidget);
   });
 
-  testWidgets('background row shows the active choice at rest', (
-    tester,
-  ) async {
+  testWidgets('background row shows the active choice at rest', (tester) async {
     await tester.pumpWidget(
       wrap(peerId: '12D3KooWTestPeer123', onOpenBackgroundSheet: () {}),
     );
@@ -207,7 +205,7 @@ void main() {
       );
 
       expect(find.byType(DaylightLagoonBackground), findsOneWidget);
-      expect(find.text('Daylight Lagoon'), findsOneWidget);
+      expect(find.text('Signal'), findsOneWidget);
 
       final title = tester.widget<Text>(find.text('Settings'));
       expect(

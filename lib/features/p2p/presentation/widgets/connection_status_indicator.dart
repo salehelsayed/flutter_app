@@ -158,9 +158,11 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
       case BadgeReadinessState.online:
       case BadgeReadinessState.onlineDotted:
       case BadgeReadinessState.onlineDirect:
-        baseColor = Colors.green;
+        baseColor = isLightSurface
+            ? readableColors.connectedHeading
+            : Colors.green;
         textColor = isLightSurface
-            ? const Color(0xFF157A39)
+            ? readableColors.connectedHeading
             : Colors.green[300]!;
       case BadgeReadinessState.connecting:
         baseColor = Colors.amber;

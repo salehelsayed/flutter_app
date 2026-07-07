@@ -753,15 +753,14 @@ class AppLocalizationsAr extends AppLocalizations {
       'تم اختيار الكونية المعكوسة';
 
   @override
-  String get settings_background_daylight_lagoon => 'بحيرة ضوء النهار';
+  String get settings_background_daylight_lagoon => 'سيجنال';
 
   @override
   String get settings_background_daylight_lagoon_desc =>
-      'سماء بحيرة مشرقة بتوهجات باستيلية ناعمة.';
+      'سماء خزفية باردة بنجمة واحدة بنفسجية كهربائية.';
 
   @override
-  String get settings_background_daylight_lagoon_selected =>
-      'تم اختيار بحيرة ضوء النهار';
+  String get settings_background_daylight_lagoon_selected => 'تم اختيار سيجنال';
 
   @override
   String get settings_background_save_fail => 'تعذر حفظ اختيار الخلفية';

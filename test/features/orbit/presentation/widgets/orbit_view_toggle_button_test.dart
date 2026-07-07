@@ -17,27 +17,24 @@ void main() {
   Widget wrap(
     OrbitViewMode viewMode, {
     BackgroundReadableColors tone = BackgroundReadableColors.dark,
-  }) =>
-      MaterialApp(
-        locale: const Locale('en'),
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        theme: ThemeData(extensions: [tone]),
-        home: Scaffold(
-          body: Stack(
-            children: [
-              OrbitViewToggleButton(viewMode: viewMode, onToggle: () {}),
-            ],
-          ),
-        ),
-      );
+  }) => MaterialApp(
+    locale: const Locale('en'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    theme: ThemeData(extensions: [tone]),
+    home: Scaffold(
+      body: Stack(
+        children: [OrbitViewToggleButton(viewMode: viewMode, onToggle: () {})],
+      ),
+    ),
+  );
 
   Container toggleContainer(WidgetTester tester) => tester.widget<Container>(
-        find.descendant(
-          of: find.byKey(const ValueKey('orbit-view-toggle')),
-          matching: find.byType(Container),
-        ),
-      );
+    find.descendant(
+      of: find.byKey(const ValueKey('orbit-view-toggle')),
+      matching: find.byType(Container),
+    ),
+  );
 
   testWidgets('TC-211-01/02 glyphs match the 207 vocabulary', (tester) async {
     // Inner-Circle view: destination is the all-chats LIST → bullet-list glyph.
@@ -53,20 +50,26 @@ void main() {
     expect(find.byIcon(Icons.blur_on), findsNothing);
   });
 
-  testWidgets('TC-211-03/04 container chrome stays token-driven (dark tone)',
-      (tester) async {
+  testWidgets('TC-211-03/04 container chrome stays token-driven (dark tone)', (
+    tester,
+  ) async {
     await tester.pumpWidget(wrap(OrbitViewMode.innerCircle));
     await tester.pump();
 
     final decoration = toggleContainer(tester).decoration! as BoxDecoration;
-    expect(decoration.color, const Color(0xBF101218),
-        reason: 'fill = dark surfaceSubtle token (== 207 mockup rgba)');
-    expect((decoration.border! as Border).top.color, const Color(0x80FFFFFF),
-        reason: 'hairline = dark border token (== 207 mockup rgba)');
+    expect(
+      decoration.color,
+      const Color(0xBF101218),
+      reason: 'fill = dark surfaceSubtle token (== 207 mockup rgba)',
+    );
+    expect(
+      (decoration.border! as Border).top.color,
+      const Color(0x80FFFFFF),
+      reason: 'hairline = dark border token (== 207 mockup rgba)',
+    );
   });
 
-  testWidgets(
-      'TC-211-03/04 container chrome stays token-driven (light tone) — '
+  testWidgets('TC-211-03/04 container chrome stays token-driven (light tone) — '
       'guards against hardcoding the dark mockup rgba', (tester) async {
     await tester.pumpWidget(
       wrap(
@@ -77,14 +80,22 @@ void main() {
     await tester.pump();
 
     final decoration = toggleContainer(tester).decoration! as BoxDecoration;
-    expect(decoration.color, const Color(0xE8EEF2F7),
-        reason: 'fill must resolve the LIGHT surfaceSubtle token');
-    expect((decoration.border! as Border).top.color, const Color(0x8A101318),
-        reason: 'hairline must resolve the LIGHT border token');
+    const colors = BackgroundReadableColors.representativeLight;
+    expect(
+      decoration.color,
+      colors.surfaceSubtle,
+      reason: 'fill must resolve the LIGHT surfaceSubtle token',
+    );
+    expect(
+      (decoration.border! as Border).top.color,
+      colors.border,
+      reason: 'hairline must resolve the LIGHT border token',
+    );
   });
 
-  testWidgets('TC-211-05/08 key + destination semantics unchanged',
-      (tester) async {
+  testWidgets('TC-211-05/08 key + destination semantics unchanged', (
+    tester,
+  ) async {
     final handle = tester.ensureSemantics();
 
     await tester.pumpWidget(wrap(OrbitViewMode.innerCircle));

@@ -30,14 +30,17 @@ class OrbitArcRing {
 ///
 /// Ring radii are knob-scaled and passed in from a single source of truth
 /// ([OrbitalVisualization]/`orbit_arc_layout`) so the painted paths track the
-/// seated nodes (TC-198-29). The glow sublayer is always teal (mirroring the
-/// mockup); only the crisp dash alternates teal / purple.
+/// seated nodes (TC-198-29). The dash and glow colors default to the old dark
+/// literals and can be injected by the active background tone.
 class OrbitalRingPainter extends CustomPainter {
   /// Circle centre; when null the painter uses the canvas centre (back-compat).
   final Offset? center;
   final double ring1Radius;
   final double ring2Radius;
   final List<OrbitArcRing> arcs;
+  final Color ring1Color;
+  final Color ring2Color;
+  final Color glowColor;
 
   static const Color _tealDash = Color(0x4081E6D9); // rgba(129,230,217,0.25)
   static const Color _purpleDash = Color(0x33A78BFA); // rgba(167,139,250,0.20)
@@ -48,6 +51,9 @@ class OrbitalRingPainter extends CustomPainter {
     this.ring1Radius = 62,
     this.ring2Radius = 108,
     this.arcs = const [],
+    this.ring1Color = _tealDash,
+    this.ring2Color = _purpleDash,
+    this.glowColor = _tealGlow,
   });
 
   @override
@@ -55,14 +61,14 @@ class OrbitalRingPainter extends CustomPainter {
     final c = center ?? Offset(size.width / 2, size.height / 2);
 
     // Ring 1 (teal), Ring 2 (purple) — full circles.
-    _drawDashedArc(canvas, c, ring1Radius, 0, 2 * pi, _tealDash);
-    _drawDashedArc(canvas, c, ring2Radius, 0, 2 * pi, _purpleDash);
+    _drawDashedArc(canvas, c, ring1Radius, 0, 2 * pi, ring1Color);
+    _drawDashedArc(canvas, c, ring2Radius, 0, 2 * pi, ring2Color);
 
     // Overflow arcs — centred at 12 o'clock (-pi/2), span ±phiMax.
     for (final arc in arcs) {
       final start = -pi / 2 - arc.phiMax;
       final sweep = 2 * arc.phiMax;
-      final color = arc.arcIndex.isEven ? _tealDash : _purpleDash;
+      final color = arc.arcIndex.isEven ? ring1Color : ring2Color;
       _drawDashedArc(canvas, c, arc.radius, start, sweep, color);
     }
   }
@@ -78,9 +84,9 @@ class OrbitalRingPainter extends CustomPainter {
     if (radius <= 0) return;
     final rect = Rect.fromCircle(center: center, radius: radius);
 
-    // Always-teal blurred glow sublayer.
+    // Blurred glow sublayer.
     final glowPaint = Paint()
-      ..color = _tealGlow
+      ..color = glowColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = 8
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
@@ -100,13 +106,7 @@ class OrbitalRingPainter extends CustomPainter {
     if (step <= 0) return;
     final count = (sweepAngle / step).floor();
     for (var i = 0; i < count; i++) {
-      canvas.drawArc(
-        rect,
-        startAngle + i * step,
-        dashAngle,
-        false,
-        paint,
-      );
+      canvas.drawArc(rect, startAngle + i * step, dashAngle, false, paint);
     }
   }
 
@@ -115,6 +115,9 @@ class OrbitalRingPainter extends CustomPainter {
       oldDelegate.center != center ||
       oldDelegate.ring1Radius != ring1Radius ||
       oldDelegate.ring2Radius != ring2Radius ||
+      oldDelegate.ring1Color != ring1Color ||
+      oldDelegate.ring2Color != ring2Color ||
+      oldDelegate.glowColor != glowColor ||
       !_listEquals(oldDelegate.arcs, arcs);
 
   static bool _listEquals(List<OrbitArcRing> a, List<OrbitArcRing> b) {

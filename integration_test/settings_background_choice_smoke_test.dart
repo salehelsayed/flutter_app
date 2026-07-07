@@ -48,6 +48,9 @@ void main() {
       currentPreference = await loadBackgroundPreference(
         secureKeyStore: secureKeyStore,
       );
+      if (!context.mounted) {
+        return;
+      }
 
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
@@ -62,22 +65,25 @@ void main() {
               onOpenBackgroundSheet: () {
                 showModalBottomSheet<void>(
                   context: context,
+                  isScrollControlled: true,
                   backgroundColor: Colors.transparent,
-                  builder: (sheetContext) => Container(
-                    color: Colors.black,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    child: BackgroundChoiceControl(
-                      value: currentPreference,
-                      onChanged: (preference) async {
-                        await saveBackgroundPreference(
-                          secureKeyStore: secureKeyStore,
-                          preference: preference,
-                        );
-                        setRouteState(() => currentPreference = preference);
-                        if (sheetContext.mounted) {
-                          Navigator.of(sheetContext).pop();
-                        }
-                      },
+                  builder: (sheetContext) => SingleChildScrollView(
+                    child: Container(
+                      color: Colors.black,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      child: BackgroundChoiceControl(
+                        value: currentPreference,
+                        onChanged: (preference) async {
+                          await saveBackgroundPreference(
+                            secureKeyStore: secureKeyStore,
+                            preference: preference,
+                          );
+                          setRouteState(() => currentPreference = preference);
+                          if (sheetContext.mounted) {
+                            Navigator.of(sheetContext).pop();
+                          }
+                        },
+                      ),
                     ),
                   ),
                 );
@@ -97,41 +103,49 @@ void main() {
       setHomeState(() => currentPreference = reloaded);
     }
 
-    await tester.pumpWidget(
-      MaterialApp(
-        locale: const Locale('en'),
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: StatefulBuilder(
-          builder: (context, setHomeState) => Scaffold(
-            body: Builder(
-              builder: (context) => Stack(
-                children: [
-                  FeedScreen(
-                    username: 'Alice',
-                    feedItems: const <FeedItem>[],
-                    onSwitchView: (_) {},
-                    activeTab: 'feed',
-                    backgroundPreference: currentPreference,
-                  ),
-                  SafeArea(
-                    child: Align(
-                      alignment: Alignment.topRight,
-                      child: ElevatedButton(
-                        key: const ValueKey('open-settings-smoke'),
-                        onPressed: () => openSettings(context, setHomeState),
-                        child: const Text('Open Settings'),
+    Future<void> pumpSmokeApp({Key? key}) async {
+      currentPreference = await loadBackgroundPreference(
+        secureKeyStore: secureKeyStore,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          key: key,
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: StatefulBuilder(
+            builder: (context, setHomeState) => Scaffold(
+              body: Builder(
+                builder: (context) => Stack(
+                  children: [
+                    FeedScreen(
+                      username: 'Alice',
+                      feedItems: const <FeedItem>[],
+                      onSwitchView: (_) {},
+                      activeTab: 'feed',
+                      backgroundPreference: currentPreference,
+                    ),
+                    SafeArea(
+                      child: Align(
+                        alignment: Alignment.topRight,
+                        child: ElevatedButton(
+                          key: const ValueKey('open-settings-smoke'),
+                          onPressed: () => openSettings(context, setHomeState),
+                          child: const Text('Open Settings'),
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
         ),
-      ),
-    );
-    await tester.pump(const Duration(milliseconds: 100));
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    await pumpSmokeApp();
 
     Future<void> openSettingsPage() async {
       await tester.tap(find.byKey(const ValueKey('open-settings-smoke')));
@@ -178,7 +192,7 @@ void main() {
     await openBackgroundSheet();
     expect(find.text('Cosmic'), findsOneWidget);
     expect(find.text('Mirrored cosmic'), findsOneWidget);
-    expect(find.text('Daylight Lagoon'), findsOneWidget);
+    expect(find.text('Signal'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('background-choice-default-selected-icon')),
       findsOneWidget,
@@ -197,7 +211,7 @@ void main() {
       await secureKeyStore.read(BackgroundPreference.storageKey),
       'daylight_lagoon',
     );
-    expect(find.text('Daylight Lagoon'), findsOneWidget); // row value
+    expect(find.text('Signal'), findsOneWidget); // row value
     expect(find.byType(DaylightLagoonBackground), findsOneWidget);
 
     await popToFeed();
@@ -207,6 +221,16 @@ void main() {
     expect(find.byType(DaylightLagoonBackground), findsOneWidget);
     expect(find.byType(CosmicBackground), findsNothing);
     expect(find.byType(CosmicBackgroundMirrored), findsNothing);
+
+    await pumpSmokeApp(key: UniqueKey());
+    expect(
+      await secureKeyStore.read(BackgroundPreference.storageKey),
+      'daylight_lagoon',
+    );
+    expect(find.byType(FeedScreen), findsOneWidget);
+    expect(find.byType(AmbientBackground), findsOneWidget);
+    expect(find.byType(DaylightLagoonBackground), findsOneWidget);
+    expect(find.text('Signal'), findsNothing);
 
     await openSettingsPage();
     expect(find.text('Background'), findsOneWidget);

@@ -91,6 +91,17 @@ void main() {
     _expectTextContrast(BackgroundReadableColors.representativeLight);
     _expectComponentContrast(BackgroundReadableColors.representativeLight);
   });
+
+  test('representative light roles pass against the real Paper White ground', () {
+    const colors = BackgroundReadableColors.representativeLight;
+    const paperWhiteGround = Color(0xFFFFFFFF);
+
+    expectTextContrast(colors.textPrimary, paperWhiteGround);
+    expectTextContrast(colors.textSecondary, paperWhiteGround);
+    expectTextContrast(colors.textMuted, paperWhiteGround);
+    expectTextContrast(colors.composerHint, paperWhiteGround);
+    expectComponentContrast(colors.accent, paperWhiteGround);
+  });
 }
 
 void _expectTextContrast(BackgroundReadableColors colors) {
@@ -98,6 +109,11 @@ void _expectTextContrast(BackgroundReadableColors colors) {
   expectTextContrast(colors.textSecondary, colors.surfaceBase);
   expectTextContrast(colors.textMuted, colors.surfaceBase);
   expectTextContrast(colors.placeholderText, colors.inputFill);
+  if (colors.isLightSurface) {
+    expectTextContrast(colors.composerHint, colors.composerInputFill);
+    expectTextContrast(colors.emptyHint, colors.surfaceBase);
+    expectTextContrast(colors.emptyDate, colors.surfaceBase);
+  }
 }
 
 void _expectComponentContrast(BackgroundReadableColors colors) {
@@ -107,4 +123,14 @@ void _expectComponentContrast(BackgroundReadableColors colors) {
   expectComponentContrast(colors.border, colors.surfaceBase);
   expectComponentContrast(colors.inputBorder, colors.inputFill);
   expectComponentContrast(colors.disabledForeground, colors.disabledSurface);
+  if (colors.isLightSurface) {
+    expectComponentContrast(colors.accentIcon, colors.accent);
+    final sendSurface = Color.alphaBlend(
+      colors.sendBg,
+      colors.composerInputFill,
+    );
+    final micSurface = Color.alphaBlend(colors.micBg, colors.composerInputFill);
+    expectComponentContrast(colors.sendIcon, sendSurface);
+    expectComponentContrast(colors.micIcon, micSurface);
+  }
 }

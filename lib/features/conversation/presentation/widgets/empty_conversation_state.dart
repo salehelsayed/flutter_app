@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
@@ -42,6 +43,7 @@ class _EmptyConversationStateState extends State<EmptyConversationState>
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     return LayoutBuilder(
       builder: (context, constraints) => SingleChildScrollView(
         child: ConstrainedBox(
@@ -52,17 +54,19 @@ class _EmptyConversationStateState extends State<EmptyConversationState>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _buildAvatarWithGlow(),
+                  _buildAvatarWithGlow(readableColors),
                   const SizedBox(height: 16),
                   Text(
                     AppLocalizations.of(context)!.connected_title,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.w600,
-                      color: Color(0xFF1DB954),
+                      color: readableColors.connectedHeading,
                       shadows: [
                         Shadow(
-                          color: Color.fromRGBO(29, 185, 84, 0.4),
+                          color: readableColors.connectedHeading.withValues(
+                            alpha: 0.4,
+                          ),
                           blurRadius: 20,
                         ),
                       ],
@@ -71,24 +75,24 @@ class _EmptyConversationStateState extends State<EmptyConversationState>
                   const SizedBox(height: 4),
                   Text(
                     widget.connectionDate,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w400,
-                      color: Color.fromRGBO(255, 255, 255, 0.35),
+                      color: readableColors.emptyDate,
                     ),
                   ),
                   const SizedBox(height: 24),
-                  _buildDashedDivider(),
+                  _buildDashedDivider(readableColors),
                   const SizedBox(height: 24),
                   Text(
                     AppLocalizations.of(
                       context,
                     )!.conversation_empty_first_letter,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w500,
-                      color: Color.fromRGBO(255, 255, 255, 0.5),
+                      color: readableColors.emptyHint,
                       height: 1.5,
                     ),
                   ),
@@ -101,7 +105,7 @@ class _EmptyConversationStateState extends State<EmptyConversationState>
     );
   }
 
-  Widget _buildAvatarWithGlow() {
+  Widget _buildAvatarWithGlow(BackgroundReadableColors readableColors) {
     return SizedBox(
       width: 160,
       height: 160,
@@ -123,15 +127,19 @@ class _EmptyConversationStateState extends State<EmptyConversationState>
                   child: Container(
                     width: 160,
                     height: 160,
-                    decoration: const BoxDecoration(
+                    decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       gradient: RadialGradient(
                         colors: [
-                          Color.fromRGBO(78, 205, 196, 0.08),
-                          Color.fromRGBO(78, 205, 196, 0.03),
+                          readableColors.emptyAvatarGlow.withValues(
+                            alpha: 0.08,
+                          ),
+                          readableColors.emptyAvatarGlow.withValues(
+                            alpha: 0.03,
+                          ),
                           Colors.transparent,
                         ],
-                        stops: [0.0, 0.4, 0.7],
+                        stops: const [0.0, 0.4, 0.7],
                       ),
                     ),
                   ),
@@ -143,12 +151,12 @@ class _EmptyConversationStateState extends State<EmptyConversationState>
           Container(
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              boxShadow: const [
+              boxShadow: [
                 BoxShadow(
-                  color: Color.fromRGBO(78, 205, 196, 0.3),
+                  color: readableColors.emptyAvatarGlow.withValues(alpha: 0.3),
                   blurRadius: 30,
                 ),
-                BoxShadow(
+                const BoxShadow(
                   color: Color.fromRGBO(0, 0, 0, 0.4),
                   blurRadius: 40,
                   offset: Offset(0, 10),
@@ -162,7 +170,7 @@ class _EmptyConversationStateState extends State<EmptyConversationState>
     );
   }
 
-  Widget _buildDashedDivider() {
+  Widget _buildDashedDivider(BackgroundReadableColors readableColors) {
     return FractionallySizedBox(
       widthFactor: 0.6,
       child: LayoutBuilder(
@@ -179,7 +187,7 @@ class _EmptyConversationStateState extends State<EmptyConversationState>
                 width: dashWidth,
                 height: 1,
                 margin: EdgeInsets.only(right: dashSpace),
-                color: const Color.fromRGBO(255, 255, 255, 0.12),
+                color: readableColors.emptyDivider,
               );
             }),
           );

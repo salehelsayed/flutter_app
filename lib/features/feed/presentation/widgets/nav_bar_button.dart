@@ -25,12 +25,12 @@ class NavBarButton extends StatelessWidget {
     final readableColors = context.backgroundReadableColors;
     final isLightSurface = readableColors.isLightSurface;
     final iconColor = isLightSurface
-        ? (isActive ? readableColors.iconPrimary : readableColors.iconMuted)
+        ? (isActive ? readableColors.navActive : readableColors.navInactive)
         : (isActive
               ? NavBarTheme.activeIconColor
               : NavBarTheme.inactiveIconColor);
     final textColor = isLightSurface
-        ? (isActive ? readableColors.textPrimary : readableColors.textMuted)
+        ? (isActive ? readableColors.navActive : readableColors.navInactive)
         : (isActive
               ? NavBarTheme.activeTextColor
               : NavBarTheme.inactiveTextColor);
@@ -58,11 +58,9 @@ class NavBarButton extends StatelessWidget {
                         end: Alignment.bottomCenter,
                         colors: isLightSurface
                             ? [
-                                readableColors.surfaceSubtle.withValues(
-                                  alpha: 0.96,
-                                ),
-                                readableColors.surfaceRaised.withValues(
-                                  alpha: 0.92,
+                                readableColors.navActiveFill,
+                                readableColors.navActiveFill.withValues(
+                                  alpha: 0.06,
                                 ),
                               ]
                             : NavBarTheme.activePillGradient,

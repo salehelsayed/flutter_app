@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/glow_fab.dart';
 
 /// A single menu item for [ExpandableFab].
@@ -84,10 +85,13 @@ class _ExpandableFabState extends State<ExpandableFab>
   @override
   Widget build(BuildContext context) {
     final isTopRight = widget.anchor == ExpandableFabAnchor.topRight;
+    final readableColors = context.backgroundReadableColors;
 
     final fab = GlowFab(
       size: widget.fabSize,
       onPressed: _toggle,
+      backgroundColor: readableColors.ctaBg,
+      ringColor: readableColors.ctaIcon,
       icon: AnimatedBuilder(
         animation: _controller,
         builder: (context, child) {
@@ -114,11 +118,7 @@ class _ExpandableFabState extends State<ExpandableFab>
             if (menuItems.isNotEmpty) const SizedBox(height: 12),
             ...menuItems,
           ]
-        : [
-            ...menuItems,
-            const SizedBox(height: 12),
-            fab,
-          ];
+        : [...menuItems, const SizedBox(height: 12), fab];
 
     final positioned = isTopRight
         ? Positioned(
@@ -148,9 +148,7 @@ class _ExpandableFabState extends State<ExpandableFab>
             child: GestureDetector(
               key: const Key('expandable_fab_scrim'),
               onTap: _close,
-              child: ColoredBox(
-                color: Colors.black.withOpacity(0.4),
-              ),
+              child: ColoredBox(color: Colors.black.withValues(alpha: 0.4)),
             ),
           ),
         // FAB + menu
@@ -160,6 +158,7 @@ class _ExpandableFabState extends State<ExpandableFab>
   }
 
   Widget _buildMenuItem(ExpandableFabItem item) {
+    final readableColors = context.backgroundReadableColors;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: GestureDetector(
@@ -170,22 +169,19 @@ class _ExpandableFabState extends State<ExpandableFab>
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.1),
+            color: readableColors.ctaMenuFill,
             borderRadius: BorderRadius.circular(24),
-            border: Border.all(
-              color: Colors.white.withOpacity(0.15),
-              width: 0.5,
-            ),
+            border: Border.all(color: readableColors.ctaMenuBorder, width: 0.5),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(item.icon, color: Colors.white, size: 20),
+              Icon(item.icon, color: readableColors.ctaMenuText, size: 20),
               const SizedBox(width: 8),
               Text(
                 item.label,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: readableColors.ctaMenuText,
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
                 ),

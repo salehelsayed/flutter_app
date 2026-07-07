@@ -1303,19 +1303,19 @@ abstract class AppLocalizations {
   /// No description provided for @settings_background_daylight_lagoon.
   ///
   /// In en, this message translates to:
-  /// **'Daylight Lagoon'**
+  /// **'Signal'**
   String get settings_background_daylight_lagoon;
 
   /// No description provided for @settings_background_daylight_lagoon_desc.
   ///
   /// In en, this message translates to:
-  /// **'A bright lagoon sky with soft pastel blooms.'**
+  /// **'A cool porcelain sky with one electric-violet star.'**
   String get settings_background_daylight_lagoon_desc;
 
   /// No description provided for @settings_background_daylight_lagoon_selected.
   ///
   /// In en, this message translates to:
-  /// **'Daylight Lagoon selected'**
+  /// **'Signal selected'**
   String get settings_background_daylight_lagoon_selected;
 
   /// No description provided for @settings_background_save_fail.

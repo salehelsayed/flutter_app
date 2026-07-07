@@ -5,12 +5,16 @@ class GlowFab extends StatelessWidget {
   final VoidCallback onPressed;
   final Widget icon;
   final double size;
+  final Color backgroundColor;
+  final Color ringColor;
 
   const GlowFab({
     super.key,
     required this.onPressed,
     this.icon = const Icon(Icons.add, color: Colors.white, size: 28),
     this.size = 56,
+    this.backgroundColor = const Color(0xFF1A1A2E),
+    this.ringColor = const Color(0xFF64B5F6),
   });
 
   @override
@@ -22,17 +26,10 @@ class GlowFab extends StatelessWidget {
         height: size,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: const Color(0xFF1A1A2E),
-          border: Border.all(
-            color: const Color(0xFF64B5F6),
-            width: 2,
-          ),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0xFF64B5F6),
-              blurRadius: 12,
-              spreadRadius: 1,
-            ),
+          color: backgroundColor,
+          border: Border.all(color: ringColor, width: 2),
+          boxShadow: [
+            BoxShadow(color: ringColor, blurRadius: 12, spreadRadius: 1),
           ],
         ),
         child: Center(child: icon),

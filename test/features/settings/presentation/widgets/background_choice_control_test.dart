@@ -51,9 +51,9 @@ void main() {
       find.text('The cosmic starfield with mirrored color blooms.'),
       findsOneWidget,
     );
-    expect(find.text('Daylight Lagoon'), findsOneWidget);
+    expect(find.text('Signal'), findsOneWidget);
     expect(
-      find.text('A bright lagoon sky with soft pastel blooms.'),
+      find.text('A cool porcelain sky with one electric-violet star.'),
       findsOneWidget,
     );
     expect(
@@ -150,7 +150,7 @@ void main() {
     );
   });
 
-  testWidgets('shows daylight lagoon selected', (tester) async {
+  testWidgets('shows Signal selected', (tester) async {
     await tester.pumpWidget(wrap(value: BackgroundPreference.daylightLagoon));
 
     expect(
@@ -221,15 +221,15 @@ void main() {
       );
       expect(optionNode.label, contains('Default'));
       expect(optionNode.value, 'Default selected');
-      expect(optionNode.hasFlag(SemanticsFlag.isButton), isTrue);
-      expect(optionNode.hasFlag(SemanticsFlag.isSelected), isTrue);
+      expect(optionNode.flagsCollection.isButton, isTrue);
+      expect(optionNode.flagsCollection.isSelected, Tristate.isTrue);
 
       final cosmicNode = tester.getSemantics(
         find.byKey(const ValueKey('background-choice-cosmic-semantics')),
       );
       expect(cosmicNode.label, contains('Cosmic'));
-      expect(cosmicNode.hasFlag(SemanticsFlag.isButton), isTrue);
-      expect(cosmicNode.hasFlag(SemanticsFlag.isSelected), isFalse);
+      expect(cosmicNode.flagsCollection.isButton, isTrue);
+      expect(cosmicNode.flagsCollection.isSelected, Tristate.isFalse);
 
       final mirroredNode = tester.getSemantics(
         find.byKey(
@@ -237,17 +237,17 @@ void main() {
         ),
       );
       expect(mirroredNode.label, contains('Mirrored cosmic'));
-      expect(mirroredNode.hasFlag(SemanticsFlag.isButton), isTrue);
-      expect(mirroredNode.hasFlag(SemanticsFlag.isSelected), isFalse);
+      expect(mirroredNode.flagsCollection.isButton, isTrue);
+      expect(mirroredNode.flagsCollection.isSelected, Tristate.isFalse);
 
       final daylightNode = tester.getSemantics(
         find.byKey(
           const ValueKey('background-choice-daylight-lagoon-semantics'),
         ),
       );
-      expect(daylightNode.label, contains('Daylight Lagoon'));
-      expect(daylightNode.hasFlag(SemanticsFlag.isButton), isTrue);
-      expect(daylightNode.hasFlag(SemanticsFlag.isSelected), isFalse);
+      expect(daylightNode.label, contains('Signal'));
+      expect(daylightNode.flagsCollection.isButton, isTrue);
+      expect(daylightNode.flagsCollection.isSelected, Tristate.isFalse);
     } finally {
       semanticsHandle.dispose();
     }
@@ -268,7 +268,7 @@ void main() {
       );
       expect(cosmicNode.label, contains('Cosmic'));
       expect(cosmicNode.value, 'Cosmic selected');
-      expect(cosmicNode.hasFlag(SemanticsFlag.isSelected), isTrue);
+      expect(cosmicNode.flagsCollection.isSelected, Tristate.isTrue);
     } finally {
       semanticsHandle.dispose();
     }
@@ -293,15 +293,13 @@ void main() {
       );
       expect(mirroredNode.label, contains('Mirrored cosmic'));
       expect(mirroredNode.value, 'Mirrored cosmic selected');
-      expect(mirroredNode.hasFlag(SemanticsFlag.isSelected), isTrue);
+      expect(mirroredNode.flagsCollection.isSelected, Tristate.isTrue);
     } finally {
       semanticsHandle.dispose();
     }
   });
 
-  testWidgets('exposes daylight lagoon selected state in semantics', (
-    tester,
-  ) async {
+  testWidgets('exposes Signal selected state in semantics', (tester) async {
     final semanticsHandle = tester.ensureSemantics();
     try {
       await tester.pumpWidget(wrap(value: BackgroundPreference.daylightLagoon));
@@ -309,16 +307,16 @@ void main() {
       final controlNode = tester.getSemantics(
         find.byKey(const ValueKey('background-choice-control-semantics')),
       );
-      expect(controlNode.value, 'Daylight Lagoon selected');
+      expect(controlNode.value, 'Signal selected');
 
       final daylightNode = tester.getSemantics(
         find.byKey(
           const ValueKey('background-choice-daylight-lagoon-semantics'),
         ),
       );
-      expect(daylightNode.label, contains('Daylight Lagoon'));
-      expect(daylightNode.value, 'Daylight Lagoon selected');
-      expect(daylightNode.hasFlag(SemanticsFlag.isSelected), isTrue);
+      expect(daylightNode.label, contains('Signal'));
+      expect(daylightNode.value, 'Signal selected');
+      expect(daylightNode.flagsCollection.isSelected, Tristate.isTrue);
     } finally {
       semanticsHandle.dispose();
     }
@@ -328,24 +326,14 @@ void main() {
     tester,
   ) async {
     final cases = <Locale, List<String>>{
-      const Locale('en'): [
-        'Background',
-        'Cosmic',
-        'Mirrored cosmic',
-        'Daylight Lagoon',
-      ],
+      const Locale('en'): ['Background', 'Cosmic', 'Mirrored cosmic', 'Signal'],
       const Locale('de'): [
         'Hintergrund',
         'Kosmisch',
         'Kosmisch gespiegelt',
-        'Tageslicht-Lagune',
+        'Signal',
       ],
-      const Locale('ar'): [
-        'الخلفية',
-        'كونية',
-        'كونية معكوسة',
-        'بحيرة ضوء النهار',
-      ],
+      const Locale('ar'): ['الخلفية', 'كونية', 'كونية معكوسة', 'سيجنال'],
     };
 
     for (final entry in cases.entries) {

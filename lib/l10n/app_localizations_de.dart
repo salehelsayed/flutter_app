@@ -750,15 +750,15 @@ class AppLocalizationsDe extends AppLocalizations {
       'Kosmisch gespiegelt ausgewählt';
 
   @override
-  String get settings_background_daylight_lagoon => 'Tageslicht-Lagune';
+  String get settings_background_daylight_lagoon => 'Signal';
 
   @override
   String get settings_background_daylight_lagoon_desc =>
-      'Ein heller Lagunenhimmel mit sanften Pastelllichtern.';
+      'Ein kühler Porzellanhimmel mit einem elektrisch-violetten Stern.';
 
   @override
   String get settings_background_daylight_lagoon_selected =>
-      'Tageslicht-Lagune ausgewählt';
+      'Signal ausgewählt';
 
   @override
   String get settings_background_save_fail =>
