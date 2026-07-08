@@ -2594,6 +2594,11 @@ class _FeedWiredState extends State<FeedWired>
       introductionListener: widget.introductionListener,
       appShellController: widget.appShellController,
       feedUnreadCountListenable: _totalUnreadCountNotifier,
+      // Orbit is the chromeless home landing: suppress its center Feed/Orbit
+      // toggle bar. Feed stays reachable via the host swipe and its own toggle
+      // (Feed pane keeps its nav bar). Flip to false to revive the toggle on
+      // Orbit without any re-plumbing.
+      hideShellNav: true,
       pendingPostTargetStore: widget.pendingPostTargetStore,
       postsPrivacySettingsRepository: widget.postsPrivacySettingsRepository,
       externalRouteChangesListenable: _mountedOrbitRouteChangesNotifier,

@@ -146,6 +146,59 @@ void main() {
           reason: 'and that seat rides the nav bar\'s vertical level');
     });
 
+    testWidgets(
+        'TC-NAVHIDE-01 hideShellNav keeps the nav-line find pill in its seat '
+        '(chromeless Orbit must NOT drop the search/find affordance)',
+        (tester) async {
+      suppressChromeErrors();
+      setPhoneSurface(tester);
+
+      Widget ringsPump({required bool hideShellNav}) =>
+          buildOrbitScreenHarness(
+            viewMode: OrbitViewMode.innerCircle,
+            header: OrbitHeaderProjection(
+              userPeerId: 'me',
+              innerItems: _friends(8),
+            ),
+            activeTab: 'orbit',
+            onSwitchView: (_) {},
+            searchTriggerAnimation: const AlwaysStoppedAnimation<double>(1.0),
+            hideShellNav: hideShellNav,
+          );
+
+      // Baseline: toggle shown → capture the collapsed find pill's seat.
+      await tester.pumpWidget(ringsPump(hideShellNav: false));
+      await settle(tester);
+      final pillF = find.byKey(const ValueKey('orbit-find-pill'));
+      final shownRect = tester.getRect(pillF);
+
+      // Chromeless: toggle hidden. The pill must keep the EXACT same seat — a
+      // bare SizedBox.shrink collapsed the nav-band Stack and dropped the pill
+      // off the bottom edge (the reported search-icon bug).
+      await tester.pumpWidget(ringsPump(hideShellNav: true));
+      await settle(tester);
+      final hiddenRect = tester.getRect(pillF);
+      expect(hiddenRect, shownRect,
+          reason: 'the nav-line find pill keeps its seat with the toggle hidden');
+      final screen = screenSize(tester);
+      expect(hiddenRect.bottom, lessThanOrEqualTo(screen.height),
+          reason: 'the pill stays on-screen (not clipped past the bottom edge)');
+
+      // The toggle bar stays in the tree for layout (that is what preserves the
+      // pill's seat) but is wrapped in a hidden Visibility — invisible and
+      // non-interactive.
+      expect(find.byType(FeedNavigationBar), findsOneWidget);
+      final navVisibilities = find
+          .ancestor(
+            of: find.byType(FeedNavigationBar),
+            matching: find.byType(Visibility),
+          )
+          .evaluate()
+          .map((e) => e.widget as Visibility);
+      expect(navVisibilities.any((v) => !v.visible), isTrue,
+          reason: 'the hidden toggle is wrapped in a not-visible Visibility');
+    });
+
     testWidgets('TC-212-04 RTL keeps the physical bottom-right corner',
         (tester) async {
       suppressChromeErrors();

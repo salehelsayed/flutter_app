@@ -713,7 +713,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settings_background_default_desc =>
-      'The current ambient background.';
+      'Mirrored cosmic drift with soft color blooms.';
 
   @override
   String get settings_background_cosmic => 'Cosmic';
@@ -725,15 +725,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settings_background_cosmic_selected => 'Cosmic selected';
 
   @override
-  String get settings_background_cosmic_mirrored => 'Mirrored cosmic';
+  String get settings_background_aurora => 'Aurora';
 
   @override
-  String get settings_background_cosmic_mirrored_desc =>
-      'The cosmic starfield with mirrored color blooms.';
+  String get settings_background_aurora_desc => 'The original ambient glow.';
 
   @override
-  String get settings_background_cosmic_mirrored_selected =>
-      'Mirrored cosmic selected';
+  String get settings_background_aurora_selected => 'Aurora selected';
 
   @override
   String get settings_background_daylight_lagoon => 'Signal';

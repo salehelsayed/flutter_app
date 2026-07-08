@@ -163,6 +163,12 @@ class OrbitWired extends StatefulWidget {
   /// so its posts-nearby interactive refresh is functional (not degraded).
   final NearbyLocationService? nearbyLocationService;
 
+  /// When true, the home host renders Orbit chromeless: the center Feed/Orbit
+  /// toggle bar is suppressed (Feed stays reachable via the host swipe + its own
+  /// toggle). Threaded straight through to [OrbitScreen.hideShellNav]. Defaults
+  /// false so every other caller / bare pump keeps the toggle.
+  final bool hideShellNav;
+
   const OrbitWired({
     super.key,
     required this.identityRepo,
@@ -212,6 +218,7 @@ class OrbitWired extends StatefulWidget {
     this.accountMigrationRunTransfer,
     this.accountMigrationSizeGate,
     this.nearbyLocationService,
+    this.hideShellNav = false,
   });
 
   @override
@@ -2562,6 +2569,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onLeaveStuckGroup: _onLeaveStuckGroup,
       viewMode: _viewMode,
       onToggleView: _onToggleView,
+      hideShellNav: widget.hideShellNav,
       activeTab: showPersistentNav
           ? widget.appShellController!.activeTab
           : null,

@@ -17,8 +17,8 @@ class AmbientBackground extends StatefulWidget {
   final BackgroundReadableTone? readableToneOverride;
 
   /// 134 §7 app-level reduced-motion opt-in for the feed surface: when true the
-  /// default-background ambient loop does NOT start its infinite repeat() and the
-  /// static glow frame is rendered instead.
+  /// Aurora ambient loop does NOT start its infinite repeat() and the static
+  /// glow frame is rendered instead.
   ///
   /// 156 QW-3: the OS reduce-motion preference (`MediaQuery.disableAnimations` /
   /// `accessibleNavigation`) is now ALSO honored on every ambient surface,
@@ -27,7 +27,7 @@ class AmbientBackground extends StatefulWidget {
   final bool reduceMotion;
 
   /// 158 (`critic-2`): steady-state idle-animation suppression for the chat/group
-  /// surfaces. When true the default-background ambient loop does NOT start its
+  /// surfaces. When true the Aurora ambient loop does NOT start its
   /// infinite repeat() — the static glow frame is rendered instead — so the
   /// always-mounted chrome `BackdropFilter`s (header/composer/group panel) sit in
   /// front of a STILL backdrop and become cacheable at rest. Distinct from
@@ -122,12 +122,12 @@ class _AmbientBackgroundState extends State<AmbientBackground>
         : FeedTokens.dark;
     final theme = Theme.of(context);
     final themedBackground = switch (widget.preference) {
-      BackgroundPreference.defaultBackground => _DefaultAmbientBackground(
-        animation: _controller,
+      BackgroundPreference.defaultBackground => CosmicBackgroundMirrored(
         child: widget.child,
       ),
       BackgroundPreference.cosmic => CosmicBackground(child: widget.child),
-      BackgroundPreference.cosmicMirrored => CosmicBackgroundMirrored(
+      BackgroundPreference.aurora => _DefaultAmbientBackground(
+        animation: _controller,
         child: widget.child,
       ),
       BackgroundPreference.daylightLagoon => DaylightLagoonBackground(
@@ -154,12 +154,12 @@ class _AmbientBackgroundState extends State<AmbientBackground>
     );
   }
 
-  bool get _usesDefaultBackground {
-    return widget.preference == BackgroundPreference.defaultBackground;
+  bool get _usesGlowBackground {
+    return widget.preference == BackgroundPreference.aurora;
   }
 
-  /// The default-background ambient loop runs UNLESS (a) the preference is not
-  /// the default treatment, (b) this is a chat/group surface (158 critic-2:
+  /// The Aurora ambient loop runs UNLESS (a) the preference is not the glow
+  /// treatment, (b) this is a chat/group surface (158 critic-2:
   /// idle-glow suppression so the always-mounted chrome BackdropFilters stay
   /// cacheable at rest), (c) this is the feed surface AND [reduceMotion] is
   /// requested, or (d) the OS reduce-motion preference is on (156 QW-3, applies
@@ -167,7 +167,7 @@ class _AmbientBackgroundState extends State<AmbientBackground>
   /// short-circuits another. When gated off the controller stays at value 0 →
   /// the static final glow frame is rendered.
   bool get _shouldAnimate {
-    if (!_usesDefaultBackground) return false;
+    if (!_usesGlowBackground) return false;
     if (widget.isChatSurface) return false;
     if (widget.isFeedSurface && widget.reduceMotion) return false;
     if (_motionDisabled) return false;

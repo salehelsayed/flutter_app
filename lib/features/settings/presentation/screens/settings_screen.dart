@@ -83,15 +83,15 @@ class SettingsScreen extends StatelessWidget {
     this.readableToneOverride,
   });
 
-  String _backgroundValueLabel(AppLocalizations l10n) => switch (
-    currentBackgroundPreference) {
-    BackgroundPreference.defaultBackground => l10n.settings_background_default,
-    BackgroundPreference.cosmic => l10n.settings_background_cosmic,
-    BackgroundPreference.cosmicMirrored =>
-      l10n.settings_background_cosmic_mirrored,
-    BackgroundPreference.daylightLagoon =>
-      l10n.settings_background_daylight_lagoon,
-  };
+  String _backgroundValueLabel(AppLocalizations l10n) =>
+      switch (currentBackgroundPreference) {
+        BackgroundPreference.defaultBackground =>
+          l10n.settings_background_default,
+        BackgroundPreference.cosmic => l10n.settings_background_cosmic,
+        BackgroundPreference.aurora => l10n.settings_background_aurora,
+        BackgroundPreference.daylightLagoon =>
+          l10n.settings_background_daylight_lagoon,
+      };
 
   String _qualityValueLabel(
     AppLocalizations l10n,

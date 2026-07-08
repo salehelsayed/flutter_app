@@ -1348,6 +1348,7 @@ Future<Map<String, dynamic>> _sendProofMessage({
   DateTime? timestamp,
   String? quotedMessageId,
   List<MediaAttachment>? mediaAttachments,
+  bool includeSenderPeerIdInDurableRecipients = false,
 }) async {
   final stopwatch = Stopwatch()..start();
   final messageId = 'gmp_${_runId}_${_scenario}_${key}_$_role';
@@ -1371,6 +1372,8 @@ Future<Map<String, dynamic>> _sendProofMessage({
     mediaAttachments: mediaAttachments,
     mediaAttachmentRepo: stack.mediaAttachmentRepo,
     inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
+    includeSenderPeerIdInDurableRecipients:
+        includeSenderPeerIdInDurableRecipients,
   );
   stopwatch.stop();
   if (result.$1 != SendGroupMessageResult.success &&
@@ -10278,18 +10281,19 @@ Future<DateTime> _removeCharlieAndPublish({
   final charliePeerId = charlieIdentity['peerId'] as String;
   final charlieUsername =
       charlieIdentity['username'] as String? ?? _usernameForRole('charlie');
-  final removedAt = removedAtOverride?.toUtc() ?? DateTime.now().toUtc();
+  final requestedRemovedAt = removedAtOverride?.toUtc();
 
-  await removeGroupMember(
+  final removal = await removeGroupMember(
     bridge: stack.bridge,
     groupRepo: stack.groupRepo,
     groupId: groupId,
     memberPeerId: charliePeerId,
     selfPeerId: stack.identity.peerId,
     actorUsername: stack.identity.username,
-    eventAt: removedAt,
+    eventAt: requestedRemovedAt,
     msgRepo: stack.groupMsgRepo,
   );
+  final removedAt = removal.eventAt;
 
   final group = await stack.groupRepo.getGroup(groupId);
   final remainingMembers = await stack.groupRepo.getMembers(groupId);
@@ -10297,8 +10301,7 @@ Future<DateTime> _removeCharlieAndPublish({
     throw StateError('Missing group $groupId after Charlie removal');
   }
 
-  final sourceEventId =
-      'member_removed:$groupId:${stack.identity.peerId}:${removedAt.microsecondsSinceEpoch}';
+  final sourceEventId = removal.eventId;
   final replayRecipientPeerIds = <String>{
     charliePeerId,
     ...additionalReplayRecipientPeerIds.where((peerId) => peerId.isNotEmpty),
@@ -15005,7 +15008,6 @@ Future<void> _runGe013Alice(
     key: _ge013BobSiblingBeforeKey,
     text: siblingBeforeSent['text'] as String,
     senderPeerId: bobPeerId,
-    drainWhileWaiting: false,
   );
   await waitForSharedJson(
     _signalName('bob_received_$_ge013BobSiblingBeforeKey.json'),
@@ -15098,7 +15100,6 @@ Future<void> _runGe013Bob(
     key: _ge013BobSiblingBeforeKey,
     text: siblingBeforeSent['text'] as String,
     senderPeerId: bobPeerId,
-    drainWhileWaiting: false,
   );
   writeSharedJson(
     _signalName('bob_received_$_ge013BobSiblingBeforeKey.json'),
@@ -15184,6 +15185,7 @@ Future<void> _runGe013Charlie(
     groupId: groupId,
     key: _ge013BobSiblingBeforeKey,
     text: 'GE-013 Bob sibling before revoke $_runId',
+    includeSenderPeerIdInDurableRecipients: true,
   );
 
   final revokedFixture = await waitForSharedJson(
@@ -49508,8 +49510,11 @@ Future<void> main() async {
   testWidgets(
     'group multi-party device proof scenario=$_scenario role=$_role run=$_runId',
     (tester) async {
+      tester.platformDispatcher.semanticsEnabledTestValue = false;
+      addTearDown(tester.platformDispatcher.clearSemanticsEnabledTestValue);
       Directory(_sharedDir).createSync(recursive: true);
       await _runScenarioRole();
     },
+    semanticsEnabled: false,
   );
 }

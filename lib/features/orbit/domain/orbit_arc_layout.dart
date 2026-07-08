@@ -106,10 +106,10 @@ class OrbitSeat {
   });
 
   OrbitProvenance get provenance => switch (kind) {
-        OrbitSeatKind.ring1 => const OrbitProvenance.ring(1),
-        OrbitSeatKind.ring2 => const OrbitProvenance.ring(2),
-        OrbitSeatKind.arc => OrbitProvenance.arc((arcIndex ?? 0) + 1),
-      };
+    OrbitSeatKind.ring1 => const OrbitProvenance.ring(1),
+    OrbitSeatKind.ring2 => const OrbitProvenance.ring(2),
+    OrbitSeatKind.arc => OrbitProvenance.arc((arcIndex ?? 0) + 1),
+  };
 }
 
 /// The overflow badge's placement (the notional 9th ring-2 slot).
@@ -172,9 +172,9 @@ double orbitArcAvatarSize(OrbitGeometryPrefs geometry) =>
 /// ONLY the circle→first-arc gap; arc-to-arc spacing stays 46·sp.
 double orbitArcRadius(OrbitGeometryPrefs geometry, int arcIndex) =>
     (kOrbitRing2Radius +
-            kOrbitArcRingGap * geometry.orbitGap +
-            kOrbitArcRingGap * arcIndex) *
-        geometry.spacingScale;
+        kOrbitArcRingGap * geometry.orbitGap +
+        kOrbitArcRingGap * arcIndex) *
+    geometry.spacingScale;
 
 /// Radians of arc half-span per unit of the wrap knob (mockup 1.25) — shared
 /// by [orbitArcPhi] and the [orbitArcWrapFromPointer] inverse mapping.
@@ -202,8 +202,9 @@ int orbitArcCapacity(OrbitGeometryPrefs geometry, int arcIndex) {
 }
 
 /// The capacity of each of the [kOrbitMaxArcs] arcs.
-List<int> orbitArcCaps(OrbitGeometryPrefs geometry) =>
-    [for (var a = 0; a < kOrbitMaxArcs; a++) orbitArcCapacity(geometry, a)];
+List<int> orbitArcCaps(OrbitGeometryPrefs geometry) => [
+  for (var a = 0; a < kOrbitMaxArcs; a++) orbitArcCapacity(geometry, a),
+];
 
 /// Provenance of member [index] under [geometry]. Past the 12-arc envelope the
 /// real (extrapolated) arc index is returned — nothing is culled, so every seat
@@ -244,6 +245,27 @@ double orbitArcOverhang({
   return math.max(0.0, (topMargin - topY).ceilToDouble());
 }
 
+/// Pixels the lowest seat tap target pokes below the base canvas bottom.
+///
+/// This scans every computed seat because high spacing can make ring-2 tap
+/// boxes poke below the canvas, while high wrap can make arc tips droop lower.
+double orbitArcBottomOverhang({
+  required int memberCount,
+  required OrbitGeometryPrefs geometry,
+  required double centerY,
+}) {
+  final layout = computeOrbitLayout(
+    memberCount: memberCount,
+    geometry: geometry,
+  );
+  var bottom = 0.0;
+  for (final seat in layout.seats) {
+    final tapTarget = math.max(seat.avatarSize, kOrbitMinTapTarget);
+    bottom = math.max(bottom, seat.dy + tapTarget / 2);
+  }
+  return math.max(0.0, bottom - centerY);
+}
+
 /// Full inner-circle layout for [memberCount] members under [geometry].
 OrbitLayout computeOrbitLayout({
   required int memberCount,
@@ -267,17 +289,19 @@ OrbitLayout computeOrbitLayout({
     final a = orbitSeatAngle(i, ring1End, 0);
     final dx = sign * math.cos(a) * r1;
     final dy = math.sin(a) * r1;
-    seats.add(OrbitSeat(
-      index: i,
-      dx: dx,
-      dy: dy,
-      radius: r1,
-      angle: _angleOf(dx, dy),
-      avatarSize: ring1Avatar,
-      kind: OrbitSeatKind.ring1,
-      arcIndex: null,
-      entranceDelayMs: 0,
-    ));
+    seats.add(
+      OrbitSeat(
+        index: i,
+        dx: dx,
+        dy: dy,
+        radius: r1,
+        angle: _angleOf(dx, dy),
+        avatarSize: ring1Avatar,
+        kind: OrbitSeatKind.ring1,
+        arcIndex: null,
+        entranceDelayMs: 0,
+      ),
+    );
   }
 
   // Ring 2 — members 5..12. A partial ring spreads over its actual seat count
@@ -290,17 +314,19 @@ OrbitLayout computeOrbitLayout({
     final a = orbitSeatAngle(i - kOrbitRing1Count, ring2Slots, 1);
     final dx = sign * math.cos(a) * r2;
     final dy = math.sin(a) * r2;
-    seats.add(OrbitSeat(
-      index: i,
-      dx: dx,
-      dy: dy,
-      radius: r2,
-      angle: _angleOf(dx, dy),
-      avatarSize: ring2Avatar,
-      kind: OrbitSeatKind.ring2,
-      arcIndex: null,
-      entranceDelayMs: 0,
-    ));
+    seats.add(
+      OrbitSeat(
+        index: i,
+        dx: dx,
+        dy: dy,
+        radius: r2,
+        angle: _angleOf(dx, dy),
+        avatarSize: ring2Avatar,
+        kind: OrbitSeatKind.ring2,
+        arcIndex: null,
+        entranceDelayMs: 0,
+      ),
+    );
   }
 
   // Badge — the notional 9th ring-2 slot.
@@ -334,20 +360,23 @@ OrbitLayout computeOrbitLayout({
       final phi = start + j * pitch;
       final dx = sign * r * math.sin(phi);
       final dy = -r * math.cos(phi);
-      seats.add(OrbitSeat(
-        index: idx + j,
-        dx: dx,
-        dy: dy,
-        radius: r,
-        angle: _angleOf(dx, dy),
-        avatarSize: avPx,
-        kind: OrbitSeatKind.arc,
-        arcIndex: arcI,
-        entranceDelayMs: arcI * 60 + j * 5,
-        staggerParity: j % 2,
-      ));
+      seats.add(
+        OrbitSeat(
+          index: idx + j,
+          dx: dx,
+          dy: dy,
+          radius: r,
+          angle: _angleOf(dx, dy),
+          avatarSize: avPx,
+          kind: OrbitSeatKind.arc,
+          arcIndex: arcI,
+          entranceDelayMs: arcI * 60 + j * 5,
+          staggerParity: j % 2,
+        ),
+      );
     }
-    idx += cap; // advance by full cap (mockup); overshoot past the end is harmless
+    idx +=
+        cap; // advance by full cap (mockup); overshoot past the end is harmless
     arcI++;
   }
 
@@ -381,10 +410,14 @@ Offset orbitHandleAnchor(
     OrbitKnob.spacingScale => Offset(0, kOrbitRing2Radius * sp),
     OrbitKnob.avatarScale => Offset(0, -kOrbitRing1Radius * sp),
     OrbitKnob.orbitGap => Offset(0, -r0),
-    OrbitKnob.arcWrap =>
-      Offset(sign * r0 * math.sin(phi0), -r0 * math.cos(phi0)),
-    OrbitKnob.maxPerArc =>
-      Offset(-sign * r0 * math.sin(phi0), -r0 * math.cos(phi0)),
+    OrbitKnob.arcWrap => Offset(
+      sign * r0 * math.sin(phi0),
+      -r0 * math.cos(phi0),
+    ),
+    OrbitKnob.maxPerArc => Offset(
+      -sign * r0 * math.sin(phi0),
+      -r0 * math.cos(phi0),
+    ),
   };
 }
 
@@ -398,8 +431,11 @@ double orbitGapDragDelta(double dy, double spAtDragStart) =>
 /// [centre]: cv = clamp(|atan2(px−cx, cy−py)| / 1.25, 0.5, 2.5). |atan2| makes
 /// the mapping mirror-symmetric, so it needs no RTL special-casing.
 double orbitArcWrapFromPointer(Offset centre, Offset pointer) {
-  final angle =
-      math.atan2(pointer.dx - centre.dx, centre.dy - pointer.dy).abs();
-  return (angle / kOrbitPhiPerWrap)
-      .clamp(OrbitGeometryPrefs.minArcWrap, OrbitGeometryPrefs.maxArcWrap);
+  final angle = math
+      .atan2(pointer.dx - centre.dx, centre.dy - pointer.dy)
+      .abs();
+  return (angle / kOrbitPhiPerWrap).clamp(
+    OrbitGeometryPrefs.minArcWrap,
+    OrbitGeometryPrefs.maxArcWrap,
+  );
 }

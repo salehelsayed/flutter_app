@@ -153,7 +153,10 @@ class _InnerCircleInteractiveSurfaceState
 
   // Only av/sp affect the always-visible rings; the other three only make sense
   // once the arcs are revealed (TC-198-26).
-  static const _collapsedKnobs = [OrbitKnob.avatarScale, OrbitKnob.spacingScale];
+  static const _collapsedKnobs = [
+    OrbitKnob.avatarScale,
+    OrbitKnob.spacingScale,
+  ];
   static const _allKnobs = OrbitKnob.values;
 
   @override
@@ -392,16 +395,16 @@ class _InnerCircleInteractiveSurfaceState
   }
 
   void _onBadgeTap() => setState(() {
-        _overflowExpanded = !_overflowExpanded;
-        if (!_overflowExpanded) {
-          // Collapsing removes cv/pr/og — disarm if one of them was armed,
-          // and settle a live drag whose handle just unmounted (TC-198F-26).
-          if (_armed != null && !_collapsedKnobs.contains(_armed)) {
-            _armed = null;
-            _settleInterruptedDrag();
-          }
-        }
-      });
+    _overflowExpanded = !_overflowExpanded;
+    if (!_overflowExpanded) {
+      // Collapsing removes cv/pr/og — disarm if one of them was armed,
+      // and settle a live drag whose handle just unmounted (TC-198F-26).
+      if (_armed != null && !_collapsedKnobs.contains(_armed)) {
+        _armed = null;
+        _settleInterruptedDrag();
+      }
+    }
+  });
 
   // ---- knob mutation with write-through ----
   void _persist(OrbitGeometryPrefs next) {
@@ -456,58 +459,71 @@ class _InnerCircleInteractiveSurfaceState
     _dragTotal += details.delta;
     final next = _draggedGeometry(knob, details);
     if (next == _geometry) return;
-    _compensateScrollForOverhang(knob, next);
+    _compensateScrollForOverhang(next);
     setState(() => _geometry = next);
   }
 
   OrbitGeometryPrefs _draggedGeometry(
-      OrbitKnob knob, DragUpdateDetails details) {
+    OrbitKnob knob,
+    DragUpdateDetails details,
+  ) {
     switch (knob) {
       case OrbitKnob.avatarScale:
         return _dragStart.copyWith(
-            avatarScale: (_dragStart.avatarScale - _dragTotal.dy / 90)
-                .clamp(OrbitGeometryPrefs.minAvatarScale,
-                    OrbitGeometryPrefs.maxAvatarScale)
-                .toDouble());
+          avatarScale: (_dragStart.avatarScale - _dragTotal.dy / 90)
+              .clamp(
+                OrbitGeometryPrefs.minAvatarScale,
+                OrbitGeometryPrefs.maxAvatarScale,
+              )
+              .toDouble(),
+        );
       case OrbitKnob.spacingScale:
         return _dragStart.copyWith(
-            spacingScale: (_dragStart.spacingScale + _dragTotal.dy / 108)
-                .clamp(OrbitGeometryPrefs.minSpacingScale,
-                    OrbitGeometryPrefs.maxSpacingScale)
-                .toDouble());
+          spacingScale: (_dragStart.spacingScale + _dragTotal.dy / 108)
+              .clamp(
+                OrbitGeometryPrefs.minSpacingScale,
+                OrbitGeometryPrefs.maxSpacingScale,
+              )
+              .toDouble(),
+        );
       case OrbitKnob.maxPerArc:
         return _dragStart.copyWith(
-            maxPerArc: (_dragStart.maxPerArc + _dragTotal.dx / 34)
-                .round()
-                .clamp(OrbitGeometryPrefs.minMaxPerArc,
-                    OrbitGeometryPrefs.maxMaxPerArc));
+          maxPerArc: (_dragStart.maxPerArc + _dragTotal.dx / 34).round().clamp(
+            OrbitGeometryPrefs.minMaxPerArc,
+            OrbitGeometryPrefs.maxMaxPerArc,
+          ),
+        );
       case OrbitKnob.orbitGap:
         // M8 — ÷sp, with sp snapshotted at drag start.
         return _dragStart.copyWith(
-            orbitGap: (_dragStart.orbitGap +
-                    orbitGapDragDelta(
-                        _dragTotal.dy, _dragStart.spacingScale))
-                .clamp(OrbitGeometryPrefs.minOrbitGap,
-                    OrbitGeometryPrefs.maxOrbitGap)
-                .toDouble());
+          orbitGap:
+              (_dragStart.orbitGap +
+                      orbitGapDragDelta(_dragTotal.dy, _dragStart.spacingScale))
+                  .clamp(
+                    OrbitGeometryPrefs.minOrbitGap,
+                    OrbitGeometryPrefs.maxOrbitGap,
+                  )
+                  .toDouble(),
+        );
       case OrbitKnob.arcWrap:
         // M7 — the wrap follows the pointer's ANGLE around the live centre.
         final surfaceObj = context.findRenderObject();
         final origin = _canvasOriginNow;
         if (surfaceObj is! RenderBox || origin == null) return _geometry;
         final local = surfaceObj.globalToLocal(details.globalPosition);
-        final centre = origin +
+        final centre =
+            origin +
             Offset(kOrbitCanvasCenter, kOrbitCanvasCenter + _currentOverhang);
         return _dragStart.copyWith(
-            arcWrap: orbitArcWrapFromPointer(centre, local));
+          arcWrap: orbitArcWrapFromPointer(centre, local),
+        );
     }
   }
 
-  // TC-198-72 — the SINGLE scroll writer: og/cv drags change the overhang and
-  // this jump absorbs it, so the circle stays planted under the finger. The
-  // measured-origin path only ever READS _scroll.
-  void _compensateScrollForOverhang(OrbitKnob knob, OrbitGeometryPrefs next) {
-    if (knob != OrbitKnob.orbitGap && knob != OrbitKnob.arcWrap) return;
+  // TC-198-72 / TC-223-03 — the SINGLE scroll writer: any drag that changes
+  // the top overhang gets absorbed here, so the circle stays planted under the
+  // finger. The measured-origin path only ever READS _scroll.
+  void _compensateScrollForOverhang(OrbitGeometryPrefs next) {
     if (!_overflowExpanded || !_scroll.hasClients) return;
     final delta = _overhangFor(next) - _overhangFor(_geometry);
     if (delta == 0) return;
@@ -517,8 +533,10 @@ class _InnerCircleInteractiveSurfaceState
     // the recovery path). Growth extends the extent by exactly delta, so the
     // clamp below stays reachable after this frame's layout.
     if (delta > 0 && position.maxScrollExtent <= 0) return;
-    final target = (_scroll.offset + delta)
-        .clamp(0.0, position.maxScrollExtent + (delta > 0 ? delta : 0.0));
+    final target = (_scroll.offset + delta).clamp(
+      0.0,
+      position.maxScrollExtent + (delta > 0 ? delta : 0.0),
+    );
     if (target == _scroll.offset) return;
     _scroll.jumpTo(target.toDouble());
   }
@@ -576,12 +594,12 @@ class _InnerCircleInteractiveSurfaceState
 
   // ---- helpers ----
   String _handleName(AppLocalizations l10n, OrbitKnob knob) => switch (knob) {
-        OrbitKnob.avatarScale => l10n.orbit_handle_avatar_size,
-        OrbitKnob.spacingScale => l10n.orbit_handle_ring_spacing,
-        OrbitKnob.arcWrap => l10n.orbit_handle_arc_wrap,
-        OrbitKnob.maxPerArc => l10n.orbit_handle_max_per_arc,
-        OrbitKnob.orbitGap => l10n.orbit_handle_orbit_gap,
-      };
+    OrbitKnob.avatarScale => l10n.orbit_handle_avatar_size,
+    OrbitKnob.spacingScale => l10n.orbit_handle_ring_spacing,
+    OrbitKnob.arcWrap => l10n.orbit_handle_arc_wrap,
+    OrbitKnob.maxPerArc => l10n.orbit_handle_max_per_arc,
+    OrbitKnob.orbitGap => l10n.orbit_handle_orbit_gap,
+  };
 
   String _formatValue(OrbitKnob knob) {
     final v = _geometry.valueOf(knob);
@@ -625,8 +643,7 @@ class _InnerCircleInteractiveSurfaceState
                 controller: _scroll,
                 padding: const EdgeInsets.symmetric(horizontal: 24),
                 child: ConstrainedBox(
-                  constraints:
-                      BoxConstraints(minHeight: constraints.maxHeight),
+                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
                   // The ConstrainedBox floors the Stack at the viewport height so
                   // a short population is centered (via the leading spacer below)
                   // while an overflow-tall population scrolls (the Stack grows
@@ -637,8 +654,9 @@ class _InnerCircleInteractiveSurfaceState
                         child: GestureDetector(
                           key: const ValueKey('orbit-inner-circle-background'),
                           behavior: HitTestBehavior.opaque,
-                          onLongPressStart:
-                              _editing ? null : (_) => _enterEdit(),
+                          onLongPressStart: _editing
+                              ? null
+                              : (_) => _enterEdit(),
                           onDoubleTap: _toggleLabels,
                           onTap: _onBackgroundTap,
                         ),
@@ -660,8 +678,8 @@ class _InnerCircleInteractiveSurfaceState
                               onSelfAvatarTap: widget.onSelfAvatarTap == null
                                   ? null
                                   : _onSelfAvatarTap,
-                              onSelfAvatarLongPress: widget.onSelfAvatarTap ==
-                                      null
+                              onSelfAvatarLongPress:
+                                  widget.onSelfAvatarTap == null
                                   ? null
                                   : _onSelfAvatarLongPress,
                               geometry: _geometry,
@@ -681,7 +699,8 @@ class _InnerCircleInteractiveSurfaceState
                                 child: Text(
                                   l10n.orbit_inner_circle_empty_hint,
                                   key: const ValueKey(
-                                      'orbit-inner-circle-empty-hint'),
+                                    'orbit-inner-circle-empty-hint',
+                                  ),
                                   textAlign: TextAlign.center,
                                   style: TextStyle(
                                     fontSize: 13,
@@ -732,8 +751,7 @@ class _InnerCircleInteractiveSurfaceState
           child: Center(
             child: Container(
               key: const ValueKey('orbit-edit-banner'),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
               decoration: BoxDecoration(
                 color: const Color(0xB30A0A0F),
                 borderRadius: BorderRadius.circular(12),
@@ -767,8 +785,7 @@ class _InnerCircleInteractiveSurfaceState
             behavior: HitTestBehavior.opaque,
             onTap: _reset,
             child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               decoration: BoxDecoration(
                 color: const Color(0xB30A0A0F),
                 borderRadius: BorderRadius.circular(14),
@@ -802,17 +819,27 @@ class _InnerCircleInteractiveSurfaceState
           builder: (context, _) {
             final origin = _canvasOriginNow;
             final overhang = _currentOverhang;
-            final mirrored =
-                Directionality.of(context) == TextDirection.rtl;
+            final mirrored = Directionality.of(context) == TextDirection.rtl;
             return Stack(
               clipBehavior: Clip.none,
               children: [
                 for (final knob in _visibleKnobs)
                   _buildAnchoredHandle(
-                      l10n, knob, origin, overhang, mirrored, constraints),
+                    l10n,
+                    knob,
+                    origin,
+                    overhang,
+                    mirrored,
+                    constraints,
+                  ),
                 if (armed != null && origin != null)
                   _buildValueBubble(
-                      armed, origin, overhang, mirrored, constraints),
+                    armed,
+                    origin,
+                    overhang,
+                    mirrored,
+                    constraints,
+                  ),
               ],
             );
           },
@@ -830,8 +857,9 @@ class _InnerCircleInteractiveSurfaceState
           child: _StepperButton(
             key: const ValueKey('orbit-edit-step-decrease'),
             icon: Icons.remove,
-            semanticsLabel:
-                l10n.orbit_edit_step_decrease(_handleName(l10n, armed)),
+            semanticsLabel: l10n.orbit_edit_step_decrease(
+              _handleName(l10n, armed),
+            ),
             onTap: () => _step(armed, -1),
           ),
         ),
@@ -842,8 +870,9 @@ class _InnerCircleInteractiveSurfaceState
           child: _StepperButton(
             key: const ValueKey('orbit-edit-step-increase'),
             icon: Icons.add,
-            semanticsLabel:
-                l10n.orbit_edit_step_increase(_handleName(l10n, armed)),
+            semanticsLabel: l10n.orbit_edit_step_increase(
+              _handleName(l10n, armed),
+            ),
             onTap: () => _step(armed, 1),
           ),
         ),
@@ -863,13 +892,16 @@ class _InnerCircleInteractiveSurfaceState
     final measured = origin != null;
     final pos = measured
         ? origin +
-            Offset(kOrbitCanvasCenter + anchor.dx,
-                kOrbitCanvasCenter + overhang + anchor.dy)
+              Offset(
+                kOrbitCanvasCenter + anchor.dx,
+                kOrbitCanvasCenter + overhang + anchor.dy,
+              )
         : Offset.zero;
     // Band-hide on BOTH axes against the surface viewport (never minus
     // viewInsets); unmeasured ⇒ hidden (the first-frame guard, TC-198F-09).
     // Offstage keeps the widget MOUNTED so a live drag survives (TC-198F-04).
-    final visible = measured &&
+    final visible =
+        measured &&
         pos.dx >= 0 &&
         pos.dx <= constraints.maxWidth &&
         pos.dy >= 0 &&
@@ -919,15 +951,19 @@ class _InnerCircleInteractiveSurfaceState
     BoxConstraints constraints,
   ) {
     final anchor = orbitHandleAnchor(armed, _geometry, mirrored: mirrored);
-    final pos = origin +
-        Offset(kOrbitCanvasCenter + anchor.dx,
-            kOrbitCanvasCenter + overhang + anchor.dy);
+    final pos =
+        origin +
+        Offset(
+          kOrbitCanvasCenter + anchor.dx,
+          kOrbitCanvasCenter + overhang + anchor.dy,
+        );
     // Floats above the armed disc (M5): bottom edge 6px above the disc top,
     // horizontally centred on the handle via the fixed-width Center trick.
     // Clamped into the surface band: the bubble stays PRESENT while its
     // handle is band-hidden (TC-198-71) but never paints past the surface
     // (TC-198F-28).
-    final rawBottom = constraints.maxHeight -
+    final rawBottom =
+        constraints.maxHeight -
         pos.dy +
         OrbitEditHandle.effectiveDiscSize(_geometry.avatarScale) / 2 +
         6;
@@ -992,8 +1028,12 @@ class _InnerCircleInteractiveSurfaceState
                     key: ValueKey('orbit-find-chip-${chip.index}'),
                     item: chip.item,
                     provenance: chip.provenance.isArc
-                        ? l10n.orbit_chip_provenance_arc(chip.provenance.arcNumber!)
-                        : l10n.orbit_chip_provenance_ring(chip.provenance.ringNumber!),
+                        ? l10n.orbit_chip_provenance_arc(
+                            chip.provenance.arcNumber!,
+                          )
+                        : l10n.orbit_chip_provenance_ring(
+                            chip.provenance.ringNumber!,
+                          ),
                     colors: colors,
                     onTap: () => _openItemFromChip(chip),
                   ),
@@ -1013,89 +1053,100 @@ class _InnerCircleInteractiveSurfaceState
       // renders nothing here.
       if (_findOpen || widget.findOpenSignal == null)
         Positioned(
-        key: const ValueKey('orbit-slot-find-pill'),
-        left: _findOpen ? 16 : null,
-        right: 16,
-        bottom: bottomInset +
-            (lifted ? 88.0 : (kbUp ? 10.0 : 40.0)) +
-            (kbUp ? 0.0 : _bandLift),
-        child: _findOpen
-            ? Container(
-                key: const ValueKey('orbit-find-pill'),
-                constraints: const BoxConstraints(minHeight: 56),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                decoration: BoxDecoration(
-                  color: colors.glassSurface,
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.search, size: 22, color: colors.iconPrimary),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: TextField(
-                        controller: _findController,
-                        focusNode: _findFocus,
-                        onChanged: _onFindChanged,
-                        style: TextStyle(
-                            fontSize: 16, color: colors.textPrimary),
-                        decoration: InputDecoration(
-                          isDense: true,
-                          border: InputBorder.none,
-                          hintText: l10n.orbit_find_placeholder,
-                        ),
-                      ),
-                    ),
-                    // 205 item 1: a discoverable close X — collapse the pill and
-                    // dismiss the keyboard, so the user never depends on the
-                    // undiscoverable background tap.
-                    GestureDetector(
-                      key: const ValueKey('orbit-find-close'),
-                      behavior: HitTestBehavior.opaque,
-                      onTap: _closeFind,
-                      child: Semantics(
-                        button: true,
-                        label: l10n.orbit_find_close,
-                        child: Padding(
-                          padding: const EdgeInsets.only(left: 8),
-                          child: Icon(Icons.close,
-                              size: 20, color: colors.iconPrimary),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              )
-            : Semantics(
-                container: true,
-                button: true,
-                label: l10n.orbit_find_pill_semantics,
-                child: GestureDetector(
+          key: const ValueKey('orbit-slot-find-pill'),
+          left: _findOpen ? 16 : null,
+          right: 16,
+          bottom:
+              bottomInset +
+              (lifted ? 88.0 : (kbUp ? 10.0 : 40.0)) +
+              (kbUp ? 0.0 : _bandLift),
+          child: _findOpen
+              ? Container(
                   key: const ValueKey('orbit-find-pill'),
-                  behavior: HitTestBehavior.opaque,
-                  onTap: _openFind,
-                  child: Container(
-                    width: 52,
-                    height: 52,
-                    decoration: BoxDecoration(
-                      color: colors.glassSurface,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: colors.glassBorder),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Color(0x59000000),
-                          blurRadius: 18,
-                          offset: Offset(0, 6),
+                  constraints: const BoxConstraints(minHeight: 56),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: colors.glassSurface,
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.search, size: 22, color: colors.iconPrimary),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: TextField(
+                          controller: _findController,
+                          focusNode: _findFocus,
+                          onChanged: _onFindChanged,
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: colors.textPrimary,
+                          ),
+                          decoration: InputDecoration(
+                            isDense: true,
+                            border: InputBorder.none,
+                            hintText: l10n.orbit_find_placeholder,
+                          ),
                         ),
-                      ],
+                      ),
+                      // 205 item 1: a discoverable close X — collapse the pill and
+                      // dismiss the keyboard, so the user never depends on the
+                      // undiscoverable background tap.
+                      GestureDetector(
+                        key: const ValueKey('orbit-find-close'),
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _closeFind,
+                        child: Semantics(
+                          button: true,
+                          label: l10n.orbit_find_close,
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 8),
+                            child: Icon(
+                              Icons.close,
+                              size: 20,
+                              color: colors.iconPrimary,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : Semantics(
+                  container: true,
+                  button: true,
+                  label: l10n.orbit_find_pill_semantics,
+                  child: GestureDetector(
+                    key: const ValueKey('orbit-find-pill'),
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _openFind,
+                    child: Container(
+                      width: 52,
+                      height: 52,
+                      decoration: BoxDecoration(
+                        color: colors.glassSurface,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: colors.glassBorder),
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x59000000),
+                            blurRadius: 18,
+                            offset: Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      child: Icon(
+                        Icons.search,
+                        size: 24,
+                        color: colors.iconPrimary,
+                      ),
                     ),
-                    child:
-                        Icon(Icons.search, size: 24, color: colors.iconPrimary),
                   ),
                 ),
-              ),
-      ),
+        ),
     ];
   }
 }
@@ -1209,15 +1260,17 @@ class _FindChip extends StatelessWidget {
   // The member's own avatar above the name: friends inherit plan 200's
   // aspect-safe UserAvatar; groups render the group glyph (200 GroupAvatar).
   Widget _avatar() => switch (item) {
-        OrbitFriendItem(:final friend) =>
-          UserAvatar(peerId: friend.peerId, size: 40),
-        OrbitGroupItem(:final group) => GroupAvatar(
-            groupId: group.groupId,
-            name: group.name,
-            avatarPath: group.group.avatarPath,
-            size: 40,
-            borderRadius: BorderRadius.circular(20),
-            cacheBustKey: group.group.lastMetadataEventAt?.toIso8601String(),
-          ),
-      };
+    OrbitFriendItem(:final friend) => UserAvatar(
+      peerId: friend.peerId,
+      size: 40,
+    ),
+    OrbitGroupItem(:final group) => GroupAvatar(
+      groupId: group.groupId,
+      name: group.name,
+      avatarPath: group.group.avatarPath,
+      size: 40,
+      borderRadius: BorderRadius.circular(20),
+      cacheBustKey: group.group.lastMetadataEventAt?.toIso8601String(),
+    ),
+  };
 }

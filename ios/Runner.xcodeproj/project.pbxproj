@@ -588,6 +588,7 @@
 			);
 			inputPaths = (
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/bridge.go",
+				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/bridge_entrypoint_contract_test.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/bridge_generate_next_key_test.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/bridge_lan.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/bridge_ping.go",
@@ -671,6 +672,7 @@
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/inbox_wake_token_test.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/lan_dial.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/lan_dial_test.go",
+				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/libp2p_refactor_contract_test.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/media.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/media_lan.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/media_lan_test.go",

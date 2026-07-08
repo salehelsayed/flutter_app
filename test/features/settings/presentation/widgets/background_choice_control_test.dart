@@ -43,14 +43,14 @@ void main() {
 
     expect(find.text('Background'), findsOneWidget);
     expect(find.text('Default'), findsOneWidget);
-    expect(find.text('The current ambient background.'), findsOneWidget);
-    expect(find.text('Cosmic'), findsOneWidget);
-    expect(find.text('A deep starfield for Feed.'), findsOneWidget);
-    expect(find.text('Mirrored cosmic'), findsOneWidget);
     expect(
-      find.text('The cosmic starfield with mirrored color blooms.'),
+      find.text('Mirrored cosmic drift with soft color blooms.'),
       findsOneWidget,
     );
+    expect(find.text('Cosmic'), findsOneWidget);
+    expect(find.text('A deep starfield for Feed.'), findsOneWidget);
+    expect(find.text('Aurora'), findsOneWidget);
+    expect(find.text('The original ambient glow.'), findsOneWidget);
     expect(find.text('Signal'), findsOneWidget);
     expect(
       find.text('A cool porcelain sky with one electric-violet star.'),
@@ -65,15 +65,62 @@ void main() {
       findsNothing,
     );
     expect(
-      find.byKey(
-        const ValueKey('background-choice-cosmic-mirrored-selected-icon'),
-      ),
+      find.byKey(const ValueKey('background-choice-aurora-selected-icon')),
       findsNothing,
     );
     expect(
       find.byKey(
         const ValueKey('background-choice-daylight-lagoon-selected-icon'),
       ),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('background-choice-cosmic-mirrored')),
+      findsNothing,
+    );
+  });
+
+  testWidgets(
+    'shows Default, Cosmic, Aurora, and Signal without mirrored cosmic',
+    (tester) async {
+      await tester.pumpWidget(wrap());
+
+      expect(find.text('Background'), findsOneWidget);
+      expect(find.text('Default'), findsOneWidget);
+      expect(
+        find.text('Mirrored cosmic drift with soft color blooms.'),
+        findsOneWidget,
+      );
+      expect(find.text('Cosmic'), findsOneWidget);
+      expect(find.text('A deep starfield for Feed.'), findsOneWidget);
+      expect(find.text('Aurora'), findsOneWidget);
+      expect(find.text('The original ambient glow.'), findsOneWidget);
+      expect(find.text('Signal'), findsOneWidget);
+      expect(
+        find.text('A cool porcelain sky with one electric-violet star.'),
+        findsOneWidget,
+      );
+      expect(find.text('Mirrored cosmic'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('background-choice-cosmic-mirrored')),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets('cosmic_mirrored user sees Default tile selected', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      wrap(value: BackgroundPreference.fromStorageString('cosmic_mirrored')),
+    );
+
+    expect(
+      find.byKey(const ValueKey('background-choice-default-selected-icon')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('background-choice-aurora-selected-icon')),
       findsNothing,
     );
   });
@@ -124,15 +171,13 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.byKey(
-        const ValueKey('background-choice-cosmic-mirrored-selected-icon'),
-      ),
+      find.byKey(const ValueKey('background-choice-aurora-selected-icon')),
       findsNothing,
     );
   });
 
-  testWidgets('shows mirrored cosmic selected', (tester) async {
-    await tester.pumpWidget(wrap(value: BackgroundPreference.cosmicMirrored));
+  testWidgets('shows Aurora selected', (tester) async {
+    await tester.pumpWidget(wrap(value: BackgroundPreference.aurora));
 
     expect(
       find.byKey(const ValueKey('background-choice-default-selected-icon')),
@@ -143,9 +188,7 @@ void main() {
       findsNothing,
     );
     expect(
-      find.byKey(
-        const ValueKey('background-choice-cosmic-mirrored-selected-icon'),
-      ),
+      find.byKey(const ValueKey('background-choice-aurora-selected-icon')),
       findsOneWidget,
     );
   });
@@ -162,9 +205,7 @@ void main() {
       findsNothing,
     );
     expect(
-      find.byKey(
-        const ValueKey('background-choice-cosmic-mirrored-selected-icon'),
-      ),
+      find.byKey(const ValueKey('background-choice-aurora-selected-icon')),
       findsNothing,
     );
     expect(
@@ -187,11 +228,9 @@ void main() {
 
     expect(selected, BackgroundPreference.cosmic);
 
-    await tester.tap(
-      find.byKey(const ValueKey('background-choice-cosmic-mirrored')),
-    );
+    await tester.tap(find.byKey(const ValueKey('background-choice-aurora')));
 
-    expect(selected, BackgroundPreference.cosmicMirrored);
+    expect(selected, BackgroundPreference.aurora);
 
     await tester.ensureVisible(
       find.byKey(const ValueKey('background-choice-daylight-lagoon')),
@@ -231,14 +270,12 @@ void main() {
       expect(cosmicNode.flagsCollection.isButton, isTrue);
       expect(cosmicNode.flagsCollection.isSelected, Tristate.isFalse);
 
-      final mirroredNode = tester.getSemantics(
-        find.byKey(
-          const ValueKey('background-choice-cosmic-mirrored-semantics'),
-        ),
+      final auroraNode = tester.getSemantics(
+        find.byKey(const ValueKey('background-choice-aurora-semantics')),
       );
-      expect(mirroredNode.label, contains('Mirrored cosmic'));
-      expect(mirroredNode.flagsCollection.isButton, isTrue);
-      expect(mirroredNode.flagsCollection.isSelected, Tristate.isFalse);
+      expect(auroraNode.label, contains('Aurora'));
+      expect(auroraNode.flagsCollection.isButton, isTrue);
+      expect(auroraNode.flagsCollection.isSelected, Tristate.isFalse);
 
       final daylightNode = tester.getSemantics(
         find.byKey(
@@ -274,26 +311,22 @@ void main() {
     }
   });
 
-  testWidgets('exposes mirrored cosmic selected state in semantics', (
-    tester,
-  ) async {
+  testWidgets('exposes Aurora selected state in semantics', (tester) async {
     final semanticsHandle = tester.ensureSemantics();
     try {
-      await tester.pumpWidget(wrap(value: BackgroundPreference.cosmicMirrored));
+      await tester.pumpWidget(wrap(value: BackgroundPreference.aurora));
 
       final controlNode = tester.getSemantics(
         find.byKey(const ValueKey('background-choice-control-semantics')),
       );
-      expect(controlNode.value, 'Mirrored cosmic selected');
+      expect(controlNode.value, 'Aurora selected');
 
-      final mirroredNode = tester.getSemantics(
-        find.byKey(
-          const ValueKey('background-choice-cosmic-mirrored-semantics'),
-        ),
+      final auroraNode = tester.getSemantics(
+        find.byKey(const ValueKey('background-choice-aurora-semantics')),
       );
-      expect(mirroredNode.label, contains('Mirrored cosmic'));
-      expect(mirroredNode.value, 'Mirrored cosmic selected');
-      expect(mirroredNode.flagsCollection.isSelected, Tristate.isTrue);
+      expect(auroraNode.label, contains('Aurora'));
+      expect(auroraNode.value, 'Aurora selected');
+      expect(auroraNode.flagsCollection.isSelected, Tristate.isTrue);
     } finally {
       semanticsHandle.dispose();
     }
@@ -326,14 +359,9 @@ void main() {
     tester,
   ) async {
     final cases = <Locale, List<String>>{
-      const Locale('en'): ['Background', 'Cosmic', 'Mirrored cosmic', 'Signal'],
-      const Locale('de'): [
-        'Hintergrund',
-        'Kosmisch',
-        'Kosmisch gespiegelt',
-        'Signal',
-      ],
-      const Locale('ar'): ['الخلفية', 'كونية', 'كونية معكوسة', 'سيجنال'],
+      const Locale('en'): ['Background', 'Cosmic', 'Aurora', 'Signal'],
+      const Locale('de'): ['Hintergrund', 'Kosmisch', 'Aurora', 'Signal'],
+      const Locale('ar'): ['الخلفية', 'كونية', 'أورورا', 'سيجنال'],
     };
 
     for (final entry in cases.entries) {

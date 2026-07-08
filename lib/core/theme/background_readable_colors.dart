@@ -248,7 +248,7 @@ class BackgroundReadableColors
     switch (preference) {
       case BackgroundPreference.defaultBackground:
       case BackgroundPreference.cosmic:
-      case BackgroundPreference.cosmicMirrored:
+      case BackgroundPreference.aurora:
         return BackgroundReadableTone.dark;
       case BackgroundPreference.daylightLagoon:
         return BackgroundReadableTone.representativeLight;

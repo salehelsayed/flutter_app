@@ -17,15 +17,18 @@ void main() {
     expect(controller.activeTab, AppShellTab.feed);
   });
 
-  test('214: invalid initial tab ids coerce to orbit; explicit feed honored', () {
-    final coerced = AppShellController(initialTab: 'not-a-tab');
-    addTearDown(coerced.dispose);
-    expect(coerced.activeTab, AppShellTab.orbit);
+  test(
+    '214: invalid initial tab ids coerce to orbit; explicit feed honored',
+    () {
+      final coerced = AppShellController(initialTab: 'not-a-tab');
+      addTearDown(coerced.dispose);
+      expect(coerced.activeTab, AppShellTab.orbit);
 
-    final explicitFeed = AppShellController(initialTab: AppShellTab.feed);
-    addTearDown(explicitFeed.dispose);
-    expect(explicitFeed.activeTab, AppShellTab.feed);
-  });
+      final explicitFeed = AppShellController(initialTab: AppShellTab.feed);
+      addTearDown(explicitFeed.dispose);
+      expect(explicitFeed.activeTab, AppShellTab.feed);
+    },
+  );
 
   test('ignores invalid tab ids and duplicate switches', () {
     final controller = AppShellController(initialTab: AppShellTab.orbit);
@@ -62,24 +65,18 @@ void main() {
     expect(controller.backgroundPreference, BackgroundPreference.cosmic);
     expect(notifications, 1);
 
-    controller.setBackgroundPreference(BackgroundPreference.cosmicMirrored);
+    controller.setBackgroundPreference(BackgroundPreference.aurora);
 
-    expect(
-      controller.backgroundPreference,
-      BackgroundPreference.cosmicMirrored,
-    );
+    expect(controller.backgroundPreference, BackgroundPreference.aurora);
     expect(notifications, 2);
   });
 
   test('accepts initial background preference', () {
     final controller = AppShellController(
-      initialBackgroundPreference: BackgroundPreference.cosmicMirrored,
+      initialBackgroundPreference: BackgroundPreference.aurora,
     );
     addTearDown(controller.dispose);
 
-    expect(
-      controller.backgroundPreference,
-      BackgroundPreference.cosmicMirrored,
-    );
+    expect(controller.backgroundPreference, BackgroundPreference.aurora);
   });
 }

@@ -51,14 +51,14 @@ void main() {
     FakeSecureKeyStore? store,
     String mnemonic = twelveWords,
   }) async {
-    final repo = identityRepo ??
-        (FakeIdentityRepository()
-          ..seed(
-            FakeIdentityRepository.makeIdentity(
-              peerId: 'sheet-peer',
-              mnemonic12: mnemonic,
-            ),
-          ));
+    final repo =
+        identityRepo ??
+        (FakeIdentityRepository()..seed(
+          FakeIdentityRepository.makeIdentity(
+            peerId: 'sheet-peer',
+            mnemonic12: mnemonic,
+          ),
+        ));
     final shell = AppShellController();
     addTearDown(shell.dispose);
     final privacyRepo = InMemoryPostsPrivacySettingsRepository();
@@ -97,35 +97,36 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
   }
 
-  testWidgets('T1 background row opens sheet with 4 options, selection marked', (
-    tester,
-  ) async {
-    await pumpWired(tester);
+  testWidgets(
+    'T1 background row opens sheet with 4 options, selection marked',
+    (tester) async {
+      await pumpWired(tester);
 
-    await openSheet(tester, 'settings-row-background');
+      await openSheet(tester, 'settings-row-background');
 
-    expect(find.byType(BackgroundChoiceControl), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('background-choice-default')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('background-choice-cosmic')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('background-choice-cosmic-mirrored')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('background-choice-daylight-lagoon')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('background-choice-default-selected-icon')),
-      findsOneWidget,
-    );
-  });
+      expect(find.byType(BackgroundChoiceControl), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('background-choice-default')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('background-choice-cosmic')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('background-choice-aurora')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('background-choice-daylight-lagoon')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('background-choice-default-selected-icon')),
+        findsOneWidget,
+      );
+    },
+  );
 
   testWidgets('T2 selecting Cosmic persists, updates shell, closes to row', (
     tester,

@@ -167,3 +167,6 @@ output/
 # Graphify AST/stat cache — content-keyed, per-host scratch regenerated on every
 # build/update. Tracking it produces constant churn and drowns real diffs.
 **/graphify-out/cache/
+
+# transient manual test logs
+.manual_test_logs/

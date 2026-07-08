@@ -27,8 +27,7 @@ class BackgroundChoiceControl extends StatelessWidget {
       BackgroundPreference.defaultBackground =>
         l10n.settings_background_default_selected,
       BackgroundPreference.cosmic => l10n.settings_background_cosmic_selected,
-      BackgroundPreference.cosmicMirrored =>
-        l10n.settings_background_cosmic_mirrored_selected,
+      BackgroundPreference.aurora => l10n.settings_background_aurora_selected,
       BackgroundPreference.daylightLagoon =>
         l10n.settings_background_daylight_lagoon_selected,
     };
@@ -107,21 +106,18 @@ class BackgroundChoiceControl extends StatelessWidget {
                   ),
                   const SizedBox(height: 10),
                   _BackgroundOption(
-                    optionKey: const ValueKey(
-                      'background-choice-cosmic-mirrored',
-                    ),
+                    optionKey: const ValueKey('background-choice-aurora'),
                     semanticsKey: const ValueKey(
-                      'background-choice-cosmic-mirrored-semantics',
+                      'background-choice-aurora-semantics',
                     ),
                     selectedIconKey: const ValueKey(
-                      'background-choice-cosmic-mirrored-selected-icon',
+                      'background-choice-aurora-selected-icon',
                     ),
-                    label: l10n.settings_background_cosmic_mirrored,
-                    description: l10n.settings_background_cosmic_mirrored_desc,
-                    selectedLabel:
-                        l10n.settings_background_cosmic_mirrored_selected,
-                    isSelected: value == BackgroundPreference.cosmicMirrored,
-                    onTap: () => onChanged(BackgroundPreference.cosmicMirrored),
+                    label: l10n.settings_background_aurora,
+                    description: l10n.settings_background_aurora_desc,
+                    selectedLabel: l10n.settings_background_aurora_selected,
+                    isSelected: value == BackgroundPreference.aurora,
+                    onTap: () => onChanged(BackgroundPreference.aurora),
                   ),
                   const SizedBox(height: 10),
                   _BackgroundOption(

@@ -140,7 +140,14 @@ class OrbitalVisualization extends StatelessWidget {
             centerY: _center,
           )
         : 0.0;
-    final boxHeight = _size + overhang;
+    final bottomOverhang = overflowExpanded
+        ? orbitArcBottomOverhang(
+            memberCount: items.length,
+            geometry: geometry,
+            centerY: _center,
+          )
+        : 0.0;
+    final boxHeight = _size + overhang + bottomOverhang;
     final cx = _center;
     final cy = _center + overhang;
 
@@ -504,7 +511,11 @@ class _OrbitNodeHalo extends StatelessWidget {
               // crisp accent ring (blurRadius defaults to 0)
               BoxShadow(color: color, spreadRadius: _ringWidth),
               // soft neutral lift
-              const BoxShadow(color: _lift, blurRadius: 12, offset: Offset(0, 4)),
+              const BoxShadow(
+                color: _lift,
+                blurRadius: 12,
+                offset: Offset(0, 4),
+              ),
             ],
           ),
         ),

@@ -228,7 +228,8 @@ void main() {
           (i) => makeMessage(
             id: 'm$i',
             text: 'row $i',
-            timestamp: '2026-02-09T15:${(10 + i).toString().padLeft(2, '0')}:00.000Z',
+            timestamp:
+                '2026-02-09T15:${(10 + i).toString().padLeft(2, '0')}:00.000Z',
           ),
         );
 
@@ -254,8 +255,11 @@ void main() {
         await pumpFrames(tester);
 
         expect(find.byKey(syncingBannerKey), findsOneWidget);
-        expect(controller.offset, offsetBefore,
-            reason: 'toggling the affordance must not move the scroll position');
+        expect(
+          controller.offset,
+          offsetBefore,
+          reason: 'toggling the affordance must not move the scroll position',
+        );
         expect(
           find.descendant(
             of: find.byKey(const ValueKey('messages')),
@@ -346,12 +350,12 @@ void main() {
       expect(find.byType(CosmicBackground), findsOneWidget);
     });
 
-    testWidgets('renders the selected mirrored cosmic background', (
+    testWidgets('renders Mirror Cosmic for the default background', (
       tester,
     ) async {
       await tester.pumpWidget(
         buildTestWidget(
-          backgroundPreference: BackgroundPreference.cosmicMirrored,
+          backgroundPreference: BackgroundPreference.defaultBackground,
         ),
       );
       await tester.pump();
@@ -576,29 +580,26 @@ void main() {
       expect(find.byType(SwipeToQuoteBubble), findsOneWidget);
     });
 
-    testWidgets(
-      'wraps outgoing messages with swipe to quote (136 Phase 3 both '
-      'directions)',
-      (tester) async {
-        // 136 Phase 3 behavior change: swipe-to-reply is now enabled on EVERY
-        // balloon in BOTH directions (previously incoming-only).
-        await tester.pumpWidget(
-          buildTestWidget(
-            messages: [
-              makeMessage(
-                id: 'outgoing-1',
-                isIncoming: false,
-                text: 'Swipe me too',
-              ),
-            ],
-            onQuoteReply: (_) {},
-          ),
-        );
-        await pumpFrames(tester);
+    testWidgets('wraps outgoing messages with swipe to quote (136 Phase 3 both '
+        'directions)', (tester) async {
+      // 136 Phase 3 behavior change: swipe-to-reply is now enabled on EVERY
+      // balloon in BOTH directions (previously incoming-only).
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [
+            makeMessage(
+              id: 'outgoing-1',
+              isIncoming: false,
+              text: 'Swipe me too',
+            ),
+          ],
+          onQuoteReply: (_) {},
+        ),
+      );
+      await pumpFrames(tester);
 
-        expect(find.byType(SwipeToQuoteBubble), findsOneWidget);
-      },
-    );
+      expect(find.byType(SwipeToQuoteBubble), findsOneWidget);
+    });
 
     testWidgets('does not wrap deleted messages with swipe to quote', (
       tester,
@@ -2439,40 +2440,37 @@ void main() {
       },
     );
 
-    testWidgets(
-      'TC-18 1:1 own consecutive messages group (second balloon not '
-      'first-in-run)',
-      (tester) async {
-        await tester.pumpWidget(
-          buildTestWidget(
-            messages: [
-              makeMessage(
-                id: 'out-1',
-                isIncoming: false,
-                text: 'My first',
-                timestamp: '2026-02-09T15:30:00.000Z',
-              ),
-              makeMessage(
-                id: 'out-2',
-                isIncoming: false,
-                text: 'My second',
-                timestamp: '2026-02-09T15:31:00.000Z',
-              ),
-            ],
-            initialLoadDone: true,
-          ),
-        );
-        await pumpFrames(tester);
+    testWidgets('TC-18 1:1 own consecutive messages group (second balloon not '
+        'first-in-run)', (tester) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [
+            makeMessage(
+              id: 'out-1',
+              isIncoming: false,
+              text: 'My first',
+              timestamp: '2026-02-09T15:30:00.000Z',
+            ),
+            makeMessage(
+              id: 'out-2',
+              isIncoming: false,
+              text: 'My second',
+              timestamp: '2026-02-09T15:31:00.000Z',
+            ),
+          ],
+          initialLoadDone: true,
+        ),
+      );
+      await pumpFrames(tester);
 
-        // First outgoing balloon starts the run.
-        expect(liveLetterCard(tester, 'out-1').isFirstInGroup, isTrue);
-        // Second outgoing balloon continues the run (grouped).
-        expect(liveLetterCard(tester, 'out-2').isFirstInGroup, isFalse);
-        // Both render as bubbles (side-aligned chat balloons).
-        expect(liveLetterCard(tester, 'out-1').bubbleLayout, isTrue);
-        expect(liveLetterCard(tester, 'out-2').bubbleLayout, isTrue);
-      },
-    );
+      // First outgoing balloon starts the run.
+      expect(liveLetterCard(tester, 'out-1').isFirstInGroup, isTrue);
+      // Second outgoing balloon continues the run (grouped).
+      expect(liveLetterCard(tester, 'out-2').isFirstInGroup, isFalse);
+      // Both render as bubbles (side-aligned chat balloons).
+      expect(liveLetterCard(tester, 'out-1').bubbleLayout, isTrue);
+      expect(liveLetterCard(tester, 'out-2').bubbleLayout, isTrue);
+    });
 
     testWidgets(
       'TC-19 1:1 outgoing balloon is swipe-to-reply enabled and quotes the '
@@ -2498,10 +2496,7 @@ void main() {
         expect(find.byType(SwipeToQuoteBubble), findsOneWidget);
 
         // Swiping the outgoing balloon triggers a quote-reply with its id.
-        await tester.drag(
-          find.byType(SwipeToQuoteBubble),
-          const Offset(80, 0),
-        );
+        await tester.drag(find.byType(SwipeToQuoteBubble), const Offset(80, 0));
         await tester.pump();
 
         expect(quotedId, 'swipe-out-1');
@@ -2644,9 +2639,7 @@ void main() {
         await pumpFrames(tester);
 
         double bottomOf(String id) {
-          final pad = tester.widget<Padding>(
-            find.byKey(ValueKey('msg-$id')),
-          );
+          final pad = tester.widget<Padding>(find.byKey(ValueKey('msg-$id')));
           return pad.padding.resolve(TextDirection.ltr).bottom;
         }
 
@@ -2688,25 +2681,24 @@ void main() {
       },
     );
 
-    testWidgets(
-      'TC-22: a newly-appended (isNew) message entrance-animates',
-      (tester) async {
-        // Positive control: the last message on the first build (when the list
-        // was empty) is the "new" one and MUST animate.
-        await tester.pumpWidget(
-          buildTestWidget(
-            messages: [
-              makeMessage(id: 'older-row', text: 'Older'),
-              makeMessage(id: 'newest-row', text: 'Newest'),
-            ],
-            initialLoadDone: true,
-          ),
-        );
-        await tester.pump(const Duration(milliseconds: 500));
+    testWidgets('TC-22: a newly-appended (isNew) message entrance-animates', (
+      tester,
+    ) async {
+      // Positive control: the last message on the first build (when the list
+      // was empty) is the "new" one and MUST animate.
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [
+            makeMessage(id: 'older-row', text: 'Older'),
+            makeMessage(id: 'newest-row', text: 'Newest'),
+          ],
+          initialLoadDone: true,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
 
-        expect(find.byKey(const ValueKey('newest-row')), findsOneWidget);
-      },
-    );
+      expect(find.byKey(const ValueKey('newest-row')), findsOneWidget);
+    });
   });
 
   // 159 TC-159-09b — Accepted Difference: the quoted-parent map is window-only
@@ -2747,7 +2739,8 @@ void main() {
         expect(
           liveLetterCard(tester, 'reply-1').isQuoteUnavailable,
           isTrue,
-          reason: 'an evicted/absent quoted parent resolves to quote-unavailable',
+          reason:
+              'an evicted/absent quoted parent resolves to quote-unavailable',
         );
       },
     );

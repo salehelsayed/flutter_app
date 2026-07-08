@@ -180,7 +180,7 @@ void main() {
     expect(find.byType(FeedScreen), findsOneWidget);
     expect(find.byType(AmbientBackground), findsOneWidget);
     expect(find.byType(CosmicBackground), findsNothing);
-    expect(find.byType(CosmicBackgroundMirrored), findsNothing);
+    expect(find.byType(CosmicBackgroundMirrored), findsOneWidget);
 
     await openSettingsPage();
 
@@ -191,7 +191,7 @@ void main() {
     // The options live behind the row's focused sheet now.
     await openBackgroundSheet();
     expect(find.text('Cosmic'), findsOneWidget);
-    expect(find.text('Mirrored cosmic'), findsOneWidget);
+    expect(find.text('Aurora'), findsOneWidget);
     expect(find.text('Signal'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('background-choice-default-selected-icon')),
@@ -242,26 +242,24 @@ void main() {
       findsOneWidget,
     );
     await tester.ensureVisible(
-      find.byKey(const ValueKey('background-choice-cosmic-mirrored')),
+      find.byKey(const ValueKey('background-choice-aurora')),
     );
-    await tester.tap(
-      find.byKey(const ValueKey('background-choice-cosmic-mirrored')),
-    );
+    await tester.tap(find.byKey(const ValueKey('background-choice-aurora')));
     for (var i = 0; i < 8; i++) {
       await tester.pump(const Duration(milliseconds: 80));
     }
     expect(
       await secureKeyStore.read(BackgroundPreference.storageKey),
-      'cosmic_mirrored',
+      'aurora',
     );
-    expect(find.text('Mirrored cosmic'), findsOneWidget); // row value
+    expect(find.text('Aurora'), findsOneWidget); // row value
 
     await popToFeed();
 
     expect(find.byType(FeedScreen), findsOneWidget);
     expect(find.byType(AmbientBackground), findsOneWidget);
     expect(find.byType(CosmicBackground), findsNothing);
-    expect(find.byType(CosmicBackgroundMirrored), findsOneWidget);
+    expect(find.byType(CosmicBackgroundMirrored), findsNothing);
 
     await openSettingsPage();
     expect(find.text('Background'), findsOneWidget);
@@ -289,6 +287,6 @@ void main() {
 
     expect(find.byType(FeedScreen), findsOneWidget);
     expect(find.byType(CosmicBackground), findsNothing);
-    expect(find.byType(CosmicBackgroundMirrored), findsNothing);
+    expect(find.byType(CosmicBackgroundMirrored), findsOneWidget);
   });
 }

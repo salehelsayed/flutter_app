@@ -332,6 +332,7 @@
 			);
 			inputPaths = (
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/bridge.go",
+				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/bridge_entrypoint_contract_test.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/bridge_generate_next_key_test.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/bridge_lan.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/bridge_ping.go",
@@ -340,6 +341,7 @@
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/bridge_test.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/bridge_wake.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/events.go",
+				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/feature_flags_partial_map_test.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/cmd/testpeer/commands.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/cmd/testpeer/commands_test.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/cmd/testpeer/envelope.go",
@@ -396,6 +398,7 @@
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/early_reserve.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/event_dispatcher.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/feature_flags.go",
+				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/feature_flags_merge_test.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/feature_flags_runtime.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/feature_flags_runtime_test.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/group.go",
@@ -413,6 +416,7 @@
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/inbox_wake_token_test.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/lan_dial.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/lan_dial_test.go",
+				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/libp2p_refactor_contract_test.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/media.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/media_lan.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/media_lan_test.go",

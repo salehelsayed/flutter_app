@@ -142,10 +142,24 @@ class _OrbitalAvatarState extends State<OrbitalAvatar>
             // and the 48px opaque GestureDetector stays the sole tap target.
             ExcludeSemantics(
               child: IgnorePointer(
-                child: UnreadOrbitIndicator(
-                  unreadCount: widget.unreadCount,
-                  diameter: widget.size,
-                  motionEnabled: widget.unreadMotionEnabled,
+                // The indicator sizes ITSELF to ~1.66x the avatar (ring at 1.35x
+                // radius + satellite halo) and lays its satellites out around
+                // that self-assumed box center. This tap-target Stack is only
+                // ~48px, which CLAMPS the indicator below its natural size so
+                // its internal center drifts from the real box center and the
+                // satellites shear off-axis. Clip.none stops the clip, not the
+                // constraint — so hand it unbounded constraints via OverflowBox
+                // and let it overpaint the box, centered on the node.
+                child: OverflowBox(
+                  minWidth: 0,
+                  maxWidth: double.infinity,
+                  minHeight: 0,
+                  maxHeight: double.infinity,
+                  child: UnreadOrbitIndicator(
+                    unreadCount: widget.unreadCount,
+                    diameter: widget.size,
+                    motionEnabled: widget.unreadMotionEnabled,
+                  ),
                 ),
               ),
             ),

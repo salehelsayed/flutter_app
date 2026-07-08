@@ -730,7 +730,8 @@ class AppLocalizationsAr extends AppLocalizations {
   String get settings_background_default => 'الافتراضية';
 
   @override
-  String get settings_background_default_desc => 'الخلفية المحيطة الحالية.';
+  String get settings_background_default_desc =>
+      'انسياب كوني معكوس بتوهجات لونية ناعمة.';
 
   @override
   String get settings_background_cosmic => 'كونية';
@@ -742,15 +743,13 @@ class AppLocalizationsAr extends AppLocalizations {
   String get settings_background_cosmic_selected => 'تم اختيار الكونية';
 
   @override
-  String get settings_background_cosmic_mirrored => 'كونية معكوسة';
+  String get settings_background_aurora => 'أورورا';
 
   @override
-  String get settings_background_cosmic_mirrored_desc =>
-      'حقل النجوم الكوني مع توهجات لونية معكوسة.';
+  String get settings_background_aurora_desc => 'التوهج المحيط الأصلي.';
 
   @override
-  String get settings_background_cosmic_mirrored_selected =>
-      'تم اختيار الكونية المعكوسة';
+  String get settings_background_aurora_selected => 'تم اختيار أورورا';
 
   @override
   String get settings_background_daylight_lagoon => 'سيجنال';

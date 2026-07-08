@@ -12,10 +12,7 @@ void main() {
         'default',
       );
       expect(BackgroundPreference.cosmic.toStorageString(), 'cosmic');
-      expect(
-        BackgroundPreference.cosmicMirrored.toStorageString(),
-        'cosmic_mirrored',
-      );
+      expect(BackgroundPreference.aurora.toStorageString(), 'aurora');
       expect(
         BackgroundPreference.daylightLagoon.toStorageString(),
         'daylight_lagoon',
@@ -32,8 +29,12 @@ void main() {
         BackgroundPreference.cosmic,
       );
       expect(
+        BackgroundPreference.fromStorageString('aurora'),
+        BackgroundPreference.aurora,
+      );
+      expect(
         BackgroundPreference.fromStorageString('cosmic_mirrored'),
-        BackgroundPreference.cosmicMirrored,
+        BackgroundPreference.defaultBackground,
       );
       expect(
         BackgroundPreference.fromStorageString('daylight_lagoon'),
@@ -45,6 +46,21 @@ void main() {
       );
       expect(
         BackgroundPreference.fromStorageString('future-background'),
+        BackgroundPreference.defaultBackground,
+      );
+    });
+
+    test('aurora token round-trips', () {
+      expect(BackgroundPreference.aurora.toStorageString(), 'aurora');
+      expect(
+        BackgroundPreference.fromStorageString('aurora'),
+        BackgroundPreference.aurora,
+      );
+    });
+
+    test('parses cosmic_mirrored as the new default', () {
+      expect(
+        BackgroundPreference.fromStorageString('cosmic_mirrored'),
         BackgroundPreference.defaultBackground,
       );
     });
@@ -77,17 +93,14 @@ void main() {
       expect(result, BackgroundPreference.cosmic);
     });
 
-    test(
-      'returns mirrored cosmic when stored value is cosmic_mirrored',
-      () async {
-        final store = FakeSecureKeyStore();
-        await store.write(BackgroundPreference.storageKey, 'cosmic_mirrored');
+    test('returns default when stored value is cosmic_mirrored', () async {
+      final store = FakeSecureKeyStore();
+      await store.write(BackgroundPreference.storageKey, 'cosmic_mirrored');
 
-        final result = await loadBackgroundPreference(secureKeyStore: store);
+      final result = await loadBackgroundPreference(secureKeyStore: store);
 
-        expect(result, BackgroundPreference.cosmicMirrored);
-      },
-    );
+      expect(result, BackgroundPreference.defaultBackground);
+    });
 
     test(
       'returns daylight lagoon when stored value is daylight_lagoon',
@@ -134,18 +147,15 @@ void main() {
       expect(await store.read(BackgroundPreference.storageKey), 'cosmic');
     });
 
-    test('saves mirrored cosmic to secure storage', () async {
+    test('saves aurora to secure storage', () async {
       final store = FakeSecureKeyStore();
 
       await saveBackgroundPreference(
         secureKeyStore: store,
-        preference: BackgroundPreference.cosmicMirrored,
+        preference: BackgroundPreference.aurora,
       );
 
-      expect(
-        await store.read(BackgroundPreference.storageKey),
-        'cosmic_mirrored',
-      );
+      expect(await store.read(BackgroundPreference.storageKey), 'aurora');
     });
 
     test('saves daylight lagoon to secure storage', () async {

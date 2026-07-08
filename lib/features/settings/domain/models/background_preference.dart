@@ -3,7 +3,7 @@
 enum BackgroundPreference {
   defaultBackground,
   cosmic,
-  cosmicMirrored,
+  aurora,
   daylightLagoon;
 
   /// Key used in SecureKeyStore for the app background preference.
@@ -15,8 +15,8 @@ enum BackgroundPreference {
         return 'default';
       case BackgroundPreference.cosmic:
         return 'cosmic';
-      case BackgroundPreference.cosmicMirrored:
-        return 'cosmic_mirrored';
+      case BackgroundPreference.aurora:
+        return 'aurora';
       case BackgroundPreference.daylightLagoon:
         return 'daylight_lagoon';
     }
@@ -30,8 +30,11 @@ enum BackgroundPreference {
     if (value == 'cosmic') {
       return BackgroundPreference.cosmic;
     }
+    if (value == 'aurora') {
+      return BackgroundPreference.aurora;
+    }
     if (value == 'cosmic_mirrored') {
-      return BackgroundPreference.cosmicMirrored;
+      return BackgroundPreference.defaultBackground;
     }
     if (value == 'daylight_lagoon') {
       return BackgroundPreference.daylightLagoon;

@@ -274,6 +274,14 @@ class OrbitScreen extends StatefulWidget {
   /// no pill (bare-`OrbitScreen` pumps stay unaffected).
   final P2PService? p2pService;
 
+  /// When true, the persistent-nav home host suppresses the center Feed/Orbit
+  /// toggle bar (chromeless-Orbit landing) while keeping the rest of the nav
+  /// band — rings find pill / search trigger — and all its layout reservations
+  /// intact. Feed stays reachable via the host swipe and its own toggle. See
+  /// [_OrbitScreenView.hideShellNav]. Defaults false so bare pumps and non-home
+  /// callers keep the toggle.
+  final bool hideShellNav;
+
   const OrbitScreen({
     super.key,
     required this.headerProjectionListenable,
@@ -322,6 +330,7 @@ class OrbitScreen extends StatefulWidget {
     this.innerCircleResetListenable,
     this.onSelfAvatarTap,
     this.p2pService,
+    this.hideShellNav = false,
   });
 
   @override
@@ -423,6 +432,7 @@ class _OrbitScreenState extends State<OrbitScreen> {
         ringsFindSignal: _ringsFindSignal,
         ringsFindOpenListenable: _ringsFindOpen,
         onRingsFindOpenChanged: _onRingsFindOpenChanged,
+        hideShellNav: widget.hideShellNav,
       );
 }
 
@@ -494,6 +504,14 @@ class _OrbitScreenView extends StatelessWidget {
   /// AND forwards to the 198 swipe-yield gate).
   final void Function(bool) onInnerEdit;
 
+  /// When true, suppress the center Feed/Orbit toggle bar in the persistent-nav
+  /// band while keeping the band's other nav-line affordances (rings find pill /
+  /// search trigger) and all `_showsPersistentNav` layout reservations intact.
+  /// Option-3 "Orbit chromeless" landing: Feed stays reachable via the host
+  /// swipe + its own toggle. Flip `hideShellNav: true` in
+  /// `FeedWired._buildOrbitHost` back to false to revive the toggle here.
+  final bool hideShellNav;
+
   const _OrbitScreenView({
     required this.headerProjectionListenable,
     required this.listProjectionListenable,
@@ -545,6 +563,7 @@ class _OrbitScreenView extends StatelessWidget {
     required this.onRingsFindOpenChanged,
     required this.innerEditing,
     required this.onInnerEdit,
+    required this.hideShellNav,
   });
 
   bool get _showsPersistentNav => activeTab != null && onSwitchView != null;
@@ -739,7 +758,24 @@ class _OrbitScreenView extends StatelessWidget {
                     children: [
                       // Center keeps the Feed/Orbit bar horizontally centered
                       // without flex balancing, independent of the trigger.
-                      Center(child: _buildNavigationBar()),
+                      // hideShellNav suppresses ONLY this toggle (Orbit
+                      // chromeless landing). We keep it in the layout via
+                      // Visibility(maintainSize) — invisible + non-interactive
+                      // but still occupying the bar's box — so this Stack keeps
+                      // the bar's height and the nav-line search trigger / rings
+                      // find pill stay on their line. A bare SizedBox.shrink
+                      // collapses the Stack to ~0 height, dropping the trigger
+                      // to the band's bottom anchor where the screen edge clips
+                      // it (the reported search-icon bug).
+                      Center(
+                        child: Visibility(
+                          visible: !hideShellNav,
+                          maintainSize: true,
+                          maintainAnimation: true,
+                          maintainState: true,
+                          child: _buildNavigationBar(),
+                        ),
+                      ),
 
                       // Search trigger — rides the nav line at the physical
                       // right edge (Positioned, not directional → RTL-safe),

@@ -286,9 +286,6 @@ void main() {
     matching: find.text('Orbit'),
   );
 
-  Finder orbitFeedNavLabel() =>
-      find.descendant(of: find.byType(OrbitWired), matching: find.text('Feed'));
-
   Finder orbitSearchField() => find.descendant(
     of: find.byType(OrbitWired),
     matching: find.byType(TextField),
@@ -1251,7 +1248,10 @@ void main() {
 
       await tester.tap(feedOrbitNavLabel());
       await pumpFeedFrames(tester, count: 10);
-      await tester.tap(orbitFeedNavLabel());
+      // Return to Feed. Orbit is now the chromeless home landing (its Feed
+      // toggle is hidden), so switch via the shell controller — the exact path
+      // that toggle drove (onSwitchView('feed') → switchTo).
+      appShellController.switchTo('feed');
       await pumpFeedFrames(tester, count: 10);
 
       expect(feedScrollOffset(), closeTo(scrolledOffset, 1));
@@ -1316,8 +1316,10 @@ void main() {
         // Leave to Feed and re-enter Orbit → the inline-tab rising edge resets
         // the view to Inner-Circle. This is the ONLY path that proves the reset
         // fires on the latched host (initState alone cannot cover it). The
-        // search state does NOT survive.
-        await tester.tap(orbitFeedNavLabel());
+        // search state does NOT survive. (Orbit's Feed toggle is hidden — the
+        // chromeless home landing — so the leave leg drives the shell
+        // controller directly, exactly what that toggle used to do.)
+        appShellController.switchTo('feed');
         await pumpFeedFrames(tester, count: 10);
         await tester.tap(feedOrbitNavLabel());
         await pumpFeedFrames(tester, count: 10);

@@ -34,13 +34,28 @@ void main() {
     );
   }
 
-  testWidgets('renders child over the default background treatment', (
+  testWidgets('renders child over the default Mirror Cosmic treatment', (
     tester,
   ) async {
     await tester.pumpWidget(wrapAmbient());
 
     expect(find.text('Content'), findsOneWidget);
     expect(find.byType(CosmicBackground), findsNothing);
+    expect(find.byType(CosmicBackgroundMirrored), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('cosmic-background-mirrored-root')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('aurora preference renders the ambient glow', (tester) async {
+    await tester.pumpWidget(
+      wrapAmbient(preference: BackgroundPreference.aurora),
+    );
+
+    expect(find.text('Content'), findsOneWidget);
+    expect(find.byType(CosmicBackground), findsNothing);
+    expect(find.byType(CosmicBackgroundMirrored), findsNothing);
     expect(find.byType(AnimatedBuilder), findsAtLeastNWidgets(2));
 
     final backgroundContainers = tester
@@ -73,18 +88,44 @@ void main() {
     );
   });
 
+  testWidgets('default preference renders Mirror Cosmic', (tester) async {
+    await tester.pumpWidget(wrapAmbient());
+
+    expect(find.text('Content'), findsOneWidget);
+    expect(find.byType(CosmicBackground), findsNothing);
+    expect(find.byType(CosmicBackgroundMirrored), findsOneWidget);
+    expect(find.byKey(const ValueKey('cosmic-background-root')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('cosmic-background-mirrored-root')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('cosmic-background-mirrored-painter')),
+      findsOneWidget,
+    );
+
+    final mirroredRoot = tester.widget<DecoratedBox>(
+      find.byKey(const ValueKey('cosmic-background-mirrored-root')),
+    );
+    final decoration = mirroredRoot.decoration as BoxDecoration;
+    final gradient = decoration.gradient as RadialGradient;
+    expect(gradient.colors, contains(const Color(0xFF0A1124)));
+    expect(gradient.colors, contains(const Color(0xFF02030A)));
+  });
+
   // ---------------------------------------------------------------------------
-  // 156 QW-2/QW-3: RepaintBoundary isolation + reduce-motion on the DEFAULT
-  // (non-feed) ambient surface.
+  // 156 QW-2/QW-3: RepaintBoundary isolation + reduce-motion on the Aurora
+  // (non-feed) glow surface.
   // ---------------------------------------------------------------------------
   testWidgets(
-    'TC-03: default background wraps the screen child in a RepaintBoundary',
+    'TC-03: aurora glow wraps the screen child in a RepaintBoundary',
     (tester) async {
       await tester.pumpWidget(
         MaterialApp(
           home: MediaQuery(
             data: const MediaQueryData(size: Size(390, 844)),
             child: AmbientBackground(
+              preference: BackgroundPreference.aurora,
               child: const KeyedSubtree(
                 key: ValueKey('ambient-child'),
                 child: Text('Content'),
@@ -118,10 +159,13 @@ void main() {
         .toList();
   }
 
-  testWidgets('TC-04: default background honors disableAnimations', (
-    tester,
-  ) async {
-    await tester.pumpWidget(wrapAmbient(disableAnimations: true));
+  testWidgets('TC-04: aurora glow honors disableAnimations', (tester) async {
+    await tester.pumpWidget(
+      wrapAmbient(
+        preference: BackgroundPreference.aurora,
+        disableAnimations: true,
+      ),
+    );
     await tester.pump();
 
     final controllers = ambientControllers(tester);
@@ -129,10 +173,15 @@ void main() {
     expect(controllers.first.isAnimating, isFalse);
   });
 
-  testWidgets('TC-05: default background DOES animate when motion enabled', (
+  testWidgets('TC-05: aurora glow DOES animate when motion enabled', (
     tester,
   ) async {
-    await tester.pumpWidget(wrapAmbient(disableAnimations: false));
+    await tester.pumpWidget(
+      wrapAmbient(
+        preference: BackgroundPreference.aurora,
+        disableAnimations: false,
+      ),
+    );
     await tester.pump();
 
     final controllers = ambientControllers(tester);
@@ -140,9 +189,51 @@ void main() {
     expect(controllers.first.isAnimating, isTrue);
   });
 
+  testWidgets(
+    'aurora glow animates, is chat-suppressed, and honors OS reduce-motion',
+    (tester) async {
+      await tester.pumpWidget(
+        wrapAmbient(
+          preference: BackgroundPreference.aurora,
+          disableAnimations: false,
+        ),
+      );
+      await tester.pump();
+
+      var controllers = ambientControllers(tester);
+      expect(controllers, isNotEmpty);
+      expect(controllers.first.isAnimating, isTrue);
+
+      await tester.pumpWidget(
+        wrapAmbient(
+          preference: BackgroundPreference.aurora,
+          chatSurface: true,
+          disableAnimations: false,
+        ),
+      );
+      await tester.pump();
+
+      controllers = ambientControllers(tester);
+      expect(controllers, isNotEmpty);
+      expect(controllers.first.isAnimating, isFalse);
+
+      await tester.pumpWidget(
+        wrapAmbient(
+          preference: BackgroundPreference.aurora,
+          disableAnimations: true,
+        ),
+      );
+      await tester.pump();
+
+      controllers = ambientControllers(tester);
+      expect(controllers, isNotEmpty);
+      expect(controllers.first.isAnimating, isFalse);
+    },
+  );
+
   // ---------------------------------------------------------------------------
   // 158 (critic-2): steady-state idle-glow suppression on chat/group surfaces
-  // for default (motion-on) users, so the always-mounted chrome BackdropFilters
+  // for Aurora (motion-on) users, so the always-mounted chrome BackdropFilters
   // sit in front of a STILL backdrop and become cacheable at rest. Distinct from
   // the 156 OS reduce-motion gate (additive, not a replacement).
   // ---------------------------------------------------------------------------
@@ -199,7 +290,11 @@ void main() {
     'TC-158-01: chat surface does not animate the glow with motion enabled',
     (tester) async {
       await tester.pumpWidget(
-        wrapAmbient(chatSurface: true, disableAnimations: false),
+        wrapAmbient(
+          preference: BackgroundPreference.aurora,
+          chatSurface: true,
+          disableAnimations: false,
+        ),
       );
       await tester.pump();
 
@@ -210,7 +305,11 @@ void main() {
       // A no-op rebuild keeps it static (didUpdateWidget/didChangeDependencies
       // recompute the suppression from the prop — no latched/persisted state).
       await tester.pumpWidget(
-        wrapAmbient(chatSurface: true, disableAnimations: false),
+        wrapAmbient(
+          preference: BackgroundPreference.aurora,
+          chatSurface: true,
+          disableAnimations: false,
+        ),
       );
       await tester.pump();
       expect(ambientControllers(tester).first.isAnimating, isFalse);
@@ -221,7 +320,11 @@ void main() {
     'TC-158-02: non-chat surface still animates with motion enabled',
     (tester) async {
       await tester.pumpWidget(
-        wrapAmbient(chatSurface: false, disableAnimations: false),
+        wrapAmbient(
+          preference: BackgroundPreference.aurora,
+          chatSurface: false,
+          disableAnimations: false,
+        ),
       );
       await tester.pump();
 
@@ -235,7 +338,11 @@ void main() {
     'TC-158-03: 156 reduce-motion gate still wins on a chat surface',
     (tester) async {
       await tester.pumpWidget(
-        wrapAmbient(chatSurface: true, disableAnimations: true),
+        wrapAmbient(
+          preference: BackgroundPreference.aurora,
+          chatSurface: true,
+          disableAnimations: true,
+        ),
       );
       await tester.pump();
 
@@ -334,11 +441,11 @@ void main() {
     );
   });
 
-  testWidgets('renders mirrored cosmic as a distinct shared background', (
+  testWidgets('renders Mirror Cosmic as the default shared background', (
     tester,
   ) async {
     await tester.pumpWidget(
-      wrapAmbient(preference: BackgroundPreference.cosmicMirrored),
+      wrapAmbient(preference: BackgroundPreference.defaultBackground),
     );
 
     expect(find.text('Content'), findsOneWidget);
@@ -408,10 +515,12 @@ void main() {
     expect(decoration.color, const Color(0xFFFFFFFF));
   });
 
-  testWidgets('Feed surface with default preference stays default', (
+  testWidgets('Feed surface with aurora preference animates the glow', (
     tester,
   ) async {
-    await tester.pumpWidget(wrapAmbient(isFeedSurface: true));
+    await tester.pumpWidget(
+      wrapAmbient(preference: BackgroundPreference.aurora, isFeedSurface: true),
+    );
 
     expect(find.byType(CosmicBackground), findsNothing);
     expect(find.byType(AnimatedBuilder), findsAtLeastNWidgets(2));
@@ -442,29 +551,30 @@ void main() {
     );
   });
 
-  testWidgets('mirrored cosmic honors disabled animations with static paint', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      wrapAmbient(
-        preference: BackgroundPreference.cosmicMirrored,
-        disableAnimations: true,
-      ),
-    );
+  testWidgets(
+    'default Mirror Cosmic honors disabled animations with static paint',
+    (tester) async {
+      await tester.pumpWidget(
+        wrapAmbient(
+          preference: BackgroundPreference.defaultBackground,
+          disableAnimations: true,
+        ),
+      );
 
-    expect(find.byType(CosmicBackgroundMirrored), findsOneWidget);
-    expect(
-      find.descendant(
-        of: find.byType(CosmicBackgroundMirrored),
-        matching: find.byType(AnimatedBuilder),
-      ),
-      findsNothing,
-    );
-    expect(
-      find.byKey(const ValueKey('cosmic-background-mirrored-painter')),
-      findsOneWidget,
-    );
-  });
+      expect(find.byType(CosmicBackgroundMirrored), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(CosmicBackgroundMirrored),
+          matching: find.byType(AnimatedBuilder),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('cosmic-background-mirrored-painter')),
+        findsOneWidget,
+      );
+    },
+  );
 
   testWidgets('daylight lagoon honors disabled animations with static paint', (
     tester,
@@ -514,6 +624,31 @@ void main() {
         isNot(contains('Background-Feature/daylight_lagoon_background.dart')),
         reason: file.path,
       );
+    }
+  });
+
+  test('no background token string is branched on outside the codec', () {
+    final forbiddenTokenLiterals = <String>[
+      "'aurora'",
+      '"aurora"',
+      "'cosmic_mirrored'",
+      '"cosmic_mirrored"',
+    ];
+    final dartFiles = Directory('lib')
+        .listSync(recursive: true)
+        .whereType<File>()
+        .where((file) => file.path.endsWith('.dart'))
+        .where(
+          (file) =>
+              file.path !=
+              'lib/features/settings/domain/models/background_preference.dart',
+        );
+
+    for (final file in dartFiles) {
+      final content = file.readAsStringSync();
+      for (final token in forbiddenTokenLiterals) {
+        expect(content, isNot(contains(token)), reason: file.path);
+      }
     }
   });
 

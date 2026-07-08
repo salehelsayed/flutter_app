@@ -70,6 +70,24 @@ require_command() {
   fi
 }
 
+refresh_flutter_xcode_config() {
+  local -a flutter_args=(
+    build ios
+    --simulator
+    --debug
+    --config-only
+    --no-pub
+    --target lib/main.dart
+  )
+
+  if [[ -n "${MKNOON_RELAY_ADDRESSES:-}" ]]; then
+    flutter_args+=("--dart-define=MKNOON_RELAY_ADDRESSES=$MKNOON_RELAY_ADDRESSES")
+  fi
+
+  printf 'Refreshing Flutter iOS generated config without rebuilding app\n'
+  flutter "${flutter_args[@]}"
+}
+
 device_name_for_udid() {
   local udid="$1"
   local devices_json
@@ -523,6 +541,8 @@ main() {
 
   if [[ "$skip_build" -eq 0 ]]; then
     flutter build ios --simulator --debug
+  else
+    refresh_flutter_xcode_config
   fi
 
   if [[ ! -d "$APP_PATH" ]]; then

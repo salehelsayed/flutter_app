@@ -342,6 +342,10 @@ void _assertBackgroundScrollDoesNotRegress(
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
+void main() {
+  registerFeedPerf();
+}
+
 void registerFeedPerf() {
   final items = _generateFeedItems();
 
@@ -366,12 +370,7 @@ void registerFeedPerf() {
     // Debug-mode flutter test scroll timing includes occasional sliver/card
     // first-build spikes. Keep average and P99 budgets tight while allowing
     // one isolated debug outlier to avoid false failures on lazy card mount.
-    _assertThresholds(
-      collector.stats,
-      'Scroll',
-      maxP99Ms: 24,
-      maxWorstMs: 100,
-    );
+    _assertThresholds(collector.stats, 'Scroll', maxP99Ms: 24, maxWorstMs: 100);
   });
 
   // 2/3/4. Card expand-collapse, swipe-to-quote, and inline-compose perf.
@@ -404,16 +403,16 @@ void registerFeedPerf() {
 
     final cosmicStats = await _collectScrollStats(tester);
 
-    _assertBackgroundScrollDoesNotRegress(
-      baselineStats,
-      cosmicStats,
-      'Cosmic',
-    );
+    _assertBackgroundScrollDoesNotRegress(baselineStats, cosmicStats, 'Cosmic');
   });
 
-  // 6. Mirrored cosmic scroll performance
+  // 6. Default Mirror Cosmic scroll performance
   testWidgets('FEED 6', (tester) async {
-    await _pumpFeedScreen(tester, items);
+    await _pumpFeedScreen(
+      tester,
+      items,
+      backgroundPreference: BackgroundPreference.aurora,
+    );
     expect(find.byType(CosmicBackgroundMirrored), findsNothing);
 
     final baselineStats = await _collectScrollStats(tester);
@@ -421,7 +420,7 @@ void registerFeedPerf() {
     await _pumpFeedScreen(
       tester,
       items,
-      backgroundPreference: BackgroundPreference.cosmicMirrored,
+      backgroundPreference: BackgroundPreference.defaultBackground,
     );
 
     expect(find.byType(CosmicBackgroundMirrored), findsOneWidget);
@@ -431,7 +430,7 @@ void registerFeedPerf() {
     _assertBackgroundScrollDoesNotRegress(
       baselineStats,
       mirroredStats,
-      'Mirrored cosmic',
+      'Default Mirror Cosmic',
     );
   });
 

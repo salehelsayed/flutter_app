@@ -95,13 +95,13 @@ void main() {
     expect(FeedTokens.dark.canvas, const Color(0xE60A0A0F));
   });
 
-  testWidgets('all three dark presets resolve to dark readable/feed tokens', (
+  testWidgets('dark background presets resolve to dark readable/feed tokens', (
     tester,
   ) async {
     for (final preference in [
       BackgroundPreference.defaultBackground,
       BackgroundPreference.cosmic,
-      BackgroundPreference.cosmicMirrored,
+      BackgroundPreference.aurora,
     ]) {
       late BackgroundReadableColors readableColors;
       late FeedTokens feedTokens;

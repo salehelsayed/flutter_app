@@ -52,6 +52,10 @@ Environment:
                                     (default: ios).
   DEVICE_A, DEVICE_B, DEVICE_C, DEVICE_D
                                     Used by smoke_test_friends.sh.
+  RELIABILITY_REUSE_BUILT_APP=1    Reuse an existing
+                                    build/ios/iphonesimulator/Runner.app for
+                                    shell/UI harnesses that support skipping
+                                    their build step.
   RELIABILITY_NOTIFICATION_SOUND_INTERACTIVE=1
                                     Do not force notification sound smoke into
                                     non-interactive mode.
@@ -491,6 +495,9 @@ print_command_for_path() {
       if [ -n "$device_id" ]; then
         printf ' --devices %s' "$(quote_for_display "$device_id")"
       fi
+      if [ "${RELIABILITY_REUSE_BUILT_APP:-0}" = "1" ]; then
+        printf ' --skip-build'
+      fi
       ;;
     scripts/smoke_test_push_decrypt_simulator.sh)
       printf './%s' "$path"
@@ -560,6 +567,9 @@ run_path() {
       device_id="$(ios_notification_tap_devices)"
       if [ -n "$device_id" ]; then
         cmd+=(--devices "$device_id")
+      fi
+      if [ "${RELIABILITY_REUSE_BUILT_APP:-0}" = "1" ]; then
+        cmd+=(--skip-build)
       fi
       MKNOON_RELAY_ADDRESSES="$(relay_addresses)" "${cmd[@]}"
       ;;

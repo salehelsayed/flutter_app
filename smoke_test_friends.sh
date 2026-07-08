@@ -1476,7 +1476,7 @@ EOF
   "contact_request_action": "none",
   "introduction_action": "accept_all",
   "idle_cycles_after_seen": 12,
-  "poll_cycles": 35,
+  "poll_cycles": 90,
   "poll_interval_ms": 500
 }
 EOF
@@ -1508,7 +1508,8 @@ EOF
   "stepId": "$step_id",
   "contact_request_action": "none",
   "introduction_action": "accept_all",
-  "poll_cycles": 35,
+  "idle_cycles_after_seen": 12,
+  "poll_cycles": 90,
   "poll_interval_ms": 500
 }
 EOF
@@ -1520,7 +1521,8 @@ EOF
   "contact_request_action": "none",
   "contact_settle_delay_ms": 3000,
   "introduction_action": "accept_all",
-  "poll_cycles": 35,
+  "idle_cycles_after_seen": 12,
+  "poll_cycles": 90,
   "poll_interval_ms": 500
 }
 EOF

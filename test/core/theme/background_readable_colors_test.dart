@@ -12,7 +12,7 @@ void main() {
       for (final preference in const [
         BackgroundPreference.defaultBackground,
         BackgroundPreference.cosmic,
-        BackgroundPreference.cosmicMirrored,
+        BackgroundPreference.aurora,
       ]) {
         final colors = BackgroundReadableColors.resolve(preference);
 
@@ -39,6 +39,17 @@ void main() {
     );
     expect(colors.statusBarIconBrightness, Brightness.dark);
     expect(colors.navigationBarIconBrightness, Brightness.dark);
+  });
+
+  test('aurora resolves to the dark tone', () {
+    final colors = BackgroundReadableColors.resolve(
+      BackgroundPreference.aurora,
+    );
+
+    expect(colors.textPrimary, BackgroundReadableColors.dark.textPrimary);
+    expect(colors.surfaceBase, BackgroundReadableColors.dark.surfaceBase);
+    expect(colors.statusBarIconBrightness, Brightness.light);
+    expect(colors.navigationBarIconBrightness, Brightness.light);
   });
 
   test(
@@ -92,16 +103,19 @@ void main() {
     _expectComponentContrast(BackgroundReadableColors.representativeLight);
   });
 
-  test('representative light roles pass against the real Paper White ground', () {
-    const colors = BackgroundReadableColors.representativeLight;
-    const paperWhiteGround = Color(0xFFFFFFFF);
+  test(
+    'representative light roles pass against the real Paper White ground',
+    () {
+      const colors = BackgroundReadableColors.representativeLight;
+      const paperWhiteGround = Color(0xFFFFFFFF);
 
-    expectTextContrast(colors.textPrimary, paperWhiteGround);
-    expectTextContrast(colors.textSecondary, paperWhiteGround);
-    expectTextContrast(colors.textMuted, paperWhiteGround);
-    expectTextContrast(colors.composerHint, paperWhiteGround);
-    expectComponentContrast(colors.accent, paperWhiteGround);
-  });
+      expectTextContrast(colors.textPrimary, paperWhiteGround);
+      expectTextContrast(colors.textSecondary, paperWhiteGround);
+      expectTextContrast(colors.textMuted, paperWhiteGround);
+      expectTextContrast(colors.composerHint, paperWhiteGround);
+      expectComponentContrast(colors.accent, paperWhiteGround);
+    },
+  );
 }
 
 void _expectTextContrast(BackgroundReadableColors colors) {

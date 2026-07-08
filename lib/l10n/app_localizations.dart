@@ -1261,7 +1261,7 @@ abstract class AppLocalizations {
   /// No description provided for @settings_background_default_desc.
   ///
   /// In en, this message translates to:
-  /// **'The current ambient background.'**
+  /// **'Mirrored cosmic drift with soft color blooms.'**
   String get settings_background_default_desc;
 
   /// No description provided for @settings_background_cosmic.
@@ -1282,23 +1282,23 @@ abstract class AppLocalizations {
   /// **'Cosmic selected'**
   String get settings_background_cosmic_selected;
 
-  /// No description provided for @settings_background_cosmic_mirrored.
+  /// No description provided for @settings_background_aurora.
   ///
   /// In en, this message translates to:
-  /// **'Mirrored cosmic'**
-  String get settings_background_cosmic_mirrored;
+  /// **'Aurora'**
+  String get settings_background_aurora;
 
-  /// No description provided for @settings_background_cosmic_mirrored_desc.
+  /// No description provided for @settings_background_aurora_desc.
   ///
   /// In en, this message translates to:
-  /// **'The cosmic starfield with mirrored color blooms.'**
-  String get settings_background_cosmic_mirrored_desc;
+  /// **'The original ambient glow.'**
+  String get settings_background_aurora_desc;
 
-  /// No description provided for @settings_background_cosmic_mirrored_selected.
+  /// No description provided for @settings_background_aurora_selected.
   ///
   /// In en, this message translates to:
-  /// **'Mirrored cosmic selected'**
-  String get settings_background_cosmic_mirrored_selected;
+  /// **'Aurora selected'**
+  String get settings_background_aurora_selected;
 
   /// No description provided for @settings_background_daylight_lagoon.
   ///
