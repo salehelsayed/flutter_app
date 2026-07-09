@@ -107,6 +107,7 @@ class InnerCircleInteractiveSurface extends StatefulWidget {
 /// which is what makes handle re-seating same-frame (TC-198F-02).
 class _CanvasMeasurement {
   final Offset origin;
+  final double width;
   final double scrollOffset;
 
   /// The layout inputs the measurement is valid for — a mismatch in build
@@ -115,6 +116,7 @@ class _CanvasMeasurement {
 
   const _CanvasMeasurement({
     required this.origin,
+    required this.width,
     required this.scrollOffset,
     required this.signature,
   });
@@ -299,6 +301,7 @@ class _InnerCircleInteractiveSurfaceState
     if (surfaceObj is! RenderBox || !surfaceObj.hasSize) return;
     final next = _CanvasMeasurement(
       origin: canvasObj.localToGlobal(Offset.zero, ancestor: surfaceObj),
+      width: canvasObj.size.width,
       scrollOffset: _scroll.hasClients ? _scroll.offset : 0.0,
       signature: _measureSignature(constraints),
     );
@@ -333,6 +336,8 @@ class _InnerCircleInteractiveSurfaceState
     final scrollNow = _scroll.hasClients ? _scroll.offset : 0.0;
     return m.origin - Offset(0, scrollNow - m.scrollOffset);
   }
+
+  double? get _canvasWidthNow => _canvasMeasurement?.width;
 
   // ---- gesture handlers on the empty background ----
   void _enterEdit() {
@@ -511,9 +516,10 @@ class _InnerCircleInteractiveSurfaceState
         final origin = _canvasOriginNow;
         if (surfaceObj is! RenderBox || origin == null) return _geometry;
         final local = surfaceObj.globalToLocal(details.globalPosition);
+        final canvasWidth = _canvasWidthNow ?? kOrbitCanvasSize;
         final centre =
             origin +
-            Offset(kOrbitCanvasCenter, kOrbitCanvasCenter + _currentOverhang);
+            Offset(canvasWidth / 2, kOrbitCanvasCenter + _currentOverhang);
         return _dragStart.copyWith(
           arcWrap: orbitArcWrapFromPointer(centre, local),
         );
@@ -641,7 +647,7 @@ class _InnerCircleInteractiveSurfaceState
             Positioned.fill(
               child: SingleChildScrollView(
                 controller: _scroll,
-                padding: const EdgeInsets.symmetric(horizontal: 24),
+                padding: EdgeInsets.zero,
                 child: ConstrainedBox(
                   constraints: BoxConstraints(minHeight: constraints.maxHeight),
                   // The ConstrainedBox floors the Stack at the viewport height so
@@ -695,7 +701,13 @@ class _InnerCircleInteractiveSurfaceState
                             ),
                             if (widget.items.isEmpty)
                               Padding(
-                                padding: const EdgeInsets.only(top: 12),
+                                key: const ValueKey('orbit-empty-hint-padding'),
+                                padding: const EdgeInsets.fromLTRB(
+                                  24,
+                                  12,
+                                  24,
+                                  0,
+                                ),
                                 child: Text(
                                   l10n.orbit_inner_circle_empty_hint,
                                   key: const ValueKey(
@@ -818,6 +830,7 @@ class _InnerCircleInteractiveSurfaceState
           listenable: _scroll,
           builder: (context, _) {
             final origin = _canvasOriginNow;
+            final canvasWidth = _canvasWidthNow;
             final overhang = _currentOverhang;
             final mirrored = Directionality.of(context) == TextDirection.rtl;
             return Stack(
@@ -828,14 +841,16 @@ class _InnerCircleInteractiveSurfaceState
                     l10n,
                     knob,
                     origin,
+                    canvasWidth,
                     overhang,
                     mirrored,
                     constraints,
                   ),
-                if (armed != null && origin != null)
+                if (armed != null && origin != null && canvasWidth != null)
                   _buildValueBubble(
                     armed,
                     origin,
+                    canvasWidth,
                     overhang,
                     mirrored,
                     constraints,
@@ -884,16 +899,17 @@ class _InnerCircleInteractiveSurfaceState
     AppLocalizations l10n,
     OrbitKnob knob,
     Offset? origin,
+    double? canvasWidth,
     double overhang,
     bool mirrored,
     BoxConstraints constraints,
   ) {
     final anchor = orbitHandleAnchor(knob, _geometry, mirrored: mirrored);
-    final measured = origin != null;
+    final measured = origin != null && canvasWidth != null;
     final pos = measured
         ? origin +
               Offset(
-                kOrbitCanvasCenter + anchor.dx,
+                canvasWidth / 2 + anchor.dx,
                 kOrbitCanvasCenter + overhang + anchor.dy,
               )
         : Offset.zero;
@@ -946,6 +962,7 @@ class _InnerCircleInteractiveSurfaceState
   Widget _buildValueBubble(
     OrbitKnob armed,
     Offset origin,
+    double canvasWidth,
     double overhang,
     bool mirrored,
     BoxConstraints constraints,
@@ -954,7 +971,7 @@ class _InnerCircleInteractiveSurfaceState
     final pos =
         origin +
         Offset(
-          kOrbitCanvasCenter + anchor.dx,
+          canvasWidth / 2 + anchor.dx,
           kOrbitCanvasCenter + overhang + anchor.dy,
         );
     // Floats above the armed disc (M5): bottom edge 6px above the disc top,

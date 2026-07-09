@@ -23,6 +23,7 @@ import 'package:flutter_app/features/groups/presentation/screens/group_conversat
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
@@ -360,7 +361,17 @@ Future<void> _pumpGroupConversationWired(
         bridge: bridge,
         identityRepo: _FakeIdentityRepository(_testIdentity),
         contactRepo: InMemoryContactRepository(),
-        p2pService: FakeP2PService(),
+        // 210 preservation: every send in this suite assumes a reachable relay
+        // (optimistic 'sending', tick semantics). The bare FakeP2PService() is
+        // relayReady==false, which makes the insert-time gate persist
+        // 'queued_offline' instead — pin it ONLINE like the main wired suite.
+        p2pService: FakeP2PService(
+          initialState: const NodeState(
+            isStarted: true,
+            peerId: 'me',
+            relayState: 'online',
+          ),
+        ),
         mediaAttachmentRepo: effectiveMediaRepo,
         mediaFileManager: mediaFileManager,
         audioRecorderService: audioRecorderService,

@@ -80,6 +80,9 @@ List<OrbitItem> _friends(int n) => [for (var i = 0; i < n; i++) _friend(i)];
 double _seatBottomTapPoke(OrbitSeat seat) =>
     seat.dy + math.max(seat.avatarSize, kOrbitMinTapTarget) / 2;
 
+double _seatSideTapPoke(OrbitSeat seat) =>
+    seat.dx.abs() + math.max(seat.avatarSize, kOrbitMinTapTarget) / 2;
+
 OrbitSeat _bottomTapSeat({
   required int memberCount,
   required OrbitGeometryPrefs geometry,
@@ -96,6 +99,38 @@ OrbitSeat _bottomTapSeat({
     (a, b) => _seatBottomTapPoke(b) > _seatBottomTapPoke(a) ? b : a,
   );
 }
+
+OrbitSeat _sideTapSeat({
+  required int memberCount,
+  required OrbitGeometryPrefs geometry,
+  bool arcsOnly = false,
+}) {
+  final candidates = computeOrbitLayout(
+    memberCount: memberCount,
+    geometry: geometry,
+  ).seats.where((seat) => !arcsOnly || seat.kind == OrbitSeatKind.arc);
+  if (candidates.isEmpty) {
+    throw StateError('No orbit seats matched arcsOnly=$arcsOnly');
+  }
+  return candidates.reduce(
+    (a, b) => _seatSideTapPoke(b) > _seatSideTapPoke(a) ? b : a,
+  );
+}
+
+List<OrbitSeat> _arcSeatsAtAbsDx({
+  required int memberCount,
+  required OrbitGeometryPrefs geometry,
+  required double targetDx,
+  double tolerance = 0.25,
+}) =>
+    computeOrbitLayout(memberCount: memberCount, geometry: geometry).seats
+        .where(
+          (seat) =>
+              seat.kind == OrbitSeatKind.arc &&
+              (seat.dx.abs() - targetDx).abs() <= tolerance,
+        )
+        .toList()
+      ..sort((a, b) => a.dx.compareTo(b.dx));
 
 void main() {
   late List<OrbitFriend> tappedFriends;
@@ -205,7 +240,12 @@ void main() {
   Finder handleAnyF(OrbitKnob k) =>
       find.byKey(ValueKey('orbit-handle-${k.name}'), skipOffstage: false);
   Finder canvasF() => find.byKey(const ValueKey('orbit-viz-canvas'));
+  Rect canvasRect(WidgetTester tester) => tester.getRect(canvasF());
   Offset canvasOrigin(WidgetTester tester) => tester.getTopLeft(canvasF());
+  double canvasCentreLocalX(WidgetTester tester) =>
+      canvasRect(tester).width / 2;
+  double canvasCentreX(WidgetTester tester) =>
+      canvasOrigin(tester).dx + canvasCentreLocalX(tester);
 
   double overhangOf(
     int itemCount,
@@ -253,7 +293,7 @@ void main() {
     final o = canvasOrigin(tester);
     final ov = overhangOf(itemCount, g, expanded: expanded);
     final a = anchorOf(knob, g, mirrored: mirrored);
-    return o + Offset(160 + a.dx, 160 + ov + a.dy);
+    return o + Offset(canvasCentreLocalX(tester) + a.dx, 160 + ov + a.dy);
   }
 
   String bubbleText(WidgetTester tester) => tester
@@ -997,7 +1037,7 @@ void main() {
         reason: 'pr rides the mirrored −φ twin tip',
       );
       // Under RTL cv sits screen-LEFT and pr screen-RIGHT — and never swap.
-      final centreX = canvasOrigin(tester).dx + 160;
+      final centreX = canvasCentreX(tester);
       expect(cv.dx, lessThan(centreX));
       expect(pr.dx, greaterThan(centreX));
       expect(tester.takeException(), isNull, reason: 'no overflow errors');
@@ -1712,7 +1752,11 @@ void main() {
         final cvCenter = tester.getCenter(handleF(OrbitKnob.arcWrap));
         final origin = canvasOrigin(tester);
         final centre =
-            origin + Offset(160, 160 + overhangOf(20, g0, expanded: true));
+            origin +
+            Offset(
+              canvasCentreLocalX(tester),
+              160 + overhangOf(20, g0, expanded: true),
+            );
         final g = await tester.startGesture(cvCenter);
         await tester.pump(const Duration(milliseconds: 20));
         await g.moveBy(const Offset(30, 0));
@@ -2222,6 +2266,240 @@ void main() {
         await gesture.up();
         await tester.pump();
         await settle(tester);
+      },
+    );
+  });
+
+  group('224 — expanded side arc tappability', () {
+    const g0 = OrbitGeometryPrefs(
+      avatarScale: 1.4,
+      spacingScale: 1.0,
+      arcWrap: 1.0,
+      maxPerArc: 9,
+      orbitGap: 1.5,
+    );
+
+    testWidgets(
+      'TC-224-12 side-arc seat opens chat through the full surface chain',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
+
+        final store = FakeSecureKeyStore();
+        await store.write(OrbitGeometryPrefs.storageKey, g0.toStorageString());
+        final sideSeat = _sideTapSeat(
+          memberCount: 50,
+          geometry: g0,
+          arcsOnly: true,
+        );
+
+        await tester.pumpWidget(host(_friends(50), store: store));
+        await settle(tester);
+        await expandBadge(tester);
+
+        final node = find.byKey(ValueKey('orbit-node-${sideSeat.index}'));
+        expect(node, findsOneWidget);
+        await tester.tap(node, warnIfMissed: false);
+        await tester.pump();
+
+        expect(tappedFriends.single.username, 'friend${sideSeat.index}');
+      },
+    );
+
+    testWidgets(
+      'TC-224-13 release-band side seat tappable at 390pt with centered clamp',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
+
+        final geometry = OrbitGeometryPrefs.defaults.copyWith(arcWrap: 2.5);
+        final store = FakeSecureKeyStore();
+        await store.write(
+          OrbitGeometryPrefs.storageKey,
+          geometry.toStorageString(),
+        );
+        final sideSeat = _sideTapSeat(
+          memberCount: 30,
+          geometry: geometry,
+          arcsOnly: true,
+        );
+
+        await tester.pumpWidget(host(_friends(30), store: store));
+        await settle(tester);
+        await expandBadge(tester);
+
+        final rect = canvasRect(tester);
+        expect(rect.width, lessThanOrEqualTo(390.0));
+        expect(rect.width, closeTo(390.0, 0.5));
+        expect(rect.center.dx, closeTo(195.0, 0.5));
+
+        final node = find.byKey(ValueKey('orbit-node-${sideSeat.index}'));
+        expect(node, findsOneWidget);
+        await tester.tap(node, warnIfMissed: false);
+        await tester.pump();
+
+        expect(tappedFriends.single.username, 'friend${sideSeat.index}');
+      },
+    );
+
+    testWidgets(
+      'TC-224-14 handles stay seated same-frame when side overhang changes',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
+
+        final store = FakeSecureKeyStore();
+        await store.write(OrbitGeometryPrefs.storageKey, g0.toStorageString());
+        await tester.pumpWidget(host(_friends(20), store: store));
+        await settle(tester);
+        await expandBadge(tester);
+        await longPressBg(tester);
+        await settle(tester);
+
+        await tester.tap(handleF(OrbitKnob.orbitGap));
+        await tester.pump();
+        await tester.tap(
+          find.byKey(const ValueKey('orbit-edit-step-increase')),
+        );
+        await tester.pump();
+
+        final next = g0.stepped(OrbitKnob.orbitGap, 1);
+        final anchor = anchorOf(OrbitKnob.arcWrap, next);
+        final expectedX =
+            canvasRect(tester).left + canvasCentreLocalX(tester) + anchor.dx;
+        expect(
+          tester.getCenter(handleF(OrbitKnob.arcWrap)).dx,
+          closeTo(expectedX, 2.0),
+        );
+        await settle(tester);
+      },
+    );
+
+    testWidgets('TC-224-15 circle stays planted in X across an og step', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final store = FakeSecureKeyStore();
+      await store.write(OrbitGeometryPrefs.storageKey, g0.toStorageString());
+      await tester.pumpWidget(host(_friends(20), store: store));
+      await settle(tester);
+      await expandBadge(tester);
+      final before = tester.getCenter(centreAvatarF()).dx;
+
+      await longPressBg(tester);
+      await settle(tester);
+      await tester.tap(handleF(OrbitKnob.orbitGap));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('orbit-edit-step-increase')));
+      await tester.pump();
+
+      expect(
+        (tester.getCenter(centreAvatarF()).dx - before).abs(),
+        lessThan(8),
+      );
+      await settle(tester);
+    });
+
+    testWidgets('TC-224-16 background gestures reach the full surface width', (
+      tester,
+    ) async {
+      await tester.pumpWidget(host(_friends(8)));
+      await settle(tester);
+
+      final bg = tester.getRect(
+        find.byKey(const ValueKey('orbit-inner-circle-background')),
+      );
+      final edge = Offset(4, bg.center.dy);
+
+      final tap1 = await tester.startGesture(edge);
+      await tap1.up();
+      await tester.pump(const Duration(milliseconds: 60));
+      final tap2 = await tester.startGesture(edge);
+      await tap2.up();
+      await tester.pump();
+      expect(find.text('friend0'), findsOneWidget);
+
+      final longPress = await tester.startGesture(edge);
+      await tester.pump(const Duration(milliseconds: 620));
+      await longPress.up();
+      await tester.pump();
+      expect(bannerF(), findsOneWidget);
+      await settle(tester);
+    });
+
+    testWidgets('TC-224-17 empty-state hint keeps its 24px horizontal inset', (
+      tester,
+    ) async {
+      await tester.pumpWidget(host(const <OrbitItem>[]));
+      await settle(tester);
+
+      final padding =
+          tester
+                  .widget<Padding>(
+                    find.byKey(const ValueKey('orbit-empty-hint-padding')),
+                  )
+                  .padding
+              as EdgeInsets;
+
+      expect(padding.left, 24.0);
+      expect(padding.right, 24.0);
+    });
+
+    testWidgets(
+      'TC-224-18 375dp clamp keeps near-in flank seats alive and locks dead band',
+      (tester) async {
+        tester.view.physicalSize = const Size(375, 812);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
+
+        final geometry = OrbitGeometryPrefs.defaults.copyWith(arcWrap: 2.5);
+        final flankSeats = _arcSeatsAtAbsDx(
+          memberCount: 30,
+          geometry: geometry,
+          targetDx: 177.06,
+        );
+        expect(flankSeats.length, 2);
+
+        final store = FakeSecureKeyStore();
+        await store.write(
+          OrbitGeometryPrefs.storageKey,
+          geometry.toStorageString(),
+        );
+        await tester.pumpWidget(host(_friends(30), store: store));
+        await settle(tester);
+        await expandBadge(tester);
+
+        final rect = canvasRect(tester);
+        expect(rect.width, closeTo(375.0, 0.5));
+
+        final maxSeat = _sideTapSeat(
+          memberCount: 30,
+          geometry: geometry,
+          arcsOnly: true,
+        );
+        final maxSeatCenterX = rect.center.dx + maxSeat.dx;
+        expect(
+          maxSeatCenterX < rect.left || maxSeatCenterX > rect.right,
+          isTrue,
+        );
+
+        for (final seat in flankSeats) {
+          await tester.tap(
+            find.byKey(ValueKey('orbit-node-${seat.index}')),
+            warnIfMissed: false,
+          );
+          await tester.pump();
+        }
+
+        expect(tappedFriends.map((f) => f.username), [
+          for (final seat in flankSeats) 'friend${seat.index}',
+        ]);
       },
     );
   });

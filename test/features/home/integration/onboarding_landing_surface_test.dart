@@ -14,6 +14,8 @@ import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart'
+    show ConversationWired;
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
@@ -226,7 +228,25 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     await pumpFrames(tester);
 
-    // The journey terminates on the shell root showing the Orbit surface.
+    // 215: the journey now terminates IN the accepted contact's 1:1 chat,
+    // pushed ON TOP of the freshly-established Feed shell (back-stack
+    // [FeedWired, ConversationWired]) — "say hi" is one tap, not three.
+    expect(find.byType(ConversationWired), findsOneWidget);
+    expect(
+      tester
+          .widget<ConversationWired>(find.byType(ConversationWired))
+          .contact
+          .peerId,
+      request.peerId,
+    );
+    // Feed shell preserved underneath (offstage under the opaque chat route)
+    // — proves two-push, not a shell-replacing chat.
+    expect(find.byType(FeedWired, skipOffstage: false), findsOneWidget);
+    expect(appShellController.activeTab, AppShellTab.orbit);
+
+    // 214: back-nav returns to the shell root showing the Orbit surface.
+    Navigator.of(tester.element(find.byType(ConversationWired))).pop();
+    await pumpFrames(tester);
     expect(find.byType(FeedWired), findsOneWidget);
     expect(
       Navigator.of(tester.element(find.byType(FeedWired))).canPop(),

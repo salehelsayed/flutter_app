@@ -214,6 +214,7 @@ class StartupRouter extends StatefulWidget {
   final GetInitialRemoteMessageFn? getInitialRemoteMessage;
   final bool Function()? shouldHandleInitialPushOpen;
   final Future<void> Function()? clearDeliveredNotifications;
+  final Future<void> Function()? ingestStagedPushEnvelopes;
   final Future<void> Function(NotificationRouteTarget routeTarget)?
   onNotificationRouteTarget;
   final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
@@ -283,6 +284,7 @@ class StartupRouter extends StatefulWidget {
     this.getInitialRemoteMessage,
     this.shouldHandleInitialPushOpen,
     this.clearDeliveredNotifications,
+    this.ingestStagedPushEnvelopes,
     this.onNotificationRouteTarget,
     this.accountMigrationRunTransfer,
     this.accountMigrationSizeGate,
@@ -1044,6 +1046,7 @@ class _StartupRouterState extends State<StartupRouter> {
       mediaAttachmentRepository: widget.mediaAttachmentRepository,
       reactionRepository: widget.reactionRepository,
       selfPeerId: identity?.peerId,
+      ingestStagedPushEnvelopes: widget.ingestStagedPushEnvelopes,
     );
   }
 
@@ -1170,6 +1173,7 @@ class _StartupRouterState extends State<StartupRouter> {
       getInitialRemoteMessage: widget.getInitialRemoteMessage,
       shouldHandleInitialPushOpen: widget.shouldHandleInitialPushOpen,
       clearDeliveredNotifications: widget.clearDeliveredNotifications,
+      ingestStagedPushEnvelopes: widget.ingestStagedPushEnvelopes,
       onNotificationRouteTarget: widget.onNotificationRouteTarget,
       accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
       accountMigrationSizeGate: widget.accountMigrationSizeGate,

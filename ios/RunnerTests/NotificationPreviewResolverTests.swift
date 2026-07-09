@@ -249,6 +249,84 @@ final class NotificationPreviewResolverTests: XCTestCase {
     try? FileManager.default.removeItem(at: dir)
   }
 
+  func testAppGroupPushEnvelopeStoreUsesInjectiveNonceFileNames() throws {
+    let dir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("push-envelope-\(UUID().uuidString)")
+    let store = AppGroupPushEnvelopeStore(directory: dir)
+    let base64Nonce = "a+b/c="
+    let sanitizedCollision = "a_b_c_"
+
+    XCTAssertEqual(
+      AppGroupPushEnvelopeStore.fileName(forNonce: base64Nonce),
+      "nonce-v1-612b622f633d.json"
+    )
+    XCTAssertEqual(
+      AppGroupPushEnvelopeStore.fileName(forNonce: sanitizedCollision),
+      "nonce-v1-615f625f635f.json"
+    )
+    XCTAssertNotEqual(
+      AppGroupPushEnvelopeStore.fileName(forNonce: base64Nonce),
+      AppGroupPushEnvelopeStore.fileName(forNonce: sanitizedCollision)
+    )
+
+    XCTAssertTrue(store.stage(userInfo: [
+      "type": "new_message",
+      "sender_id": "peer-alice",
+      "message_id": "msg-1",
+      "kem": "kem-1",
+      "ciphertext": "cipher-1",
+      "nonce": base64Nonce,
+    ]))
+    XCTAssertTrue(store.stage(userInfo: [
+      "type": "new_message",
+      "sender_id": "peer-alice",
+      "message_id": "msg-2",
+      "kem": "kem-2",
+      "ciphertext": "cipher-2",
+      "nonce": sanitizedCollision,
+    ]))
+
+    let contents = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+    XCTAssertEqual(Set(contents), [
+      "nonce-v1-612b622f633d.json",
+      "nonce-v1-615f625f635f.json",
+    ])
+
+    let firstData = try Data(
+      contentsOf: dir.appendingPathComponent(
+        AppGroupPushEnvelopeStore.fileName(forNonce: base64Nonce)
+      )
+    )
+    let firstJSON = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: firstData) as? [String: Any]
+    )
+    XCTAssertEqual(firstJSON["nonce"] as? String, base64Nonce)
+
+    XCTAssertTrue(store.clear(nonce: base64Nonce))
+    let contentsAfterClear = try FileManager.default.contentsOfDirectory(
+      atPath: dir.path
+    )
+    XCTAssertEqual(Set(contentsAfterClear), [
+      "nonce-v1-615f625f635f.json",
+    ])
+    XCTAssertFalse(
+      FileManager.default.fileExists(
+        atPath: dir.appendingPathComponent(
+          AppGroupPushEnvelopeStore.fileName(forNonce: base64Nonce)
+        ).path
+      )
+    )
+    XCTAssertTrue(
+      FileManager.default.fileExists(
+        atPath: dir.appendingPathComponent(
+          AppGroupPushEnvelopeStore.fileName(forNonce: sanitizedCollision)
+        ).path
+      )
+    )
+
+    try? FileManager.default.removeItem(at: dir)
+  }
+
   func testDecryptsNativeV3GroupPreviewFromEncryptedExtra() throws {
     let plaintext = try jsonString([
       "text": "Hello group",

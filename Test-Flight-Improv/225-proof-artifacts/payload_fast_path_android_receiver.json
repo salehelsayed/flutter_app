@@ -1,0 +1,29 @@
+{
+  "testCase": "TC-B12",
+  "scenario": "payload_fast_path_android_receiver",
+  "status": "passed",
+  "capturedAt": "2026-07-09T19:42:35Z",
+  "devices": ["21071FDF600CSC (Pixel 6, Android 16, receiver)", "iPhone 11 (12D3KooWPzDTjARPoFbnbr2VGVMNsAhA, sender)"],
+  "checks": {
+    "androidReceiver": true,
+    "fcmDelivered": true,
+    "backgroundIsolateStaged": true,
+    "airplaneModeBeforeTap": true,
+    "messageVisibleFromStagedEnvelope": true,
+    "noRelayDrainBeforeVisibility": true
+  },
+  "evidence": {
+    "build": "debug APK of 225 working tree (com.mknoon.app fresh install 2026-07-09, side-by-side with com.mknoon.app.codex)",
+    "receiverPeer": "12D3KooWHumhPzm4hYGQ...",
+    "relayJournal": "19:40:53 [INBOX] Stored message for 12D3KooWHumhPzm4hYGQ from 12D3KooWPzDTjARPoFbn; 19:40:53 [PUSH] Notification sent to 12D3KooWHumhPzm4hYGQ (attempt 1/3)",
+    "deviceFlow": "19:41:00 PUSH_BACKGROUND_MESSAGE_RECEIVED (kem/ciphertext/nonce/sender_id); 19:41:01 PUSH_BACKGROUND_NOTIFICATION_SHOWN; staged nonce-v1-373270342b724a3877752b594e507748.json observed pre-tap; NO CHAT_MSG_RECEIVE_STORED pre-tap",
+    "tap": "19:42:35 tap in airplane mode (airplane_mode_on=1, ip route to relay: Network is unreachable); 19:42:38 NOTIFICATION_TAPPED; 19:42:39.9 stale_render 1619ms; 19:42:40.2/.3 CHAT_MSG_RECEIVE_STORED via staged-envelope ingest (ids de77bd55, 640452e2); messages visible on screen (screenshots tap_result_5s/11s.png); staged files cleared post-ingest",
+    "drainAbsence": "0 occurrences of P2P_SERVICE_INBOX_STAGED_DRAIN_SUCCESS across the whole logcat window",
+    "dedupeBonus": "leg-attempt-1 message (already in DB via drain) rendered exactly once after its stale staged envelope was re-ingested — INV-225-6 held on device"
+  },
+  "deviations": [
+    "Receiver process was killed (am kill) BEFORE the send instead of 'backgrounded >=1 min': a backgrounded-alive app receives a doze maintenance window from the high-priority FCM wake, its node connects and the relay drain stores the message pre-tap (observed in leg attempt 1 at 19:37:48), which contaminates the staged-payload proof. Headless FCM start exercises the identical background-isolate staging code with no drain possible.",
+    "Two sender messages were staged in this leg (a stray 'B12-AR proof' resend + 'B12-AR proof 2'); both rendered from staged envelopes under airplane mode.",
+    "Observation for follow-up: a staged envelope whose payload.id already exists in the DB is retained (re-attempted on later ingests) rather than cleared after dedupe."
+  ]
+}

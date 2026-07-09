@@ -324,8 +324,10 @@ import 'package:flutter_app/features/push/application/firebase_readiness.dart';
 import 'package:flutter_app/features/push/application/group_missing_notification_feedback.dart';
 import 'package:flutter_app/features/push/application/push_listener_armer.dart';
 import 'package:flutter_app/features/push/application/handle_foreground_remote_message_use_case.dart';
+import 'package:flutter_app/features/push/application/ingest_staged_push_envelopes_use_case.dart';
 import 'package:flutter_app/features/push/application/push_registration_coordinator.dart';
 import 'package:flutter_app/features/push/application/prepare_notification_route_target_use_case.dart';
+import 'package:flutter_app/features/push/application/push_envelope_staging.dart';
 import 'package:flutter_app/features/push/application/resolve_group_notification_route_target_use_case.dart';
 import 'package:flutter_app/features/push/application/register_push_token_use_case.dart'
     as push_registration;
@@ -1956,9 +1958,9 @@ void main() async {
       : BonsoirDiscoveryService(
           nativeResolver:
               (Platform.isAndroid &&
-                      const bool.fromEnvironment('MKNOON_ENABLE_NATIVE_MDNS'))
-                  ? PlatformChannelMdnsResolver()
-                  : null,
+                  const bool.fromEnvironment('MKNOON_ENABLE_NATIVE_MDNS'))
+              ? PlatformChannelMdnsResolver()
+              : null,
         );
   final localWsServer = LocalWsServer();
   // NET-REL-01 P3: wire the receive-side media server in production so inbound
@@ -2131,6 +2133,36 @@ void main() async {
 
     return mapChatReplayOutcomeToDisposition(outcome);
   }
+
+  final pushEnvelopeStagingStore = FilePushEnvelopeStagingStore(
+    directory: await resolvePushEnvelopeStagingDirectory(),
+  );
+  final ingestStagedPushEnvelopesUseCase = IngestStagedPushEnvelopesUseCase(
+    store: pushEnvelopeStagingStore,
+    localPeerIdProvider: () async {
+      final identity = await repository.loadIdentity();
+      return identity?.peerId ?? '';
+    },
+    isSenderBlocked: (senderPeerId) async {
+      final contact = await contactRepository.getContact(senderPeerId);
+      return contact?.isBlocked ?? false;
+    },
+    accountMigrationNetworkGate: () async {
+      final identity = await repository.loadIdentity();
+      return accountMigrationRuntimeNetworkGate.allowsAccountNetworkSideEffects(
+        peerId: identity?.peerId,
+        operation: 'push_staged_envelope_ingest',
+      );
+    },
+    replayChatMessage:
+        (message, {required bool suppressNotification, String? stagedEntryId}) {
+          return replayInboxChatMessage(
+            message,
+            suppressNotification: suppressNotification,
+            stagedEntryId: stagedEntryId,
+          );
+        },
+  );
 
   // 127-Bug-C: reaction-receive notification deps. The notification stack is
   // constructed further below (after p2pService), but this closure is defined
@@ -3381,6 +3413,9 @@ void main() async {
             .restoreActiveAfterExportInterrupted();
       },
       deferredRuntimeStartup: startLiveServices,
+      ingestStagedPushEnvelopes: ({required String source}) async {
+        await ingestStagedPushEnvelopesUseCase(source: source);
+      },
       firebaseReadiness: firebaseReadiness,
       onAppDetached: () async {
         // Best-effort graceful teardown on app termination. Stopping the node
@@ -3586,6 +3621,8 @@ class MyApp extends StatefulWidget {
   /// pause is stale (no export run in flight). See handleAppResumed.
   final Future<bool> Function()? accountMigrationRecoverExportPause;
   final Future<void> Function()? deferredRuntimeStartup;
+  final Future<void> Function({required String source})?
+  ingestStagedPushEnvelopes;
 
   /// 191 (Fix D2): the shared Firebase-readiness latch. _MyAppState registers
   /// its push-listener arm on this (the third arm point) so a retried/late
@@ -3678,6 +3715,7 @@ class MyApp extends StatefulWidget {
     this.accountMigrationReceiverEvents,
     this.accountMigrationRecoverExportPause,
     this.deferredRuntimeStartup,
+    this.ingestStagedPushEnvelopes,
     this.firebaseReadiness,
     this.onAppDetached,
   });
@@ -3840,9 +3878,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // services (hence Firebase) are ready. The unconditional _pushListenersArmed
     // latch inside _setupPushListeners keeps this idempotent against the (no-op)
     // initState call above.
-    unawaited(
-      _ensureRuntimeServicesReady().then((_) => _setupPushListeners()),
-    );
+    unawaited(_ensureRuntimeServicesReady().then((_) => _setupPushListeners()));
     // 191 (Fix D2): a THIRD arm point rides Firebase first-success readiness —
     // the only event that flips Firebase.apps non-empty. If the
     // _ensureRuntimeServicesReady re-arm above fires while Firebase.apps is
@@ -3872,8 +3908,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // cold-start work (that already runs via main()); idempotent — a later real
     // resume just re-arms the same timers (`onForegrounded()` cancels first).
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (WidgetsBinding.instance.lifecycleState ==
-          AppLifecycleState.resumed) {
+      if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
         _keepAliveUseCase.onForegrounded();
         unawaited(_setPresenceUseCase.onForegrounded());
       }
@@ -3896,9 +3931,26 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       StartupTiming.instance.mark('deferred_runtime_start_begin');
       await deferredRuntimeStartup();
       StartupTiming.instance.mark('deferred_runtime_start_complete');
+      unawaited(_ingestStagedPushEnvelopes(source: 'runtime_ready'));
     }();
     _runtimeServicesReady = startup;
     return startup;
+  }
+
+  Future<void> _ingestStagedPushEnvelopes({required String source}) async {
+    final ingest = widget.ingestStagedPushEnvelopes;
+    if (ingest == null) {
+      return;
+    }
+    try {
+      await ingest(source: source);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'STAGED_PUSH_ENVELOPE_INGEST_ERROR',
+        details: {'source': source, 'error': e.toString()},
+      );
+    }
   }
 
   void _setupShareIntentHandling() {
@@ -4497,6 +4549,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       // FDC-04 (WIRE-1): the only seam holding a P2PService — supply the real
       // eager-warm fn so a warm notif-tap overlaps the dial with the screen.
       warmPeer: widget.p2pService.warmPeer,
+      ingestStagedPushEnvelopes: () =>
+          _ingestStagedPushEnvelopes(source: 'notification_tap_prepare'),
     );
   }
 
@@ -4529,8 +4583,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.chatMessageListener.dispose();
     widget.contactRequestListener.dispose();
     _postNotificationOpenCoordinator.dispose();
-    _setPresenceUseCase.dispose(); // 181: cancel the 60s presence heartbeat Timer
-    _keepAliveUseCase.dispose(); // 183: cancel the ~8s keepalive Timer (no leak)
+    // 181: cancel the 60s presence heartbeat Timer.
+    _setPresenceUseCase.dispose();
+    // 183: cancel the ~8s keepalive Timer (no leak).
+    _keepAliveUseCase.dispose();
     widget.pushRegistrationCoordinator?.dispose();
     widget.contactPresenceSnapshotRepository.dispose();
     widget.postRepository.dispose();
@@ -4684,6 +4740,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       // 183: arm the active-chat keepalive loop on resume (foreground-only — it
       // can never fire while suspended).
       _keepAliveUseCase.onForegrounded();
+      unawaited(_ingestStagedPushEnvelopes(source: 'app_resumed'));
       await handleAppResumed(
         bridge: widget.bridge,
         p2pService: widget.p2pService,
@@ -4966,7 +5023,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         // FDC-07: start LAN mDNS discovery early on the cold-start branch. Bound
         // to the concrete impl method (off the P2PService interface to avoid
         // churning the fakes); idempotent with startNode's own early seam.
-        startEarlyLocalDiscovery: () => widget.p2pService.startEarlyLocalDiscovery(),
+        startEarlyLocalDiscovery: () =>
+            widget.p2pService.startEarlyLocalDiscovery(),
         appShellController: widget.appShellController,
         pendingPostTargetStore: widget.pendingPostTargetStore,
         postsPrivacySettingsRepository: widget.postsPrivacySettingsRepository,
@@ -4984,6 +5042,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             _handleAccountMigrationReceiverActivated,
         clearDeliveredNotifications:
             widget.notificationService.clearDeliveredNotifications,
+        ingestStagedPushEnvelopes: () => _ingestStagedPushEnvelopes(
+          source: 'startup_router_notification_tap',
+        ),
         onNotificationRouteTarget: _handleNotificationRouteTarget,
         onStartupHomeReady: _onStartupHomeReady,
       ),

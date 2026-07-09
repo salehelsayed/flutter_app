@@ -32,11 +32,15 @@ Future<void> prepareNotificationRouteTarget({
   // Optional/default-null — must be forwarded here or notif-tap warm silently
   // never fires (the dead-wire that TC-04-10b locks against).
   Future<void> Function(String peerId)? warmPeer,
+  IngestStagedPushEnvelopesFn? ingestStagedPushEnvelopes,
+  Duration stagedPushEnvelopeIngestTimeout = const Duration(milliseconds: 400),
 }) async {
   final result = await prepareNotificationOpen(
     routeTarget: routeTarget,
     drainOfflineInbox: drainOfflineInbox,
     warmPeer: warmPeer,
+    ingestStagedPushEnvelopes: ingestStagedPushEnvelopes,
+    stagedPushEnvelopeIngestTimeout: stagedPushEnvelopeIngestTimeout,
     drainGroupOfflineInboxForGroup: (groupId) async {
       final allowed = await accountMigrationNetworkGate(
         peerId: selfPeerId,

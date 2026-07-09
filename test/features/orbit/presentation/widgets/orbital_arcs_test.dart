@@ -18,54 +18,55 @@ import 'package:flutter_app/features/orbit/presentation/widgets/unread_orbit_ind
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 OrbitFriend _makeFriend(int i, {int unreadCount = 0}) => OrbitFriend(
-      contact: ContactModel(
-        peerId: 'peer-$i-abcdef1234',
-        publicKey: 'pk-$i',
-        rendezvous: '/ip4/127.0.0.1/tcp/400$i',
-        username: 'friend$i',
-        signature: 'sig-$i',
-        scannedAt: '2024-01-01T00:00:00Z',
-      ),
-      messageCount: i,
-      unreadCount: unreadCount,
-    );
+  contact: ContactModel(
+    peerId: 'peer-$i-abcdef1234',
+    publicKey: 'pk-$i',
+    rendezvous: '/ip4/127.0.0.1/tcp/400$i',
+    username: 'friend$i',
+    signature: 'sig-$i',
+    scannedAt: '2024-01-01T00:00:00Z',
+  ),
+  messageCount: i,
+  unreadCount: unreadCount,
+);
 
 OrbitGroup _makeGroup(int i, {String? name, int unreadCount = 0}) => OrbitGroup(
-      group: GroupModel(
-        id: 'g-$i',
-        name: name ?? 'Group $i',
-        type: GroupType.chat,
-        topicName: 'topic-g-$i',
-        createdBy: 'creator',
-        myRole: GroupRole.admin,
-        createdAt: DateTime.utc(2026, 1, 1),
-      ),
-      unreadCount: unreadCount,
-      lastActivityTimestamp: DateTime.utc(2026, 7, 2, 12 - i),
-    );
+  group: GroupModel(
+    id: 'g-$i',
+    name: name ?? 'Group $i',
+    type: GroupType.chat,
+    topicName: 'topic-g-$i',
+    createdBy: 'creator',
+    myRole: GroupRole.admin,
+    createdAt: DateTime.utc(2026, 1, 1),
+  ),
+  unreadCount: unreadCount,
+  lastActivityTimestamp: DateTime.utc(2026, 7, 2, 12 - i),
+);
 
-List<OrbitItem> _friends(int n) =>
-    [for (var i = 0; i < n; i++) OrbitFriendItem(_makeFriend(i))];
+List<OrbitItem> _friends(int n) => [
+  for (var i = 0; i < n; i++) OrbitFriendItem(_makeFriend(i)),
+];
 
 void main() {
   Widget wrap(
     Widget child, {
     Locale locale = const Locale('en'),
     bool disableAnimations = false,
-  }) =>
-      MaterialApp(
-        locale: locale,
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        theme: ThemeData(extensions: [BackgroundReadableColors.dark]),
-        home: Builder(
-          builder: (context) => MediaQuery(
-            data: MediaQuery.of(context)
-                .copyWith(disableAnimations: disableAnimations),
-            child: Scaffold(body: SingleChildScrollView(child: child)),
-          ),
-        ),
-      );
+  }) => MaterialApp(
+    locale: locale,
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    theme: ThemeData(extensions: [BackgroundReadableColors.dark]),
+    home: Builder(
+      builder: (context) => MediaQuery(
+        data: MediaQuery.of(
+          context,
+        ).copyWith(disableAnimations: disableAnimations),
+        child: Scaffold(body: SingleChildScrollView(child: child)),
+      ),
+    ),
+  );
 
   Future<void> pumpBounded(WidgetTester tester, {int count = 16}) async {
     for (var i = 0; i < count; i++) {
@@ -91,21 +92,26 @@ void main() {
     bool labelsVisible = false,
     Locale locale = const Locale('en'),
     bool disableAnimations = false,
+    bool centerChild = false,
+    ValueChanged<OrbitFriend>? onFriendTap,
     ValueChanged<OrbitGroup>? onGroupTap,
   }) {
     var expanded = startExpanded;
     return wrap(
       StatefulBuilder(
-        builder: (context, setState) => OrbitalVisualization(
-          userPeerId: 'my-peer-id-123',
-          items: items,
-          onFriendTap: (_) {},
-          onGroupTap: onGroupTap ?? (_) {},
-          geometry: geometry,
-          overflowExpanded: expanded,
-          labelsVisible: labelsVisible,
-          onBadgeTap: () => setState(() => expanded = !expanded),
-        ),
+        builder: (context, setState) {
+          final viz = OrbitalVisualization(
+            userPeerId: 'my-peer-id-123',
+            items: items,
+            onFriendTap: onFriendTap ?? (_) {},
+            onGroupTap: onGroupTap ?? (_) {},
+            geometry: geometry,
+            overflowExpanded: expanded,
+            labelsVisible: labelsVisible,
+            onBadgeTap: () => setState(() => expanded = !expanded),
+          );
+          return centerChild ? Center(child: viz) : viz;
+        },
       ),
       locale: locale,
       disableAnimations: disableAnimations,
@@ -113,9 +119,9 @@ void main() {
   }
 
   OrbitalRingPainter painterOf(WidgetTester tester) {
-    final cp = tester.widgetList<CustomPaint>(find.byType(CustomPaint)).firstWhere(
-          (c) => c.painter is OrbitalRingPainter,
-        );
+    final cp = tester
+        .widgetList<CustomPaint>(find.byType(CustomPaint))
+        .firstWhere((c) => c.painter is OrbitalRingPainter);
     return cp.painter! as OrbitalRingPainter;
   }
 
@@ -168,7 +174,9 @@ void main() {
     });
 
     // TC-198-06 render half
-    testWidgets('24 items: 11 arc nodes once each, 2 painted arcs', (tester) async {
+    testWidgets('24 items: 11 arc nodes once each, 2 painted arcs', (
+      tester,
+    ) async {
       await tester.pumpWidget(expandable(_friends(24), startExpanded: true));
       await settle(tester);
       expect(find.byType(OrbitalAvatar), findsNWidgets(24)); // 13 ring + 11 arc
@@ -183,22 +191,25 @@ void main() {
       );
       await tester.pump(); // no long delay
       // The overflow arc node is already fully opaque (no entrance frames).
-      final opacity = tester.widget<Opacity>(find
-          .descendant(
-            of: find.ancestor(
-              of: find.bySemanticsLabel('Open chat with friend13'),
-              matching: find.byType(OrbitalAvatar),
-            ),
-            matching: find.byType(Opacity),
-          )
-          .first);
+      final opacity = tester.widget<Opacity>(
+        find
+            .descendant(
+              of: find.ancestor(
+                of: find.bySemanticsLabel('Open chat with friend13'),
+                matching: find.byType(OrbitalAvatar),
+              ),
+              matching: find.byType(Opacity),
+            )
+            .first,
+      );
       expect(opacity.opacity, 1.0);
       await settle(tester); // drain the pre-198 ring entrance timers
     });
 
     // TC-198-10
-    testWidgets('overflow group node renders GroupAvatar and fires group tap',
-        (tester) async {
+    testWidgets('overflow group node renders GroupAvatar and fires group tap', (
+      tester,
+    ) async {
       OrbitGroup? tapped;
       final items = <OrbitItem>[
         ..._friends(13),
@@ -249,7 +260,9 @@ void main() {
     });
 
     // TC-198-13 render half
-    testWidgets('seat 14 sits exactly where the layout places it', (tester) async {
+    testWidgets('seat 14 sits exactly where the layout places it', (
+      tester,
+    ) async {
       await tester.pumpWidget(expandable(_friends(24), startExpanded: true));
       await settle(tester);
       final seat13 = computeOrbitLayout(
@@ -262,18 +275,24 @@ void main() {
     });
 
     // TC-198-28
-    testWidgets('av 0.6 / 1.4 scale arc avatars; 44px floors hold', (tester) async {
+    testWidgets('av 0.6 / 1.4 scale arc avatars; 44px floors hold', (
+      tester,
+    ) async {
       for (final (av, expected) in [(0.6, 20.4), (1.4, 47.6)]) {
-        await tester.pumpWidget(expandable(
-          _friends(16),
-          geometry: OrbitGeometryPrefs.defaults.copyWith(avatarScale: av),
-          startExpanded: true,
-        ));
+        await tester.pumpWidget(
+          expandable(
+            _friends(16),
+            geometry: OrbitGeometryPrefs.defaults.copyWith(avatarScale: av),
+            startExpanded: true,
+          ),
+        );
         await settle(tester);
-        final node = tester.widget<OrbitalAvatar>(find.ancestor(
-          of: find.bySemanticsLabel('Open chat with friend13'),
-          matching: find.byType(OrbitalAvatar),
-        ));
+        final node = tester.widget<OrbitalAvatar>(
+          find.ancestor(
+            of: find.bySemanticsLabel('Open chat with friend13'),
+            matching: find.byType(OrbitalAvatar),
+          ),
+        );
         expect(node.size, closeTo(expected, 0.01));
         final gd = find.descendant(
           of: find.ancestor(
@@ -287,13 +306,16 @@ void main() {
     });
 
     // TC-198-29
-    testWidgets('sp 1.5 scales node seats AND painted ring/arc paths',
-        (tester) async {
-      await tester.pumpWidget(expandable(
-        _friends(16),
-        geometry: OrbitGeometryPrefs.defaults.copyWith(spacingScale: 1.5),
-        startExpanded: true,
-      ));
+    testWidgets('sp 1.5 scales node seats AND painted ring/arc paths', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        expandable(
+          _friends(16),
+          geometry: OrbitGeometryPrefs.defaults.copyWith(spacingScale: 1.5),
+          startExpanded: true,
+        ),
+      );
       await settle(tester);
       final painter = painterOf(tester);
       expect(painter.ring1Radius, closeTo(62 * 1.5, 1e-6));
@@ -307,11 +329,13 @@ void main() {
 
     // TC-198-58
     testWidgets('arc fill mirrors under RTL', (tester) async {
-      await tester.pumpWidget(expandable(
-        _friends(24),
-        startExpanded: true,
-        locale: const Locale('ar'),
-      ));
+      await tester.pumpWidget(
+        expandable(
+          _friends(24),
+          startExpanded: true,
+          locale: const Locale('ar'),
+        ),
+      );
       await settle(tester);
       final seat13 = computeOrbitLayout(
         memberCount: 24,
@@ -333,20 +357,27 @@ void main() {
     });
 
     // TC-198-62
-    testWidgets('knobs=1.0, ≤13 items: geometry identical to HEAD (no badge)',
-        (tester) async {
+    testWidgets('knobs=1.0, ≤13 items: geometry identical to HEAD (no badge)', (
+      tester,
+    ) async {
       await tester.pumpWidget(expandable(_friends(13)));
       await settle(tester);
       expect(find.byType(OverflowBadge), findsNothing);
       // Ring 1 node at 62px, ring 2 node at 108px — the pre-198 consts.
-      expect(nodeOffset(tester, 'Open chat with friend0').distance,
-          closeTo(62, 1.0));
-      expect(nodeOffset(tester, 'Open chat with friend5').distance,
-          closeTo(108, 1.0));
+      expect(
+        nodeOffset(tester, 'Open chat with friend0').distance,
+        closeTo(62, 1.0),
+      );
+      expect(
+        nodeOffset(tester, 'Open chat with friend5').distance,
+        closeTo(108, 1.0),
+      );
     });
 
     // TC-198-53 per-node render half
-    testWidgets('labelsVisible renders a name under every node', (tester) async {
+    testWidgets('labelsVisible renders a name under every node', (
+      tester,
+    ) async {
       await tester.pumpWidget(expandable(_friends(13)));
       await settle(tester);
       expect(find.text('friend0'), findsNothing);
@@ -359,29 +390,39 @@ void main() {
 
     // TC-205-08 — 205 item 5: double-tap labels are high-contrast (textPrimary
     // + a drop shadow), not the pale translucent textMuted with no scrim.
-    testWidgets('TC-205-08 double-tap labels are high-contrast', (tester) async {
+    testWidgets('TC-205-08 double-tap labels are high-contrast', (
+      tester,
+    ) async {
       await tester.pumpWidget(expandable(_friends(13), labelsVisible: true));
       await settle(tester);
       final label = tester.widget<Text>(find.text('friend0'));
-      expect(label.style?.color, BackgroundReadableColors.dark.textPrimary,
-          reason: 'HEAD renders the pale textMuted');
-      expect(label.style?.shadows, isNotEmpty,
-          reason: 'HEAD renders no shadow/scrim over the dark canvas');
+      expect(
+        label.style?.color,
+        BackgroundReadableColors.dark.textPrimary,
+        reason: 'HEAD renders the pale textMuted',
+      );
+      expect(
+        label.style?.shadows,
+        isNotEmpty,
+        reason: 'HEAD renders no shadow/scrim over the dark canvas',
+      );
     });
 
     // Entrance must relinquish opacity (not pin nodes mid-entrance).
     testWidgets('after entrance an arc node is fully opaque', (tester) async {
       await tester.pumpWidget(expandable(_friends(16), startExpanded: true));
       await settle(tester);
-      final opacity = tester.widget<Opacity>(find
-          .descendant(
-            of: find.ancestor(
-              of: find.bySemanticsLabel('Open chat with friend13'),
-              matching: find.byType(OrbitalAvatar),
-            ),
-            matching: find.byType(Opacity),
-          )
-          .first);
+      final opacity = tester.widget<Opacity>(
+        find
+            .descendant(
+              of: find.ancestor(
+                of: find.bySemanticsLabel('Open chat with friend13'),
+                matching: find.byType(OrbitalAvatar),
+              ),
+              matching: find.byType(Opacity),
+            )
+            .first,
+      );
       expect(opacity.opacity, 1.0);
     });
 
@@ -389,11 +430,10 @@ void main() {
     // visualization hard-codes `entranceMotionEnabled: true` for non-arc seats
     // (orbital_visualization.dart:207), so ring nodes animate even under
     // disableAnimations; the fix threads `motionEnabled` to every seat.
-    testWidgets('TC-201-10 ring-node entrance honors reduce-motion',
-        (tester) async {
-      await tester.pumpWidget(
-        expandable(_friends(8), disableAnimations: true),
-      );
+    testWidgets('TC-201-10 ring-node entrance honors reduce-motion', (
+      tester,
+    ) async {
+      await tester.pumpWidget(expandable(_friends(8), disableAnimations: true));
       await tester.pump(); // one frame — no long delay
       // friend5 is a ring node with a non-zero stagger index: on HEAD its
       // Future.delayed(200ms) entrance timer has not fired at t=0, so the
@@ -401,12 +441,150 @@ void main() {
       // Locate the node by globalIndex, NOT by semantics: an Opacity of 0 drops
       // its child from the semantics tree, so bySemanticsLabel would find
       // nothing precisely in the (HEAD) state this row exists to catch.
-      final node =
-          find.byWidgetPredicate((w) => w is OrbitalAvatar && w.globalIndex == 5);
+      final node = find.byWidgetPredicate(
+        (w) => w is OrbitalAvatar && w.globalIndex == 5,
+      );
       final opacity = tester.widget<Opacity>(
-          find.descendant(of: node, matching: find.byType(Opacity)).first);
+        find.descendant(of: node, matching: find.byType(Opacity)).first,
+      );
       expect(opacity.opacity, 1.0);
       await settle(tester); // once instant, no ring entrance timers to drain
+    });
+  });
+
+  group('224 side arc hit testing', () {
+    const g0 = OrbitGeometryPrefs(
+      avatarScale: 1.4,
+      spacingScale: 1.0,
+      arcWrap: 1.0,
+      maxPerArc: 9,
+      orbitGap: 1.5,
+    );
+
+    Finder nodeF(int index) => find.byKey(ValueKey('orbit-node-$index'));
+    Rect canvasRect(WidgetTester tester) =>
+        tester.getRect(find.byKey(const ValueKey('orbit-viz-canvas')));
+
+    testWidgets('TC-224-07 side-arc seats are TAPPABLE at G0', (tester) async {
+      final tapped = <String>[];
+      await tester.pumpWidget(
+        expandable(
+          _friends(20),
+          geometry: g0,
+          startExpanded: true,
+          centerChild: true,
+          onFriendTap: (friend) => tapped.add(friend.username),
+        ),
+      );
+      await settle(tester);
+
+      for (final index in [13, 16, 19]) {
+        await tester.tap(nodeF(index), warnIfMissed: false);
+        await tester.pump();
+      }
+
+      expect(tapped, ['friend13', 'friend16', 'friend19']);
+    });
+
+    testWidgets(
+      'TC-224-08 canvas box width grows when expanded and stays 320 otherwise',
+      (tester) async {
+        await tester.pumpWidget(
+          expandable(
+            _friends(20),
+            geometry: g0,
+            startExpanded: true,
+            centerChild: true,
+          ),
+        );
+        await settle(tester);
+        expect(canvasRect(tester).width, closeTo(383.94, 0.1));
+
+        await tester.pumpWidget(
+          expandable(
+            _friends(20),
+            geometry: OrbitGeometryPrefs.defaults,
+            startExpanded: true,
+            centerChild: true,
+          ),
+        );
+        await settle(tester);
+        expect(canvasRect(tester).width, closeTo(320.0, 0.01));
+
+        await tester.pumpWidget(
+          expandable(
+            _friends(20),
+            geometry: g0,
+            startExpanded: false,
+            centerChild: true,
+          ),
+        );
+        await settle(tester);
+        expect(canvasRect(tester).width, closeTo(320.0, 0.01));
+      },
+    );
+
+    testWidgets(
+      'TC-224-09 painted centre X equals canvas rect centre X at G0',
+      (tester) async {
+        await tester.pumpWidget(
+          expandable(
+            _friends(20),
+            geometry: g0,
+            startExpanded: true,
+            centerChild: true,
+          ),
+        );
+        await settle(tester);
+
+        expect(centerOf(tester).dx, closeTo(canvasRect(tester).center.dx, 0.5));
+      },
+    );
+
+    testWidgets('TC-224-10 side GROUP node fires onGroupTap', (tester) async {
+      OrbitGroup? tapped;
+      final items = <OrbitItem>[
+        ..._friends(13),
+        OrbitGroupItem(_makeGroup(13, name: 'Side Crew')),
+        for (var i = 14; i < 20; i++) OrbitFriendItem(_makeFriend(i)),
+      ];
+      await tester.pumpWidget(
+        expandable(
+          items,
+          geometry: g0,
+          startExpanded: true,
+          centerChild: true,
+          onGroupTap: (group) => tapped = group,
+        ),
+      );
+      await settle(tester);
+
+      await tester.tap(nodeF(13), warnIfMissed: false);
+      await tester.pump();
+
+      expect(tapped?.name, 'Side Crew');
+    });
+
+    testWidgets('TC-224-11 RTL side-arc seats are tappable', (tester) async {
+      final tapped = <String>[];
+      await tester.pumpWidget(
+        expandable(
+          _friends(20),
+          geometry: g0,
+          startExpanded: true,
+          centerChild: true,
+          locale: const Locale('ar'),
+          onFriendTap: (friend) => tapped.add(friend.username),
+        ),
+      );
+      await settle(tester);
+
+      for (final index in [13, 19]) {
+        await tester.tap(nodeF(index), warnIfMissed: false);
+        await tester.pump();
+      }
+
+      expect(tapped, ['friend13', 'friend19']);
     });
   });
 }

@@ -59,6 +59,7 @@ import '../../../../shared/fakes/fake_audio_recorder_service.dart';
 import '../../../../shared/fakes/fake_mic_permission_gateway.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../../shared/fakes/fake_media_picker.dart';
+import '../../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../../shared/fakes/fake_upload_wake_lock_driver.dart';
 import '../../domain/repositories/fake_media_attachment_repository.dart';
 import '../../domain/repositories/fake_reaction_repository.dart';
@@ -2050,16 +2051,18 @@ void main() {
 
         final before = mediaAttachmentRepo.getAttachmentsForMessageCallCount;
 
-        await messageRepo.saveMessage(ConversationMessage(
-          id: messageId,
-          contactPeerId: makeContact().peerId,
-          senderPeerId: makeContact().peerId,
-          text: '',
-          timestamp: sentAt,
-          status: 'sent',
-          isIncoming: true,
-          createdAt: sentAt,
-        ));
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: messageId,
+            contactPeerId: makeContact().peerId,
+            senderPeerId: makeContact().peerId,
+            text: '',
+            timestamp: sentAt,
+            status: 'sent',
+            isIncoming: true,
+            createdAt: sentAt,
+          ),
+        );
         await pumpUntil(tester, () {
           final screen = tester.widget<ConversationScreen>(
             find.byType(ConversationScreen),
@@ -2144,8 +2147,7 @@ void main() {
         final screen = tester.widget<ConversationScreen>(
           find.byType(ConversationScreen),
         );
-        final shown =
-            screen.messages.firstWhere((m) => m.id == messageId);
+        final shown = screen.messages.firstWhere((m) => m.id == messageId);
         expect(shown.media, isNotEmpty);
       },
     );
@@ -3001,80 +3003,81 @@ void main() {
       },
     );
 
-    testWidgets('shows the inbox transport glyph when inbox delivered message is returned', (
-      tester,
-    ) async {
-      final identityRepo = FakeIdentityRepository(makeIdentity());
-      final messageRepo = FakeMessageRepository();
-      final chatListener = ChatMessageListener(
-        chatMessageStream: const Stream.empty(),
-        messageRepo: messageRepo,
-        contactRepo: FakeContactRepository(),
-      );
-
-      final gate = Completer<void>();
-      String? sentMessageId;
-
-      Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
-        required P2PService p2pService,
-        required MessageRepository messageRepo,
-        required String targetPeerId,
-        required String text,
-        required String senderPeerId,
-        required String senderUsername,
-        String? messageId,
-        String? timestamp,
-        Bridge? bridge,
-        String? recipientMlKemPublicKey,
-        String? quotedMessageId,
-        List<MediaAttachment>? mediaAttachments,
-        MediaAttachmentRepository? mediaAttachmentRepo,
-        TransportMetrics? transportMetrics,
-      }) async {
-        sentMessageId = messageId;
-        await gate.future;
-        final delivered = ConversationMessage(
-          id: messageId!,
-          contactPeerId: targetPeerId,
-          senderPeerId: senderPeerId,
-          text: text,
-          timestamp: timestamp!,
-          status: 'delivered',
-          transport: 'inbox',
-          isIncoming: false,
-          createdAt: timestamp,
+    testWidgets(
+      'shows the inbox transport glyph when inbox delivered message is returned',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
         );
-        await messageRepo.saveMessage(delivered);
-        return (SendChatMessageResult.success, delivered);
-      }
 
-      await pumpScreen(
-        tester,
-        identityRepo: identityRepo,
-        messageRepo: messageRepo,
-        chatListener: chatListener,
-        sendFn: sendFn,
-      );
+        final gate = Completer<void>();
+        String? sentMessageId;
 
-      await tester.enterText(find.byType(TextField), 'Inbox delivered');
-      await tester.pump(const Duration(milliseconds: 300));
-      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-      await tester.pump();
+        Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String text,
+          required String senderPeerId,
+          required String senderUsername,
+          String? messageId,
+          String? timestamp,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
+        }) async {
+          sentMessageId = messageId;
+          await gate.future;
+          final delivered = ConversationMessage(
+            id: messageId!,
+            contactPeerId: targetPeerId,
+            senderPeerId: senderPeerId,
+            text: text,
+            timestamp: timestamp!,
+            status: 'delivered',
+            transport: 'inbox',
+            isIncoming: false,
+            createdAt: timestamp,
+          );
+          await messageRepo.saveMessage(delivered);
+          return (SendChatMessageResult.success, delivered);
+        }
 
-      expect(find.text('Inbox delivered'), findsOneWidget);
-      // 184: in-flight ('sending') → single tick on 1:1 (clock→tick).
-      expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: sendFn,
+        );
 
-      gate.complete();
-      await tester.pump(const Duration(milliseconds: 50));
+        await tester.enterText(find.byType(TextField), 'Inbox delivered');
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump();
 
-      // 155: reached with transport 'inbox' → the inbox transport glyph
-      // (Icons.inbox via _transportIcon), never the retired two-tick.
-      expect(find.byIcon(Icons.inbox), findsOneWidget);
-      expect(find.byIcon(Icons.done_all_rounded), findsNothing);
-      expect(messageRepo.store[sentMessageId!]!.status, 'delivered');
-      expect(messageRepo.store[sentMessageId!]!.transport, 'inbox');
-    });
+        expect(find.text('Inbox delivered'), findsOneWidget);
+        // 184: in-flight ('sending') → single tick on 1:1 (clock→tick).
+        expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+
+        gate.complete();
+        await tester.pump(const Duration(milliseconds: 50));
+
+        // 155: reached with transport 'inbox' → the inbox transport glyph
+        // (Icons.inbox via _transportIcon), never the retired two-tick.
+        expect(find.byIcon(Icons.inbox), findsOneWidget);
+        expect(find.byIcon(Icons.done_all_rounded), findsNothing);
+        expect(messageRepo.store[sentMessageId!]!.status, 'delivered');
+        expect(messageRepo.store[sentMessageId!]!.transport, 'inbox');
+      },
+    );
 
     testWidgets(
       'guards against rapid duplicate sends and resets after success',
@@ -3689,7 +3692,11 @@ void main() {
           AppLifecycleState.resumed,
         );
         await tester.pump();
-        expect(p2p.drainCallCount, 1, reason: 'still coalesced behind the gate');
+        expect(
+          p2p.drainCallCount,
+          1,
+          reason: 'still coalesced behind the gate',
+        );
 
         // Release the in-flight drain → the coalesced pass runs a 2nd drain.
         gate.complete();
@@ -3882,7 +3889,10 @@ void main() {
           isIncoming: true,
           ts: '2026-05-04T14:05:00.000Z',
         );
-        final p2p = DrainPersistsP2PService(repo: messageRepo, pending: [fresh]);
+        final p2p = DrainPersistsP2PService(
+          repo: messageRepo,
+          pending: [fresh],
+        );
 
         await pumpScreen(
           tester,
@@ -3983,92 +3993,90 @@ void main() {
       },
     );
 
-    testWidgets(
-      'plain (orbit) entry emits no live-render timing event',
-      (tester) async {
-        final captured = <Map<String, dynamic>>[];
-        debugSetFlowEventSink(captured.add);
-        addTearDown(() => debugSetFlowEventSink(null));
+    testWidgets('plain (orbit) entry emits no live-render timing event', (
+      tester,
+    ) async {
+      final captured = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(captured.add);
+      addTearDown(() => debugSetFlowEventSink(null));
 
-        final identityRepo = FakeIdentityRepository(makeIdentity());
-        final messageRepo = FakeMessageRepository();
-        final chatListener = ChatMessageListener(
-          chatMessageStream: const Stream.empty(),
-          messageRepo: messageRepo,
-          contactRepo: FakeContactRepository(),
-        );
-        final p2p = DrainPersistsP2PService(repo: messageRepo, pending: []);
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      final p2p = DrainPersistsP2PService(repo: messageRepo, pending: []);
 
-        await pumpScreen(
-          tester,
-          identityRepo: identityRepo,
-          messageRepo: messageRepo,
-          chatListener: chatListener,
-          sendFn: _instantSuccessSendFn,
-          p2pService: p2p,
-          // No notificationTappedAt — orbit/contact-list open.
-        );
-        await tester.pump(const Duration(milliseconds: 400));
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+        p2pService: p2p,
+        // No notificationTappedAt — orbit/contact-list open.
+      );
+      await tester.pump(const Duration(milliseconds: 400));
 
-        expect(
-          captured.where(
-            (e) => e['event'] == 'NOTIFICATION_TAP_TO_LIVE_MESSAGE_TIMING',
-          ),
-          isEmpty,
-        );
-      },
-    );
+      expect(
+        captured.where(
+          (e) => e['event'] == 'NOTIFICATION_TAP_TO_LIVE_MESSAGE_TIMING',
+        ),
+        isEmpty,
+      );
+    });
 
     // TC-13 (145): the drain-refetch event carries a numeric per-pass duration.
-    testWidgets(
-      'CONV_FL_NOTIF_DRAIN_REFETCH carries a numeric drainMs',
-      (tester) async {
-        final captured = <Map<String, dynamic>>[];
-        debugSetFlowEventSink(captured.add);
-        addTearDown(() => debugSetFlowEventSink(null));
+    testWidgets('CONV_FL_NOTIF_DRAIN_REFETCH carries a numeric drainMs', (
+      tester,
+    ) async {
+      final captured = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(captured.add);
+      addTearDown(() => debugSetFlowEventSink(null));
 
-        final identityRepo = FakeIdentityRepository(makeIdentity());
-        final messageRepo = FakeMessageRepository();
-        final chatListener = ChatMessageListener(
-          chatMessageStream: const Stream.empty(),
-          messageRepo: messageRepo,
-          contactRepo: FakeContactRepository(),
-        );
-        final fresh = makeMsg(
-          id: 'drainms-1',
-          text: 'surfaced by the drain',
-          isIncoming: true,
-          ts: '2026-05-04T14:05:00.000Z',
-        );
-        final p2p = DrainPersistsP2PService(repo: messageRepo, pending: [fresh]);
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      final fresh = makeMsg(
+        id: 'drainms-1',
+        text: 'surfaced by the drain',
+        isIncoming: true,
+        ts: '2026-05-04T14:05:00.000Z',
+      );
+      final p2p = DrainPersistsP2PService(repo: messageRepo, pending: [fresh]);
 
-        await pumpScreen(
-          tester,
-          identityRepo: identityRepo,
-          messageRepo: messageRepo,
-          chatListener: chatListener,
-          sendFn: _instantSuccessSendFn,
-          p2pService: p2p,
-          notificationTappedAt: DateTime.utc(2026, 5, 4, 14, 5),
-        );
-        await pumpUntil(
-          tester,
-          () => tester
-              .widget<ConversationScreen>(find.byType(ConversationScreen))
-              .messages
-              .any((m) => m.id == 'drainms-1'),
-        );
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+        p2pService: p2p,
+        notificationTappedAt: DateTime.utc(2026, 5, 4, 14, 5),
+      );
+      await pumpUntil(
+        tester,
+        () => tester
+            .widget<ConversationScreen>(find.byType(ConversationScreen))
+            .messages
+            .any((m) => m.id == 'drainms-1'),
+      );
 
-        final refetch = captured
-            .where((e) => e['event'] == 'CONV_FL_NOTIF_DRAIN_REFETCH')
-            .toList();
-        expect(refetch, isNotEmpty);
-        final details = refetch.first['details'] as Map;
-        expect(details['trigger'], 'notif_tap');
-        expect(details['drainMs'], isA<int>());
-        expect(details['drainMs'], greaterThanOrEqualTo(0));
-      },
-    );
+      final refetch = captured
+          .where((e) => e['event'] == 'CONV_FL_NOTIF_DRAIN_REFETCH')
+          .toList();
+      expect(refetch, isNotEmpty);
+      final details = refetch.first['details'] as Map;
+      expect(details['trigger'], 'notif_tap');
+      expect(details['drainMs'], isA<int>());
+      expect(details['drainMs'], greaterThanOrEqualTo(0));
+    });
   });
 
   group('ConversationWired media props', () {
@@ -4349,10 +4357,7 @@ void main() {
           sendFn: _instantSuccessSendFn,
           initialText: 'hello',
           initialPendingMedia: [
-            PendingComposerMedia(
-              file: bigImage,
-              budgetBytes: 30 * 1024 * 1024,
-            ),
+            PendingComposerMedia(file: bigImage, budgetBytes: 30 * 1024 * 1024),
           ],
         );
 
@@ -4524,7 +4529,10 @@ void main() {
           ],
         );
 
-        expect(find.byKey(const ValueKey('attachment-invalid-0')), findsNothing);
+        expect(
+          find.byKey(const ValueKey('attachment-invalid-0')),
+          findsNothing,
+        );
         expect(
           find.byKey(const ValueKey('attachment-invalid-1')),
           findsOneWidget,
@@ -4538,7 +4546,10 @@ void main() {
           find.byKey(const ValueKey('attachment-invalid-0')),
           findsOneWidget,
         );
-        expect(find.byKey(const ValueKey('attachment-invalid-1')), findsNothing);
+        expect(
+          find.byKey(const ValueKey('attachment-invalid-1')),
+          findsNothing,
+        );
         // Only one chip remains, and it carries the warning.
         expect(find.byIcon(Icons.error_outline), findsOneWidget);
       },
@@ -7332,8 +7343,7 @@ void main() {
         expect(
           find.byKey(const ValueKey('failed-message-retry-failed-retry')),
           findsNothing,
-          reason:
-              'a delivered row must not keep the Retry affordance (INV-4)',
+          reason: 'a delivered row must not keep the Retry affordance (INV-4)',
         );
       },
     );
@@ -7375,7 +7385,9 @@ void main() {
 
         // Persist the delivered status (as the receipt arm does), then REOPEN
         // the conversation from scratch (fresh widget over the durable store).
-        await messageRepo.saveMessage(failedReply.copyWith(status: 'delivered'));
+        await messageRepo.saveMessage(
+          failedReply.copyWith(status: 'delivered'),
+        );
         await tester.pumpWidget(const SizedBox.shrink());
         await tester.pump();
 
@@ -8341,9 +8353,7 @@ void main() {
         audioRecorderService: recorder,
         micPermissionGateway: gateway,
       );
-      return tester.widget<ConversationScreen>(
-        find.byType(ConversationScreen),
-      );
+      return tester.widget<ConversationScreen>(find.byType(ConversationScreen));
     }
 
     testWidgets(
@@ -8377,9 +8387,11 @@ void main() {
         // the stale `recordingState` widget prop (only refreshed on a parent
         // rebuild) nor the never-populated `isRecording` field.
         await tester.tap(find.byKey(const ValueKey('mic-perm-not-now')));
-        for (var i = 0;
-            i < 12 && find.byIcon(Icons.mic_rounded).evaluate().isEmpty;
-            i++) {
+        for (
+          var i = 0;
+          i < 12 && find.byIcon(Icons.mic_rounded).evaluate().isEmpty;
+          i++
+        ) {
           await tester.pump(const Duration(milliseconds: 50));
         }
         await pending;
@@ -8414,7 +8426,9 @@ void main() {
       expect(find.byType(AlertDialog), findsNothing);
     });
 
-    testWidgets('granted mic permission still starts recording', (tester) async {
+    testWidgets('granted mic permission still starts recording', (
+      tester,
+    ) async {
       final recorder = FakeAudioRecorderService();
       final gateway = FakeMicPermissionGateway()
         ..statusToReturn = MicPermissionStatus.granted;
@@ -8434,30 +8448,31 @@ void main() {
     // Option A (owner-locked): a first plain `denied` (still re-promptable in
     // app — request() already showed the OS prompt) resets to idle WITHOUT
     // forcing the Settings dialog. Locks the denied-vs-permanentlyDenied axis.
-    testWidgets('1:1 first plain denied resets to idle with no dialog/snackbar', (
-      tester,
-    ) async {
-      final l10n = await AppLocalizations.delegate.load(const Locale('en'));
-      final recorder = FakeAudioRecorderService();
-      final gateway = FakeMicPermissionGateway()
-        ..statusToReturn = MicPermissionStatus.denied;
-      final screen = await driveRecordStartSetup(
-        tester,
-        recorder: recorder,
-        gateway: gateway,
-      );
+    testWidgets(
+      '1:1 first plain denied resets to idle with no dialog/snackbar',
+      (tester) async {
+        final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+        final recorder = FakeAudioRecorderService();
+        final gateway = FakeMicPermissionGateway()
+          ..statusToReturn = MicPermissionStatus.denied;
+        final screen = await driveRecordStartSetup(
+          tester,
+          recorder: recorder,
+          gateway: gateway,
+        );
 
-      await (screen.onRecordStart! as Future<void> Function())();
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
+        await (screen.onRecordStart! as Future<void> Function())();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
 
-      expect(find.byType(AlertDialog), findsNothing);
-      expect(find.text(l10n.perm_microphone_record), findsNothing);
-      expect(recorder.startCallCount, 0);
-      // Live rendered composer is back to idle (mic shown, not recording).
-      expect(find.byIcon(Icons.stop_rounded), findsNothing);
-      expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
-    });
+        expect(find.byType(AlertDialog), findsNothing);
+        expect(find.text(l10n.perm_microphone_record), findsNothing);
+        expect(recorder.startCallCount, 0);
+        // Live rendered composer is back to idle (mic shown, not recording).
+        expect(find.byIcon(Icons.stop_rounded), findsNothing);
+        expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
+      },
+    );
   });
 
   // 159 sub-change 3 — the per-frame coalescer (which batches the per-event
@@ -8564,6 +8579,34 @@ void main() {
       },
     );
   });
+
+  test(
+    'payload-ingested message later replayed by the drain renders exactly once',
+    () async {
+      final messageRepo = InMemoryMessageRepository();
+      final payloadIngested = ConversationMessage(
+        id: 'payload-drain-same-id',
+        contactPeerId: 'peer-alice',
+        senderPeerId: 'peer-alice',
+        text: 'payload first',
+        timestamp: '2026-07-09T12:00:00.000Z',
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: '2026-07-09T12:00:00.000Z',
+        transport: 'push',
+      );
+
+      await messageRepo.saveMessage(payloadIngested);
+      await messageRepo.saveMessage(
+        payloadIngested.copyWith(transport: 'inbox'),
+      );
+
+      final messages = await messageRepo.getMessagesForContact('peer-alice');
+      expect(messages, hasLength(1));
+      expect(messages.single.id, 'payload-drain-same-id');
+      expect(messages.single.text, 'payload first');
+    },
+  );
 }
 
 /// Convenience send function that returns success instantly.

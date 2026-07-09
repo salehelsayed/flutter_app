@@ -37,43 +37,47 @@ void main() {
     // target peer. Mutation: remove the warm hook from the conversation case →
     // re-red. (On a COLD tap the service-level PS-3 gate makes it a no-op; this
     // only proves the hook fires.)
-    test('TC-04-10: conversation route fires warmPeer for the target peer',
-        () async {
-      final warmed = <String>[];
-      final result = await prepareNotificationOpen(
-        routeTarget: const NotificationRouteTarget.conversation('peer-123'),
-        drainOfflineInbox: () async {},
-        drainGroupOfflineInboxForGroup: (_) async {},
-        warmPeer: (pid) async {
-          warmed.add(pid);
-        },
-      );
-      expect(result.ok, isTrue);
-      expect(warmed, ['peer-123']);
-    });
-
-    // TC-04-10: warmPeer is NOT fired for group / intros / contactRequest / post
-    // routes — warmPeer is 1:1-conversation-only.
-    test('TC-04-10: warmPeer is not fired for non-conversation routes',
-        () async {
-      final warmed = <String>[];
-      Future<void> run(NotificationRouteTarget rt) async {
-        await prepareNotificationOpen(
-          routeTarget: rt,
+    test(
+      'TC-04-10: conversation route fires warmPeer for the target peer',
+      () async {
+        final warmed = <String>[];
+        final result = await prepareNotificationOpen(
+          routeTarget: const NotificationRouteTarget.conversation('peer-123'),
           drainOfflineInbox: () async {},
           drainGroupOfflineInboxForGroup: (_) async {},
           warmPeer: (pid) async {
             warmed.add(pid);
           },
         );
-      }
+        expect(result.ok, isTrue);
+        expect(warmed, ['peer-123']);
+      },
+    );
 
-      await run(const NotificationRouteTarget.group('g1'));
-      await run(const NotificationRouteTarget.intros());
-      await run(const NotificationRouteTarget.contactRequest('peer-x'));
-      await run(const NotificationRouteTarget.post('post-1'));
-      expect(warmed, isEmpty);
-    });
+    // TC-04-10: warmPeer is NOT fired for group / intros / contactRequest / post
+    // routes — warmPeer is 1:1-conversation-only.
+    test(
+      'TC-04-10: warmPeer is not fired for non-conversation routes',
+      () async {
+        final warmed = <String>[];
+        Future<void> run(NotificationRouteTarget rt) async {
+          await prepareNotificationOpen(
+            routeTarget: rt,
+            drainOfflineInbox: () async {},
+            drainGroupOfflineInboxForGroup: (_) async {},
+            warmPeer: (pid) async {
+              warmed.add(pid);
+            },
+          );
+        }
+
+        await run(const NotificationRouteTarget.group('g1'));
+        await run(const NotificationRouteTarget.intros());
+        await run(const NotificationRouteTarget.contactRequest('peer-x'));
+        await run(const NotificationRouteTarget.post('post-1'));
+        expect(warmed, isEmpty);
+      },
+    );
 
     test(
       'group target drains the targeted group inbox before navigation',
@@ -187,6 +191,55 @@ void main() {
         // (unawaited) production path — completing the Completer is enough.
         neverCompletes.complete();
         await Future<void>.delayed(Duration.zero);
+      },
+    );
+
+    test(
+      'conversation route awaits ingest BOUNDED: fast completes, stall falls through, throw succeeds, drain stays fire-and-forget',
+      () async {
+        final order = <String>[];
+        final fastResult = await prepareNotificationOpen(
+          routeTarget: const NotificationRouteTarget.conversation('peer-123'),
+          drainOfflineInbox: () {
+            order.add('drain');
+            return Completer<void>().future;
+          },
+          drainGroupOfflineInboxForGroup: (_) async {},
+          ingestStagedPushEnvelopes: () async {
+            order.add('ingest');
+          },
+          stagedPushEnvelopeIngestTimeout: const Duration(milliseconds: 20),
+        );
+        expect(fastResult.ok, isTrue);
+        expect(order, ['ingest', 'drain']);
+
+        final stalled = Completer<void>();
+        final stopwatch = Stopwatch()..start();
+        final stalledResult = await prepareNotificationOpen(
+          routeTarget: const NotificationRouteTarget.conversation('peer-123'),
+          drainOfflineInbox: () async {},
+          drainGroupOfflineInboxForGroup: (_) async {},
+          ingestStagedPushEnvelopes: () => stalled.future,
+          stagedPushEnvelopeIngestTimeout: const Duration(milliseconds: 20),
+        );
+        stopwatch.stop();
+        expect(stalledResult.ok, isTrue);
+        expect(
+          stopwatch.elapsedMilliseconds,
+          lessThan(250),
+          reason: 'a stalled local ingest must fall through at the route bound',
+        );
+        expect(stalled.isCompleted, isFalse);
+        stalled.complete();
+
+        final throwingResult = await prepareNotificationOpen(
+          routeTarget: const NotificationRouteTarget.conversation('peer-123'),
+          drainOfflineInbox: () async {},
+          drainGroupOfflineInboxForGroup: (_) async {},
+          ingestStagedPushEnvelopes: () => throw StateError('ingest boom'),
+          stagedPushEnvelopeIngestTimeout: const Duration(milliseconds: 20),
+        );
+        expect(throwingResult.ok, isTrue);
       },
     );
 

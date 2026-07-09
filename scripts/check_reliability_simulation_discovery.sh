@@ -195,6 +195,10 @@ classify_path() {
       record "1to1" "$path" "runner" "FDC-16 CV-07 1:1 device-real campaign orchestrator (--list-scenarios)"
       return
       ;;
+    integration_test/scripts/run_notification_tap_device_real.dart)
+      record "1to1" "$path" "runner" "225 notification-tap device/relay proof campaign orchestrator (--list-scenarios)"
+      return
+      ;;
     integration_test/scripts/run_media_stable_id_smoke.dart|\
     integration_test/scripts/run_media_delivery_ui_smoke.dart)
       record "1to1" "$path" "runner" "1:1 media simulator smoke"
@@ -214,6 +218,18 @@ classify_path() {
       ;;
     integration_test/notification_open_during_other_chat_harness.dart)
       record "support" "$path" "support" "1:1 notification-open two-simulator harness"
+      return
+      ;;
+    integration_test/inbox_replay_before_ack_custody_harness.dart)
+      record "1to1" "$path" "test" "225 TC-A6 replay-before-ack relay custody simulator proof"
+      return
+      ;;
+    integration_test/notif_push_payload_persist_harness.dart)
+      record "1to1" "$path" "test" "225 TC-B11 push payload persist simulator proof"
+      return
+      ;;
+    integration_test/notification_tap_message_visible_proof_test.dart)
+      record "1to1" "$path" "test" "225 TC-B12 device notification tap payload fast-path proof"
       return
       ;;
     integration_test/notification_sound_smoke_harness.dart)
@@ -791,6 +807,10 @@ expand_record_to_checks() {
       return
       ;;
     integration_test/scripts/run_1to1_device_real.dart)
+      expand_1to1_device_real "$category" "$path" "$note"
+      return
+      ;;
+    integration_test/scripts/run_notification_tap_device_real.dart)
       expand_1to1_device_real "$category" "$path" "$note"
       return
       ;;

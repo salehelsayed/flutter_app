@@ -11,6 +11,7 @@ final class NotificationService: UNNotificationServiceExtension {
     eventEmitter: previewEventEmitter
   )
   private lazy var recentRemoteShownMarkerStore = RecentRemoteShownMarkerStore()
+  private lazy var pushEnvelopeStore = AppGroupPushEnvelopeStore()
 
   override func didReceive(
     _ request: UNNotificationRequest,
@@ -23,6 +24,8 @@ final class NotificationService: UNNotificationServiceExtension {
       contentHandler(request.content)
       return
     }
+
+    pushEnvelopeStore?.stage(userInfo: bestAttemptContent.userInfo)
 
     let preview = previewResolver.resolve(
       userInfo: bestAttemptContent.userInfo,

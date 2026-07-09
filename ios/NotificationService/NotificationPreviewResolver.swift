@@ -492,6 +492,147 @@ final class AppGroupPushDedupeStore: PushDedupeStoring {
   }
 }
 
+final class AppGroupPushEnvelopeStore {
+  private let directory: URL?
+  private let maxEntries: Int
+  private let ttlSeconds: TimeInterval
+
+  init?(
+    appGroupIdentifier: String = mknoonSharedAppGroupIdentifier,
+    maxEntries: Int = 64,
+    ttlSeconds: TimeInterval = 48 * 60 * 60
+  ) {
+    guard let containerURL = FileManager.default.containerURL(
+      forSecurityApplicationGroupIdentifier: appGroupIdentifier
+    ) else {
+      return nil
+    }
+    let dir = containerURL.appendingPathComponent(
+      "PushEnvelopeStaging",
+      isDirectory: true
+    )
+    try? FileManager.default.createDirectory(
+      at: dir,
+      withIntermediateDirectories: true
+    )
+    directory = dir
+    self.maxEntries = maxEntries
+    self.ttlSeconds = ttlSeconds
+  }
+
+  init(directory: URL, maxEntries: Int = 64, ttlSeconds: TimeInterval = 48 * 60 * 60) {
+    try? FileManager.default.createDirectory(
+      at: directory,
+      withIntermediateDirectories: true
+    )
+    self.directory = directory
+    self.maxEntries = maxEntries
+    self.ttlSeconds = ttlSeconds
+  }
+
+  @discardableResult
+  func stage(userInfo: [AnyHashable: Any]) -> Bool {
+    guard let directory,
+          let envelope = Self.envelope(userInfo: userInfo) else {
+      return false
+    }
+    let fileURL = directory.appendingPathComponent(
+      Self.fileName(forNonce: envelope.nonce)
+    )
+    do {
+      let data = try JSONSerialization.data(
+        withJSONObject: envelope.json,
+        options: [.sortedKeys]
+      )
+      try data.write(to: fileURL, options: [.atomic])
+      prune()
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  @discardableResult
+  func clear(nonce: String) -> Bool {
+    guard let directory else {
+      return false
+    }
+    let fileURL = directory.appendingPathComponent(
+      Self.fileName(forNonce: nonce)
+    )
+    do {
+      try FileManager.default.removeItem(at: fileURL)
+      return true
+    } catch {
+      return !FileManager.default.fileExists(atPath: fileURL.path)
+    }
+  }
+
+  private func prune() {
+    guard let directory else {
+      return
+    }
+    let files = (try? FileManager.default.contentsOfDirectory(
+      at: directory,
+      includingPropertiesForKeys: [.contentModificationDateKey],
+      options: [.skipsHiddenFiles]
+    )) ?? []
+    let now = Date()
+    var jsonFiles: [(url: URL, modified: Date)] = []
+    for file in files where file.pathExtension == "json" {
+      let modified = (
+        try? file.resourceValues(forKeys: [.contentModificationDateKey])
+      )?.contentModificationDate ?? now
+      if now.timeIntervalSince(modified) > ttlSeconds {
+        try? FileManager.default.removeItem(at: file)
+      } else {
+        jsonFiles.append((file, modified))
+      }
+    }
+    let overflow = jsonFiles.count - maxEntries
+    if overflow > 0 {
+      for file in jsonFiles.sorted(by: { $0.modified < $1.modified }).prefix(overflow) {
+        try? FileManager.default.removeItem(at: file.url)
+      }
+    }
+  }
+
+  private static func envelope(userInfo: [AnyHashable: Any]) -> (
+    nonce: String,
+    json: [String: Any]
+  )? {
+    let data = PushRouteData(userInfo: userInfo)
+    guard data.string("type", aliases: "t") == "new_message",
+          let senderPeerId = data.string("sender_id", aliases: "from", "s"),
+          let kem = data.string("kem", aliases: "k"),
+          let ciphertext = data.string("ciphertext", aliases: "c"),
+          let nonce = data.string("nonce", aliases: "n") else {
+      return nil
+    }
+    let messageId = data.string(
+      "message_id",
+      aliases: "messageId", "id", "msgId"
+    )
+    var json: [String: Any] = [
+      "kind": "chat",
+      "kem": kem,
+      "ciphertext": ciphertext,
+      "nonce": nonce,
+      "senderPeerId": senderPeerId,
+      "receivedAtMs": Int64(Date().timeIntervalSince1970 * 1000),
+    ]
+    json["messageId"] = messageId ?? NSNull()
+    return (nonce, json)
+  }
+
+  static func fileName(forNonce nonce: String) -> String {
+    let hex = nonce.utf8.map { byte in
+      String(format: "%02x", byte)
+    }.joined()
+    return "nonce-v1-\(hex).json"
+  }
+}
+
 // 04-P0 SI-5: the NSE drops a per-message "already shown" marker into the SHARED
 // app-group container so the Dart RecentRemoteNotificationGate can suppress a
 // duplicate Dart-side banner even when iOS never schedules the Dart isolate.

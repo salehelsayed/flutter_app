@@ -17,6 +17,7 @@ import 'package:flutter_app/features/account_migration/application/account_migra
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
 import 'package:flutter_app/features/push/application/push_decrypt_preview.dart';
+import 'package:flutter_app/features/push/application/push_envelope_staging.dart';
 import 'package:flutter_app/features/push/application/resolve_group_notification_route_target_use_case.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
@@ -31,6 +32,8 @@ typedef BackgroundPushNotificationDisplayEligibilityResolver =
     Future<PushFallbackNotificationDisplayEligibility> Function(
       RemoteMessage message,
     );
+typedef BackgroundPushEnvelopeStager =
+    Future<void> Function(StagedPushEnvelope entry);
 
 BackgroundPushNotificationResolver _backgroundPushNotificationResolver =
     resolveBackgroundPushNotification;
@@ -39,6 +42,8 @@ _backgroundPushNotificationDisplayEligibilityResolver =
     resolveBackgroundPushNotificationDisplayEligibilityFromLocalState;
 AccountMigrationNetworkGate _backgroundAccountMigrationNetworkGate =
     _defaultBackgroundAccountMigrationNetworkGate;
+BackgroundPushEnvelopeStager _backgroundPushEnvelopeStager =
+    _defaultBackgroundPushEnvelopeStager;
 
 @visibleForTesting
 void debugSetBackgroundPushNotificationResolver(
@@ -76,6 +81,16 @@ void debugSetBackgroundAccountMigrationNetworkGate(
 void debugResetBackgroundAccountMigrationNetworkGate() {
   _backgroundAccountMigrationNetworkGate =
       _defaultBackgroundAccountMigrationNetworkGate;
+}
+
+@visibleForTesting
+void debugSetBackgroundPushEnvelopeStager(BackgroundPushEnvelopeStager stager) {
+  _backgroundPushEnvelopeStager = stager;
+}
+
+@visibleForTesting
+void debugResetBackgroundPushEnvelopeStager() {
+  _backgroundPushEnvelopeStager = _defaultBackgroundPushEnvelopeStager;
 }
 
 Future<void> _initializeBackgroundNotifications() async {
@@ -161,6 +176,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   }
 
   try {
+    await _stageChatPushEnvelopeIfPresent(message);
     await _initializeBackgroundNotifications();
     final fallback = await _backgroundPushNotificationResolver(message);
     final dedupeKey = backgroundPushFallbackDedupeKey(message);
@@ -207,6 +223,69 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       details: {'error': e.toString()},
     );
   }
+}
+
+Future<void> _stageChatPushEnvelopeIfPresent(RemoteMessage message) async {
+  if (defaultTargetPlatform == TargetPlatform.iOS) {
+    return;
+  }
+  final entry = _stagedPushEnvelopeFromRemoteMessage(message);
+  if (entry == null) {
+    return;
+  }
+  try {
+    await _backgroundPushEnvelopeStager(entry);
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_BACKGROUND_ENVELOPE_STAGE_ERROR',
+      details: {'messageId': message.messageId, 'error': e.toString()},
+    );
+  }
+}
+
+StagedPushEnvelope? _stagedPushEnvelopeFromRemoteMessage(
+  RemoteMessage message,
+) {
+  final data = message.data;
+  if (_trimToNull(data['type']) != 'new_message') {
+    return null;
+  }
+  final senderPeerId =
+      _trimToNull(data['sender_id']) ?? _trimToNull(data['from']);
+  final kem = _trimToNull(data['kem']) ?? _trimToNull(data['k']);
+  final ciphertext = _trimToNull(data['ciphertext']) ?? _trimToNull(data['c']);
+  final nonce = _trimToNull(data['nonce']) ?? _trimToNull(data['n']);
+  if (senderPeerId == null ||
+      kem == null ||
+      ciphertext == null ||
+      nonce == null) {
+    return null;
+  }
+  return StagedPushEnvelope(
+    kind: 'chat',
+    kem: kem,
+    ciphertext: ciphertext,
+    nonce: nonce,
+    senderPeerId: senderPeerId,
+    messageId: remoteNotificationMessageIdFromData(data),
+    receivedAtMs: DateTime.now().toUtc().millisecondsSinceEpoch,
+  );
+}
+
+String? _trimToNull(Object? value) {
+  final trimmed = value?.toString().trim();
+  if (trimmed == null || trimmed.isEmpty) {
+    return null;
+  }
+  return trimmed;
+}
+
+Future<void> _defaultBackgroundPushEnvelopeStager(
+  StagedPushEnvelope entry,
+) async {
+  final store = await FilePushEnvelopeStagingStore.openDefault();
+  await store.stage(entry);
 }
 
 Future<PushFallbackNotificationDisplayEligibility>
@@ -265,7 +344,10 @@ Future<bool> _defaultBackgroundAccountMigrationNetworkGate({
   if (operation == 'push_background_notification_display') {
     return gate.allowsAccountNotificationDisplay(peerId: peerId);
   }
-  return gate.allowsAccountNetworkSideEffects(peerId: peerId, operation: operation);
+  return gate.allowsAccountNetworkSideEffects(
+    peerId: peerId,
+    operation: operation,
+  );
 }
 
 /// 04-P0 / SI-1: a confirmed group member's background-FCM display eligibility,

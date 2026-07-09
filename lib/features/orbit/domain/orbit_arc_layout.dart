@@ -266,6 +266,26 @@ double orbitArcBottomOverhang({
   return math.max(0.0, bottom - centerY);
 }
 
+/// Pixels the widest seat tap target pokes past the base canvas side edge.
+///
+/// This is mirror-invariant by design: it scans absolute [OrbitSeat.dx] across
+/// every computed seat and uses the same 48px tap-target floor as the renderer.
+double orbitArcSideOverhang({
+  required int memberCount,
+  required OrbitGeometryPrefs geometry,
+}) {
+  final layout = computeOrbitLayout(
+    memberCount: memberCount,
+    geometry: geometry,
+  );
+  var side = 0.0;
+  for (final seat in layout.seats) {
+    final tapTarget = math.max(seat.avatarSize, kOrbitMinTapTarget);
+    side = math.max(side, seat.dx.abs() + tapTarget / 2);
+  }
+  return math.max(0.0, side - kOrbitCanvasCenter);
+}
+
 /// Full inner-circle layout for [memberCount] members under [geometry].
 OrbitLayout computeOrbitLayout({
   required int memberCount,

@@ -163,6 +163,15 @@ readonly ONE_TO_ONE_TESTS=(
   # curated 1to1 gate also runs the receive-path (push→drain) arm locks.
   "test/features/push/application/firebase_readiness_test.dart"
   "test/features/push/application/push_listener_armer_test.dart"
+  # 225: notif-tap last-message lag — replay-before-ack and 1:1 push-envelope
+  # staging fast-path host locks. test/core/** and selected feature integration
+  # files are pinned here so the headline 1:1 gate includes them.
+  "test/core/services/p2p_service_inbox_ack_ordering_test.dart"
+  "test/core/inbox/replay_before_ack_redelivery_idempotent_test.dart"
+  "test/features/push/application/background_message_handler_staging_test.dart"
+  "test/features/push/application/ingest_staged_push_envelopes_use_case_test.dart"
+  "test/features/conversation/integration/notif_tap_payload_fast_path_test.dart"
+  "test/features/push/integration/push_ingest_persistence_test.dart"
 )
 
 readonly FEED_TESTS=(

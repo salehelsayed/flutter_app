@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
@@ -111,6 +112,16 @@ class OrbitalVisualization extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) =>
+          _buildWithConstraints(context, constraints),
+    );
+  }
+
+  Widget _buildWithConstraints(
+    BuildContext context,
+    BoxConstraints constraints,
+  ) {
     final readableColors = context.backgroundReadableColors;
     final l10n = AppLocalizations.of(context)!;
     final innerBorderColor = readableColors.border.withValues(alpha: 0.20);
@@ -147,8 +158,18 @@ class OrbitalVisualization extends StatelessWidget {
             centerY: _center,
           )
         : 0.0;
+    final sideOverhang = overflowExpanded
+        ? orbitArcSideOverhang(memberCount: items.length, geometry: geometry)
+        : 0.0;
+    final appliedSideOverhang = constraints.maxWidth.isFinite
+        ? math.min(
+            sideOverhang,
+            math.max(0.0, (constraints.maxWidth - _size) / 2),
+          )
+        : sideOverhang;
+    final boxWidth = _size + appliedSideOverhang * 2;
     final boxHeight = _size + overhang + bottomOverhang;
-    final cx = _center;
+    final cx = _center + appliedSideOverhang;
     final cy = _center + overhang;
 
     // Painter arc rings (one per occupied arc) when expanded.
@@ -325,7 +346,7 @@ class OrbitalVisualization extends StatelessWidget {
       children: [
         SizedBox(
           key: canvasKey,
-          width: _size,
+          width: boxWidth,
           height: boxHeight,
           // Stable inner key so tests can measure the canvas box without
           // access to the host's (Global) canvasKey — same rect by construction.

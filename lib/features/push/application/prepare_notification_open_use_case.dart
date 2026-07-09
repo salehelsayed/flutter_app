@@ -5,6 +5,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 typedef DrainGroupOfflineInboxForGroupFn =
     Future<void> Function(String groupId);
+typedef IngestStagedPushEnvelopesFn = Future<void> Function();
 
 class PrepareNotificationOpenResult {
   final bool ok;
@@ -28,10 +29,26 @@ Future<PrepareNotificationOpenResult> prepareNotificationOpen({
   // it is a no-op (the service-level PS-3 gate). Forwarded from
   // prepareNotificationRouteTarget, supplied at main.dart.
   Future<void> Function(String peerId)? warmPeer,
+  IngestStagedPushEnvelopesFn? ingestStagedPushEnvelopes,
+  Duration stagedPushEnvelopeIngestTimeout = const Duration(milliseconds: 400),
 }) async {
   try {
     switch (routeTarget.kind) {
       case NotificationRouteTargetKind.conversation:
+        final ingest = ingestStagedPushEnvelopes;
+        if (ingest != null) {
+          try {
+            await Future<void>.sync(
+              ingest,
+            ).timeout(stagedPushEnvelopeIngestTimeout, onTimeout: () {});
+          } catch (e) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'NOTIFICATION_OPEN_STAGED_PUSH_INGEST_ERROR',
+              details: {'error': e.toString()},
+            );
+          }
+        }
         // 145: do NOT block routing on the relay drain. The conversation screen
         // self-heals via its own notif-tap drain (see ConversationWired), so
         // awaiting here only delays the screen from appearing on warm resume.
@@ -54,9 +71,11 @@ Future<PrepareNotificationOpenResult> prepareNotificationOpen({
         // outer catch (which would fail the route).
         final warmPeerId = routeTarget.peerId;
         if (warmPeer != null && warmPeerId != null) {
-          unawaited(Future<void>.sync(() => warmPeer(warmPeerId)).catchError((
-            Object _,
-          ) {}));
+          unawaited(
+            Future<void>.sync(
+              () => warmPeer(warmPeerId),
+            ).catchError((Object _) {}),
+          );
         }
         break;
       case NotificationRouteTargetKind.contactRequest:

@@ -143,7 +143,8 @@ class P2PServiceImpl
   // [maxConcurrentInboxDecrypts]) BEFORE the serial commit loop and threads each
   // plaintext into the replay. When null (the default), no prefetch runs and the
   // drain is byte-identical to HEAD — a safe default-off rollback + test seam.
-  final Future<String?> Function(ChatMessage message)? _predecryptInboxChatEntry;
+  final Future<String?> Function(ChatMessage message)?
+  _predecryptInboxChatEntry;
   final TransportMetrics? _transportMetrics;
   final Duration? _keyRotationGracePeriodOverride;
   StreamSubscription<LocalChatMessage>? _localMessageSub;
@@ -419,8 +420,7 @@ class P2PServiceImpl
        _replayLiveDirectChatMessage = replayLiveDirectChatMessage,
        _replayRecoveredInboxIntroductionMessage =
            replayRecoveredInboxIntroductionMessage,
-       _replayRecoveredInboxContactRequest =
-           replayRecoveredInboxContactRequest,
+       _replayRecoveredInboxContactRequest = replayRecoveredInboxContactRequest,
        _replayRecoveredInboxReaction = replayRecoveredInboxReaction,
        _replayRecoveredInboxMessageDeletion =
            replayRecoveredInboxMessageDeletion,
@@ -913,8 +913,7 @@ class P2PServiceImpl
   static int? debugLibp2pListenPort(
     List<String> listenAddresses, {
     required bool quic,
-  }) =>
-      _libp2pListenPort(listenAddresses, quic: quic);
+  }) => _libp2pListenPort(listenAddresses, quic: quic);
 
   void _setLocalDiscoveryActive() {
     _localDiscoveryActive = true;
@@ -1991,6 +1990,12 @@ class P2PServiceImpl
         replayMs: 0,
       );
     }
+    final replaySw = Stopwatch()..start();
+    final replayed = ackableEntryIds.isEmpty
+        ? 0
+        : await _replayStagedInboxEntries(entryIds: ackableEntryIds);
+    replaySw.stop();
+
     final ackSw = Stopwatch();
     if (ackableEntryIds.isNotEmpty) {
       ackSw.start();
@@ -2020,12 +2025,6 @@ class P2PServiceImpl
       }
       ackSw.stop();
     }
-
-    final replaySw = Stopwatch()..start();
-    final replayed = ackableEntryIds.isEmpty
-        ? 0
-        : await _replayStagedInboxEntries(entryIds: ackableEntryIds);
-    replaySw.stop();
 
     return (
       replayed: replayed,
@@ -2182,7 +2181,8 @@ class P2PServiceImpl
             // (this method) and the first page's own replay.
             'retrieveMs': firstPage.retrieveMs,
             'ackMs': firstPage.ackMs,
-            'replayMs': replayExistingSw.elapsedMilliseconds + firstPage.replayMs,
+            'replayMs':
+                replayExistingSw.elapsedMilliseconds + firstPage.replayMs,
           },
         );
       }
@@ -3719,8 +3719,9 @@ class P2PServiceImpl
     String? match;
     for (final c in _currentState.connections) {
       if (_shortId(c.peerId) == remotePeerShort) {
-        if (match != null && match != c.peerId)
+        if (match != null && match != c.peerId) {
           return null; // collision → fail-safe
+        }
         match = c.peerId;
       }
     }
@@ -4443,9 +4444,7 @@ class P2PServiceImpl
       return;
     }
 
-    unawaited(
-      localP2P.updateLibp2pPorts(quicPort: quicPort, tcpPort: tcpPort),
-    );
+    unawaited(localP2P.updateLibp2pPorts(quicPort: quicPort, tcpPort: tcpPort));
     emitFlowEvent(
       layer: 'FL',
       event: 'FDC_LAN_ADVERT_PORTS',

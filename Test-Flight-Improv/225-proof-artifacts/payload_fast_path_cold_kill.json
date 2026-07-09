@@ -1,0 +1,26 @@
+{
+  "testCase": "TC-B12",
+  "scenario": "payload_fast_path_cold_kill",
+  "status": "passed",
+  "capturedAt": "2026-07-09T19:47:57Z",
+  "devices": ["21071FDF600CSC (Pixel 6, Android 16, receiver)", "iPhone 11 (12D3KooWPzDTjARPoFbnbr2VGVMNsAhA, sender)"],
+  "checks": {
+    "receiverTerminatedBeforeTap": true,
+    "notificationTapColdLaunchedApp": true,
+    "startupIngestRan": true,
+    "messageVisibleFromStagedEnvelope": true,
+    "noRelayDrainBeforeVisibility": true
+  },
+  "evidence": {
+    "build": "debug APK of 225 working tree (com.mknoon.app fresh install 2026-07-09)",
+    "pushPhase": "relay 19:46:44 [INBOX] Stored message from 12D3KooWPzDTjARPoFbn + [PUSH] Notification sent (attempt 1/3); device 19:46:50 PUSH_BACKGROUND_MESSAGE_RECEIVED (headless pid 22011) + 19:46:51 NOTIFICATION_SHOWN; staged nonce-v1-746661642b7767465366635176376353.json; no CHAT_MSG_RECEIVE_STORED pre-tap",
+    "termination": "am kill after push arrival: pidof empty verified at 19:47:2x, re-verified after airplane-mode enable, immediately before the tap",
+    "airplaneMode": "airplane_mode_on=1 + 'Network is unreachable' to relay 13.60.15.36 before the tap; plane icon in post-tap screenshots",
+    "tap": "19:47:57 tap -> NEW process pid 22233 (cold launch); 19:48:00.5 NOTIFICATION_TAPPED; 19:48:02.3 stale_render 1839ms; 19:48:02.7 CHAT_MSG_RECEIVE_STORED id 18677fb5 'B12-CK proof' via staged-envelope ingest; message visible on screen (ck_25s.png); CK staged file cleared post-ingest",
+    "drainAbsence": "0 occurrences of P2P_SERVICE_INBOX_STAGED_DRAIN_SUCCESS in the logcat window (network fully cut)"
+  },
+  "deviations": [
+    "Termination used `adb shell am kill` (process-kill preserving the posted notification and FCM deliverability) instead of `am force-stop`: force-stop cancels the app's notifications and puts the package in stopped state (blocking FCM), making the scenario physically untappable. am kill is the faithful OS-kill equivalent.",
+    "The push arrived to a headless FCM-started process (prior process killed pre-send) rather than a backgrounded-alive app, to keep the relay drain from storing the message pre-tap (see android_receiver artifact deviation)."
+  ]
+}

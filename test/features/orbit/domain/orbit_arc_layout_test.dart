@@ -34,6 +34,23 @@ double _bottomTapPokeOracle({
   return math.max(0.0, bottom - centerY);
 }
 
+double _sideTapPokeOracle({
+  required int memberCount,
+  required OrbitGeometryPrefs geometry,
+  bool mirrored = false,
+}) {
+  final layout = computeOrbitLayout(
+    memberCount: memberCount,
+    geometry: geometry,
+    mirrored: mirrored,
+  );
+  if (layout.seats.isEmpty) return 0.0;
+  final side = layout.seats
+      .map((s) => s.dx.abs() + math.max(s.avatarSize, kOrbitMinTapTarget) / 2)
+      .reduce(math.max);
+  return math.max(0.0, side - kOrbitCanvasCenter);
+}
+
 void main() {
   group('orbit_arc_layout pure math (198 F1)', () {
     // TC-198-32 — og scales ONLY the ring2→arc0 gap; arc-to-arc stays 46·sp.
@@ -333,6 +350,69 @@ void main() {
         ),
         closeTo(expected, 0.01),
       );
+    });
+
+    group('224 side arc horizontal overhang', () {
+      test('TC-224-01 side overhang: 0 when every tap box fits', () {
+        expect(orbitArcSideOverhang(memberCount: 20, geometry: _g()), 0.0);
+      });
+
+      test(
+        'TC-224-02 side overhang = max |dx| tap-box poke over ALL seats',
+        () {
+          final geometry = _g(av: 1.4, og: 1.5);
+          final expected = _sideTapPokeOracle(
+            memberCount: 20,
+            geometry: geometry,
+          );
+
+          expect(expected, closeTo(31.9703, 0.05));
+          expect(
+            orbitArcSideOverhang(memberCount: 20, geometry: geometry),
+            closeTo(expected, 0.01),
+          );
+        },
+      );
+
+      test('TC-224-03 pinch-bound arc overhangs at default knobs', () {
+        expect(
+          orbitArcSideOverhang(memberCount: 30, geometry: _g()),
+          closeTo(34.0, 0.05),
+        );
+      });
+
+      test('TC-224-04 arcWrap release droop counted', () {
+        expect(
+          orbitArcSideOverhang(memberCount: 30, geometry: _g(cv: 2.5)),
+          closeTo(58.19, 0.05),
+        );
+      });
+
+      test('TC-224-05 mirror invariance matches a mirrored layout scan', () {
+        final geometry = _g(av: 1.4, og: 1.5);
+        final ltrExpected = _sideTapPokeOracle(
+          memberCount: 20,
+          geometry: geometry,
+        );
+        final rtlExpected = _sideTapPokeOracle(
+          memberCount: 20,
+          geometry: geometry,
+          mirrored: true,
+        );
+
+        expect(rtlExpected, closeTo(ltrExpected, 1e-9));
+        expect(
+          orbitArcSideOverhang(memberCount: 20, geometry: geometry),
+          closeTo(rtlExpected, 0.01),
+        );
+      });
+
+      test('TC-224-06 tap floor honored when avatar is below 48px', () {
+        expect(
+          orbitArcSideOverhang(memberCount: 22, geometry: _g(av: 0.6)),
+          closeTo(10.14, 0.05),
+        );
+      });
     });
   });
 
