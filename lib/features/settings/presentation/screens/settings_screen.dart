@@ -4,9 +4,9 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
-import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_group.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/settings_orbit_nav_button.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_profile_section.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_qr_tiles.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
@@ -300,9 +300,8 @@ class SettingsScreen extends StatelessWidget {
               right: 0,
               bottom: bottomInset + 8,
               child: Center(
-                child: FeedNavigationBar(
-                  activeTab: activeTab,
-                  onSwitchView: onSwitchView,
+                child: SettingsOrbitNavButton(
+                  onTap: () => onSwitchView('orbit'),
                 ),
               ),
             ),

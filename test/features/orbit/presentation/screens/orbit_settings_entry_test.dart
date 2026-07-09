@@ -15,6 +15,7 @@ import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart'
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/settings/presentation/screens/settings_screen.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
 
@@ -97,16 +98,16 @@ void main() {
   late InMemoryFeedClearedRepository feedClearedRepo;
 
   IdentityModel identityWith({Uint8List? avatarBlob}) => IdentityModel(
-        peerId: 'my-peer-id-12345',
-        publicKey: 'pk',
-        privateKey: 'sk',
-        mnemonic12: 'w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12',
-        mlKemPublicKey: 'mlkem-my-peer-id-12345',
-        username: 'Alice',
-        avatarBlob: avatarBlob,
-        createdAt: '2026-03-15T10:00:00.000Z',
-        updatedAt: '2026-03-15T10:00:00.000Z',
-      );
+    peerId: 'my-peer-id-12345',
+    publicKey: 'pk',
+    privateKey: 'sk',
+    mnemonic12: 'w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12',
+    mlKemPublicKey: 'mlkem-my-peer-id-12345',
+    username: 'Alice',
+    avatarBlob: avatarBlob,
+    createdAt: '2026-03-15T10:00:00.000Z',
+    updatedAt: '2026-03-15T10:00:00.000Z',
+  );
 
   setUp(() {
     identityRepo = FakeIdentityRepository();
@@ -119,13 +120,14 @@ void main() {
     mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
     mediaFileManager = FakeMediaFileManager();
     imageProcessor = ImageProcessor(
-      compressFile: ({
-        required path,
-        required quality,
-        required keepExif,
-        minWidth = 1920,
-        minHeight = 1080,
-      }) async => null,
+      compressFile:
+          ({
+            required path,
+            required quality,
+            required keepExif,
+            minWidth = 1920,
+            minHeight = 1080,
+          }) async => null,
       compressVideo: ({required path, required compress, onProgress}) async =>
           null,
     );
@@ -134,23 +136,23 @@ void main() {
 
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
-      const MethodChannel('plugins.flutter.io/path_provider'),
-      (MethodCall methodCall) async {
-        if (methodCall.method == 'getApplicationDocumentsDirectory') {
-          return '/tmp/test_docs';
-        }
-        return null;
-      },
-    );
+          const MethodChannel('plugins.flutter.io/path_provider'),
+          (MethodCall methodCall) async {
+            if (methodCall.method == 'getApplicationDocumentsDirectory') {
+              return '/tmp/test_docs';
+            }
+            return null;
+          },
+        );
   });
 
   tearDown(() {
     postsPrivacyRepo.dispose();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
-      const MethodChannel('plugins.flutter.io/path_provider'),
-      null,
-    );
+          const MethodChannel('plugins.flutter.io/path_provider'),
+          null,
+        );
   });
 
   void setLargeSurface(WidgetTester tester) {
@@ -218,8 +220,9 @@ void main() {
       supportedLocales: AppLocalizations.supportedLocales,
       home: Builder(
         builder: (context) => MediaQuery(
-          data: MediaQuery.of(context)
-              .copyWith(disableAnimations: disableAnimations),
+          data: MediaQuery.of(
+            context,
+          ).copyWith(disableAnimations: disableAnimations),
           child: orbit,
         ),
       ),
@@ -235,8 +238,8 @@ void main() {
   Finder centerAvatar() => find.byKey(centerKey);
 
   UserAvatar centerUserAvatar(WidgetTester tester) => tester.widget<UserAvatar>(
-        find.descendant(of: centerAvatar(), matching: find.byType(UserAvatar)),
-      );
+    find.descendant(of: centerAvatar(), matching: find.byType(UserAvatar)),
+  );
 
   AppShellController freshController() {
     final controller = AppShellController(initialTab: AppShellTab.orbit);
@@ -249,8 +252,9 @@ void main() {
     await pumpFrames(tester);
   }
 
-  testWidgets('TC-206-01 idle center tap opens Settings via slide-up',
-      (tester) async {
+  testWidgets('TC-206-01 idle center tap opens Settings via slide-up', (
+    tester,
+  ) async {
     setLargeSurface(tester);
     suppressOverflowErrors();
     identityRepo.seed(identityWith());
@@ -265,8 +269,9 @@ void main() {
     expect(find.text('Settings'), findsOneWidget);
   });
 
-  testWidgets('TC-206-02 orbit-opened Settings is the full screen',
-      (tester) async {
+  testWidgets('TC-206-02 orbit-opened Settings is the full screen', (
+    tester,
+  ) async {
     setLargeSurface(tester);
     suppressOverflowErrors();
     identityRepo.seed(identityWith());
@@ -303,8 +308,9 @@ void main() {
     expect(find.byKey(const ValueKey('orbit-edit-banner')), findsNothing);
   });
 
-  testWidgets('TC-206-04 identity without photo still opens Settings',
-      (tester) async {
+  testWidgets('TC-206-04 identity without photo still opens Settings', (
+    tester,
+  ) async {
     setLargeSurface(tester);
     suppressOverflowErrors();
     // Null avatar bytes → the placeholder ring avatar renders, still tappable.
@@ -318,8 +324,9 @@ void main() {
     expect(find.text('Settings'), findsOneWidget);
   });
 
-  testWidgets('TC-206-06 rapid taps push exactly one settings route',
-      (tester) async {
+  testWidgets('TC-206-06 rapid taps push exactly one settings route', (
+    tester,
+  ) async {
     setLargeSurface(tester);
     suppressOverflowErrors();
     identityRepo.seed(identityWith());
@@ -341,8 +348,9 @@ void main() {
     expect(centerAvatar(), findsOneWidget);
   });
 
-  testWidgets('TC-206-07 long-press center enters edit, no Settings',
-      (tester) async {
+  testWidgets('TC-206-07 long-press center enters edit, no Settings', (
+    tester,
+  ) async {
     setLargeSurface(tester);
     suppressOverflowErrors();
     identityRepo.seed(identityWith());
@@ -359,8 +367,9 @@ void main() {
     expect(find.byType(SettingsWired), findsNothing);
   });
 
-  testWidgets('TC-206-08 mid-edit center tap ends edit, no Settings',
-      (tester) async {
+  testWidgets('TC-206-08 mid-edit center tap ends edit, no Settings', (
+    tester,
+  ) async {
     setLargeSurface(tester);
     suppressOverflowErrors();
     identityRepo.seed(identityWith());
@@ -384,33 +393,37 @@ void main() {
   });
 
   testWidgets(
-      'TC-206-09 find-open center tap closes find; next tap opens Settings',
-      (tester) async {
-    setLargeSurface(tester);
-    suppressOverflowErrors();
-    identityRepo.seed(identityWith());
+    'TC-206-09 find-open center tap closes find; next tap opens Settings',
+    (tester) async {
+      setLargeSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(identityWith());
 
-    await tester.pumpWidget(buildOrbit(appShellController: freshController()));
-    await pumpFrames(tester);
+      await tester.pumpWidget(
+        buildOrbit(appShellController: freshController()),
+      );
+      await pumpFrames(tester);
 
-    // Open the find pill.
-    await tester.tap(find.byKey(const ValueKey('orbit-find-pill')));
-    await pumpFrames(tester);
-    expect(find.byKey(const ValueKey('orbit-find-pill')), findsOneWidget);
+      // Open the find pill.
+      await tester.tap(find.byKey(const ValueKey('orbit-find-pill')));
+      await pumpFrames(tester);
+      expect(find.byKey(const ValueKey('orbit-find-pill')), findsOneWidget);
 
-    // Center tap while find is open: closes find, does NOT open Settings.
-    await tester.tap(centerAvatar());
-    await pumpFrames(tester);
-    expect(find.byType(SettingsWired), findsNothing);
+      // Center tap while find is open: closes find, does NOT open Settings.
+      await tester.tap(centerAvatar());
+      await pumpFrames(tester);
+      expect(find.byType(SettingsWired), findsNothing);
 
-    // A subsequent idle center tap DOES open Settings.
-    await tester.tap(centerAvatar());
-    await pumpFrames(tester);
-    expect(find.byType(SettingsWired), findsOneWidget);
-  });
+      // A subsequent idle center tap DOES open Settings.
+      await tester.tap(centerAvatar());
+      await pumpFrames(tester);
+      expect(find.byType(SettingsWired), findsOneWidget);
+    },
+  );
 
-  testWidgets('TC-206-18 identity change-kind refreshes center avatar bytes',
-      (tester) async {
+  testWidgets('TC-206-18 identity change-kind refreshes center avatar bytes', (
+    tester,
+  ) async {
     setLargeSurface(tester);
     suppressOverflowErrors();
     final controller = freshController();
@@ -431,28 +444,33 @@ void main() {
   });
 
   testWidgets(
-      'TC-206-22 wiring-lock: SettingsWired receives orbit-threaded nearby '
-      'service + SHARED controller', (tester) async {
-    setLargeSurface(tester);
-    suppressOverflowErrors();
-    final controller = freshController();
-    final nearby = _FakeNearbyLocationService();
-    identityRepo.seed(identityWith());
+    'TC-206-22 wiring-lock: SettingsWired receives orbit-threaded nearby '
+    'service + SHARED controller',
+    (tester) async {
+      setLargeSurface(tester);
+      suppressOverflowErrors();
+      final controller = freshController();
+      final nearby = _FakeNearbyLocationService();
+      identityRepo.seed(identityWith());
 
-    await tester.pumpWidget(buildOrbit(
-      appShellController: controller,
-      nearbyLocationService: nearby,
-    ));
-    await pumpFrames(tester);
-    await openSettings(tester);
+      await tester.pumpWidget(
+        buildOrbit(
+          appShellController: controller,
+          nearbyLocationService: nearby,
+        ),
+      );
+      await pumpFrames(tester);
+      await openSettings(tester);
 
-    final settings = tester.widget<SettingsWired>(find.byType(SettingsWired));
-    expect(identical(settings.nearbyLocationService, nearby), isTrue);
-    expect(identical(settings.appShellController, controller), isTrue);
-  });
+      final settings = tester.widget<SettingsWired>(find.byType(SettingsWired));
+      expect(identical(settings.nearbyLocationService, nearby), isTrue);
+      expect(identical(settings.appShellController, controller), isTrue);
+    },
+  );
 
-  testWidgets('TC-206-23 move-account reachable from orbit-opened Settings',
-      (tester) async {
+  testWidgets('TC-206-23 move-account reachable from orbit-opened Settings', (
+    tester,
+  ) async {
     setLargeSurface(tester);
     suppressOverflowErrors();
     identityRepo.seed(identityWith());
@@ -497,15 +515,48 @@ void main() {
     expect(find.byType(SettingsWired), findsOneWidget);
   });
 
+  testWidgets(
+    'TC-226-16 swipe-right on Settings returns to orbit intact and center '
+    'tap reopens Settings',
+    (tester) async {
+      setLargeSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(identityWith());
+
+      await tester.pumpWidget(
+        buildOrbit(appShellController: freshController()),
+      );
+      await pumpFrames(tester);
+
+      await openSettings(tester);
+      expect(find.byType(SettingsWired), findsOneWidget);
+
+      await tester.fling(
+        find.byType(SettingsScreen),
+        const Offset(300, 0),
+        1200,
+      );
+      await pumpFrames(tester);
+
+      expect(find.byType(SettingsWired), findsNothing);
+      expect(centerAvatar(), findsOneWidget);
+
+      await openSettings(tester);
+      expect(find.byType(SettingsWired), findsOneWidget);
+    },
+  );
+
   testWidgets('TC-206-27 reduce-motion open + return', (tester) async {
     setLargeSurface(tester);
     suppressOverflowErrors();
     identityRepo.seed(identityWith());
 
-    await tester.pumpWidget(buildOrbit(
-      appShellController: freshController(),
-      disableAnimations: true,
-    ));
+    await tester.pumpWidget(
+      buildOrbit(
+        appShellController: freshController(),
+        disableAnimations: true,
+      ),
+    );
     await pumpFrames(tester);
 
     await openSettings(tester);
@@ -516,12 +567,11 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  test(
-      'TC-206-24 source-guard: both OrbitWired ctor sites thread '
+  test('TC-206-24 source-guard: both OrbitWired ctor sites thread '
       'nearbyLocationService', () {
-    final feedWired =
-        File('lib/features/feed/presentation/screens/feed_wired.dart')
-            .readAsStringSync();
+    final feedWired = File(
+      'lib/features/feed/presentation/screens/feed_wired.dart',
+    ).readAsStringSync();
     final mainDart = File('lib/main.dart').readAsStringSync();
 
     // Each file constructs exactly one OrbitWired(...). Isolate that arg block
@@ -548,9 +598,15 @@ void main() {
       return args.contains('nearbyLocationService:');
     }
 
-    expect(orbitCtorThreadsNearby(feedWired), isTrue,
-        reason: 'feed_wired.dart OrbitWired must thread nearbyLocationService');
-    expect(orbitCtorThreadsNearby(mainDart), isTrue,
-        reason: 'main.dart OrbitWired must thread nearbyLocationService');
+    expect(
+      orbitCtorThreadsNearby(feedWired),
+      isTrue,
+      reason: 'feed_wired.dart OrbitWired must thread nearbyLocationService',
+    );
+    expect(
+      orbitCtorThreadsNearby(mainDart),
+      isTrue,
+      reason: 'main.dart OrbitWired must thread nearbyLocationService',
+    );
   });
 }

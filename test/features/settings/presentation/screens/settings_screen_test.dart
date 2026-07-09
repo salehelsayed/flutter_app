@@ -7,8 +7,8 @@ import 'package:flutter_app/features/identity/presentation/widgets/daylight_lago
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_screen.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/settings_orbit_nav_button.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_profile_section.dart';
-import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 
 void main() {
   Widget wrap({
@@ -144,10 +144,10 @@ void main() {
     expect(find.byKey(const ValueKey('settings-row-recovery')), findsNothing);
   });
 
-  testWidgets('renders FeedNavigationBar', (tester) async {
+  testWidgets('renders SettingsOrbitNavButton', (tester) async {
     await tester.pumpWidget(wrap(peerId: '12D3KooWTestPeer123'));
 
-    expect(find.byType(FeedNavigationBar), findsOneWidget);
+    expect(find.byType(SettingsOrbitNavButton), findsOneWidget);
   });
 
   testWidgets('background row shows the active choice at rest', (tester) async {
@@ -243,7 +243,7 @@ void main() {
 
     expect(find.byType(DaylightLagoonBackground), findsOneWidget);
     expect(find.byType(SettingsProfileSection), findsOneWidget);
-    expect(find.byType(FeedNavigationBar), findsOneWidget);
+    expect(find.byType(SettingsOrbitNavButton), findsOneWidget);
     expect(find.text('@AliceTheLightThemeTester'), findsOneWidget);
     expect(find.text(peerId), findsOneWidget);
     expect(find.byKey(const ValueKey('settings-my-qr-tile')), findsOneWidget);
@@ -304,6 +304,6 @@ void main() {
     expect(find.text('Photo Quality'), findsNothing);
     expect(find.text('Video Quality'), findsNothing);
     expect(find.text('Share People Nearby'), findsNothing);
-    expect(find.byType(FeedNavigationBar), findsOneWidget);
+    expect(find.byType(SettingsOrbitNavButton), findsOneWidget);
   });
 }

@@ -14,6 +14,7 @@ import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/settings/application/background_preference_use_cases.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
@@ -124,6 +125,8 @@ class _SettingsWiredState extends State<SettingsWired> {
   // changes outside a sheet gesture (the 2s copy-revert timer). Null when no
   // recovery sheet is open.
   VoidCallback? _recoverySheetTick;
+
+  double _settingsSwipeBackDx = 0;
 
   @override
   void initState() {
@@ -534,6 +537,27 @@ class _SettingsWiredState extends State<SettingsWired> {
     Navigator.of(context).pop();
   }
 
+  void _onSettingsHorizontalDragStart(DragStartDetails details) {
+    _settingsSwipeBackDx = 0;
+  }
+
+  void _onSettingsHorizontalDragUpdate(DragUpdateDetails details) {
+    _settingsSwipeBackDx += details.delta.dx;
+  }
+
+  void _onSettingsHorizontalDragEnd(DragEndDetails details) {
+    final totalDx = _settingsSwipeBackDx;
+    _settingsSwipeBackDx = 0;
+    final width = MediaQuery.sizeOf(context).width;
+    final velocity = details.primaryVelocity ?? 0;
+    final qualifies =
+        totalDx > 0 && (totalDx >= width * 0.28 || velocity >= 900);
+    if (!qualifies) return;
+    if (!mounted || ModalRoute.of(context)?.isCurrent != true) return;
+
+    _onSwitchView(AppShellTab.orbit);
+  }
+
   // 209 — funnels both QR tiles through the single-flight latch: a second tap
   // (same tile or the sibling) is swallowed while the pushed route is up.
   Future<void> _runQrEntry(Future<void> Function() entry) async {
@@ -551,8 +575,11 @@ class _SettingsWiredState extends State<SettingsWired> {
   /// extension (a modal route does not inherit AmbientBackground's — the
   /// FriendPicker precedent).
   Future<void> _showSettingsSheet({
-    required Widget Function(BuildContext sheetContext, StateSetter setSheetState)
-        builder,
+    required Widget Function(
+      BuildContext sheetContext,
+      StateSetter setSheetState,
+    )
+    builder,
   }) {
     return showModalBottomSheet<void>(
       context: context,
@@ -584,9 +611,7 @@ class _SettingsWiredState extends State<SettingsWired> {
                 borderRadius: const BorderRadius.vertical(
                   top: Radius.circular(16),
                 ),
-                border: Border(
-                  top: BorderSide(color: readableColors.divider),
-                ),
+                border: Border(top: BorderSide(color: readableColors.divider)),
               ),
               padding: const EdgeInsets.only(top: 16, bottom: 16),
               child: SafeArea(
@@ -713,8 +738,8 @@ class _SettingsWiredState extends State<SettingsWired> {
           ),
         )
         .whenComplete(() {
-      _moveRouteActive = false;
-    });
+          _moveRouteActive = false;
+        });
   }
 
   /// Builds the debug-only settings section. Only rendered in [kDebugMode].
@@ -775,40 +800,45 @@ class _SettingsWiredState extends State<SettingsWired> {
     final canHostQr =
         widget.onMyQrRequested != null && widget.onScanQrRequested != null;
 
-    return Scaffold(
-      body: SettingsScreen(
-        username: identity?.username ?? 'Username',
-        peerId: identity?.peerId,
-        avatarBytes: _pickedAvatarBytes ?? identity?.avatarBlob,
-        mnemonic: identity?.mnemonic12,
-        isPeerIdCopied: _isPeerIdCopied,
-        onBack: _onBack,
-        onPickAvatar: _onPickAvatar,
-        onUsernameChanged: _onUsernameChanged,
-        onCopyPeerId: _onCopyPeerId,
-        onMyQr: canHostQr
-            ? () => _runQrEntry(widget.onMyQrRequested!)
-            : null,
-        onScan: canHostQr
-            ? () => _runQrEntry(widget.onScanQrRequested!)
-            : null,
-        onOpenBackgroundSheet: _openBackgroundSheet,
-        onOpenPhotoQualitySheet: _openPhotoQualitySheet,
-        onOpenVideoQualitySheet: _openVideoQualitySheet,
-        onOpenRecoverySheet: _openRecoverySheet,
-        currentBackgroundPreference: _currentBackgroundPreference,
-        currentQuality: _currentQuality,
-        currentVideoQuality: _currentVideoQuality,
-        isNearbySharingEnabled: _postsPrivacySettings.sharingEnabled,
-        onNearbySharingChanged: _onNearbySharingChanged,
-        onMoveAccountToNewPhone: identity == null
-            ? null
-            : _onMoveAccountToNewPhone,
-        debugSection: _buildDebugSection(),
-        onSwitchView: _onSwitchView,
-        activeTab: widget.appShellController.activeTab,
-        showNavigationBar: widget.showNavigationBar,
-      ),
+    final screen = SettingsScreen(
+      username: identity?.username ?? 'Username',
+      peerId: identity?.peerId,
+      avatarBytes: _pickedAvatarBytes ?? identity?.avatarBlob,
+      mnemonic: identity?.mnemonic12,
+      isPeerIdCopied: _isPeerIdCopied,
+      onBack: _onBack,
+      onPickAvatar: _onPickAvatar,
+      onUsernameChanged: _onUsernameChanged,
+      onCopyPeerId: _onCopyPeerId,
+      onMyQr: canHostQr ? () => _runQrEntry(widget.onMyQrRequested!) : null,
+      onScan: canHostQr ? () => _runQrEntry(widget.onScanQrRequested!) : null,
+      onOpenBackgroundSheet: _openBackgroundSheet,
+      onOpenPhotoQualitySheet: _openPhotoQualitySheet,
+      onOpenVideoQualitySheet: _openVideoQualitySheet,
+      onOpenRecoverySheet: _openRecoverySheet,
+      currentBackgroundPreference: _currentBackgroundPreference,
+      currentQuality: _currentQuality,
+      currentVideoQuality: _currentVideoQuality,
+      isNearbySharingEnabled: _postsPrivacySettings.sharingEnabled,
+      onNearbySharingChanged: _onNearbySharingChanged,
+      onMoveAccountToNewPhone: identity == null
+          ? null
+          : _onMoveAccountToNewPhone,
+      debugSection: _buildDebugSection(),
+      onSwitchView: _onSwitchView,
+      activeTab: widget.appShellController.activeTab,
+      showNavigationBar: widget.showNavigationBar,
     );
+    final body = widget.showNavigationBar
+        ? GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onHorizontalDragStart: _onSettingsHorizontalDragStart,
+            onHorizontalDragUpdate: _onSettingsHorizontalDragUpdate,
+            onHorizontalDragEnd: _onSettingsHorizontalDragEnd,
+            child: screen,
+          )
+        : screen;
+
+    return Scaffold(body: body);
   }
 }
