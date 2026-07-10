@@ -27,8 +27,14 @@ class UploadProgressViewState {
 class UploadProgressBanner extends StatelessWidget {
   final UploadProgressViewState state;
   final VoidCallback? onCancel;
+  final String? title;
 
-  const UploadProgressBanner({super.key, required this.state, this.onCancel});
+  const UploadProgressBanner({
+    super.key,
+    required this.state,
+    this.onCancel,
+    this.title,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -48,7 +54,7 @@ class UploadProgressBanner extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            l10n.upload_progress_title,
+            title ?? l10n.upload_progress_title,
             style: TextStyle(
               color: readableColors.textPrimary,
               fontSize: 14,

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:uuid/uuid.dart';
@@ -32,6 +33,52 @@ import 'share_target_selection.dart';
 const _shareBatchUuid = Uuid();
 
 enum ShareBatchTargetStatus { sent, queued, failed }
+
+enum ShareBatchDeliveryPhase { uploading, sending }
+
+class ShareBatchDeliveryProgress {
+  final int sentBytes;
+  final int totalBytes;
+  final ShareBatchDeliveryPhase phase;
+
+  const ShareBatchDeliveryProgress({
+    required this.sentBytes,
+    required this.totalBytes,
+    required this.phase,
+  });
+}
+
+typedef ShareBatchDeliveryProgressCallback =
+    void Function(ShareBatchDeliveryProgress progress);
+
+class ShareBatchUploadHooks {
+  final void Function({required String blobId, required int budgetBytes})
+  _onStarted;
+  final void Function({required bool succeeded}) _onSettled;
+  final void Function() _onSending;
+
+  const ShareBatchUploadHooks({
+    required void Function({required String blobId, required int budgetBytes})
+    onStarted,
+    required void Function({required bool succeeded}) onSettled,
+    required void Function() onSending,
+  }) : _onStarted = onStarted,
+       _onSettled = onSettled,
+       _onSending = onSending;
+
+  static final none = ShareBatchUploadHooks(
+    onStarted: ({required blobId, required budgetBytes}) {},
+    onSettled: ({required succeeded}) {},
+    onSending: () {},
+  );
+
+  void started({required String blobId, required int budgetBytes}) =>
+      _onStarted(blobId: blobId, budgetBytes: budgetBytes);
+
+  void settled({required bool succeeded}) => _onSettled(succeeded: succeeded);
+
+  void sending() => _onSending();
+}
 
 class ShareBatchTargetResult {
   final ShareTargetSelection target;
@@ -84,6 +131,7 @@ abstract class ShareBatchDeliveryCoordinator {
   Future<ShareBatchDeliveryResult> deliver({
     required ShareIntent shareIntent,
     required List<ShareTargetSelection> targets,
+    ShareBatchDeliveryProgressCallback? onProgress,
   });
 
   /// 236: one explicit accepted group-media Forward. Unlike [deliver], the
@@ -119,6 +167,7 @@ typedef SendToContactFn =
       required ShareIntent shareIntent,
       required ContactModel contact,
       required List<PendingComposerMedia> processedMedia,
+      required ShareBatchUploadHooks uploadHooks,
     });
 
 typedef SendToGroupFn =
@@ -127,6 +176,7 @@ typedef SendToGroupFn =
       required ShareIntent shareIntent,
       required GroupModel group,
       required List<PendingComposerMedia> processedMedia,
+      required ShareBatchUploadHooks uploadHooks,
     });
 
 class DefaultShareBatchDeliveryCoordinator
@@ -148,6 +198,7 @@ class DefaultShareBatchDeliveryCoordinator
   final ProcessSharedMediaFn? processSharedMediaFn;
   final SendToContactFn? sendToContactFn;
   final SendToGroupFn? sendToGroupFn;
+  final Stream<Map<String, dynamic>>? mediaUploadProgressEvents;
 
   /// 236 test seam: overrides the dispatch-time forward source gate. The
   /// production default is built from this coordinator's own repositories.
@@ -170,6 +221,7 @@ class DefaultShareBatchDeliveryCoordinator
     this.processSharedMediaFn,
     this.sendToContactFn,
     this.sendToGroupFn,
+    this.mediaUploadProgressEvents,
     this.groupMediaForwardSourceGate,
   });
 
@@ -182,6 +234,7 @@ class DefaultShareBatchDeliveryCoordinator
   Future<ShareBatchDeliveryResult> deliver({
     required ShareIntent shareIntent,
     required List<ShareTargetSelection> targets,
+    ShareBatchDeliveryProgressCallback? onProgress,
   }) async {
     if (targets.isEmpty) {
       return const ShareBatchDeliveryResult(results: []);
@@ -208,36 +261,61 @@ class DefaultShareBatchDeliveryCoordinator
     final processedMedia = processedBatch.processedMedia;
     final results = <ShareBatchTargetResult>[];
 
-    for (final target in targets) {
-      // 236 TC-236-03E: each target is its own exception boundary — one
-      // thrown target becomes one typed failed result and can never abort
-      // the targets after it.
-      ShareBatchTargetResult result;
-      try {
-        result = switch (target.kind) {
-          ShareTargetSelectionKind.contact =>
-            await (sendToContactFn ?? _sendToContact)(
-              identity: identity,
-              shareIntent: shareIntent,
-              contact: target.requireContact,
-              processedMedia: processedMedia,
-            ),
-          ShareTargetSelectionKind.group =>
-            await (sendToGroupFn ?? _sendToGroup)(
-              identity: identity,
-              shareIntent: shareIntent,
-              group: target.requireGroup,
-              processedMedia: processedMedia,
-            ),
-        };
-      } catch (_) {
-        result = ShareBatchTargetResult(
-          target: target,
-          status: ShareBatchTargetStatus.failed,
-          detail: 'Share failed.',
-        );
+    var bytesPerTarget = 0;
+    for (final media in processedMedia) {
+      bytesPerTarget += media.budgetBytes;
+    }
+    final totalBytes = bytesPerTarget * targets.length;
+    final progressTracker = onProgress == null || totalBytes <= 0
+        ? null
+        : _ShareBatchProgressTracker(
+            totalBytes: totalBytes,
+            onProgress: onProgress,
+          );
+    final uploadHooks = progressTracker?.hooks ?? ShareBatchUploadHooks.none;
+    final progressSubscription = progressTracker == null
+        ? null
+        : (mediaUploadProgressEvents ?? mediaUploadProgressStream).listen(
+            progressTracker.onUploadEvent,
+          );
+
+    try {
+      for (final target in targets) {
+        // 236 TC-236-03E: each target is its own exception boundary — one
+        // thrown target becomes one typed failed result and can never abort
+        // the targets after it.
+        ShareBatchTargetResult result;
+        try {
+          result = switch (target.kind) {
+            ShareTargetSelectionKind.contact =>
+              await (sendToContactFn ?? _sendToContact)(
+                identity: identity,
+                shareIntent: shareIntent,
+                contact: target.requireContact,
+                processedMedia: processedMedia,
+                uploadHooks: uploadHooks,
+              ),
+            ShareTargetSelectionKind.group =>
+              await (sendToGroupFn ?? _sendToGroup)(
+                identity: identity,
+                shareIntent: shareIntent,
+                group: target.requireGroup,
+                processedMedia: processedMedia,
+                uploadHooks: uploadHooks,
+              ),
+          };
+        } catch (_) {
+          uploadHooks.settled(succeeded: false);
+          result = ShareBatchTargetResult(
+            target: target,
+            status: ShareBatchTargetStatus.failed,
+            detail: 'Share failed.',
+          );
+        }
+        results.add(result);
       }
-      results.add(result);
+    } finally {
+      await progressSubscription?.cancel();
     }
 
     return ShareBatchDeliveryResult(
@@ -368,6 +446,7 @@ class DefaultShareBatchDeliveryCoordinator
             shareIntent: shareIntent,
             contact: current,
             processedMedia: processedMedia,
+            uploadHooks: ShareBatchUploadHooks.none,
           );
         case ShareTargetSelectionKind.group:
           final groupRepo = groupRepository!;
@@ -400,6 +479,7 @@ class DefaultShareBatchDeliveryCoordinator
             shareIntent: shareIntent,
             group: current,
             processedMedia: processedMedia,
+            uploadHooks: ShareBatchUploadHooks.none,
           );
       }
     } catch (_) {
@@ -472,6 +552,7 @@ class DefaultShareBatchDeliveryCoordinator
     required ShareIntent shareIntent,
     required ContactModel contact,
     required List<PendingComposerMedia> processedMedia,
+    required ShareBatchUploadHooks uploadHooks,
   }) async {
     final resolvedContact =
         await contactRepository.getContact(contact.peerId) ?? contact;
@@ -511,18 +592,24 @@ class DefaultShareBatchDeliveryCoordinator
         }
       }
 
-      final uploaded = await uploadMedia(
-        bridge: bridge,
-        localFilePath: media.file.path,
-        mime: mime,
-        recipientPeerId: resolvedContact.peerId,
-        mediaFileManager: mediaFileManager,
-        width: media.width,
-        height: media.height,
-        durationMs: media.durationMs,
-        blobId: attachmentId,
-        preparedArtifact: preparedArtifact,
-      );
+      uploadHooks.started(blobId: attachmentId, budgetBytes: media.budgetBytes);
+      MediaAttachment? uploaded;
+      try {
+        uploaded = await uploadMedia(
+          bridge: bridge,
+          localFilePath: media.file.path,
+          mime: mime,
+          recipientPeerId: resolvedContact.peerId,
+          mediaFileManager: mediaFileManager,
+          width: media.width,
+          height: media.height,
+          durationMs: media.durationMs,
+          blobId: attachmentId,
+          preparedArtifact: preparedArtifact,
+        );
+      } finally {
+        uploadHooks.settled(succeeded: uploaded != null);
+      }
       if (uploaded == null) {
         return ShareBatchTargetResult(
           target: ShareTargetSelection.contact(resolvedContact),
@@ -534,6 +621,7 @@ class DefaultShareBatchDeliveryCoordinator
     }
 
     final text = shareIntent.text ?? '';
+    uploadHooks.sending();
     final (result, message) = await sendChatMessage(
       p2pService: p2pService,
       messageRepo: messageRepository,
@@ -577,6 +665,7 @@ class DefaultShareBatchDeliveryCoordinator
     required ShareIntent shareIntent,
     required GroupModel group,
     required List<PendingComposerMedia> processedMedia,
+    required ShareBatchUploadHooks uploadHooks,
   }) async {
     final groupRepo = groupRepository;
     final msgRepo = groupMessageRepository;
@@ -600,18 +689,27 @@ class DefaultShareBatchDeliveryCoordinator
       for (final media in processedMedia) {
         final mime = _mimeFromPath(media.file.path);
         final attachmentId = _shareBatchUuid.v4();
-        final uploaded = await uploadMedia(
-          bridge: bridge,
-          localFilePath: media.file.path,
-          mime: mime,
-          recipientPeerId: resolvedGroup.id,
-          mediaFileManager: mediaFileManager,
-          width: media.width,
-          height: media.height,
-          durationMs: media.durationMs,
-          allowedPeers: allowedPeers,
+        uploadHooks.started(
           blobId: attachmentId,
+          budgetBytes: media.budgetBytes,
         );
+        MediaAttachment? uploaded;
+        try {
+          uploaded = await uploadMedia(
+            bridge: bridge,
+            localFilePath: media.file.path,
+            mime: mime,
+            recipientPeerId: resolvedGroup.id,
+            mediaFileManager: mediaFileManager,
+            width: media.width,
+            height: media.height,
+            durationMs: media.durationMs,
+            allowedPeers: allowedPeers,
+            blobId: attachmentId,
+          );
+        } finally {
+          uploadHooks.settled(succeeded: uploaded != null);
+        }
         if (uploaded == null) {
           return ShareBatchTargetResult(
             target: ShareTargetSelection.group(resolvedGroup),
@@ -625,6 +723,7 @@ class DefaultShareBatchDeliveryCoordinator
       }
 
       final senderDeviceId = _currentSenderDeviceId;
+      uploadHooks.sending();
       final (result, message) = await sendGroupMessage(
         bridge: bridge,
         groupRepo: groupRepo,
@@ -680,6 +779,88 @@ class DefaultShareBatchDeliveryCoordinator
     } finally {
       await callBgEnd(bridge, bgTaskId);
     }
+  }
+}
+
+class _ShareBatchProgressTracker {
+  final int totalBytes;
+  final ShareBatchDeliveryProgressCallback onProgress;
+
+  String? _activeBlobId;
+  int _activeBudgetBytes = 0;
+  int _currentBytes = 0;
+  int _completedBytes = 0;
+
+  _ShareBatchProgressTracker({
+    required this.totalBytes,
+    required this.onProgress,
+  });
+
+  late final ShareBatchUploadHooks hooks = ShareBatchUploadHooks(
+    onStarted: _onUploadStarted,
+    onSettled: _onUploadSettled,
+    onSending: _onSending,
+  );
+
+  void onUploadEvent(Map<String, dynamic> event) {
+    final activeBlobId = _activeBlobId;
+    if (activeBlobId == null || event['id'] != activeBlobId) {
+      return;
+    }
+    final rawSentBytes = event['sentBytes'];
+    if (rawSentBytes is! num) {
+      return;
+    }
+    final clamped = rawSentBytes.toInt().clamp(0, _activeBudgetBytes).toInt();
+    if (clamped <= _currentBytes) {
+      return;
+    }
+    _currentBytes = clamped;
+    _emit(ShareBatchDeliveryPhase.uploading);
+  }
+
+  void _onUploadStarted({required String blobId, required int budgetBytes}) {
+    if (_activeBlobId != null) {
+      _onUploadSettled(succeeded: false);
+    }
+    _activeBlobId = blobId;
+    _activeBudgetBytes = budgetBytes < 0 ? 0 : budgetBytes;
+    _currentBytes = 0;
+    _emit(ShareBatchDeliveryPhase.uploading);
+  }
+
+  void _onUploadSettled({required bool succeeded}) {
+    if (_activeBlobId == null) {
+      return;
+    }
+    final settledBytes = succeeded ? _activeBudgetBytes : _currentBytes;
+
+    // Clear the active id before folding completion so a late synchronous
+    // final event cannot be adopted or counted twice.
+    _activeBlobId = null;
+    _activeBudgetBytes = 0;
+    _currentBytes = 0;
+    _completedBytes = (_completedBytes + settledBytes)
+        .clamp(0, totalBytes)
+        .toInt();
+    _emit(ShareBatchDeliveryPhase.uploading);
+  }
+
+  void _onSending() {
+    _emit(ShareBatchDeliveryPhase.sending);
+  }
+
+  void _emit(ShareBatchDeliveryPhase phase) {
+    final sentBytes = (_completedBytes + _currentBytes)
+        .clamp(0, totalBytes)
+        .toInt();
+    onProgress(
+      ShareBatchDeliveryProgress(
+        sentBytes: sentBytes,
+        totalBytes: totalBytes,
+        phase: phase,
+      ),
+    );
   }
 }
 

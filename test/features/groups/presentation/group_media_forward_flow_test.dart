@@ -138,6 +138,7 @@ void main() {
             required shareIntent,
             required contact,
             required processedMedia,
+            required uploadHooks,
           }) async {
             contactSends.add(contact);
             contactSendIntents.add(shareIntent);
@@ -153,6 +154,7 @@ void main() {
             required shareIntent,
             required group,
             required processedMedia,
+            required uploadHooks,
           }) async {
             groupSends.add(group);
             groupSendIntents.add(shareIntent);

@@ -12,6 +12,7 @@ import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart'
     hide sendChatMessage, editChatMessage;
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart'
@@ -857,6 +858,126 @@ void main() {
         kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
       );
     });
+
+    test(
+      '1:1 media first outgoing change carries renderable attachments in every terminal funnel',
+      () async {
+        const messageId = 'msg-first-media-change';
+        const localPath = '/tmp/renderable-first-frame.jpg';
+        const attachment = MediaAttachment(
+          id: 'att-first-media-change',
+          messageId: '',
+          mime: 'image/jpeg',
+          size: 1024,
+          mediaType: 'image',
+          localPath: localPath,
+          downloadStatus: 'done',
+          createdAt: '2026-07-10T12:00:00.000Z',
+          contentHash:
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          encryptionKeyBase64: 'key-first-media-change',
+          encryptionNonce: 'nonce-first-media-change',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+
+        final cases =
+            <
+              ({
+                String name,
+                FakeP2PService service,
+                StoreInInboxDetailedFn? detailedStore,
+                String expectedStatus,
+              })
+            >[
+              (
+                name: 'live success',
+                service: FakeP2PService(sendMessageAcked: true),
+                detailedStore: null,
+                expectedStatus: 'delivered',
+              ),
+              (
+                name: 'inbox accepted',
+                service: FakeP2PService(
+                  sendMessageResult: false,
+                  useNullDiscover: true,
+                  storeInInboxResult: true,
+                ),
+                detailedStore: null,
+                expectedStatus: 'inboxed',
+              ),
+              (
+                name: 'inbox full retryable',
+                service: FakeP2PService(
+                  sendMessageResult: false,
+                  useNullDiscover: true,
+                  storeInInboxResult: false,
+                ),
+                detailedStore: (peerId, message, {timeoutMs}) async =>
+                    const InboxStoreOutcome(
+                      status: InboxStoreStatus.rejectedFull,
+                    ),
+                expectedStatus: 'sent',
+              ),
+              (
+                name: 'terminal failure',
+                service: FakeP2PService(
+                  sendMessageResult: false,
+                  useNullDiscover: true,
+                  storeInInboxResult: false,
+                ),
+                detailedStore: (peerId, message, {timeoutMs}) async =>
+                    const InboxStoreOutcome(status: InboxStoreStatus.failed),
+                expectedStatus: 'failed',
+              ),
+            ];
+
+        for (final testCase in cases) {
+          final repository = FakeMessageRepository();
+          final (result, returnedMessage) = await chat_use_case.sendChatMessage(
+            p2pService: testCase.service,
+            messageRepo: repository,
+            targetPeerId: 'target-peer',
+            text: 'photo',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            messageId: messageId,
+            bridge: PassthroughCryptoBridge(),
+            recipientMlKemPublicKey: testRecipientMlKemPublicKey,
+            mediaAttachments: const [attachment],
+            mediaAttachmentRepo: FakeMediaAttachmentRepository(),
+            storeInInboxDetailed: testCase.detailedStore,
+          );
+
+          expect(
+            repository.saved,
+            isNotEmpty,
+            reason: '${testCase.name} must publish an outgoing change',
+          );
+          final firstChange = repository.saved.first;
+          expect(
+            firstChange.status,
+            testCase.expectedStatus,
+            reason: testCase.name,
+          );
+          expect(
+            firstChange.media,
+            hasLength(1),
+            reason:
+                '${testCase.name} must publish media on its first repository change',
+          );
+          expect(firstChange.media.single.id, attachment.id);
+          expect(firstChange.media.single.messageId, messageId);
+          expect(firstChange.media.single.localPath, localPath);
+          expect(returnedMessage?.media, hasLength(1));
+          expect(
+            result == SendChatMessageResult.success ||
+                result == SendChatMessageResult.peerNotFound,
+            isTrue,
+            reason: testCase.name,
+          );
+        }
+      },
+    );
 
     test(
       'sanitizes outgoing comment text while preserving safe markers',

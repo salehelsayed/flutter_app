@@ -1168,7 +1168,11 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           wireEnvelope: jsonString,
         )
         .copyWith(relayExpiresAt: expiresAtMs);
-    await messageRepo.saveMessage(inboxedMessage);
+    await _saveOutgoingMessageWithMedia(
+      messageRepo: messageRepo,
+      message: inboxedMessage,
+      attachments: normalizedAttachments,
+    );
     await _persistOutgoingMedia(
       mediaAttachmentRepo: mediaAttachmentRepo,
       attachments: normalizedAttachments,
@@ -1213,7 +1217,11 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       transport: 'inbox',
       wireEnvelope: jsonString,
     );
-    await messageRepo.saveMessage(sentMessage);
+    await _saveOutgoingMessageWithMedia(
+      messageRepo: messageRepo,
+      message: sentMessage,
+      attachments: normalizedAttachments,
+    );
     await _persistOutgoingMedia(
       mediaAttachmentRepo: mediaAttachmentRepo,
       attachments: normalizedAttachments,
@@ -1330,7 +1338,11 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     editedAt: resolvedEditedAt,
     wireEnvelope: jsonString,
   );
-  await messageRepo.saveMessage(failedMessage);
+  await _saveOutgoingMessageWithMedia(
+    messageRepo: messageRepo,
+    message: failedMessage,
+    attachments: normalizedAttachments,
+  );
   await _persistOutgoingMedia(
     mediaAttachmentRepo: mediaAttachmentRepo,
     attachments: normalizedAttachments,
@@ -2066,6 +2078,16 @@ Future<void> _persistOutgoingMedia({
   }
 }
 
+Future<void> _saveOutgoingMessageWithMedia({
+  required MessageRepository messageRepo,
+  required ConversationMessage message,
+  required List<MediaAttachment>? attachments,
+}) {
+  return messageRepo.saveMessage(
+    message.copyWith(media: attachments ?? const <MediaAttachment>[]),
+  );
+}
+
 Future<(SendChatMessageResult, ConversationMessage)> _completeSuccessfulSend({
   required P2PService p2pService,
   required MessageRepository messageRepo,
@@ -2096,7 +2118,11 @@ Future<(SendChatMessageResult, ConversationMessage)> _completeSuccessfulSend({
     via: via,
     concurrentInbox: concurrentInbox,
   );
-  await messageRepo.saveMessage(message);
+  await _saveOutgoingMessageWithMedia(
+    messageRepo: messageRepo,
+    message: message,
+    attachments: attachments,
+  );
   await _persistOutgoingMedia(
     mediaAttachmentRepo: mediaAttachmentRepo,
     attachments: attachments,

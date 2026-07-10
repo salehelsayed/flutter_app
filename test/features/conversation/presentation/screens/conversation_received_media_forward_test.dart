@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
@@ -30,6 +31,7 @@ import '../../domain/repositories/fake_media_attachment_repository.dart';
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/services/fake_p2p_service.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
+import '../../../../shared/fakes/fake_upload_wake_lock_driver.dart';
 import '../../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../../shared/fakes/in_memory_group_repository.dart';
@@ -44,6 +46,7 @@ void main() {
   late FakeMediaAttachmentRepository mediaRepo;
 
   setUp(() {
+    UploadWakeLockController.debugReset(driver: FakeUploadWakeLockDriver());
     tempDir = Directory.systemTemp.createTempSync('conversation_forward_ui_');
     sourceFile = File('${tempDir.path}/source.jpg')..writeAsBytesSync([1]);
     final attachment = MediaAttachment(
@@ -71,7 +74,10 @@ void main() {
     mediaRepo = FakeMediaAttachmentRepository()..seed([attachment]);
   });
 
-  tearDown(() => tempDir.deleteSync(recursive: true));
+  tearDown(() {
+    UploadWakeLockController.debugReset();
+    tempDir.deleteSync(recursive: true);
+  });
 
   Future<void> pumpFrames(WidgetTester tester, {int count = 8}) async {
     for (var i = 0; i < count; i++) {
@@ -473,7 +479,11 @@ void main() {
       final expectedSummary =
           '${partialSummary[0].toUpperCase()}${partialSummary.substring(1)}';
       expect(find.text(expectedSummary), findsOneWidget);
-      expect(find.byType(SnackBar), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('share-inline-feedback')),
+        findsOneWidget,
+      );
+      expect(find.byType(SnackBar), findsNothing);
       expect(tester.takeException(), isNull);
     }
     semanticsHandle.dispose();
@@ -487,6 +497,7 @@ class _PartialForwardCoordinator implements ShareBatchDeliveryCoordinator {
   Future<ShareBatchDeliveryResult> deliver({
     required ShareIntent shareIntent,
     required List<ShareTargetSelection> targets,
+    ShareBatchDeliveryProgressCallback? onProgress,
   }) async {
     expectSync(
       shareIntent.forwardProvenance?.operationDedupKey,

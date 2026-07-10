@@ -85,6 +85,7 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/core/database/migrations/097_direct_message_forwarded_test.dart"
   "test/features/share/application/share_batch_delivery_coordinator_test.dart"
   "test/features/share/presentation/share_target_picker_wired_test.dart"
+  "test/features/share/integration/external_share_media_ux_test.dart"
   "test/features/conversation/domain/models/message_payload_test.dart"
   "test/features/conversation/presentation/widgets/letter_card_test.dart"
   "test/features/conversation/presentation/screens/conversation_screen_test.dart"

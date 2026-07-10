@@ -5,10 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
+import 'package:flutter_app/features/share/application/share_batch_delivery_coordinator.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/avatar_image_provider.dart';
 
@@ -24,6 +26,9 @@ class ShareTargetPickerScreen extends StatefulWidget {
   final List<GroupModel> groups;
   final bool isLoading;
   final bool isSending;
+  final UploadProgressViewState? uploadProgress;
+  final ShareBatchDeliveryPhase? deliveryPhase;
+  final String? inlineFeedback;
   final Set<String> selectedContactPeerIds;
   final Set<String> selectedGroupIds;
   final ValueChanged<ContactModel> onToggleContact;
@@ -41,6 +46,9 @@ class ShareTargetPickerScreen extends StatefulWidget {
     required this.groups,
     this.isLoading = false,
     this.isSending = false,
+    this.uploadProgress,
+    this.deliveryPhase,
+    this.inlineFeedback,
     this.selectedContactPeerIds = const {},
     this.selectedGroupIds = const {},
     required this.onToggleContact,
@@ -133,12 +141,23 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
                           (!_showsCaptionField && widget.sharedText != null))
                         _buildPreviewStrip(context),
                       if (_showsCaptionField) _buildCaptionField(context),
+                      if (widget.uploadProgress != null)
+                        UploadProgressBanner(
+                          state: widget.uploadProgress!,
+                          title:
+                              widget.deliveryPhase ==
+                                  ShareBatchDeliveryPhase.sending
+                              ? AppLocalizations.of(context)!.share_sending
+                              : null,
+                        ),
+                      if (widget.inlineFeedback != null)
+                        _buildInlineFeedback(context, widget.inlineFeedback!),
                       _buildSearchField(context),
                       Expanded(child: _buildTargetList(context)),
                       if (_selectionCount > 0) _buildSendButton(context),
                     ],
                   ),
-                  if (widget.isSending)
+                  if (widget.isSending && widget.uploadProgress == null)
                     Positioned.fill(
                       child: IgnorePointer(
                         ignoring: false,
@@ -158,6 +177,25 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
             ),
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildInlineFeedback(BuildContext context, String feedback) {
+    final readableColors = context.backgroundReadableColors;
+    return Container(
+      key: const ValueKey('share-inline-feedback'),
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: readableColors.surfaceRaised,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: readableColors.border),
+      ),
+      child: Text(
+        feedback,
+        style: TextStyle(color: readableColors.textPrimary, fontSize: 13),
       ),
     );
   }

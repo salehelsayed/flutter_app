@@ -442,6 +442,7 @@ void main() {
                 required shareIntent,
                 required contact,
                 required processedMedia,
+                required uploadHooks,
               }) async {
                 contactCalls++;
                 return ShareBatchTargetResult(
@@ -456,6 +457,7 @@ void main() {
                 required shareIntent,
                 required group,
                 required processedMedia,
+                required uploadHooks,
               }) async {
                 groupCalls++;
                 return ShareBatchTargetResult(

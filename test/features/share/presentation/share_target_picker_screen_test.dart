@@ -3,8 +3,10 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
+import 'package:flutter_app/features/share/application/share_batch_delivery_coordinator.dart';
 import 'package:flutter_app/features/share/presentation/screens/share_target_picker_screen.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -42,6 +44,9 @@ void main() {
     List<GroupModel> groups = const [],
     bool isLoading = false,
     bool isSending = false,
+    UploadProgressViewState? uploadProgress,
+    ShareBatchDeliveryPhase? deliveryPhase,
+    String? inlineFeedback,
     Set<String> selectedContactPeerIds = const {},
     Set<String> selectedGroupIds = const {},
     ValueChanged<ContactModel>? onToggleContact,
@@ -63,6 +68,9 @@ void main() {
         groups: groups,
         isLoading: isLoading,
         isSending: isSending,
+        uploadProgress: uploadProgress,
+        deliveryPhase: deliveryPhase,
+        inlineFeedback: inlineFeedback,
         selectedContactPeerIds: selectedContactPeerIds,
         selectedGroupIds: selectedGroupIds,
         onToggleContact: onToggleContact ?? (_) {},
@@ -273,6 +281,7 @@ void main() {
 
     expect(find.text('Sending...'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byKey(const ValueKey('upload-progress-banner')), findsNothing);
     expect(
       tester
           .widget<ListTile>(find.byKey(const ValueKey('share-contact-alice')))
@@ -295,6 +304,60 @@ void main() {
       isNull,
     );
   });
+
+  testWidgets(
+    'external media send uses the shared upload banner for upload and sending phases',
+    (tester) async {
+      final contact = makeContact(peerId: 'alice', username: 'Alice');
+
+      await tester.pumpWidget(
+        buildScreen(
+          contacts: [contact],
+          selectedContactPeerIds: const {'alice'},
+          isSending: true,
+          uploadProgress: const UploadProgressViewState(
+            sentBytes: 25,
+            totalBytes: 100,
+          ),
+          deliveryPhase: ShareBatchDeliveryPhase.uploading,
+          onSend: () {},
+        ),
+      );
+
+      expect(
+        find.byKey(const ValueKey('upload-progress-banner')),
+        findsOneWidget,
+      );
+      expect(find.text('25 B / 100 B'), findsOneWidget);
+      expect(find.text('Uploading media'), findsOneWidget);
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+
+      await tester.pumpWidget(
+        buildScreen(
+          contacts: [contact],
+          selectedContactPeerIds: const {'alice'},
+          isSending: true,
+          uploadProgress: const UploadProgressViewState(
+            sentBytes: 100,
+            totalBytes: 100,
+          ),
+          deliveryPhase: ShareBatchDeliveryPhase.sending,
+          onSend: () {},
+        ),
+      );
+
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('upload-progress-banner')),
+          matching: find.text('Sending...'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Uploading media'), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+    },
+  );
 
   testWidgets('2g: search filters both contacts and groups', (tester) async {
     await tester.pumpWidget(

@@ -736,6 +736,7 @@ class _RecordingBatchCoordinator implements ShareBatchDeliveryCoordinator {
   Future<ShareBatchDeliveryResult> deliver({
     required ShareIntent shareIntent,
     required List<ShareTargetSelection> targets,
+    ShareBatchDeliveryProgressCallback? onProgress,
   }) async {
     deliverCallCount++;
     lastShareIntent = shareIntent;

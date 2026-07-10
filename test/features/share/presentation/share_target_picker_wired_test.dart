@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -22,6 +23,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
+import '../../../shared/fakes/fake_upload_wake_lock_driver.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
@@ -32,6 +34,11 @@ import '../../identity/domain/repositories/fake_identity_repository.dart';
 void main() {
   final activeContact = _makeContact('peer-alice', 'Alice');
   final archivedContact = _makeContact('peer-bob', 'Bob');
+
+  setUp(() {
+    UploadWakeLockController.debugReset(driver: FakeUploadWakeLockDriver());
+  });
+  tearDown(UploadWakeLockController.debugReset);
 
   Widget buildWidget({
     required InMemoryContactRepository contactRepository,
@@ -611,6 +618,356 @@ void main() {
     expect(find.text('Share with...'), findsNothing);
   });
 
+  testWidgets(
+    'successful media send closes after progress without a snackbar',
+    (tester) async {
+      final harness = _buildHarness();
+      harness.contactRepository.addTestContact(activeContact);
+      final gate = Completer<void>();
+      final coordinator = _ControlledBatchCoordinator(
+        gate: gate,
+        progressBeforeGate: const [
+          ShareBatchDeliveryProgress(
+            sentBytes: 25,
+            totalBytes: 100,
+            phase: ShareBatchDeliveryPhase.uploading,
+          ),
+        ],
+        progressAfterGate: const [
+          ShareBatchDeliveryProgress(
+            sentBytes: 100,
+            totalBytes: 100,
+            phase: ShareBatchDeliveryPhase.uploading,
+          ),
+          ShareBatchDeliveryProgress(
+            sentBytes: 100,
+            totalBytes: 100,
+            phase: ShareBatchDeliveryPhase.sending,
+          ),
+        ],
+        result: ShareBatchDeliveryResult(
+          results: [
+            ShareBatchTargetResult(
+              target: ShareTargetSelection.contact(activeContact),
+              status: ShareBatchTargetStatus.sent,
+              detail: 'Sent.',
+            ),
+          ],
+        ),
+      );
+
+      await tester.pumpWidget(
+        _buildRoutedPickerApp(
+          harness: harness,
+          shareIntent: const ShareIntent(
+            type: ShareIntentType.files,
+            filePaths: ['/tmp/shared-photo.jpg'],
+          ),
+          coordinator: coordinator,
+        ),
+      );
+      await tester.tap(find.text('open picker'));
+      await pumpPickerFrames(tester);
+      await tester.tap(
+        find.byKey(ValueKey('share-contact-${activeContact.peerId}')),
+      );
+      await tester.pump();
+      await tester.tap(find.text('Send'));
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('upload-progress-banner')),
+        findsOneWidget,
+      );
+      expect(find.text('25 B / 100 B'), findsOneWidget);
+
+      gate.complete();
+      await pumpPickerFrames(tester);
+
+      expect(find.byKey(const ValueKey('underlying-composer')), findsOneWidget);
+      expect(find.byType(SnackBar), findsNothing);
+      expect(find.text('Sent to 1 target.'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'partial and skipped external share outcomes stay inline snackbar free and retry safe',
+    (tester) async {
+      final partialHarness = _buildHarness();
+      final failedGroup = _makeGroup(
+        'inline-failed-group',
+        'Failed Group',
+        GroupType.chat,
+        GroupRole.admin,
+      );
+      partialHarness.contactRepository.addTestContact(activeContact);
+      await _saveWritableGroup(partialHarness.groupRepository, failedGroup);
+      final partialCoordinator = _ControlledBatchCoordinator(
+        result: ShareBatchDeliveryResult(
+          results: [
+            ShareBatchTargetResult(
+              target: ShareTargetSelection.contact(activeContact),
+              status: ShareBatchTargetStatus.sent,
+              detail: 'Sent.',
+            ),
+            ShareBatchTargetResult(
+              target: ShareTargetSelection.group(failedGroup),
+              status: ShareBatchTargetStatus.failed,
+              detail: 'Share failed.',
+            ),
+          ],
+        ),
+      );
+      await pumpPicker(
+        tester,
+        contactRepository: partialHarness.contactRepository,
+        groupRepository: partialHarness.groupRepository,
+        messageRepository: partialHarness.messageRepository,
+        mediaAttachmentRepository: partialHarness.mediaAttachmentRepository,
+        identityRepository: partialHarness.identityRepository,
+        chatMessageListener: partialHarness.chatMessageListener,
+        groupMessageRepository: partialHarness.groupMessageRepository,
+        groupMessageListener: partialHarness.groupMessageListener,
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.text,
+          text: 'Shared hello',
+        ),
+        batchShareCoordinator: partialCoordinator,
+      );
+      await tester.tap(
+        find.byKey(ValueKey('share-contact-${activeContact.peerId}')),
+      );
+      await tester.tap(find.byKey(ValueKey('share-group-${failedGroup.id}')));
+      await tester.pump();
+      await tester.tap(find.text('Send'));
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('share-inline-feedback')),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Sent to 1 target, failed for 1 target.'),
+        findsOneWidget,
+      );
+      expect(find.text('Share with (1)'), findsOneWidget);
+      expect(find.byType(SnackBar), findsNothing);
+
+      final skippedHarness = _buildHarness();
+      skippedHarness.contactRepository.addTestContact(activeContact);
+      final skippedCoordinator = _ControlledBatchCoordinator(
+        result: ShareBatchDeliveryResult(
+          results: [
+            ShareBatchTargetResult(
+              target: ShareTargetSelection.contact(activeContact),
+              status: ShareBatchTargetStatus.sent,
+              detail: 'Sent.',
+            ),
+          ],
+          skippedOversizedGifCount: 1,
+          skippedOversizedGifReason: 'Attachment skipped.',
+        ),
+      );
+      await pumpPicker(
+        tester,
+        contactRepository: skippedHarness.contactRepository,
+        groupRepository: skippedHarness.groupRepository,
+        messageRepository: skippedHarness.messageRepository,
+        mediaAttachmentRepository: skippedHarness.mediaAttachmentRepository,
+        identityRepository: skippedHarness.identityRepository,
+        chatMessageListener: skippedHarness.chatMessageListener,
+        groupMessageRepository: skippedHarness.groupMessageRepository,
+        groupMessageListener: skippedHarness.groupMessageListener,
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: ['/tmp/shared.gif', '/tmp/shared.jpg'],
+        ),
+        batchShareCoordinator: skippedCoordinator,
+      );
+      await tester.tap(
+        find.byKey(ValueKey('share-contact-${activeContact.peerId}')),
+      );
+      await tester.pump();
+      await tester.tap(find.text('Send'));
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('share-inline-feedback')),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Sent to 1 target. Skipped 1 oversized attachment.'),
+        findsOneWidget,
+      );
+      expect(find.text('Share with...'), findsOneWidget);
+      expect(find.text('Send'), findsNothing);
+      expect(find.byType(SnackBar), findsNothing);
+
+      final exceptionHarness = _buildHarness();
+      exceptionHarness.contactRepository.addTestContact(activeContact);
+      await pumpPicker(
+        tester,
+        contactRepository: exceptionHarness.contactRepository,
+        groupRepository: exceptionHarness.groupRepository,
+        messageRepository: exceptionHarness.messageRepository,
+        mediaAttachmentRepository: exceptionHarness.mediaAttachmentRepository,
+        identityRepository: exceptionHarness.identityRepository,
+        chatMessageListener: exceptionHarness.chatMessageListener,
+        groupMessageRepository: exceptionHarness.groupMessageRepository,
+        groupMessageListener: exceptionHarness.groupMessageListener,
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.text,
+          text: 'Shared hello',
+        ),
+        batchShareCoordinator: const _ControlledBatchCoordinator(
+          error: 'delivery exploded',
+        ),
+      );
+      await tester.tap(
+        find.byKey(ValueKey('share-contact-${activeContact.peerId}')),
+      );
+      await tester.pump();
+      await tester.tap(find.text('Send'));
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('share-inline-feedback')),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Could not share to the selected targets.'),
+        findsOneWidget,
+      );
+      expect(find.byType(SnackBar), findsNothing);
+      expect(find.text('Share with (1)'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'external media send keeps route and wake lock until delivery settles',
+    (tester) async {
+      final wakeLockDriver = FakeUploadWakeLockDriver();
+      UploadWakeLockController.debugReset(driver: wakeLockDriver);
+      addTearDown(UploadWakeLockController.debugReset);
+
+      Future<void> runMediaCase({
+        required ShareBatchDeliveryResult result,
+        Object? error,
+        required bool closes,
+      }) async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+        UploadWakeLockController.debugReset(driver: wakeLockDriver);
+        final harness = _buildHarness();
+        harness.contactRepository.addTestContact(activeContact);
+        final gate = Completer<void>();
+        final coordinator = _ControlledBatchCoordinator(
+          gate: gate,
+          result: result,
+          error: error,
+        );
+        await tester.pumpWidget(
+          _buildRoutedPickerApp(
+            harness: harness,
+            shareIntent: const ShareIntent(
+              type: ShareIntentType.files,
+              filePaths: ['/tmp/shared-photo.jpg'],
+            ),
+            coordinator: coordinator,
+          ),
+        );
+        await tester.tap(find.text('open picker'));
+        await pumpPickerFrames(tester);
+        await tester.tap(
+          find.byKey(ValueKey('share-contact-${activeContact.peerId}')),
+        );
+        await tester.pump();
+        await tester.tap(find.text('Send'));
+        await tester.pump();
+
+        expect(UploadWakeLockController.debugActiveHolds, 1);
+        expect(wakeLockDriver.enableCalls, greaterThan(0));
+
+        await tester.binding.handlePopRoute();
+        await tester.pump();
+        expect(find.text('Share with (1)'), findsOneWidget);
+
+        gate.complete();
+        await pumpPickerFrames(tester);
+        expect(UploadWakeLockController.debugActiveHolds, 0);
+        expect(wakeLockDriver.disableCalls, greaterThan(0));
+        if (closes) {
+          expect(
+            find.byKey(const ValueKey('underlying-composer')),
+            findsOneWidget,
+          );
+        } else {
+          expect(
+            find.byKey(const ValueKey('share-inline-feedback')),
+            findsOneWidget,
+          );
+        }
+      }
+
+      final sentResult = ShareBatchDeliveryResult(
+        results: [
+          ShareBatchTargetResult(
+            target: ShareTargetSelection.contact(activeContact),
+            status: ShareBatchTargetStatus.sent,
+            detail: 'Sent.',
+          ),
+        ],
+      );
+      final failedResult = ShareBatchDeliveryResult(
+        results: [
+          ShareBatchTargetResult(
+            target: ShareTargetSelection.contact(activeContact),
+            status: ShareBatchTargetStatus.failed,
+            detail: 'Share failed.',
+          ),
+        ],
+      );
+      await runMediaCase(result: sentResult, closes: true);
+      await runMediaCase(result: failedResult, closes: false);
+      await runMediaCase(
+        result: const ShareBatchDeliveryResult(results: []),
+        error: 'delivery exploded',
+        closes: false,
+      );
+
+      UploadWakeLockController.debugReset(driver: wakeLockDriver);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      final textHarness = _buildHarness();
+      textHarness.contactRepository.addTestContact(activeContact);
+      final textGate = Completer<void>();
+      await tester.pumpWidget(
+        _buildRoutedPickerApp(
+          harness: textHarness,
+          shareIntent: const ShareIntent(
+            type: ShareIntentType.text,
+            text: 'text only',
+          ),
+          coordinator: _ControlledBatchCoordinator(
+            gate: textGate,
+            result: sentResult,
+          ),
+        ),
+      );
+      await tester.tap(find.text('open picker'));
+      await pumpPickerFrames(tester);
+      await tester.tap(
+        find.byKey(ValueKey('share-contact-${activeContact.peerId}')),
+      );
+      await tester.pump();
+      await tester.tap(find.text('Send'));
+      await tester.pump();
+      expect(UploadWakeLockController.debugActiveHolds, 0);
+      textGate.complete();
+      await pumpPickerFrames(tester);
+    },
+  );
+
   testWidgets('partial failure keeps only failed targets selected', (
     tester,
   ) async {
@@ -812,9 +1169,7 @@ void main() {
         messageId: 'src-msg',
         attachmentId: 'src-att',
         initialCaption: 'seed caption',
-        provenance: ForwardProvenance(
-          operationDedupKey: 'group-forward-op-5',
-        ),
+        provenance: ForwardProvenance(operationDedupKey: 'group-forward-op-5'),
       );
       await pumpPicker(
         tester,
@@ -837,9 +1192,7 @@ void main() {
       await tester.tap(
         find.byKey(ValueKey('share-contact-${sentContact.peerId}')),
       );
-      await tester.tap(
-        find.byKey(ValueKey('share-group-${queuedGroup.id}')),
-      );
+      await tester.tap(find.byKey(ValueKey('share-group-${queuedGroup.id}')));
       await tester.tap(
         find.byKey(ValueKey('share-contact-${failedContact.peerId}')),
       );
@@ -853,8 +1206,11 @@ void main() {
       await tester.pump();
 
       expect(coordinator.forwardRequests, hasLength(2));
-      expect(coordinator.intents, isEmpty,
-          reason: 'forward mode never routes through the OS-share deliver');
+      expect(
+        coordinator.intents,
+        isEmpty,
+        reason: 'forward mode never routes through the OS-share deliver',
+      );
       // The retry re-dispatches the SAME forward operation identity.
       expect(
         coordinator.forwardRequests.map(
@@ -882,7 +1238,9 @@ void main() {
         reason: 'the queued target is exclusively owned by durable retry',
       );
       expect(
-        allTargetKeys.where((key) => key == 'contact:${sentContact.peerId}').length,
+        allTargetKeys
+            .where((key) => key == 'contact:${sentContact.peerId}')
+            .length,
         1,
         reason: 'sent targets never retry',
       );
@@ -1068,6 +1426,68 @@ class _Harness {
   });
 }
 
+Widget _buildRoutedPickerApp({
+  required _Harness harness,
+  required ShareIntent shareIntent,
+  required ShareBatchDeliveryCoordinator coordinator,
+}) {
+  return MaterialApp(
+    locale: const Locale('en'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: Builder(
+      builder: (context) => Scaffold(
+        body: Column(
+          children: [
+            const TextField(key: ValueKey('underlying-composer')),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => ShareTargetPickerWired(
+                      shareIntent: shareIntent,
+                      identityRepo: harness.identityRepository,
+                      contactRepository: harness.contactRepository,
+                      messageRepository: harness.messageRepository,
+                      mediaAttachmentRepository:
+                          harness.mediaAttachmentRepository,
+                      chatMessageListener: harness.chatMessageListener,
+                      bridge: FakeBridge(),
+                      p2pService: FakeP2PService(),
+                      mediaFileManager: FakeMediaFileManager(),
+                      imageProcessor: ImageProcessor(
+                        compressFile:
+                            ({
+                              required path,
+                              required quality,
+                              required keepExif,
+                              minWidth = 1920,
+                              minHeight = 1080,
+                            }) async => null,
+                        compressVideo:
+                            ({
+                              required path,
+                              required compress,
+                              onProgress,
+                            }) async => null,
+                      ),
+                      groupRepository: harness.groupRepository,
+                      groupMessageRepository: harness.groupMessageRepository,
+                      groupMessageListener: harness.groupMessageListener,
+                      batchShareCoordinator: coordinator,
+                    ),
+                  ),
+                );
+              },
+              child: const Text('open picker'),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 Future<void> _saveWritableGroup(
   InMemoryGroupRepository repository,
   GroupModel group, {
@@ -1123,6 +1543,50 @@ Future<void> pumpPickerFrames(WidgetTester tester, {int count = 20}) async {
   }
 }
 
+class _ControlledBatchCoordinator implements ShareBatchDeliveryCoordinator {
+  final ShareBatchDeliveryResult result;
+  final Completer<void>? gate;
+  final List<ShareBatchDeliveryProgress> progressBeforeGate;
+  final List<ShareBatchDeliveryProgress> progressAfterGate;
+  final Object? error;
+
+  const _ControlledBatchCoordinator({
+    this.result = const ShareBatchDeliveryResult(results: []),
+    this.gate,
+    this.progressBeforeGate = const [],
+    this.progressAfterGate = const [],
+    this.error,
+  });
+
+  @override
+  Future<ShareBatchDeliveryResult> deliver({
+    required ShareIntent shareIntent,
+    required List<ShareTargetSelection> targets,
+    ShareBatchDeliveryProgressCallback? onProgress,
+  }) async {
+    for (final progress in progressBeforeGate) {
+      onProgress?.call(progress);
+    }
+    await gate?.future;
+    for (final progress in progressAfterGate) {
+      onProgress?.call(progress);
+    }
+    if (error != null) {
+      throw error!;
+    }
+    return result;
+  }
+
+  @override
+  Future<ShareBatchDeliveryResult> deliverGroupMediaForward({
+    required GroupMediaForwardRequest request,
+    String? caption,
+    required List<ShareTargetSelection> targets,
+  }) {
+    throw UnimplementedError();
+  }
+}
+
 class _RecordingBatchCoordinator implements ShareBatchDeliveryCoordinator {
   final ShareBatchDeliveryResult result;
   int deliverCallCount = 0;
@@ -1138,6 +1602,7 @@ class _RecordingBatchCoordinator implements ShareBatchDeliveryCoordinator {
   Future<ShareBatchDeliveryResult> deliver({
     required ShareIntent shareIntent,
     required List<ShareTargetSelection> targets,
+    ShareBatchDeliveryProgressCallback? onProgress,
   }) async {
     deliverCallCount++;
     lastShareIntent = shareIntent;
@@ -1175,6 +1640,7 @@ class _SequencedRecordingBatchCoordinator
   Future<ShareBatchDeliveryResult> deliver({
     required ShareIntent shareIntent,
     required List<ShareTargetSelection> targets,
+    ShareBatchDeliveryProgressCallback? onProgress,
   }) async {
     intents.add(shareIntent);
     this.targets.add(List<ShareTargetSelection>.from(targets));

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -18,6 +19,7 @@ import 'package:flutter_app/features/conversation/application/reaction_listener.
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
@@ -130,6 +132,9 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
   final Set<String> _selectedGroupIds = <String>{};
   bool _isLoading = true;
   bool _isSending = false;
+  UploadProgressViewState? _uploadProgress;
+  ShareBatchDeliveryPhase? _deliveryPhase;
+  String? _inlineFeedback;
 
   @override
   void initState() {
@@ -313,10 +318,24 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
       return;
     }
 
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    setState(() => _isSending = true);
+    setState(() {
+      _isSending = true;
+      _uploadProgress = null;
+      _deliveryPhase = null;
+      _inlineFeedback = null;
+    });
 
+    final forwardRequest = widget.groupMediaForwardRequest;
+    final holdsMediaWakeLock =
+        forwardRequest == null && widget.shareIntent.hasFiles;
+    var wakeLockHeld = false;
+    ShareBatchDeliveryResult? deliveryResult;
+    Object? deliveryError;
     try {
+      if (holdsMediaWakeLock) {
+        wakeLockHeld = true;
+        await UploadWakeLockController.acquire();
+      }
       final preSendReady = widget.preSendReady;
       if (preSendReady != null) {
         await preSendReady();
@@ -331,9 +350,8 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
         setState(() => _isSending = false);
         return;
       }
-      final forwardRequest = widget.groupMediaForwardRequest;
       final coordinator = _resolveBatchShareCoordinator();
-      final result = forwardRequest != null
+      deliveryResult = forwardRequest != null
           ? await coordinator.deliverGroupMediaForward(
               request: forwardRequest,
               caption: _composedCaption(),
@@ -342,77 +360,95 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
           : await coordinator.deliver(
               shareIntent: _buildComposedShareIntent(),
               targets: targets,
+              onProgress: _onDeliveryProgress,
             );
-
-      if (!mounted) {
-        return;
-      }
-
-      final summary = _buildSummary(result);
-
-      if (result.hasFailures) {
-        setState(() {
-          _selectedContactPeerIds
-            ..clear()
-            ..addAll(
-              result.results
-                  .where(
-                    (item) =>
-                        item.status == ShareBatchTargetStatus.failed &&
-                        item.target.kind == ShareTargetSelectionKind.contact,
-                  )
-                  .map((item) => item.target.requireContact.peerId),
-            );
-          _selectedGroupIds
-            ..clear()
-            ..addAll(
-              result.results
-                  .where(
-                    (item) =>
-                        item.status == ShareBatchTargetStatus.failed &&
-                        item.target.kind == ShareTargetSelectionKind.group,
-                  )
-                  .map((item) => item.target.requireGroup.id),
-            );
-          _isSending = false;
-        });
-        messenger
-          ?..hideCurrentSnackBar()
-          ..showSnackBar(
-            SnackBar(
-              content: Text(summary),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        return;
-      }
-
-      setState(() => _isSending = false);
-      _requestClose(result);
-      messenger
-        ?..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(content: Text(summary), behavior: SnackBarBehavior.floating),
-        );
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
         event: 'SHARE_PICKER_SEND_ERROR',
         details: {'error': e.toString()},
       );
-      if (!mounted) {
-        return;
+      deliveryError = e;
+    } finally {
+      if (wakeLockHeld) {
+        await UploadWakeLockController.release();
       }
-      setState(() => _isSending = false);
-      messenger
-        ?..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(AppLocalizations.of(context)!.share_send_failed),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
     }
+
+    if (!mounted) {
+      return;
+    }
+    if (deliveryError != null) {
+      setState(() {
+        _isSending = false;
+        _uploadProgress = null;
+        _deliveryPhase = null;
+        _inlineFeedback = AppLocalizations.of(context)!.share_send_failed;
+      });
+      return;
+    }
+
+    final result = deliveryResult!;
+    final summary = _buildSummary(result);
+    if (result.hasFailures) {
+      setState(() {
+        _selectedContactPeerIds
+          ..clear()
+          ..addAll(
+            result.results
+                .where(
+                  (item) =>
+                      item.status == ShareBatchTargetStatus.failed &&
+                      item.target.kind == ShareTargetSelectionKind.contact,
+                )
+                .map((item) => item.target.requireContact.peerId),
+          );
+        _selectedGroupIds
+          ..clear()
+          ..addAll(
+            result.results
+                .where(
+                  (item) =>
+                      item.status == ShareBatchTargetStatus.failed &&
+                      item.target.kind == ShareTargetSelectionKind.group,
+                )
+                .map((item) => item.target.requireGroup.id),
+          );
+        _isSending = false;
+        _uploadProgress = null;
+        _deliveryPhase = null;
+        _inlineFeedback = summary;
+      });
+      return;
+    }
+
+    if (result.hasSkippedOversizedGifs) {
+      setState(() {
+        _selectedContactPeerIds.clear();
+        _selectedGroupIds.clear();
+        _isSending = false;
+        _uploadProgress = null;
+        _deliveryPhase = null;
+        _inlineFeedback = summary;
+      });
+      return;
+    }
+
+    setState(() => _isSending = false);
+    _requestClose(result);
+  }
+
+  void _onDeliveryProgress(ShareBatchDeliveryProgress progress) {
+    if (!mounted || !_isSending) {
+      return;
+    }
+    setState(() {
+      _uploadProgress = UploadProgressViewState(
+        sentBytes: progress.sentBytes,
+        totalBytes: progress.totalBytes,
+      );
+      _deliveryPhase = progress.phase;
+    });
   }
 
   Future<List<ShareTargetSelection>>
@@ -545,23 +581,29 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
 
   @override
   Widget build(BuildContext context) {
-    return ShareTargetPickerScreen(
-      sharedText: widget.shareIntent.text,
-      sharedFilePaths: widget.shareIntent.filePaths,
-      captionController: _captionController,
-      contacts: _contacts,
-      groups: _groups,
-      isLoading: _isLoading,
-      isSending: _isSending,
-      selectedContactPeerIds: _selectedContactPeerIds,
-      selectedGroupIds: _selectedGroupIds,
-      onToggleContact: _toggleContact,
-      onToggleGroup: _toggleGroup,
-      onSend: _selectedTargets.isNotEmpty ? _sendSelectedTargets : null,
-      onCancel: _isSending ? null : () => _requestClose(),
-      backgroundPreference:
-          widget.appShellController?.backgroundPreference ??
-          BackgroundPreference.defaultBackground,
+    return PopScope(
+      canPop: !_isSending,
+      child: ShareTargetPickerScreen(
+        sharedText: widget.shareIntent.text,
+        sharedFilePaths: widget.shareIntent.filePaths,
+        captionController: _captionController,
+        contacts: _contacts,
+        groups: _groups,
+        isLoading: _isLoading,
+        isSending: _isSending,
+        uploadProgress: _uploadProgress,
+        deliveryPhase: _deliveryPhase,
+        inlineFeedback: _inlineFeedback,
+        selectedContactPeerIds: _selectedContactPeerIds,
+        selectedGroupIds: _selectedGroupIds,
+        onToggleContact: _toggleContact,
+        onToggleGroup: _toggleGroup,
+        onSend: _selectedTargets.isNotEmpty ? _sendSelectedTargets : null,
+        onCancel: _isSending ? null : () => _requestClose(),
+        backgroundPreference:
+            widget.appShellController?.backgroundPreference ??
+            BackgroundPreference.defaultBackground,
+      ),
     );
   }
 }

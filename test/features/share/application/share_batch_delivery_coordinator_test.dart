@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -6,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as path;
 
 import 'package:flutter_app/core/constants/media_constants.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -61,6 +63,7 @@ void main() {
             required shareIntent,
             required contact,
             required processedMedia,
+            required uploadHooks,
           }) async {
             contactCallCount++;
             return ShareBatchTargetResult(
@@ -114,6 +117,7 @@ void main() {
               required shareIntent,
               required contact,
               required processedMedia,
+              required uploadHooks,
             }) async {
               contactMedia = processedMedia;
               return ShareBatchTargetResult(
@@ -128,6 +132,7 @@ void main() {
               required shareIntent,
               required group,
               required processedMedia,
+              required uploadHooks,
             }) async {
               groupMedia = processedMedia;
               return ShareBatchTargetResult(
@@ -158,6 +163,260 @@ void main() {
     },
   );
 
+  test(
+    'external batch progress clamps cumulative bytes and rejects unrelated or late upload ids',
+    () async {
+      final progressEvents = StreamController<Map<String, dynamic>>.broadcast(
+        sync: true,
+      );
+      addTearDown(progressEvents.close);
+      final identityRepository = FakeIdentityRepository()
+        ..seed(_makeIdentity());
+      final processedMedia = [
+        PendingComposerMedia(file: File('/tmp/first.jpg'), budgetBytes: 100),
+        PendingComposerMedia(file: File('/tmp/second.jpg'), budgetBytes: 200),
+      ];
+      final observed = <ShareBatchDeliveryProgress>[];
+
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: identityRepository,
+        contactRepository: InMemoryContactRepository(),
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        groupRepository: InMemoryGroupRepository(),
+        groupMessageRepository: InMemoryGroupMessageRepository(),
+        bridge: FakeBridge(),
+        p2pService: FakeP2PService(),
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: _imageProcessor(),
+        mediaUploadProgressEvents: progressEvents.stream,
+        processSharedMediaFn: (_) async =>
+            ProcessedShareMediaBatch(processedMedia: processedMedia),
+        sendToContactFn:
+            ({
+              required identity,
+              required shareIntent,
+              required contact,
+              required processedMedia,
+              required uploadHooks,
+            }) async {
+              uploadHooks.started(blobId: 'contact-1', budgetBytes: 100);
+              progressEvents.add({'id': 'unrelated', 'sentBytes': 77});
+              progressEvents.add({'id': 'contact-1', 'sentBytes': 116});
+              uploadHooks.settled(succeeded: true);
+              progressEvents.add({'id': 'contact-1', 'sentBytes': 100});
+
+              uploadHooks.started(blobId: 'contact-2', budgetBytes: 200);
+              uploadHooks.settled(succeeded: true);
+              uploadHooks.sending();
+              return ShareBatchTargetResult(
+                target: ShareTargetSelection.contact(contact),
+                status: ShareBatchTargetStatus.sent,
+                detail: 'Sent.',
+              );
+            },
+        sendToGroupFn:
+            ({
+              required identity,
+              required shareIntent,
+              required group,
+              required processedMedia,
+              required uploadHooks,
+            }) async {
+              uploadHooks.started(blobId: 'group-1', budgetBytes: 100);
+              progressEvents.add({'id': 'group-1', 'sentBytes': 40});
+              uploadHooks.settled(succeeded: true);
+
+              uploadHooks.started(blobId: 'group-2', budgetBytes: 200);
+              progressEvents.add({'id': 'group-2', 'sentBytes': 216});
+              uploadHooks.settled(succeeded: true);
+              uploadHooks.sending();
+              return ShareBatchTargetResult(
+                target: ShareTargetSelection.group(group),
+                status: ShareBatchTargetStatus.sent,
+                detail: 'Sent.',
+              );
+            },
+      );
+
+      await coordinator.deliver(
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: ['/tmp/first.jpg', '/tmp/second.jpg'],
+        ),
+        targets: [
+          ShareTargetSelection.contact(
+            _makeContact('progress-contact', 'Contact'),
+          ),
+          ShareTargetSelection.group(_makeGroup('progress-group', 'Group')),
+        ],
+        onProgress: observed.add,
+      );
+
+      expect(observed, isNotEmpty);
+      expect(observed.last.sentBytes, 600);
+      expect(observed.last.totalBytes, 600);
+      expect(observed.last.phase, ShareBatchDeliveryPhase.sending);
+      expect(
+        observed.map((event) => event.sentBytes),
+        orderedEquals([...observed.map((event) => event.sentBytes)]..sort()),
+      );
+      expect(
+        observed.every(
+          (event) =>
+              event.sentBytes >= 0 && event.sentBytes <= event.totalBytes,
+        ),
+        isTrue,
+      );
+      expect(observed.any((event) => event.sentBytes == 77), isFalse);
+      expect(observed.any((event) => event.sentBytes == 100), isTrue);
+
+      final partialEvents = StreamController<Map<String, dynamic>>.broadcast(
+        sync: true,
+      );
+      addTearDown(partialEvents.close);
+      final partialObserved = <ShareBatchDeliveryProgress>[];
+      final partialCoordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: identityRepository,
+        contactRepository: InMemoryContactRepository(),
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        groupRepository: InMemoryGroupRepository(),
+        groupMessageRepository: InMemoryGroupMessageRepository(),
+        bridge: FakeBridge(),
+        p2pService: FakeP2PService(),
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: _imageProcessor(),
+        mediaUploadProgressEvents: partialEvents.stream,
+        processSharedMediaFn: (_) async =>
+            ProcessedShareMediaBatch(processedMedia: [processedMedia.first]),
+        sendToContactFn:
+            ({
+              required identity,
+              required shareIntent,
+              required contact,
+              required processedMedia,
+              required uploadHooks,
+            }) async {
+              uploadHooks.started(blobId: 'failed-blob', budgetBytes: 100);
+              partialEvents.add({'id': 'failed-blob', 'sentBytes': 40});
+              throw StateError('upload failed after partial progress');
+            },
+        sendToGroupFn:
+            ({
+              required identity,
+              required shareIntent,
+              required group,
+              required processedMedia,
+              required uploadHooks,
+            }) async {
+              uploadHooks.started(blobId: 'next-blob', budgetBytes: 100);
+              partialEvents.add({'id': 'next-blob', 'sentBytes': 100});
+              uploadHooks.settled(succeeded: true);
+              uploadHooks.sending();
+              return ShareBatchTargetResult(
+                target: ShareTargetSelection.group(group),
+                status: ShareBatchTargetStatus.sent,
+                detail: 'Sent.',
+              );
+            },
+      );
+
+      await partialCoordinator.deliver(
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: ['/tmp/first.jpg'],
+        ),
+        targets: [
+          ShareTargetSelection.contact(
+            _makeContact('partial-contact', 'Contact'),
+          ),
+          ShareTargetSelection.group(_makeGroup('partial-group', 'Group')),
+        ],
+        onProgress: partialObserved.add,
+      );
+
+      expect(partialObserved.last.sentBytes, 140);
+      expect(partialObserved.last.totalBytes, 200);
+      expect(
+        partialObserved.map((event) => event.sentBytes),
+        orderedEquals(
+          [...partialObserved.map((event) => event.sentBytes)]..sort(),
+        ),
+      );
+    },
+  );
+
+  test(
+    'external batch progress uses the production media upload stream by default',
+    () async {
+      final identityRepository = FakeIdentityRepository()
+        ..seed(_makeIdentity());
+      final observed = <ShareBatchDeliveryProgress>[];
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: identityRepository,
+        contactRepository: InMemoryContactRepository(),
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        groupRepository: InMemoryGroupRepository(),
+        groupMessageRepository: InMemoryGroupMessageRepository(),
+        bridge: FakeBridge(),
+        p2pService: FakeP2PService(),
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: _imageProcessor(),
+        processSharedMediaFn: (_) async => ProcessedShareMediaBatch(
+          processedMedia: [
+            PendingComposerMedia(
+              file: File('/tmp/production-default.jpg'),
+              budgetBytes: 50,
+            ),
+          ],
+        ),
+        sendToContactFn:
+            ({
+              required identity,
+              required shareIntent,
+              required contact,
+              required processedMedia,
+              required uploadHooks,
+            }) async {
+              uploadHooks.started(
+                blobId: 'production-default-blob',
+                budgetBytes: 50,
+              );
+              emitMediaUploadProgressEvent({
+                'id': 'production-default-blob',
+                'sentBytes': 25,
+              });
+              uploadHooks.settled(succeeded: true);
+              uploadHooks.sending();
+              return ShareBatchTargetResult(
+                target: ShareTargetSelection.contact(contact),
+                status: ShareBatchTargetStatus.sent,
+                detail: 'Sent.',
+              );
+            },
+      );
+
+      await coordinator.deliver(
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: ['/tmp/production-default.jpg'],
+        ),
+        targets: [
+          ShareTargetSelection.contact(
+            _makeContact('production-contact', 'Contact'),
+          ),
+        ],
+        onProgress: observed.add,
+      );
+
+      expect(observed.any((event) => event.sentBytes == 25), isTrue);
+      expect(observed.last.sentBytes, 50);
+      expect(observed.last.phase, ShareBatchDeliveryPhase.sending);
+    },
+  );
+
   test('reports sent queued and failed results truthfully', () async {
     final identityRepository = FakeIdentityRepository()..seed(_makeIdentity());
     final coordinator = DefaultShareBatchDeliveryCoordinator(
@@ -179,6 +438,7 @@ void main() {
             required shareIntent,
             required contact,
             required processedMedia,
+            required uploadHooks,
           }) async {
             return ShareBatchTargetResult(
               target: ShareTargetSelection.contact(contact),
@@ -196,6 +456,7 @@ void main() {
             required shareIntent,
             required group,
             required processedMedia,
+            required uploadHooks,
           }) async {
             return ShareBatchTargetResult(
               target: ShareTargetSelection.group(group),
@@ -265,6 +526,7 @@ void main() {
               required shareIntent,
               required contact,
               required processedMedia,
+              required uploadHooks,
             }) async {
               deliveredMedia = processedMedia;
               return ShareBatchTargetResult(
@@ -337,6 +599,7 @@ void main() {
               required shareIntent,
               required contact,
               required processedMedia,
+              required uploadHooks,
             }) async {
               deliveredMedia = processedMedia;
               return ShareBatchTargetResult(
@@ -1194,7 +1457,11 @@ void main() {
       );
 
       expect(result.results, hasLength(2));
-      expect(result.failureCount, 0, reason: result.results.map((r) => r.detail).join('; '));
+      expect(
+        result.failureCount,
+        0,
+        reason: result.results.map((r) => r.detail).join('; '),
+      );
 
       // Two INDEPENDENT uploads: fresh distinct blob ids, and neither reuses
       // the source attachment id.
@@ -1217,10 +1484,10 @@ void main() {
       );
       // The group upload is scoped to the destination group's CURRENT
       // members; the contact upload has no group access list at all.
-      expect(
-        ((groupUpload['allowedPeers'] as List?) ?? const []).toSet(),
-        {'my-peer-id-12345', 'peer-writer'},
-      );
+      expect(((groupUpload['allowedPeers'] as List?) ?? const []).toSet(), {
+        'my-peer-id-12345',
+        'peer-writer',
+      });
       expect(contactUpload['allowedPeers'], isNull);
 
       // Destination-side persisted rows carry FRESH crypto: two distinct new
@@ -1235,9 +1502,9 @@ void main() {
         owner: MediaOwnerLane.group,
       )).single;
       final contactAttachments = await media.getAttachmentsForMessage(
-        (await directMessages.getMessagesForContact('peer-dest-contact'))
-            .first
-            .id,
+        (await directMessages.getMessagesForContact(
+          'peer-dest-contact',
+        )).first.id,
         owner: MediaOwnerLane.direct,
       );
       final contactAttachment = contactAttachments.single;
@@ -1257,21 +1524,28 @@ void main() {
 
       // The forwarded marker rides every destination map; only the edited
       // caption and the newly minted media join normal routing fields.
-      final publishPayload = bridge.sentMessages
-          .map((message) => jsonDecode(message) as Map<String, dynamic>)
-          .firstWhere((message) => message['cmd'] == 'group:publish')['payload']
-          as Map<String, dynamic>;
+      final publishPayload =
+          bridge.sentMessages
+                  .map((message) => jsonDecode(message) as Map<String, dynamic>)
+                  .firstWhere(
+                    (message) => message['cmd'] == 'group:publish',
+                  )['payload']
+              as Map<String, dynamic>;
       expect(publishPayload['text'], 'edited caption');
       expect(publishPayload['isForwarded'], isTrue);
       expect(savedGroupMessage.isForwarded, isTrue);
-      final contactWire = p2pService.lastSendMessageContent ??
+      final contactWire =
+          p2pService.lastSendMessageContent ??
           p2pService.lastStoreInInboxMessage;
       expect(contactWire, isNotNull);
       final contactEnvelope = jsonDecode(contactWire!) as Map<String, dynamic>;
-      final contactInner = jsonDecode(
-        (contactEnvelope['encrypted'] as Map<String, dynamic>)['ciphertext']
-            as String,
-      ) as Map<String, dynamic>;
+      final contactInner =
+          jsonDecode(
+                (contactEnvelope['encrypted']
+                        as Map<String, dynamic>)['ciphertext']
+                    as String,
+              )
+              as Map<String, dynamic>;
       expect(contactInner['isForwarded'], isTrue);
       expect(contactInner['text'], 'edited caption');
 
@@ -1398,6 +1672,7 @@ void main() {
               required shareIntent,
               required contact,
               required processedMedia,
+              required uploadHooks,
             }) async {
               callOrder.add('contact:${contact.peerId}');
               if (contact.peerId == 'peer-throw-1') {
@@ -1415,6 +1690,7 @@ void main() {
               required shareIntent,
               required group,
               required processedMedia,
+              required uploadHooks,
             }) async {
               callOrder.add('group:${group.id}');
               if (group.id == 'group-throw') {
