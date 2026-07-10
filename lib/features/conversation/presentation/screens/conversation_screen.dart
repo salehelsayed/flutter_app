@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -5,9 +6,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' as intl;
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/received_media_egress.dart';
 import 'package:flutter_app/core/utils/format_day_separator_label.dart';
 import 'package:flutter_app/core/widgets/quiet_confirm.dart';
+import 'package:flutter_app/features/conversation/application/received_media_action_controller.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/utils/message_run_grouping.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/blocked_banner.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
@@ -26,9 +33,11 @@ import 'package:flutter_app/features/identity/presentation/widgets/ambient_backg
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_banner.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_system_message.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/direct_received_media_action_sheet.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
-import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
+import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
+import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
 
 typedef ConversationMediaViewerBuilder =
     Widget Function({
@@ -36,6 +45,22 @@ typedef ConversationMediaViewerBuilder =
       required List<String> allPaths,
       required int initialIndex,
     });
+
+/// 231: Save/Share for one direct received attachment. The wired layer routes
+/// this to the [ReceivedMediaActionController], which reloads and qualifies
+/// the CURRENT row before any irreversible egress — the screen only carries
+/// the stable identity.
+typedef DirectReceivedMediaEgressHandler =
+    Future<DirectReceivedMediaEgressOutcome> Function(
+      DirectReceivedMediaActionIdentity identity,
+      MediaEgressDestination destination,
+    );
+
+/// 231: current persisted Info metadata for one direct received attachment.
+typedef DirectReceivedMediaInfoLoader =
+    Future<DirectReceivedMediaInfo?> Function(
+      DirectReceivedMediaActionIdentity identity,
+    );
 
 @immutable
 class ConversationComposerViewState {
@@ -204,6 +229,16 @@ class ConversationScreen extends StatefulWidget {
   final ConversationMediaViewerBuilder? mediaViewerBuilder;
   final BackgroundPreference backgroundPreference;
 
+  /// 231: direct received-media core actions. All three are optional; when
+  /// none is provided the media tiles keep their pre-231 behavior (tap-to-view
+  /// only, row-level long press).
+  final DirectReceivedMediaEgressHandler? onMediaEgress;
+  final DirectReceivedMediaInfoLoader? onLoadMediaInfo;
+
+  /// Whole-message Delete for Me initiated from a media surface — the wired
+  /// layer labels the confirmation as message+attachments removal.
+  final ValueChanged<String>? onDeleteMediaMessage;
+
   const ConversationScreen({
     super.key,
     required this.contactPeerId,
@@ -269,6 +304,9 @@ class ConversationScreen extends StatefulWidget {
     this.allowEditAction = true,
     this.mediaViewerBuilder,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
+    this.onMediaEgress,
+    this.onLoadMediaInfo,
+    this.onDeleteMediaMessage,
   });
 
   @override
@@ -600,37 +638,44 @@ class _ConversationScreenState extends State<ConversationScreen> {
                   )
                   .toList();
               if (index < visual.length && visual[index].localPath != null) {
-                final allPaths = visual
-                    .where(
-                      (a) => a.localPath != null && a.downloadStatus == 'done',
-                    )
-                    .map((a) => a.localPath!)
-                    .toList();
-                final tappedPath = visual[index].localPath!;
-                final startIndex = allPaths
-                    .indexOf(tappedPath)
-                    .clamp(0, allPaths.length - 1);
                 final mediaViewerBuilder = widget.mediaViewerBuilder;
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => mediaViewerBuilder != null
-                        ? mediaViewerBuilder(
-                            localPath: tappedPath,
-                            allPaths: allPaths,
-                            initialIndex: startIndex,
-                          )
-                        : FullScreenImageViewer(
-                            localPath: tappedPath,
-                            allPaths: allPaths,
-                            initialIndex: startIndex,
-                          ),
-                  ),
-                );
+                if (mediaViewerBuilder != null) {
+                  // Injected builder (test seam / legacy path-based viewer).
+                  final allPaths = visual
+                      .where(
+                        (a) =>
+                            a.localPath != null && a.downloadStatus == 'done',
+                      )
+                      .map((a) => a.localPath!)
+                      .toList();
+                  final tappedPath = visual[index].localPath!;
+                  final startIndex = allPaths
+                      .indexOf(tappedPath)
+                      .clamp(0, allPaths.length - 1);
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => mediaViewerBuilder(
+                        localPath: tappedPath,
+                        allPaths: allPaths,
+                        initialIndex: startIndex,
+                      ),
+                    ),
+                  );
+                  return;
+                }
+                // 231: message-bounded typed viewer carrying stable
+                // attachment/message identity and the direct-lane action
+                // capabilities (plan 230 surface).
+                _openDirectMediaViewer(message, visual, index);
               }
             };
 
-            LetterCard buildLetterCard({VoidCallback? onLongPress}) {
+            LetterCard buildLetterCard({
+              VoidCallback? onLongPress,
+              void Function(int index)? onMediaLongPress,
+            }) {
               return LetterCard(
+                onMediaLongPress: onMediaLongPress,
                 senderPeerId: message.senderPeerId,
                 senderName: message.isIncoming ? widget.contactUsername : 'You',
                 text: displayText,
@@ -694,6 +739,18 @@ class _ConversationScreenState extends State<ConversationScreen> {
                 onLongPress: canOpenContextOverlay
                     ? () => _showMessageContextOverlay(
                         message,
+                        cardContext: cardContext,
+                        selectedMessage: buildLetterCard(),
+                      )
+                    : null,
+                // 231: tile long-press carries the exact attachment. An
+                // ineligible tile (outgoing/unresolved/not-done) falls back
+                // to the plain whole-message context inside the handler.
+                onMediaLongPress:
+                    canOpenContextOverlay && _hasDirectMediaActionSurface
+                    ? (visualIndex) => _onMediaCellLongPress(
+                        message,
+                        visualIndex,
                         cardContext: cardContext,
                         selectedMessage: buildLetterCard(),
                       )
@@ -883,6 +940,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
     ConversationMessage message, {
     required BuildContext cardContext,
     required Widget selectedMessage,
+    MediaAttachment? mediaTarget,
   }) {
     final route = ModalRoute.of(context);
     if (route != null && !route.isCurrent) return;
@@ -905,6 +963,21 @@ class _ConversationScreenState extends State<ConversationScreen> {
     final hasEditAction = _canEditMessage(message);
     final hasCopyAction = !message.isDeleted && message.text.trim().isNotEmpty;
     final hasDeleteAction = _canDeleteMessage(message);
+    // 231: received-media entries for the exact long-pressed eligible
+    // attachment. On a media-targeted overlay, Delete routes to the
+    // media-labeled whole-message confirmation.
+    final mediaIdentity = mediaTarget == null
+        ? null
+        : DirectReceivedMediaActionIdentity(
+            messageId: message.id,
+            attachmentId: mediaTarget.id,
+          );
+    final showSaveAction = mediaIdentity != null && widget.onMediaEgress != null;
+    final showShareAction = showSaveAction;
+    final showInfoAction =
+        mediaIdentity != null && widget.onLoadMediaInfo != null;
+    final showMediaDeleteAction =
+        mediaIdentity != null && widget.onDeleteMediaMessage != null;
 
     showDialog(
       context: context,
@@ -916,7 +989,12 @@ class _ConversationScreenState extends State<ConversationScreen> {
         currentEmoji: ownReaction?.emoji,
         showEditAction: hasEditAction,
         showCopyAction: hasCopyAction,
-        showDeleteAction: hasDeleteAction,
+        showSaveAction: showSaveAction,
+        showShareAction: showShareAction,
+        showInfoAction: showInfoAction,
+        showDeleteAction: mediaIdentity != null
+            ? showMediaDeleteAction
+            : hasDeleteAction,
         onDismiss: () => Navigator.of(dialogContext).pop(),
         onReactionSelected: (emoji) {
           Navigator.of(dialogContext).pop();
@@ -942,16 +1020,349 @@ class _ConversationScreenState extends State<ConversationScreen> {
                 await _copyMessageText(message.text);
               }
             : null,
-        onDeleteTap: hasDeleteAction
+        onSaveTap: showSaveAction
             ? () {
                 Navigator.of(dialogContext).pop();
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (!mounted) return;
-                  widget.onDeleteMessage?.call(message.id);
-                });
+                unawaited(_promptSaveDestinationAndPerform(mediaIdentity));
               }
             : null,
+        onShareTap: showShareAction
+            ? () {
+                Navigator.of(dialogContext).pop();
+                unawaited(
+                  _performMediaEgressWithFeedback(
+                    mediaIdentity,
+                    MediaEgressDestination.share,
+                  ),
+                );
+              }
+            : null,
+        onInfoTap: showInfoAction
+            ? () {
+                Navigator.of(dialogContext).pop();
+                unawaited(_showDirectMediaInfo(mediaIdentity));
+              }
+            : null,
+        onDeleteTap: mediaIdentity != null
+            ? (showMediaDeleteAction
+                  ? () {
+                      Navigator.of(dialogContext).pop();
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (!mounted) return;
+                        widget.onDeleteMediaMessage?.call(message.id);
+                      });
+                    }
+                  : null)
+            : (hasDeleteAction
+                  ? () {
+                      Navigator.of(dialogContext).pop();
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (!mounted) return;
+                        widget.onDeleteMessage?.call(message.id);
+                      });
+                    }
+                  : null),
       ),
+    );
+  }
+
+  /// 231: whether any direct received-media action surface is wired.
+  bool get _hasDirectMediaActionSurface =>
+      widget.onMediaEgress != null ||
+      widget.onLoadMediaInfo != null ||
+      widget.onDeleteMediaMessage != null;
+
+  /// 231: an attachment may surface media actions only when its CURRENT
+  /// display state is an incoming, live, direct-owned, completed visual with
+  /// bytes on disk. Missing or unresolved ownership yields no action-bearing
+  /// surface (fail closed) — and the controller re-verifies durable state
+  /// again immediately before any egress.
+  bool _isDirectMediaActionEligible(
+    ConversationMessage message,
+    MediaAttachment attachment,
+  ) {
+    if (message.isDeleted || !message.isIncoming) return false;
+    if (message.transport == 'system') return false;
+    if (attachment.ownerLane != MediaOwnerLane.direct) return false;
+    if (attachment.mediaType != 'image' && attachment.mediaType != 'video') {
+      return false;
+    }
+    if (attachment.downloadStatus != kMediaDownloadStatusDone) return false;
+    final localPath = attachment.localPath;
+    if (localPath == null || localPath.isEmpty) return false;
+    return File(MediaFileManager.resolveStoredPathSync(localPath)).existsSync();
+  }
+
+  void _onMediaCellLongPress(
+    ConversationMessage message,
+    int visualIndex, {
+    required BuildContext cardContext,
+    required Widget selectedMessage,
+  }) {
+    final visual = message.media
+        .where((a) => a.mediaType == 'image' || a.mediaType == 'video')
+        .toList();
+    if (visualIndex < 0 || visualIndex >= visual.length) return;
+    final attachment = visual[visualIndex];
+    _showMessageContextOverlay(
+      message,
+      cardContext: cardContext,
+      selectedMessage: selectedMessage,
+      mediaTarget: _isDirectMediaActionEligible(message, attachment)
+          ? attachment
+          : null,
+    );
+  }
+
+  /// 231: message-bounded typed viewer over the tapped message's completed
+  /// visual attachments. Never concatenates other messages' media —
+  /// conversation-wide navigation is plan 233.
+  void _openDirectMediaViewer(
+    ConversationMessage message,
+    List<MediaAttachment> visual,
+    int tappedIndex,
+  ) {
+    final viewable = visual
+        .where(
+          (a) =>
+              a.localPath != null &&
+              a.downloadStatus == kMediaDownloadStatusDone,
+        )
+        .toList();
+    if (viewable.isEmpty) return;
+    final tappedId = visual[tappedIndex].id;
+    var initialIndex = viewable.indexWhere((a) => a.id == tappedId);
+    if (initialIndex < 0) initialIndex = 0;
+    final items = [
+      for (final attachment in viewable)
+        _buildDirectViewerItem(message, attachment),
+    ];
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => FullScreenTypedMediaViewer(
+          items: items,
+          initialIndex: initialIndex,
+          onAction: (item, action) => _handleViewerAction(item, action),
+        ),
+      ),
+    );
+  }
+
+  MediaViewerItem _buildDirectViewerItem(
+    ConversationMessage message,
+    MediaAttachment attachment,
+  ) {
+    final localPath = attachment.localPath;
+    final resolvedPath = localPath == null || localPath.isEmpty
+        ? null
+        : MediaFileManager.resolveStoredPathSync(localPath);
+    final hasBytes = resolvedPath != null && File(resolvedPath).existsSync();
+    final kind = attachment.mediaType == 'video'
+        ? MediaViewerKind.video
+        : attachment.isAnimated
+        ? MediaViewerKind.gif
+        : MediaViewerKind.image;
+    final allowed = <MediaViewerAction>{};
+    if (_isDirectMediaActionEligible(message, attachment)) {
+      if (widget.onMediaEgress != null) {
+        allowed.add(MediaViewerAction.save);
+        allowed.add(MediaViewerAction.share);
+      }
+      if (widget.onQuoteReply != null) allowed.add(MediaViewerAction.reply);
+      if (widget.onLoadMediaInfo != null) allowed.add(MediaViewerAction.info);
+      if (widget.onDeleteMediaMessage != null) {
+        allowed.add(MediaViewerAction.delete);
+      }
+    }
+    return MediaViewerItem(
+      attachmentId: attachment.id,
+      messageId: message.id,
+      kind: kind,
+      mime: attachment.mime,
+      // Only a trusted direct owner is forwarded; anything else (unresolved
+      // legacy rows, foreign lanes) stays ownerless and action-ineligible.
+      owner: attachment.ownerLane == MediaOwnerLane.direct
+          ? MediaOwnerLane.direct
+          : null,
+      localPath: resolvedPath,
+      sizeBytes: attachment.size,
+      width: attachment.width,
+      height: attachment.height,
+      durationMs: attachment.durationMs,
+      caption: message.isDeleted || message.text.trim().isEmpty
+          ? null
+          : message.text,
+      senderLabel: message.isIncoming ? widget.contactUsername : null,
+      timestamp: message.parsedTimestamp,
+      protection: MediaViewerProtection(
+        isDownloaded:
+            attachment.downloadStatus == kMediaDownloadStatusDone && hasBytes,
+        isIntegrityVerified:
+            attachment.downloadStatus != kMediaDownloadStatusIntegrityFailed,
+      ),
+      capabilities: MediaViewerActionCapabilities(allowed: allowed),
+    );
+  }
+
+  Future<MediaViewerActionResult> _handleViewerAction(
+    MediaViewerItem item,
+    MediaViewerAction action,
+  ) async {
+    final identity = DirectReceivedMediaActionIdentity(
+      messageId: item.messageId,
+      attachmentId: item.attachmentId,
+    );
+    switch (action) {
+      case MediaViewerAction.save:
+        final destination = await DirectMediaSaveDestinationSheet.show(
+          context,
+        );
+        if (!mounted || destination == null) {
+          return MediaViewerActionResult.cancelled;
+        }
+        return _viewerEgressResult(
+          await _performMediaEgress(identity, destination),
+        );
+      case MediaViewerAction.share:
+        return _viewerEgressResult(
+          await _performMediaEgress(identity, MediaEgressDestination.share),
+        );
+      case MediaViewerAction.reply:
+        if (!mounted) return MediaViewerActionResult.failure;
+        // Close the viewer route, then quote the OWNING message.
+        Navigator.of(context).pop();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _handleReplyAction(item.messageId);
+        });
+        return MediaViewerActionResult.success;
+      case MediaViewerAction.info:
+        await _showDirectMediaInfo(identity);
+        return MediaViewerActionResult.success;
+      case MediaViewerAction.delete:
+        if (!mounted || widget.onDeleteMediaMessage == null) {
+          return MediaViewerActionResult.failure;
+        }
+        // Close the viewer first; the wired layer owns the one
+        // Delete-for-Me confirmation and the existing whole-message cleanup.
+        Navigator.of(context).pop();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          widget.onDeleteMediaMessage?.call(item.messageId);
+        });
+        return MediaViewerActionResult.success;
+      case MediaViewerAction.forward:
+      case MediaViewerAction.bookmark:
+        // Plans 232/233 own these; the direct lane never authorizes them.
+        return MediaViewerActionResult.failure;
+    }
+  }
+
+  Future<DirectReceivedMediaEgressOutcome?> _performMediaEgress(
+    DirectReceivedMediaActionIdentity identity,
+    MediaEgressDestination destination,
+  ) async {
+    final handler = widget.onMediaEgress;
+    if (handler == null) return null;
+    return handler(identity, destination);
+  }
+
+  Future<void> _promptSaveDestinationAndPerform(
+    DirectReceivedMediaActionIdentity identity,
+  ) async {
+    final destination = await DirectMediaSaveDestinationSheet.show(context);
+    if (!mounted || destination == null) return;
+    await _performMediaEgressWithFeedback(identity, destination);
+  }
+
+  Future<void> _performMediaEgressWithFeedback(
+    DirectReceivedMediaActionIdentity identity,
+    MediaEgressDestination destination,
+  ) async {
+    final outcome = await _performMediaEgress(identity, destination);
+    if (!mounted || outcome == null) return;
+    _showMediaFeedback(_egressOutcomeCopy(outcome));
+  }
+
+  void _showMediaFeedback(String copy) {
+    ScaffoldMessenger.maybeOf(context)
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(copy), behavior: SnackBarBehavior.floating),
+      );
+  }
+
+  /// Typed outcome → user copy. Denials and structural rejects surface as
+  /// truthful unavailability; nothing here retries or mutates the source.
+  String _egressOutcomeCopy(DirectReceivedMediaEgressOutcome outcome) {
+    final l10n = AppLocalizations.of(context)!;
+    if (outcome.wasDenied) return l10n.media_egress_result_unavailable;
+    final result = outcome.result!;
+    switch (result.outcome) {
+      case MediaEgressOutcome.saved:
+      case MediaEgressOutcome.partial:
+        return l10n.media_egress_result_saved;
+      case MediaEgressOutcome.presented:
+        return l10n.media_egress_result_shared;
+      case MediaEgressOutcome.cancelled:
+        return l10n.media_egress_result_cancelled;
+      case MediaEgressOutcome.permissionDenied:
+        return l10n.media_egress_result_permission_denied;
+      case MediaEgressOutcome.rejected:
+        final allMissing =
+            result.items.isNotEmpty &&
+            result.items.every(
+              (item) => item.outcome == MediaEgressItemOutcome.missingFile,
+            );
+        return allMissing
+            ? l10n.media_egress_result_missing
+            : l10n.media_egress_result_unavailable;
+      case MediaEgressOutcome.busy:
+      case MediaEgressOutcome.platformFailure:
+        return l10n.media_egress_result_failed;
+    }
+  }
+
+  MediaViewerActionResult _viewerEgressResult(
+    DirectReceivedMediaEgressOutcome? outcome,
+  ) {
+    if (outcome == null || outcome.wasDenied) {
+      return MediaViewerActionResult.failure;
+    }
+    switch (outcome.result!.outcome) {
+      case MediaEgressOutcome.saved:
+      case MediaEgressOutcome.partial:
+      case MediaEgressOutcome.presented:
+        return MediaViewerActionResult.success;
+      case MediaEgressOutcome.cancelled:
+        return MediaViewerActionResult.cancelled;
+      case MediaEgressOutcome.busy:
+      case MediaEgressOutcome.permissionDenied:
+      case MediaEgressOutcome.rejected:
+      case MediaEgressOutcome.platformFailure:
+        return MediaViewerActionResult.failure;
+    }
+  }
+
+  /// 231: local Info from persisted metadata — no transport reads. A stale
+  /// identity (row/parent gone) surfaces truthful unavailability.
+  Future<void> _showDirectMediaInfo(
+    DirectReceivedMediaActionIdentity identity,
+  ) async {
+    final loader = widget.onLoadMediaInfo;
+    if (loader == null) return;
+    final info = await loader(identity);
+    if (!mounted) return;
+    if (info == null) {
+      _showMediaFeedback(
+        AppLocalizations.of(context)!.media_egress_result_unavailable,
+      );
+      return;
+    }
+    await DirectReceivedMediaInfoSheet.show(
+      context,
+      info: info,
+      senderLabel: info.isIncoming ? widget.contactUsername : 'You',
     );
   }
 

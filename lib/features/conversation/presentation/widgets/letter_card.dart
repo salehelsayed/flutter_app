@@ -50,6 +50,11 @@ class LetterCard extends StatelessWidget {
   final bool isDeleted;
   final List<MediaAttachment> media;
   final void Function(int index)? onMediaTap;
+
+  /// 235: per-attachment long-press with the exact index into the rendered
+  /// image/video grid (same index space as [onMediaTap]). When null, tile
+  /// long-presses fall through to the card-level [onLongPress].
+  final void Function(int index)? onMediaLongPress;
   final List<MessageReaction> reactions;
   final String? ownPeerId;
   final VoidCallback? onLongPress;
@@ -128,6 +133,7 @@ class LetterCard extends StatelessWidget {
     this.isDeleted = false,
     this.media = const [],
     this.onMediaTap,
+    this.onMediaLongPress,
     this.reactions = const [],
     this.ownPeerId,
     this.onLongPress,
@@ -388,6 +394,7 @@ class LetterCard extends StatelessWidget {
           child: MediaGrid(
             media: _imageVideoMedia,
             onTap: onMediaTap,
+            onLongPressItem: onMediaLongPress,
             onRetryUnavailableMedia: onRetryUnavailableMedia != null
                 ? (attachment) => onRetryUnavailableMedia!(attachment.id)
                 : null,

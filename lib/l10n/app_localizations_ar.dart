@@ -619,6 +619,15 @@ class AppLocalizationsAr extends AppLocalizations {
   String get conversation_context_delete => 'حذف';
 
   @override
+  String get conversation_context_save => 'حفظ';
+
+  @override
+  String get conversation_context_share => 'مشاركة';
+
+  @override
+  String get conversation_context_info => 'معلومات';
+
+  @override
   String get conversation_context_copied => 'تم نسخ الرسالة إلى الحافظة';
 
   @override
@@ -632,6 +641,10 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get conversation_delete_message_prompt => 'لمن تريد حذف هذه الرسالة؟';
+
+  @override
+  String get conversation_delete_media_message_prompt =>
+      'هل تريد حذف هذه الرسالة؟ ستتم إزالة الرسالة وجميع مرفقاتها من هذا الجهاز.';
 
   @override
   String get conversation_delete_for_me => 'الحذف لديّ';
@@ -1983,6 +1996,139 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get media_viewer_action_bookmark => 'إشارة مرجعية';
+
+  @override
+  String get media_viewer_action_info => 'معلومات';
+
+  @override
+  String get media_viewer_action_reply => 'رد';
+
+  @override
+  String get media_save_destination_prompt => 'الحفظ في…';
+
+  @override
+  String get media_save_destination_photos => 'حفظ في الصور';
+
+  @override
+  String get media_save_destination_files => 'حفظ في الملفات';
+
+  @override
+  String get media_egress_result_saved => 'تم الحفظ';
+
+  @override
+  String get media_egress_result_shared => 'تمت المشاركة';
+
+  @override
+  String get media_egress_result_cancelled => 'تم الإلغاء';
+
+  @override
+  String get media_egress_result_permission_denied =>
+      'مطلوب إذن لإتمام هذا الإجراء';
+
+  @override
+  String get media_egress_result_missing =>
+      'ملف الوسائط هذا غير موجود على هذا الجهاز';
+
+  @override
+  String get media_egress_result_failed => 'تعذر إكمال هذا الإجراء';
+
+  @override
+  String get media_egress_result_unavailable =>
+      'لم تعد هذه الوسائط متاحة للحفظ أو المشاركة';
+
+  @override
+  String get media_info_title => 'معلومات الوسائط';
+
+  @override
+  String get media_info_sender => 'من';
+
+  @override
+  String get media_info_direction => 'الاتجاه';
+
+  @override
+  String get media_info_direction_incoming => 'مستلمة';
+
+  @override
+  String get media_info_direction_outgoing => 'مرسلة';
+
+  @override
+  String get media_info_date => 'التاريخ';
+
+  @override
+  String get media_info_type => 'النوع';
+
+  @override
+  String get media_info_size => 'الحجم';
+
+  @override
+  String get media_info_dimensions => 'الأبعاد';
+
+  @override
+  String get media_info_duration => 'المدة';
+
+  @override
+  String get media_info_state => 'الحالة';
+
+  @override
+  String get media_info_state_downloaded => 'تم التنزيل';
+
+  @override
+  String get media_info_state_not_downloaded => 'لم يتم التنزيل';
+
+  @override
+  String get media_info_state_unverified => 'تعذر التحقق';
+
+  @override
+  String get group_media_info_title => 'معلومات الوسائط';
+
+  @override
+  String get group_media_info_kind => 'النوع';
+
+  @override
+  String get group_media_info_kind_image => 'صورة';
+
+  @override
+  String get group_media_info_kind_video => 'فيديو';
+
+  @override
+  String get group_media_info_sender => 'من';
+
+  @override
+  String get group_media_info_sent_time => 'أُرسلت';
+
+  @override
+  String get group_media_info_size => 'الحجم';
+
+  @override
+  String get group_media_info_state => 'الحالة';
+
+  @override
+  String get group_media_info_caption => 'التعليق';
+
+  @override
+  String get group_media_info_state_available => 'تم التنزيل والتحقق';
+
+  @override
+  String get group_media_info_state_pending => 'لم يتم التنزيل بعد';
+
+  @override
+  String get group_media_info_state_unavailable => 'غير متوفر';
+
+  @override
+  String get group_media_delete_for_me_title => 'الحذف لديّ فقط؟';
+
+  @override
+  String get group_media_delete_for_me_body =>
+      'سيؤدي هذا إلى إزالة الرسالة ووسائطها من هذا الجهاز فقط. يحتفظ الأعضاء الآخرون بنسختهم.';
+
+  @override
+  String get group_media_delete_for_me_confirm => 'احذف لديّ';
+
+  @override
+  String get group_media_delete_for_me_cancel => 'إلغاء';
+
+  @override
+  String get group_media_saved_confirm => 'تم الحفظ';
 
   @override
   String get media_viewer_play => 'تشغيل';

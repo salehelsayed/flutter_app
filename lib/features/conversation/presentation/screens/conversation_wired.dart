@@ -22,6 +22,8 @@ import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/permissions/mic_permission_prompt.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/received_media_egress.dart';
+import 'package:flutter_app/core/media/received_media_egress_service.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/settings/application/media_download_policy.dart';
@@ -57,6 +59,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/application/load_reactions_use_case.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
+import 'package:flutter_app/features/conversation/application/received_media_action_controller.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/application/remove_reaction_use_case.dart';
@@ -256,6 +259,13 @@ class ConversationWired extends StatefulWidget {
   /// gated by this decider.
   final MediaAutoDownloadDecider? autoDownloadDecider;
 
+  /// 231: direct received-media Save/Share/Info authority. Null (production
+  /// default) builds a controller over [messageRepo]/[mediaAttachmentRepo]
+  /// and the real [ReceivedMediaEgressService]; tests inject a recording
+  /// controller. Media actions stay unwired when [mediaAttachmentRepo] is
+  /// absent and no controller is injected.
+  final ReceivedMediaActionController? receivedMediaActionController;
+
   const ConversationWired({
     super.key,
     required this.contact,
@@ -295,6 +305,7 @@ class ConversationWired extends StatefulWidget {
     this.appShellController,
     this.transportMetrics,
     this.autoDownloadDecider,
+    this.receivedMediaActionController,
   });
 
   @override
@@ -1908,13 +1919,27 @@ class _ConversationWiredState extends State<ConversationWired>
     });
   }
 
-  Future<void> _onDeleteMessage(String messageId) async {
+  Future<void> _onDeleteMessage(String messageId) =>
+      _promptAndDeleteMessage(messageId, mediaMessage: false);
+
+  /// 231: whole-message Delete for Me initiated from a media surface. Same
+  /// confirmation sheet and use case as [_onDeleteMessage] — only the prompt
+  /// copy changes, stating the message AND all its attachments are removed
+  /// from this device (never a single-attachment deletion).
+  Future<void> _onDeleteMediaMessage(String messageId) =>
+      _promptAndDeleteMessage(messageId, mediaMessage: true);
+
+  Future<void> _promptAndDeleteMessage(
+    String messageId, {
+    required bool mediaMessage,
+  }) async {
     if (!mounted) return;
     final message = _messages.where((m) => m.id == messageId).firstOrNull;
     if (message == null || message.isDeleted) return;
 
     final action = await _showDeleteMessageSheet(
       canDeleteForEveryone: _canDeleteForEveryone(message),
+      mediaMessage: mediaMessage,
     );
     if (!mounted || action == null || action == _DeleteMessageAction.cancel) {
       return;
@@ -1994,14 +2019,61 @@ class _ConversationWiredState extends State<ConversationWired>
 
   Future<_DeleteMessageAction?> _showDeleteMessageSheet({
     required bool canDeleteForEveryone,
+    bool mediaMessage = false,
   }) {
     return showModalBottomSheet<_DeleteMessageAction>(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (sheetContext) =>
-          _DeleteMessageSheet(canDeleteForEveryone: canDeleteForEveryone),
+      builder: (sheetContext) => _DeleteMessageSheet(
+        canDeleteForEveryone: canDeleteForEveryone,
+        mediaMessage: mediaMessage,
+      ),
     );
+  }
+
+  // ── 231: direct received-media actions → local controller only ──────────
+
+  ReceivedMediaActionController? _lazyMediaActionController;
+
+  /// The single egress/info authority for this screen's media actions. An
+  /// injected controller wins (tests); otherwise one is built lazily over the
+  /// local repositories and the real plan-227 service. Null (no repo) leaves
+  /// media actions unwired.
+  ReceivedMediaActionController? get _mediaActionController {
+    final injected = widget.receivedMediaActionController;
+    if (injected != null) return injected;
+    final mediaAttachmentRepo = widget.mediaAttachmentRepo;
+    if (mediaAttachmentRepo == null) return null;
+    return _lazyMediaActionController ??= ReceivedMediaActionController(
+      loadParentMessage: widget.messageRepo.getMessage,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      egressService: ReceivedMediaEgressService(),
+    );
+  }
+
+  Future<DirectReceivedMediaEgressOutcome> _performDirectMediaEgress(
+    DirectReceivedMediaActionIdentity identity,
+    MediaEgressDestination destination,
+  ) async {
+    final controller = _mediaActionController;
+    if (controller == null) {
+      return const DirectReceivedMediaEgressOutcome.denied(
+        DirectMediaEgressDenial.policyUnavailable,
+      );
+    }
+    return controller.performEgress(
+      identity: identity,
+      destination: destination,
+    );
+  }
+
+  Future<DirectReceivedMediaInfo?> _loadDirectMediaInfo(
+    DirectReceivedMediaActionIdentity identity,
+  ) async {
+    final controller = _mediaActionController;
+    if (controller == null) return null;
+    return controller.loadInfo(identity);
   }
 
   (String?, bool) _resolveActiveQuotePreview() {
@@ -4615,6 +4687,18 @@ class _ConversationWiredState extends State<ConversationWired>
           onMaybeLater: _onMaybeLater,
           onQuoteReply: _onQuoteReply,
           onDeleteMessage: _onDeleteMessage,
+          // 231: direct received-media actions — every Save/Share/Info runs
+          // through the local controller; Delete stays on the existing
+          // whole-message seam with media-labeled confirmation copy.
+          onMediaEgress: _mediaActionController != null
+              ? _performDirectMediaEgress
+              : null,
+          onLoadMediaInfo: _mediaActionController != null
+              ? _loadDirectMediaInfo
+              : null,
+          onDeleteMediaMessage: _mediaActionController != null
+              ? (messageId) => unawaited(_onDeleteMediaMessage(messageId))
+              : null,
           activeQuoteText: activeQuoteText,
           isActiveQuoteUnavailable: isActiveQuoteUnavailable,
           onClearQuote: _onClearQuote,
@@ -4636,7 +4720,14 @@ enum _DeleteMessageAction { forMe, forEveryone, cancel }
 class _DeleteMessageSheet extends StatelessWidget {
   final bool canDeleteForEveryone;
 
-  const _DeleteMessageSheet({required this.canDeleteForEveryone});
+  /// 231: when the deletion was initiated from a media surface the prompt
+  /// states that the message AND all of its attachments leave this device.
+  final bool mediaMessage;
+
+  const _DeleteMessageSheet({
+    required this.canDeleteForEveryone,
+    this.mediaMessage = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -4701,7 +4792,9 @@ class _DeleteMessageSheet extends StatelessWidget {
                       ),
                       const SizedBox(height: 18),
                       Text(
-                        l10n.conversation_delete_message_prompt,
+                        mediaMessage
+                            ? l10n.conversation_delete_media_message_prompt
+                            : l10n.conversation_delete_message_prompt,
                         key: ConversationWired.deletePromptKey,
                         textAlign: TextAlign.center,
                         style: TextStyle(

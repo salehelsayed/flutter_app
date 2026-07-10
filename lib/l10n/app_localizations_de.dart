@@ -609,6 +609,15 @@ class AppLocalizationsDe extends AppLocalizations {
   String get conversation_context_delete => 'Löschen';
 
   @override
+  String get conversation_context_save => 'Speichern';
+
+  @override
+  String get conversation_context_share => 'Teilen';
+
+  @override
+  String get conversation_context_info => 'Info';
+
+  @override
   String get conversation_context_copied =>
       'Nachricht in die Zwischenablage kopiert';
 
@@ -624,6 +633,10 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get conversation_delete_message_prompt =>
       'Für wen möchtest du diese Nachricht löschen?';
+
+  @override
+  String get conversation_delete_media_message_prompt =>
+      'Diese Nachricht löschen? Die Nachricht und alle ihre Anhänge werden von diesem Gerät entfernt.';
 
   @override
   String get conversation_delete_for_me => 'Für mich löschen';
@@ -2003,6 +2016,141 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get media_viewer_action_bookmark => 'Lesezeichen';
+
+  @override
+  String get media_viewer_action_info => 'Info';
+
+  @override
+  String get media_viewer_action_reply => 'Antworten';
+
+  @override
+  String get media_save_destination_prompt => 'Speichern in …';
+
+  @override
+  String get media_save_destination_photos => 'In Fotos speichern';
+
+  @override
+  String get media_save_destination_files => 'In Dateien speichern';
+
+  @override
+  String get media_egress_result_saved => 'Gespeichert';
+
+  @override
+  String get media_egress_result_shared => 'Geteilt';
+
+  @override
+  String get media_egress_result_cancelled => 'Abgebrochen';
+
+  @override
+  String get media_egress_result_permission_denied =>
+      'Berechtigung erforderlich, um diese Aktion abzuschließen';
+
+  @override
+  String get media_egress_result_missing =>
+      'Diese Mediendatei fehlt auf diesem Gerät';
+
+  @override
+  String get media_egress_result_failed =>
+      'Aktion konnte nicht abgeschlossen werden';
+
+  @override
+  String get media_egress_result_unavailable =>
+      'Diese Medien stehen zum Speichern oder Teilen nicht mehr zur Verfügung';
+
+  @override
+  String get media_info_title => 'Medieninfo';
+
+  @override
+  String get media_info_sender => 'Von';
+
+  @override
+  String get media_info_direction => 'Richtung';
+
+  @override
+  String get media_info_direction_incoming => 'Empfangen';
+
+  @override
+  String get media_info_direction_outgoing => 'Gesendet';
+
+  @override
+  String get media_info_date => 'Datum';
+
+  @override
+  String get media_info_type => 'Typ';
+
+  @override
+  String get media_info_size => 'Größe';
+
+  @override
+  String get media_info_dimensions => 'Abmessungen';
+
+  @override
+  String get media_info_duration => 'Dauer';
+
+  @override
+  String get media_info_state => 'Status';
+
+  @override
+  String get media_info_state_downloaded => 'Heruntergeladen';
+
+  @override
+  String get media_info_state_not_downloaded => 'Nicht heruntergeladen';
+
+  @override
+  String get media_info_state_unverified => 'Konnte nicht überprüft werden';
+
+  @override
+  String get group_media_info_title => 'Medieninfo';
+
+  @override
+  String get group_media_info_kind => 'Typ';
+
+  @override
+  String get group_media_info_kind_image => 'Bild';
+
+  @override
+  String get group_media_info_kind_video => 'Video';
+
+  @override
+  String get group_media_info_sender => 'Von';
+
+  @override
+  String get group_media_info_sent_time => 'Gesendet';
+
+  @override
+  String get group_media_info_size => 'Größe';
+
+  @override
+  String get group_media_info_state => 'Status';
+
+  @override
+  String get group_media_info_caption => 'Bildunterschrift';
+
+  @override
+  String get group_media_info_state_available =>
+      'Heruntergeladen und verifiziert';
+
+  @override
+  String get group_media_info_state_pending => 'Noch nicht heruntergeladen';
+
+  @override
+  String get group_media_info_state_unavailable => 'Nicht verfügbar';
+
+  @override
+  String get group_media_delete_for_me_title => 'Für mich löschen?';
+
+  @override
+  String get group_media_delete_for_me_body =>
+      'Dies entfernt die Nachricht und ihre Medien nur von diesem Gerät. Andere Mitglieder behalten ihre Kopie.';
+
+  @override
+  String get group_media_delete_for_me_confirm => 'Für mich löschen';
+
+  @override
+  String get group_media_delete_for_me_cancel => 'Abbrechen';
+
+  @override
+  String get group_media_saved_confirm => 'Gespeichert';
 
   @override
   String get media_viewer_play => 'Abspielen';

@@ -173,6 +173,13 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/push/application/ingest_staged_push_envelopes_use_case_test.dart"
   "test/features/conversation/integration/notif_tap_payload_fast_path_test.dart"
   "test/features/push/integration/push_ingest_persistence_test.dart"
+  # 231: 1:1 received media core actions — attachment-targeted bubble/viewer
+  # identity + Info/Reply (screen tests auto-glob but are pinned for the
+  # curated 1to1 gate), the current-row egress controller, and the exact
+  # egress-callsite / frozen wired-transport boundary contract.
+  "test/features/conversation/presentation/screens/conversation_received_media_actions_test.dart"
+  "test/features/conversation/application/received_media_action_controller_test.dart"
+  "test/features/conversation/application/received_media_action_transport_boundary_test.dart"
 )
 
 readonly FEED_TESTS=(

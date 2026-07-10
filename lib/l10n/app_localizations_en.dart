@@ -599,6 +599,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get conversation_context_delete => 'Delete';
 
   @override
+  String get conversation_context_save => 'Save';
+
+  @override
+  String get conversation_context_share => 'Share';
+
+  @override
+  String get conversation_context_info => 'Info';
+
+  @override
   String get conversation_context_copied => 'Message copied to clipboard';
 
   @override
@@ -613,6 +622,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get conversation_delete_message_prompt =>
       'Who would you like to delete this message for?';
+
+  @override
+  String get conversation_delete_media_message_prompt =>
+      'Delete this message? The message and all of its attachments will be removed from this device.';
 
   @override
   String get conversation_delete_for_me => 'Delete for Me';
@@ -1954,6 +1967,139 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get media_viewer_action_bookmark => 'Bookmark';
+
+  @override
+  String get media_viewer_action_info => 'Info';
+
+  @override
+  String get media_viewer_action_reply => 'Reply';
+
+  @override
+  String get media_save_destination_prompt => 'Save to…';
+
+  @override
+  String get media_save_destination_photos => 'Save to Photos';
+
+  @override
+  String get media_save_destination_files => 'Save to Files';
+
+  @override
+  String get media_egress_result_saved => 'Saved';
+
+  @override
+  String get media_egress_result_shared => 'Shared';
+
+  @override
+  String get media_egress_result_cancelled => 'Cancelled';
+
+  @override
+  String get media_egress_result_permission_denied =>
+      'Permission needed to finish this action';
+
+  @override
+  String get media_egress_result_missing =>
+      'This media file is missing from this device';
+
+  @override
+  String get media_egress_result_failed => 'Couldn\'t complete this action';
+
+  @override
+  String get media_egress_result_unavailable =>
+      'This media is no longer available for saving or sharing';
+
+  @override
+  String get media_info_title => 'Media info';
+
+  @override
+  String get media_info_sender => 'From';
+
+  @override
+  String get media_info_direction => 'Direction';
+
+  @override
+  String get media_info_direction_incoming => 'Received';
+
+  @override
+  String get media_info_direction_outgoing => 'Sent';
+
+  @override
+  String get media_info_date => 'Date';
+
+  @override
+  String get media_info_type => 'Type';
+
+  @override
+  String get media_info_size => 'Size';
+
+  @override
+  String get media_info_dimensions => 'Dimensions';
+
+  @override
+  String get media_info_duration => 'Duration';
+
+  @override
+  String get media_info_state => 'Status';
+
+  @override
+  String get media_info_state_downloaded => 'Downloaded';
+
+  @override
+  String get media_info_state_not_downloaded => 'Not downloaded';
+
+  @override
+  String get media_info_state_unverified => 'Couldn\'t verify';
+
+  @override
+  String get group_media_info_title => 'Media info';
+
+  @override
+  String get group_media_info_kind => 'Type';
+
+  @override
+  String get group_media_info_kind_image => 'Image';
+
+  @override
+  String get group_media_info_kind_video => 'Video';
+
+  @override
+  String get group_media_info_sender => 'From';
+
+  @override
+  String get group_media_info_sent_time => 'Sent';
+
+  @override
+  String get group_media_info_size => 'Size';
+
+  @override
+  String get group_media_info_state => 'Status';
+
+  @override
+  String get group_media_info_caption => 'Caption';
+
+  @override
+  String get group_media_info_state_available => 'Downloaded and verified';
+
+  @override
+  String get group_media_info_state_pending => 'Not downloaded yet';
+
+  @override
+  String get group_media_info_state_unavailable => 'Unavailable';
+
+  @override
+  String get group_media_delete_for_me_title => 'Delete for me?';
+
+  @override
+  String get group_media_delete_for_me_body =>
+      'This removes the message and its media from this device only. Other members keep their copy.';
+
+  @override
+  String get group_media_delete_for_me_confirm => 'Delete for me';
+
+  @override
+  String get group_media_delete_for_me_cancel => 'Cancel';
+
+  @override
+  String get group_media_saved_confirm => 'Saved';
 
   @override
   String get media_viewer_play => 'Play';

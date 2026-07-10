@@ -14,6 +14,10 @@ import 'media_grid_cell.dart';
 class MediaGrid extends StatelessWidget {
   final List<MediaAttachment> media;
   final void Function(int index)? onTap;
+
+  /// 235: per-attachment long-press carrying the exact tile index within
+  /// [media] — the same index space as [onTap].
+  final void Function(int index)? onLongPressItem;
   final void Function(MediaAttachment attachment)? onRetryUnavailableMedia;
   final bool requireVerifiedContentHash;
 
@@ -25,6 +29,7 @@ class MediaGrid extends StatelessWidget {
     super.key,
     required this.media,
     this.onTap,
+    this.onLongPressItem,
     this.onRetryUnavailableMedia,
     this.requireVerifiedContentHash = false,
     this.ownedMediaPeerId,
@@ -102,6 +107,9 @@ class MediaGrid extends StatelessWidget {
                   showOverlayCount: overflow > 0,
                   overlayCount: overflow,
                   onTap: onTap != null ? () => onTap!(3) : null,
+                  onLongPress: onLongPressItem != null
+                      ? () => onLongPressItem!(3)
+                      : null,
                   onRetryUnavailableMedia: onRetryUnavailableMedia != null
                       ? () => onRetryUnavailableMedia!(media[3])
                       : null,
@@ -120,6 +128,9 @@ class MediaGrid extends StatelessWidget {
     return MediaGridCell(
       attachment: media[index],
       onTap: onTap != null ? () => onTap!(index) : null,
+      onLongPress: onLongPressItem != null
+          ? () => onLongPressItem!(index)
+          : null,
       onRetryUnavailableMedia: onRetryUnavailableMedia != null
           ? () => onRetryUnavailableMedia!(media[index])
           : null,

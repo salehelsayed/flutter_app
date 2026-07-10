@@ -51,10 +51,12 @@ class FullScreenTypedMediaViewer extends StatefulWidget {
 class _FullScreenTypedMediaViewerState
     extends State<FullScreenTypedMediaViewer> {
   static const List<MediaViewerAction> _actionOrder = <MediaViewerAction>[
+    MediaViewerAction.reply,
     MediaViewerAction.save,
     MediaViewerAction.share,
     MediaViewerAction.forward,
     MediaViewerAction.bookmark,
+    MediaViewerAction.info,
     MediaViewerAction.delete,
   ];
 
@@ -228,6 +230,10 @@ IconData _actionIcon(MediaViewerAction action) {
       return Icons.forward_rounded;
     case MediaViewerAction.bookmark:
       return Icons.bookmark_border_rounded;
+    case MediaViewerAction.info:
+      return Icons.info_outline_rounded;
+    case MediaViewerAction.reply:
+      return Icons.reply_rounded;
     case MediaViewerAction.delete:
       return Icons.delete_outline_rounded;
   }
@@ -243,6 +249,10 @@ String _actionTooltip(AppLocalizations l10n, MediaViewerAction action) {
       return l10n.media_viewer_action_forward;
     case MediaViewerAction.bookmark:
       return l10n.media_viewer_action_bookmark;
+    case MediaViewerAction.info:
+      return l10n.media_viewer_action_info;
+    case MediaViewerAction.reply:
+      return l10n.media_viewer_action_reply;
     case MediaViewerAction.delete:
       return l10n.media_viewer_action_delete;
   }

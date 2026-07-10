@@ -20,7 +20,9 @@ enum MediaViewerKind { image, gif, video }
 /// A per-item action the viewer may surface. The viewer performs no side
 /// effect itself: it invokes the supplied [MediaViewerActionCallback] with the
 /// exact current item. Concrete per-lane policies live in plans 231-242.
-enum MediaViewerAction { save, share, forward, delete, bookmark }
+/// 235 adds [info] (privacy-minimized metadata sheet) and [reply] (existing
+/// quote-composer reuse); both stay callback-only like every other action.
+enum MediaViewerAction { save, share, forward, delete, bookmark, info, reply }
 
 /// The settled outcome of an awaited [MediaViewerActionCallback].
 enum MediaViewerActionStatus { success, cancelled, failure }

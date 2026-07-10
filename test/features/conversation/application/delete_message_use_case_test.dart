@@ -184,6 +184,15 @@ void main() {
           ),
           owner: MediaOwnerLane.group,
         );
+        // 231: non-default plan-228 viewer state on BOTH surviving siblings so
+        // byte-for-byte preservation covers bookmark/playback, not just the
+        // schema defaults a lossy rewrite would reproduce for free.
+        await fixture.db.update(
+          'media_attachments',
+          {'is_bookmarked': 1, 'last_playback_position_ms': 4321},
+          where: 'id = ?',
+          whereArgs: ['att-collide-group'],
+        );
         // Legacy row: addressable through NO lane, must survive cleanup.
         await fixture.db.insert('media_attachments', {
           'id': 'att-collide-unresolved',
@@ -192,6 +201,9 @@ void main() {
           'mime': 'image/jpeg',
           'size': 2048,
           'media_type': 'image',
+          'local_path': 'media/msg-collide/unresolved-photo.jpg',
+          'is_bookmarked': 1,
+          'last_playback_position_ms': 7777,
           'download_status': 'done',
           'created_at': '2026-03-31T10:00:02.000Z',
         });
@@ -204,6 +216,11 @@ void main() {
         );
         expect(groupRowBefore, isNotNull);
         expect(unresolvedRowBefore, isNotNull);
+        // The preservation assertion below must be over NON-default state.
+        expect(groupRowBefore!['is_bookmarked'], 1);
+        expect(groupRowBefore['last_playback_position_ms'], 4321);
+        expect(unresolvedRowBefore!['is_bookmarked'], 1);
+        expect(unresolvedRowBefore['last_playback_position_ms'], 7777);
 
         final count = await deleteMessageForMe(
           message: message,
@@ -230,10 +247,14 @@ void main() {
           await fixture.rawAttachmentRow('att-collide-unresolved'),
           unresolvedRowBefore,
         );
-        // NO file deletion recorded for the group sibling's path.
+        // NO file deletion recorded for either surviving sibling's path.
         expect(
           mediaFileManager.deletedFilePaths,
           isNot(contains(endsWith('media/msg-collide/group-photo.jpg'))),
+        );
+        expect(
+          mediaFileManager.deletedFilePaths,
+          isNot(contains(endsWith('media/msg-collide/unresolved-photo.jpg'))),
         );
       },
     );

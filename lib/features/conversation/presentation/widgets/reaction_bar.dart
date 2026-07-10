@@ -73,12 +73,17 @@ class _ReactionBarState extends State<ReactionBar>
               borderRadius: BorderRadius.circular(28),
               border: Border.all(color: readableColors.glassBorder),
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ...kPresetEmojis.map((emoji) => _emojiButton(context, emoji)),
-                _plusButton(context),
-              ],
+            // The 7 fixed 44px buttons need 332px with chrome; on very narrow
+            // viewports (320dp) scale the row down instead of overflowing.
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ...kPresetEmojis.map((emoji) => _emojiButton(context, emoji)),
+                  _plusButton(context),
+                ],
+              ),
             ),
           ),
         ),

@@ -17,6 +17,11 @@ class MessageContextOverlay extends StatefulWidget {
   static const editActionKey = ValueKey('message-context-edit-action');
   static const copyActionKey = ValueKey('message-context-copy-action');
   static const deleteActionKey = ValueKey('message-context-delete-action');
+  // 235: received-media actions. Default-off so existing direct/group call
+  // sites keep their exact Reply/Edit/Copy/Delete menu.
+  static const saveActionKey = ValueKey('message-context-save-action');
+  static const shareActionKey = ValueKey('message-context-share-action');
+  static const infoActionKey = ValueKey('message-context-info-action');
 
   static const _reactionBarHeight = 60.0;
   static const _menuActionHeight = 58.0;
@@ -29,6 +34,9 @@ class MessageContextOverlay extends StatefulWidget {
   final bool showReplyAction;
   final bool showEditAction;
   final bool showCopyAction;
+  final bool showSaveAction;
+  final bool showShareAction;
+  final bool showInfoAction;
   final bool showDeleteAction;
   final VoidCallback onDismiss;
   final void Function(String emoji)? onReactionSelected;
@@ -36,6 +44,9 @@ class MessageContextOverlay extends StatefulWidget {
   final VoidCallback? onReplyTap;
   final VoidCallback? onEditTap;
   final VoidCallback? onCopyTap;
+  final VoidCallback? onSaveTap;
+  final VoidCallback? onShareTap;
+  final VoidCallback? onInfoTap;
   final VoidCallback? onDeleteTap;
 
   const MessageContextOverlay({
@@ -47,6 +58,9 @@ class MessageContextOverlay extends StatefulWidget {
     this.showReplyAction = true,
     this.showEditAction = false,
     this.showCopyAction = false,
+    this.showSaveAction = false,
+    this.showShareAction = false,
+    this.showInfoAction = false,
     this.showDeleteAction = false,
     required this.onDismiss,
     this.onReactionSelected,
@@ -54,6 +68,9 @@ class MessageContextOverlay extends StatefulWidget {
     this.onReplyTap,
     this.onEditTap,
     this.onCopyTap,
+    this.onSaveTap,
+    this.onShareTap,
+    this.onInfoTap,
     this.onDeleteTap,
   });
 
@@ -81,6 +98,9 @@ class _MessageContextOverlayState extends State<MessageContextOverlay> {
         (widget.showReplyAction ? 1 : 0) +
         (widget.showEditAction ? 1 : 0) +
         (widget.showCopyAction ? 1 : 0) +
+        (widget.showSaveAction ? 1 : 0) +
+        (widget.showShareAction ? 1 : 0) +
+        (widget.showInfoAction ? 1 : 0) +
         (widget.showDeleteAction ? 1 : 0);
     final hasMenu = actionCount > 0;
     final menuHeight = hasMenu
@@ -93,9 +113,25 @@ class _MessageContextOverlayState extends State<MessageContextOverlay> {
     final selectedMessageWidth = widget.anchorRect.width > 0
         ? widget.anchorRect.width
         : size.width - 32;
-    final selectedMessageHeight = widget.anchorRect.height > 0
-        ? widget.anchorRect.height
-        : 120.0;
+    // 235: with the received-media entries the menu can be tall enough that a
+    // full-height media snapshot no longer fits above it. Cap the snapshot box
+    // so reaction bar + snapshot + menu always fit the viewport; the FittedBox
+    // inside scales the lifted card down. The cap only binds when the combined
+    // content would overflow, so existing (shorter) menus are laid out exactly
+    // as before.
+    final selectedMessageMaxHeight =
+        size.height -
+        topPadding -
+        bottomPadding -
+        reactionBlockHeight -
+        (hasMenu ? menuHeight + MessageContextOverlay._verticalGap : 0.0);
+    final selectedMessageHeight =
+        (widget.anchorRect.height > 0 ? widget.anchorRect.height : 120.0)
+            .clamp(
+              0.0,
+              selectedMessageMaxHeight < 80.0 ? 80.0 : selectedMessageMaxHeight,
+            )
+            .toDouble();
     final anchorAlignment = Alignment(
       ((widget.anchorRect.center.dx / size.width) * 2 - 1).clamp(-1.0, 1.0),
       -1,
@@ -222,6 +258,9 @@ class _MessageContextOverlayState extends State<MessageContextOverlay> {
                     showReplyAction: widget.showReplyAction,
                     showEditAction: widget.showEditAction,
                     showCopyAction: widget.showCopyAction,
+                    showSaveAction: widget.showSaveAction,
+                    showShareAction: widget.showShareAction,
+                    showInfoAction: widget.showInfoAction,
                     showDeleteAction: widget.showDeleteAction,
                     onReplyTap: widget.onReplyTap != null
                         ? () => _handleOnce(widget.onReplyTap!)
@@ -231,6 +270,15 @@ class _MessageContextOverlayState extends State<MessageContextOverlay> {
                         : null,
                     onCopyTap: widget.onCopyTap != null
                         ? () => _handleOnce(widget.onCopyTap!)
+                        : null,
+                    onSaveTap: widget.onSaveTap != null
+                        ? () => _handleOnce(widget.onSaveTap!)
+                        : null,
+                    onShareTap: widget.onShareTap != null
+                        ? () => _handleOnce(widget.onShareTap!)
+                        : null,
+                    onInfoTap: widget.onInfoTap != null
+                        ? () => _handleOnce(widget.onInfoTap!)
                         : null,
                     onDeleteTap: widget.onDeleteTap != null
                         ? () => _handleOnce(widget.onDeleteTap!)
@@ -258,10 +306,16 @@ class _ContextMenuCard extends StatelessWidget {
   final bool showReplyAction;
   final bool showEditAction;
   final bool showCopyAction;
+  final bool showSaveAction;
+  final bool showShareAction;
+  final bool showInfoAction;
   final bool showDeleteAction;
   final VoidCallback? onReplyTap;
   final VoidCallback? onEditTap;
   final VoidCallback? onCopyTap;
+  final VoidCallback? onSaveTap;
+  final VoidCallback? onShareTap;
+  final VoidCallback? onInfoTap;
   final VoidCallback? onDeleteTap;
 
   const _ContextMenuCard({
@@ -269,10 +323,16 @@ class _ContextMenuCard extends StatelessWidget {
     required this.showReplyAction,
     required this.showEditAction,
     required this.showCopyAction,
+    required this.showSaveAction,
+    required this.showShareAction,
+    required this.showInfoAction,
     required this.showDeleteAction,
     this.onReplyTap,
     this.onEditTap,
     this.onCopyTap,
+    this.onSaveTap,
+    this.onShareTap,
+    this.onInfoTap,
     this.onDeleteTap,
   });
 
@@ -304,6 +364,30 @@ class _ContextMenuCard extends StatelessWidget {
           icon: Icons.copy_rounded,
           label: l10n.conversation_context_copy,
           onTap: onCopyTap,
+        ),
+      // 235: received-media entries sit between Copy and Delete so the
+      // existing Reply -> Edit -> Copy -> Delete keyed order is preserved
+      // whenever those four render together.
+      if (showSaveAction)
+        _ContextMenuAction(
+          key: MessageContextOverlay.saveActionKey,
+          icon: Icons.download_rounded,
+          label: l10n.conversation_context_save,
+          onTap: onSaveTap,
+        ),
+      if (showShareAction)
+        _ContextMenuAction(
+          key: MessageContextOverlay.shareActionKey,
+          icon: Icons.ios_share_rounded,
+          label: l10n.conversation_context_share,
+          onTap: onShareTap,
+        ),
+      if (showInfoAction)
+        _ContextMenuAction(
+          key: MessageContextOverlay.infoActionKey,
+          icon: Icons.info_outline_rounded,
+          label: l10n.conversation_context_info,
+          onTap: onInfoTap,
         ),
       if (showDeleteAction)
         _ContextMenuAction(

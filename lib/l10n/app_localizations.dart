@@ -1060,6 +1060,24 @@ abstract class AppLocalizations {
   /// **'Delete'**
   String get conversation_context_delete;
 
+  /// No description provided for @conversation_context_save.
+  ///
+  /// In en, this message translates to:
+  /// **'Save'**
+  String get conversation_context_save;
+
+  /// No description provided for @conversation_context_share.
+  ///
+  /// In en, this message translates to:
+  /// **'Share'**
+  String get conversation_context_share;
+
+  /// No description provided for @conversation_context_info.
+  ///
+  /// In en, this message translates to:
+  /// **'Info'**
+  String get conversation_context_info;
+
   /// No description provided for @conversation_context_copied.
   ///
   /// In en, this message translates to:
@@ -1089,6 +1107,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Who would you like to delete this message for?'**
   String get conversation_delete_message_prompt;
+
+  /// No description provided for @conversation_delete_media_message_prompt.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete this message? The message and all of its attachments will be removed from this device.'**
+  String get conversation_delete_media_message_prompt;
 
   /// No description provided for @conversation_delete_for_me.
   ///
@@ -3343,6 +3367,264 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Bookmark'**
   String get media_viewer_action_bookmark;
+
+  /// No description provided for @media_viewer_action_info.
+  ///
+  /// In en, this message translates to:
+  /// **'Info'**
+  String get media_viewer_action_info;
+
+  /// No description provided for @media_viewer_action_reply.
+  ///
+  /// In en, this message translates to:
+  /// **'Reply'**
+  String get media_viewer_action_reply;
+
+  /// No description provided for @media_save_destination_prompt.
+  ///
+  /// In en, this message translates to:
+  /// **'Save to…'**
+  String get media_save_destination_prompt;
+
+  /// No description provided for @media_save_destination_photos.
+  ///
+  /// In en, this message translates to:
+  /// **'Save to Photos'**
+  String get media_save_destination_photos;
+
+  /// No description provided for @media_save_destination_files.
+  ///
+  /// In en, this message translates to:
+  /// **'Save to Files'**
+  String get media_save_destination_files;
+
+  /// No description provided for @media_egress_result_saved.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved'**
+  String get media_egress_result_saved;
+
+  /// No description provided for @media_egress_result_shared.
+  ///
+  /// In en, this message translates to:
+  /// **'Shared'**
+  String get media_egress_result_shared;
+
+  /// No description provided for @media_egress_result_cancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancelled'**
+  String get media_egress_result_cancelled;
+
+  /// No description provided for @media_egress_result_permission_denied.
+  ///
+  /// In en, this message translates to:
+  /// **'Permission needed to finish this action'**
+  String get media_egress_result_permission_denied;
+
+  /// No description provided for @media_egress_result_missing.
+  ///
+  /// In en, this message translates to:
+  /// **'This media file is missing from this device'**
+  String get media_egress_result_missing;
+
+  /// No description provided for @media_egress_result_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t complete this action'**
+  String get media_egress_result_failed;
+
+  /// No description provided for @media_egress_result_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'This media is no longer available for saving or sharing'**
+  String get media_egress_result_unavailable;
+
+  /// No description provided for @media_info_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Media info'**
+  String get media_info_title;
+
+  /// No description provided for @media_info_sender.
+  ///
+  /// In en, this message translates to:
+  /// **'From'**
+  String get media_info_sender;
+
+  /// No description provided for @media_info_direction.
+  ///
+  /// In en, this message translates to:
+  /// **'Direction'**
+  String get media_info_direction;
+
+  /// No description provided for @media_info_direction_incoming.
+  ///
+  /// In en, this message translates to:
+  /// **'Received'**
+  String get media_info_direction_incoming;
+
+  /// No description provided for @media_info_direction_outgoing.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent'**
+  String get media_info_direction_outgoing;
+
+  /// No description provided for @media_info_date.
+  ///
+  /// In en, this message translates to:
+  /// **'Date'**
+  String get media_info_date;
+
+  /// No description provided for @media_info_type.
+  ///
+  /// In en, this message translates to:
+  /// **'Type'**
+  String get media_info_type;
+
+  /// No description provided for @media_info_size.
+  ///
+  /// In en, this message translates to:
+  /// **'Size'**
+  String get media_info_size;
+
+  /// No description provided for @media_info_dimensions.
+  ///
+  /// In en, this message translates to:
+  /// **'Dimensions'**
+  String get media_info_dimensions;
+
+  /// No description provided for @media_info_duration.
+  ///
+  /// In en, this message translates to:
+  /// **'Duration'**
+  String get media_info_duration;
+
+  /// No description provided for @media_info_state.
+  ///
+  /// In en, this message translates to:
+  /// **'Status'**
+  String get media_info_state;
+
+  /// No description provided for @media_info_state_downloaded.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloaded'**
+  String get media_info_state_downloaded;
+
+  /// No description provided for @media_info_state_not_downloaded.
+  ///
+  /// In en, this message translates to:
+  /// **'Not downloaded'**
+  String get media_info_state_not_downloaded;
+
+  /// No description provided for @media_info_state_unverified.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t verify'**
+  String get media_info_state_unverified;
+
+  /// No description provided for @group_media_info_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Media info'**
+  String get group_media_info_title;
+
+  /// No description provided for @group_media_info_kind.
+  ///
+  /// In en, this message translates to:
+  /// **'Type'**
+  String get group_media_info_kind;
+
+  /// No description provided for @group_media_info_kind_image.
+  ///
+  /// In en, this message translates to:
+  /// **'Image'**
+  String get group_media_info_kind_image;
+
+  /// No description provided for @group_media_info_kind_video.
+  ///
+  /// In en, this message translates to:
+  /// **'Video'**
+  String get group_media_info_kind_video;
+
+  /// No description provided for @group_media_info_sender.
+  ///
+  /// In en, this message translates to:
+  /// **'From'**
+  String get group_media_info_sender;
+
+  /// No description provided for @group_media_info_sent_time.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent'**
+  String get group_media_info_sent_time;
+
+  /// No description provided for @group_media_info_size.
+  ///
+  /// In en, this message translates to:
+  /// **'Size'**
+  String get group_media_info_size;
+
+  /// No description provided for @group_media_info_state.
+  ///
+  /// In en, this message translates to:
+  /// **'Status'**
+  String get group_media_info_state;
+
+  /// No description provided for @group_media_info_caption.
+  ///
+  /// In en, this message translates to:
+  /// **'Caption'**
+  String get group_media_info_caption;
+
+  /// No description provided for @group_media_info_state_available.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloaded and verified'**
+  String get group_media_info_state_available;
+
+  /// No description provided for @group_media_info_state_pending.
+  ///
+  /// In en, this message translates to:
+  /// **'Not downloaded yet'**
+  String get group_media_info_state_pending;
+
+  /// No description provided for @group_media_info_state_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Unavailable'**
+  String get group_media_info_state_unavailable;
+
+  /// No description provided for @group_media_delete_for_me_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete for me?'**
+  String get group_media_delete_for_me_title;
+
+  /// No description provided for @group_media_delete_for_me_body.
+  ///
+  /// In en, this message translates to:
+  /// **'This removes the message and its media from this device only. Other members keep their copy.'**
+  String get group_media_delete_for_me_body;
+
+  /// No description provided for @group_media_delete_for_me_confirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete for me'**
+  String get group_media_delete_for_me_confirm;
+
+  /// No description provided for @group_media_delete_for_me_cancel.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel'**
+  String get group_media_delete_for_me_cancel;
+
+  /// No description provided for @group_media_saved_confirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved'**
+  String get group_media_saved_confirm;
 
   /// No description provided for @media_viewer_play.
   ///

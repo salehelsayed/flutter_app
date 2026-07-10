@@ -20,6 +20,12 @@ class MediaGridCell extends StatelessWidget {
   final bool showOverlayCount;
   final int overlayCount;
   final VoidCallback? onTap;
+
+  /// 235: per-attachment long-press (exact item identity for received-media
+  /// actions). Unlike [onTap] it is NOT gated on displayability — Info and
+  /// Delete-for-me apply to pending/unavailable rows too; the caller's policy
+  /// decides what to surface.
+  final VoidCallback? onLongPress;
   final VoidCallback? onRetryUnavailableMedia;
   final bool requireVerifiedContentHash;
   final VideoThumbnailResolver? videoThumbnailResolver;
@@ -39,6 +45,7 @@ class MediaGridCell extends StatelessWidget {
     this.showOverlayCount = false,
     this.overlayCount = 0,
     this.onTap,
+    this.onLongPress,
     this.onRetryUnavailableMedia,
     this.requireVerifiedContentHash = false,
     this.videoThumbnailResolver,
@@ -48,7 +55,10 @@ class MediaGridCell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
+      // 231: stable per-tile handle for tap/long-press targeting in tests.
+      key: ValueKey('media-grid-cell-${attachment.messageId}-${attachment.id}'),
       onTap: _canOpen ? onTap : null,
+      onLongPress: onLongPress,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(borderRadius),
         child: Stack(

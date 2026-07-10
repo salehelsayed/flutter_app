@@ -69,6 +69,13 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   # arm point). Auto-glob into feature-host-all; pinned here for the 1to1 host gate.
   "test/features/push/application/firebase_readiness_test.dart"
   "test/features/push/application/push_listener_armer_test.dart"
+  # 231: 1:1 received media core actions — bubble/viewer identity + Info/Reply
+  # (screen), current-row egress controller, exact-callsite transport boundary,
+  # and the wired viewer-delete/egress seams (conversation_wired_test).
+  "test/features/conversation/presentation/screens/conversation_received_media_actions_test.dart"
+  "test/features/conversation/application/received_media_action_controller_test.dart"
+  "test/features/conversation/application/received_media_action_transport_boundary_test.dart"
+  "test/features/conversation/presentation/screens/conversation_wired_test.dart"
 )
 
 readonly GO_BRIDGE_CONNECTED_PEER_TEST="go-mknoon/bridge/bridge_test.go"

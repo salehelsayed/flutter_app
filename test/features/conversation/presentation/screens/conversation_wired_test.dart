@@ -22,9 +22,12 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/core/media/received_media_egress.dart';
+import 'package:flutter_app/core/media/received_media_egress_service.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
+import 'package:flutter_app/features/conversation/application/received_media_action_controller.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
@@ -46,6 +49,8 @@ import 'package:flutter_app/features/conversation/presentation/screens/conversat
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/direct_received_media_action_sheet.dart';
+import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/recording_overlay.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
@@ -975,6 +980,7 @@ void main() {
     DateTime? notificationTappedAt,
     ThemeData? themeOverride,
     MediaAutoDownloadDecider? autoDownloadDecider,
+    ReceivedMediaActionController? receivedMediaActionController,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -1017,6 +1023,7 @@ void main() {
           initialPendingMedia: initialPendingMedia,
           maxAttachmentBudgetBytes: maxAttachmentBudgetBytes,
           autoDownloadDecider: autoDownloadDecider,
+          receivedMediaActionController: receivedMediaActionController,
         ),
       ),
     );
@@ -9269,6 +9276,317 @@ void main() {
       },
     );
   });
+
+  // ── 231: 1:1 received media core actions — wired seam ────────────────────
+  group('231 direct received media actions', () {
+    Directory createMediaTempDir(WidgetTester tester) {
+      final tempDir = Directory.systemTemp.createTempSync('wired_media_231_');
+      addTearDown(() {
+        try {
+          tempDir.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+      return tempDir;
+    }
+
+    testWidgets(
+      'viewer delete invokes existing direct whole message cleanup',
+      (tester) async {
+        tester.view.physicalSize = const Size(1080, 2160);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final tempDir = createMediaTempDir(tester);
+        final imagePath = '${tempDir.path}/delete-me.jpg';
+        File(imagePath).writeAsBytesSync(const [1, 2, 3]);
+
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'media-del-msg',
+            contactPeerId: makeContact().peerId,
+            senderPeerId: makeContact().peerId,
+            text: 'delete my media',
+            timestamp: '2026-02-09T15:30:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-02-09T15:30:01.000Z',
+          ),
+        );
+        final mediaRepo = FakeMediaAttachmentRepository();
+        mediaRepo.seed([
+          MediaAttachment(
+            id: 'att-del',
+            messageId: 'media-del-msg',
+            mime: 'image/jpeg',
+            size: 3,
+            mediaType: 'image',
+            localPath: imagePath,
+            downloadStatus: 'done',
+            createdAt: '2026-02-09T15:30:02.000Z',
+            ownerLane: MediaOwnerLane.direct,
+          ),
+        ]);
+
+        final deleteCalls = <String>[];
+        Future<int> recordingDeleteForMe({
+          required ConversationMessage message,
+          required MessageRepository messageRepo,
+          ReactionRepository? reactionRepo,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+          MediaFileManager? mediaFileManager,
+        }) async {
+          deleteCalls.add(message.id);
+          expect(
+            identical(mediaAttachmentRepo, mediaRepo),
+            isTrue,
+            reason:
+                'whole-message cleanup must run against the owner-aware '
+                'direct attachment repository',
+          );
+          await messageRepo.deleteMessage(message.id);
+          return 1;
+        }
+
+        final controller = ReceivedMediaActionController(
+          loadParentMessage: messageRepo.getMessage,
+          mediaAttachmentRepo: mediaRepo,
+          egressService: _RecordingEgressService(),
+          resolveStoredPath: (storedPath) => storedPath,
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          deleteForMeFn: recordingDeleteForMe,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: FakeMediaFileManager(),
+          receivedMediaActionController: controller,
+        );
+        await tester.pump(const Duration(milliseconds: 300));
+
+        await tester.tap(
+          find.byKey(const ValueKey('media-grid-cell-media-del-msg-att-del')),
+        );
+        await pumpUntil(
+          tester,
+          () =>
+              find.byType(FullScreenTypedMediaViewer).evaluate().isNotEmpty,
+        );
+
+        await tester.tap(find.byKey(const ValueKey('media_action_delete')));
+        await pumpUntil(
+          tester,
+          () =>
+              find.byKey(ConversationWired.deleteSheetKey).evaluate().isNotEmpty,
+        );
+
+        // Viewer closed; exactly ONE local Delete-for-Me choice, labeled as
+        // whole-message deletion (message + all attachments, this device).
+        expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
+        expect(find.byKey(ConversationWired.deleteForMeKey), findsOneWidget);
+        expect(
+          find.byKey(ConversationWired.deleteForEveryoneKey),
+          findsNothing,
+        );
+        expect(
+          find.text(
+            'Delete this message? The message and all of its attachments '
+            'will be removed from this device.',
+          ),
+          findsOneWidget,
+        );
+
+        await tester.tap(find.byKey(ConversationWired.deleteForMeKey));
+        await pumpUntil(tester, () => deleteCalls.isNotEmpty);
+
+        expect(deleteCalls, ['media-del-msg']);
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(find.text('delete my media'), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'bubble and viewer media egress use controller with zero delivery calls',
+      (tester) async {
+        tester.view.physicalSize = const Size(1080, 2160);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final tempDir = createMediaTempDir(tester);
+        final imagePath = '${tempDir.path}/egress.jpg';
+        File(imagePath).writeAsBytesSync(const [1, 2, 3]);
+
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'media-egress-msg',
+            contactPeerId: makeContact().peerId,
+            senderPeerId: makeContact().peerId,
+            text: 'egress row',
+            timestamp: '2026-02-09T15:30:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-02-09T15:30:01.000Z',
+          ),
+        );
+        final mediaRepo = FakeMediaAttachmentRepository();
+        mediaRepo.seed([
+          MediaAttachment(
+            id: 'att-egress',
+            messageId: 'media-egress-msg',
+            mime: 'image/jpeg',
+            size: 3,
+            mediaType: 'image',
+            localPath: imagePath,
+            downloadStatus: 'done',
+            createdAt: '2026-02-09T15:30:02.000Z',
+            ownerLane: MediaOwnerLane.direct,
+          ),
+        ]);
+
+        final egressService = _RecordingEgressService();
+        final controller = ReceivedMediaActionController(
+          loadParentMessage: messageRepo.getMessage,
+          mediaAttachmentRepo: mediaRepo,
+          egressService: egressService,
+          resolveStoredPath: (storedPath) => storedPath,
+        );
+        final p2pService = _ThrowingDeliveryP2PService();
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _throwingSendFn,
+          deleteForEveryoneFn: _throwingDeleteForEveryoneFn,
+          p2pService: p2pService,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: FakeMediaFileManager(),
+          receivedMediaActionController: controller,
+        );
+        await tester.pump(const Duration(milliseconds: 300));
+
+        const cellKey = ValueKey('media-grid-cell-media-egress-msg-att-egress');
+
+        // Bubble → Save → Photos traverses screen → wired → controller once.
+        await tester.longPress(find.byKey(cellKey));
+        await pumpUntil(
+          tester,
+          () => find
+              .byKey(MessageContextOverlay.saveActionKey)
+              .evaluate()
+              .isNotEmpty,
+        );
+        await tester.tap(find.byKey(MessageContextOverlay.saveActionKey));
+        await pumpUntil(
+          tester,
+          () => find
+              .byKey(DirectMediaSaveDestinationSheet.photosActionKey)
+              .evaluate()
+              .isNotEmpty,
+        );
+        await tester.tap(
+          find.byKey(DirectMediaSaveDestinationSheet.photosActionKey),
+        );
+        await pumpUntil(tester, () => egressService.calls.isNotEmpty);
+
+        expect(egressService.calls, hasLength(1));
+        expect(
+          egressService.calls.single.destination,
+          MediaEgressDestination.photos,
+        );
+        expect(egressService.calls.single.selection, hasLength(1));
+        expect(
+          egressService.calls.single.selection.single.attachmentId,
+          'att-egress',
+        );
+        expect(
+          egressService.calls.single.selection.single.storedPath,
+          imagePath,
+        );
+        expect(
+          egressService.calls.single.selection.single.mime,
+          'image/jpeg',
+        );
+
+        // Viewer → Share uses the SAME controller seam with exact identity.
+        await tester.tap(find.byKey(cellKey));
+        await pumpUntil(
+          tester,
+          () =>
+              find.byType(FullScreenTypedMediaViewer).evaluate().isNotEmpty,
+        );
+        await tester.tap(find.byKey(const ValueKey('media_action_share')));
+        await pumpUntil(tester, () => egressService.calls.length >= 2);
+
+        expect(egressService.calls, hasLength(2));
+        expect(
+          egressService.calls.last.destination,
+          MediaEgressDestination.share,
+        );
+        expect(
+          egressService.calls.last.selection.single.attachmentId,
+          'att-egress',
+        );
+
+        await tester.tap(find.byIcon(Icons.arrow_back));
+        await tester.pump(const Duration(milliseconds: 500));
+
+        // Stale current row: the controller's reload denies — zero further
+        // egress calls and zero delivery calls (the spies would throw).
+        await mediaRepo.updateDownloadStatus('att-egress', 'downloading');
+        await tester.longPress(find.byKey(cellKey));
+        await pumpUntil(
+          tester,
+          () => find
+              .byKey(MessageContextOverlay.saveActionKey)
+              .evaluate()
+              .isNotEmpty,
+        );
+        await tester.tap(find.byKey(MessageContextOverlay.saveActionKey));
+        await pumpUntil(
+          tester,
+          () => find
+              .byKey(DirectMediaSaveDestinationSheet.photosActionKey)
+              .evaluate()
+              .isNotEmpty,
+        );
+        await tester.tap(
+          find.byKey(DirectMediaSaveDestinationSheet.photosActionKey),
+        );
+        await pumpUntil(
+          tester,
+          () => find
+              .textContaining('no longer available')
+              .evaluate()
+              .isNotEmpty,
+        );
+
+        expect(egressService.calls, hasLength(2));
+        expect(tester.takeException(), isNull);
+      },
+    );
+  });
 }
 
 /// 248 — a contact repo that reports one other active friend so the overflow
@@ -9316,4 +9634,106 @@ Future<(SendChatMessageResult, ConversationMessage?)> _instantSuccessSendFn({
   );
   await messageRepo.saveMessage(delivered);
   return (SendChatMessageResult.success, delivered);
+}
+
+/// 231 (TC-231-05W/09W): records every native-boundary egress call without
+/// touching a platform channel.
+class _RecordingEgressService extends ReceivedMediaEgressService {
+  final calls =
+      <({
+        String requestId,
+        MediaEgressDestination destination,
+        List<ReceivedMediaEgressCandidate> selection,
+      })>[];
+
+  @override
+  Future<MediaEgressResult> perform({
+    required String requestId,
+    required MediaEgressDestination destination,
+    required List<ReceivedMediaEgressCandidate> selection,
+  }) async {
+    calls.add((
+      requestId: requestId,
+      destination: destination,
+      selection: selection,
+    ));
+    return MediaEgressResult(
+      requestId: requestId,
+      outcome: destination == MediaEgressDestination.share
+          ? MediaEgressOutcome.presented
+          : MediaEgressOutcome.saved,
+      items: [
+        for (final candidate in selection)
+          MediaEgressItemResult(
+            attachmentId: candidate.attachmentId,
+            outcome: MediaEgressItemOutcome.saved,
+          ),
+      ],
+    );
+  }
+}
+
+/// 231 (TC-231-09W): delivery surfaces throw — a media action that reaches
+/// any send/store seam fails the test loudly. Mount-time warm/dial from the
+/// base fake stays live so the screen opens normally.
+class _ThrowingDeliveryP2PService extends FakeP2PService {
+  @override
+  Future<bool> sendMessage(String peerId, String message) async {
+    throw StateError('media action must not call sendMessage');
+  }
+
+  @override
+  Future<SendMessageResult> sendMessageWithReply(
+    String peerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    throw StateError('media action must not call sendMessageWithReply');
+  }
+
+  @override
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    throw StateError('media action must not call storeInInbox');
+  }
+}
+
+/// 231 (TC-231-09W): the chat send seam must never fire for a media action.
+Future<(SendChatMessageResult, ConversationMessage?)> _throwingSendFn({
+  required P2PService p2pService,
+  required MessageRepository messageRepo,
+  required String targetPeerId,
+  required String text,
+  required String senderPeerId,
+  required String senderUsername,
+  String? messageId,
+  String? timestamp,
+  Bridge? bridge,
+  String? recipientMlKemPublicKey,
+  String? quotedMessageId,
+  List<MediaAttachment>? mediaAttachments,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  TransportMetrics? transportMetrics,
+}) async {
+  throw StateError('media action must not call the chat send seam');
+}
+
+/// 231 (TC-231-09W): Delete for Everyone's encrypted delivery path must
+/// never fire for a local media action.
+Future<(SendChatMessageResult, ConversationMessage?)>
+_throwingDeleteForEveryoneFn({
+  required P2PService p2pService,
+  required MessageRepository messageRepo,
+  required ConversationMessage originalMessage,
+  ReactionRepository? reactionRepo,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  MediaFileManager? mediaFileManager,
+  Bridge? bridge,
+  String? recipientMlKemPublicKey,
+  bool emitTimingEvent = true,
+}) async {
+  throw StateError('media action must not call delete-for-everyone delivery');
 }
