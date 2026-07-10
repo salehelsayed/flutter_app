@@ -1488,11 +1488,32 @@ Future<MediaAttachment?> downloadMedia({
             } catch (_) {}
           }
 
-          // 2. Mark as downloading
-          await mediaAttachmentRepo.updateDownloadStatus(
-            attachment.id,
-            kMediaDownloadStatusDownloading,
-          );
+          // 2. Mark as downloading. 229: a CAS-capable repository claims the
+          // row conditionally (exact owner + a claimable source state) so a
+          // concurrent eviction/commit can never be silently overwritten; a
+          // lost claim aborts BEFORE any transfer with zero state change.
+          if (mediaAttachmentRepo is MediaDownloadStateRepository) {
+            final claimed = await (mediaAttachmentRepo
+                    as MediaDownloadStateRepository)
+                .beginMediaDownload(attachment.id, owner: owner);
+            if (!claimed) {
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'MEDIA_DOWNLOAD_CLAIM_LOST',
+                details: {'blobId': idPrefix, 'phase': 'begin'},
+              );
+              emitDownloadTiming(
+                outcome: 'failed',
+                details: {'error': 'download_claim_lost'},
+              );
+              return null;
+            }
+          } else {
+            await mediaAttachmentRepo.updateDownloadStatus(
+              attachment.id,
+              kMediaDownloadStatusDownloading,
+            );
+          }
 
           // 3. Download from relay
           final result = await callP2PMediaDownload(
@@ -1941,11 +1962,44 @@ Future<MediaAttachment?> downloadMedia({
             }
           }
 
-          // 4. Store relative path in DB (survives iOS container UUID changes)
-          await mediaAttachmentRepo.updateLocalPath(
-            attachment.id,
-            relativePath,
-          );
+          // 4. Store relative path in DB (survives iOS container UUID
+          // changes). 229: a CAS-capable repository commits done/path ONLY
+          // from this download's own `downloading` claim — a late completion
+          // whose claim was lost (e.g. the row was evicted meanwhile) writes
+          // nothing and removes only the exact canonical artifact it just
+          // promoted.
+          if (mediaAttachmentRepo is MediaDownloadStateRepository) {
+            final committedRow = await (mediaAttachmentRepo
+                    as MediaDownloadStateRepository)
+                .commitMediaDownloadLocalPath(
+              attachment.id,
+              owner: owner,
+              localPath: relativePath,
+            );
+            if (!committedRow) {
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'MEDIA_DOWNLOAD_CLAIM_LOST',
+                details: {'blobId': idPrefix, 'phase': 'commit'},
+              );
+              await deleteIfExists(
+                File(absolutePath),
+                caller: 'downloadMedia.lateCommitClaimLost',
+                reason: 'discard_promoted_artifact_after_lost_claim',
+                details: {'blobId': idPrefix},
+              );
+              emitDownloadTiming(
+                outcome: 'failed',
+                details: {'error': 'download_commit_claim_lost'},
+              );
+              return null;
+            }
+          } else {
+            await mediaAttachmentRepo.updateLocalPath(
+              attachment.id,
+              relativePath,
+            );
+          }
           final committed = await verifyCommittedLocalPath(
             absolutePath: absolutePath,
             relativePath: relativePath,

@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
@@ -54,13 +55,16 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
+import 'package:flutter_app/features/settings/application/media_download_policy.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
+import 'package:flutter_app/features/settings/domain/models/media_download_preferences.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../shared/fakes/fake_audio_recorder_service.dart';
 import '../../../../shared/fakes/fake_mic_permission_gateway.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
+import '../../../../shared/fakes/recording_media_auto_download_decider.dart';
 import '../../../../shared/fakes/fake_media_picker.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../../shared/fakes/fake_upload_wake_lock_driver.dart';
@@ -970,6 +974,7 @@ void main() {
     int maxAttachmentBudgetBytes = kGeneralMediaAttachmentBudgetBytes,
     DateTime? notificationTappedAt,
     ThemeData? themeOverride,
+    MediaAutoDownloadDecider? autoDownloadDecider,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -1011,6 +1016,7 @@ void main() {
           initialAttachments: initialAttachments,
           initialPendingMedia: initialPendingMedia,
           maxAttachmentBudgetBytes: maxAttachmentBudgetBytes,
+          autoDownloadDecider: autoDownloadDecider,
         ),
       ),
     );
@@ -8993,6 +8999,273 @@ void main() {
         expect(find.byKey(ConversationWired.deleteSheetKey), findsNothing);
         expect(find.text('Keep this message'), findsOneWidget);
         expect(messageRepo.store['signal-delete-row']?.isDeleted, isFalse);
+      },
+    );
+  });
+
+  group('229 mounted media recovery obeys direct auto download policy', () {
+    ConversationMessage makeIncoming(String id, int secondsOffset) {
+      final ts = DateTime.utc(2026, 2, 11, 10, 0, secondsOffset)
+          .toIso8601String();
+      return ConversationMessage(
+        id: id,
+        contactPeerId: makeContact().peerId,
+        senderPeerId: makeContact().peerId,
+        text: 'letter $id',
+        timestamp: ts,
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: ts,
+      );
+    }
+
+    MediaAttachment makeRecoveryAttachment(
+      String id,
+      String messageId, {
+      String status = 'pending',
+    }) {
+      return MediaAttachment(
+        id: id,
+        messageId: messageId,
+        mime: 'image/jpeg',
+        size: 10,
+        mediaType: 'image',
+        downloadStatus: status,
+        downloadRetryCount: 0,
+        createdAt: '2026-02-11T10:00:00.000Z',
+      );
+    }
+
+    /// Seeds 51 incoming messages so the initial page (50) leaves msg 0 for
+    /// the older-page trigger. Eligible rows: a pending attachment on the
+    /// newest message, a retryable-failed attachment on the oldest (older
+    /// page), plus an evicted attachment that must never transfer.
+    (FakeMessageRepository, FakeMediaAttachmentRepository) seedRecoveryFixture() {
+      final messageRepo = FakeMessageRepository();
+      final mediaRepo = FakeMediaAttachmentRepository();
+      for (var i = 0; i <= 50; i++) {
+        final message = makeIncoming('msg-229-$i', i);
+        messageRepo.store[message.id] = message;
+      }
+      mediaRepo.seed([
+        makeRecoveryAttachment('att-229-new', 'msg-229-50'),
+        makeRecoveryAttachment('att-229-old', 'msg-229-0', status: 'failed'),
+        makeRecoveryAttachment(
+          'att-229-evicted',
+          'msg-229-49',
+          status: kMediaDownloadStatusEvicted,
+        ),
+      ]);
+      return (messageRepo, mediaRepo);
+    }
+
+    Future<void> driveAllRecoveryTriggers(WidgetTester tester) async {
+      // Mount recovery already ran in pumpScreen. Staged-drain reload: the
+      // test binding starts detached; resuming fires the drain + reload.
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 400));
+      // Older-page load: any scroll near the load edge of the reversed list.
+      await tester.drag(find.byType(ListView).first, const Offset(0, 80));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 400));
+    }
+
+    testWidgets(
+      'denied policy makes zero transfers across mount, drain reload and '
+      'older page',
+      (tester) async {
+        final (messageRepo, mediaRepo) = seedRecoveryFixture();
+        final downloadCalls = <(String, MediaOwnerLane)>[];
+        Future<MediaAttachment?> recordingDownload({
+          required Bridge bridge,
+          required MediaAttachmentRepository mediaAttachmentRepo,
+          required MediaFileManager mediaFileManager,
+          required MediaAttachment attachment,
+          required String contactPeerId,
+          required MediaOwnerLane owner,
+        }) async {
+          downloadCalls.add((attachment.id, owner));
+          return attachment;
+        }
+
+        final denying = RecordingMediaAutoDownloadDecider(allow: false);
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: messageRepo,
+          chatListener: ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
+            messageRepo: messageRepo,
+            contactRepo: FakeContactRepository(),
+          ),
+          sendFn: _instantSuccessSendFn,
+          bridge: FakeBridge(),
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: FakeMediaFileManager(),
+          downloadMediaFn: recordingDownload,
+          autoDownloadDecider: denying,
+        );
+
+        await driveAllRecoveryTriggers(tester);
+
+        expect(
+          downloadCalls,
+          isEmpty,
+          reason: 'a denied policy must produce zero transfers from mount, '
+              'staged-drain reload and older-page recovery',
+        );
+        // The policy was genuinely consulted (per eligible attachment,
+        // immediately before the would-be transfer) with the direct context.
+        expect(denying.requests, isNotEmpty);
+        for (final request in denying.requests) {
+          expect(request.conversationKind, MediaConversationKind.oneToOne);
+          expect(request.storageOwner, MediaOwnerLane.direct);
+          expect(request.userInitiated, isFalse);
+        }
+        final consultedStatuses =
+            denying.requests.map((r) => r.downloadStatus).toSet();
+        expect(consultedStatuses.contains('pending'), isTrue);
+        expect(
+          consultedStatuses.contains('failed'),
+          isTrue,
+          reason: 'the older-page retryable row must also be policy-gated',
+        );
+        expect(consultedStatuses.contains(kMediaDownloadStatusEvicted), isFalse,
+            reason: 'evicted rows are not recovery candidates at all');
+        // Rows are untouched: still pending/failed/evicted after all
+        // recovery passes.
+        final newRows = await mediaRepo.getAttachmentsForMessage(
+          'msg-229-50',
+          owner: MediaOwnerLane.direct,
+        );
+        expect(newRows.single.downloadStatus, 'pending');
+      },
+    );
+
+    testWidgets(
+      'allowed default transfers each eligible attachment once and skips '
+      'evicted',
+      (tester) async {
+        final (messageRepo, mediaRepo) = seedRecoveryFixture();
+        final downloadCalls = <(String, MediaOwnerLane)>[];
+        Future<MediaAttachment?> persistingDownload({
+          required Bridge bridge,
+          required MediaAttachmentRepository mediaAttachmentRepo,
+          required MediaFileManager mediaFileManager,
+          required MediaAttachment attachment,
+          required String contactPeerId,
+          required MediaOwnerLane owner,
+        }) async {
+          downloadCalls.add((attachment.id, owner));
+          final done = attachment.copyWith(downloadStatus: 'done');
+          await mediaAttachmentRepo.saveAttachment(done, owner: owner);
+          return done;
+        }
+
+        final allowing = RecordingMediaAutoDownloadDecider();
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: messageRepo,
+          chatListener: ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
+            messageRepo: messageRepo,
+            contactRepo: FakeContactRepository(),
+          ),
+          sendFn: _instantSuccessSendFn,
+          bridge: FakeBridge(),
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: FakeMediaFileManager(),
+          downloadMediaFn: persistingDownload,
+          autoDownloadDecider: allowing,
+        );
+
+        await driveAllRecoveryTriggers(tester);
+
+        final callsById = <String, int>{};
+        for (final (id, owner) in downloadCalls) {
+          callsById[id] = (callsById[id] ?? 0) + 1;
+          expect(owner, MediaOwnerLane.direct);
+        }
+        expect(callsById['att-229-new'], 1,
+            reason: 'the pending attachment transfers exactly once');
+        expect(callsById['att-229-old'], 1,
+            reason: 'the older-page retryable attachment transfers exactly '
+                'once');
+        expect(callsById.containsKey('att-229-evicted'), isFalse,
+            reason: 'an evicted local copy must never auto-recover');
+        expect(allowing.requests, isNotEmpty);
+      },
+    );
+
+    testWidgets(
+      'direct evicted media retries only after visible action',
+      (tester) async {
+        final messageRepo = FakeMessageRepository();
+        final mediaRepo = FakeMediaAttachmentRepository();
+        final message = makeIncoming('msg-evicted-ui', 0);
+        messageRepo.store[message.id] = message;
+        mediaRepo.seed([
+          makeRecoveryAttachment(
+            'att-evicted-ui',
+            'msg-evicted-ui',
+            status: kMediaDownloadStatusEvicted,
+          ),
+        ]);
+
+        final downloadCalls = <(String, MediaOwnerLane)>[];
+        Future<MediaAttachment?> recordingDownload({
+          required Bridge bridge,
+          required MediaAttachmentRepository mediaAttachmentRepo,
+          required MediaFileManager mediaFileManager,
+          required MediaAttachment attachment,
+          required String contactPeerId,
+          required MediaOwnerLane owner,
+        }) async {
+          downloadCalls.add((attachment.id, owner));
+          final done = attachment.copyWith(downloadStatus: 'done');
+          await mediaAttachmentRepo.saveAttachment(done, owner: owner);
+          return done;
+        }
+
+        // A fully-permissive policy still never auto-transfers evicted rows.
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: messageRepo,
+          chatListener: ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
+            messageRepo: messageRepo,
+            contactRepo: FakeContactRepository(),
+          ),
+          sendFn: _instantSuccessSendFn,
+          bridge: FakeBridge(),
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: FakeMediaFileManager(),
+          downloadMediaFn: recordingDownload,
+          autoDownloadDecider: RecordingMediaAutoDownloadDecider(),
+        );
+        await tester.pump(const Duration(milliseconds: 300));
+
+        expect(downloadCalls, isEmpty,
+            reason: 'mount must make zero transfers for an evicted row');
+
+        // The truthful removed state with its explicit retry is visible.
+        const retryKey = ValueKey(
+          'evicted-media-retry-msg-evicted-ui-att-evicted-ui',
+        );
+        expect(find.text('Local copy removed'), findsOneWidget);
+        expect(find.byKey(retryKey), findsOneWidget);
+
+        await tester.tap(find.byKey(retryKey));
+        await pumpUntil(tester, () => downloadCalls.isNotEmpty);
+
+        expect(downloadCalls, hasLength(1),
+            reason: 'one visible action performs exactly one retry');
+        expect(downloadCalls.single.$1, 'att-evicted-ui');
+        expect(downloadCalls.single.$2, MediaOwnerLane.direct,
+            reason: 'the explicit retry stays owner-aware');
       },
     );
   });

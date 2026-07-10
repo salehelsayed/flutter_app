@@ -996,6 +996,65 @@ class AppLocalizationsEn extends AppLocalizations {
   String get media_could_not_verify => 'Couldn\'t verify this media';
 
   @override
+  String get settings_media_storage => 'Media & storage';
+
+  @override
+  String get settings_media_auto_download => 'Automatic downloads';
+
+  @override
+  String get settings_media_auto_download_desc =>
+      'Choose which received media downloads automatically on each network.';
+
+  @override
+  String get settings_media_lane_direct => 'Direct chats';
+
+  @override
+  String get settings_media_lane_discussions => 'Discussions';
+
+  @override
+  String get settings_media_lane_announcements => 'Announcements';
+
+  @override
+  String get settings_media_type_image => 'Photos';
+
+  @override
+  String get settings_media_type_video => 'Videos';
+
+  @override
+  String get settings_media_type_audio => 'Audio';
+
+  @override
+  String get settings_media_type_file => 'Files';
+
+  @override
+  String get settings_media_network_off => 'Off';
+
+  @override
+  String get settings_media_network_wifi => 'Wi-Fi';
+
+  @override
+  String get settings_media_network_all => 'Wi-Fi + cellular';
+
+  @override
+  String get settings_media_save_fail =>
+      'Couldn\'t save media download settings';
+
+  @override
+  String get settings_media_storage_usage => 'Storage usage';
+
+  @override
+  String get settings_media_storage_compute => 'Show usage';
+
+  @override
+  String get settings_media_storage_clear_type => 'Clear';
+
+  @override
+  String get settings_media_storage_empty => 'No downloaded media copies';
+
+  @override
+  String get media_local_copy_removed => 'Local copy removed';
+
+  @override
   String get media_retry_unavailable => 'Retry unavailable media';
 
   @override

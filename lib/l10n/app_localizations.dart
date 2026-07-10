@@ -1768,6 +1768,120 @@ abstract class AppLocalizations {
   /// **'Couldn\'t verify this media'**
   String get media_could_not_verify;
 
+  /// No description provided for @settings_media_storage.
+  ///
+  /// In en, this message translates to:
+  /// **'Media & storage'**
+  String get settings_media_storage;
+
+  /// No description provided for @settings_media_auto_download.
+  ///
+  /// In en, this message translates to:
+  /// **'Automatic downloads'**
+  String get settings_media_auto_download;
+
+  /// No description provided for @settings_media_auto_download_desc.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose which received media downloads automatically on each network.'**
+  String get settings_media_auto_download_desc;
+
+  /// No description provided for @settings_media_lane_direct.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct chats'**
+  String get settings_media_lane_direct;
+
+  /// No description provided for @settings_media_lane_discussions.
+  ///
+  /// In en, this message translates to:
+  /// **'Discussions'**
+  String get settings_media_lane_discussions;
+
+  /// No description provided for @settings_media_lane_announcements.
+  ///
+  /// In en, this message translates to:
+  /// **'Announcements'**
+  String get settings_media_lane_announcements;
+
+  /// No description provided for @settings_media_type_image.
+  ///
+  /// In en, this message translates to:
+  /// **'Photos'**
+  String get settings_media_type_image;
+
+  /// No description provided for @settings_media_type_video.
+  ///
+  /// In en, this message translates to:
+  /// **'Videos'**
+  String get settings_media_type_video;
+
+  /// No description provided for @settings_media_type_audio.
+  ///
+  /// In en, this message translates to:
+  /// **'Audio'**
+  String get settings_media_type_audio;
+
+  /// No description provided for @settings_media_type_file.
+  ///
+  /// In en, this message translates to:
+  /// **'Files'**
+  String get settings_media_type_file;
+
+  /// No description provided for @settings_media_network_off.
+  ///
+  /// In en, this message translates to:
+  /// **'Off'**
+  String get settings_media_network_off;
+
+  /// No description provided for @settings_media_network_wifi.
+  ///
+  /// In en, this message translates to:
+  /// **'Wi-Fi'**
+  String get settings_media_network_wifi;
+
+  /// No description provided for @settings_media_network_all.
+  ///
+  /// In en, this message translates to:
+  /// **'Wi-Fi + cellular'**
+  String get settings_media_network_all;
+
+  /// No description provided for @settings_media_save_fail.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t save media download settings'**
+  String get settings_media_save_fail;
+
+  /// No description provided for @settings_media_storage_usage.
+  ///
+  /// In en, this message translates to:
+  /// **'Storage usage'**
+  String get settings_media_storage_usage;
+
+  /// No description provided for @settings_media_storage_compute.
+  ///
+  /// In en, this message translates to:
+  /// **'Show usage'**
+  String get settings_media_storage_compute;
+
+  /// No description provided for @settings_media_storage_clear_type.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear'**
+  String get settings_media_storage_clear_type;
+
+  /// No description provided for @settings_media_storage_empty.
+  ///
+  /// In en, this message translates to:
+  /// **'No downloaded media copies'**
+  String get settings_media_storage_empty;
+
+  /// No description provided for @media_local_copy_removed.
+  ///
+  /// In en, this message translates to:
+  /// **'Local copy removed'**
+  String get media_local_copy_removed;
+
   /// No description provided for @media_retry_unavailable.
   ///
   /// In en, this message translates to:

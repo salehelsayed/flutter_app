@@ -92,6 +92,48 @@ class MediaRepositoryRealDbFixture {
             afterMessageId: afterMessageId,
             afterAttachmentId: afterAttachmentId,
           ),
+      dbLoadMediaStoragePage:
+          ({
+            required String scopeKind,
+            required String scopeId,
+            required List<String> mediaTypes,
+            required int limit,
+            String? afterTimestamp,
+            String? afterMessageId,
+            String? afterAttachmentId,
+          }) => dbLoadMediaStoragePage(
+            db,
+            scopeKind: scopeKind,
+            scopeId: scopeId,
+            mediaTypes: mediaTypes,
+            limit: limit,
+            afterTimestamp: afterTimestamp,
+            afterMessageId: afterMessageId,
+            afterAttachmentId: afterAttachmentId,
+          ),
+      dbBeginMediaDownload: (id, {required String ownerLane}) =>
+          dbBeginMediaDownload(db, id, ownerLane: ownerLane),
+      dbCommitMediaDownloadLocalPath:
+          (id, {required String ownerLane, required String localPath}) =>
+              dbCommitMediaDownloadLocalPath(
+                db,
+                id,
+                ownerLane: ownerLane,
+                localPath: localPath,
+              ),
+      dbClaimMediaEvicted:
+          (
+            id, {
+            required String ownerLane,
+            required String expectedLocalPath,
+          }) => dbClaimMediaEvicted(
+            db,
+            id,
+            ownerLane: ownerLane,
+            expectedLocalPath: expectedLocalPath,
+          ),
+      dbFinalizeMediaEvictedPathCleared: (id, {required String ownerLane}) =>
+          dbFinalizeMediaEvictedPathCleared(db, id, ownerLane: ownerLane),
       secureKeyStore: secureKeyStore,
     );
     return MediaRepositoryRealDbFixture._(db, repo, secureKeyStore);

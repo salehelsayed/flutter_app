@@ -7,6 +7,10 @@ import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_storage_manager.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_library.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/media_storage_usage_section.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -156,6 +160,12 @@ class OrbitWired extends StatefulWidget {
   final VoidCallback? debugOnHeaderBuild;
   final VoidCallback? debugOnListBuild;
   final TransportMetrics? transportMetrics;
+
+  /// 229 — optional storage-management capability threaded into Settings'
+  /// Media & storage sheet (totals/actions render only when both are set).
+  final MediaStorageManager? mediaStorageManager;
+  final Future<List<MediaStorageScopeOption>> Function()?
+  mediaStorageScopesProvider;
   final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
   final AccountMigrationSizeGate? accountMigrationSizeGate;
 
@@ -215,6 +225,8 @@ class OrbitWired extends StatefulWidget {
     this.debugOnHeaderBuild,
     this.debugOnListBuild,
     this.transportMetrics,
+    this.mediaStorageManager,
+    this.mediaStorageScopesProvider,
     this.accountMigrationRunTransfer,
     this.accountMigrationSizeGate,
     this.nearbyLocationService,
@@ -676,12 +688,55 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               // returned pop-futures drive Settings' single-flight latch.
               onMyQrRequested: _onMyQR,
               onScanQrRequested: _onScanQR,
+              // 229: storage management for the Media & storage sheet —
+              // injected by hosts/tests, else built over this orbit's own
+              // repositories.
+              mediaStorageManager: widget.mediaStorageManager ??
+                  MediaStorageManager(
+                    repository: widget.mediaAttachmentRepo,
+                    documentsDirectoryProvider: () async =>
+                        (await getApplicationDocumentsDirectory()).path,
+                  ),
+              mediaStorageScopesProvider: widget.mediaStorageScopesProvider ??
+                  _loadMediaStorageScopes,
             ),
           ),
         )
         .whenComplete(() {
       _settingsRouteActive = false;
     });
+  }
+
+  /// 229: the scopes the Media & storage sheet can measure/clear — one per
+  /// active contact (direct lane) and one per group (discussions AND
+  /// announcements share the group lane).
+  Future<List<MediaStorageScopeOption>> _loadMediaStorageScopes() async {
+    final options = <MediaStorageScopeOption>[];
+    try {
+      final contacts = await widget.contactRepo.getActiveContacts();
+      options.addAll(
+        contacts.map(
+          (contact) => MediaStorageScopeOption(
+            scope: MediaLibraryScope.direct(contact.peerId),
+            label: contact.username,
+          ),
+        ),
+      );
+    } catch (_) {}
+    try {
+      final groups = await widget.groupRepository?.getActiveGroups();
+      if (groups != null) {
+        options.addAll(
+          groups.map(
+            (group) => MediaStorageScopeOption(
+              scope: MediaLibraryScope.group(group.id),
+              label: group.name,
+            ),
+          ),
+        );
+      }
+    } catch (_) {}
+    return options;
   }
 
   void _loadIdentity() async {

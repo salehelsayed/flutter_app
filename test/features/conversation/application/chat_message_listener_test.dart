@@ -21,7 +21,9 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
+import 'package:flutter_app/features/settings/domain/models/media_download_preferences.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
+import '../../../shared/fakes/recording_media_auto_download_decider.dart';
 import '../../../shared/fakes/spy_recent_remote_notification_gate.dart';
 
 // -- Fakes --
@@ -2132,5 +2134,122 @@ void main() {
         listener.dispose();
       },
     );
+  });
+
+  group('ChatMessageListener 229 auto-download policy', () {
+    late StreamController<ChatMessage> chatStreamController;
+    late _FakeMessageRepository messageRepo;
+    late _FakeContactRepository contactRepo;
+    late _FakeBridge bridge;
+    late _FakeMediaAttachmentRepo mediaRepo;
+    late _FakeMediaFileManager fileManager;
+
+    setUp(() {
+      chatStreamController = StreamController<ChatMessage>.broadcast();
+      messageRepo = _FakeMessageRepository();
+      contactRepo = _FakeContactRepository();
+      bridge = _FakeBridge();
+      mediaRepo = _FakeMediaAttachmentRepo();
+      fileManager = _FakeMediaFileManager();
+    });
+
+    tearDown(() {
+      chatStreamController.close();
+    });
+
+    ChatMessageListener createListener({
+      RecordingMediaAutoDownloadDecider? decider,
+    }) {
+      return ChatMessageListener(
+        chatMessageStream: chatStreamController.stream,
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        mediaAttachmentRepo: mediaRepo,
+        mediaFileManager: fileManager,
+        downloadProfilePictureFn: _noopDownloadProfilePicture,
+        autoDownloadDecider: decider,
+      );
+    }
+
+    test('auto download policy gates direct attachments before transfer',
+        () async {
+      final senderPeerId = 'sender-peer-policy-gate';
+      contactRepo.seedContact(_makeContact(senderPeerId));
+
+      // Denied: the policy is consulted with the full direct context, no
+      // transfer happens, and the persisted row stays pending (still
+      // reachable through the explicit retry affordance).
+      final denying = RecordingMediaAutoDownloadDecider(allow: false);
+      final deniedListener = createListener(decider: denying);
+      deniedListener.start();
+      final emitted = <ConversationMessage>[];
+      final sub = deniedListener.incomingMessageStream.listen(emitted.add);
+
+      chatStreamController.add(
+        _makeChatMessage(
+          from: senderPeerId,
+          id: 'msg-policy-denied',
+          media: _testMediaJson,
+        ),
+      );
+      await Future.delayed(const Duration(milliseconds: 250));
+
+      expect(
+        bridge.downloadCallCount,
+        0,
+        reason: 'a denied policy decision must run BEFORE any transfer',
+      );
+      expect(denying.requests, hasLength(1));
+      final request = denying.requests.single;
+      expect(request.conversationKind, MediaConversationKind.oneToOne);
+      expect(request.storageOwner, MediaOwnerLane.direct);
+      expect(request.mediaType, 'image');
+      expect(request.downloadStatus, 'pending');
+      expect(request.userInitiated, isFalse);
+      expect(
+        mediaRepo.downloadStatusUpdates,
+        isEmpty,
+        reason: 'a denied attachment must not change persisted state',
+      );
+      final persisted = await mediaRepo.getAttachmentsForMessage(
+        'msg-policy-denied',
+        owner: MediaOwnerLane.direct,
+      );
+      expect(persisted.single.downloadStatus, 'pending');
+      expect(emitted.last.media, isNotNull);
+      expect(emitted.last.media!.single.downloadStatus, 'pending');
+
+      await sub.cancel();
+      deniedListener.dispose();
+
+      // Allowed default: exactly one owner-aware download for the eligible
+      // attachment, consulted once with the same direct context.
+      final allowing = RecordingMediaAutoDownloadDecider();
+      final allowedListener = createListener(decider: allowing);
+      allowedListener.start();
+      final allowedEmitted = <ConversationMessage>[];
+      allowedListener.incomingMessageStream.listen(allowedEmitted.add);
+
+      chatStreamController.add(
+        _makeChatMessage(
+          from: senderPeerId,
+          id: 'msg-policy-allowed',
+          media: _testMediaJson,
+        ),
+      );
+      await Future.delayed(const Duration(milliseconds: 250));
+
+      expect(bridge.downloadCallCount, 1);
+      expect(allowing.requests, hasLength(1));
+      expect(
+        allowing.requests.single.conversationKind,
+        MediaConversationKind.oneToOne,
+      );
+      expect(allowing.requests.single.storageOwner, MediaOwnerLane.direct);
+      expect(allowedEmitted.last.media!.single.downloadStatus, 'done');
+
+      allowedListener.dispose();
+    });
   });
 }

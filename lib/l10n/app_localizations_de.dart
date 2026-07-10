@@ -1018,6 +1018,66 @@ class AppLocalizationsDe extends AppLocalizations {
       'Diese Medien konnten nicht verifiziert werden';
 
   @override
+  String get settings_media_storage => 'Medien & Speicher';
+
+  @override
+  String get settings_media_auto_download => 'Automatische Downloads';
+
+  @override
+  String get settings_media_auto_download_desc =>
+      'Wähle, welche empfangenen Medien in jedem Netz automatisch geladen werden.';
+
+  @override
+  String get settings_media_lane_direct => 'Direktchats';
+
+  @override
+  String get settings_media_lane_discussions => 'Diskussionen';
+
+  @override
+  String get settings_media_lane_announcements => 'Ankündigungen';
+
+  @override
+  String get settings_media_type_image => 'Fotos';
+
+  @override
+  String get settings_media_type_video => 'Videos';
+
+  @override
+  String get settings_media_type_audio => 'Audio';
+
+  @override
+  String get settings_media_type_file => 'Dateien';
+
+  @override
+  String get settings_media_network_off => 'Aus';
+
+  @override
+  String get settings_media_network_wifi => 'WLAN';
+
+  @override
+  String get settings_media_network_all => 'WLAN + Mobilfunk';
+
+  @override
+  String get settings_media_save_fail =>
+      'Medien-Download-Einstellungen konnten nicht gespeichert werden';
+
+  @override
+  String get settings_media_storage_usage => 'Speichernutzung';
+
+  @override
+  String get settings_media_storage_compute => 'Nutzung anzeigen';
+
+  @override
+  String get settings_media_storage_clear_type => 'Leeren';
+
+  @override
+  String get settings_media_storage_empty =>
+      'Keine heruntergeladenen Medienkopien';
+
+  @override
+  String get media_local_copy_removed => 'Lokale Kopie entfernt';
+
+  @override
   String get media_retry_unavailable => 'Nicht verfügbare Medien erneut laden';
 
   @override

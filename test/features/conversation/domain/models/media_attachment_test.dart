@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 
@@ -168,6 +169,22 @@ void main() {
         expect(json.containsKey('localPath'), isFalse);
         expect(json.containsKey('downloadStatus'), isFalse);
         expect(json.containsKey('createdAt'), isFalse);
+
+        // 229: the local-only `evicted` status persists through DB map/copy
+        // paths but never enters attachment wire JSON.
+        final evicted = testAttachment.copyWith(
+          downloadStatus: kMediaDownloadStatusEvicted,
+        );
+        expect(evicted.toJson().containsKey('downloadStatus'), isFalse);
+        expect(evicted.toMap()['download_status'], 'evicted');
+        expect(
+          MediaAttachment.fromMap(evicted.toMap()).downloadStatus,
+          kMediaDownloadStatusEvicted,
+        );
+        expect(
+          evicted.copyWith(width: 100).downloadStatus,
+          kMediaDownloadStatusEvicted,
+        );
       });
 
       test('toJson omits null optional fields', () {

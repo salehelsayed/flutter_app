@@ -33,9 +33,14 @@ import 'package:flutter_app/features/posts/domain/models/posts_privacy_settings.
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 import 'package:flutter_app/features/settings/application/upload_profile_picture_use_case.dart';
+import 'package:flutter_app/features/settings/domain/models/media_download_preferences.dart';
+import 'package:flutter_app/features/settings/application/media_download_preference_use_cases.dart';
 import 'package:flutter_app/features/settings/presentation/navigation/settings_route_transition.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/background_choice_control.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/image_quality_toggle.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/media_download_matrix_control.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/media_storage_usage_section.dart';
+import 'package:flutter_app/core/media/media_storage_manager.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_introduction_debug_card.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_recovery_phrase_card.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_transport_diagnostics_card.dart';
@@ -69,6 +74,14 @@ class SettingsWired extends StatefulWidget {
   final Future<void> Function()? onMyQrRequested;
   final Future<void> Function()? onScanQrRequested;
 
+  /// 229 — optional storage-management capability for the Media & storage
+  /// sheet. The auto-download matrix always renders (it needs only
+  /// [secureKeyStore]); the storage totals/actions section renders only when
+  /// BOTH the manager and the scopes provider are supplied.
+  final MediaStorageManager? mediaStorageManager;
+  final Future<List<MediaStorageScopeOption>> Function()?
+  mediaStorageScopesProvider;
+
   const SettingsWired({
     super.key,
     required this.identityRepo,
@@ -88,6 +101,8 @@ class SettingsWired extends StatefulWidget {
     this.showNavigationBar = true,
     this.onMyQrRequested,
     this.onScanQrRequested,
+    this.mediaStorageManager,
+    this.mediaStorageScopesProvider,
   });
 
   @override
@@ -108,6 +123,9 @@ class _SettingsWiredState extends State<SettingsWired> {
   ImageQualityPreference _currentQuality = ImageQualityPreference.compressed;
   ImageQualityPreference _currentVideoQuality =
       ImageQualityPreference.compressed;
+  MediaDownloadPreferences _mediaDownloadPreferences =
+      const MediaDownloadPreferences.defaults();
+  String? _mediaDownloadError;
   PostsPrivacySettings _postsPrivacySettings = const PostsPrivacySettings();
   List<IntroductionModel> _debugIntroductions = const [];
   bool _isLoadingDebugIntroductions = false;
@@ -136,6 +154,7 @@ class _SettingsWiredState extends State<SettingsWired> {
     _loadBackgroundPreference();
     _loadQualityPreference();
     _loadVideoQualityPreference();
+    _loadMediaDownloadPreferences();
     _loadPostsPrivacySettings();
   }
 
@@ -304,6 +323,85 @@ class _SettingsWiredState extends State<SettingsWired> {
     if (mounted) {
       setState(() => _currentVideoQuality = pref);
     }
+  }
+
+  Future<void> _loadMediaDownloadPreferences() async {
+    final prefs = await loadMediaDownloadPreferences(
+      secureKeyStore: widget.secureKeyStore,
+    );
+    if (mounted) {
+      setState(() => _mediaDownloadPreferences = prefs);
+    }
+  }
+
+  /// 229: optimistic persist-with-rollback (the background-preference
+  /// pattern): a failed write restores the previous matrix and surfaces a
+  /// visible error instead of a lying toggle.
+  Future<void> _onMediaDownloadPreferencesChanged(
+    MediaDownloadPreferences next,
+  ) async {
+    final previous = _mediaDownloadPreferences;
+    setState(() {
+      _mediaDownloadPreferences = next;
+      _mediaDownloadError = null;
+    });
+    try {
+      await saveMediaDownloadPreferences(
+        secureKeyStore: widget.secureKeyStore,
+        preferences: next,
+      );
+      if (!mounted) return;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'SETTINGS_FL_MEDIA_DOWNLOAD_SAVED',
+        details: {'outcome': 'success'},
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _mediaDownloadPreferences = previous;
+        _mediaDownloadError = AppLocalizations.of(
+          context,
+        )!.settings_media_save_fail;
+      });
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'SETTINGS_FL_MEDIA_DOWNLOAD_SAVE_ERROR',
+        details: {'outcome': 'failure', 'error': e.toString()},
+      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_mediaDownloadError!)));
+    }
+  }
+
+  Future<void> _openMediaStorageSheet() {
+    final manager = widget.mediaStorageManager;
+    final scopesProvider = widget.mediaStorageScopesProvider;
+    return _showSettingsSheet(
+      builder: (sheetContext, setSheetState) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          MediaDownloadMatrixControl(
+            preferences: _mediaDownloadPreferences,
+            errorText: _mediaDownloadError,
+            onChanged: (next) async {
+              await _onMediaDownloadPreferencesChanged(next);
+              if (!mounted || !sheetContext.mounted) return;
+              // The sheet stays open for further matrix edits; rebuild it
+              // in place so the choice (or the rollback) is visible.
+              setSheetState(() {});
+            },
+          ),
+          if (manager != null && scopesProvider != null)
+            MediaStorageUsageSection(
+              manager: manager,
+              loadScopes: scopesProvider,
+            ),
+        ],
+      ),
+    );
   }
 
   Future<void> _onVideoQualityChanged(ImageQualityPreference newQuality) async {
@@ -815,6 +913,7 @@ class _SettingsWiredState extends State<SettingsWired> {
       onOpenBackgroundSheet: _openBackgroundSheet,
       onOpenPhotoQualitySheet: _openPhotoQualitySheet,
       onOpenVideoQualitySheet: _openVideoQualitySheet,
+      onOpenMediaStorageSheet: _openMediaStorageSheet,
       onOpenRecoverySheet: _openRecoverySheet,
       currentBackgroundPreference: _currentBackgroundPreference,
       currentQuality: _currentQuality,

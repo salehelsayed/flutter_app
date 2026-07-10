@@ -28,8 +28,10 @@ import 'package:flutter_app/features/feed/application/app_shell_controller.dart'
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
+import 'package:flutter_app/features/settings/domain/models/media_download_preferences.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/image_quality_toggle.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/media_download_matrix_control.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../../shared/fakes/in_memory_introduction_repository.dart';
 import '../../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
@@ -1027,6 +1029,159 @@ void main() {
       isTrue,
       reason:
           'the avatar-upload success branch must fire notifyIdentityChanged',
+    );
+  });
+
+  // --- 229 TC-229-05 ---
+
+  Set<MediaDownloadNetworkChoice> selectedChoice(
+    WidgetTester tester,
+    String rowKey,
+  ) =>
+      tester
+          .widget<SegmentedButton<MediaDownloadNetworkChoice>>(
+            find.byKey(ValueKey(rowKey)),
+          )
+          .selected;
+
+  Future<void> tapChoice(
+    WidgetTester tester,
+    String rowKey,
+    String label,
+  ) async {
+    await tester.ensureVisible(find.byKey(ValueKey(rowKey)));
+    await tester.pump();
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(ValueKey(rowKey)),
+        matching: find.text(label),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+  }
+
+  testWidgets('media download settings persist and rollback failed saves', (
+    tester,
+  ) async {
+    final store = FakeSecureKeyStore();
+    // A previously saved matrix (discussion videos Wi-Fi only) must be
+    // reconstructed on a fresh mount.
+    await store.write(
+      MediaDownloadPreferences.storageKey,
+      const MediaDownloadPreferences.defaults()
+          .copyWithChoice(
+            kind: MediaConversationKind.discussion,
+            mediaType: 'video',
+            network: MediaDownloadNetwork.cellular,
+            enabled: false,
+          )
+          .toStorageString(),
+    );
+
+    await pumpScreen(
+      tester,
+      identityRepo: FakeIdentityRepository(makeIdentity()),
+      secureKeyStore: store,
+    );
+    await openSheet(tester, 'settings-row-media-storage');
+
+    expect(
+      selectedChoice(tester, 'media-download-discussion-video'),
+      {MediaDownloadNetworkChoice.wifi},
+      reason: 'the saved matrix must be reconstructed after a fresh mount',
+    );
+    expect(
+      selectedChoice(tester, 'media-download-oneToOne-image'),
+      {MediaDownloadNetworkChoice.all},
+    );
+
+    // A new choice persists the FULL matrix.
+    await tapChoice(tester, 'media-download-oneToOne-image', 'Off');
+    final saved = MediaDownloadPreferences.fromStorageString(
+      await store.read(MediaDownloadPreferences.storageKey),
+    );
+    expect(
+      saved.isAutoDownloadEnabled(
+        kind: MediaConversationKind.oneToOne,
+        mediaType: 'image',
+        network: MediaDownloadNetwork.wifi,
+      ),
+      isFalse,
+    );
+    expect(
+      saved.isAutoDownloadEnabled(
+        kind: MediaConversationKind.oneToOne,
+        mediaType: 'image',
+        network: MediaDownloadNetwork.cellular,
+      ),
+      isFalse,
+    );
+    expect(
+      saved.isAutoDownloadEnabled(
+        kind: MediaConversationKind.discussion,
+        mediaType: 'video',
+        network: MediaDownloadNetwork.cellular,
+      ),
+      isFalse,
+      reason: 'saving one cell must not erase the rest of the matrix',
+    );
+    expect(
+      selectedChoice(tester, 'media-download-oneToOne-image'),
+      {MediaDownloadNetworkChoice.off},
+    );
+
+    // A completely fresh settings mount reconstructs both choices (and the
+    // untouched announcement lane default).
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await pumpScreen(
+      tester,
+      identityRepo: FakeIdentityRepository(makeIdentity()),
+      secureKeyStore: store,
+    );
+    await openSheet(tester, 'settings-row-media-storage');
+    expect(
+      selectedChoice(tester, 'media-download-oneToOne-image'),
+      {MediaDownloadNetworkChoice.off},
+    );
+    expect(
+      selectedChoice(tester, 'media-download-discussion-video'),
+      {MediaDownloadNetworkChoice.wifi},
+    );
+    expect(
+      selectedChoice(tester, 'media-download-announcement-file'),
+      {MediaDownloadNetworkChoice.all},
+    );
+
+    // Rollback: a thrown write restores the prior value and surfaces a
+    // visible error instead of a lying toggle.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await pumpScreen(
+      tester,
+      identityRepo: FakeIdentityRepository(makeIdentity()),
+      secureKeyStore: _FailingWriteSecureKeyStore(),
+    );
+    await openSheet(tester, 'settings-row-media-storage');
+    expect(
+      selectedChoice(tester, 'media-download-oneToOne-image'),
+      {MediaDownloadNetworkChoice.all},
+    );
+    await tapChoice(tester, 'media-download-oneToOne-image', 'Off');
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(
+      selectedChoice(tester, 'media-download-oneToOne-image'),
+      {MediaDownloadNetworkChoice.all},
+      reason: 'a failed write must roll the optimistic choice back',
+    );
+    expect(
+      find.byKey(const ValueKey('media-download-save-error')),
+      findsOneWidget,
+      reason: 'the failure must be visibly reported',
+    );
+    expect(
+      find.text("Couldn't save media download settings"),
+      findsWidgets,
     );
   });
 }

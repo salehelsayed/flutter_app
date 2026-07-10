@@ -146,6 +146,16 @@ Future<void> dbSaveMediaAttachmentPreservingLocalState(
       }
 
       final merged = Map<String, Object?>.from(row);
+      // 229: a user-evicted local copy survives ordinary replay (wire rows
+      // decode as `pending` with no path — they must not re-arm a transfer
+      // or resurrect a path). Only an explicit local retry, which writes
+      // `downloading`, may leave the evicted state through this save path;
+      // the conditional download commit is the only path back to `done`.
+      if (existing['download_status'] == kMediaDownloadStatusEvicted &&
+          merged['download_status'] != kMediaDownloadStatusDownloading) {
+        merged['download_status'] = kMediaDownloadStatusEvicted;
+        merged['local_path'] = existing['local_path'];
+      }
       // Local-only viewer state always survives an ordinary replay.
       merged['is_bookmarked'] = existing['is_bookmarked'];
       var position =
@@ -399,6 +409,137 @@ Future<void> dbUpdateMediaDownloadStatus(
     );
     rethrow;
   }
+}
+
+/// 229: source states a download may conditionally claim into `downloading`.
+/// `done` is deliberately absent (a completed row is adopted, never
+/// re-transferred) and `evicted` is reachable only through the explicit
+/// user-retry paths — every automatic entry point filters evicted rows out
+/// before the use case runs.
+const Set<String> kMediaDownloadClaimableStatuses = {
+  kMediaDownloadStatusPending,
+  kMediaDownloadStatusDownloading,
+  kMediaDownloadStatusFailed,
+  kMediaDownloadStatusDownloadFailed,
+  kMediaDownloadStatusEvicted,
+};
+
+/// 229: owner-aware CAS claim into `downloading`. Affects the row only when
+/// it is addressed under its exact owner lane AND currently claimable.
+/// Returns the affected row count — 0 is a lost/disallowed claim, never
+/// success.
+Future<int> dbBeginMediaDownload(
+  Database db,
+  String id, {
+  required String ownerLane,
+}) async {
+  final statuses = kMediaDownloadClaimableStatuses.toList();
+  final placeholders = List.filled(statuses.length, '?').join(', ');
+  final affected = await db.rawUpdate(
+    'UPDATE media_attachments SET download_status = ? '
+    'WHERE id = ? AND owner_lane = ? AND download_status IN ($placeholders)',
+    [kMediaDownloadStatusDownloading, id, ownerLane, ...statuses],
+  );
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MEDIA_DB_DOWNLOAD_CLAIM',
+    details: {
+      'id': id.length > 8 ? id.substring(0, 8) : id,
+      'ownerLane': ownerLane,
+      'affected': affected,
+    },
+  );
+  return affected;
+}
+
+/// 229: owner-aware CAS commit of the canonical relative path. Commits
+/// `done` (and resets the retry budget, INV-DL-2) ONLY from this download's
+/// own `downloading` claim — a claim lost to a concurrent state change (e.g.
+/// an eviction) affects zero rows and the caller must fail closed.
+Future<int> dbCommitMediaDownloadLocalPath(
+  Database db,
+  String id, {
+  required String ownerLane,
+  required String localPath,
+}) async {
+  final affected = await db.rawUpdate(
+    'UPDATE media_attachments SET local_path = ?, download_status = ?, '
+    'download_retry_count = 0 '
+    'WHERE id = ? AND owner_lane = ? AND download_status = ?',
+    [localPath, kMediaDownloadStatusDone, id, ownerLane,
+        kMediaDownloadStatusDownloading],
+  );
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MEDIA_DB_DOWNLOAD_COMMIT',
+    details: {
+      'id': id.length > 8 ? id.substring(0, 8) : id,
+      'ownerLane': ownerLane,
+      'affected': affected,
+    },
+  );
+  return affected;
+}
+
+/// 229: owner-aware CAS eviction claim. Flips the exact
+/// `(id, owner, localPath, done)` row to `evicted` while RETAINING the
+/// stored path (deletion happens after the durable claim; the path is
+/// nulled only by [dbFinalizeMediaEvictedPathCleared]). Returns the affected
+/// row count — 0 means the row changed underneath the caller (busy download,
+/// path repair, another eviction) and nothing may be deleted.
+Future<int> dbClaimMediaEvicted(
+  Database db,
+  String id, {
+  required String ownerLane,
+  required String expectedLocalPath,
+}) async {
+  final affected = await db.rawUpdate(
+    'UPDATE media_attachments SET download_status = ? '
+    'WHERE id = ? AND owner_lane = ? AND local_path = ? '
+    'AND download_status = ?',
+    [
+      kMediaDownloadStatusEvicted,
+      id,
+      ownerLane,
+      expectedLocalPath,
+      kMediaDownloadStatusDone,
+    ],
+  );
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MEDIA_DB_EVICTED_CLAIM',
+    details: {
+      'id': id.length > 8 ? id.substring(0, 8) : id,
+      'ownerLane': ownerLane,
+      'affected': affected,
+    },
+  );
+  return affected;
+}
+
+/// 229: clears the stored path of a row that is still `evicted` under its
+/// exact owner (the post-deletion finalize, or the fresh-manager
+/// reconciliation of a cleanup-pending row whose file is proven absent).
+Future<int> dbFinalizeMediaEvictedPathCleared(
+  Database db,
+  String id, {
+  required String ownerLane,
+}) async {
+  final affected = await db.rawUpdate(
+    'UPDATE media_attachments SET local_path = NULL '
+    'WHERE id = ? AND owner_lane = ? AND download_status = ?',
+    [id, ownerLane, kMediaDownloadStatusEvicted],
+  );
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MEDIA_DB_EVICTED_PATH_CLEARED',
+    details: {
+      'id': id.length > 8 ? id.substring(0, 8) : id,
+      'ownerLane': ownerLane,
+      'affected': affected,
+    },
+  );
+  return affected;
 }
 
 /// 228: sets the local bookmark flag. Only visual media (image/video) can be

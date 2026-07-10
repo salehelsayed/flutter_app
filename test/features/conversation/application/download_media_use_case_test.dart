@@ -11,12 +11,16 @@ import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_storage_manager.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_library.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
+
+import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
 
 const _jpegBytes = <int>[0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10];
 const _jpegHash =
@@ -385,6 +389,24 @@ class _FakeMediaFileManager extends MediaFileManager {
       return storedPath;
     }
     return '$basePath/$storedPath';
+  }
+}
+
+/// 229: a file-manager fake whose ABSOLUTE paths follow the real
+/// `media/<scope>/<blob><ext>` convention under [basePath], so the storage
+/// manager (documents root = basePath) and the download use case address
+/// the same canonical file.
+class _CanonicalPathFakeMediaFileManager extends _FakeMediaFileManager {
+  _CanonicalPathFakeMediaFileManager(super.basePath);
+
+  @override
+  Future<String> localPathForAttachment({
+    required String contactPeerId,
+    required String blobId,
+    required String mime,
+  }) async {
+    final ext = _FakeMediaFileManager._extensionFromMime(mime);
+    return '$basePath/media/$contactPeerId/$blobId$ext';
   }
 }
 
@@ -2466,6 +2488,145 @@ void main() {
           expect(File(absolutePath).readAsBytesSync(), _jpegBytes);
         },
       );
+    });
+  });
+
+  group('229 download/eviction CAS', () {
+    test(
+        'download and eviction compare and set prevents local copy '
+        'resurrection', () async {
+      final fixture = await MediaRepositoryRealDbFixture.create();
+      addTearDown(fixture.dispose);
+      const contactId = 'contact-cas';
+      const groupId = 'group-cas';
+      await fixture.seedDirectParent('msg-cas', contactPeerId: contactId);
+      await fixture.seedGroupParent('msg-cas', groupId: groupId);
+
+      final canonicalFileManager =
+          _CanonicalPathFakeMediaFileManager(tempDir.path);
+      final directScope = MediaLibraryScope.direct(contactId);
+      final manager = MediaStorageManager(
+        repository: fixture.repo,
+        documentsDirectoryProvider: () async => tempDir.path,
+      );
+
+      const attachment = MediaAttachment(
+        id: 'blob-cas-1',
+        messageId: 'msg-cas',
+        mime: 'image/jpeg',
+        size: 3,
+        mediaType: 'image',
+        downloadStatus: 'pending',
+        createdAt: '2026-07-10T09:00:00.000Z',
+      );
+      await fixture.repo.saveAttachment(
+        attachment,
+        owner: MediaOwnerLane.direct,
+      );
+      // Same-parent group collision row with its own committed file.
+      const siblingRelative = 'media/$groupId/blob-cas-g.jpg';
+      final siblingAbsolute = '${tempDir.path}/$siblingRelative';
+      File(siblingAbsolute)
+        ..createSync(recursive: true)
+        ..writeAsBytesSync(const [9, 9, 9]);
+      await fixture.repo.saveAttachment(
+        const MediaAttachment(
+          id: 'blob-cas-g',
+          messageId: 'msg-cas',
+          mime: 'image/jpeg',
+          size: 3,
+          mediaType: 'image',
+          downloadStatus: 'done',
+          localPath: siblingRelative,
+          createdAt: '2026-07-10T09:00:00.000Z',
+        ),
+        owner: MediaOwnerLane.group,
+      );
+
+      const canonicalRelative = 'media/$contactId/blob-cas-1.jpg';
+      final canonicalAbsolute = '${tempDir.path}/$canonicalRelative';
+
+      // --- Phase 1: the download wins the `downloading` claim; Clear during
+      // the transfer is busy with zero mutation. ---
+      MediaClearLocalCopyResult? midTransferClear;
+      bridge.beforeDownloadResponse = (request) async {
+        final row = await fixture.rawAttachmentRow('blob-cas-1');
+        expect(row!['download_status'], kMediaDownloadStatusDownloading,
+            reason: 'the CAS begin claim must precede the transfer');
+        midTransferClear = await manager.clearLocalCopy(
+          scope: directScope,
+          attachmentId: 'blob-cas-1',
+          mime: 'image/jpeg',
+        );
+      };
+      final downloaded = await downloadMedia(
+        bridge: bridge,
+        mediaAttachmentRepo: fixture.repo,
+        mediaFileManager: canonicalFileManager,
+        attachment: attachment,
+        contactPeerId: contactId,
+        owner: MediaOwnerLane.direct,
+      );
+      expect(midTransferClear, MediaClearLocalCopyResult.busy);
+      expect(downloaded, isNotNull);
+      expect(downloaded!.downloadStatus, kMediaDownloadStatusDone);
+      final committed = await fixture.rawAttachmentRow('blob-cas-1');
+      expect(committed!['download_status'], kMediaDownloadStatusDone);
+      expect(committed['local_path'], canonicalRelative);
+      expect(File(canonicalAbsolute).existsSync(), isTrue);
+
+      // --- Phase 2: after completion Clear succeeds. ---
+      bridge.beforeDownloadResponse = null;
+      expect(
+        await manager.clearLocalCopy(
+          scope: directScope,
+          attachmentId: 'blob-cas-1',
+          mime: 'image/jpeg',
+        ),
+        MediaClearLocalCopyResult.cleared,
+      );
+      expect(File(canonicalAbsolute).existsSync(), isFalse);
+      final evictedRow = await fixture.rawAttachmentRow('blob-cas-1');
+      expect(evictedRow!['download_status'], kMediaDownloadStatusEvicted);
+      expect(evictedRow['local_path'], isNull);
+
+      // --- Phase 3: an explicit retry claims evicted -> downloading, but a
+      // forced lost claim means the late completion cannot restore
+      // done/path; it removes ONLY the exact canonical artifact it just
+      // promoted, and the collision sibling survives untouched. ---
+      bridge.beforeDownloadResponse = (request) async {
+        // Simulate the claim being lost mid-transfer (a concurrent local
+        // state change) — the row leaves `downloading` underneath the
+        // running download.
+        await fixture.db.rawUpdate(
+          "UPDATE media_attachments SET download_status = ?, "
+          'local_path = NULL WHERE id = ?',
+          [kMediaDownloadStatusEvicted, 'blob-cas-1'],
+        );
+      };
+      final lateCompletion = await downloadMedia(
+        bridge: bridge,
+        mediaAttachmentRepo: fixture.repo,
+        mediaFileManager: canonicalFileManager,
+        attachment: attachment.copyWith(
+          downloadStatus: kMediaDownloadStatusEvicted,
+        ),
+        contactPeerId: contactId,
+        owner: MediaOwnerLane.direct,
+      );
+      expect(lateCompletion, isNull,
+          reason: 'a lost claim must fail closed, never resurrect the copy');
+      final afterLate = await fixture.rawAttachmentRow('blob-cas-1');
+      expect(afterLate!['download_status'], kMediaDownloadStatusEvicted);
+      expect(afterLate['local_path'], isNull);
+      expect(File(canonicalAbsolute).existsSync(), isFalse,
+          reason: 'the late completion removes exactly the artifact it '
+              'promoted');
+      // The sibling lane row and file are untouched by the whole journey.
+      final sibling = await fixture.rawAttachmentRow('blob-cas-g');
+      expect(sibling!['download_status'], kMediaDownloadStatusDone);
+      expect(sibling['local_path'], siblingRelative);
+      expect(File(siblingAbsolute).existsSync(), isTrue);
     });
   });
 }

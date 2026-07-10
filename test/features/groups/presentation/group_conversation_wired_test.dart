@@ -48,7 +48,9 @@ import 'package:flutter_app/features/groups/presentation/screens/group_info_scre
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+import 'package:flutter_app/features/settings/application/media_download_policy.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
+import 'package:flutter_app/features/settings/domain/models/media_download_preferences.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:image_picker/image_picker.dart';
@@ -61,6 +63,7 @@ import '../../../shared/fakes/fake_mic_permission_gateway.dart';
 import '../../../shared/fakes/fake_group_reaction_replay_outbox_repository.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/fake_media_picker.dart';
+import '../../../shared/fakes/recording_media_auto_download_decider.dart';
 import '../../../shared/fakes/fake_upload_wake_lock_driver.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
@@ -1047,6 +1050,7 @@ void main() {
       ActiveConversationTracker? groupConversationTracker,
       CountingGroupMessageRepository? messageRepo,
       GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
+      MediaAutoDownloadDecider? autoDownloadDecider,
     }) {
       final g = group ?? makeChatGroup();
       final effectiveMsgRepo = messageRepo ?? msgRepo;
@@ -1086,6 +1090,7 @@ void main() {
           groupReactionReplayOutboxRepository: reactionReplayOutboxRepo,
           groupConversationTracker: groupConversationTracker,
           inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+          autoDownloadDecider: autoDownloadDecider,
         ),
       );
     }
@@ -13673,6 +13678,234 @@ void main() {
           reason: 'gate must OPEN (resolve once) for a genuinely new message',
         );
         expect(find.text('Fresh message'), findsOneWidget);
+      },
+    );
+  });
+
+  group('229 download policy separates discussion announcement and manual '
+      'retry', () {
+    MediaAttachment makePolicyAttachment(
+      String id,
+      String messageId, {
+      String status = kMediaDownloadStatusPending,
+      String mime = 'image/png',
+      String mediaType = 'image',
+    }) {
+      return MediaAttachment(
+        id: id,
+        messageId: messageId,
+        mime: mime,
+        size: 2048,
+        mediaType: mediaType,
+        downloadStatus: status,
+        downloadRetryCount: 0,
+        contentHash: _validContentHash,
+        encryptionKeyBase64: 'key-fixture',
+        encryptionNonce: 'nonce-fixture',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        createdAt: '2026-07-10T09:00:00.000Z',
+      );
+    }
+
+    int downloadCommandCount() => bridge.commandLog
+        .where((command) => command == 'media:download')
+        .length;
+
+    testWidgets(
+      'discussion denial makes zero transfers and consults the discussion '
+      'lane',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        await msgRepo.saveMessage(
+          makeMessage(id: 'msg-229-disc', text: 'discussion media letter'),
+        );
+        await mediaAttachmentRepo.saveAttachment(
+          makePolicyAttachment('att-229-disc', 'msg-229-disc'),
+          owner: MediaOwnerLane.group,
+        );
+
+        final denying = RecordingMediaAutoDownloadDecider(allow: false);
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: FakeMediaFileManager(),
+            autoDownloadDecider: denying,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+        await pumpUntil(tester, () => denying.requests.isNotEmpty);
+
+        expect(
+          downloadCommandCount(),
+          0,
+          reason: 'a denied policy decision must run BEFORE any transfer',
+        );
+        for (final request in denying.requests) {
+          expect(request.conversationKind, MediaConversationKind.discussion);
+          expect(request.storageOwner, MediaOwnerLane.group);
+          expect(request.userInitiated, isFalse);
+        }
+        // Denial keeps the persisted row untouched (no optimistic
+        // downloading flip, no failure downgrade).
+        final rows = await mediaAttachmentRepo.getAttachmentsForMessage(
+          'msg-229-disc',
+          owner: MediaOwnerLane.group,
+        );
+        expect(rows.single.downloadStatus, kMediaDownloadStatusPending);
+      },
+    );
+
+    testWidgets(
+      'announcement denial consults the announcement lane and an explicit '
+      'retry still transfers once with the group owner',
+      (tester) async {
+        // A read-only announcement member: no compose permission, yet media
+        // retry stays reachable.
+        final group = makeAnnouncementGroup(role: GroupRole.member);
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        await msgRepo.saveMessage(
+          makeMessage(id: 'msg-229-ann', text: 'announcement media letter'),
+        );
+        await mediaAttachmentRepo.saveAttachment(
+          makePolicyAttachment(
+            'att-229-ann',
+            'msg-229-ann',
+            status: kMediaDownloadStatusFailed,
+          ),
+          owner: MediaOwnerLane.group,
+        );
+
+        final denying = RecordingMediaAutoDownloadDecider(allow: false);
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: FakeMediaFileManager(),
+            autoDownloadDecider: denying,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+        await pumpUntil(tester, () => denying.requests.isNotEmpty);
+
+        expect(downloadCommandCount(), 0,
+            reason: 'the retryable-failed row must not auto-recover under a '
+                'denied announcement lane');
+        for (final request in denying.requests) {
+          expect(
+            request.conversationKind,
+            MediaConversationKind.announcement,
+            reason: 'announcement groups decide on their own product lane',
+          );
+          expect(request.storageOwner, MediaOwnerLane.group,
+              reason: 'announcement is never a third storage owner');
+        }
+        final consultsBeforeRetry = denying.requests.length;
+
+        // Explicit user retry bypasses the denied auto preference.
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.onRetryUnavailableMedia, isNotNull,
+            reason: 'read-only announcement members keep the retry '
+                'affordance');
+        screen.onRetryUnavailableMedia!('msg-229-ann', 'att-229-ann');
+        // The retry path does real file I/O before and after the bridge
+        // call; give it real-async windows until the transfer lands.
+        for (var i = 0; i < 40 && downloadCommandCount() < 1; i++) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 25)),
+          );
+          await tester.pump(const Duration(milliseconds: 25));
+        }
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)),
+        );
+        await pumpFrames(tester, count: 10);
+
+        expect(
+          downloadCommandCount(),
+          1,
+          reason: 'the explicit retry transfers exactly once despite the '
+              'denied auto preference',
+        );
+        expect(
+          denying.requests.length,
+          consultsBeforeRetry,
+          reason: 'the user-authoritative retry is never policy-gated',
+        );
+        // The integrity-checked download path stayed engaged: the fake
+        // bridge produced no verifiable bytes, so the row settles in a
+        // truthful non-done state instead of a phantom success.
+        final rows = await mediaAttachmentRepo.getAttachmentsForMessage(
+          'msg-229-ann',
+          owner: MediaOwnerLane.group,
+        );
+        expect(rows.single.downloadStatus, isNot(kMediaDownloadStatusDone));
+      },
+    );
+
+    testWidgets(
+      'group backed evicted media retries only after visible action',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        await msgRepo.saveMessage(
+          makeMessage(id: 'msg-229-evict', text: 'evicted media letter'),
+        );
+        await mediaAttachmentRepo.saveAttachment(
+          makePolicyAttachment(
+            'att-229-evict',
+            'msg-229-evict',
+            status: kMediaDownloadStatusEvicted,
+          ),
+          owner: MediaOwnerLane.group,
+        );
+
+        // Fully-permissive policy: evicted still never auto-transfers.
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: FakeMediaFileManager(),
+            autoDownloadDecider: RecordingMediaAutoDownloadDecider(),
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        expect(downloadCommandCount(), 0,
+            reason: 'mount must make zero transfers for an evicted row');
+
+        const retryKey = ValueKey(
+          'evicted-media-retry-msg-229-evict-att-229-evict',
+        );
+        expect(find.text('Local copy removed'), findsOneWidget);
+        expect(find.byKey(retryKey), findsOneWidget);
+
+        await tester.tap(find.byKey(retryKey));
+        for (var i = 0; i < 40 && downloadCommandCount() < 1; i++) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 25)),
+          );
+          await tester.pump(const Duration(milliseconds: 25));
+        }
+
+        expect(downloadCommandCount(), 1,
+            reason: 'one visible action performs exactly one owner-aware '
+                'retry');
+        // The retry went through the owner-aware group lane (the
+        // owner-enforcing repo would throw on a cross-lane write) and the
+        // fake bridge produced no verifiable bytes, so the row settles
+        // truthfully non-done.
+        final rows = await mediaAttachmentRepo.getAttachmentsForMessage(
+          'msg-229-evict',
+          owner: MediaOwnerLane.group,
+        );
+        expect(rows.single.downloadStatus, isNot(kMediaDownloadStatusDone));
       },
     );
   });

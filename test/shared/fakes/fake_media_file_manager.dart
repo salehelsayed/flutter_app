@@ -146,5 +146,15 @@ class FakeMediaFileManager extends MediaFileManager {
     Map<String, Object?> details = const {},
   }) async {
     deletedFilePaths.add(localPath);
+    // 229: mirror the real manager's observable behavior — production code
+    // now routes ALL app-owned unlinks through this seam, so tests that
+    // seed real files (e.g. stale unsafe copies) must see them disappear,
+    // not merely be recorded.
+    try {
+      final file = File(localPath);
+      if (file.existsSync()) {
+        file.deleteSync();
+      }
+    } catch (_) {}
   }
 }

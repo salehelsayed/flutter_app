@@ -168,3 +168,114 @@ Future<List<Map<String, Object?>>> dbLoadMediaLibraryPage(
     rethrow;
   }
 }
+
+/// Loads one raw owner-scoped all-media STORAGE page (229 TC-229-08).
+///
+/// Same owner scoping, parent visibility and tombstone rules as
+/// [dbLoadMediaLibraryPage] — direct requires a live un-hidden parent, group
+/// anti-joins the durable local-deletion tombstones, `unresolved` rows never
+/// match — but serves the storage inventory instead of the visual library:
+/// all four media types are addressable, there is no bookmark dimension, and
+/// only rows with a stored `local_path` (the only rows that can occupy local
+/// storage) are returned. Byte truth stays with the caller: it must stat the
+/// canonical file and never trust `size` for storage totals.
+Future<List<Map<String, Object?>>> dbLoadMediaStoragePage(
+  Database db, {
+  required String scopeKind, // 'direct' | 'group'
+  required String scopeId,
+  required List<String> mediaTypes,
+  required int limit,
+  String? afterTimestamp,
+  String? afterMessageId,
+  String? afterAttachmentId,
+}) async {
+  if (limit < 1 || limit > 100) {
+    throw ArgumentError.value(limit, 'limit', 'must be within 1..100');
+  }
+  if (scopeKind != 'direct' && scopeKind != 'group') {
+    throw ArgumentError.value(scopeKind, 'scopeKind', 'unknown scope kind');
+  }
+  if (mediaTypes.isEmpty) {
+    throw ArgumentError.value(mediaTypes, 'mediaTypes', 'must not be empty');
+  }
+
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'MEDIA_STORAGE_DB_PAGE_START',
+    details: {
+      'scopeKind': scopeKind,
+      'mediaTypes': mediaTypes,
+      'limit': limit,
+    },
+  );
+
+  try {
+    final typePlaceholders = List.filled(mediaTypes.length, '?').join(', ');
+    final args = <Object?>[];
+
+    final String parentJoin;
+    final String parentPredicate;
+    if (scopeKind == 'direct') {
+      parentJoin = 'JOIN messages p ON p.id = m.message_id';
+      parentPredicate =
+          "m.owner_lane = 'direct' AND p.contact_peer_id = ? "
+          'AND p.hidden_at IS NULL AND p.deleted_at IS NULL';
+    } else {
+      parentJoin = 'JOIN group_messages p ON p.id = m.message_id';
+      parentPredicate =
+          "m.owner_lane = 'group' AND p.group_id = ? "
+          'AND NOT EXISTS (SELECT 1 FROM group_message_local_deletions t '
+          'WHERE t.message_id = p.id)';
+    }
+    args.add(scopeId);
+    args.addAll(mediaTypes);
+
+    var keysetPredicate = '';
+    if (afterTimestamp != null &&
+        afterMessageId != null &&
+        afterAttachmentId != null) {
+      keysetPredicate =
+          ' AND (p.timestamp < ? '
+          'OR (p.timestamp = ? AND m.message_id < ?) '
+          'OR (p.timestamp = ? AND m.message_id = ? AND m.id < ?))';
+      args.addAll([
+        afterTimestamp,
+        afterTimestamp,
+        afterMessageId,
+        afterTimestamp,
+        afterMessageId,
+        afterAttachmentId,
+      ]);
+    }
+    args.add(limit);
+
+    final rows = await db.rawQuery(
+      'SELECT ${_attachmentSelectList()}, '
+      'p.timestamp AS parent_timestamp '
+      'FROM media_attachments m '
+      '$parentJoin '
+      'WHERE $parentPredicate '
+      'AND m.media_type IN ($typePlaceholders) '
+      'AND m.local_path IS NOT NULL'
+      '$keysetPredicate '
+      'ORDER BY p.timestamp DESC, m.message_id DESC, m.id DESC '
+      'LIMIT ?',
+      args,
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MEDIA_STORAGE_DB_PAGE_SUCCESS',
+      details: {'count': rows.length},
+    );
+
+    return rows;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MEDIA_STORAGE_DB_PAGE_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}

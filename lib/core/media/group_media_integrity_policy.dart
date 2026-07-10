@@ -21,6 +21,16 @@ const String kMediaDownloadStatusUploadCancelled = 'upload_cancelled';
 /// EVENT name `'media:download_failed'` (a different namespace).
 const String kMediaDownloadStatusDownloadFailed = 'download_failed';
 
+/// 229: local-only "user removed the downloaded copy, message kept" state.
+///
+/// Reached exclusively through the owner-aware eviction claim (Clear local
+/// copy); never parsed from or written to attachment wire JSON. Auto-download
+/// and mounted recovery ignore it; only an explicit user retry may transition
+/// it back to downloading. `evicted` with a non-null `local_path` is a
+/// deliberate cleanup-pending state (the claim survived a failed file delete
+/// or a failed final path-clear), not successful byte reclamation.
+const String kMediaDownloadStatusEvicted = 'evicted';
+
 class GroupMediaIntegrityPolicy {
   static final RegExp _sha256HexPattern = RegExp(r'^[a-f0-9]{64}$');
 

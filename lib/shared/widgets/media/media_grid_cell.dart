@@ -200,6 +200,12 @@ class MediaGridCell extends StatelessWidget {
       onRetryUnavailableMedia != null &&
       GroupMediaIntegrityPolicy.isRetryableDownloadFailure(attachment);
 
+  /// 229: user-removed local copy — a truthful terminal-ish state, never an
+  /// indefinite loader, with a user-authoritative explicit Retry (not gated
+  /// by the bounded auto-retry budget).
+  bool get _isEvicted =>
+      attachment.downloadStatus == kMediaDownloadStatusEvicted;
+
   Widget _buildContent(BuildContext context) {
     final isImage = attachment.mediaType == 'image';
     final isVideo = attachment.mediaType == 'video';
@@ -207,6 +213,10 @@ class MediaGridCell extends StatelessWidget {
     final hasPath = attachment.localPath != null;
     if (attachment.downloadStatus == kMediaDownloadStatusUploadPending) {
       return _buildUploadPendingPlaceholder(context);
+    }
+
+    if (_isEvicted) {
+      return _buildEvictedPlaceholder(context);
     }
 
     if (_showsUnavailableMedia) {
@@ -355,6 +365,68 @@ class MediaGridCell extends StatelessWidget {
                   child: IconButton(
                     key: ValueKey(
                       'unavailable-media-retry-${attachment.messageId}-${attachment.id}',
+                    ),
+                    visualDensity: VisualDensity.compact,
+                    iconSize: 18,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                    color: const Color(0xFF4ecdc4),
+                    onPressed: onRetryUnavailableMedia,
+                    tooltip: l10n.media_retry_unavailable,
+                    icon: const Icon(Icons.refresh_rounded),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 229: "local copy removed" placeholder. The relay keeps blobs for a
+  /// bounded time only, so the copy makes no cloud-style re-download
+  /// promise — Retry attempts a transfer that settles truthfully (done or
+  /// terminal unavailable).
+  Widget _buildEvictedPlaceholder(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return Container(
+      color: const Color.fromRGBO(255, 255, 255, 0.03),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.file_download_off_outlined,
+                size: 24,
+                color: Color.fromRGBO(255, 255, 255, 0.34),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                l10n.media_local_copy_removed,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color.fromRGBO(255, 255, 255, 0.66),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              if (onRetryUnavailableMedia != null) ...[
+                const SizedBox(height: 8),
+                Semantics(
+                  container: true,
+                  label: l10n.media_retry_unavailable,
+                  button: true,
+                  child: IconButton(
+                    key: ValueKey(
+                      'evicted-media-retry-${attachment.messageId}-${attachment.id}',
                     ),
                     visualDensity: VisualDensity.compact,
                     iconSize: 18,

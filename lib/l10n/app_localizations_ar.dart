@@ -1013,6 +1013,64 @@ class AppLocalizationsAr extends AppLocalizations {
   String get media_could_not_verify => 'تعذّر التحقق من هذه الوسائط';
 
   @override
+  String get settings_media_storage => 'الوسائط والتخزين';
+
+  @override
+  String get settings_media_auto_download => 'التنزيل التلقائي';
+
+  @override
+  String get settings_media_auto_download_desc =>
+      'اختر الوسائط المستلمة التي تُنزَّل تلقائيًا على كل شبكة.';
+
+  @override
+  String get settings_media_lane_direct => 'الدردشات المباشرة';
+
+  @override
+  String get settings_media_lane_discussions => 'النقاشات';
+
+  @override
+  String get settings_media_lane_announcements => 'الإعلانات';
+
+  @override
+  String get settings_media_type_image => 'الصور';
+
+  @override
+  String get settings_media_type_video => 'الفيديوهات';
+
+  @override
+  String get settings_media_type_audio => 'الصوتيات';
+
+  @override
+  String get settings_media_type_file => 'الملفات';
+
+  @override
+  String get settings_media_network_off => 'إيقاف';
+
+  @override
+  String get settings_media_network_wifi => 'واي فاي';
+
+  @override
+  String get settings_media_network_all => 'واي فاي + بيانات الجوال';
+
+  @override
+  String get settings_media_save_fail => 'تعذّر حفظ إعدادات تنزيل الوسائط';
+
+  @override
+  String get settings_media_storage_usage => 'استخدام التخزين';
+
+  @override
+  String get settings_media_storage_compute => 'عرض الاستخدام';
+
+  @override
+  String get settings_media_storage_clear_type => 'مسح';
+
+  @override
+  String get settings_media_storage_empty => 'لا توجد نسخ وسائط منزّلة';
+
+  @override
+  String get media_local_copy_removed => 'تمت إزالة النسخة المحلية';
+
+  @override
   String get media_retry_unavailable => 'إعادة تحميل الوسائط غير المتاحة';
 
   @override

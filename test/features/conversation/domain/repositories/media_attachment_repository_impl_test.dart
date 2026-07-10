@@ -686,6 +686,175 @@ void main() {
       },
     );
 
+    // --- 229 TC-229-12 ---
+
+    test(
+      'ordinary replay preserves evicted and viewer state until explicit '
+      'owner-aware retry',
+      () async {
+        await fixture.seedDirectParent('msg-evict');
+        await fixture.seedGroupParent('msg-evict');
+
+        // Collision fixture: both lanes carry attachments under the SAME
+        // parent message id, plus a fail-closed unresolved legacy row.
+        Future<void> seedEvictedLane(MediaOwnerLane owner, String id) async {
+          await fixture.repo.saveAttachment(
+            makeAttachment(
+              id: id,
+              messageId: 'msg-evict',
+              mime: 'video/mp4',
+              mediaType: 'video',
+              durationMs: 9000,
+              downloadStatus: 'done',
+              localPath: 'media/peer/$id.mp4',
+            ),
+            owner: owner,
+          );
+          await fixture.repo.setBookmarked(id, bookmarked: true);
+          await fixture.repo.updatePlaybackPosition(id, 3000);
+          // The owner-aware eviction claim retains the path for deletion...
+          expect(
+            await fixture.repo.claimMediaEvicted(
+              id,
+              owner: owner,
+              expectedLocalPath: 'media/peer/$id.mp4',
+            ),
+            1,
+          );
+          // ...and the post-delete finalize nulls it.
+          expect(
+            await fixture.repo.finalizeMediaEvictedPathCleared(
+              id,
+              owner: owner,
+            ),
+            1,
+          );
+        }
+
+        await seedEvictedLane(MediaOwnerLane.direct, 'att-evict-d');
+        await seedEvictedLane(MediaOwnerLane.group, 'att-evict-g');
+        await fixture.db.insert('media_attachments', {
+          'id': 'att-evict-u',
+          'message_id': 'msg-evict',
+          'mime': 'video/mp4',
+          'size': 10,
+          'media_type': 'video',
+          'download_status': 'done',
+          'local_path': 'media/peer/att-evict-u.mp4',
+          'created_at': '2026-02-20T10:00:00.000Z',
+          'owner_lane': 'unresolved',
+        });
+
+        // Ordinary wire replay (pending, no path, default local fields) in
+        // BOTH lanes: transport metadata updates, but evicted status, null
+        // path, owner, bookmark and playback all survive.
+        for (final (owner, id) in [
+          (MediaOwnerLane.direct, 'att-evict-d'),
+          (MediaOwnerLane.group, 'att-evict-g'),
+        ]) {
+          await fixture.repo.saveAttachment(
+            makeAttachment(
+              id: id,
+              messageId: 'msg-evict',
+              mime: 'video/mp4',
+              mediaType: 'video',
+              durationMs: 9000,
+              width: 640,
+              downloadStatus: 'pending',
+            ),
+            owner: owner,
+          );
+          final row = await rawRow(id);
+          expect(row!['download_status'], 'evicted',
+              reason: '$owner replay must not re-arm an evicted row');
+          expect(row['local_path'], isNull);
+          expect(row['is_bookmarked'], 1);
+          expect(row['last_playback_position_ms'], 3000);
+          expect(row['owner_lane'], owner.dbValue);
+          expect(row['width'], 640);
+        }
+
+        // A blind `done` replay through the ordinary save path cannot
+        // resurrect the local copy either.
+        await fixture.repo.saveAttachment(
+          makeAttachment(
+            id: 'att-evict-d',
+            messageId: 'msg-evict',
+            mime: 'video/mp4',
+            mediaType: 'video',
+            durationMs: 9000,
+            downloadStatus: 'done',
+            localPath: 'media/peer/att-evict-d.mp4',
+          ),
+          owner: MediaOwnerLane.direct,
+        );
+        final blind = await rawRow('att-evict-d');
+        expect(blind!['download_status'], 'evicted');
+        expect(blind['local_path'], isNull);
+
+        // The unresolved legacy row is untouched by every lane-scoped
+        // operation above.
+        final unresolved = await rawRow('att-evict-u');
+        expect(unresolved!['download_status'], 'done');
+        expect(unresolved['owner_lane'], 'unresolved');
+        expect(unresolved['local_path'], 'media/peer/att-evict-u.mp4');
+
+        // A cross-lane retry claim is a lost claim (0 rows), never a
+        // mutation of the sibling.
+        expect(
+          await fixture.repo.beginMediaDownload(
+            'att-evict-g',
+            owner: MediaOwnerLane.direct,
+          ),
+          isFalse,
+        );
+        expect((await rawRow('att-evict-g'))!['download_status'], 'evicted');
+
+        // The explicit matching-owner retry transitions ONLY its row, and
+        // the CAS commit from that claim settles done with the fresh path.
+        expect(
+          await fixture.repo.beginMediaDownload(
+            'att-evict-d',
+            owner: MediaOwnerLane.direct,
+          ),
+          isTrue,
+        );
+        expect(
+          (await rawRow('att-evict-d'))!['download_status'],
+          'downloading',
+        );
+        expect((await rawRow('att-evict-g'))!['download_status'], 'evicted');
+        expect(
+          await fixture.repo.commitMediaDownloadLocalPath(
+            'att-evict-d',
+            owner: MediaOwnerLane.direct,
+            localPath: 'media/peer/att-evict-d-new.mp4',
+          ),
+          isTrue,
+        );
+        final settled = await rawRow('att-evict-d');
+        expect(settled!['download_status'], 'done');
+        expect(settled['local_path'], 'media/peer/att-evict-d-new.mp4');
+        expect(settled['is_bookmarked'], 1,
+            reason: 'viewer state survives the full evict/retry journey');
+
+        // A late commit whose claim was lost (row no longer downloading)
+        // affects zero rows.
+        expect(
+          await fixture.repo.commitMediaDownloadLocalPath(
+            'att-evict-d',
+            owner: MediaOwnerLane.direct,
+            localPath: 'media/peer/att-evict-d-stale.mp4',
+          ),
+          isFalse,
+        );
+        expect(
+          (await rawRow('att-evict-d'))!['local_path'],
+          'media/peer/att-evict-d-new.mp4',
+        );
+      },
+    );
+
     // --- 228 TC-228-10 ---
 
     test(

@@ -9,6 +9,7 @@ import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import '../models/media_attachment.dart';
 import '../models/media_library.dart';
 import '../models/media_preview_descriptor.dart';
+import '../models/media_storage.dart';
 import 'media_attachment_repository.dart';
 
 /// Implementation of MediaAttachmentRepository using database helper functions.
@@ -27,7 +28,9 @@ class MediaAttachmentRepositoryImpl
         MediaAttachmentByIdLookup,
         MediaPreviewDescriptorLookup,
         MediaLibraryStateRepository,
-        MediaLibraryRepository {
+        MediaLibraryRepository,
+        MediaDownloadStateRepository,
+        MediaStorageInventoryRepository {
   final Future<void> Function(Map<String, Object?> row)
   dbSaveMediaAttachmentPreservingLocalState;
   final Future<List<Map<String, Object?>>> Function(
@@ -75,6 +78,39 @@ class MediaAttachmentRepositoryImpl
     String? afterAttachmentId,
   })
   dbLoadMediaLibraryPage;
+
+  // 229: the owner-scoped all-media storage page closure. Optional like the
+  // CAS closures below; the capability fails closed when missing.
+  final Future<List<Map<String, Object?>>> Function({
+    required String scopeKind,
+    required String scopeId,
+    required List<String> mediaTypes,
+    required int limit,
+    String? afterTimestamp,
+    String? afterMessageId,
+    String? afterAttachmentId,
+  })?
+  dbLoadMediaStoragePage;
+
+  // 229: owner-aware CAS closures. Optional so schema-only constructions
+  // keep compiling, but the capability methods fail closed (StateError)
+  // rather than silently degrading when a closure is missing.
+  final Future<int> Function(String id, {required String ownerLane})?
+  dbBeginMediaDownload;
+  final Future<int> Function(
+    String id, {
+    required String ownerLane,
+    required String localPath,
+  })?
+  dbCommitMediaDownloadLocalPath;
+  final Future<int> Function(
+    String id, {
+    required String ownerLane,
+    required String expectedLocalPath,
+  })?
+  dbClaimMediaEvicted;
+  final Future<int> Function(String id, {required String ownerLane})?
+  dbFinalizeMediaEvictedPathCleared;
   final SecureKeyStore? secureKeyStore;
 
   MediaAttachmentRepositoryImpl({
@@ -92,8 +128,74 @@ class MediaAttachmentRepositoryImpl
     required this.dbSetMediaBookmarked,
     required this.dbUpdateMediaPlaybackPosition,
     required this.dbLoadMediaLibraryPage,
+    this.dbLoadMediaStoragePage,
+    this.dbBeginMediaDownload,
+    this.dbCommitMediaDownloadLocalPath,
+    this.dbClaimMediaEvicted,
+    this.dbFinalizeMediaEvictedPathCleared,
     this.secureKeyStore,
   });
+
+  T _requireCasClosure<T>(T? closure, String name) {
+    if (closure == null) {
+      throw StateError(
+        '229 CAS closure $name is not wired on this '
+        'MediaAttachmentRepositoryImpl — conditional download/eviction '
+        'transitions fail closed instead of degrading to unconditional '
+        'writes',
+      );
+    }
+    return closure;
+  }
+
+  @override
+  Future<bool> beginMediaDownload(
+    String id, {
+    required MediaOwnerLane owner,
+  }) async {
+    final claim = _requireCasClosure(dbBeginMediaDownload, 'beginMediaDownload');
+    return await claim(id, ownerLane: owner.dbValue) > 0;
+  }
+
+  @override
+  Future<bool> commitMediaDownloadLocalPath(
+    String id, {
+    required MediaOwnerLane owner,
+    required String localPath,
+  }) async {
+    final commit = _requireCasClosure(
+      dbCommitMediaDownloadLocalPath,
+      'commitMediaDownloadLocalPath',
+    );
+    return await commit(id, ownerLane: owner.dbValue, localPath: localPath) >
+        0;
+  }
+
+  @override
+  Future<int> claimMediaEvicted(
+    String id, {
+    required MediaOwnerLane owner,
+    required String expectedLocalPath,
+  }) {
+    final claim = _requireCasClosure(dbClaimMediaEvicted, 'claimMediaEvicted');
+    return claim(
+      id,
+      ownerLane: owner.dbValue,
+      expectedLocalPath: expectedLocalPath,
+    );
+  }
+
+  @override
+  Future<int> finalizeMediaEvictedPathCleared(
+    String id, {
+    required MediaOwnerLane owner,
+  }) {
+    final finalize = _requireCasClosure(
+      dbFinalizeMediaEvictedPathCleared,
+      'finalizeMediaEvictedPathCleared',
+    );
+    return finalize(id, ownerLane: owner.dbValue);
+  }
 
   @override
   Future<void> saveAttachment(
@@ -306,6 +408,77 @@ class MediaAttachmentRepositoryImpl
   }
 
   @override
+  Future<MediaStoragePage> getMediaStoragePage({
+    required MediaLibraryScope scope,
+    MediaStorageKind kind = MediaStorageKind.all,
+    int limit = kMediaLibraryMaxPageSize,
+    String? cursor,
+  }) async {
+    final loadPage = _requireCasClosure(
+      dbLoadMediaStoragePage,
+      'getMediaStoragePage',
+    );
+    // Every argument-contract failure happens HERE, before any SQL.
+    if (limit < 1 || limit > kMediaLibraryMaxPageSize) {
+      throw ArgumentError.value(
+        limit,
+        'limit',
+        'must be within 1..$kMediaLibraryMaxPageSize',
+      );
+    }
+    _MediaStorageCursor? after;
+    if (cursor != null) {
+      after = _MediaStorageCursor.decode(cursor);
+      if (after.scopeKind != scope.lane.dbValue ||
+          after.scopeId != scope.id ||
+          after.kind != kind.name) {
+        throw ArgumentError.value(
+          cursor,
+          'cursor',
+          'cursor was minted for a different scope/kind signature',
+        );
+      }
+    }
+
+    final rows = await loadPage(
+      scopeKind: scope.lane.dbValue,
+      scopeId: scope.id,
+      mediaTypes: kind.mediaTypes,
+      limit: limit,
+      afterTimestamp: after?.timestamp,
+      afterMessageId: after?.messageId,
+      afterAttachmentId: after?.attachmentId,
+    );
+
+    final entries = <MediaStorageEntry>[];
+    for (final row in rows) {
+      final attachmentMap = await _hydrateRow(
+        mediaLibraryRowToAttachmentMap(row),
+      );
+      entries.add(
+        MediaStorageEntry(
+          attachment: MediaAttachment.fromMap(attachmentMap),
+          parentTimestamp: row['parent_timestamp'] as String,
+        ),
+      );
+    }
+
+    String? nextCursor;
+    if (entries.length == limit) {
+      final last = entries.last;
+      nextCursor = _MediaStorageCursor(
+        scopeKind: scope.lane.dbValue,
+        scopeId: scope.id,
+        kind: kind.name,
+        timestamp: last.parentTimestamp,
+        messageId: last.attachment.messageId,
+        attachmentId: last.attachment.id,
+      ).encode();
+    }
+    return MediaStoragePage(entries: entries, nextCursor: nextCursor);
+  }
+
+  @override
   Future<void> updatePlaybackPosition(String id, int positionMs) async {
     await dbUpdateMediaPlaybackPosition(id, positionMs);
   }
@@ -477,6 +650,66 @@ class MediaAttachmentRepositoryImpl
     }
 
     return Map<String, Object?>.from(row)..['encryption_key_base64'] = hydrated;
+  }
+}
+
+/// Opaque keyset cursor for [MediaAttachmentRepositoryImpl.getMediaStoragePage]
+/// (229). Embeds the complete scope/kind signature alongside the keyset
+/// position; a `v`/`q` mismatch or replay under another signature fails
+/// before SQL. Deliberately a distinct codec from [_MediaLibraryCursor] so a
+/// visual-library cursor can never address the storage query (and vice
+/// versa).
+class _MediaStorageCursor {
+  const _MediaStorageCursor({
+    required this.scopeKind,
+    required this.scopeId,
+    required this.kind,
+    required this.timestamp,
+    required this.messageId,
+    required this.attachmentId,
+  });
+
+  final String scopeKind;
+  final String scopeId;
+  final String kind;
+  final String timestamp;
+  final String messageId;
+  final String attachmentId;
+
+  String encode() => base64Url.encode(
+    utf8.encode(
+      jsonEncode({
+        'v': 1,
+        'q': 'storage',
+        'scopeKind': scopeKind,
+        'scopeId': scopeId,
+        'kind': kind,
+        'ts': timestamp,
+        'mid': messageId,
+        'aid': attachmentId,
+      }),
+    ),
+  );
+
+  static _MediaStorageCursor decode(String cursor) {
+    try {
+      final decoded =
+          jsonDecode(utf8.decode(base64Url.decode(cursor)))
+              as Map<String, dynamic>;
+      if (decoded['v'] != 1 || decoded['q'] != 'storage') {
+        throw const FormatException('unknown storage cursor signature');
+      }
+      return _MediaStorageCursor(
+        scopeKind: decoded['scopeKind'] as String,
+        scopeId: decoded['scopeId'] as String,
+        kind: decoded['kind'] as String,
+        timestamp: decoded['ts'] as String,
+        messageId: decoded['mid'] as String,
+        attachmentId: decoded['aid'] as String,
+      );
+    } catch (e) {
+      throw ArgumentError.value(cursor, 'cursor', 'malformed cursor: $e');
+    }
   }
 }
 

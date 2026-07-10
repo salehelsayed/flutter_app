@@ -24,6 +24,8 @@ import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart'
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
 import 'package:flutter_app/features/settings/application/download_profile_picture_use_case.dart';
+import 'package:flutter_app/features/settings/application/media_download_policy.dart';
+import 'package:flutter_app/features/settings/domain/models/media_download_preferences.dart';
 
 enum ChatMessageProcessState {
   stored,
@@ -91,6 +93,12 @@ class ChatMessageListener {
   final Duration backgroundNotificationDuplicateGuardDelay;
   final AccountMigrationNetworkGate accountMigrationNetworkGate;
 
+  /// 229: user auto-download policy consulted immediately before every
+  /// automatic direct media transfer. Null preserves HEAD behavior (allowed);
+  /// a denied attachment stays `pending` with zero transfer and remains
+  /// reachable through the explicit user retry affordance.
+  final MediaAutoDownloadDecider? autoDownloadDecider;
+
   /// 115 P2: optional delivery-receipt sender. When set, relay-inbox
   /// arrivals (per the shared origin contract) confirm durable persist back
   /// to the message sender. Live direct/LAN messages never mint receipts —
@@ -123,6 +131,7 @@ class ChatMessageListener {
     this.backgroundNotificationDuplicateGuardDelay = const Duration(seconds: 2),
     this.accountMigrationNetworkGate = allowAccountMigrationNetworkSideEffects,
     this.sendDeliveryReceipt,
+    this.autoDownloadDecider,
   });
 
   /// Stream of new incoming chat messages for the UI to listen to.
@@ -193,6 +202,20 @@ class ChatMessageListener {
           continue;
         }
         try {
+          // 229: consult the user policy immediately before transfer; the
+          // storage owner is the typed lane this row was addressed under.
+          final decider =
+              autoDownloadDecider ?? defaultMediaAutoDownloadDecider;
+          if (decider != null &&
+              !await decider.shouldAutoDownload(
+                conversationKind: MediaConversationKind.oneToOne,
+                storageOwner: MediaOwnerLane.direct,
+                mediaType: attachment.mediaType,
+                downloadStatus: attachment.downloadStatus,
+              )) {
+            downloadedMedia.add(attachment);
+            continue;
+          }
           final result = await downloadMedia(
             bridge: bridge!,
             mediaAttachmentRepo: mediaAttachmentRepo!,

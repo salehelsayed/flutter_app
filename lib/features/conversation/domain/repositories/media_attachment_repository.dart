@@ -3,6 +3,7 @@ import 'package:flutter_app/core/media/media_owner_lane.dart';
 import '../models/media_attachment.dart';
 import '../models/media_library.dart';
 import '../models/media_preview_descriptor.dart';
+import '../models/media_storage.dart';
 
 /// Repository interface for managing media attachments.
 ///
@@ -116,6 +117,72 @@ abstract class MediaLibraryRepository {
     MediaLibraryFilter filter = const MediaLibraryFilter(),
     int limit = 50,
     String? cursor,
+  });
+}
+
+/// Optional capability (229): the owner-scoped all-media STORAGE page query
+/// behind `MediaStorageManager.inventory`.
+///
+/// Reuses the 228 visibility contract (owner-lane SQL predicate, live/
+/// un-hidden direct parents, group tombstone anti-join, `unresolved`
+/// invisible) but addresses all four media types and returns only rows with
+/// a stored local path. Cursors are opaque and bound to the exact scope +
+/// kind signature; replaying one under another signature (or malformed)
+/// throws [ArgumentError] before SQL, as do limits outside
+/// `1..kMediaLibraryMaxPageSize`. This deliberately does NOT broaden the
+/// visual [MediaLibraryRepository] contract.
+abstract class MediaStorageInventoryRepository {
+  Future<MediaStoragePage> getMediaStoragePage({
+    required MediaLibraryScope scope,
+    MediaStorageKind kind = MediaStorageKind.all,
+    int limit = kMediaLibraryMaxPageSize,
+    String? cursor,
+  });
+}
+
+/// Optional capability (229): owner-aware conditional download/eviction
+/// state transitions with affected-row results.
+///
+/// The download use case claims a row into `downloading` before transfer and
+/// commits the canonical path/`done` ONLY from its own claim; the storage
+/// manager claims `done` rows into `evicted` before touching any file and
+/// nulls the path only after a successful delete. Every method returns how
+/// many rows the conditional write affected — zero is a lost claim, never
+/// success.
+abstract class MediaDownloadStateRepository {
+  /// CAS: claim [id] into `downloading` under [owner]. Allowed source states
+  /// are pending/downloading/failed/download_failed/evicted; `done` rows are
+  /// adopted, never re-claimed. Returns true when exactly one row was
+  /// claimed.
+  Future<bool> beginMediaDownload(String id, {required MediaOwnerLane owner});
+
+  /// CAS: commit the canonical relative [localPath] + `done` (retry budget
+  /// resets) only while the row is still this download's `downloading`
+  /// claim under [owner]. Returns true when the commit landed; false means
+  /// the claim was lost and the caller must fail closed (removing only the
+  /// exact artifact it promoted).
+  Future<bool> commitMediaDownloadLocalPath(
+    String id, {
+    required MediaOwnerLane owner,
+    required String localPath,
+  });
+
+  /// CAS: claim the exact `(id, owner, expectedLocalPath, done)` row as
+  /// `evicted`, retaining the stored path for the deletion step. Returns the
+  /// affected row count (0 = row changed underneath the caller — delete
+  /// nothing).
+  Future<int> claimMediaEvicted(
+    String id, {
+    required MediaOwnerLane owner,
+    required String expectedLocalPath,
+  });
+
+  /// CAS: null the stored path of a row still `evicted` under [owner] (the
+  /// post-delete finalize, or fresh-manager reconciliation after proving the
+  /// canonical file absent). Returns the affected row count.
+  Future<int> finalizeMediaEvictedPathCleared(
+    String id, {
+    required MediaOwnerLane owner,
   });
 }
 

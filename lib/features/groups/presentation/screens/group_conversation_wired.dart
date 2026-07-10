@@ -68,8 +68,10 @@ import 'package:flutter_app/features/groups/presentation/screens/group_conversat
 import 'package:flutter_app/features/groups/presentation/screens/group_info_wired.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_reaction_details_sheet.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/settings/application/media_download_policy.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
+import 'package:flutter_app/features/settings/domain/models/media_download_preferences.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
@@ -178,6 +180,15 @@ class GroupConversationWired extends StatefulWidget {
   final DateTime? notificationTappedAt;
   final BackgroundPreference backgroundPreference;
 
+  /// 229: user auto-download policy consulted immediately before every
+  /// automatic group media transfer (initial load and live-stream recovery).
+  /// The product kind is derived from [group]: announcement groups decide on
+  /// the announcement lane, every other group type on the discussion lane;
+  /// storage stays [MediaOwnerLane.group] for both. Null preserves HEAD
+  /// behavior (allowed). The explicit unavailable-media retry is
+  /// user-authoritative and never gated by this decider.
+  final MediaAutoDownloadDecider? autoDownloadDecider;
+
   const GroupConversationWired({
     super.key,
     required this.group,
@@ -209,6 +220,7 @@ class GroupConversationWired extends StatefulWidget {
     this.maxAttachmentBudgetBytes = kGeneralMediaAttachmentBudgetBytes,
     this.notificationTappedAt,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
+    this.autoDownloadDecider,
   });
 
   @override
@@ -1392,6 +1404,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         if (!_shouldRecoverVisibleAttachment(attachment)) {
           continue;
         }
+        // 229: consult the user policy immediately before transfer — BEFORE
+        // the optimistic downloading flip, so a denied attachment keeps its
+        // persisted state untouched and stays explicitly retryable.
+        if (!await _autoDownloadAllowed(attachment)) {
+          continue;
+        }
 
         final retrying = attachment.copyWith(
           clearLocalPath: true,
@@ -1465,6 +1483,33 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           setState(() => _updateMediaForMessage(entry.key, resolved));
         }
       }
+    }
+  }
+
+  /// 229: the product kind this screen decides downloads under. Announcement
+  /// groups are their own preference lane; chat and Q&A groups are
+  /// discussions. Storage stays [MediaOwnerLane.group] for all of them —
+  /// announcement is never a third storage owner.
+  MediaConversationKind get _mediaConversationKind =>
+      _group.type == GroupType.announcement
+          ? MediaConversationKind.announcement
+          : MediaConversationKind.discussion;
+
+  /// 229: policy check run immediately before each automatic group transfer.
+  /// An untrusted-row policy throw fails closed (no transfer).
+  Future<bool> _autoDownloadAllowed(MediaAttachment attachment) async {
+    final decider =
+        widget.autoDownloadDecider ?? defaultMediaAutoDownloadDecider;
+    if (decider == null) return true;
+    try {
+      return await decider.shouldAutoDownload(
+        conversationKind: _mediaConversationKind,
+        storageOwner: MediaOwnerLane.group,
+        mediaType: attachment.mediaType,
+        downloadStatus: attachment.downloadStatus,
+      );
+    } catch (_) {
+      return false;
     }
   }
 
@@ -2420,10 +2465,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     try {
       final absolutePath = await mediaFileManager.resolveStoredPath(localPath);
       if (_isPendingUploadPath(absolutePath)) return;
-      final file = File(absolutePath);
-      if (await file.exists()) {
-        await file.delete();
-      }
+      // 229: route through the guarded app-owned delete (ownership telemetry,
+      // no raw unlink) instead of a bare File.delete.
+      await mediaFileManager.deleteFile(
+        absolutePath,
+        caller: 'GroupConversationWired._deleteUnsafeLocalMediaFile',
+        reason: 'replace_unsafe_local_copy_before_retry',
+        storedPath: localPath,
+      );
     } catch (_) {}
   }
 

@@ -55,6 +55,11 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
       widget.onRetryUnavailableMedia != null &&
       GroupMediaIntegrityPolicy.isRetryableDownloadFailure(widget.attachment);
 
+  /// 229: user-removed local copy — renders a truthful removed state (never
+  /// a disabled forever-player) with a user-authoritative explicit Retry.
+  bool get _isEvicted =>
+      widget.attachment.downloadStatus == kMediaDownloadStatusEvicted;
+
   @override
   void initState() {
     super.initState();
@@ -200,6 +205,9 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isEvicted) {
+      return _buildEvictedAudio();
+    }
     if (_showsUnavailableMedia) {
       return _buildUnavailableAudio();
     }
@@ -287,6 +295,62 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
           ),
         ),
       ],
+    );
+  }
+
+  /// 229: "local copy removed" pill. Retry is user-authoritative (never
+  /// gated by the bounded auto-retry budget or the auto-download
+  /// preference) and settles truthfully — done, or terminal unavailable
+  /// once the relay copy has expired.
+  Widget _buildEvictedAudio() {
+    final l10n = AppLocalizations.of(context)!;
+    return Container(
+      key: ValueKey('evicted-media-audio-${widget.attachment.id}'),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color.fromRGBO(255, 255, 255, 0.04),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color.fromRGBO(255, 255, 255, 0.08)),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.file_download_off_outlined,
+            size: 18,
+            color: Color.fromRGBO(255, 255, 255, 0.42),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              l10n.media_local_copy_removed,
+              style: const TextStyle(
+                color: Color.fromRGBO(255, 255, 255, 0.66),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          if (widget.onRetryUnavailableMedia != null)
+            Semantics(
+              container: true,
+              label: l10n.media_retry_unavailable,
+              button: true,
+              child: IconButton(
+                key: ValueKey(
+                  'evicted-media-retry-${widget.attachment.messageId}-${widget.attachment.id}',
+                ),
+                visualDensity: VisualDensity.compact,
+                iconSize: 18,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                color: const Color(0xFF4ecdc4),
+                onPressed: widget.onRetryUnavailableMedia,
+                tooltip: l10n.media_retry_unavailable,
+                icon: const Icon(Icons.refresh_rounded),
+              ),
+            ),
+        ],
+      ),
     );
   }
 

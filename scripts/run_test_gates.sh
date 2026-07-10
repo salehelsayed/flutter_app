@@ -26,6 +26,7 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/integration/ranked_race_relay_penalty_test.dart"
   "test/features/conversation/integration/media_attachment_flow_test.dart"
   "test/features/conversation/integration/media_retry_smoke_test.dart"
+  "test/features/conversation/integration/media_eviction_redownload_test.dart"
   "test/features/conversation/integration/voice_message_exchange_test.dart"
   "test/features/conversation/integration/incomplete_upload_recovery_test.dart"
   "test/features/conversation/integration/send_then_lock_delivery_test.dart"
@@ -235,6 +236,7 @@ readonly INTRO_TESTS=(
 
 readonly GROUP_TESTS=(
   "test/features/groups/integration/group_messaging_smoke_test.dart"
+  "test/features/conversation/integration/media_eviction_redownload_test.dart"
   "test/features/groups/integration/group_admin_metadata_convergence_test.dart"
   "test/features/groups/integration/group_resume_recovery_test.dart"
   "test/features/groups/integration/group_edge_cases_smoke_test.dart"

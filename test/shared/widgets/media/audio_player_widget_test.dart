@@ -159,5 +159,43 @@ void main() {
         expect(retried, isFalse);
       },
     );
+
+    testWidgets(
+      '229: evicted audio shows removed state and explicit retry',
+      (tester) async {
+        var retryCount = 0;
+        final attachment = baseAttachment.copyWith(
+          downloadStatus: kMediaDownloadStatusEvicted,
+          waveform: [0.2, 0.6, 0.4],
+        );
+        await tester.pumpWidget(
+          buildApp(attachment, onRetryUnavailableMedia: () => retryCount++),
+        );
+        await tester.pump();
+
+        // Truthful removed state — not a disabled player, not the generic
+        // unavailable pill, no loader.
+        expect(
+          find.byKey(const ValueKey('evicted-media-audio-att-audio-001')),
+          findsOneWidget,
+        );
+        expect(find.text('Local copy removed'), findsOneWidget);
+        expect(find.text('Media unavailable'), findsNothing);
+        expect(find.byType(WaveformSeekBar), findsNothing);
+        expect(find.byType(Slider), findsNothing);
+        expect(find.byType(CircularProgressIndicator), findsNothing);
+
+        // Explicit, user-authoritative Retry: exactly one transfer request
+        // per tap, none on build.
+        expect(retryCount, 0);
+        final retryKey = const ValueKey(
+          'evicted-media-retry-msg-001-att-audio-001',
+        );
+        expect(find.byKey(retryKey), findsOneWidget);
+        await tester.tap(find.byKey(retryKey));
+        await tester.pump();
+        expect(retryCount, 1);
+      },
+    );
   });
 }

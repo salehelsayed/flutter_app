@@ -40,6 +40,10 @@ class SettingsScreen extends StatelessWidget {
   final VoidCallback? onOpenBackgroundSheet;
   final VoidCallback? onOpenPhotoQualitySheet;
   final VoidCallback? onOpenVideoQualitySheet;
+
+  /// 229: opens the Media & storage sheet (auto-download matrix + scoped
+  /// storage totals/actions). Row hidden when null.
+  final VoidCallback? onOpenMediaStorageSheet;
   final VoidCallback? onOpenRecoverySheet;
   final BackgroundPreference currentBackgroundPreference;
   final ImageQualityPreference currentQuality;
@@ -69,6 +73,7 @@ class SettingsScreen extends StatelessWidget {
     this.onOpenBackgroundSheet,
     this.onOpenPhotoQualitySheet,
     this.onOpenVideoQualitySheet,
+    this.onOpenMediaStorageSheet,
     this.onOpenRecoverySheet,
     this.currentBackgroundPreference = BackgroundPreference.defaultBackground,
     this.currentQuality = ImageQualityPreference.compressed,
@@ -158,6 +163,13 @@ class SettingsScreen extends StatelessWidget {
           label: l10n.settings_video_quality,
           value: _qualityValueLabel(l10n, currentVideoQuality),
           onTap: onOpenVideoQualitySheet,
+        ),
+      if (onOpenMediaStorageSheet != null)
+        SettingsListRow(
+          key: const ValueKey('settings-row-media-storage'),
+          icon: Icons.download_for_offline_outlined,
+          label: l10n.settings_media_storage,
+          onTap: onOpenMediaStorageSheet,
         ),
       if (onNearbySharingChanged != null)
         SettingsListRow(

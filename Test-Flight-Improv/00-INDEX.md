@@ -201,7 +201,7 @@ plan is refreshed/reviewed.
 |---|---|---|
 | [227-received-media-native-egress-foundation-tdd-plan.md](227-received-media-native-egress-foundation-tdd-plan.md) | Execution-ready | Single and bounded-list Save to Photos/Files plus external OS Share; native Android/iOS proof; no messaging transport. |
 | [228-shared-media-library-bookmark-persistence-tdd-plan.md](228-shared-media-library-bookmark-persistence-tdd-plan.md) | Execution-ready | Paged media-library source, bookmarks, and video resume state; DB `v96` with Android/iOS SQLCipher proof. |
-| [229-cross-track-media-download-storage-controls-tdd-plan.md](229-cross-track-media-download-storage-controls-tdd-plan.md) | Execution-ready | Auto-download policy, local availability, eviction, clear-local-copy, and storage controls across lanes. |
+| [229-cross-track-media-download-storage-controls-tdd-plan.md](229-cross-track-media-download-storage-controls-tdd-plan.md) | Implemented host-green 2026-07-10 (see plan Execution Progress) | Auto-download policy, local availability, eviction, clear-local-copy, and storage controls across lanes. |
 | [230-shared-typed-media-viewer-tdd-plan.md](230-shared-typed-media-viewer-tdd-plan.md) | Execution-ready | Typed current-item/action callback seam, safe Info metadata, and video seek/speed/mute/resume/lifecycle controls; callback-only and transport-free. |
 | [243-native-media-picture-in-picture-tdd-plan.md](243-native-media-picture-in-picture-tdd-plan.md) | Evidence-gated | Native video-only PiP ownership, capability, privacy, and Android/iOS device proof after a bounded platform spike. |
 

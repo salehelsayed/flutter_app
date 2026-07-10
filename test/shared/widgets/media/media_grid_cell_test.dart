@@ -1119,4 +1119,73 @@ void main() {
       expect(mti.placeholder, isNotNull);
     },
   );
+
+  testWidgets(
+    '229: evicted image video and file show removed state and explicit retry',
+    (tester) async {
+      const specs = [
+        (id: 'evicted-image', mime: 'image/jpeg', mediaType: 'image'),
+        (id: 'evicted-video', mime: 'video/mp4', mediaType: 'video'),
+        (id: 'evicted-file', mime: 'application/pdf', mediaType: 'file'),
+      ];
+      for (final spec in specs) {
+        var retryCount = 0;
+        final attachment = _attachment(
+          id: spec.id,
+          mime: spec.mime,
+          mediaType: spec.mediaType,
+          downloadStatus: kMediaDownloadStatusEvicted,
+          localPath: null,
+        );
+        await tester.pumpWidget(
+          wrap(
+            MediaGridCell(
+              attachment: attachment,
+              onRetryUnavailableMedia: () => retryCount++,
+            ),
+          ),
+        );
+        await tester.pump();
+
+        // Truthful removed state — never an indefinite loader, never the
+        // generic unavailable copy.
+        expect(find.text('Local copy removed'), findsOneWidget,
+            reason: '${spec.mediaType} must render the removed state');
+        expect(find.byType(CircularProgressIndicator), findsNothing,
+            reason: '${spec.mediaType} must not render as loading');
+        expect(find.text('Media unavailable'), findsNothing);
+
+        // Explicit, user-authoritative Retry (not budget-gated).
+        final retryKey = ValueKey('evicted-media-retry-msg-1-${spec.id}');
+        expect(find.byKey(retryKey), findsOneWidget);
+        expect(retryCount, 0, reason: 'build must never dispatch a retry');
+        await tester.tap(find.byKey(retryKey));
+        await tester.pump();
+        expect(retryCount, 1,
+            reason: '${spec.mediaType} retry fires exactly once per tap');
+      }
+
+      // Without a retry callback the removed state stays truthful but
+      // renders no dead button.
+      await tester.pumpWidget(
+        wrap(
+          MediaGridCell(
+            attachment: _attachment(
+              id: 'evicted-no-cb',
+              mime: 'image/jpeg',
+              mediaType: 'image',
+              downloadStatus: kMediaDownloadStatusEvicted,
+              localPath: null,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('Local copy removed'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('evicted-media-retry-msg-1-evicted-no-cb')),
+        findsNothing,
+      );
+    },
+  );
 }

@@ -24,7 +24,9 @@ import 'package:flutter_app/core/permissions/mic_permission_prompt.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/features/settings/application/media_download_policy.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
+import 'package:flutter_app/features/settings/domain/models/media_download_preferences.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/notification_tap_timing.dart';
@@ -247,6 +249,13 @@ class ConversationWired extends StatefulWidget {
   final AppShellController? appShellController;
   final TransportMetrics? transportMetrics;
 
+  /// 229: user auto-download policy consulted immediately before every
+  /// automatic visible-media recovery transfer (initial mount, staged-drain
+  /// reload and older-page load). Null preserves HEAD behavior (allowed).
+  /// Explicit unavailable-media retry stays user-authoritative and is never
+  /// gated by this decider.
+  final MediaAutoDownloadDecider? autoDownloadDecider;
+
   const ConversationWired({
     super.key,
     required this.contact,
@@ -285,6 +294,7 @@ class ConversationWired extends StatefulWidget {
     this.notificationTappedAt,
     this.appShellController,
     this.transportMetrics,
+    this.autoDownloadDecider,
   });
 
   @override
@@ -1412,7 +1422,8 @@ class _ConversationWiredState extends State<ConversationWired>
       var didMutateDisplayState = false;
       for (final attachment in storedAttachments) {
         final resolved = await _resolveAttachmentForDisplay(attachment);
-        if (_shouldRecoverVisibleAttachment(resolved)) {
+        if (_shouldRecoverVisibleAttachment(resolved) &&
+            await _autoDownloadAllowed(resolved)) {
           MediaAttachment? downloaded;
           try {
             downloaded = await widget.downloadMediaFn(
@@ -1482,6 +1493,26 @@ class _ConversationWiredState extends State<ConversationWired>
         // retry budget; the terminal `download_failed` is never re-recovered
         // (INV-DL-1) — mirrors the group recovery path.
         GroupMediaIntegrityPolicy.isRetryableDownloadFailure(attachment);
+  }
+
+  /// 229: policy check run immediately before each automatic recovery
+  /// transfer. The storage owner is the typed lane the row was addressed
+  /// under ([MediaOwnerLane.direct]); an untrusted-row policy throw fails
+  /// closed (no transfer).
+  Future<bool> _autoDownloadAllowed(MediaAttachment attachment) async {
+    final decider =
+        widget.autoDownloadDecider ?? defaultMediaAutoDownloadDecider;
+    if (decider == null) return true;
+    try {
+      return await decider.shouldAutoDownload(
+        conversationKind: MediaConversationKind.oneToOne,
+        storageOwner: MediaOwnerLane.direct,
+        mediaType: attachment.mediaType,
+        downloadStatus: attachment.downloadStatus,
+      );
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<MediaAttachment> _resolveAttachmentForDisplay(

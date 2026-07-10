@@ -155,6 +155,8 @@ import 'package:flutter_app/features/groups/application/retry_incomplete_group_u
 import 'package:flutter_app/features/groups/application/retry_failed_group_messages_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
+import 'package:flutter_app/features/settings/application/media_auto_download_decider.dart';
+import 'package:flutter_app/features/settings/application/media_download_policy.dart';
 import 'package:flutter_app/features/settings/application/profile_update_listener.dart';
 import 'package:flutter_app/core/services/connectivity_signal.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
@@ -382,6 +384,14 @@ void main() async {
   final SecureKeyStore? sharedPushKeyStore = !kIsWeb && Platform.isIOS
       ? FlutterSecureKeyStore(appleAccessGroup: mknoonSharedAppleAccessGroup)
       : null;
+  // 229: install the process-wide auto-download policy so EVERY automatic
+  // media transfer entry point (direct listener, direct visible-media
+  // recovery, shared group loader) consults the user's persisted matrix +
+  // current network class immediately before transferring.
+  defaultMediaAutoDownloadDecider =
+      PreferenceBackedMediaAutoDownloadDecider.fromSecureKeyStore(
+        secureKeyStore: secureKeyStore,
+      );
   final pushTokenStore = PushTokenStoreImpl(secureKeyStore: secureKeyStore);
   // FDC-09 §12 / CV-14: ONE shared sender-side received-wake-token store — the
   // receive leg (ContactRequestListener → handleIncomingMessage) writes it and
@@ -811,6 +821,48 @@ void main() async {
           afterMessageId: afterMessageId,
           afterAttachmentId: afterAttachmentId,
         ),
+    dbLoadMediaStoragePage:
+        ({
+          required String scopeKind,
+          required String scopeId,
+          required List<String> mediaTypes,
+          required int limit,
+          String? afterTimestamp,
+          String? afterMessageId,
+          String? afterAttachmentId,
+        }) => dbLoadMediaStoragePage(
+          db,
+          scopeKind: scopeKind,
+          scopeId: scopeId,
+          mediaTypes: mediaTypes,
+          limit: limit,
+          afterTimestamp: afterTimestamp,
+          afterMessageId: afterMessageId,
+          afterAttachmentId: afterAttachmentId,
+        ),
+    dbBeginMediaDownload: (id, {required String ownerLane}) =>
+        dbBeginMediaDownload(db, id, ownerLane: ownerLane),
+    dbCommitMediaDownloadLocalPath:
+        (id, {required String ownerLane, required String localPath}) =>
+            dbCommitMediaDownloadLocalPath(
+              db,
+              id,
+              ownerLane: ownerLane,
+              localPath: localPath,
+            ),
+    dbClaimMediaEvicted:
+        (
+          id, {
+          required String ownerLane,
+          required String expectedLocalPath,
+        }) => dbClaimMediaEvicted(
+          db,
+          id,
+          ownerLane: ownerLane,
+          expectedLocalPath: expectedLocalPath,
+        ),
+    dbFinalizeMediaEvictedPathCleared: (id, {required String ownerLane}) =>
+        dbFinalizeMediaEvictedPathCleared(db, id, ownerLane: ownerLane),
     secureKeyStore: secureKeyStore,
   );
 
