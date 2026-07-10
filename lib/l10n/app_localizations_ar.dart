@@ -756,7 +756,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get settings_background_daylight_lagoon_desc =>
-      'سماء خزفية باردة بنجمة واحدة بنفسجية كهربائية.';
+      'سماء معدنية دافئة بضوء بنفسجي ومريمي ناعم.';
 
   @override
   String get settings_background_daylight_lagoon_selected => 'تم اختيار سيجنال';

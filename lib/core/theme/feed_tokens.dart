@@ -105,15 +105,19 @@ class FeedTokens extends ThemeExtension<FeedTokens> {
 
   /// Light Signal token set used only when AmbientBackground resolves the
   /// daylight-lagoon storage key to the representative light tone.
+  // 248 — the warm Signal Feed hierarchy. Accent is the calmer violet #6045B6;
+  // small success text/border is full-opacity #236143 with the #DCE9E1 success
+  // fill; canvas/surfaces mirror the mineral ground. Numeric blur/radius/spacing
+  // /leading values are unchanged, so geometry/density is identical.
   static const FeedTokens light = FeedTokens(
-    teal400: Color(0xFF5A24E0),
-    tealFill08: Color(0x145A24E0),
-    green500: Color(0xFF0C7C46),
-    greenFill15: Color(0xFFDFF3E9),
-    surfaceSubtle: Color(0xFFF7F8FB),
-    surfaceRaised: Color(0xFFFFFFFF),
-    borderSoft: Color(0x33463A96),
-    canvas: Color(0xFFF4F6FA),
+    teal400: Color(0xFF6045B6),
+    tealFill08: Color(0x146045B6),
+    green500: Color(0xFF236143),
+    greenFill15: Color(0xFFDCE9E1),
+    surfaceSubtle: Color(0xFFE1DCE5),
+    surfaceRaised: Color(0xFFFAF8F3),
+    borderSoft: Color(0xFFB3ACBD),
+    canvas: Color(0xFFECE8E1),
     blurLetter: 14.0,
     blurNav: 24.0,
     radiusFull: 16.0,
@@ -121,14 +125,14 @@ class FeedTokens extends ThemeExtension<FeedTokens> {
     textMessage: TextStyle(
       fontSize: 15.5,
       fontWeight: FontWeight.w400,
-      color: Color(0xFF16181F),
+      color: Color(0xFF25222B),
       height: 1.4,
     ),
     leadingMessage: 1.4,
     textMeta: TextStyle(
       fontSize: 12.5,
       fontWeight: FontWeight.w400,
-      color: Color(0xFF4A4E5C),
+      color: Color(0xFF56515E),
     ),
   );
 

@@ -753,7 +753,7 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get settings_background_daylight_lagoon_desc =>
-      'Ein kühler Porzellanhimmel mit einem elektrisch-violetten Stern.';
+      'Ein warmer mineralischer Himmel mit sanftem violettem und salbeigrünem Licht.';
 
   @override
   String get settings_background_daylight_lagoon_selected =>

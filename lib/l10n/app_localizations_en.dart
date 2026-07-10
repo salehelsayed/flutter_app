@@ -738,7 +738,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settings_background_daylight_lagoon_desc =>
-      'A cool porcelain sky with one electric-violet star.';
+      'A warm mineral sky with soft violet and sage light.';
 
   @override
   String get settings_background_daylight_lagoon_selected => 'Signal selected';

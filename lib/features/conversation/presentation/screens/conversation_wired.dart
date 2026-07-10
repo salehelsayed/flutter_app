@@ -4234,13 +4234,31 @@ class _ConversationWiredState extends State<ConversationWired>
     );
     final l10n = AppLocalizations.of(context)!;
 
+    // 248 (TC-17) — under Signal the popup uses light warm chrome + semantic
+    // success/destructive colors; the dark branch keeps the transcribed
+    // hardcoded literals.
+    final readable = context.backgroundReadableColors;
+    final isLight = readable.isLightSurface;
+    final menuSurface = isLight
+        ? readable.surfaceRaised
+        : const Color.fromRGBO(18, 20, 28, 0.98);
+    final menuBorder = isLight
+        ? readable.surfaceBorder
+        : const Color.fromRGBO(255, 255, 255, 0.14);
+    final successColor = isLight
+        ? const Color(0xFF2F7755)
+        : const Color(0xFF10B981);
+    final destructiveColor = isLight
+        ? const Color(0xFFB4232F)
+        : const Color(0xFFEF4444);
+
     showMenu<String>(
       context: context,
       position: position,
-      color: const Color.fromRGBO(18, 20, 28, 0.98),
+      color: menuSurface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(color: Color.fromRGBO(255, 255, 255, 0.14)),
+        side: BorderSide(color: menuBorder),
       ),
       items: [
         if (!_contact.isBlocked && _hasOtherFriends)
@@ -4248,18 +4266,18 @@ class _ConversationWiredState extends State<ConversationWired>
             value: 'introduce',
             child: Row(
               children: [
-                const Icon(
+                Icon(
                   Icons.people_outline,
                   size: 18,
-                  color: Color(0xFF10B981),
+                  color: successColor,
                 ),
                 const SizedBox(width: 10),
                 Text(
                   l10n.conversation_introduce_to_circle,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
-                    color: Color(0xFF10B981),
+                    color: successColor,
                   ),
                 ),
               ],
@@ -4272,9 +4290,7 @@ class _ConversationWiredState extends State<ConversationWired>
               Icon(
                 _contact.isBlocked ? Icons.replay : Icons.block,
                 size: 18,
-                color: _contact.isBlocked
-                    ? const Color(0xFF10B981)
-                    : const Color(0xFFEF4444),
+                color: _contact.isBlocked ? successColor : destructiveColor,
               ),
               const SizedBox(width: 10),
               Text(
@@ -4284,9 +4300,7 @@ class _ConversationWiredState extends State<ConversationWired>
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
-                  color: _contact.isBlocked
-                      ? const Color(0xFF10B981)
-                      : const Color(0xFFEF4444),
+                  color: _contact.isBlocked ? successColor : destructiveColor,
                 ),
               ),
             ],
@@ -4296,18 +4310,18 @@ class _ConversationWiredState extends State<ConversationWired>
           value: 'delete',
           child: Row(
             children: [
-              const Icon(
+              Icon(
                 Icons.delete_outline,
                 size: 18,
-                color: Color(0xFFEF4444),
+                color: destructiveColor,
               ),
               const SizedBox(width: 10),
               Text(
                 l10n.conversation_delete_chat_action,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
-                  color: Color(0xFFEF4444),
+                  color: destructiveColor,
                 ),
               ),
             ],
@@ -4597,6 +4611,31 @@ class _DeleteMessageSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final maxHeight = MediaQuery.of(context).size.height * 0.72;
+    // 248 (TC-18) — under Signal the sheet uses warm light chrome + readable
+    // semantic destructive actions; the dark branch keeps transcribed literals.
+    final readable = context.backgroundReadableColors;
+    final isLight = readable.isLightSurface;
+    final sheetSurface = isLight
+        ? readable.surfaceRaised
+        : const Color.fromRGBO(18, 20, 28, 0.96);
+    final sheetBorder = isLight
+        ? readable.surfaceBorder
+        : const Color.fromRGBO(255, 255, 255, 0.10);
+    final handleColor = isLight
+        ? readable.divider
+        : const Color.fromRGBO(255, 255, 255, 0.18);
+    final promptColor = isLight
+        ? readable.textPrimary
+        : const Color.fromRGBO(255, 255, 255, 0.94);
+    final forMeColor = isLight
+        ? const Color(0xFFB4232F)
+        : const Color(0xFFFF8A80);
+    final forEveryoneColor = isLight
+        ? const Color(0xFF9A3412)
+        : const Color(0xFFFFB38A);
+    final cancelColor = isLight
+        ? readable.textSecondary
+        : const Color.fromRGBO(255, 255, 255, 0.72);
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
@@ -4607,11 +4646,9 @@ class _DeleteMessageSheet extends StatelessWidget {
             child: Container(
               key: ConversationWired.deleteSheetKey,
               decoration: BoxDecoration(
-                color: const Color.fromRGBO(18, 20, 28, 0.96),
+                color: sheetSurface,
                 borderRadius: BorderRadius.circular(28),
-                border: Border.all(
-                  color: const Color.fromRGBO(255, 255, 255, 0.10),
-                ),
+                border: Border.all(color: sheetBorder),
               ),
               child: ConstrainedBox(
                 constraints: BoxConstraints(maxHeight: maxHeight),
@@ -4626,7 +4663,7 @@ class _DeleteMessageSheet extends StatelessWidget {
                           width: 42,
                           height: 4,
                           decoration: BoxDecoration(
-                            color: const Color.fromRGBO(255, 255, 255, 0.18),
+                            color: handleColor,
                             borderRadius: BorderRadius.circular(999),
                           ),
                         ),
@@ -4636,10 +4673,10 @@ class _DeleteMessageSheet extends StatelessWidget {
                         l10n.conversation_delete_message_prompt,
                         key: ConversationWired.deletePromptKey,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w600,
-                          color: Color.fromRGBO(255, 255, 255, 0.94),
+                          color: promptColor,
                           height: 1.35,
                         ),
                       ),
@@ -4648,7 +4685,7 @@ class _DeleteMessageSheet extends StatelessWidget {
                         key: ConversationWired.deleteForMeKey,
                         label: l10n.conversation_delete_for_me,
                         icon: Icons.delete_outline_rounded,
-                        color: const Color(0xFFFF8A80),
+                        color: forMeColor,
                         onTap: () => Navigator.of(
                           context,
                         ).pop(_DeleteMessageAction.forMe),
@@ -4659,7 +4696,7 @@ class _DeleteMessageSheet extends StatelessWidget {
                           key: ConversationWired.deleteForEveryoneKey,
                           label: l10n.conversation_delete_for_everyone,
                           icon: Icons.person_remove_alt_1_rounded,
-                          color: const Color(0xFFFFB38A),
+                          color: forEveryoneColor,
                           onTap: () => Navigator.of(
                             context,
                           ).pop(_DeleteMessageAction.forEveryone),
@@ -4670,7 +4707,7 @@ class _DeleteMessageSheet extends StatelessWidget {
                         key: ConversationWired.deleteCancelKey,
                         label: l10n.conversation_delete_cancel,
                         icon: Icons.close_rounded,
-                        color: const Color.fromRGBO(255, 255, 255, 0.72),
+                        color: cancelColor,
                         onTap: () => Navigator.of(
                           context,
                         ).pop(_DeleteMessageAction.cancel),
@@ -4703,6 +4740,16 @@ class _DeleteSheetAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 248 (TC-18) — nested chip surface follows the resolved theme: a warm
+    // subtle fill + decorative surfaceBorder on light, transcribed literals dark.
+    final readable = context.backgroundReadableColors;
+    final isLight = readable.isLightSurface;
+    final chipFill = isLight
+        ? readable.surfaceSubtle
+        : const Color.fromRGBO(255, 255, 255, 0.05);
+    final chipBorder = isLight
+        ? readable.surfaceBorder
+        : const Color.fromRGBO(255, 255, 255, 0.08);
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -4712,10 +4759,8 @@ class _DeleteSheetAction extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),
-            color: const Color.fromRGBO(255, 255, 255, 0.05),
-            border: Border.all(
-              color: const Color.fromRGBO(255, 255, 255, 0.08),
-            ),
+            color: chipFill,
+            border: Border.all(color: chipBorder),
           ),
           child: Row(
             children: [

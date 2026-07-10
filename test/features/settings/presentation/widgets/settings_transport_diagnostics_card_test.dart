@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_transport_diagnostics_card.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+
+import '../../../../shared/helpers/readability_test_helpers.dart';
 
 void main() {
   Widget wrap(TransportMetrics metrics) {
@@ -155,4 +158,58 @@ void main() {
       contains('LAN: discovery active, 0 peers, perm: suspected-denied'),
     );
   });
+
+  // TC-248-21: under Signal the diagnostics render warm readable roles (the old
+  // translucent whites vanished on light), refresh still works, and privacy is
+  // preserved.
+  testWidgets(
+    'Signal transport diagnostics use semantic light roles and refresh safely',
+    (tester) async {
+      const light = BackgroundReadableColors.representativeLight;
+      final metrics = TransportMetrics();
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          theme: ThemeData(extensions: const [light]),
+          home: Scaffold(
+            backgroundColor: const Color(0xFFECE8E1),
+            body: SingleChildScrollView(
+              child: SettingsTransportDiagnosticsCard(metrics: metrics),
+            ),
+          ),
+        ),
+      );
+
+      // Section label + report use warm readable text (not near-white).
+      final section = tester.widget<Text>(find.text('Transport mix (N=0)'));
+      expect(section.style!.color, light.textPrimary);
+      expectTextContrast(section.style!.color!, light.surfaceRaised);
+
+      final reportWidget = tester.widget<SelectableText>(
+        find.byKey(const ValueKey('settings-transport-debug-report')),
+      );
+      expect(reportWidget.style!.color, light.textSecondary);
+      expectTextContrast(reportWidget.style!.color!, light.surfaceSubtle);
+
+      // Refresh still recomputes the aggregate metrics.
+      metrics.recordTransport('direct');
+      await tester.tap(
+        find.byKey(const ValueKey('settings-transport-debug-refresh')),
+      );
+      await tester.pump();
+      expect(find.text('Transport mix (N=1)'), findsOneWidget);
+
+      // Privacy: the report stays aggregate-only.
+      final report = tester
+          .widget<SelectableText>(
+            find.byKey(const ValueKey('settings-transport-debug-report')),
+          )
+          .data!;
+      expect(
+        report,
+        isNot(contains('12D3KooWSettingsDiagnosticPeerIdAbcdefghijklmnop')),
+      );
+    },
+  );
 }

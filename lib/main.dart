@@ -200,6 +200,7 @@ import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/notifications/remote_notification_identity.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
+import 'package:flutter_app/core/theme/app_shell_theme_binding.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/diagnostics/app_build_info.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -4526,82 +4527,94 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'mknoon',
-      navigatorKey: MyApp.navigatorKey,
-      scaffoldMessengerKey: MyApp.scaffoldMessengerKey,
-      localizationsDelegates: AppLocalizations.localizationsDelegates,
-      supportedLocales: AppLocalizations.supportedLocales,
-      theme: AppTheme.darkTheme,
-      themeMode: ThemeMode.dark,
-      home: StartupRouter(
-        repository: widget.repository,
-        contactRepository: widget.contactRepository,
-        contactRequestRepository: widget.contactRequestRepository,
-        contactRequestListener: widget.contactRequestListener,
-        issueWakeTokensForContacts: widget.issueWakeTokensForContacts,
-        contactRequestPresentationGate: widget.contactRequestPresentationGate,
-        messageRepository: widget.messageRepository,
-        postRepository: widget.postRepository,
-        mediaAttachmentRepository: widget.mediaAttachmentRepository,
-        chatMessageListener: widget.chatMessageListener,
-        bridge: widget.bridge,
-        p2pService: widget.p2pService,
-        transportMetrics: widget.transportMetrics,
-        mediaFileManager: widget.mediaFileManager,
-        secureKeyStore: widget.secureKeyStore,
-        imageProcessor: widget.imageProcessor,
-        audioRecorderService: widget.audioRecorderService,
-        conversationTracker: widget.conversationTracker,
-        reactionRepository: widget.reactionRepository,
-        reactionListener: widget.reactionListener,
-        groupRepository: widget.groupRepository,
-        groupMessageRepository: widget.groupMessageRepository,
-        groupPendingKeyRepairRepository: widget.groupPendingKeyRepairRepository,
-        groupHistoryGapRepairRepository: widget.groupHistoryGapRepairRepository,
-        groupReactionReplayOutboxRepository:
-            widget.groupReactionReplayOutboxRepository,
-        groupMessageListener: widget.groupMessageListener,
-        groupInviteListener: widget.groupInviteListener,
-        waitForGroupMembershipUpdateIdle:
-            widget.groupMembershipUpdateListener.waitForIdle,
-        groupConversationTracker: widget.groupConversationTracker,
-        introductionRepository: widget.introductionRepository,
-        introReviewSeenRepository: widget.introReviewSeenRepository,
-        introductionListener: widget.introductionListener,
-        requestGroupKeyRepair: widget.requestGroupKeyRepair,
-        shareIntentService: widget.shareIntentService,
-        initialShareIntentCapture: _initialShareIntentCapture,
-        ensureRuntimeServicesReady: _ensureRuntimeServicesReady,
-        // FDC-07: start LAN mDNS discovery early on the cold-start branch. Bound
-        // to the concrete impl method (off the P2PService interface to avoid
-        // churning the fakes); idempotent with startNode's own early seam.
-        startEarlyLocalDiscovery: () =>
-            widget.p2pService.startEarlyLocalDiscovery(),
-        appShellController: widget.appShellController,
-        pendingPostTargetStore: widget.pendingPostTargetStore,
-        postsPrivacySettingsRepository: widget.postsPrivacySettingsRepository,
-        feedClearedRepository: widget.feedClearedRepository,
-        contactPresenceSnapshotRepository:
-            widget.contactPresenceSnapshotRepository,
-        nearbyLocationService: widget.nearbyLocationService,
-        pushRegistrationCoordinator: widget.pushRegistrationCoordinator,
-        accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
-        accountMigrationSizeGate: widget.accountMigrationSizeGate,
-        accountMigrationStartReceiver: widget.accountMigrationStartReceiver,
-        accountMigrationStopReceiver: widget.accountMigrationStopReceiver,
-        accountMigrationReceiverEvents: widget.accountMigrationReceiverEvents,
-        onAccountMigrationReceiverActivated:
-            _handleAccountMigrationReceiverActivated,
-        clearDeliveredNotifications:
-            widget.notificationService.clearDeliveredNotifications,
-        ingestStagedPushEnvelopes: () => _ingestStagedPushEnvelopes(
-          source: 'startup_router_notification_tap',
+    // 248 — bind the root ThemeMode to the live background preference so
+    // selecting Signal switches the whole app (root ThemeData + every pushed
+    // route/modal that falls back to it) to the warm light theme, while every
+    // dark wallpaper keeps the dark root. The MaterialApp rebuilds only its
+    // theme config on a background change; the navigatorKey + stable `home`
+    // preserve Navigator/StartupRouter state across the flip (TC-248-03).
+    return AppShellThemeBinding(
+      controller: widget.appShellController,
+      builder: (context, themeMode) => MaterialApp(
+        title: 'mknoon',
+        navigatorKey: MyApp.navigatorKey,
+        scaffoldMessengerKey: MyApp.scaffoldMessengerKey,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        theme: AppTheme.lightTheme,
+        darkTheme: AppTheme.darkTheme,
+        themeMode: themeMode,
+        home: StartupRouter(
+          repository: widget.repository,
+          contactRepository: widget.contactRepository,
+          contactRequestRepository: widget.contactRequestRepository,
+          contactRequestListener: widget.contactRequestListener,
+          issueWakeTokensForContacts: widget.issueWakeTokensForContacts,
+          contactRequestPresentationGate: widget.contactRequestPresentationGate,
+          messageRepository: widget.messageRepository,
+          postRepository: widget.postRepository,
+          mediaAttachmentRepository: widget.mediaAttachmentRepository,
+          chatMessageListener: widget.chatMessageListener,
+          bridge: widget.bridge,
+          p2pService: widget.p2pService,
+          transportMetrics: widget.transportMetrics,
+          mediaFileManager: widget.mediaFileManager,
+          secureKeyStore: widget.secureKeyStore,
+          imageProcessor: widget.imageProcessor,
+          audioRecorderService: widget.audioRecorderService,
+          conversationTracker: widget.conversationTracker,
+          reactionRepository: widget.reactionRepository,
+          reactionListener: widget.reactionListener,
+          groupRepository: widget.groupRepository,
+          groupMessageRepository: widget.groupMessageRepository,
+          groupPendingKeyRepairRepository:
+              widget.groupPendingKeyRepairRepository,
+          groupHistoryGapRepairRepository:
+              widget.groupHistoryGapRepairRepository,
+          groupReactionReplayOutboxRepository:
+              widget.groupReactionReplayOutboxRepository,
+          groupMessageListener: widget.groupMessageListener,
+          groupInviteListener: widget.groupInviteListener,
+          waitForGroupMembershipUpdateIdle:
+              widget.groupMembershipUpdateListener.waitForIdle,
+          groupConversationTracker: widget.groupConversationTracker,
+          introductionRepository: widget.introductionRepository,
+          introReviewSeenRepository: widget.introReviewSeenRepository,
+          introductionListener: widget.introductionListener,
+          requestGroupKeyRepair: widget.requestGroupKeyRepair,
+          shareIntentService: widget.shareIntentService,
+          initialShareIntentCapture: _initialShareIntentCapture,
+          ensureRuntimeServicesReady: _ensureRuntimeServicesReady,
+          // FDC-07: start LAN mDNS discovery early on the cold-start branch. Bound
+          // to the concrete impl method (off the P2PService interface to avoid
+          // churning the fakes); idempotent with startNode's own early seam.
+          startEarlyLocalDiscovery: () =>
+              widget.p2pService.startEarlyLocalDiscovery(),
+          appShellController: widget.appShellController,
+          pendingPostTargetStore: widget.pendingPostTargetStore,
+          postsPrivacySettingsRepository: widget.postsPrivacySettingsRepository,
+          feedClearedRepository: widget.feedClearedRepository,
+          contactPresenceSnapshotRepository:
+              widget.contactPresenceSnapshotRepository,
+          nearbyLocationService: widget.nearbyLocationService,
+          pushRegistrationCoordinator: widget.pushRegistrationCoordinator,
+          accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
+          accountMigrationSizeGate: widget.accountMigrationSizeGate,
+          accountMigrationStartReceiver: widget.accountMigrationStartReceiver,
+          accountMigrationStopReceiver: widget.accountMigrationStopReceiver,
+          accountMigrationReceiverEvents: widget.accountMigrationReceiverEvents,
+          onAccountMigrationReceiverActivated:
+              _handleAccountMigrationReceiverActivated,
+          clearDeliveredNotifications:
+              widget.notificationService.clearDeliveredNotifications,
+          ingestStagedPushEnvelopes: () => _ingestStagedPushEnvelopes(
+            source: 'startup_router_notification_tap',
+          ),
+          onNotificationRouteTarget: _handleNotificationRouteTarget,
+          onStartupHomeReady: _onStartupHomeReady,
         ),
-        onNotificationRouteTarget: _handleNotificationRouteTarget,
-        onStartupHomeReady: _onStartupHomeReady,
+        debugShowCheckedModeBanner: false,
       ),
-      debugShowCheckedModeBanner: false,
     );
   }
 }

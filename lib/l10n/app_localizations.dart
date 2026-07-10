@@ -1309,7 +1309,7 @@ abstract class AppLocalizations {
   /// No description provided for @settings_background_daylight_lagoon_desc.
   ///
   /// In en, this message translates to:
-  /// **'A cool porcelain sky with one electric-violet star.'**
+  /// **'A warm mineral sky with soft violet and sage light.'**
   String get settings_background_daylight_lagoon_desc;
 
   /// No description provided for @settings_background_daylight_lagoon_selected.

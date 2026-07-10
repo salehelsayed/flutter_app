@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Debug-only, read-only diagnostics card that renders the current session's
@@ -11,6 +12,12 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 /// aggregate counters/ratios/latencies — never peer IDs, message content, or
 /// per-conversation data. All values come from [TransportMetrics] getters, which
 /// are aggregate-only by construction.
+///
+/// 248 (TC-21) — structural/text colors read from [BackgroundReadableColors] so
+/// this debug card is readable under Signal light (the old translucent-white
+/// literals vanished on light). It is kDebugMode-only, so its dark chrome may
+/// differ slightly from the prior literals (accepted; TC-25 preserves only
+/// release surfaces).
 class SettingsTransportDiagnosticsCard extends StatefulWidget {
   final TransportMetrics metrics;
 
@@ -54,6 +61,7 @@ class _SettingsTransportDiagnosticsCardState
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final readable = context.backgroundReadableColors;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Column(
@@ -63,11 +71,11 @@ class _SettingsTransportDiagnosticsCardState
             padding: const EdgeInsets.only(left: 4, bottom: 8),
             child: Text(
               l10n.transport_diagnostics_title,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0.88,
-                color: Color.fromRGBO(255, 255, 255, 0.4),
+                color: readable.textMuted,
               ),
             ),
           ),
@@ -79,10 +87,8 @@ class _SettingsTransportDiagnosticsCardState
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(16),
-                  color: const Color.fromRGBO(255, 255, 255, 0.08),
-                  border: Border.all(
-                    color: const Color.fromRGBO(255, 255, 255, 0.12),
-                  ),
+                  color: readable.surfaceRaised,
+                  border: Border.all(color: readable.surfaceBorder),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -92,10 +98,10 @@ class _SettingsTransportDiagnosticsCardState
                         Expanded(
                           child: Text(
                             l10n.transport_diagnostics_census,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 12,
                               height: 1.35,
-                              color: Color.fromRGBO(255, 255, 255, 0.65),
+                              color: readable.textSecondary,
                             ),
                           ),
                         ),
@@ -110,20 +116,13 @@ class _SettingsTransportDiagnosticsCardState
                             height: 36,
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(10),
-                              color: const Color.fromRGBO(255, 255, 255, 0.08),
-                              border: Border.all(
-                                color: const Color.fromRGBO(
-                                  255,
-                                  255,
-                                  255,
-                                  0.12,
-                                ),
-                              ),
+                              color: readable.surfaceSubtle,
+                              border: Border.all(color: readable.surfaceBorder),
                             ),
-                            child: const Icon(
+                            child: Icon(
                               Icons.refresh,
                               size: 16,
-                              color: Color.fromRGBO(255, 255, 255, 0.7),
+                              color: readable.iconSecondary,
                             ),
                           ),
                         ),
@@ -205,22 +204,20 @@ class _SettingsTransportDiagnosticsCardState
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(12),
-                        color: const Color.fromRGBO(255, 255, 255, 0.04),
-                        border: Border.all(
-                          color: const Color.fromRGBO(255, 255, 255, 0.08),
-                        ),
+                        color: readable.surfaceSubtle,
+                        border: Border.all(color: readable.surfaceBorder),
                       ),
                       child: SelectableText(
                         _report,
                         key: const ValueKey(
                           'settings-transport-debug-report',
                         ),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: 'SF Mono',
-                          fontFamilyFallback: ['Fira Code', 'monospace'],
+                          fontFamilyFallback: const ['Fira Code', 'monospace'],
                           fontSize: 11,
                           height: 1.5,
-                          color: Color.fromRGBO(255, 255, 255, 0.8),
+                          color: readable.textSecondary,
                         ),
                       ),
                     ),
@@ -234,7 +231,7 @@ class _SettingsTransportDiagnosticsCardState
                           'settings-transport-debug-refresh-button',
                         ),
                         label: l10n.transport_diagnostics_refresh,
-                        color: const Color(0xFF14B8A6),
+                        color: readable.accent,
                         onTap: _refresh,
                       ),
                     ),
@@ -257,10 +254,10 @@ class _SectionLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(
       text,
-      style: const TextStyle(
+      style: TextStyle(
         fontSize: 12,
         fontWeight: FontWeight.w700,
-        color: Color.fromRGBO(255, 255, 255, 0.9),
+        color: context.backgroundReadableColors.textPrimary,
       ),
     );
   }
@@ -274,6 +271,7 @@ class _MetricRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readable = context.backgroundReadableColors;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
@@ -281,21 +279,21 @@ class _MetricRow extends StatelessWidget {
         children: [
           Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'SF Mono',
-              fontFamilyFallback: ['Fira Code', 'monospace'],
+              fontFamilyFallback: const ['Fira Code', 'monospace'],
               fontSize: 11,
-              color: Color.fromRGBO(255, 255, 255, 0.6),
+              color: readable.textMuted,
             ),
           ),
           Text(
             value,
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'SF Mono',
-              fontFamilyFallback: ['Fira Code', 'monospace'],
+              fontFamilyFallback: const ['Fira Code', 'monospace'],
               fontSize: 11,
               fontWeight: FontWeight.w600,
-              color: Color.fromRGBO(255, 255, 255, 0.85),
+              color: readable.textSecondary,
             ),
           ),
         ],

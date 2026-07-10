@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
@@ -122,11 +123,13 @@ void main() {
     Future<void> Function(String qrData)? onMigrationQrScanned,
     AccountMigrationTransferRunFn? accountMigrationRunTransfer,
     DownloadProfilePictureFn? downloadProfilePictureFn,
+    ThemeData? themeOverride,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
+      theme: themeOverride,
       home: QRScannerWired(
         bridge: bridge,
         contactRepository: contactRepository,
@@ -213,6 +216,31 @@ void main() {
     expect(controller.detectionSpeed, DetectionSpeed.noDuplicates);
     expect(controller.formats, [BarcodeFormat.qrCode]);
     expect(controller.cameraResolution, const Size(1280, 720));
+  });
+
+  // TC-248-24 (GREEN sentinel): the scanner is a deliberate dark exception. Even
+  // under a Signal light root it stays black with white camera chrome and
+  // QR-only detection.
+  testWidgets('Signal root keeps scanner black with white camera chrome', (
+    tester,
+  ) async {
+    await tester.pumpWidget(buildScanner(themeOverride: AppTheme.lightTheme));
+    await pumpFrames(tester);
+
+    // The root really is the Signal light theme...
+    final rootContext = tester.element(find.byType(QRScannerWired));
+    expect(Theme.of(rootContext).brightness, Brightness.light);
+
+    // ...yet the scanner scaffold stays black with the live camera chrome.
+    final blackScaffold = tester.widgetList<Scaffold>(find.byType(Scaffold)).any(
+      (s) => s.backgroundColor == Colors.black,
+    );
+    expect(blackScaffold, isTrue, reason: 'scanner scaffold stays black');
+    expect(find.byType(MobileScanner), findsOneWidget);
+
+    // QR-only detection is preserved.
+    final scanner = tester.widget<MobileScanner>(find.byType(MobileScanner));
+    expect(scanner.controller!.formats, [BarcodeFormat.qrCode]);
   });
 
   testWidgets(

@@ -512,7 +512,7 @@ void main() {
       find.byKey(const ValueKey('daylight-lagoon-background-root')),
     );
     final decoration = root.decoration as BoxDecoration;
-    expect(decoration.color, const Color(0xFFFFFFFF));
+    expect(decoration.color, const Color(0xFFECE8E1));
   });
 
   testWidgets('Feed surface with aurora preference animates the glow', (

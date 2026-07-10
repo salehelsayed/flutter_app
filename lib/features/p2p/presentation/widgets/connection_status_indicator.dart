@@ -219,7 +219,9 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
                 Text(
                   '($connectionCount)',
                   style: TextStyle(
-                    color: textColor.withValues(alpha: 0.7),
+                    // 248 (TC-29) — full semantic opacity: the old 0.7 alpha
+                    // faded #236143 to ~2.43:1 on the rendered light pill.
+                    color: textColor,
                     fontSize: 11,
                   ),
                 ),

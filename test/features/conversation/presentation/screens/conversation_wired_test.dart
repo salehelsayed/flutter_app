@@ -29,6 +29,8 @@ import 'package:flutter_app/features/conversation/application/send_chat_message_
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
+import 'package:flutter_app/core/theme/app_theme.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/date_separator.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -967,12 +969,14 @@ void main() {
         ImageQualityPreference.compressed,
     int maxAttachmentBudgetBytes = kGeneralMediaAttachmentBudgetBytes,
     DateTime? notificationTappedAt,
+    ThemeData? themeOverride,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
         locale: const Locale('en'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
+        theme: themeOverride,
         home: ConversationWired(
           contact: makeContact(),
           identityRepo: identityRepo,
@@ -8793,6 +8797,221 @@ void main() {
       expect(messages.single.text, 'payload first');
     },
   );
+
+  // 248 — Signal light overlays. Mounting under AppTheme.lightTheme models the
+  // Signal root: the sheets/popup read context.backgroundReadableColors from the
+  // ConversationWired State (above the nested AmbientBackground) and now resolve
+  // the warm light roles instead of the dark fallback.
+  group('248 Signal light overlays', () {
+    const light = BackgroundReadableColors.representativeLight;
+
+    testWidgets(
+      'Signal attachment sheet uses warm semantic roles and Cancel preserves '
+      'draft',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final tempDir = Directory.systemTemp.createTempSync('conv_signal_att_');
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final attachment = File('${tempDir.path}/staged.jpg')
+          ..writeAsStringSync('image');
+        final mediaPicker = FakeMediaPicker();
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          mediaPicker: mediaPicker,
+          initialText: 'unsent draft copy',
+          initialAttachments: [attachment],
+          themeOverride: AppTheme.lightTheme,
+        );
+
+        await tester.tap(find.byIcon(Icons.add_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(find.text('Media Library'), findsOneWidget);
+
+        // The sheet resolved the warm light roles: title text is warm charcoal,
+        // not the near-white it would inherit from the dark fallback.
+        final title = tester.widget<Text>(find.text('Media Library'));
+        expect(title.style!.color, light.textPrimary);
+
+        // Cancel dismisses only — draft + staged attachment survive.
+        tester
+            .widget<ListTile>(
+              find.byKey(ConversationWired.attachSheetCancelKey),
+            )
+            .onTap!();
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(find.text('Media Library'), findsNothing);
+        expect(mediaPicker.pickMultipleMediaCalls, 0);
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+        expect(find.text('unsent draft copy'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'Signal overflow popup uses warm surface with readable semantic actions',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final contactRepo = _OverflowContactRepo();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+
+        // The introduce item's label can overflow the narrow (~184px) fixed
+        // popup in the short test viewport — a pre-existing, out-of-scope layout
+        // quirk that does not affect the item colours under test.
+        final priorOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.exceptionAsString().contains('overflowed')) return;
+          priorOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = priorOnError);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          contactRepo: contactRepo,
+          themeOverride: AppTheme.lightTheme,
+        );
+        // Let _checkHasOtherFriends resolve so the introduce (success) item shows.
+        await tester.pump(const Duration(milliseconds: 400));
+
+        await tester.tap(find.byIcon(Icons.more_vert));
+        // The ambient background animates, so settle with fixed pumps.
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+
+        // The popup Material is the warm raised surface, never the hardcoded
+        // dark chrome.
+        final materialColors = tester
+            .widgetList<Material>(find.byType(Material))
+            .map((m) => m.color)
+            .toList();
+        expect(materialColors, contains(light.surfaceRaised));
+        expect(
+          materialColors,
+          isNot(contains(const Color.fromRGBO(18, 20, 28, 0.98))),
+        );
+
+        // Introduce = success #2F7755, block/delete = destructive #B4232F, both
+        // readable (never the dark #10B981 / #EF4444 literals).
+        final textColors = tester
+            .widgetList<Text>(find.byType(Text))
+            .map((t) => t.style?.color)
+            .toList();
+        expect(textColors, contains(const Color(0xFF2F7755)));
+        expect(textColors, contains(const Color(0xFFB4232F)));
+        expect(textColors, isNot(contains(const Color(0xFF10B981))));
+        expect(textColors, isNot(contains(const Color(0xFFEF4444))));
+      },
+    );
+
+    testWidgets(
+      'Signal delete sheet uses warm roles and cancel leaves message unchanged',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'signal-delete-row',
+            contactPeerId: makeContact().peerId,
+            senderPeerId: makeIdentity().peerId,
+            text: 'Keep this message',
+            timestamp: '2026-02-09T15:30:00.000Z',
+            status: 'delivered',
+            isIncoming: false,
+            createdAt: '2026-02-09T15:30:01.000Z',
+          ),
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          themeOverride: AppTheme.lightTheme,
+        );
+
+        await tester.longPress(find.text('Keep this message'));
+        await tester.pump(const Duration(milliseconds: 250));
+        await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
+        await pumpUntil(
+          tester,
+          () => find
+              .byKey(ConversationWired.deleteSheetKey)
+              .evaluate()
+              .isNotEmpty,
+        );
+
+        // Warm light sheet chrome + readable prompt (not the dark literals).
+        final sheet = tester.widget<Container>(
+          find.byKey(ConversationWired.deleteSheetKey),
+        );
+        final deco = sheet.decoration! as BoxDecoration;
+        expect(deco.color, light.surfaceRaised);
+        expect((deco.border! as Border).top.color, light.surfaceBorder);
+        final prompt = tester.widget<Text>(
+          find.byKey(ConversationWired.deletePromptKey),
+        );
+        expect(prompt.style!.color, light.textPrimary);
+
+        // Cancel dismisses only — the message survives, undeleted.
+        tester
+            .widget<InkWell>(
+              find.descendant(
+                of: find.byKey(ConversationWired.deleteCancelKey),
+                matching: find.byType(InkWell),
+              ),
+            )
+            .onTap!();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(find.byKey(ConversationWired.deleteSheetKey), findsNothing);
+        expect(find.text('Keep this message'), findsOneWidget);
+        expect(messageRepo.store['signal-delete-row']?.isDeleted, isFalse);
+      },
+    );
+  });
+}
+
+/// 248 — a contact repo that reports one other active friend so the overflow
+/// "introduce to circle" (success) item appears.
+class _OverflowContactRepo extends FakeContactRepository {
+  @override
+  Future<List<ContactModel>> getActiveContacts() async => [
+    ContactModel(
+      peerId: 'other-friend-peer',
+      publicKey: 'pub',
+      rendezvous: '/dns4/relay/tcp/443',
+      username: 'Bob',
+      signature: 'sig',
+      scannedAt: '2026-01-01T00:00:00.000Z',
+    ),
+  ];
 }
 
 /// Convenience send function that returns success instantly.

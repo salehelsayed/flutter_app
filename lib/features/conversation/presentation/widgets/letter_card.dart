@@ -202,7 +202,7 @@ class LetterCard extends StatelessWidget {
             color: isIncoming
                 ? readableColors.surfaceRaised
                 : readableColors.surfaceSubtle,
-            border: Border.all(color: readableColors.border),
+            border: Border.all(color: readableColors.surfaceBorder),
           ),
           child: Stack(
             children: [

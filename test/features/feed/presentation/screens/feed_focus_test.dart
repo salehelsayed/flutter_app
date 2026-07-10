@@ -3,8 +3,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/theme/feed_tokens.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -33,6 +35,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
+import '../../../../shared/helpers/readability_test_helpers.dart';
 import '../../../../core/services/fake_p2p_service.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../../shared/fakes/in_memory_media_attachment_repository.dart';
@@ -492,6 +495,44 @@ void main() {
       );
     },
   );
+
+  // TC-248-29 (Feed half): under Signal the failed-reply retry text is the
+  // full-opacity #236143 success color and is AA-readable on the warm Feed
+  // canvas — never the pale/bright dark green500.
+  testWidgets('Signal failed-reply retry text meets AA on Feed canvas', (
+    tester,
+  ) async {
+    setWideViewport(tester);
+    // daylightLagoon state so the feed resolves FeedTokens.light.
+    await secureKeyStore.write(
+      BackgroundPreference.storageKey,
+      'daylight_lagoon',
+    );
+    identityRepo.seed(testIdentity);
+    contactRepo.seed([contact('p1', 'Ann')]);
+    await seedPendingThread('p1', 'Ann', 'hi from ann');
+
+    await tester.pumpWidget(buildWired());
+    await pumpFrames(tester);
+
+    await tester.tap(find.text('hi from ann'));
+    await pumpFrames(tester);
+    await tester.enterText(
+      find.byKey(const ValueKey('feed-composer-field')),
+      'this will fail',
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('feed-composer-send')));
+    await pumpFrames(tester);
+
+    final retry = tester.widget<Text>(find.text('tap to retry'));
+    // Full-opacity #236143 success color (the warm light green500).
+    expect(retry.style!.color, FeedTokens.light.green500);
+    expect(retry.style!.color, const Color(0xFF236143));
+    // AA-readable on the warm Feed canvas.
+    expectTextContrast(retry.style!.color!, FeedTokens.light.canvas);
+    expectTextContrast(retry.style!.color!, const Color(0xFFECE8E1));
+  });
 
   // Seeds a live connection to [peerId] so a composer send SUCCEEDS (the
   // default fake has no live peer → sendChatMessage returns nodeNotRunning).

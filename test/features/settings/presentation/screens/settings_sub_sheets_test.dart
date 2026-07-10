@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/theme/app_theme.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
@@ -50,6 +52,7 @@ void main() {
     FakeIdentityRepository? identityRepo,
     FakeSecureKeyStore? store,
     String mnemonic = twelveWords,
+    ThemeData? themeOverride,
   }) async {
     final repo =
         identityRepo ??
@@ -68,6 +71,7 @@ void main() {
         locale: const Locale('en'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
+        theme: themeOverride,
         home: SettingsWired(
           identityRepo: repo,
           bridge: FakeBridge(),
@@ -143,6 +147,62 @@ void main() {
     expect(find.byType(BackgroundChoiceControl), findsNothing);
     expect(find.text('Cosmic'), findsOneWidget);
   });
+
+  // TC-248-20: under a Signal light root the background + photo-quality sheets
+  // render light Material controls + warm readable extensions, while the
+  // existing persist-and-close / quality-callback semantics are unchanged.
+  testWidgets(
+    'Signal settings sheets use light Material controls and warm semantic '
+    'surfaces',
+    (tester) async {
+      // daylightLagoon state so the sheet's re-provided extension is warm light.
+      final store = FakeSecureKeyStore();
+      await store.write(BackgroundPreference.storageKey, 'daylight_lagoon');
+      final shell = await pumpWired(
+        tester,
+        store: store,
+        themeOverride: AppTheme.lightTheme,
+      );
+
+      // Photo-quality sheet: light Material brightness + warm extension, and
+      // the existing quality callback still fires (and pops the sheet).
+      final kinds = <AppShellChangeKind>[];
+      shell.addListener(() => kinds.add(shell.lastChangeKind));
+      await openSheet(tester, 'settings-row-photo-quality');
+      final toggleContext = tester.element(find.byType(ImageQualityToggle));
+      expect(Theme.of(toggleContext).brightness, Brightness.light);
+      expect(
+        Theme.of(
+          toggleContext,
+        ).extension<BackgroundReadableColors>()!.isLightSurface,
+        isTrue,
+      );
+      await tester.tap(find.text('Original').first);
+      await settleSheetClose(tester);
+      expect(kinds, contains(AppShellChangeKind.mediaQuality));
+      expect(find.byType(ImageQualityToggle), findsNothing);
+
+      // Background sheet: light Material + warm extension, and the existing
+      // persist-and-close semantics are unchanged (selecting a choice commits
+      // immediately and closes to the row).
+      await openSheet(tester, 'settings-row-background');
+      final controlContext = tester.element(
+        find.byType(BackgroundChoiceControl),
+      );
+      expect(Theme.of(controlContext).brightness, Brightness.light);
+      final readable = Theme.of(
+        controlContext,
+      ).extension<BackgroundReadableColors>();
+      expect(readable, isNotNull);
+      expect(readable!.isLightSurface, isTrue);
+
+      await tester.tap(find.byKey(const ValueKey('background-choice-cosmic')));
+      await settleSheetClose(tester);
+      expect(await store.read(BackgroundPreference.storageKey), 'cosmic');
+      expect(shell.backgroundPreference, BackgroundPreference.cosmic);
+      expect(find.byType(BackgroundChoiceControl), findsNothing);
+    },
+  );
 
   testWidgets('T3 background save failure reverts and surfaces the error', (
     tester,

@@ -11,6 +11,7 @@ import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_doc
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../screens/orbit_screen_pump_harness.dart';
+import '../../../../shared/helpers/readability_test_helpers.dart';
 
 /// 205 items 1-3 — the shipped inner-circle find pill: a discoverable close X
 /// that collapses AND dismisses the keyboard, a roomy pill anchored just above
@@ -251,5 +252,57 @@ void main() {
       expect(noResultsLens.color, iconPrimary,
           reason: 'no-results empty-state lens');
     });
+  });
+
+  // TC-248-19: under Signal the find placeholder must be an explicit,
+  // AA-readable semantic color — not the near-white default that resolved under
+  // the dark root.
+  Widget lightHost(List<OrbitItem> items) => MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        theme: ThemeData(
+          extensions: const [BackgroundReadableColors.representativeLight],
+        ),
+        home: Scaffold(
+          resizeToAvoidBottomInset: true,
+          body: InnerCircleInteractiveSurface(
+            userPeerId: 'me',
+            items: items,
+            onFriendTap: (_) {},
+            onGroupTap: (_) {},
+            bottomClearance: 0,
+          ),
+        ),
+      );
+
+  testWidgets(
+      'Signal find placeholder uses semantic placeholder color with AA contrast',
+      (tester) async {
+    const light = BackgroundReadableColors.representativeLight;
+    await tester.pumpWidget(lightHost(_friends(8)));
+    await settle(tester);
+    await tester.tap(pillF());
+    await tester.pump();
+
+    final field = tester.widget<TextField>(find.byType(TextField));
+    final hintStyle = field.decoration!.hintStyle!;
+    expect(hintStyle.color, light.placeholderText);
+    expect(hintStyle.color, const Color(0xFF645F6A));
+    // AA-readable on the effective light field surface.
+    expectTextContrast(hintStyle.color!, light.surfaceRaised);
+    expectTextContrast(hintStyle.color!, light.inputFill);
+
+    // Typed text still lands in the field, and close still collapses it.
+    await tester.enterText(find.byType(TextField), 'friend');
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      'friend',
+    );
+    await tester.tap(find.byKey(const ValueKey('orbit-find-close')));
+    await tester.pump();
+    expect(find.byType(TextField), findsNothing);
+    await settle(tester);
   });
 }

@@ -57,7 +57,9 @@ class FriendRow extends StatelessWidget {
         decoration: BoxDecoration(
           color: readableColors.surfaceSubtle,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: readableColors.border),
+          // 248 — decorative row outline: soft surfaceBorder on light, unchanged
+          // (surfaceBorder == border) on dark.
+          border: Border.all(color: readableColors.surfaceBorder),
         ),
         child: Row(
           children: [

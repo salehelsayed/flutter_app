@@ -1,9 +1,15 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
+/// 248 (TC-22) — structural/text colors read from [BackgroundReadableColors] so
+/// this debug card is readable under Signal light (the old translucent-white
+/// literals vanished on light). Success/error/destructive actions stay distinct
+/// and readable. kDebugMode-only, so its dark chrome may differ slightly from
+/// the prior literals (accepted; TC-25 preserves only release surfaces).
 class SettingsIntroductionDebugCard extends StatelessWidget {
   final List<IntroductionModel> introductions;
   final bool isLoading;
@@ -25,6 +31,11 @@ class SettingsIntroductionDebugCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final readable = context.backgroundReadableColors;
+    final isLight = readable.isLightSurface;
+    final errorColor = isLight
+        ? const Color(0xFFB4232F)
+        : const Color(0xFFF87171);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -35,11 +46,11 @@ class SettingsIntroductionDebugCard extends StatelessWidget {
             padding: const EdgeInsets.only(left: 4, bottom: 8),
             child: Text(
               l10n.settings_intro_debug_heading,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0.88,
-                color: Color.fromRGBO(255, 255, 255, 0.4),
+                color: readable.textMuted,
               ),
             ),
           ),
@@ -51,10 +62,8 @@ class SettingsIntroductionDebugCard extends StatelessWidget {
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(16),
-                  color: const Color.fromRGBO(255, 255, 255, 0.08),
-                  border: Border.all(
-                    color: const Color.fromRGBO(255, 255, 255, 0.12),
-                  ),
+                  color: readable.surfaceRaised,
+                  border: Border.all(color: readable.surfaceBorder),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -64,10 +73,10 @@ class SettingsIntroductionDebugCard extends StatelessWidget {
                         Expanded(
                           child: Text(
                             l10n.settings_intro_debug_description,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 12,
                               height: 1.35,
-                              color: Color.fromRGBO(255, 255, 255, 0.65),
+                              color: readable.textSecondary,
                             ),
                           ),
                         ),
@@ -80,20 +89,13 @@ class SettingsIntroductionDebugCard extends StatelessWidget {
                             height: 36,
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(10),
-                              color: const Color.fromRGBO(255, 255, 255, 0.08),
-                              border: Border.all(
-                                color: const Color.fromRGBO(
-                                  255,
-                                  255,
-                                  255,
-                                  0.12,
-                                ),
-                              ),
+                              color: readable.surfaceSubtle,
+                              border: Border.all(color: readable.surfaceBorder),
                             ),
-                            child: const Icon(
+                            child: Icon(
                               Icons.refresh,
                               size: 16,
-                              color: Color.fromRGBO(255, 255, 255, 0.7),
+                              color: readable.iconSecondary,
                             ),
                           ),
                         ),
@@ -101,29 +103,26 @@ class SettingsIntroductionDebugCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 16),
                     if (isLoading)
-                      const Center(
+                      Center(
                         child: Padding(
-                          padding: EdgeInsets.symmetric(vertical: 16),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: Color(0xFF14B8A6),
+                            color: readable.accent,
                           ),
                         ),
                       )
                     else if (errorText != null)
                       Text(
                         errorText!,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFFF87171),
-                        ),
+                        style: TextStyle(fontSize: 12, color: errorColor),
                       )
                     else if (introductions.isEmpty)
                       Text(
                         l10n.settings_intro_debug_empty,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12,
-                          color: Color.fromRGBO(255, 255, 255, 0.5),
+                          color: readable.textMuted,
                         ),
                       )
                     else
@@ -163,6 +162,15 @@ class _IntroductionDebugRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final readable = context.backgroundReadableColors;
+    final isLight = readable.isLightSurface;
+    // Distinct destructive (delete-row) vs warning (delete-pair) actions.
+    final deleteRowColor = isLight
+        ? const Color(0xFFB4232F)
+        : const Color(0xFFF87171);
+    final deletePairColor = isLight
+        ? const Color(0xFF9A3412)
+        : const Color(0xFFFB923C);
     final recipientLabel = _displayLabel(
       intro.recipientUsername,
       intro.recipientId,
@@ -178,18 +186,18 @@ class _IntroductionDebugRow extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
-        color: const Color.fromRGBO(255, 255, 255, 0.04),
-        border: Border.all(color: const Color.fromRGBO(255, 255, 255, 0.08)),
+        color: readable.surfaceSubtle,
+        border: Border.all(color: readable.surfaceBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             '$recipientLabel <-> $introducedLabel',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: Color.fromRGBO(255, 255, 255, 0.95),
+              color: readable.textPrimary,
             ),
           ),
           const SizedBox(height: 6),
@@ -199,11 +207,11 @@ class _IntroductionDebugRow extends StatelessWidget {
               intro.recipientStatus.toDbString(),
               intro.introducedStatus.toDbString(),
             ),
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'SF Mono',
-              fontFamilyFallback: ['Fira Code', 'monospace'],
+              fontFamilyFallback: const ['Fira Code', 'monospace'],
               fontSize: 11,
-              color: Color.fromRGBO(255, 255, 255, 0.7),
+              color: readable.textSecondary,
             ),
           ),
           const SizedBox(height: 4),
@@ -212,11 +220,11 @@ class _IntroductionDebugRow extends StatelessWidget {
               intro.id,
               intro.createdAt.toString(),
             ),
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'SF Mono',
-              fontFamilyFallback: ['Fira Code', 'monospace'],
+              fontFamilyFallback: const ['Fira Code', 'monospace'],
               fontSize: 11,
-              color: Color.fromRGBO(255, 255, 255, 0.55),
+              color: readable.textMuted,
             ),
           ),
           const SizedBox(height: 10),
@@ -227,13 +235,13 @@ class _IntroductionDebugRow extends StatelessWidget {
               _DebugActionButton(
                 key: ValueKey('settings-intro-delete-row-${intro.id}'),
                 label: l10n.settings_intro_debug_delete_row,
-                color: const Color(0xFFF87171),
+                color: deleteRowColor,
                 onTap: () => onDeleteIntroduction(intro.id),
               ),
               _DebugActionButton(
                 key: ValueKey('settings-intro-delete-pair-${intro.id}'),
                 label: l10n.settings_intro_debug_delete_pair,
-                color: const Color(0xFFFB923C),
+                color: deletePairColor,
                 onTap: () => onDeletePair(intro),
               ),
             ],
@@ -271,8 +279,8 @@ class _DebugActionButton extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(10),
-          color: color.withOpacity(0.16),
-          border: Border.all(color: color.withOpacity(0.32)),
+          color: color.withValues(alpha: 0.16),
+          border: Border.all(color: color.withValues(alpha: 0.32)),
         ),
         child: Text(
           label,

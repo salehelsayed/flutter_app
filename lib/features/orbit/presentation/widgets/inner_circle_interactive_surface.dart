@@ -1106,6 +1106,13 @@ class _InnerCircleInteractiveSurfaceState
                             isDense: true,
                             border: InputBorder.none,
                             hintText: l10n.orbit_find_placeholder,
+                            // 248 (TC-19) — explicit AA-readable placeholder;
+                            // without it the hint fell back to a near-white
+                            // default under the dark root.
+                            hintStyle: TextStyle(
+                              fontSize: 16,
+                              color: colors.placeholderText,
+                            ),
                           ),
                         ),
                       ),

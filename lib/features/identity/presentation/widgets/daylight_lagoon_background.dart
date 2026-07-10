@@ -1,103 +1,51 @@
-import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
-/// Light shared app background with pastel drifting blooms.
-class DaylightLagoonBackground extends StatefulWidget {
+/// 248 — the Signal ("warm mineral sky") shared background. A calm, static warm
+/// gradient ground with two broad, still colour fields (a violet bloom and a
+/// sage bloom). There is deliberately NO animation controller: reduced-motion
+/// and ordinary mode render the exact same still composition, so the
+/// always-mounted chrome `BackdropFilter`s sit in front of a cacheable backdrop
+/// and nothing ticks at rest.
+class DaylightLagoonBackground extends StatelessWidget {
   final Widget child;
-  final Duration driftPeriod;
+
+  /// Warm mineral/linen ground; pure white is forbidden as the Signal canvas.
   final Color baseColor;
+
+  /// Warm center-to-edge depth without a white hotspot.
   final List<Color> groundGradientColors;
+
+  /// Broad static violet colour field.
   final Color violetWash;
-  final Color blueWash;
+
+  /// Broad static sage colour field.
+  final Color sageWash;
 
   const DaylightLagoonBackground({
     super.key,
     required this.child,
-    this.driftPeriod = const Duration(seconds: 18),
-    // Paper White: a genuinely white ground. Pure white through the center
-    // (where the orbit sits) easing to a barely-there cool grey at the extreme
-    // edges — structure without ever reading as tinted. The old porcelain
-    // #EDEEF3 + violet/blue washes are gone (they muddied the light ground).
-    this.baseColor = const Color(0xFFFFFFFF),
+    this.baseColor = const Color(0xFFECE8E1),
     this.groundGradientColors = const [
-      Color(0xFFFFFFFF),
-      Color(0xFFFFFFFF),
-      Color(0xFFF0F1F4),
+      Color(0xFFF4F0EA),
+      Color(0xFFECE8E1),
+      Color(0xFFE5DED5),
     ],
-    this.violetWash = const Color(0x00FFFFFF),
-    this.blueWash = const Color(0x00FFFFFF),
+    this.violetWash = const Color(0x177C69C8),
+    this.sageWash = const Color(0x1258A989),
   });
-
-  @override
-  State<DaylightLagoonBackground> createState() =>
-      _DaylightLagoonBackgroundState();
-}
-
-class _DaylightLagoonBackgroundState extends State<DaylightLagoonBackground>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  bool _motionDisabled = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: widget.driftPeriod,
-    );
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _syncMotionPreference();
-  }
-
-  @override
-  void didUpdateWidget(covariant DaylightLagoonBackground oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.driftPeriod != widget.driftPeriod) {
-      _controller.duration = widget.driftPeriod;
-    }
-    _syncMotionPreference();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _syncMotionPreference() {
-    final mediaQuery = MediaQuery.maybeOf(context);
-    final motionDisabled =
-        (mediaQuery?.disableAnimations ?? false) ||
-        (mediaQuery?.accessibleNavigation ?? false);
-    _motionDisabled = motionDisabled;
-
-    if (motionDisabled) {
-      _controller.stop();
-      _controller.value = 0;
-      return;
-    }
-
-    if (!_controller.isAnimating) {
-      _controller.repeat();
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
     return DecoratedBox(
       key: const ValueKey('daylight-lagoon-background-root'),
       decoration: BoxDecoration(
-        color: widget.baseColor,
+        color: baseColor,
         gradient: RadialGradient(
           center: const Alignment(0.0, -0.06),
           radius: 1.15,
-          colors: widget.groundGradientColors,
+          colors: groundGradientColors,
           stops: const [0.0, 0.62, 1.0],
         ),
       ),
@@ -108,17 +56,15 @@ class _DaylightLagoonBackgroundState extends State<DaylightLagoonBackground>
               child: CustomPaint(
                 key: const ValueKey('daylight-lagoon-background-painter'),
                 painter: _DaylightLagoonPainter(
-                  animation: _motionDisabled ? null : _controller,
-                  motionDisabled: _motionDisabled,
-                  violet: widget.violetWash,
-                  blue: widget.blueWash,
+                  violet: violetWash,
+                  sage: sageWash,
                 ),
                 isComplex: true,
-                willChange: !_motionDisabled,
+                willChange: false,
               ),
             ),
           ),
-          RepaintBoundary(child: widget.child),
+          RepaintBoundary(child: child),
         ],
       ),
     );
@@ -126,32 +72,13 @@ class _DaylightLagoonBackgroundState extends State<DaylightLagoonBackground>
 }
 
 class _DaylightLagoonPainter extends CustomPainter {
-  final Animation<double>? animation;
-  final bool motionDisabled;
   final Color violet;
-  final Color blue;
+  final Color sage;
 
-  _DaylightLagoonPainter({
-    required this.animation,
-    required this.motionDisabled,
-    required this.violet,
-    required this.blue,
-  }) : super(repaint: motionDisabled ? null : animation);
-
-  double get _driftT => motionDisabled ? 0 : animation?.value ?? 0;
+  const _DaylightLagoonPainter({required this.violet, required this.sage});
 
   @override
   void paint(Canvas canvas, Size size) {
-    final wave = math.sin(_driftT * math.pi);
-    final dx = 6 * wave;
-    final dy = -4 * wave;
-    final scale = 1.0 + 0.04 * wave;
-
-    canvas.save();
-    canvas.translate(size.width / 2, size.height / 2);
-    canvas.scale(scale);
-    canvas.translate(-size.width / 2 + dx, -size.height / 2 + dy);
-
     _paintBloom(
       canvas,
       size,
@@ -165,15 +92,13 @@ class _DaylightLagoonPainter extends CustomPainter {
     _paintBloom(
       canvas,
       size,
-      color: blue,
+      color: sage,
       cx: 0.85,
       cy: 0.10,
       rx: 0.50,
       ry: 0.40,
       stop: 0.62,
     );
-
-    canvas.restore();
   }
 
   void _paintBloom(
@@ -208,9 +133,6 @@ class _DaylightLagoonPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _DaylightLagoonPainter oldDelegate) {
-    return oldDelegate.animation != animation ||
-        oldDelegate.motionDisabled != motionDisabled ||
-        oldDelegate.violet != violet ||
-        oldDelegate.blue != blue;
+    return oldDelegate.violet != violet || oldDelegate.sage != sage;
   }
 }

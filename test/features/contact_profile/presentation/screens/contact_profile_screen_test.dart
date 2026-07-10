@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/theme/app_theme.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/contact_profile/presentation/screens/contact_profile_screen.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -193,6 +195,63 @@ void main() {
     expect(find.text('Aurora Vex'), findsNothing);
     expect(find.text('open-profile'), findsOneWidget);
   });
+
+  // TC-248-15: a Contact Profile pushed under a Signal light root must inherit
+  // the warm light ThemeData + extensions (it reads context.backgroundReadableColors
+  // and does NOT wrap itself in AmbientBackground, so it falls back to the root).
+  testWidgets(
+    'pushed Contact Profile inherits Signal light ThemeData and warm scaffold',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          // The exact theme trio the AppShellThemeBinding produces for Signal.
+          theme: AppTheme.lightTheme,
+          darkTheme: AppTheme.darkTheme,
+          themeMode: ThemeMode.light,
+          home: Builder(
+            builder: (context) => Center(
+              child: TextButton(
+                onPressed: () =>
+                    ContactProfileScreen.open(context, contact: buildContact()),
+                child: const Text('open-profile'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('open-profile'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 700)); // push + theme fade
+
+      final profileContext = tester.element(find.byType(ContactProfileScreen));
+      final theme = Theme.of(profileContext);
+      expect(theme.brightness, Brightness.light);
+
+      final readable = theme.extension<BackgroundReadableColors>();
+      expect(readable, isNotNull);
+      expect(
+        readable!.isLightSurface,
+        isTrue,
+        reason: 'pushed route must resolve the light readable extension',
+      );
+
+      final scaffold = tester.widget<Scaffold>(
+        find.descendant(
+          of: find.byType(ContactProfileScreen),
+          matching: find.byType(Scaffold),
+        ),
+      );
+      expect(
+        scaffold.backgroundColor,
+        readable.surfaceBase,
+        reason: 'scaffold uses the light warm surface, not a dark island',
+      );
+    },
+  );
 
   testWidgets('iOS edge-swipe pops the screen', (tester) async {
     // Reset the platform override before the test body returns (the foundation

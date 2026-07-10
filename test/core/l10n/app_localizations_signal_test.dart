@@ -11,14 +11,14 @@ void main() {
     expect(en.settings_background_daylight_lagoon, 'Signal');
     expect(
       en.settings_background_daylight_lagoon_desc,
-      'A cool porcelain sky with one electric-violet star.',
+      'A warm mineral sky with soft violet and sage light.',
     );
     expect(en.settings_background_daylight_lagoon_selected, 'Signal selected');
 
     expect(de.settings_background_daylight_lagoon, 'Signal');
     expect(
       de.settings_background_daylight_lagoon_desc,
-      'Ein kühler Porzellanhimmel mit einem elektrisch-violetten Stern.',
+      'Ein warmer mineralischer Himmel mit sanftem violettem und salbeigrünem Licht.',
     );
     expect(
       de.settings_background_daylight_lagoon_selected,
@@ -28,7 +28,7 @@ void main() {
     expect(ar.settings_background_daylight_lagoon, 'سيجنال');
     expect(
       ar.settings_background_daylight_lagoon_desc,
-      'سماء خزفية باردة بنجمة واحدة بنفسجية كهربائية.',
+      'سماء معدنية دافئة بضوء بنفسجي ومريمي ناعم.',
     );
     expect(ar.settings_background_daylight_lagoon_selected, 'تم اختيار سيجنال');
   });

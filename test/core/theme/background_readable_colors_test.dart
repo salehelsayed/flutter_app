@@ -104,16 +104,17 @@ void main() {
   });
 
   test(
-    'representative light roles pass against the real Paper White ground',
+    'representative light roles pass against the warm mineral ground',
     () {
       const colors = BackgroundReadableColors.representativeLight;
-      const paperWhiteGround = Color(0xFFFFFFFF);
+      // 248 — the Signal ground is warm mineral #ECE8E1, not paper white.
+      const warmGround = Color(0xFFECE8E1);
 
-      expectTextContrast(colors.textPrimary, paperWhiteGround);
-      expectTextContrast(colors.textSecondary, paperWhiteGround);
-      expectTextContrast(colors.textMuted, paperWhiteGround);
-      expectTextContrast(colors.composerHint, paperWhiteGround);
-      expectComponentContrast(colors.accent, paperWhiteGround);
+      expectTextContrast(colors.textPrimary, warmGround);
+      expectTextContrast(colors.textSecondary, warmGround);
+      expectTextContrast(colors.textMuted, warmGround);
+      expectTextContrast(colors.composerHint, warmGround);
+      expectComponentContrast(colors.accent, warmGround);
     },
   );
 }

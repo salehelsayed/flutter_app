@@ -73,8 +73,10 @@ class GroupRow extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
           color: readableColors.surfaceSubtle,
+          // 248 — decorative row outline: soft surfaceBorder on light, unchanged
+          // (surfaceBorder == border) on dark.
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: readableColors.border),
+          border: Border.all(color: readableColors.surfaceBorder),
         ),
         child: Row(
           children: [

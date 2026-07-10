@@ -19,6 +19,13 @@ class BackgroundReadableColors
   final Color glassSurface;
   final Color glassBorder;
   final Color border;
+
+  /// 248 — decorative card/bubble/divider outline. Deliberately softer than
+  /// [border]/[inputBorder] (which stay ≥3:1 control boundaries). Only named
+  /// decorative consumers (rows, bubbles) use it; the dark value equals the
+  /// prior dark [border] so dark rendering is byte-identical.
+  final Color surfaceBorder;
+
   final Color divider;
   final Color overlayScrim;
   final Color inputFill;
@@ -73,6 +80,7 @@ class BackgroundReadableColors
     required this.glassSurface,
     required this.glassBorder,
     required this.border,
+    required this.surfaceBorder,
     required this.divider,
     required this.overlayScrim,
     required this.inputFill,
@@ -128,6 +136,9 @@ class BackgroundReadableColors
     glassSurface: Color(0xCC0A0A0F),
     glassBorder: Color(0x66FFFFFF),
     border: Color(0x80FFFFFF),
+    // Dark surfaceBorder == prior dark border so decorative-outline consumers
+    // (rows/bubbles) render byte-identically on dark after switching to it.
+    surfaceBorder: Color(0x80FFFFFF),
     divider: Color(0x24FFFFFF),
     overlayScrim: Color(0xB3000000),
     inputFill: Color(0xCC101218),
@@ -170,63 +181,65 @@ class BackgroundReadableColors
     navigationBarIconBrightness: Brightness.light,
   );
 
+  // 248 — the Signal "warm mineral" light palette. Every role is measured
+  // against the actual surface it renders on (canvas #ECE8E1, base #F4F0EA,
+  // raised #FAF8F3, subtle #E1DCE5): normal/small text ≥4.5:1, control /
+  // interactive borders ≥3:1. Filled success stays #2F7755 (Material secondary
+  // + white); small success text/borders use full-opacity #236143.
   static const representativeLight = BackgroundReadableColors(
-    textPrimary: Color(0xFF16181F),
-    textSecondary: Color(0xFF4A4E5C),
-    textMuted: Color(0xFF656A79),
-    iconPrimary: Color(0xFF16181F),
-    iconSecondary: Color(0xFF4A4E5C),
-    iconMuted: Color(0xFF656A79),
-    surfaceBase: Color(0xFFF4F6FA),
-    surfaceRaised: Color(0xFFFFFFFF),
-    surfaceSubtle: Color(0xFFE9ECF4),
-    glassSurface: Color(0xEEF7F8FB),
-    glassBorder: Color(0x33463A96),
-    border: Color(0x99463A96),
-    divider: Color(0x24463A96),
+    textPrimary: Color(0xFF25222B),
+    textSecondary: Color(0xFF56515E),
+    textMuted: Color(0xFF65606C),
+    iconPrimary: Color(0xFF25222B),
+    iconSecondary: Color(0xFF56515E),
+    iconMuted: Color(0xFF65606C),
+    surfaceBase: Color(0xFFF4F0EA),
+    surfaceRaised: Color(0xFFFAF8F3),
+    surfaceSubtle: Color(0xFFE1DCE5),
+    glassSurface: Color(0xEEFAF8F3),
+    glassBorder: Color(0xFF8D83A8),
+    border: Color(0xFF8D83A8),
+    // Decorative-only: softer than border/inputBorder; grouping, never the sole
+    // control boundary.
+    surfaceBorder: Color(0xFFB3ACBD),
+    divider: Color(0xFFB3ACBD),
     overlayScrim: Color(0x66000000),
-    inputFill: Color(0xFFF7F8FB),
-    inputBorder: Color(0x99463A96),
-    placeholderText: Color(0xFF6A6F7E),
-    disabledForeground: Color(0xFF656A79),
-    disabledSurface: Color(0xFFD8DBE4),
-    accent: Color(0xFF5A24E0),
+    inputFill: Color(0xFFE1DCE5),
+    inputBorder: Color(0xFF7C7297),
+    placeholderText: Color(0xFF645F6A),
+    disabledForeground: Color(0xFF6B6672),
+    disabledSurface: Color(0xFFD5D0D9),
+    accent: Color(0xFF6045B6),
     accentIcon: Color(0xFFFFFFFF),
-    // Paper White orbit rings: bolder neutral-ink dashes so the structure reads
-    // on white (the old ink-violet 0x47/0x61 463A96 dashes went pale). ringGlow
-    // is a near-nil violet so the painter's blur sublayer never hazes.
-    ring1: Color(0x52262A3A),
-    ring2: Color(0x70262A3A),
-    ringGlow: Color(0x0A6D28D9),
-    ctaBg: Color(0xFF5A24E0),
-    ctaIcon: Color(0xFF5A24E0),
-    ctaMenuFill: Color(0xFFF7F8FB),
-    ctaMenuBorder: Color(0x335A24E0),
-    ctaMenuText: Color(0xFF16181F),
-    navActive: Color(0xFF5A24E0),
-    navInactive: Color(0xFF656A79),
-    navActiveFill: Color(0x1A5A24E0),
-    // Paper White node treatment: these are now OPAQUE crisp-ring colors (not
-    // translucent blooms). _OrbitNodeHalo paints a 2px solid ring in this color
-    // hugging each node instead of the pale soft halo that washed out on white.
-    nodeSelfGlow: Color(0xFF5A24E0),
+    ring1: Color(0x526045B6),
+    ring2: Color(0x706045B6),
+    ringGlow: Color(0x177C69C8),
+    ctaBg: Color(0xFF6045B6),
+    ctaIcon: Color(0xFF6045B6),
+    ctaMenuFill: Color(0xFFFAF8F3),
+    ctaMenuBorder: Color(0xFF8D83A8),
+    ctaMenuText: Color(0xFF25222B),
+    navActive: Color(0xFF6045B6),
+    navInactive: Color(0xFF65606C),
+    navActiveFill: Color(0x1A6045B6),
+    nodeSelfGlow: Color(0xFF6045B6),
     nodeContactGlow: Color(0xFFE5484D),
-    composerBarColor: Color(0xF2EDEEF3),
-    composerInputFill: Color(0xFFF7F8FB),
-    composerHint: Color(0xFF656A79),
-    sendBg: Color(0x1F5A24E0),
-    sendIcon: Color(0xFF5A24E0),
-    connectedHeading: Color(0xFF0A5D34),
-    emptyHint: Color(0xFF656A79),
-    emptyDate: Color(0xFF656A79),
-    emptyDivider: Color(0x66463A96),
-    emptyAvatarGlow: Color(0xFF5A24E0),
-    micBg: Color(0x1F5A24E0),
-    micBorder: Color(0x525A24E0),
-    micShadow: Color(0x3D5A24E0),
-    micIcon: Color(0xFF5A24E0),
-    avatarFrameBorder: Color(0x33463A96),
-    avatarFrameFill: Color(0xFFF7F8FB),
+    composerBarColor: Color(0xF2F4F0EA),
+    composerInputFill: Color(0xFFE1DCE5),
+    composerHint: Color(0xFF645F6A),
+    sendBg: Color(0x1F6045B6),
+    sendIcon: Color(0xFF6045B6),
+    connectedHeading: Color(0xFF236143),
+    emptyHint: Color(0xFF65606C),
+    emptyDate: Color(0xFF65606C),
+    emptyDivider: Color(0xFFB3ACBD),
+    emptyAvatarGlow: Color(0xFF6045B6),
+    micBg: Color(0x1F6045B6),
+    micBorder: Color(0xFF7C7297),
+    micShadow: Color(0x336045B6),
+    micIcon: Color(0xFF6045B6),
+    avatarFrameBorder: Color(0xFFB3ACBD),
+    avatarFrameFill: Color(0xFFFAF8F3),
     statusBarIconBrightness: Brightness.dark,
     navigationBarIconBrightness: Brightness.dark,
   );
@@ -284,6 +297,7 @@ class BackgroundReadableColors
     Color? glassSurface,
     Color? glassBorder,
     Color? border,
+    Color? surfaceBorder,
     Color? divider,
     Color? overlayScrim,
     Color? inputFill,
@@ -338,6 +352,7 @@ class BackgroundReadableColors
       glassSurface: glassSurface ?? this.glassSurface,
       glassBorder: glassBorder ?? this.glassBorder,
       border: border ?? this.border,
+      surfaceBorder: surfaceBorder ?? this.surfaceBorder,
       divider: divider ?? this.divider,
       overlayScrim: overlayScrim ?? this.overlayScrim,
       inputFill: inputFill ?? this.inputFill,
@@ -404,6 +419,7 @@ class BackgroundReadableColors
       glassSurface: Color.lerp(glassSurface, other.glassSurface, t)!,
       glassBorder: Color.lerp(glassBorder, other.glassBorder, t)!,
       border: Color.lerp(border, other.border, t)!,
+      surfaceBorder: Color.lerp(surfaceBorder, other.surfaceBorder, t)!,
       divider: Color.lerp(divider, other.divider, t)!,
       overlayScrim: Color.lerp(overlayScrim, other.overlayScrim, t)!,
       inputFill: Color.lerp(inputFill, other.inputFill, t)!,

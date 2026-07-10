@@ -404,6 +404,6 @@ void main() {
     final root = tester.widget<DecoratedBox>(
       find.byKey(const ValueKey('daylight-lagoon-background-root')),
     );
-    expect((root.decoration as BoxDecoration).color, const Color(0xFFFFFFFF));
+    expect((root.decoration as BoxDecoration).color, const Color(0xFFECE8E1));
   });
 }

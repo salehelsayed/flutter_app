@@ -2805,4 +2805,69 @@ void main() {
       },
     );
   });
+
+  // TC-248-13: under Signal, incoming = ivory raised surface, outgoing =
+  // lavender subtle surface, both outlined with the decorative surfaceBorder
+  // (not the stronger control border) and readable metadata.
+  BoxDecoration bubbleDecoration(WidgetTester tester, Color fill) {
+    final decorations = tester
+        .widgetList<Container>(
+          find.descendant(
+            of: find.byType(LetterCard),
+            matching: find.byType(Container),
+          ),
+        )
+        .map((c) => c.decoration)
+        .whereType<BoxDecoration>();
+    return decorations.firstWhere((d) => d.color == fill);
+  }
+
+  testWidgets(
+    'Signal incoming ivory and outgoing lavender bubbles use decorative '
+    'borders and readable metadata',
+    (tester) async {
+      const light = BackgroundReadableColors.representativeLight;
+
+      // Incoming = ivory raised surface with a soft decorative outline.
+      await tester.pumpWidget(
+        buildTestWidget(
+          readableColors: light,
+          isIncoming: true,
+          text: 'Incoming body copy',
+          time: '3:30 PM',
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final incoming = bubbleDecoration(tester, light.surfaceRaised);
+      expect(incoming.color, const Color(0xFFFAF8F3));
+      final incomingBorder = incoming.border! as Border;
+      expect(incomingBorder.top.color, light.surfaceBorder);
+      expect(incomingBorder.top.color, const Color(0xFFB3ACBD));
+      // Decorative, NOT the stronger control border.
+      expect(incomingBorder.top.color, isNot(light.border));
+      expect(find.text('Incoming body copy'), findsOneWidget);
+      expect(find.text('3:30 PM'), findsWidgets);
+
+      // Outgoing = lavender subtle surface, same decorative outline.
+      await tester.pumpWidget(
+        buildTestWidget(
+          readableColors: light,
+          isIncoming: false,
+          text: 'Outgoing body copy',
+          time: '3:31 PM',
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final outgoing = bubbleDecoration(tester, light.surfaceSubtle);
+      expect(outgoing.color, const Color(0xFFE1DCE5));
+      final outgoingBorder = outgoing.border! as Border;
+      expect(outgoingBorder.top.color, light.surfaceBorder);
+      expect(find.text('Outgoing body copy'), findsOneWidget);
+
+      // Incoming ivory and outgoing lavender are visibly distinct.
+      expect(light.surfaceRaised, isNot(light.surfaceSubtle));
+    },
+  );
 }
