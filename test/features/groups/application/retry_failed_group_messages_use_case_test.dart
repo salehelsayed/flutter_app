@@ -7,6 +7,7 @@ import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_messages_use_case.dart';
+import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -507,6 +508,93 @@ void main() {
         expect(
           bridge.commandLog.where((cmd) => cmd == 'group:publish').length,
           1,
+        );
+      },
+    );
+
+    test(
+      'failed media send with persisted attachments is retried, not skipped as missing media',
+      () async {
+        const messageId = 'failed-media-retry';
+        identityRepo.seed(_makeIdentity());
+        await saveRetryGroupWithMembers();
+        final failingBridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {'ok': false, 'errorCode': 'PUBLISH_FAILED'},
+            'group:inboxStore': {
+              'ok': false,
+              'errorCode': 'INBOX_STORE_FAILED',
+            },
+          },
+        );
+        final attachment = _makeAttachment(
+          id: 'failed-media-retry-att',
+          messageId: '',
+          downloadStatus: 'done',
+        );
+
+        final (failedResult, failedMessage) = await sendGroupMessage(
+          bridge: failingBridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: '',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-peer-1',
+          senderPrivateKey: 'sk-peer-1',
+          senderUsername: 'Alice',
+          messageId: messageId,
+          mediaAttachments: [attachment],
+          mediaAttachmentRepo: mediaRepo,
+        );
+        expect(failedResult, SendGroupMessageResult.error);
+        expect(failedMessage!.status, 'failed');
+
+        final retryBridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {
+              'ok': true,
+              'messageId': messageId,
+              'topicPeers': 1,
+            },
+            'group:inboxStore': {'ok': true},
+          },
+        );
+        late int retried;
+        final events = await captureFlowEvents(() async {
+          retried = await retryFailedGroupMessages(
+            groupMsgRepo: msgRepo,
+            groupRepo: groupRepo,
+            identityRepo: identityRepo,
+            bridge: retryBridge,
+            mediaAttachmentRepo: mediaRepo,
+          );
+        });
+
+        expect(retried, 1);
+        final sendPayloads = retryBridge.sentMessages
+            .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+            .where(
+              (command) =>
+                  command['cmd'] == 'group:sendReliable' ||
+                  command['cmd'] == 'group:publish',
+            )
+            .map((command) => command['payload'] as Map<String, dynamic>)
+            .toList();
+        expect(
+          sendPayloads.any((payload) => payload['messageId'] == messageId),
+          isTrue,
+        );
+        expect((await msgRepo.getMessage(messageId))!.status, isNot('failed'));
+        expect(
+          events.any(
+            (event) =>
+                event['event'] ==
+                    'RETRY_FAILED_GROUP_MESSAGES_MESSAGE_SKIPPED_UNSUPPORTED' &&
+                event['details']['messageId'] == messageId.substring(0, 8) &&
+                event['details']['reason'] == 'missing_media_attachments',
+          ),
+          isFalse,
         );
       },
     );

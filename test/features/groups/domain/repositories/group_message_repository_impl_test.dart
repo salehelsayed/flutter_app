@@ -313,8 +313,17 @@ void main() {
       () async {
         final msg = makeMessage(id: 'st002-repair-delete');
         await repo.saveMessage(msg);
+        final events = <GroupOutgoingLocalMessageChange>[];
+        final subscription = repo.outgoingLocalMessageChanges.listen(
+          events.add,
+        );
+        addTearDown(subscription.cancel);
         await repo.deleteMessageForMembershipRepair(msg.id);
+        await pumpEventQueue();
         expect(await repo.getMessage(msg.id), isNull);
+        expect(await repo.getLocalDeletionGroupId(msg.id), isNull);
+        expect(events, hasLength(1));
+        expect(events.single.reloadRequired, isTrue);
 
         await repo.saveMessage(msg.copyWith(text: 'restored after re-add'));
 
@@ -334,6 +343,53 @@ void main() {
   });
 
   group('local outgoing status changes', () {
+    test(
+      'saveMessage emits one inserted event for a brand-new outgoing sending row',
+      () async {
+        final events = <GroupOutgoingLocalMessageChange>[];
+        final subscription = repo.outgoingLocalMessageChanges.listen(
+          events.add,
+        );
+        addTearDown(subscription.cancel);
+
+        await repo.saveMessage(
+          makeMessage(
+            id: 'new-outgoing-sending',
+            status: 'sending',
+            isIncoming: false,
+          ),
+        );
+        await repo.saveMessage(
+          makeMessage(
+            id: 'new-incoming-sending',
+            status: 'sending',
+            isIncoming: true,
+          ),
+        );
+        await repo.saveMessage(
+          makeMessage(
+            id: 'new-outgoing-sent',
+            status: 'sent',
+            isIncoming: false,
+          ),
+        );
+        await repo.saveMessage(
+          makeMessage(
+            id: 'new-outgoing-sending',
+            status: 'sending',
+            isIncoming: false,
+          ),
+        );
+        await pumpEventQueue();
+
+        expect(events, hasLength(1));
+        expect(events.single.groupId, 'group-1');
+        expect(events.single.messageId, 'new-outgoing-sending');
+        expect(events.single.status, isNull);
+        expect(events.single.reloadRequired, isFalse);
+      },
+    );
+
     test(
       'saveMessage emits one local status event when an outgoing row changes status',
       () async {
@@ -508,8 +564,10 @@ void main() {
         await pumpEventQueue();
 
         expect(transitioned, 1);
-        expect(events, hasLength(1));
-        expect(events.single.reloadRequired, isTrue);
+        expect(events, hasLength(2));
+        expect(events.first.isInserted, isTrue);
+        expect(events.first.messageId, 'transition-local-status');
+        expect(events.last.reloadRequired, isTrue);
 
         events.clear();
         final noTransition = await repo.transitionSendingToFailed();

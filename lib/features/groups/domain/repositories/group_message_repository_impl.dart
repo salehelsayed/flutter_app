@@ -534,12 +534,14 @@ class GroupMessageRepositoryImpl
 
   @override
   Future<void> deleteMessageForMembershipRepair(String id) async {
+    final previous = await dbLoadGroupMessage(id);
     final repairDelete = dbDeleteGroupMessageForMembershipRepairFn;
     if (repairDelete != null) {
       await repairDelete(id);
-      return;
+    } else {
+      await dbDeleteGroupMessage(id);
     }
-    await dbDeleteGroupMessage(id);
+    _emitOutgoingRowsChangedIfNeeded(previous == null ? 0 : 1);
   }
 
   @override

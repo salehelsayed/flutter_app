@@ -10,7 +10,10 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 /// production repository, so a wrong enum at a caller fails the test instead
 /// of being hidden by an untyped fake.
 class InMemoryMediaAttachmentRepository
-    implements MediaAttachmentRepository, MediaAttachmentByIdLookup {
+    implements
+        MediaAttachmentRepository,
+        MediaAttachmentByIdLookup,
+        NewMessageMediaPersistenceRollback {
   final Map<String, MediaAttachment> _attachments = {};
   void Function(MediaAttachment attachment)? onSaveAttachment;
 
@@ -120,6 +123,26 @@ class InMemoryMediaAttachmentRepository
       _attachments.remove(key);
     }
     return keysToRemove.length;
+  }
+
+  @override
+  Future<int> rollbackNewMessageAttachments({
+    required String messageId,
+    required Set<String> attachmentIds,
+    required MediaOwnerLane owner,
+  }) async {
+    final unexpected = _attachments.values.any(
+      (attachment) =>
+          attachment.messageId == messageId &&
+          attachment.ownerLane == owner &&
+          !attachmentIds.contains(attachment.id),
+    );
+    if (unexpected) {
+      throw StateError(
+        'refusing new-message media rollback with unexpected attachment ids',
+      );
+    }
+    return deleteAttachmentsForMessage(messageId, owner: owner);
   }
 
   @override

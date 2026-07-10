@@ -45,6 +45,13 @@ class MediaRepositoryRealDbFixture {
   static Future<MediaRepositoryRealDbFixture> create({
     String databasePath = inMemoryDatabasePath,
     RecordingSecureKeyStore? secureKeyStore,
+    Future<void> Function(Map<String, Object?> row)?
+    dbSaveMediaAttachmentOverride,
+    Future<void> Function(
+      Map<String, Object?> row,
+      Future<void> Function() persist,
+    )?
+    dbSaveMediaAttachmentAround,
   }) async {
     sqfliteFfiInit();
     final db = await databaseFactoryFfi.openDatabase(
@@ -57,8 +64,14 @@ class MediaRepositoryRealDbFixture {
     );
     final effectiveSecureKeyStore = secureKeyStore ?? RecordingSecureKeyStore();
     final repo = MediaAttachmentRepositoryImpl(
-      dbSaveMediaAttachmentPreservingLocalState: (row) =>
-          dbSaveMediaAttachmentPreservingLocalState(db, row),
+      dbSaveMediaAttachmentPreservingLocalState:
+          dbSaveMediaAttachmentOverride ??
+          (row) => dbSaveMediaAttachmentAround == null
+              ? dbSaveMediaAttachmentPreservingLocalState(db, row)
+              : dbSaveMediaAttachmentAround(
+                  row,
+                  () => dbSaveMediaAttachmentPreservingLocalState(db, row),
+                ),
       dbLoadMediaForMessage: (messageId, ownerLane) =>
           dbLoadMediaForMessage(db, messageId, ownerLane: ownerLane),
       dbLoadMediaById: (id) => dbLoadMediaById(db, id),

@@ -299,6 +299,78 @@ class _SaveTrackingGroupMessageRepository
   }
 }
 
+class _OrderedGroupMessageRepository extends InMemoryGroupMessageRepository {
+  _OrderedGroupMessageRepository(this.operations);
+
+  final List<String> operations;
+
+  @override
+  Future<void> saveMessage(GroupMessage message) async {
+    operations.add('message:${message.id}:${message.status}');
+    await super.saveMessage(message);
+  }
+}
+
+class _OrderedMediaAttachmentRepository
+    extends InMemoryMediaAttachmentRepository {
+  _OrderedMediaAttachmentRepository(this.operations);
+
+  final List<String> operations;
+
+  @override
+  Future<void> saveAttachment(
+    MediaAttachment attachment, {
+    required MediaOwnerLane owner,
+  }) async {
+    operations.add('attachment:${attachment.id}:${attachment.messageId}');
+    await super.saveAttachment(attachment, owner: owner);
+  }
+}
+
+class _FailingNthMediaAttachmentRepository
+    extends InMemoryMediaAttachmentRepository {
+  _FailingNthMediaAttachmentRepository(this.failAt);
+
+  final int failAt;
+  int _saveCount = 0;
+
+  @override
+  Future<void> saveAttachment(
+    MediaAttachment attachment, {
+    required MediaOwnerLane owner,
+  }) async {
+    _saveCount++;
+    if (_saveCount == failAt) {
+      throw StateError('injected attachment persistence failure');
+    }
+    await super.saveAttachment(attachment, owner: owner);
+  }
+}
+
+class _MissingDurableMediaAttachmentRepository
+    extends InMemoryMediaAttachmentRepository {
+  @override
+  Future<List<MediaAttachment>> getAttachmentsForMessage(
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => const [];
+}
+
+class _ThrowingSaveGroupMessageRepository
+    extends InMemoryGroupMessageRepository {
+  @override
+  Future<void> saveMessage(GroupMessage message) async {
+    throw StateError('injected parent persistence failure');
+  }
+}
+
+class _SilentSaveGroupMessageRepository extends InMemoryGroupMessageRepository {
+  Future<void> seedMessage(GroupMessage message) => super.saveMessage(message);
+
+  @override
+  Future<void> saveMessage(GroupMessage message) async {}
+}
+
 class _InMemoryInviteDeliveryAttemptRepository
     implements GroupInviteDeliveryAttemptRepository {
   final Map<String, GroupInviteDeliveryAttempt> _attempts = {};
@@ -464,6 +536,17 @@ Map<String, dynamic> _lastGroupInboxStorePayload(FakeBridge bridge) {
   );
   return (jsonDecode(inboxMsg) as Map)['payload'] as Map<String, dynamic>;
 }
+
+List<String> _groupDispatchCommands(FakeBridge bridge) => bridge.sentMessages
+    .map((raw) => (jsonDecode(raw) as Map<String, dynamic>)['cmd'] as String?)
+    .whereType<String>()
+    .where(
+      (command) =>
+          command == 'group:sendReliable' ||
+          command == 'group:publish' ||
+          command == 'group:inboxStore',
+    )
+    .toList(growable: false);
 
 Map<String, dynamic> _groupSendReliablePayloadForMessage(
   FakeBridge bridge,
@@ -3594,6 +3677,7 @@ void main() {
         senderPrivateKey: 'sk-1',
         senderUsername: 'Alice',
         mediaAttachments: [voiceAttachment],
+        mediaAttachmentRepo: InMemoryMediaAttachmentRepository(),
       );
 
       final inboxPayload = _lastGroupInboxStorePayload(bridge);
@@ -4253,6 +4337,383 @@ void main() {
     setUp(() {
       mediaRepo = InMemoryMediaAttachmentRepository();
     });
+
+    test(
+      'persists stamped done attachments before the pre-persist row save and publish',
+      () async {
+        const messageId = 'group-media-order-message';
+        final operations = <String>[];
+        final orderedMessages = _OrderedGroupMessageRepository(operations);
+        final orderedMedia = _OrderedMediaAttachmentRepository(operations);
+        final gatedBridge = _GatedPublishBridge()
+          ..responses['group:publish'] = {
+            'ok': true,
+            'messageId': messageId,
+            'topicPeers': 1,
+          };
+        final attachments = [
+          testAttachment.copyWith(id: 'order-att-1'),
+          testAttachment.copyWith(id: 'order-att-2'),
+        ];
+
+        final send = sendGroupMessage(
+          bridge: gatedBridge,
+          groupRepo: groupRepo,
+          msgRepo: orderedMessages,
+          groupId: 'group-1',
+          text: '',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: messageId,
+          mediaAttachments: attachments,
+          mediaAttachmentRepo: orderedMedia,
+        );
+
+        await gatedBridge.publishStarted.future;
+        final firstMessageSave = operations.indexWhere(
+          (entry) => entry.startsWith('message:'),
+        );
+        final attachmentSaves = operations
+            .asMap()
+            .entries
+            .where((entry) => entry.value.startsWith('attachment:'))
+            .map((entry) => entry.key)
+            .toList();
+        expect(attachmentSaves, hasLength(2));
+        expect(
+          attachmentSaves.every((index) => index < firstMessageSave),
+          isTrue,
+          reason: 'all stamped media must be durable before the first row save',
+        );
+        for (final attachment in attachments) {
+          final saved = await orderedMedia.getAttachmentById(attachment.id);
+          expect(saved, isNotNull);
+          expect(saved!.messageId, messageId);
+          expect(saved.ownerLane, MediaOwnerLane.group);
+          expect(saved.downloadStatus, 'done');
+        }
+
+        gatedBridge.publishGate.complete();
+        final (result, _) = await send;
+        expect(result, SendGroupMessageResult.success);
+        expect(orderedMedia.count, 2);
+      },
+    );
+
+    test(
+      'terminal publish failure retains persisted done attachments',
+      () async {
+        const messageId = 'group-media-terminal-failure';
+        final failingBridge = _FailPublishBridge()
+          ..responses['group:inboxStore'] = {
+            'ok': false,
+            'errorCode': 'INBOX_STORE_FAILED',
+          };
+
+        final (result, message) = await sendGroupMessage(
+          bridge: failingBridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: '',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: messageId,
+          mediaAttachments: [testAttachment.copyWith(id: 'failed-media-att')],
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(result, SendGroupMessageResult.error);
+        expect(message, isNotNull);
+        expect(message!.status, 'failed');
+        final saved = await mediaRepo.getAttachmentsForMessage(
+          messageId,
+          owner: MediaOwnerLane.group,
+        );
+        expect(saved, hasLength(1));
+        expect(saved.single.id, 'failed-media-att');
+        expect(saved.single.downloadStatus, 'done');
+      },
+    );
+
+    test(
+      'nth attachment persistence failure rolls back new media and never dispatches',
+      () async {
+        const messageId = 'group-media-nth-persist-failure';
+        final messages = InMemoryGroupMessageRepository();
+        final failingMedia = _FailingNthMediaAttachmentRepository(2);
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: messages,
+          groupId: 'group-1',
+          text: '',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: messageId,
+          mediaAttachments: [
+            testAttachment.copyWith(id: 'nth-persist-1'),
+            testAttachment.copyWith(id: 'nth-persist-2'),
+          ],
+          mediaAttachmentRepo: failingMedia,
+        );
+
+        expect(result, SendGroupMessageResult.error);
+        expect(message, isNull);
+        expect(await messages.getMessage(messageId), isNull);
+        expect(await messages.getLocalDeletionGroupId(messageId), isNull);
+        expect(
+          await failingMedia.getAttachmentsForMessage(
+            messageId,
+            owner: MediaOwnerLane.group,
+          ),
+          isEmpty,
+        );
+        expect(_groupDispatchCommands(bridge), isEmpty);
+      },
+    );
+
+    test(
+      'parent persistence failure rolls back new media and never dispatches',
+      () async {
+        const messageId = 'group-media-parent-persist-failure';
+        final messages = _ThrowingSaveGroupMessageRepository();
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: messages,
+          groupId: 'group-1',
+          text: '',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: messageId,
+          mediaAttachments: [testAttachment.copyWith(id: 'parent-failure-att')],
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(result, SendGroupMessageResult.error);
+        expect(message, isNull);
+        expect(
+          await mediaRepo.getAttachmentsForMessage(
+            messageId,
+            owner: MediaOwnerLane.group,
+          ),
+          isEmpty,
+        );
+        expect(_groupDispatchCommands(bridge), isEmpty);
+      },
+    );
+
+    test(
+      'media verification failure removes a new parent and its media before dispatch',
+      () async {
+        const messageId = 'group-media-verification-failure';
+        final messages = InMemoryGroupMessageRepository();
+        final unreadableMedia = _MissingDurableMediaAttachmentRepository();
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: messages,
+          groupId: 'group-1',
+          text: '',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: messageId,
+          mediaAttachments: [
+            testAttachment.copyWith(id: 'verification-failure-att'),
+          ],
+          mediaAttachmentRepo: unreadableMedia,
+        );
+
+        expect(result, SendGroupMessageResult.error);
+        expect(message, isNull);
+        expect(await messages.getMessage(messageId), isNull);
+        expect(
+          await unreadableMedia.getAttachmentById('verification-failure-att'),
+          isNull,
+        );
+        expect(_groupDispatchCommands(bridge), isEmpty);
+      },
+    );
+
+    test(
+      'media without a persistence repository fails before parent save or dispatch',
+      () async {
+        const messageId = 'group-media-missing-repository';
+        final messages = _SaveTrackingGroupMessageRepository();
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: messages,
+          groupId: 'group-1',
+          text: '',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: messageId,
+          mediaAttachments: [
+            testAttachment.copyWith(id: 'missing-repository-att'),
+          ],
+        );
+
+        expect(result, SendGroupMessageResult.error);
+        expect(message, isNull);
+        expect(await messages.getMessage(messageId), isNull);
+        expect(await messages.getLocalDeletionGroupId(messageId), isNull);
+        expect(messages.savedMessages, isEmpty);
+        expect(_groupDispatchCommands(bridge), isEmpty);
+      },
+    );
+
+    test(
+      'media verification failure restores an existing retry parent before returning',
+      () async {
+        const messageId = 'group-media-retry-verification-failure';
+        final messages = InMemoryGroupMessageRepository();
+        final unreadableMedia = _MissingDurableMediaAttachmentRepository();
+        final originalTimestamp = DateTime.utc(2026, 7, 10, 13);
+        final original = GroupMessage(
+          id: messageId,
+          groupId: 'group-1',
+          senderPeerId: 'peer-1',
+          senderUsername: 'Alice',
+          text: '',
+          timestamp: originalTimestamp,
+          lastSendAttemptAt: originalTimestamp,
+          status: 'failed',
+          isIncoming: false,
+          createdAt: originalTimestamp,
+          wireEnvelope: '{"original":true}',
+          inboxRetryPayload: '{"original":true}',
+        );
+        await messages.saveMessage(original);
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: messages,
+          groupId: 'group-1',
+          text: '',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: messageId,
+          timestamp: originalTimestamp,
+          mediaAttachments: [
+            testAttachment.copyWith(id: 'retry-verification-failure-att'),
+          ],
+          mediaAttachmentRepo: unreadableMedia,
+        );
+
+        expect(result, SendGroupMessageResult.error);
+        expect(message, same(original));
+        final restored = await messages.getMessage(messageId);
+        expect(restored?.status, 'failed');
+        expect(restored?.lastSendAttemptAt, originalTimestamp);
+        expect(restored?.wireEnvelope, '{"original":true}');
+        expect(_groupDispatchCommands(bridge), isEmpty);
+      },
+    );
+
+    test(
+      'silently rejected parent persistence rolls back new media and never dispatches',
+      () async {
+        const messageId = 'group-media-parent-silent-reject';
+        final messages = _SilentSaveGroupMessageRepository();
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: messages,
+          groupId: 'group-1',
+          text: '',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: messageId,
+          mediaAttachments: [testAttachment.copyWith(id: 'silent-reject-att')],
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(result, SendGroupMessageResult.error);
+        expect(message, isNull);
+        expect(await messages.getMessage(messageId), isNull);
+        expect(
+          await mediaRepo.getAttachmentsForMessage(
+            messageId,
+            owner: MediaOwnerLane.group,
+          ),
+          isEmpty,
+        );
+        expect(_groupDispatchCommands(bridge), isEmpty);
+      },
+    );
+
+    test(
+      'silently rejected retry parent persistence never dispatches a stale row',
+      () async {
+        const messageId = 'group-media-retry-parent-silent-reject';
+        final messages = _SilentSaveGroupMessageRepository();
+        final originalTimestamp = DateTime.utc(2026, 7, 10, 12);
+        await messages.seedMessage(
+          GroupMessage(
+            id: messageId,
+            groupId: 'group-1',
+            senderPeerId: 'peer-1',
+            senderUsername: 'Alice',
+            text: '',
+            timestamp: originalTimestamp,
+            lastSendAttemptAt: originalTimestamp,
+            status: 'failed',
+            isIncoming: false,
+            createdAt: originalTimestamp,
+            wireEnvelope: '{"stale":true}',
+            inboxRetryPayload: '{"stale":true}',
+          ),
+        );
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: messages,
+          groupId: 'group-1',
+          text: '',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: messageId,
+          timestamp: originalTimestamp,
+          mediaAttachments: [testAttachment.copyWith(id: 'retry-parent-att')],
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(result, SendGroupMessageResult.error);
+        expect(message?.status, 'failed');
+        expect(
+          (await messages.getMessage(messageId))?.wireEnvelope,
+          '{"stale":true}',
+        );
+        expect(_groupDispatchCommands(bridge), isEmpty);
+      },
+    );
 
     test('includes media in publish payload', () async {
       final (result, _) = await sendGroupMessage(
@@ -9164,6 +9625,7 @@ void main() {
           encryptionNonce: 'media-nonce-secret-ek002',
           encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
         );
+        final privacyMediaRepo = InMemoryMediaAttachmentRepository();
 
         late SendGroupMessageResult result;
         late GroupMessage? message;
@@ -9180,6 +9642,7 @@ void main() {
             senderUsername: 'Alice',
             messageId: 'msg-ek002-privacy',
             mediaAttachments: [mediaAttachment],
+            mediaAttachmentRepo: privacyMediaRepo,
           );
         });
 

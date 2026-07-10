@@ -51,7 +51,18 @@ class InMemoryGroupMessageRepository
     required GroupMessage? previous,
     required GroupMessage saved,
   }) {
-    if (previous == null || saved.isIncoming) return;
+    if (previous == null) {
+      if (!saved.isIncoming && saved.status == 'sending') {
+        _outgoingLocalMessageChangesController.add(
+          GroupOutgoingLocalMessageChange.inserted(
+            groupId: saved.groupId,
+            messageId: saved.id,
+          ),
+        );
+      }
+      return;
+    }
+    if (saved.isIncoming) return;
     if (previous.status == saved.status) return;
     _outgoingLocalMessageChangesController.add(
       GroupOutgoingLocalMessageChange.status(
@@ -239,7 +250,8 @@ class InMemoryGroupMessageRepository
 
   @override
   Future<void> deleteMessageForMembershipRepair(String id) async {
-    _messages.remove(id);
+    final removed = _messages.remove(id);
+    _emitOutgoingRowsChangedIfNeeded(removed == null ? 0 : 1);
   }
 
   @override

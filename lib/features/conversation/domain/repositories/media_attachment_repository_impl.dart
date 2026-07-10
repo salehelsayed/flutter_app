@@ -32,7 +32,8 @@ class MediaAttachmentRepositoryImpl
         MediaLibraryRepository,
         MediaDownloadStateRepository,
         MediaStorageInventoryRepository,
-        GroupGuardedMediaAttachmentSave {
+        GroupGuardedMediaAttachmentSave,
+        NewMessageMediaPersistenceRollback {
   final Future<void> Function(Map<String, Object?> row)
   dbSaveMediaAttachmentPreservingLocalState;
   final Future<List<Map<String, Object?>>> Function(
@@ -164,6 +165,19 @@ class MediaAttachmentRepositoryImpl
     return closure;
   }
 
+  Future<T> _withLifecycleLocks<T>(
+    Iterable<String> attachmentIds,
+    Future<T> Function() action,
+  ) {
+    final ids = attachmentIds.toSet().toList()..sort();
+    Future<T> acquire(int index) {
+      if (index >= ids.length) return action();
+      return lifecycleLock.synchronized(ids[index], () => acquire(index + 1));
+    }
+
+    return acquire(0);
+  }
+
   @override
   Future<bool> beginMediaDownload(
     String id, {
@@ -259,7 +273,7 @@ class MediaAttachmentRepositoryImpl
   Future<void> saveAttachment(
     MediaAttachment attachment, {
     required MediaOwnerLane owner,
-  }) async {
+  }) => lifecycleLock.synchronized(attachment.id, () async {
     emitFlowEvent(
       layer: 'FL',
       event: 'MEDIA_REPO_SAVE_START',
@@ -271,6 +285,11 @@ class MediaAttachmentRepositoryImpl
       },
     );
 
+    String? keyNameForCompensation;
+    var keyExistedBefore = false;
+    String? previousKeyValue;
+    var keyWriteMayHaveMutated = false;
+    var rowPersisted = false;
     try {
       // A model stamped with a DIFFERENT lane than the caller's typed owner
       // is a caller bug — fail closed before any side effect.
@@ -300,9 +319,30 @@ class MediaAttachmentRepositoryImpl
         }
       }
 
-      await dbSaveMediaAttachmentPreservingLocalState(
-        await _toStorageRow(stamped),
-      );
+      final rawKey = stamped.encryptionKeyBase64;
+      final store = secureKeyStore;
+      if (store != null &&
+          rawKey != null &&
+          rawKey.isNotEmpty &&
+          !isSecureStoreReference(rawKey)) {
+        keyNameForCompensation = mediaAttachmentEncryptionKeyStoreName(
+          stamped.id,
+        );
+        keyExistedBefore = await store.containsKey(keyNameForCompensation);
+        if (keyExistedBefore) {
+          previousKeyValue = await store.read(keyNameForCompensation);
+          if (previousKeyValue == null) {
+            throw StateError(
+              'secure media key disappeared before attachment save',
+            );
+          }
+        }
+      }
+
+      keyWriteMayHaveMutated = keyNameForCompensation != null;
+      final storageRow = await _toStorageRow(stamped);
+      await dbSaveMediaAttachmentPreservingLocalState(storageRow);
+      rowPersisted = true;
 
       emitFlowEvent(
         layer: 'FL',
@@ -314,6 +354,30 @@ class MediaAttachmentRepositoryImpl
         },
       );
     } catch (e) {
+      final keyName = keyNameForCompensation;
+      final store = secureKeyStore;
+      if (!rowPersisted &&
+          keyWriteMayHaveMutated &&
+          keyName != null &&
+          store != null) {
+        try {
+          if (keyExistedBefore) {
+            await store.write(keyName, previousKeyValue!);
+          } else if (!keyExistedBefore) {
+            await store.delete(keyName);
+          }
+        } catch (compensationError) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'MEDIA_REPO_SAVE_COMPENSATION_FAILED',
+            details: {'error': compensationError.toString()},
+          );
+          throw StateError(
+            'attachment save failed and secure-key compensation failed: '
+            '$e; compensation: $compensationError',
+          );
+        }
+      }
       emitFlowEvent(
         layer: 'FL',
         event: 'MEDIA_REPO_SAVE_ERROR',
@@ -321,7 +385,50 @@ class MediaAttachmentRepositoryImpl
       );
       rethrow;
     }
-  }
+  });
+
+  @override
+  Future<int> rollbackNewMessageAttachments({
+    required String messageId,
+    required Set<String> attachmentIds,
+    required MediaOwnerLane owner,
+  }) => _withLifecycleLocks(attachmentIds, () async {
+    final rows = await dbLoadMediaForMessage(messageId, owner.dbValue);
+    final persistedIds = rows
+        .map((row) => row['id'])
+        .whereType<String>()
+        .toSet();
+    if (!attachmentIds.containsAll(persistedIds)) {
+      throw StateError(
+        'refusing new-message media rollback with unexpected attachment ids',
+      );
+    }
+
+    final deleted = await dbDeleteMediaForMessage(messageId, owner.dbValue);
+    final store = secureKeyStore;
+    if (store != null) {
+      final failures = <String>[];
+      for (final attachmentId in persistedIds) {
+        final keyName = mediaAttachmentEncryptionKeyStoreName(attachmentId);
+        try {
+          await store.delete(keyName);
+        } catch (_) {
+          try {
+            await store.delete(keyName);
+          } catch (error) {
+            failures.add('$attachmentId: $error');
+          }
+        }
+      }
+      if (failures.isNotEmpty) {
+        throw StateError(
+          'new-message media rollback left secure-key residue: '
+          '${failures.join('; ')}',
+        );
+      }
+    }
+    return deleted;
+  });
 
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(

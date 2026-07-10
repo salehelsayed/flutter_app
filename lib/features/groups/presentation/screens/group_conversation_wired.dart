@@ -1741,11 +1741,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       return;
     }
     final media = await _loadResolvedAttachmentsForMessage(messageId);
-    if (!mounted || _messages.any((entry) => entry.id == messageId)) {
+    final latestMessage = await widget.msgRepo.getMessage(messageId);
+    if (latestMessage == null ||
+        latestMessage.groupId != widget.group.id ||
+        !mounted ||
+        _messages.any((entry) => entry.id == messageId)) {
       return;
     }
     _enqueueGroupMessageUpdate(
-      message.copyWith(media: media),
+      latestMessage.copyWith(media: media),
       media: media,
       markAsRead: false,
     );

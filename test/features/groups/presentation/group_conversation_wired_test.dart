@@ -546,6 +546,41 @@ class SlowInitialPageGroupMessageRepository
   }
 }
 
+class StaleReloadGroupMessageRepository extends CountingGroupMessageRepository {
+  bool _holdNextPage = false;
+  Completer<void>? _pageCaptured;
+  Completer<void>? _releasePage;
+
+  void holdNextPage() {
+    _holdNextPage = true;
+    _pageCaptured = Completer<void>();
+    _releasePage = Completer<void>();
+  }
+
+  Future<void> get pageCaptured => _pageCaptured!.future;
+
+  void releasePage() => _releasePage!.complete();
+
+  @override
+  Future<List<GroupMessage>> getMessagesPage(
+    String groupId, {
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    final snapshot = await super.getMessagesPage(
+      groupId,
+      limit: limit,
+      offset: offset,
+    );
+    if (_holdNextPage) {
+      _holdNextPage = false;
+      _pageCaptured!.complete();
+      await _releasePage!.future;
+    }
+    return snapshot;
+  }
+}
+
 class FailingInitialPageGroupMessageRepository
     extends CountingGroupMessageRepository {
   bool failNextPage = true;
@@ -587,6 +622,31 @@ class CountingMediaAttachmentRepository
   }) async {
     getAttachmentsForMessagesCalls++;
     return super.getAttachmentsForMessages(messageIds, owner: owner);
+  }
+}
+
+class GateFirstSingleMediaReadRepository
+    extends CountingMediaAttachmentRepository {
+  final Completer<void> firstReadCaptured = Completer<void>();
+  final Completer<void> releaseFirstRead = Completer<void>();
+  bool armed = false;
+  bool _gated = false;
+
+  @override
+  Future<List<MediaAttachment>> getAttachmentsForMessage(
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async {
+    final snapshot = await super.getAttachmentsForMessage(
+      messageId,
+      owner: owner,
+    );
+    if (armed && !_gated) {
+      _gated = true;
+      firstReadCaptured.complete();
+      await releaseFirstRead.future;
+    }
+    return snapshot;
   }
 }
 
@@ -4617,6 +4677,231 @@ void main() {
         );
       },
     );
+
+    testWidgets(
+      'multiple inserted events surface targeted upserts without a full page reload',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester);
+        final initialPageLoads = msgRepo.getMessagesPageCalls;
+        final initialMarkReadCalls = msgRepo.markAsReadCalls;
+        GroupConversationWired.debugReorderInvocationCount = 0;
+
+        for (var i = 0; i < 3; i++) {
+          await msgRepo.saveMessage(
+            makeMessage(
+              id: 'inserted-burst-$i',
+              text: 'Inserted burst $i',
+              groupId: group.id,
+              isIncoming: false,
+              senderPeerId: testIdentity.peerId,
+              senderUsername: testIdentity.username,
+              status: 'sending',
+            ),
+          );
+        }
+        await pumpFrames(tester, count: 20);
+
+        for (var i = 0; i < 3; i++) {
+          expect(find.text('Inserted burst $i'), findsOneWidget);
+        }
+        expect(msgRepo.getMessagesPageCalls, initialPageLoads);
+        expect(GroupConversationWired.debugReorderInvocationCount, 1);
+        expect(msgRepo.markAsReadCalls, initialMarkReadCalls);
+      },
+    );
+
+    testWidgets(
+      'inserted event for an in-flight optimistic media send does not clobber optimistic media',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final gatedMedia = GateFirstSingleMediaReadRepository();
+        await tester.pumpWidget(
+          buildWidget(group: group, mediaRepo: gatedMedia),
+        );
+        await pumpFrames(tester);
+
+        const messageId = 'optimistic-insert-race';
+        final durableAttachment = MediaAttachment(
+          id: 'optimistic-insert-race-att',
+          messageId: messageId,
+          mime: 'image/png',
+          size: _tinyPngBytes.length,
+          mediaType: 'image',
+          localPath: 'media/group-1/relative.png',
+          downloadStatus: 'done',
+          createdAt: '2026-07-11T10:00:00.000Z',
+          contentHash:
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          encryptionKeyBase64: 'key-optimistic',
+          encryptionNonce: 'nonce-optimistic',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+        await gatedMedia.saveAttachment(
+          durableAttachment,
+          owner: MediaOwnerLane.group,
+        );
+        gatedMedia.armed = true;
+        final row = makeMessage(
+          id: messageId,
+          text: '',
+          groupId: group.id,
+          isIncoming: false,
+          senderPeerId: testIdentity.peerId,
+          senderUsername: testIdentity.username,
+          status: 'sending',
+        );
+        await msgRepo.saveMessage(row);
+        await pumpUntil(tester, () => gatedMedia.firstReadCaptured.isCompleted);
+        expect(gatedMedia.firstReadCaptured.isCompleted, isTrue);
+
+        final optimisticAttachment = durableAttachment.copyWith(
+          localPath: '/tmp/optimistic-absolute.png',
+        );
+        await gatedMedia.saveAttachment(
+          optimisticAttachment,
+          owner: MediaOwnerLane.group,
+        );
+        final optimistic = row.copyWith(media: [optimisticAttachment]);
+        await msgRepo.saveMessage(optimistic);
+        messageStreamController.add(optimistic);
+        await pumpFrames(tester, count: 5);
+        gatedMedia.releaseFirstRead.complete();
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(
+          screen.mediaMap[messageId]!.single.localPath,
+          '/tmp/optimistic-absolute.png',
+        );
+      },
+    );
+
+    testWidgets(
+      'terminal status arriving while inserted media hydration is held wins over the sending snapshot',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        final gatedMedia = GateFirstSingleMediaReadRepository();
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: gatedMedia,
+            mediaFileManager: FakeMediaFileManager(),
+          ),
+        );
+        await pumpFrames(tester);
+
+        const messageId = 'inserted-terminal-status-race';
+        await gatedMedia.saveAttachment(
+          MediaAttachment(
+            id: 'inserted-terminal-status-race-att',
+            messageId: messageId,
+            mime: 'image/png',
+            size: _tinyPngBytes.length,
+            mediaType: 'image',
+            localPath: 'pending_uploads/$messageId/terminal-race.png',
+            downloadStatus: 'done',
+            createdAt: '2026-07-11T10:00:00.000Z',
+            contentHash:
+                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            encryptionKeyBase64: 'key-terminal-race',
+            encryptionNonce: 'nonce-terminal-race',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ),
+          owner: MediaOwnerLane.group,
+        );
+        gatedMedia.armed = true;
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: messageId,
+            text: '',
+            groupId: group.id,
+            isIncoming: false,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            status: 'sending',
+          ),
+        );
+        await pumpUntil(tester, () => gatedMedia.firstReadCaptured.isCompleted);
+        expect(gatedMedia.firstReadCaptured.isCompleted, isTrue);
+
+        await msgRepo.updateMessageStatus(messageId, 'failed');
+        expect((await msgRepo.getMessage(messageId))!.status, 'failed');
+        gatedMedia.releaseFirstRead.complete();
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(
+          screen.messages
+              .singleWhere((message) => message.id == messageId)
+              .status,
+          'failed',
+        );
+        expect(screen.mediaMap[messageId], hasLength(1));
+        expect(
+          find.byKey(const ValueKey('failed-media-retry-$messageId')),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets('an inserted message survives a concurrent stale page load', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      final staleRepo = StaleReloadGroupMessageRepository();
+      await staleRepo.saveMessage(
+        makeMessage(
+          id: 'reload-trigger',
+          text: 'Reload trigger',
+          groupId: group.id,
+          isIncoming: false,
+          senderPeerId: testIdentity.peerId,
+          senderUsername: testIdentity.username,
+          status: 'sending',
+        ),
+      );
+      await tester.pumpWidget(
+        buildWidget(group: group, messageRepo: staleRepo),
+      );
+      await pumpFrames(tester);
+
+      staleRepo.holdNextPage();
+      await staleRepo.transitionSendingToFailed();
+      await pumpUntil(tester, () => staleRepo.getMessagesPageCalls >= 2);
+      expect(staleRepo.getMessagesPageCalls, greaterThanOrEqualTo(2));
+
+      await staleRepo.saveMessage(
+        makeMessage(
+          id: 'inserted-during-stale-load',
+          text: 'Inserted during stale load',
+          groupId: group.id,
+          isIncoming: false,
+          senderPeerId: testIdentity.peerId,
+          senderUsername: testIdentity.username,
+          status: 'sending',
+        ),
+      );
+      await pumpUntil(
+        tester,
+        () => find.text('Inserted during stale load').evaluate().isNotEmpty,
+      );
+      expect(find.text('Inserted during stale load'), findsOneWidget);
+
+      staleRepo.releasePage();
+      await pumpFrames(tester, count: 20);
+      expect(find.text('Inserted during stale load'), findsOneWidget);
+    });
 
     testWidgets(
       'GFR-003 open conversation applies outgoing local status update in place',

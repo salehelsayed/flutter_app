@@ -573,6 +573,145 @@ Future<void> _persistOutgoingMedia({
   }
 }
 
+Future<void> _rollbackNewOutgoingMedia({
+  required MediaAttachmentRepository? mediaAttachmentRepo,
+  required String messageId,
+  required List<MediaAttachment> attachments,
+}) async {
+  if (mediaAttachmentRepo == null || attachments.isEmpty) return;
+  final attachmentIds = attachments.map((attachment) => attachment.id).toSet();
+  final rollback = mediaAttachmentRepo;
+  if (rollback is NewMessageMediaPersistenceRollback) {
+    await (rollback as NewMessageMediaPersistenceRollback)
+        .rollbackNewMessageAttachments(
+          messageId: messageId,
+          attachmentIds: attachmentIds,
+          owner: MediaOwnerLane.group,
+        );
+    return;
+  }
+  await mediaAttachmentRepo.deleteAttachmentsForMessage(
+    messageId,
+    owner: MediaOwnerLane.group,
+  );
+}
+
+bool _isExpectedDurablePrePersistMessage(
+  GroupMessage? durable,
+  GroupMessage expected,
+) =>
+    durable != null &&
+    durable.id == expected.id &&
+    durable.groupId == expected.groupId &&
+    durable.senderPeerId == expected.senderPeerId &&
+    durable.transportPeerId == expected.transportPeerId &&
+    durable.senderUsername == expected.senderUsername &&
+    durable.text == expected.text &&
+    durable.timestamp.toUtc() == expected.timestamp.toUtc() &&
+    (durable.status == 'sending' || durable.status == 'failed') &&
+    !durable.isIncoming &&
+    durable.lastSendAttemptAt?.toUtc() == expected.lastSendAttemptAt?.toUtc() &&
+    durable.quotedMessageId == expected.quotedMessageId &&
+    durable.logicalDeliveryId == expected.logicalDeliveryId &&
+    durable.keyGeneration == expected.keyGeneration &&
+    durable.isForwarded == expected.isForwarded &&
+    durable.createdAt.toUtc() == expected.createdAt.toUtc() &&
+    durable.wireEnvelope == expected.wireEnvelope &&
+    !durable.inboxStored &&
+    durable.inboxRetryPayload == expected.inboxRetryPayload;
+
+bool _sameWaveform(List<double>? left, List<double>? right) {
+  if (identical(left, right)) return true;
+  if (left == null || right == null || left.length != right.length) {
+    return false;
+  }
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
+}
+
+bool _isExpectedDurableOutgoingMedia(
+  MediaAttachment durable,
+  MediaAttachment expected,
+) =>
+    durable.id == expected.id &&
+    durable.messageId == expected.messageId &&
+    durable.ownerLane == MediaOwnerLane.group &&
+    durable.mime == expected.mime &&
+    durable.size == expected.size &&
+    durable.mediaType == expected.mediaType &&
+    durable.width == expected.width &&
+    durable.height == expected.height &&
+    durable.durationMs == expected.durationMs &&
+    durable.localPath == expected.localPath &&
+    durable.downloadStatus == expected.downloadStatus &&
+    durable.createdAt == expected.createdAt &&
+    _sameWaveform(durable.waveform, expected.waveform) &&
+    durable.contentHash == expected.contentHash &&
+    durable.thumbnailHash == expected.thumbnailHash &&
+    durable.encryptionKeyBase64 == expected.encryptionKeyBase64 &&
+    durable.encryptionNonce == expected.encryptionNonce &&
+    durable.encryptionScheme == expected.encryptionScheme;
+
+Future<bool> _areExpectedOutgoingMediaDurable({
+  required MediaAttachmentRepository? mediaAttachmentRepo,
+  required String messageId,
+  required List<MediaAttachment> expected,
+}) async {
+  if (expected.isEmpty) return true;
+  if (mediaAttachmentRepo == null) return false;
+  final stored = await mediaAttachmentRepo.getAttachmentsForMessage(
+    messageId,
+    owner: MediaOwnerLane.group,
+  );
+  final storedById = {
+    for (final attachment in stored) attachment.id: attachment,
+  };
+  if (stored.length != expected.length ||
+      storedById.length != expected.length) {
+    return false;
+  }
+  return expected.every((attachment) {
+    final durable = storedById[attachment.id];
+    return durable != null &&
+        durable.messageId == messageId &&
+        _isExpectedDurableOutgoingMedia(durable, attachment);
+  });
+}
+
+bool _isSameOutgoingPrePersistAttempt(
+  GroupMessage? durable,
+  GroupMessage expected,
+) =>
+    durable != null &&
+    durable.id == expected.id &&
+    durable.groupId == expected.groupId &&
+    durable.senderPeerId == expected.senderPeerId &&
+    !durable.isIncoming &&
+    durable.lastSendAttemptAt?.toUtc() == expected.lastSendAttemptAt?.toUtc();
+
+Future<void> _rollbackRejectedOutgoingParent({
+  required GroupMessageRepository msgRepo,
+  required GroupMessage? preExistingMessage,
+  required GroupMessage expectedAttempt,
+}) async {
+  final durable = await msgRepo.getMessage(expectedAttempt.id);
+  if (!_isSameOutgoingPrePersistAttempt(durable, expectedAttempt)) return;
+  if (preExistingMessage == null) {
+    final rollback = msgRepo;
+    if (rollback is! GroupMembershipRepairDeletionRepository) {
+      throw StateError(
+        'outgoing pre-persist rollback requires non-tombstoning deletion',
+      );
+    }
+    await (rollback as GroupMembershipRepairDeletionRepository)
+        .deleteMessageForMembershipRepair(expectedAttempt.id);
+    return;
+  }
+  await msgRepo.saveMessage(preExistingMessage);
+}
+
 List<MediaAttachment>? _sanitizeGroupMediaAttachments(
   List<MediaAttachment>? attachments,
 ) {
@@ -1093,7 +1232,89 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     inboxRetryPayload: inboxRetryPayload,
   );
 
-  await msgRepo.saveMessage(prePersistMessage);
+  final stampedGroupMediaAttachments =
+      groupMediaAttachments
+          ?.map(
+            (attachment) => attachment.copyWith(messageId: resolvedMessageId),
+          )
+          .toList(growable: false) ??
+      const <MediaAttachment>[];
+  final preExistingMessage = await msgRepo.getMessage(resolvedMessageId);
+  try {
+    await _persistOutgoingMedia(
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      attachments: stampedGroupMediaAttachments,
+    );
+    final mediaWereDurableBeforeParent = await _areExpectedOutgoingMediaDurable(
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      messageId: resolvedMessageId,
+      expected: stampedGroupMediaAttachments,
+    );
+    if (!mediaWereDurableBeforeParent) {
+      throw StateError('outgoing group media pre-persist was rejected');
+    }
+    await msgRepo.saveMessage(prePersistMessage);
+    final durableMessage = await msgRepo.getMessage(resolvedMessageId);
+    final mediaAreDurable = await _areExpectedOutgoingMediaDurable(
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      messageId: resolvedMessageId,
+      expected: stampedGroupMediaAttachments,
+    );
+    if (!_isExpectedDurablePrePersistMessage(
+          durableMessage,
+          prePersistMessage,
+        ) ||
+        !mediaAreDurable) {
+      throw StateError('outgoing group parent/media pre-persist was rejected');
+    }
+  } catch (error) {
+    try {
+      await _rollbackRejectedOutgoingParent(
+        msgRepo: msgRepo,
+        preExistingMessage: preExistingMessage,
+        expectedAttempt: prePersistMessage,
+      );
+    } catch (rollbackError) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_SEND_MSG_PRE_PERSIST_PARENT_ROLLBACK_FAILED',
+        details: {
+          'messageId': _diagnosticPrefix(resolvedMessageId),
+          'error': rollbackError.toString(),
+        },
+      );
+    }
+    if (preExistingMessage == null) {
+      try {
+        await _rollbackNewOutgoingMedia(
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          messageId: resolvedMessageId,
+          attachments: stampedGroupMediaAttachments,
+        );
+      } catch (rollbackError) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_SEND_MSG_PRE_PERSIST_ROLLBACK_FAILED',
+          details: {
+            'messageId': _diagnosticPrefix(resolvedMessageId),
+            'error': rollbackError.toString(),
+          },
+        );
+      }
+    }
+    prepareStopwatch.stop();
+    prepareMs = prepareStopwatch.elapsedMilliseconds;
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_SEND_MSG_PRE_PERSIST_FAILED',
+      details: {
+        'messageId': _diagnosticPrefix(resolvedMessageId),
+        'error': error.toString(),
+      },
+    );
+    emitGroupSendTiming(outcome: 'pre_persist_failed');
+    return (SendGroupMessageResult.error, preExistingMessage);
+  }
   prepareStopwatch.stop();
   prepareMs = prepareStopwatch.elapsedMilliseconds;
 

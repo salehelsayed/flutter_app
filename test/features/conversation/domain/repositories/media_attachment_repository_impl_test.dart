@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
@@ -7,6 +9,40 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/models/media_library.dart';
 
 import '../../../../shared/fixtures/media_repository_real_db_fixture.dart';
+
+class _FailFirstDeleteSecureKeyStore extends RecordingSecureKeyStore {
+  String? failOnceFor;
+
+  @override
+  Future<void> delete(String key) async {
+    if (failOnceFor == key) {
+      failOnceFor = null;
+      throw StateError('injected first secure-key delete failure');
+    }
+    await super.delete(key);
+  }
+}
+
+class _FailingSnapshotSecureKeyStore extends RecordingSecureKeyStore {
+  bool failContains = false;
+  bool failRead = false;
+
+  @override
+  Future<bool> containsKey(String key) {
+    if (failContains) {
+      throw StateError('injected containsKey failure');
+    }
+    return super.containsKey(key);
+  }
+
+  @override
+  Future<String?> read(String key) {
+    if (failRead) {
+      throw StateError('injected read failure');
+    }
+    return super.read(key);
+  }
+}
 
 void main() {
   // 228: the repository fixture is a REAL in-memory database built through
@@ -165,6 +201,269 @@ void main() {
           ),
           'plain-media-key-base64',
         );
+      },
+    );
+
+    test(
+      'failed attachment DB save compensates a new key and restores a pre-existing key',
+      () async {
+        await fixture.dispose();
+        fixture = await MediaRepositoryRealDbFixture.create(
+          dbSaveMediaAttachmentOverride: (_) async {
+            throw StateError('injected DB save failure');
+          },
+        );
+
+        const newId = 'blob-failed-new-key';
+        await expectLater(
+          fixture.repo.saveAttachment(
+            makeAttachment(
+              id: newId,
+              encryptionKeyBase64: 'new-key-value',
+              encryptionNonce: 'nonce-new',
+              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            ),
+            owner: MediaOwnerLane.group,
+          ),
+          throwsStateError,
+        );
+        expect(
+          await fixture.secureKeyStore.containsKey(
+            mediaAttachmentEncryptionKeyStoreName(newId),
+          ),
+          isFalse,
+        );
+
+        const existingId = 'blob-failed-existing-key';
+        final existingKeyName = mediaAttachmentEncryptionKeyStoreName(
+          existingId,
+        );
+        await fixture.secureKeyStore.write(existingKeyName, 'original-key');
+        await expectLater(
+          fixture.repo.saveAttachment(
+            makeAttachment(
+              id: existingId,
+              encryptionKeyBase64: 'replacement-key',
+              encryptionNonce: 'nonce-existing',
+              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            ),
+            owner: MediaOwnerLane.group,
+          ),
+          throwsStateError,
+        );
+        expect(
+          await fixture.secureKeyStore.read(existingKeyName),
+          'original-key',
+        );
+      },
+    );
+
+    test(
+      'secure-key snapshot failures leave the existing row and key untouched',
+      () async {
+        for (final failure in const ['contains', 'read']) {
+          await fixture.dispose();
+          final secureStore = _FailingSnapshotSecureKeyStore();
+          fixture = await MediaRepositoryRealDbFixture.create(
+            secureKeyStore: secureStore,
+          );
+          final id = 'snapshot-failure-$failure';
+          final keyName = mediaAttachmentEncryptionKeyStoreName(id);
+          await fixture.repo.saveAttachment(
+            makeAttachment(
+              id: id,
+              mime: 'image/jpeg',
+              encryptionKeyBase64: 'original-key-$failure',
+              encryptionNonce: 'original-nonce-$failure',
+              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            ),
+            owner: MediaOwnerLane.group,
+          );
+          final originalRow = Map<String, Object?>.from((await rawRow(id))!);
+          secureStore.failContains = failure == 'contains';
+          secureStore.failRead = failure == 'read';
+
+          await expectLater(
+            fixture.repo.saveAttachment(
+              makeAttachment(
+                id: id,
+                mime: 'image/png',
+                encryptionKeyBase64: 'replacement-key-$failure',
+                encryptionNonce: 'replacement-nonce-$failure',
+                encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+              ),
+              owner: MediaOwnerLane.group,
+            ),
+            throwsStateError,
+          );
+
+          secureStore.failContains = false;
+          secureStore.failRead = false;
+          expect(await rawRow(id), originalRow);
+          expect(await secureStore.read(keyName), 'original-key-$failure');
+        }
+      },
+    );
+
+    test(
+      'new-message rollback removes exact group rows and secure keys only',
+      () async {
+        for (final id in const ['rollback-a', 'rollback-b']) {
+          await fixture.repo.saveAttachment(
+            makeAttachment(
+              id: id,
+              messageId: 'new-group-message',
+              encryptionKeyBase64: 'key-$id',
+              encryptionNonce: 'nonce-$id',
+              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            ),
+            owner: MediaOwnerLane.group,
+          );
+        }
+        await fixture.repo.saveAttachment(
+          makeAttachment(
+            id: 'preserved-sibling',
+            messageId: 'other-group-message',
+            encryptionKeyBase64: 'key-preserved',
+            encryptionNonce: 'nonce-preserved',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ),
+          owner: MediaOwnerLane.group,
+        );
+
+        final deleted = await fixture.repo.rollbackNewMessageAttachments(
+          messageId: 'new-group-message',
+          attachmentIds: const {
+            'rollback-a',
+            'rollback-b',
+            'preserved-sibling',
+          },
+          owner: MediaOwnerLane.group,
+        );
+
+        expect(deleted, 2);
+        expect(await rawRow('rollback-a'), isNull);
+        expect(await rawRow('rollback-b'), isNull);
+        expect(await rawRow('preserved-sibling'), isNotNull);
+        expect(
+          await fixture.secureKeyStore.containsKey(
+            mediaAttachmentEncryptionKeyStoreName('rollback-a'),
+          ),
+          isFalse,
+        );
+        expect(
+          await fixture.secureKeyStore.containsKey(
+            mediaAttachmentEncryptionKeyStoreName('rollback-b'),
+          ),
+          isFalse,
+        );
+        expect(
+          await fixture.secureKeyStore.read(
+            mediaAttachmentEncryptionKeyStoreName('preserved-sibling'),
+          ),
+          'key-preserved',
+        );
+      },
+    );
+
+    test(
+      'new-message rollback retries a transient secure-key delete failure',
+      () async {
+        await fixture.dispose();
+        final secureStore = _FailFirstDeleteSecureKeyStore();
+        fixture = await MediaRepositoryRealDbFixture.create(
+          secureKeyStore: secureStore,
+        );
+        const attachmentId = 'rollback-delete-retry';
+        final keyName = mediaAttachmentEncryptionKeyStoreName(attachmentId);
+        await fixture.repo.saveAttachment(
+          makeAttachment(
+            id: attachmentId,
+            messageId: 'rollback-delete-message',
+            encryptionKeyBase64: 'rollback-delete-key',
+            encryptionNonce: 'rollback-delete-nonce',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ),
+          owner: MediaOwnerLane.group,
+        );
+        secureStore.failOnceFor = keyName;
+
+        final deleted = await fixture.repo.rollbackNewMessageAttachments(
+          messageId: 'rollback-delete-message',
+          attachmentIds: const {attachmentId},
+          owner: MediaOwnerLane.group,
+        );
+
+        expect(deleted, 1);
+        expect(await rawRow(attachmentId), isNull);
+        expect(await secureStore.containsKey(keyName), isFalse);
+      },
+    );
+
+    test(
+      'same-id failed and succeeding saves serialize key compensation',
+      () async {
+        await fixture.dispose();
+        final firstReplacementEnteredDb = Completer<void>();
+        final releaseFirstReplacement = Completer<void>();
+        var dbSaveCount = 0;
+        fixture = await MediaRepositoryRealDbFixture.create(
+          dbSaveMediaAttachmentAround: (row, persist) async {
+            dbSaveCount++;
+            if (dbSaveCount == 2) {
+              firstReplacementEnteredDb.complete();
+              await releaseFirstReplacement.future;
+              throw StateError('injected late first-save DB failure');
+            }
+            await persist();
+          },
+        );
+        const attachmentId = 'serialized-key-compensation';
+        final keyName = mediaAttachmentEncryptionKeyStoreName(attachmentId);
+        await saveDirect(
+          makeAttachment(
+            id: attachmentId,
+            encryptionKeyBase64: 'base-key',
+            encryptionNonce: 'base-nonce',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ),
+        );
+
+        final failedSave = saveDirect(
+          makeAttachment(
+            id: attachmentId,
+            encryptionKeyBase64: 'first-replacement-key',
+            encryptionNonce: 'first-replacement-nonce',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ),
+        );
+        await firstReplacementEnteredDb.future;
+        final succeedingSave = saveDirect(
+          makeAttachment(
+            id: attachmentId,
+            encryptionKeyBase64: 'second-replacement-key',
+            encryptionNonce: 'second-replacement-nonce',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(
+          dbSaveCount,
+          2,
+          reason: 'the second save must wait on the ID lock',
+        );
+
+        releaseFirstReplacement.complete();
+        await expectLater(failedSave, throwsStateError);
+        await succeedingSave;
+
+        expect(
+          await fixture.secureKeyStore.read(keyName),
+          'second-replacement-key',
+        );
+        final hydrated = await fixture.repo.getAttachmentById(attachmentId);
+        expect(hydrated?.encryptionKeyBase64, 'second-replacement-key');
+        expect(hydrated?.encryptionNonce, 'second-replacement-nonce');
       },
     );
 

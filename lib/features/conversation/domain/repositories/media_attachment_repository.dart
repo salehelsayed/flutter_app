@@ -83,6 +83,20 @@ abstract class MediaAttachmentRepository {
   });
 }
 
+/// Optional compensation capability for a brand-new message whose attachment
+/// rows were written before its parent row became durable.
+///
+/// Callers may use this only after proving that [messageId] had no pre-existing
+/// parent. Implementations must remove the exact new attachment rows and any
+/// secure-key side effects without touching another message or owner lane.
+abstract class NewMessageMediaPersistenceRollback {
+  Future<int> rollbackNewMessageAttachments({
+    required String messageId,
+    required Set<String> attachmentIds,
+    required MediaOwnerLane owner,
+  });
+}
+
 /// Optional narrow lookup for callers that must reconcile an out-of-band media
 /// event with an attachment row regardless of current download status.
 abstract class MediaAttachmentByIdLookup {
