@@ -1,3 +1,5 @@
+import 'package:flutter_app/features/introduction/domain/models/introduction_payload.dart';
+
 enum NotificationRouteTargetKind {
   conversation,
   contactRequest,
@@ -8,6 +10,8 @@ enum NotificationRouteTargetKind {
 }
 
 class NotificationRouteTarget {
+  static const _introsMessageMarker = '|message:';
+
   final NotificationRouteTargetKind kind;
   final String? peerId;
   final String? groupId;
@@ -37,8 +41,13 @@ class NotificationRouteTarget {
         messageId: messageId,
       );
 
-  const NotificationRouteTarget.intros()
-    : this._(kind: NotificationRouteTargetKind.intros);
+  /// An anchored Intros target carries the canonical introduction envelope
+  /// `messageId` (`<introductionId>::<action>::<senderPeerId>`) so the
+  /// notification-open flow can resolve an introducer acceptance to the
+  /// originating recipient conversation. Bare `intros` remains the generic
+  /// Orbit/Intros route.
+  const NotificationRouteTarget.intros({String? messageId})
+    : this._(kind: NotificationRouteTargetKind.intros, messageId: messageId);
 
   const NotificationRouteTarget.post(String postId)
     : this._(kind: NotificationRouteTargetKind.post, postId: postId);
@@ -61,7 +70,10 @@ class NotificationRouteTarget {
         messageId == null || messageId!.isEmpty
             ? 'group:${groupId ?? ''}'
             : 'group:${groupId ?? ''}|message:${messageId!}',
-      NotificationRouteTargetKind.intros => 'intros',
+      NotificationRouteTargetKind.intros =>
+        messageId == null || messageId!.isEmpty
+            ? 'intros'
+            : 'intros$_introsMessageMarker${messageId!}',
       NotificationRouteTargetKind.post => 'post:${postId ?? ''}',
       NotificationRouteTargetKind.postComment =>
         'post_comment:${postId ?? ''}:${commentId ?? ''}',
@@ -75,6 +87,18 @@ class NotificationRouteTarget {
     }
     if (payload == 'intros') {
       return const NotificationRouteTarget.intros();
+    }
+    if (payload.startsWith('intros$_introsMessageMarker')) {
+      // 252: anchored Intros payloads mirror the group `|message:` marker.
+      // Anchor only a validated canonical introduction envelope ID; anything
+      // else fails closed to the generic Intros route (never the conversation
+      // catch-all below).
+      final messageId = payload
+          .substring('intros$_introsMessageMarker'.length)
+          .trim();
+      return IntroductionPayload.parseEnvelopeMessageId(messageId) == null
+          ? const NotificationRouteTarget.intros()
+          : NotificationRouteTarget.intros(messageId: messageId);
     }
     if (payload.startsWith('contact_request:')) {
       final peerId = payload.substring('contact_request:'.length).trim();
@@ -156,7 +180,14 @@ class NotificationRouteTarget {
         // already renders pending invites alongside introductions.
         return const NotificationRouteTarget.intros();
       case 'intros':
-        return const NotificationRouteTarget.intros();
+        // 252: retain the canonical introduction envelope message ID so an
+        // introducer acceptance tap can resolve to the recipient thread.
+        // Non-canonical (legacy/malformed) IDs stay unanchored.
+        final introMessageId = messageIdFromRemoteMessageData(data);
+        return IntroductionPayload.parseEnvelopeMessageId(introMessageId) ==
+                null
+            ? const NotificationRouteTarget.intros()
+            : NotificationRouteTarget.intros(messageId: introMessageId);
       case 'post_create':
         final postId = _trimToNull(
           data['postId']?.toString() ?? data['post_id']?.toString(),

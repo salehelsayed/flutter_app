@@ -7,7 +7,7 @@ void main() {
   group('IntroductionPayload serialization', () {
     final timestamp = DateTime.now().toUtc().toIso8601String();
 
-    IntroductionPayload _makeSendPayload() {
+    IntroductionPayload makeSendPayload() {
       return IntroductionPayload(
         action: 'send',
         introductionId: 'intro-1',
@@ -25,7 +25,7 @@ void main() {
       );
     }
 
-    IntroductionPayload _makeAcceptPayload() {
+    IntroductionPayload makeAcceptPayload() {
       return IntroductionPayload(
         action: 'accept',
         introductionId: 'intro-1',
@@ -44,7 +44,7 @@ void main() {
     }
 
     test('toInnerJson serializes send action correctly', () {
-      final payload = _makeSendPayload();
+      final payload = makeSendPayload();
       final json = payload.toInnerJson();
       final map = jsonDecode(json) as Map<String, dynamic>;
 
@@ -62,7 +62,7 @@ void main() {
     });
 
     test('fromInnerJson parses send action correctly', () {
-      final original = _makeSendPayload();
+      final original = makeSendPayload();
       final json = original.toInnerJson();
       final parsed = IntroductionPayload.fromInnerJson(json);
 
@@ -80,7 +80,7 @@ void main() {
     });
 
     test('toInnerJson serializes accept action correctly', () {
-      final payload = _makeAcceptPayload();
+      final payload = makeAcceptPayload();
       final json = payload.toInnerJson();
       final map = jsonDecode(json) as Map<String, dynamic>;
 
@@ -90,7 +90,7 @@ void main() {
     });
 
     test('fromInnerJson parses accept action correctly', () {
-      final original = _makeAcceptPayload();
+      final original = makeAcceptPayload();
       final json = original.toInnerJson();
       final parsed = IntroductionPayload.fromInnerJson(json);
 
@@ -101,7 +101,7 @@ void main() {
     });
 
     test('toJson wraps in v1 envelope', () {
-      final payload = _makeSendPayload();
+      final payload = makeSendPayload();
       final json = payload.toJson();
       final map = jsonDecode(json) as Map<String, dynamic>;
 
@@ -113,7 +113,7 @@ void main() {
     });
 
     test('fromJson parses v1 envelope', () {
-      final original = _makeSendPayload();
+      final original = makeSendPayload();
       final json = original.toJson();
       final parsed = IntroductionPayload.fromJson(json);
 
@@ -163,10 +163,66 @@ void main() {
     });
 
     test(
+      'builds the relay golden and parses canonical envelope identity while rejecting malformed ids',
+      () {
+        // The literal consumed by the relay-side TC-02 fixture.
+        final golden = IntroductionPayload.buildEnvelopeMessageId(
+          introductionId: 'intro-golden',
+          action: 'accept',
+          senderPeerId: 'peer-responder',
+        );
+        expect(golden, 'intro-golden::accept::peer-responder');
+
+        final identity = IntroductionPayload.parseEnvelopeMessageId(golden);
+        expect(identity, isNotNull);
+        expect(identity!.introductionId, 'intro-golden');
+        expect(identity.action, 'accept');
+        expect(identity.senderPeerId, 'peer-responder');
+
+        // Intro IDs may themselves contain '::'; parsing must consume the
+        // action and sender from the RIGHT.
+        final nested = IntroductionPayload.parseEnvelopeMessageId(
+          'intro::multi::part::send::peer-a',
+        );
+        expect(nested, isNotNull);
+        expect(nested!.introductionId, 'intro::multi::part');
+        expect(nested.action, 'send');
+        expect(nested.senderPeerId, 'peer-a');
+
+        final pass = IntroductionPayload.parseEnvelopeMessageId(
+          'intro-1::pass::peer-b',
+        );
+        expect(pass, isNotNull);
+        expect(pass!.action, 'pass');
+
+        const malformed = <String?>[
+          null,
+          '',
+          '   ',
+          'intro-legacy',
+          'intro-1::accept',
+          'accept::peer-b',
+          '::accept::peer-b',
+          'intro-1::accept::',
+          'intro-1::approve::peer-b',
+          // Extra right segment displaces the action slot.
+          'intro-1::accept::peer-b::extra',
+        ];
+        for (final id in malformed) {
+          expect(
+            IntroductionPayload.parseEnvelopeMessageId(id),
+            isNull,
+            reason: 'expected rejection for: $id',
+          );
+        }
+      },
+    );
+
+    test(
       'ensureEnvelopeMessageId replaces intro-only ids so send and accept do not collide',
       () {
-        final sendEnvelope = _makeSendPayload().toJson();
-        final acceptEnvelope = _makeAcceptPayload().toJson();
+        final sendEnvelope = makeSendPayload().toJson();
+        final acceptEnvelope = makeAcceptPayload().toJson();
 
         final normalizedSend = jsonDecode(
           IntroductionPayload.ensureEnvelopeMessageId(

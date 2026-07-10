@@ -511,16 +511,21 @@ void main() {
       expect(shouldShowBackgroundPushFallbackNotification(message), isFalse);
     });
 
-    test('shows fallback for intros type', () {
-      const message = RemoteMessage(data: {'type': 'intros'});
+    test(
+      'intros fallback without provider copy uses meaningful introduction update copy',
+      () {
+        const message = RemoteMessage(data: {'type': 'intros'});
 
-      expect(shouldShowBackgroundPushFallbackNotification(message), isTrue);
+        expect(shouldShowBackgroundPushFallbackNotification(message), isTrue);
 
-      final fallback = buildBackgroundPushFallbackNotification(message);
-      expect(fallback.title, backgroundPushDefaultTitle);
-      expect(fallback.body, backgroundPushDefaultBody);
-      expect(fallback.payload, 'intros');
-    });
+        final fallback = buildBackgroundPushFallbackNotification(message);
+        expect(fallback.title, 'Introduction update');
+        expect(fallback.body, 'Open Mknoon to see the latest update.');
+        expect(fallback.title, isNot(backgroundPushDefaultTitle));
+        expect(fallback.body, isNot(backgroundPushDefaultBody));
+        expect(fallback.payload, 'intros');
+      },
+    );
 
     test('preserves provided copy for a new-introduction intros fallback', () {
       const message = RemoteMessage(

@@ -11,6 +11,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/features/introduction/application/handle_incoming_introduction_use_case.dart';
 import 'package:flutter_app/features/introduction/application/introduction_copy.dart';
 import 'package:flutter_app/features/introduction/application/insert_intro_system_message.dart';
+import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
@@ -430,10 +431,24 @@ class IntroductionListener {
                       responderUsername: payload.responderUsername,
                     )
                   : '$responderName also accepted! You\'re now connected.';
+              // 252: anchor ONLY the introducer's notification to the
+              // canonical accept envelope ID so a warm/local tap reaches the
+              // same A->B resolver seam as a terminated/remote relay tap.
+              // Participants keep the generic Intros route.
+              final responderId = payload.responderId;
+              final notificationPayload = isIntroducer && responderId != null
+                  ? NotificationRouteTarget.intros(
+                      messageId: IntroductionPayload.buildEnvelopeMessageId(
+                        introductionId: model.id,
+                        action: 'accept',
+                        senderPeerId: responderId,
+                      ),
+                    ).toPayload()
+                  : 'intros';
               await notificationService!.showNotification(
                 title: 'New Connection',
                 body: body,
-                payload: 'intros',
+                payload: notificationPayload,
               );
             }
           }

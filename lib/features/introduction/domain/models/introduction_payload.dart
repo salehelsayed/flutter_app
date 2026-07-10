@@ -1,5 +1,19 @@
 import 'dart:convert';
 
+/// Validated identity parts of a canonical introduction envelope message ID
+/// (`<introductionId>::<action>::<senderPeerId>`).
+class IntroductionEnvelopeIdentity {
+  final String introductionId;
+  final String action;
+  final String senderPeerId;
+
+  const IntroductionEnvelopeIdentity({
+    required this.introductionId,
+    required this.action,
+    required this.senderPeerId,
+  });
+}
+
 /// Wire-format model for introduction messages sent over P2P.
 ///
 /// Follows the same envelope pattern as `GroupInvitePayload`:
@@ -216,6 +230,53 @@ class IntroductionPayload {
     required String senderPeerId,
   }) {
     return '$introductionId::$action::$senderPeerId';
+  }
+
+  /// Parses a transport-level envelope message ID built by
+  /// [buildEnvelopeMessageId] back into its identity parts.
+  ///
+  /// Introduction IDs may themselves contain `::`, so the action and sender
+  /// segments are consumed from the RIGHT. Only `send`, `accept`, and `pass`
+  /// actions are recognized; legacy or malformed IDs (missing segments, empty
+  /// parts, unsupported actions) return null so callers fail closed to the
+  /// generic Intros route.
+  static IntroductionEnvelopeIdentity? parseEnvelopeMessageId(
+    String? messageId,
+  ) {
+    final trimmed = messageId?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return null;
+    }
+
+    const separator = '::';
+    final senderSeparator = trimmed.lastIndexOf(separator);
+    if (senderSeparator <= 0) {
+      return null;
+    }
+    final senderPeerId = trimmed.substring(
+      senderSeparator + separator.length,
+    );
+
+    final rest = trimmed.substring(0, senderSeparator);
+    final actionSeparator = rest.lastIndexOf(separator);
+    if (actionSeparator <= 0) {
+      return null;
+    }
+    final action = rest.substring(actionSeparator + separator.length);
+    final introductionId = rest.substring(0, actionSeparator);
+
+    if (introductionId.isEmpty || senderPeerId.isEmpty) {
+      return null;
+    }
+    if (action != 'send' && action != 'accept' && action != 'pass') {
+      return null;
+    }
+
+    return IntroductionEnvelopeIdentity(
+      introductionId: introductionId,
+      action: action,
+      senderPeerId: senderPeerId,
+    );
   }
 
   /// Attempts to parse a JSON string as a v2 encrypted envelope.

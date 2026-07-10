@@ -43,6 +43,12 @@ const (
 	groupInvitePushBody        = "Open Mknoon to review"
 	introPushNotificationTitle = "New Introduction"
 	introPushNotificationBody  = "Open Mknoon to review"
+	// 252: role-neutral acceptance copy. Applied only when the canonical
+	// envelope message ID validates as an `accept` (and, for v1 plaintext,
+	// agrees with the cleartext payload action). No responder identity is
+	// exposed; the client resolves the exact context locally on tap.
+	introAcceptPushNotificationTitle = "Introduction accepted"
+	introAcceptPushNotificationBody  = "Someone accepted an introduction involving you."
 
 	// maxPushDataBytes caps the assembled FCM `data` payload. FCM rejects any
 	// message whose data exceeds 4096 bytes with "Message is too large. The
@@ -314,7 +320,11 @@ func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
 	resolvedTitle := metadata.SenderUsername
 	switch metadata.RouteType {
 	case "intros":
-		resolvedTitle = introPushNotificationTitle
+		if metadata.IntroAction == "accept" {
+			resolvedTitle = introAcceptPushNotificationTitle
+		} else {
+			resolvedTitle = introPushNotificationTitle
+		}
 	case "contact_request":
 		resolvedTitle = contactRequestPushTitle
 	case "group_invite":
@@ -624,6 +634,59 @@ type chatPushMetadata struct {
 	GroupID        string
 	GroupName      string
 	Body           string
+	// IntroAction is the VALIDATED canonical introduction action ("send",
+	// "accept", "pass"). Empty when the envelope's canonical message ID is
+	// absent, malformed, or (for v1) conflicts with the cleartext payload
+	// action — those fail closed to generic introduction copy.
+	IntroAction string
+}
+
+// introductionEnvelopeIdentity is the validated identity carried by a
+// canonical introduction envelope message ID
+// (`<introductionId>::<action>::<senderPeerId>`).
+type introductionEnvelopeIdentity struct {
+	CanonicalID    string
+	IntroductionID string
+	Action         string
+	SenderPeerID   string
+}
+
+// parseIntroductionEnvelopeIdentity parses a canonical introduction envelope
+// message ID. Introduction IDs may themselves contain "::", so the action and
+// sender segments are consumed from the RIGHT. Only send/accept/pass are
+// recognized; malformed shapes (missing segments, empty parts, unsupported
+// actions) return ok=false so push construction fails closed to generic copy.
+func parseIntroductionEnvelopeIdentity(messageID string) (introductionEnvelopeIdentity, bool) {
+	trimmed := strings.TrimSpace(messageID)
+	senderSep := strings.LastIndex(trimmed, "::")
+	if senderSep <= 0 {
+		return introductionEnvelopeIdentity{}, false
+	}
+	senderPeerID := trimmed[senderSep+2:]
+
+	rest := trimmed[:senderSep]
+	actionSep := strings.LastIndex(rest, "::")
+	if actionSep <= 0 {
+		return introductionEnvelopeIdentity{}, false
+	}
+	action := rest[actionSep+2:]
+	introductionID := rest[:actionSep]
+
+	if introductionID == "" || senderPeerID == "" {
+		return introductionEnvelopeIdentity{}, false
+	}
+	switch action {
+	case "send", "accept", "pass":
+	default:
+		return introductionEnvelopeIdentity{}, false
+	}
+
+	return introductionEnvelopeIdentity{
+		CanonicalID:    trimmed,
+		IntroductionID: introductionID,
+		Action:         action,
+		SenderPeerID:   senderPeerID,
+	}, true
 }
 
 func extractChatPushMetadata(message string) chatPushMetadata {
@@ -634,12 +697,36 @@ func extractChatPushMetadata(message string) chatPushMetadata {
 
 	switch trimmedString(envelope["type"]) {
 	case "introduction":
-		return chatPushMetadata{
+		metadata := chatPushMetadata{
 			ShouldNotify: true,
 			RouteType:    "intros",
 			MessageID:    extractMessageId(message),
 			Body:         introPushNotificationBody,
 		}
+		// 252: introduction metadata prefers a VALIDATED canonical top-level
+		// messageId over any coexisting legacy id, and that one selected
+		// value drives both the action decision and the forwarded push
+		// message_id. When no canonical messageId validates, the generic
+		// extractMessageId routing identity and generic copy are preserved
+		// unchanged (global ID precedence is untouched).
+		identity, ok := parseIntroductionEnvelopeIdentity(trimmedString(envelope["messageId"]))
+		if !ok {
+			return metadata
+		}
+		// v1 plaintext envelopes carry a cleartext action; it must AGREE with
+		// the validated canonical ID before that action is trusted. v2 opaque
+		// envelopes derive the action only from the canonical ID.
+		if payload, isV1 := envelope["payload"].(map[string]interface{}); isV1 {
+			if trimmedString(payload["action"]) != identity.Action {
+				return metadata
+			}
+		}
+		metadata.MessageID = identity.CanonicalID
+		metadata.IntroAction = identity.Action
+		if identity.Action == "accept" {
+			metadata.Body = introAcceptPushNotificationBody
+		}
+		return metadata
 	case "chat_message":
 		return chatPushMetadata{
 			ShouldNotify: true,

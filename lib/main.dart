@@ -17,6 +17,7 @@ import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_media_deletion_journal_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
@@ -67,7 +68,9 @@ import 'package:flutter_app/features/introduction/domain/repositories/introducti
 import 'package:flutter_app/features/introduction/domain/repositories/intro_review_seen_repository_impl.dart';
 import 'package:flutter_app/features/introduction/application/introduction_outbound_delivery.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
+import 'package:flutter_app/features/introduction/application/resolve_introduction_notification_target_use_case.dart';
 import 'package:flutter_app/features/introduction/application/resolve_unknown_inbox_sender_use_case.dart';
+import 'package:flutter_app/features/push/application/intro_accept_notification_open_flow.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
@@ -133,6 +136,10 @@ import 'package:flutter_app/features/groups/domain/repositories/group_history_ga
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/pending_group_invite_repository_impl.dart';
+import 'package:flutter_app/core/database/helpers/group_message_local_deletions_db_helpers.dart';
+import 'package:flutter_app/features/groups/application/delete_group_media_for_me_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_media_delete_for_me_coordinator.dart';
+import 'package:flutter_app/features/groups/application/group_media_deletion_journal_reconciler.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/group_invite_identity_callbacks.dart';
@@ -863,8 +870,69 @@ void main() async {
         ),
     dbFinalizeMediaEvictedPathCleared: (id, {required String ownerLane}) =>
         dbFinalizeMediaEvictedPathCleared(db, id, ownerLane: ownerLane),
+    dbSaveGroupMediaAttachmentGuarded: (row, {required String groupId}) =>
+        dbSaveGroupMediaAttachmentGuarded(db, row, groupId: groupId),
     secureKeyStore: secureKeyStore,
   );
+
+  // 235: deletion-journal reconciler + the production Delete-for-me
+  // coordinator. The reconciler is the ONLY consumer of journal rows; it runs
+  // post-delete, on cold start (unawaited, after runApp), and on resume
+  // BEFORE the account-migration network gate.
+  final groupMediaDeletionReconciler = GroupMediaDeletionJournalReconciler(
+    loadJournalPage:
+        ({required int limit, String? afterCreatedAt, String? afterAttachmentId}) =>
+            dbLoadGroupMediaDeletionJournalPage(
+              db,
+              limit: limit,
+              afterCreatedAt: afterCreatedAt,
+              afterAttachmentId: afterAttachmentId,
+            ),
+    loadAttachmentRow: (attachmentId) => dbLoadMediaById(db, attachmentId),
+    loadLocalDeletionGroupId: (messageId) async {
+      final row = await dbLoadGroupMessageLocalDeletion(db, messageId);
+      return row?['group_id'] as String?;
+    },
+    parentExists: ({required String messageId, required String groupId}) async {
+      final rows = await db.query(
+        'group_messages',
+        columns: ['id'],
+        where: 'id = ? AND group_id = ?',
+        whereArgs: [messageId, groupId],
+        limit: 1,
+      );
+      return rows.isNotEmpty;
+    },
+    finalizeEntry: ({required String attachmentId, required String messageId}) =>
+        dbFinalizeGroupMediaDeletionJournalEntry(
+          db,
+          attachmentId: attachmentId,
+          messageId: messageId,
+        ),
+    resolveStoredPath: (relativePath) =>
+        MediaFileManager().resolveStoredPath(relativePath),
+    secureKeyStore: secureKeyStore,
+  );
+  final deleteGroupMediaForMeUseCase = DeleteGroupMediaForMeUseCase(
+    prepare:
+        ({
+          required String groupId,
+          required String messageId,
+          required String operationId,
+        }) => dbPrepareGroupMediaDeleteForMe(
+          db,
+          groupId: groupId,
+          messageId: messageId,
+          operationId: operationId,
+        ),
+    runCleanup: () async {
+      await groupMediaDeletionReconciler.runBounded();
+    },
+  );
+  // Process-wide default (229 decider pattern): every group-conversation
+  // entry path (orbit, feed, list, picker, notification route) gets the real
+  // coordinator; explicit injection still wins.
+  defaultGroupMediaDeleteForMeCoordinator = deleteGroupMediaForMeUseCase;
 
   // Create reaction repository
   final reactionRepository = ReactionRepositoryImpl(
@@ -1147,6 +1215,8 @@ void main() async {
           dbClearGroupMessageRetryBackoff(executor),
       dbResetGroupMessageRetryStateFn: (id) =>
           dbResetGroupMessageRetryState(executor, id),
+      dbLoadGroupMessageLocalDeletionFn: (messageId) =>
+          dbLoadGroupMessageLocalDeletion(executor, messageId),
       dbLoadGroupInboxCursorFn: (groupId) async {
         final row = await dbLoadGroupInboxCursor(executor, groupId);
         return row?['cursor'] as String?;
@@ -2950,6 +3020,10 @@ void main() async {
       contactPresenceSnapshotRepository: contactPresenceSnapshotRepository,
       nearbyLocationService: nearbyLocationService,
       mediaAttachmentRepository: mediaAttachmentRepository,
+      groupMediaDeleteForMeCoordinator: deleteGroupMediaForMeUseCase,
+      groupMediaDeletionCleanup: () async {
+        await groupMediaDeletionReconciler.runBounded();
+      },
       chatMessageListener: chatMessageListener,
       postListener: postListener,
       postCommentListener: postCommentListener,
@@ -3070,6 +3144,22 @@ void main() async {
       return GroupInviteSweepResult.empty;
     }),
   );
+  // 235: cold-start deletion-journal reconciliation — finishes any
+  // Delete-for-me cleanup a previous process crashed out of. Local-only,
+  // bounded, per-item isolated; errors never block startup.
+  unawaited(
+    groupMediaDeletionReconciler.runBounded().catchError((
+      Object error,
+      StackTrace stackTrace,
+    ) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_MEDIA_DELETION_STARTUP_RECONCILE_ERROR',
+        details: {'error': error.toString()},
+      );
+      return GroupMediaDeletionCleanupStats();
+    }),
+  );
 
   // Keep polling for intro E2E config files in explicit test mode so
   // simulator relaunch timing does not race a single startup timer.
@@ -3171,6 +3261,13 @@ class MyApp extends StatefulWidget {
   final ContactPresenceSnapshotRepositoryImpl contactPresenceSnapshotRepository;
   final NearbyLocationService nearbyLocationService;
   final MediaAttachmentRepositoryImpl mediaAttachmentRepository;
+
+  /// 235: production Delete-for-me coordinator (journal prepare + cleanup).
+  final GroupMediaDeleteForMeCoordinator groupMediaDeleteForMeCoordinator;
+
+  /// 235: one bounded deletion-journal reconciliation pass; runs on resume
+  /// BEFORE the account-migration network gate (local-only work).
+  final Future<void> Function() groupMediaDeletionCleanup;
   final ChatMessageListener chatMessageListener;
   final PostListener postListener;
   final PostCommentListener postCommentListener;
@@ -3270,6 +3367,8 @@ class MyApp extends StatefulWidget {
     required this.contactPresenceSnapshotRepository,
     required this.nearbyLocationService,
     required this.mediaAttachmentRepository,
+    required this.groupMediaDeleteForMeCoordinator,
+    required this.groupMediaDeletionCleanup,
     required this.chatMessageListener,
     required this.postListener,
     required this.postCommentListener,
@@ -3849,8 +3948,37 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         );
         return;
       case NotificationRouteTargetKind.intros:
+        // 252: snapshot the tap timestamp (matching the conversation/group
+        // branches) so an introducer-acceptance redirect can hand the
+        // original tap context to the conversation screen; the shared
+        // coordinator falls back to the Orbit/Intros route for everything
+        // else.
+        final introTappedAt = _notificationTappedAt;
         _notificationTappedAt = null;
-        await _openIntroOrbitRoute(navigator: navigator);
+        await openIntroAcceptNotificationRoute(
+          routeTarget: routeTarget,
+          notificationTappedAt: introTappedAt,
+          resolveTarget: (target) => resolveIntroductionNotificationTarget(
+            routeTarget: target,
+            introRepo: widget.introductionRepository,
+            contactRepo: widget.contactRepository,
+            loadOwnPeerId: () async =>
+                (await widget.repository.loadIdentity())?.peerId,
+          ),
+          isConversationAlreadyActive: (conversationTarget) =>
+              isNotificationRouteTargetAlreadyActive(
+                routeTarget: conversationTarget,
+                groupConversationTracker: widget.groupConversationTracker,
+                conversationTracker: widget.conversationTracker,
+              ),
+          openConversation: (contact, tappedAt) =>
+              _openConversationForContact(
+                navigator: navigator,
+                contact: contact,
+                notificationTappedAt: tappedAt,
+              ),
+          openIntros: () => _openIntroOrbitRoute(navigator: navigator),
+        );
         return;
       case NotificationRouteTargetKind.group:
         final identity = await widget.repository.loadIdentity();
@@ -3932,6 +4060,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               groupConversationTracker: widget.groupConversationTracker,
               initialHighlightedMessageId: routeTarget.messageId,
               mediaAttachmentRepo: widget.mediaAttachmentRepository,
+              mediaDeleteForMeCoordinator:
+                  widget.groupMediaDeleteForMeCoordinator,
               mediaFileManager: widget.mediaFileManager,
               imageProcessor: widget.imageProcessor,
               audioRecorderService: widget.audioRecorderService,
@@ -3998,6 +4128,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       appShellController: widget.appShellController,
       messageRepository: widget.messageRepository,
       builder: (feedUnreadCountListenable) => OrbitWired(
+        groupMediaDeleteForMeCoordinator:
+            widget.groupMediaDeleteForMeCoordinator,
         identityRepo: widget.repository,
         contactRepo: widget.contactRepository,
         contactRequestRepo: widget.contactRequestRepository,
@@ -4369,6 +4501,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         activeConversationPeerId: () => widget.conversationTracker.activePeerId,
         recoverInterruptedExportPause:
             widget.accountMigrationRecoverExportPause,
+        // 235: local deletion-journal cleanup — before the network gate.
+        groupMediaDeletionCleanupFn: widget.groupMediaDeletionCleanup,
         retryPushRegistrationFn: widget.pushRegistrationCoordinator?.retryNow,
         contactRepo: widget.contactRepository,
         identityRepo: widget.repository,

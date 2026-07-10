@@ -249,6 +249,15 @@ readonly INTRO_TESTS=(
   "test/features/introduction/integration/introduction_smoke_test.dart"
   "test/features/introduction/presentation/screens/friend_picker_wired_test.dart"
   "test/features/introduction/regression/introduction_regression_test.dart"
+  # 252: intro-accept notification copy + A->B chat routing (fallback copy,
+  # anchored route target, canonical envelope-ID parse, resolver, shared open
+  # coordinator, main.dart source-wiring lock).
+  "test/features/push/application/background_push_notification_fallback_test.dart"
+  "test/core/notifications/notification_route_target_test.dart"
+  "test/core/notifications/intro_accept_open_coordinator_wiring_test.dart"
+  "test/features/introduction/application/introduction_payload_test.dart"
+  "test/features/introduction/application/resolve_introduction_notification_target_use_case_test.dart"
+  "test/features/push/application/intro_accept_notification_open_flow_test.dart"
 )
 
 readonly GROUP_TESTS=(
@@ -329,6 +338,17 @@ readonly GROUP_TESTS=(
   # every ReceivedMediaEgressService call; refusals make zero egress calls).
   "test/features/groups/application/group_received_media_action_policy_test.dart"
   "test/features/groups/application/group_received_media_actions_test.dart"
+  # 235 persistence slice: v98 deletion journal (atomic delete-prepare +
+  # exact reaction cleanup), the file->key->DB cleanup saga with restart
+  # convergence, the guarded incoming final write / journal-aware download
+  # CAS, the tombstone reaction discard, and the cold-start/resume wiring.
+  "test/features/groups/application/delete_group_media_for_me_use_case_test.dart"
+  "test/features/groups/application/handle_incoming_group_message_use_case_test.dart"
+  "test/features/groups/application/handle_incoming_group_reaction_use_case_test.dart"
+  "test/features/groups/integration/group_received_media_delete_replay_test.dart"
+  "test/core/database/migrations/098_group_media_deletion_journal_test.dart"
+  "test/core/lifecycle/group_media_deletion_reconciler_wiring_test.dart"
+  "test/core/lifecycle/handle_app_resumed_group_media_cleanup_test.dart"
 )
 
 readonly POSTS_TESTS=(

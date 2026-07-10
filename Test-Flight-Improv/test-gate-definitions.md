@@ -409,10 +409,21 @@ Files:
 - `test/features/introduction/application/pass_introduction_test.dart`
 - `test/features/introduction/application/send_introduction_test.dart`
 - `test/features/introduction/integration/intro_wiring_smoke_test.dart`
+- `test/features/introduction/integration/introduction_b_to_a_c_precondition_test.dart`
 - `test/features/introduction/integration/introduction_multi_node_test.dart`
 - `test/features/introduction/integration/introduction_smoke_test.dart`
 - `test/features/introduction/presentation/screens/friend_picker_wired_test.dart`
 - `test/features/introduction/regression/introduction_regression_test.dart`
+- `test/features/push/application/background_push_notification_fallback_test.dart` (252: intros fallback copy + provider-copy preservation)
+- `test/core/notifications/notification_route_target_test.dart` (252: anchored intros envelope identity, malformed fail-closed)
+- `test/core/notifications/intro_accept_open_coordinator_wiring_test.dart` (252: main.dart intros-branch coordinator source-wiring lock)
+- `test/features/introduction/application/introduction_payload_test.dart` (252: canonical envelope-ID builder/parser golden)
+- `test/features/introduction/application/resolve_introduction_notification_target_use_case_test.dart` (252: introducer-accept -> recipient-thread resolver)
+- `test/features/push/application/intro_accept_notification_open_flow_test.dart` (252: drain-then-resolve shared open coordinator)
+
+Device proof (manual device-proof suite, outside the automated host sweep):
+
+- `integration_test/intro_accept_notification_android_proof_test.dart` validates the artifacts of `integration_test/scripts/run_intro_accept_notification_android.dart` (`physical_introducer` / `emulator_introducer` three-party campaigns).
 
 Required companion rule:
 

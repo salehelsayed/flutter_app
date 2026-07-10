@@ -606,7 +606,14 @@ void main() {
           notificationService.shownGeneric.single.body,
           'Sarah accepted your intro to Lina. Lina and Sarah are now connected',
         );
-        expect(notificationService.shownGeneric.single.payload, 'intros');
+        // 252: the introducer's local mutual-accept notification is anchored
+        // to the canonical accept envelope ID so a warm/local tap reaches the
+        // same A->B resolver seam as a terminated/remote tap. Copy stays
+        // byte-identical.
+        expect(
+          notificationService.shownGeneric.single.payload,
+          'intros|message:intro-introducer-mutual-notification::accept::peer-C',
+        );
       },
     );
 

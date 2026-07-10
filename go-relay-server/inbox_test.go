@@ -720,46 +720,243 @@ func TestBuildChatPushMessage_CarriesEncryptedDataWithoutPlaintextPreview(t *tes
 }
 
 func TestBuildIntroductionPushMessage_UsesIntrosRouteAndGenericCopy(t *testing.T) {
-	msg := buildPushMessage(
-		"fcm-token",
-		"peer-from",
-		`{"type":"introduction","version":"1","messageId":"intro-1","payload":{"action":"send","introductionId":"intro-1","timestamp":"2026-04-04T20:36:00Z"}}`,
-	)
+	// TC-03: every non-acceptance or non-validating introduction envelope keeps
+	// the generic copy, the intros route, and no sender identity. Acceptance
+	// copy must key on the VALIDATED canonical envelope ID (and, for v1, its
+	// agreement with the cleartext payload action) — not on substring matching
+	// or "anything that is not send".
+	cases := []struct {
+		name          string
+		message       string
+		wantMessageID string
+	}{
+		{
+			name:          "v1 plaintext send",
+			message:       `{"type":"introduction","version":"1","messageId":"intro-1","payload":{"action":"send","introductionId":"intro-1","timestamp":"2026-04-04T20:36:00Z"}}`,
+			wantMessageID: "intro-1",
+		},
+		{
+			name:          "opaque v2 canonical send",
+			message:       `{"type":"introduction","version":"2","messageId":"intro-1::send::peer-a","senderPeerId":"peer-a","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`,
+			wantMessageID: "intro-1::send::peer-a",
+		},
+		{
+			name:          "opaque v2 canonical pass",
+			message:       `{"type":"introduction","version":"2","messageId":"intro-1::pass::peer-b","senderPeerId":"peer-b","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`,
+			wantMessageID: "intro-1::pass::peer-b",
+		},
+		{
+			name:          "opaque v2 malformed canonical id",
+			message:       `{"type":"introduction","version":"2","messageId":"intro-legacy-shape","senderPeerId":"peer-b","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`,
+			wantMessageID: "intro-legacy-shape",
+		},
+		{
+			name:          "opaque v2 unsupported action",
+			message:       `{"type":"introduction","version":"2","messageId":"intro-1::approve::peer-b","senderPeerId":"peer-b","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`,
+			wantMessageID: "intro-1::approve::peer-b",
+		},
+		{
+			name: "v1 payload action conflicts with canonical id",
+			// Cleartext claims send while the canonical ID claims accept:
+			// conflicting evidence fails closed to generic copy.
+			message:       `{"type":"introduction","version":"1","messageId":"intro-1::accept::peer-x","payload":{"action":"send","introductionId":"intro-1","timestamp":"2026-04-04T20:36:00Z"}}`,
+			wantMessageID: "intro-1::accept::peer-x",
+		},
+	}
 
-	if msg.Token != "fcm-token" {
-		t.Fatalf("token = %q, want %q", msg.Token, "fcm-token")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := buildPushMessage("fcm-token", "peer-from", tc.message)
+
+			if msg.Token != "fcm-token" {
+				t.Fatalf("token = %q, want %q", msg.Token, "fcm-token")
+			}
+			if msg.Data["type"] != "intros" {
+				t.Fatalf("type = %q, want %q", msg.Data["type"], "intros")
+			}
+			if _, ok := msg.Data["sender_id"]; ok {
+				t.Fatalf("sender_id should be omitted for intros push, got %q", msg.Data["sender_id"])
+			}
+			if msg.Data["message_id"] != tc.wantMessageID {
+				t.Fatalf("message_id = %q, want %q", msg.Data["message_id"], tc.wantMessageID)
+			}
+			if msg.Data["title"] != introPushNotificationTitle {
+				t.Fatalf("title = %q, want %q", msg.Data["title"], introPushNotificationTitle)
+			}
+			if msg.Data["body"] != introPushNotificationBody {
+				t.Fatalf("body = %q, want %q", msg.Data["body"], introPushNotificationBody)
+			}
+			if msg.Notification == nil {
+				t.Fatal("expected top-level notification payload")
+			}
+			if msg.Notification.Title != introPushNotificationTitle {
+				t.Fatalf(
+					"notification title = %q, want %q",
+					msg.Notification.Title,
+					introPushNotificationTitle,
+				)
+			}
+			if msg.Notification.Body != introPushNotificationBody {
+				t.Fatalf(
+					"notification body = %q, want %q",
+					msg.Notification.Body,
+					introPushNotificationBody,
+				)
+			}
+		})
 	}
-	if msg.Data["type"] != "intros" {
-		t.Fatalf("type = %q, want %q", msg.Data["type"], "intros")
+}
+
+func TestBuildIntroductionAcceptPushMessage_UsesActionAwareCopyAndStableRouteData(t *testing.T) {
+	// TC-02: v1 plaintext and v2 opaque acceptance envelopes emit role-neutral
+	// acceptance copy in every surface (data, FCM notification, Android, APNs
+	// alert), select and forward the exact validated canonical message ID, and
+	// expose no responder identity.
+	const golden = "intro-golden::accept::peer-responder"
+	cases := []struct {
+		name          string
+		message       string
+		wantMessageID string
+	}{
+		{
+			name:          "v1 plaintext accept with agreeing canonical id",
+			message:       `{"type":"introduction","version":"1","messageId":"` + golden + `","payload":{"action":"accept","introductionId":"intro-golden","responderId":"peer-responder","timestamp":"2026-07-10T09:00:00Z"}}`,
+			wantMessageID: golden,
+		},
+		{
+			name:          "opaque v2 canonical accept",
+			message:       `{"type":"introduction","version":"2","messageId":"` + golden + `","senderPeerId":"peer-responder","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`,
+			wantMessageID: golden,
+		},
+		{
+			name:          "opaque v2 canonical accept second responder",
+			message:       `{"type":"introduction","version":"2","messageId":"intro-2::accept::peer-b","senderPeerId":"peer-b","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`,
+			wantMessageID: "intro-2::accept::peer-b",
+		},
+		{
+			name: "opaque v2 mixed legacy id and canonical messageId",
+			// The validated canonical messageId must drive BOTH the action
+			// decision and the forwarded push message_id — never the
+			// coexisting legacy id.
+			message:       `{"type":"introduction","version":"2","id":"legacy-envelope-id","messageId":"` + golden + `","senderPeerId":"peer-responder","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`,
+			wantMessageID: golden,
+		},
 	}
-	if _, ok := msg.Data["sender_id"]; ok {
-		t.Fatalf("sender_id should be omitted for intros push, got %q", msg.Data["sender_id"])
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := buildPushMessage("fcm-token", "peer-from", tc.message)
+
+			if msg.Data["type"] != "intros" {
+				t.Fatalf("type = %q, want %q", msg.Data["type"], "intros")
+			}
+			if msg.Data["message_id"] != tc.wantMessageID {
+				t.Fatalf("message_id = %q, want %q", msg.Data["message_id"], tc.wantMessageID)
+			}
+			if msg.Data["message_id"] == "legacy-envelope-id" {
+				t.Fatal("acceptance push must never forward the legacy envelope id")
+			}
+			if msg.Data["title"] != "Introduction accepted" {
+				t.Fatalf("data title = %q, want %q", msg.Data["title"], "Introduction accepted")
+			}
+			if msg.Data["body"] != "Someone accepted an introduction involving you." {
+				t.Fatalf(
+					"data body = %q, want %q",
+					msg.Data["body"],
+					"Someone accepted an introduction involving you.",
+				)
+			}
+			if _, ok := msg.Data["sender_id"]; ok {
+				t.Fatalf("sender_id should be omitted for intros push, got %q", msg.Data["sender_id"])
+			}
+			if _, ok := msg.Data["sender_username"]; ok {
+				t.Fatalf("sender_username should be omitted, got %q", msg.Data["sender_username"])
+			}
+			if _, ok := msg.Data["senderUsername"]; ok {
+				t.Fatalf("senderUsername should be omitted, got %q", msg.Data["senderUsername"])
+			}
+			if msg.Notification == nil {
+				t.Fatal("expected top-level notification payload")
+			}
+			if msg.Notification.Title != "Introduction accepted" {
+				t.Fatalf("notification title = %q", msg.Notification.Title)
+			}
+			if msg.Notification.Body != "Someone accepted an introduction involving you." {
+				t.Fatalf("notification body = %q", msg.Notification.Body)
+			}
+			if msg.Android == nil || msg.Android.Notification == nil {
+				t.Fatal("expected Android notification payload")
+			}
+			if msg.Android.Notification.Title != "Introduction accepted" {
+				t.Fatalf("android title = %q", msg.Android.Notification.Title)
+			}
+			if msg.Android.Notification.Body != "Someone accepted an introduction involving you." {
+				t.Fatalf("android body = %q", msg.Android.Notification.Body)
+			}
+			if msg.APNS == nil || msg.APNS.Payload == nil || msg.APNS.Payload.Aps == nil ||
+				msg.APNS.Payload.Aps.Alert == nil {
+				t.Fatal("expected APNs alert payload")
+			}
+			if msg.APNS.Payload.Aps.Alert.Title != "Introduction accepted" {
+				t.Fatalf("apns title = %q", msg.APNS.Payload.Aps.Alert.Title)
+			}
+			if msg.APNS.Payload.Aps.Alert.Body != "Someone accepted an introduction involving you." {
+				t.Fatalf("apns body = %q", msg.APNS.Payload.Aps.Alert.Body)
+			}
+		})
 	}
-	if msg.Data["message_id"] != "intro-1" {
-		t.Fatalf("message_id = %q, want %q", msg.Data["message_id"], "intro-1")
+}
+
+func TestParseIntroductionEnvelopeIdentity_ValidatesCanonicalAction(t *testing.T) {
+	// TC-02a: canonical identities parse from the RIGHT (intro IDs may contain
+	// "::"), only send/accept/pass are recognized, and malformed shapes return
+	// no action so push construction fails closed to generic copy.
+	valid := []struct {
+		id         string
+		wantIntro  string
+		wantAction string
+		wantSender string
+	}{
+		{"intro-golden::accept::peer-responder", "intro-golden", "accept", "peer-responder"},
+		{"intro::multi::part::accept::peer-x", "intro::multi::part", "accept", "peer-x"},
+		{"intro-1::send::peer-a", "intro-1", "send", "peer-a"},
+		{"intro-1::pass::peer-b", "intro-1", "pass", "peer-b"},
 	}
-	if msg.Data["title"] != introPushNotificationTitle {
-		t.Fatalf("title = %q, want %q", msg.Data["title"], introPushNotificationTitle)
+	for _, tc := range valid {
+		identity, ok := parseIntroductionEnvelopeIdentity(tc.id)
+		if !ok {
+			t.Fatalf("expected %q to parse", tc.id)
+		}
+		if identity.IntroductionID != tc.wantIntro {
+			t.Fatalf("%q intro = %q, want %q", tc.id, identity.IntroductionID, tc.wantIntro)
+		}
+		if identity.Action != tc.wantAction {
+			t.Fatalf("%q action = %q, want %q", tc.id, identity.Action, tc.wantAction)
+		}
+		if identity.SenderPeerID != tc.wantSender {
+			t.Fatalf("%q sender = %q, want %q", tc.id, identity.SenderPeerID, tc.wantSender)
+		}
+		if identity.CanonicalID != tc.id {
+			t.Fatalf("%q canonical = %q, want the input", tc.id, identity.CanonicalID)
+		}
 	}
-	if msg.Data["body"] != introPushNotificationBody {
-		t.Fatalf("body = %q, want %q", msg.Data["body"], introPushNotificationBody)
+
+	invalid := []string{
+		"",
+		"   ",
+		"intro-legacy",
+		"intro-1::accept",
+		"accept::peer-b",
+		"::accept::peer-b",
+		"intro-1::accept::",
+		"intro-1::approve::peer-b",
+		// Extra right segment displaces the action slot.
+		"intro-1::accept::peer-b::extra",
 	}
-	if msg.Notification == nil {
-		t.Fatal("expected top-level notification payload")
-	}
-	if msg.Notification.Title != introPushNotificationTitle {
-		t.Fatalf(
-			"notification title = %q, want %q",
-			msg.Notification.Title,
-			introPushNotificationTitle,
-		)
-	}
-	if msg.Notification.Body != introPushNotificationBody {
-		t.Fatalf(
-			"notification body = %q, want %q",
-			msg.Notification.Body,
-			introPushNotificationBody,
-		)
+	for _, id := range invalid {
+		if _, ok := parseIntroductionEnvelopeIdentity(id); ok {
+			t.Fatalf("expected %q to be rejected", id)
+		}
 	}
 }
 

@@ -121,6 +121,10 @@ classify_path() {
       record "ignored" "$path" "ignored" "manual Android/iOS direct-forwarded v97 SQLCipher migration proof outside reliability-sim"
       return
       ;;
+    integration_test/group_media_deletion_journal_sqlcipher_proof_test.dart)
+      record "ignored" "$path" "ignored" "manual Android/iOS group-media-deletion-journal v98 SQLCipher migration proof outside reliability-sim"
+      return
+      ;;
     integration_test/scripts/_android_app_package.dart|\
     integration_test/scripts/routing_smoke_group_criteria.dart|\
     integration_test/setup_device.dart|\
@@ -209,6 +213,14 @@ classify_path() {
       ;;
     integration_test/scripts/run_notification_tap_device_real.dart)
       record "1to1" "$path" "runner" "225 notification-tap device/relay proof campaign orchestrator (--list-scenarios)"
+      return
+      ;;
+    integration_test/scripts/run_intro_accept_notification_android.dart)
+      record "intro" "$path" "runner" "252 intro-accept notification copy/tap three-party Android device proof campaign orchestrator (--list-scenarios)"
+      return
+      ;;
+    integration_test/intro_accept_notification_android_proof_test.dart)
+      record "intro" "$path" "test" "252 TC-12/TC-13 intro-accept notification copy + A-B routing device proof artifact validation"
       return
       ;;
     integration_test/scripts/run_media_stable_id_smoke.dart|\
@@ -823,6 +835,10 @@ expand_record_to_checks() {
       return
       ;;
     integration_test/scripts/run_notification_tap_device_real.dart)
+      expand_1to1_device_real "$category" "$path" "$note"
+      return
+      ;;
+    integration_test/scripts/run_intro_accept_notification_android.dart)
       expand_1to1_device_real "$category" "$path" "$note"
       return
       ;;

@@ -8,6 +8,14 @@ import 'package:flutter_app/features/push/application/resolve_group_notification
 const backgroundPushDefaultTitle = 'New Message';
 const backgroundPushDefaultBody = 'You have a new message';
 
+// 252: a data-only Intros-routed push with no provider copy must never
+// masquerade as a chat message. These route-aware defaults are the safe
+// fallback for legacy/copyless `intros` pushes; recognized relay pushes carry
+// explicit copy that is preserved byte-for-byte.
+const backgroundPushIntrosFallbackTitle = 'Introduction update';
+const backgroundPushIntrosFallbackBody =
+    'Open Mknoon to see the latest update.';
+
 typedef GroupMessageNotificationDisplayEligibilityResolver =
     Future<GroupMessageNotificationDisplayEligibility> Function(String groupId);
 
@@ -208,13 +216,17 @@ String? backgroundPushFallbackDedupeKey(RemoteMessage message) {
   final collapseKey = _trimToNull(message.collapseKey);
   final title = _resolvedTitle(message);
   final body = _resolvedBody(message);
+  // Compare against the route-aware defaults so the 252 intros fallback copy
+  // stays "non-specific" for dedupe purposes, exactly like the old global
+  // defaults did.
+  final defaultTitle = _defaultTitleFor(message);
+  final defaultBody = _defaultBodyFor(message);
   final hasMessageIdentity =
       uniqueId != null ||
       timestamp != null ||
       threadId != null ||
       collapseKey != null;
-  final hasSpecificCopy =
-      title != backgroundPushDefaultTitle || body != backgroundPushDefaultBody;
+  final hasSpecificCopy = title != defaultTitle || body != defaultBody;
 
   if (!hasMessageIdentity && !hasSpecificCopy) {
     return null;
@@ -226,9 +238,8 @@ String? backgroundPushFallbackDedupeKey(RemoteMessage message) {
     if (timestamp != null) 'ts=$timestamp',
     if (threadId != null) 'thread=$threadId',
     if (collapseKey != null) 'collapse=$collapseKey',
-    if (!hasMessageIdentity && title != backgroundPushDefaultTitle)
-      'title=$title',
-    if (!hasMessageIdentity && body != backgroundPushDefaultBody) 'body=$body',
+    if (!hasMessageIdentity && title != defaultTitle) 'title=$title',
+    if (!hasMessageIdentity && body != defaultBody) 'body=$body',
   ];
   return parts.join('|');
 }
@@ -244,7 +255,7 @@ String _resolvedTitle(RemoteMessage message) {
     return backgroundPushDefaultTitle;
   }
   return _trimToNull(message.data['title']?.toString()) ??
-      backgroundPushDefaultTitle;
+      _defaultTitleFor(message);
 }
 
 String _resolvedBody(RemoteMessage message) {
@@ -252,7 +263,24 @@ String _resolvedBody(RemoteMessage message) {
     return backgroundPushDefaultBody;
   }
   return _trimToNull(message.data['body']?.toString()) ??
-      backgroundPushDefaultBody;
+      _defaultBodyFor(message);
+}
+
+String _defaultTitleFor(RemoteMessage message) {
+  return _routesToIntros(message)
+      ? backgroundPushIntrosFallbackTitle
+      : backgroundPushDefaultTitle;
+}
+
+String _defaultBodyFor(RemoteMessage message) {
+  return _routesToIntros(message)
+      ? backgroundPushIntrosFallbackBody
+      : backgroundPushDefaultBody;
+}
+
+bool _routesToIntros(RemoteMessage message) {
+  return NotificationRouteTarget.fromRemoteMessageData(message.data)?.kind ==
+      NotificationRouteTargetKind.intros;
 }
 
 bool _usesProtectedMessagePreview(RemoteMessage message) {
