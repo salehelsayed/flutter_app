@@ -61,6 +61,8 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/application/load_reactions_use_case.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
+import 'package:flutter_app/features/conversation/application/direct_media_library_batch_actions.dart';
+import 'package:flutter_app/features/conversation/application/direct_media_library_batch_delete.dart';
 import 'package:flutter_app/features/conversation/application/received_media_action_controller.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_reaction_use_case.dart';
@@ -85,6 +87,7 @@ import 'package:flutter_app/features/settings/domain/models/background_preferenc
 import 'package:flutter_app/features/share/presentation/navigation/share_target_picker_route.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 import 'conversation_screen.dart';
+import 'direct_shared_media_library_screen.dart';
 
 typedef SendChatMessageFn =
     Future<(SendChatMessageResult, ConversationMessage?)> Function({
@@ -284,6 +287,16 @@ class ConversationWired extends StatefulWidget {
   final Future<void> Function(BuildContext context, ShareIntent shareIntent)?
   receivedMediaForwardLauncher;
 
+  /// 233 test seam: stands in for the shared-media library route. The popped
+  /// [DirectSharedMediaLibraryResult] flows through the SAME Go to Message
+  /// coordination as the production screen.
+  final WidgetBuilder? sharedMediaLibraryRouteBuilder;
+
+  /// 233 test seam: the scroll-target delegate for Go to Message. Production
+  /// defaults to the element-walk + ensureVisible reveal over the reversed
+  /// list's stable `msg-<id>` keys.
+  final Future<void> Function(String messageId)? revealConversationMessageFn;
+
   const ConversationWired({
     super.key,
     required this.contact,
@@ -330,6 +343,8 @@ class ConversationWired extends StatefulWidget {
     this.forwardGroupMessageListener,
     this.forwardGroupConversationTracker,
     this.receivedMediaForwardLauncher,
+    this.sharedMediaLibraryRouteBuilder,
+    this.revealConversationMessageFn,
   });
 
   @override
@@ -1404,7 +1419,7 @@ class _ConversationWiredState extends State<ConversationWired>
   }
 
   Future<void> _loadOlderMessages() async {
-    if (_messages.isEmpty) return;
+    if (_messages.isEmpty || _isLoadingMore) return;
     setState(() => _isLoadingMore = true);
 
     try {
@@ -1981,13 +1996,7 @@ class _ConversationWiredState extends State<ConversationWired>
     }
 
     if (action == _DeleteMessageAction.forMe) {
-      final deleted = await widget.deleteMessageForMeFn(
-        message: message,
-        messageRepo: widget.messageRepo,
-        reactionRepo: widget.reactionRepo,
-        mediaAttachmentRepo: widget.mediaAttachmentRepo,
-        mediaFileManager: widget.mediaFileManager,
-      );
+      final deleted = await _deleteMessageForMeLocally(message);
       if (deleted > 0 && mounted) {
         _removeLocalMessage(messageId);
       }
@@ -2022,6 +2031,20 @@ class _ConversationWiredState extends State<ConversationWired>
           ),
         );
     }
+  }
+
+  /// The ONE local whole-message Delete-for-Me call site (the 231 frozen
+  /// transport inventory pins the delete-for-me seam to exactly one
+  /// occurrence): the message-sheet path and the 233 shared-media batch path
+  /// both delete through here.
+  Future<int> _deleteMessageForMeLocally(ConversationMessage message) {
+    return widget.deleteMessageForMeFn(
+      message: message,
+      messageRepo: widget.messageRepo,
+      reactionRepo: widget.reactionRepo,
+      mediaAttachmentRepo: widget.mediaAttachmentRepo,
+      mediaFileManager: widget.mediaFileManager,
+    );
   }
 
   bool get _canEnterEditMode =>
@@ -4401,6 +4424,179 @@ class _ConversationWiredState extends State<ConversationWired>
     return resolved;
   }
 
+  // ── 233: direct shared media library ─────────────────────────────────────
+
+  /// The Shared Media entry exists only when the injected attachment
+  /// repository actually implements the plan-228 library read/state
+  /// capabilities — never a defaulted or inferred owner. (Tests may stand a
+  /// route in via [ConversationWired.sharedMediaLibraryRouteBuilder].)
+  bool get _sharedMediaLibraryAvailable =>
+      widget.sharedMediaLibraryRouteBuilder != null ||
+      (widget.mediaAttachmentRepo is MediaLibraryRepository &&
+          widget.mediaAttachmentRepo is MediaLibraryStateRepository);
+
+  Future<void> _openSharedMediaLibrary() async {
+    final routeBuilder = widget.sharedMediaLibraryRouteBuilder;
+    if (routeBuilder != null) {
+      final result = await Navigator.of(context)
+          .push<DirectSharedMediaLibraryResult>(
+            MaterialPageRoute(builder: routeBuilder),
+          );
+      if (!mounted) return;
+      if (result is DirectSharedMediaGoToMessage) {
+        await _goToLibraryMessage(result.messageId);
+      }
+      return;
+    }
+    final repo = widget.mediaAttachmentRepo;
+    if (repo == null ||
+        repo is! MediaLibraryRepository ||
+        repo is! MediaLibraryStateRepository) {
+      return;
+    }
+    // Batch Save/Share: the shared plan-231 current-row qualification with
+    // ONE plan-227 list-capable native call per dispatch.
+    final batchActions = DirectMediaLibraryBatchActionsCoordinator(
+      loadParentMessage: widget.messageRepo.getMessage,
+      mediaAttachmentRepo: repo,
+      egressService: ReceivedMediaEgressService(),
+    );
+    final result = await Navigator.of(context)
+        .push<DirectSharedMediaLibraryResult>(
+          MaterialPageRoute(
+            builder: (_) => DirectSharedMediaLibraryScreen(
+              contactPeerId: _contact.peerId,
+              contactUsername: _contact.username,
+              libraryRepository: repo as MediaLibraryRepository,
+              stateRepository: repo as MediaLibraryStateRepository,
+              dispatchEgress: (identities, destination) =>
+                  batchActions.performBatchEgress(
+                    identities: identities,
+                    destination: destination,
+                  ),
+              // Confirmed whole-message Delete for Me: dedup by unique
+              // parent, materialize through getMessage, reuse the existing
+              // local delete seam once per resolved parent.
+              dispatchDelete: (identities) => deleteDirectMediaSelectionForMe(
+                identities: identities,
+                messageRepo: widget.messageRepo,
+                deleteMessageForMe: _deleteMessageForMeLocally,
+              ),
+              onMessagesDeleted: (deletedMessageIds) {
+                if (!mounted) return;
+                for (final messageId in deletedMessageIds) {
+                  _removeLocalMessage(messageId);
+                }
+              },
+            ),
+          ),
+        );
+    if (!mounted) return;
+    if (result is DirectSharedMediaGoToMessage) {
+      await _goToLibraryMessage(result.messageId);
+    }
+  }
+
+  // ── 233: bounded Go to Message coordination ──────────────────────────────
+
+  String? _highlightedMessageId;
+  Timer? _highlightClearTimer;
+
+  /// Loads older pages SERIALLY until the target message is present or
+  /// history is exhausted, then reveals and transiently highlights exactly
+  /// its stable `msg-<id>` key. Never replaces or resets the loaded window:
+  /// pages append through the existing [_loadOlderMessages] path only.
+  Future<void> _goToLibraryMessage(String messageId) async {
+    bool loaded() => _messages.any((m) => m.id == messageId);
+
+    while (mounted && !loaded()) {
+      if (_isLoadingMore) {
+        // A scroll-triggered load is in flight — wait for it instead of
+        // issuing a concurrent page request.
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+        continue;
+      }
+      if (!_hasMoreOlderMessages) break;
+      final beforeCount = _messages.length;
+      await _loadOlderMessages();
+      if (!mounted) return;
+      // Stop on a page that made no progress — a repository stuck below the
+      // cursor must not spin forever.
+      if (_messages.length == beforeCount) break;
+    }
+    if (!mounted) return;
+
+    if (!loaded()) {
+      // Truthful terminal state: the message is gone (deleted/older than
+      // history) — no spinner, no nearest-row substitution, no navigation.
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              AppLocalizations.of(context)!.shared_media_go_to_message_missing,
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      return;
+    }
+
+    setState(() => _highlightedMessageId = messageId);
+    final reveal =
+        widget.revealConversationMessageFn ?? _revealMessageInList;
+    await reveal(messageId);
+    _highlightClearTimer?.cancel();
+    _highlightClearTimer = Timer(const Duration(milliseconds: 1600), () {
+      if (mounted) setState(() => _highlightedMessageId = null);
+    });
+  }
+
+  /// Default reveal: walk the element tree for the row's stable key and
+  /// ensure it is visible; while the (already loaded) row is still outside
+  /// the virtualized build window, step the scroll position toward the older
+  /// end until it materializes. Bounded — never loads pages.
+  Future<void> _revealMessageInList(String messageId) async {
+    final targetKey = ValueKey('msg-$messageId');
+    for (var attempt = 0; attempt < 80; attempt++) {
+      if (!mounted) return;
+      final targetContext = _findDescendantContextByKey(targetKey);
+      if (targetContext != null && targetContext.mounted) {
+        await Scrollable.ensureVisible(
+          targetContext,
+          alignment: 0.5,
+          duration: const Duration(milliseconds: 200),
+        );
+        return;
+      }
+      if (!_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      if (position.pixels >= position.maxScrollExtent) return;
+      _scrollController.jumpTo(
+        (position.pixels + position.viewportDimension * 0.9).clamp(
+          position.minScrollExtent,
+          position.maxScrollExtent,
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 16));
+    }
+  }
+
+  BuildContext? _findDescendantContextByKey(Key key) {
+    BuildContext? found;
+    void visit(Element element) {
+      if (found != null) return;
+      if (element.widget.key == key) {
+        found = element;
+        return;
+      }
+      element.visitChildElements(visit);
+    }
+
+    (context as Element).visitChildElements(visit);
+    return found;
+  }
+
   void _onOverflow() {
     final contactRepo = widget.contactRepo;
     if (contactRepo == null) return;
@@ -4467,6 +4663,29 @@ class _ConversationWiredState extends State<ConversationWired>
               ],
             ),
           ),
+        if (_sharedMediaLibraryAvailable)
+          PopupMenuItem<String>(
+            key: const ValueKey('conversation-shared-media-action'),
+            value: 'shared_media',
+            child: Row(
+              children: [
+                Icon(
+                  Icons.photo_library_outlined,
+                  size: 18,
+                  color: isLight ? readable.textPrimary : Colors.white,
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  l10n.conversation_shared_media,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: isLight ? readable.textPrimary : Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ),
         PopupMenuItem<String>(
           value: 'block',
           child: Row(
@@ -4515,6 +4734,8 @@ class _ConversationWiredState extends State<ConversationWired>
     ).then((value) {
       if (value == 'introduce') {
         _onIntroduce();
+      } else if (value == 'shared_media') {
+        _openSharedMediaLibrary();
       } else if (value == 'block') {
         if (_contact.isBlocked) {
           _onUnblock();
@@ -4675,6 +4896,7 @@ class _ConversationWiredState extends State<ConversationWired>
     }
     _composerState.dispose();
     _scrollController.dispose();
+    _highlightClearTimer?.cancel();
     super.dispose();
   }
 
@@ -4799,6 +5021,7 @@ class _ConversationWiredState extends State<ConversationWired>
           backgroundPreference:
               widget.appShellController?.backgroundPreference ??
               BackgroundPreference.defaultBackground,
+          highlightedMessageId: _highlightedMessageId,
         ),
       ),
     );

@@ -3674,6 +3674,174 @@ abstract class AppLocalizations {
   /// **'Introduce to your circle'**
   String get conversation_introduce_to_circle;
 
+  /// No description provided for @conversation_shared_media.
+  ///
+  /// In en, this message translates to:
+  /// **'Shared media'**
+  String get conversation_shared_media;
+
+  /// No description provided for @shared_media_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Shared media'**
+  String get shared_media_title;
+
+  /// No description provided for @shared_media_filter_all.
+  ///
+  /// In en, this message translates to:
+  /// **'All'**
+  String get shared_media_filter_all;
+
+  /// No description provided for @shared_media_filter_photos.
+  ///
+  /// In en, this message translates to:
+  /// **'Photos'**
+  String get shared_media_filter_photos;
+
+  /// No description provided for @shared_media_filter_videos.
+  ///
+  /// In en, this message translates to:
+  /// **'Videos'**
+  String get shared_media_filter_videos;
+
+  /// No description provided for @shared_media_filter_bookmarked.
+  ///
+  /// In en, this message translates to:
+  /// **'Bookmarked'**
+  String get shared_media_filter_bookmarked;
+
+  /// No description provided for @shared_media_empty.
+  ///
+  /// In en, this message translates to:
+  /// **'No shared media yet'**
+  String get shared_media_empty;
+
+  /// No description provided for @shared_media_load_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t load shared media'**
+  String get shared_media_load_failed;
+
+  /// No description provided for @shared_media_kind_photo.
+  ///
+  /// In en, this message translates to:
+  /// **'Photo'**
+  String get shared_media_kind_photo;
+
+  /// No description provided for @shared_media_kind_video.
+  ///
+  /// In en, this message translates to:
+  /// **'Video'**
+  String get shared_media_kind_video;
+
+  /// No description provided for @shared_media_state_missing.
+  ///
+  /// In en, this message translates to:
+  /// **'File missing'**
+  String get shared_media_state_missing;
+
+  /// No description provided for @shared_media_state_evicted.
+  ///
+  /// In en, this message translates to:
+  /// **'Local copy removed'**
+  String get shared_media_state_evicted;
+
+  /// No description provided for @shared_media_state_not_downloaded.
+  ///
+  /// In en, this message translates to:
+  /// **'Not downloaded'**
+  String get shared_media_state_not_downloaded;
+
+  /// No description provided for @shared_media_state_unverified.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t verify'**
+  String get shared_media_state_unverified;
+
+  /// No description provided for @shared_media_selection_count.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} selected'**
+  String shared_media_selection_count(int count);
+
+  /// No description provided for @shared_media_selection_limit.
+  ///
+  /// In en, this message translates to:
+  /// **'You can select up to {max} items'**
+  String shared_media_selection_limit(int max);
+
+  /// No description provided for @shared_media_action_save.
+  ///
+  /// In en, this message translates to:
+  /// **'Save'**
+  String get shared_media_action_save;
+
+  /// No description provided for @shared_media_action_share.
+  ///
+  /// In en, this message translates to:
+  /// **'Share'**
+  String get shared_media_action_share;
+
+  /// No description provided for @shared_media_action_delete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get shared_media_action_delete;
+
+  /// No description provided for @shared_media_action_go_to_message.
+  ///
+  /// In en, this message translates to:
+  /// **'Go to message'**
+  String get shared_media_action_go_to_message;
+
+  /// No description provided for @shared_media_delete_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete {count, plural, =1{1 message} other{{count} messages}}?'**
+  String shared_media_delete_title(int count);
+
+  /// No description provided for @shared_media_delete_body.
+  ///
+  /// In en, this message translates to:
+  /// **'This removes each selected item\'s entire message, including all of its attachments, from this device only. Copies saved or shared outside this app are not affected.'**
+  String get shared_media_delete_body;
+
+  /// No description provided for @shared_media_delete_confirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete for me'**
+  String get shared_media_delete_confirm;
+
+  /// No description provided for @shared_media_delete_cancel.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel'**
+  String get shared_media_delete_cancel;
+
+  /// No description provided for @shared_media_batch_partial_failure.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 item} other{{count} items}} couldn\'t be completed and stay selected'**
+  String shared_media_batch_partial_failure(int count);
+
+  /// No description provided for @shared_media_go_to_message_missing.
+  ///
+  /// In en, this message translates to:
+  /// **'This message is no longer in the conversation'**
+  String get shared_media_go_to_message_missing;
+
+  /// No description provided for @shared_media_bookmark_add.
+  ///
+  /// In en, this message translates to:
+  /// **'Bookmark'**
+  String get shared_media_bookmark_add;
+
+  /// No description provided for @shared_media_bookmark_remove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove bookmark'**
+  String get shared_media_bookmark_remove;
+
   /// No description provided for @conversation_block_contact.
   ///
   /// In en, this message translates to:

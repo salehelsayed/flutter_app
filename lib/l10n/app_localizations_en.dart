@@ -2126,6 +2126,112 @@ class AppLocalizationsEn extends AppLocalizations {
   String get conversation_introduce_to_circle => 'Introduce to your circle';
 
   @override
+  String get conversation_shared_media => 'Shared media';
+
+  @override
+  String get shared_media_title => 'Shared media';
+
+  @override
+  String get shared_media_filter_all => 'All';
+
+  @override
+  String get shared_media_filter_photos => 'Photos';
+
+  @override
+  String get shared_media_filter_videos => 'Videos';
+
+  @override
+  String get shared_media_filter_bookmarked => 'Bookmarked';
+
+  @override
+  String get shared_media_empty => 'No shared media yet';
+
+  @override
+  String get shared_media_load_failed => 'Couldn\'t load shared media';
+
+  @override
+  String get shared_media_kind_photo => 'Photo';
+
+  @override
+  String get shared_media_kind_video => 'Video';
+
+  @override
+  String get shared_media_state_missing => 'File missing';
+
+  @override
+  String get shared_media_state_evicted => 'Local copy removed';
+
+  @override
+  String get shared_media_state_not_downloaded => 'Not downloaded';
+
+  @override
+  String get shared_media_state_unverified => 'Couldn\'t verify';
+
+  @override
+  String shared_media_selection_count(int count) {
+    return '$count selected';
+  }
+
+  @override
+  String shared_media_selection_limit(int max) {
+    return 'You can select up to $max items';
+  }
+
+  @override
+  String get shared_media_action_save => 'Save';
+
+  @override
+  String get shared_media_action_share => 'Share';
+
+  @override
+  String get shared_media_action_delete => 'Delete';
+
+  @override
+  String get shared_media_action_go_to_message => 'Go to message';
+
+  @override
+  String shared_media_delete_title(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count messages',
+      one: '1 message',
+    );
+    return 'Delete $_temp0?';
+  }
+
+  @override
+  String get shared_media_delete_body =>
+      'This removes each selected item\'s entire message, including all of its attachments, from this device only. Copies saved or shared outside this app are not affected.';
+
+  @override
+  String get shared_media_delete_confirm => 'Delete for me';
+
+  @override
+  String get shared_media_delete_cancel => 'Cancel';
+
+  @override
+  String shared_media_batch_partial_failure(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count items',
+      one: '1 item',
+    );
+    return '$_temp0 couldn\'t be completed and stay selected';
+  }
+
+  @override
+  String get shared_media_go_to_message_missing =>
+      'This message is no longer in the conversation';
+
+  @override
+  String get shared_media_bookmark_add => 'Bookmark';
+
+  @override
+  String get shared_media_bookmark_remove => 'Remove bookmark';
+
+  @override
   String conversation_block_contact(String username) {
     return 'Block $username';
   }

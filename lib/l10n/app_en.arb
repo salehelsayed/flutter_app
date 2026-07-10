@@ -1087,6 +1087,62 @@
   "media_viewer_mute": "Mute",
   "media_viewer_unmute": "Unmute",
   "conversation_introduce_to_circle": "Introduce to your circle",
+  "conversation_shared_media": "Shared media",
+  "shared_media_title": "Shared media",
+  "shared_media_filter_all": "All",
+  "shared_media_filter_photos": "Photos",
+  "shared_media_filter_videos": "Videos",
+  "shared_media_filter_bookmarked": "Bookmarked",
+  "shared_media_empty": "No shared media yet",
+  "shared_media_load_failed": "Couldn't load shared media",
+  "shared_media_kind_photo": "Photo",
+  "shared_media_kind_video": "Video",
+  "shared_media_state_missing": "File missing",
+  "shared_media_state_evicted": "Local copy removed",
+  "shared_media_state_not_downloaded": "Not downloaded",
+  "shared_media_state_unverified": "Couldn't verify",
+  "shared_media_selection_count": "{count} selected",
+  "@shared_media_selection_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "shared_media_selection_limit": "You can select up to {max} items",
+  "@shared_media_selection_limit": {
+    "placeholders": {
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "shared_media_action_save": "Save",
+  "shared_media_action_share": "Share",
+  "shared_media_action_delete": "Delete",
+  "shared_media_action_go_to_message": "Go to message",
+  "shared_media_delete_title": "Delete {count, plural, =1{1 message} other{{count} messages}}?",
+  "@shared_media_delete_title": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "shared_media_delete_body": "This removes each selected item's entire message, including all of its attachments, from this device only. Copies saved or shared outside this app are not affected.",
+  "shared_media_delete_confirm": "Delete for me",
+  "shared_media_delete_cancel": "Cancel",
+  "shared_media_batch_partial_failure": "{count, plural, =1{1 item} other{{count} items}} couldn't be completed and stay selected",
+  "@shared_media_batch_partial_failure": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "shared_media_go_to_message_missing": "This message is no longer in the conversation",
+  "shared_media_bookmark_add": "Bookmark",
+  "shared_media_bookmark_remove": "Remove bookmark",
   "conversation_block_contact": "Block {username}",
   "@conversation_block_contact": {
     "placeholders": {

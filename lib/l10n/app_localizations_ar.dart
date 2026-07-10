@@ -2155,6 +2155,112 @@ class AppLocalizationsAr extends AppLocalizations {
   String get conversation_introduce_to_circle => 'عرّفه إلى دائرتك';
 
   @override
+  String get conversation_shared_media => 'الوسائط المشتركة';
+
+  @override
+  String get shared_media_title => 'الوسائط المشتركة';
+
+  @override
+  String get shared_media_filter_all => 'الكل';
+
+  @override
+  String get shared_media_filter_photos => 'الصور';
+
+  @override
+  String get shared_media_filter_videos => 'الفيديوهات';
+
+  @override
+  String get shared_media_filter_bookmarked => 'المحفوظة';
+
+  @override
+  String get shared_media_empty => 'لا توجد وسائط مشتركة بعد';
+
+  @override
+  String get shared_media_load_failed => 'تعذّر تحميل الوسائط المشتركة';
+
+  @override
+  String get shared_media_kind_photo => 'صورة';
+
+  @override
+  String get shared_media_kind_video => 'فيديو';
+
+  @override
+  String get shared_media_state_missing => 'الملف مفقود';
+
+  @override
+  String get shared_media_state_evicted => 'أُزيلت النسخة المحلية';
+
+  @override
+  String get shared_media_state_not_downloaded => 'لم يتم التنزيل';
+
+  @override
+  String get shared_media_state_unverified => 'تعذّر التحقق';
+
+  @override
+  String shared_media_selection_count(int count) {
+    return '$count محدد';
+  }
+
+  @override
+  String shared_media_selection_limit(int max) {
+    return 'يمكنك تحديد ما يصل إلى $max عناصر';
+  }
+
+  @override
+  String get shared_media_action_save => 'حفظ';
+
+  @override
+  String get shared_media_action_share => 'مشاركة';
+
+  @override
+  String get shared_media_action_delete => 'حذف';
+
+  @override
+  String get shared_media_action_go_to_message => 'الانتقال إلى الرسالة';
+
+  @override
+  String shared_media_delete_title(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count رسائل',
+      one: 'رسالة واحدة',
+    );
+    return 'حذف $_temp0؟';
+  }
+
+  @override
+  String get shared_media_delete_body =>
+      'يؤدي هذا إلى إزالة الرسالة الكاملة لكل عنصر محدد، بما في ذلك جميع مرفقاتها، من هذا الجهاز فقط. لن تتأثر النسخ المحفوظة أو المشاركة خارج هذا التطبيق.';
+
+  @override
+  String get shared_media_delete_confirm => 'حذف لي فقط';
+
+  @override
+  String get shared_media_delete_cancel => 'إلغاء';
+
+  @override
+  String shared_media_batch_partial_failure(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count عناصر لم تكتمل وتبقى محددة',
+      one: 'عنصر واحد لم يكتمل ويبقى محددًا',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get shared_media_go_to_message_missing =>
+      'هذه الرسالة لم تعد موجودة في المحادثة';
+
+  @override
+  String get shared_media_bookmark_add => 'حفظ كإشارة مرجعية';
+
+  @override
+  String get shared_media_bookmark_remove => 'إزالة الإشارة المرجعية';
+
+  @override
   String conversation_block_contact(String username) {
     return 'حظر $username';
   }

@@ -25,12 +25,19 @@ class FullScreenTypedMediaViewer extends StatefulWidget {
     required this.items,
     this.initialIndex = 0,
     this.onAction,
+    this.onPageChanged,
     this.resumeStore,
     this.playbackAdapterFactory,
   });
 
   final List<MediaViewerItem> items;
   final int initialIndex;
+
+  /// Notified with the new current index after every page change (233: the
+  /// shared-media library uses this to append the next page lazily near the
+  /// viewer boundary). Purely observational — the viewer keeps its own
+  /// current-item state either way.
+  final ValueChanged<int>? onPageChanged;
 
   /// Invoked with the exact current item + action. Awaited once; the viewer
   /// never pops or mutates a chat optimistically on failure.
@@ -159,7 +166,10 @@ class _FullScreenTypedMediaViewerState
           PageView.builder(
             controller: _pageController,
             itemCount: items.length,
-            onPageChanged: (index) => setState(() => _currentIndex = index),
+            onPageChanged: (index) {
+              setState(() => _currentIndex = index);
+              widget.onPageChanged?.call(index);
+            },
             itemBuilder: (context, index) => _buildPage(items[index], index),
           ),
           Positioned(

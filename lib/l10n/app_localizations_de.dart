@@ -2177,6 +2177,113 @@ class AppLocalizationsDe extends AppLocalizations {
   String get conversation_introduce_to_circle => 'Deinem Kreis vorstellen';
 
   @override
+  String get conversation_shared_media => 'Geteilte Medien';
+
+  @override
+  String get shared_media_title => 'Geteilte Medien';
+
+  @override
+  String get shared_media_filter_all => 'Alle';
+
+  @override
+  String get shared_media_filter_photos => 'Fotos';
+
+  @override
+  String get shared_media_filter_videos => 'Videos';
+
+  @override
+  String get shared_media_filter_bookmarked => 'Gemerkt';
+
+  @override
+  String get shared_media_empty => 'Noch keine geteilten Medien';
+
+  @override
+  String get shared_media_load_failed =>
+      'Geteilte Medien konnten nicht geladen werden';
+
+  @override
+  String get shared_media_kind_photo => 'Foto';
+
+  @override
+  String get shared_media_kind_video => 'Video';
+
+  @override
+  String get shared_media_state_missing => 'Datei fehlt';
+
+  @override
+  String get shared_media_state_evicted => 'Lokale Kopie entfernt';
+
+  @override
+  String get shared_media_state_not_downloaded => 'Nicht heruntergeladen';
+
+  @override
+  String get shared_media_state_unverified => 'Konnte nicht überprüft werden';
+
+  @override
+  String shared_media_selection_count(int count) {
+    return '$count ausgewählt';
+  }
+
+  @override
+  String shared_media_selection_limit(int max) {
+    return 'Du kannst bis zu $max Elemente auswählen';
+  }
+
+  @override
+  String get shared_media_action_save => 'Speichern';
+
+  @override
+  String get shared_media_action_share => 'Teilen';
+
+  @override
+  String get shared_media_action_delete => 'Löschen';
+
+  @override
+  String get shared_media_action_go_to_message => 'Zur Nachricht';
+
+  @override
+  String shared_media_delete_title(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count Nachrichten',
+      one: '1 Nachricht',
+    );
+    return '$_temp0 löschen?';
+  }
+
+  @override
+  String get shared_media_delete_body =>
+      'Dies entfernt die gesamte Nachricht jedes ausgewählten Elements, einschließlich aller Anhänge, nur von diesem Gerät. Außerhalb dieser App gespeicherte oder geteilte Kopien sind nicht betroffen.';
+
+  @override
+  String get shared_media_delete_confirm => 'Für mich löschen';
+
+  @override
+  String get shared_media_delete_cancel => 'Abbrechen';
+
+  @override
+  String shared_media_batch_partial_failure(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count Elemente konnten',
+      one: '1 Element konnte',
+    );
+    return '$_temp0 nicht abgeschlossen werden und bleiben ausgewählt';
+  }
+
+  @override
+  String get shared_media_go_to_message_missing =>
+      'Diese Nachricht ist nicht mehr in der Unterhaltung';
+
+  @override
+  String get shared_media_bookmark_add => 'Merken';
+
+  @override
+  String get shared_media_bookmark_remove => 'Merken aufheben';
+
+  @override
   String conversation_block_contact(String username) {
     return '$username blockieren';
   }

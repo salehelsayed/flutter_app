@@ -88,6 +88,17 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/features/conversation/domain/models/message_payload_test.dart"
   "test/features/conversation/presentation/widgets/letter_card_test.dart"
   "test/features/conversation/presentation/screens/conversation_screen_test.dart"
+  # 233: 1:1 shared media library — strict direct-scoped paging/filters/
+  # cursors, cross-message typed viewer + lazy continuation, scoped-page
+  # bookmarks, batch save/share with the ten-item ceiling, confirmed
+  # whole-message batch delete, Go to Message, and the frozen local/
+  # transport-free boundary contract.
+  "test/features/conversation/presentation/screens/conversation_shared_media_library_test.dart"
+  "test/features/conversation/presentation/screens/conversation_shared_media_viewer_test.dart"
+  "test/features/conversation/presentation/screens/conversation_shared_media_go_to_message_test.dart"
+  "test/features/conversation/application/direct_media_library_batch_actions_test.dart"
+  "test/features/conversation/application/direct_media_library_batch_delete_test.dart"
+  "test/features/conversation/application/direct_media_library_boundary_test.dart"
 )
 
 readonly GO_BRIDGE_CONNECTED_PEER_TEST="go-mknoon/bridge/bridge_test.go"

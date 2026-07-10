@@ -1038,6 +1038,62 @@
   "media_viewer_mute": "Stummschalten",
   "media_viewer_unmute": "Ton ein",
   "conversation_introduce_to_circle": "Deinem Kreis vorstellen",
+  "conversation_shared_media": "Geteilte Medien",
+  "shared_media_title": "Geteilte Medien",
+  "shared_media_filter_all": "Alle",
+  "shared_media_filter_photos": "Fotos",
+  "shared_media_filter_videos": "Videos",
+  "shared_media_filter_bookmarked": "Gemerkt",
+  "shared_media_empty": "Noch keine geteilten Medien",
+  "shared_media_load_failed": "Geteilte Medien konnten nicht geladen werden",
+  "shared_media_kind_photo": "Foto",
+  "shared_media_kind_video": "Video",
+  "shared_media_state_missing": "Datei fehlt",
+  "shared_media_state_evicted": "Lokale Kopie entfernt",
+  "shared_media_state_not_downloaded": "Nicht heruntergeladen",
+  "shared_media_state_unverified": "Konnte nicht überprüft werden",
+  "shared_media_selection_count": "{count} ausgewählt",
+  "@shared_media_selection_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "shared_media_selection_limit": "Du kannst bis zu {max} Elemente auswählen",
+  "@shared_media_selection_limit": {
+    "placeholders": {
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "shared_media_action_save": "Speichern",
+  "shared_media_action_share": "Teilen",
+  "shared_media_action_delete": "Löschen",
+  "shared_media_action_go_to_message": "Zur Nachricht",
+  "shared_media_delete_title": "{count, plural, =1{1 Nachricht} other{{count} Nachrichten}} löschen?",
+  "@shared_media_delete_title": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "shared_media_delete_body": "Dies entfernt die gesamte Nachricht jedes ausgewählten Elements, einschließlich aller Anhänge, nur von diesem Gerät. Außerhalb dieser App gespeicherte oder geteilte Kopien sind nicht betroffen.",
+  "shared_media_delete_confirm": "Für mich löschen",
+  "shared_media_delete_cancel": "Abbrechen",
+  "shared_media_batch_partial_failure": "{count, plural, =1{1 Element konnte} other{{count} Elemente konnten}} nicht abgeschlossen werden und bleiben ausgewählt",
+  "@shared_media_batch_partial_failure": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "shared_media_go_to_message_missing": "Diese Nachricht ist nicht mehr in der Unterhaltung",
+  "shared_media_bookmark_add": "Merken",
+  "shared_media_bookmark_remove": "Merken aufheben",
   "conversation_block_contact": "{username} blockieren",
   "@conversation_block_contact": {
     "placeholders": {

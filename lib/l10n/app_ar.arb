@@ -1038,6 +1038,62 @@
   "media_viewer_mute": "كتم الصوت",
   "media_viewer_unmute": "إلغاء الكتم",
   "conversation_introduce_to_circle": "عرّفه إلى دائرتك",
+  "conversation_shared_media": "الوسائط المشتركة",
+  "shared_media_title": "الوسائط المشتركة",
+  "shared_media_filter_all": "الكل",
+  "shared_media_filter_photos": "الصور",
+  "shared_media_filter_videos": "الفيديوهات",
+  "shared_media_filter_bookmarked": "المحفوظة",
+  "shared_media_empty": "لا توجد وسائط مشتركة بعد",
+  "shared_media_load_failed": "تعذّر تحميل الوسائط المشتركة",
+  "shared_media_kind_photo": "صورة",
+  "shared_media_kind_video": "فيديو",
+  "shared_media_state_missing": "الملف مفقود",
+  "shared_media_state_evicted": "أُزيلت النسخة المحلية",
+  "shared_media_state_not_downloaded": "لم يتم التنزيل",
+  "shared_media_state_unverified": "تعذّر التحقق",
+  "shared_media_selection_count": "{count} محدد",
+  "@shared_media_selection_count": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "shared_media_selection_limit": "يمكنك تحديد ما يصل إلى {max} عناصر",
+  "@shared_media_selection_limit": {
+    "placeholders": {
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "shared_media_action_save": "حفظ",
+  "shared_media_action_share": "مشاركة",
+  "shared_media_action_delete": "حذف",
+  "shared_media_action_go_to_message": "الانتقال إلى الرسالة",
+  "shared_media_delete_title": "حذف {count, plural, =1{رسالة واحدة} other{{count} رسائل}}؟",
+  "@shared_media_delete_title": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "shared_media_delete_body": "يؤدي هذا إلى إزالة الرسالة الكاملة لكل عنصر محدد، بما في ذلك جميع مرفقاتها، من هذا الجهاز فقط. لن تتأثر النسخ المحفوظة أو المشاركة خارج هذا التطبيق.",
+  "shared_media_delete_confirm": "حذف لي فقط",
+  "shared_media_delete_cancel": "إلغاء",
+  "shared_media_batch_partial_failure": "{count, plural, =1{عنصر واحد لم يكتمل ويبقى محددًا} other{{count} عناصر لم تكتمل وتبقى محددة}}",
+  "@shared_media_batch_partial_failure": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "shared_media_go_to_message_missing": "هذه الرسالة لم تعد موجودة في المحادثة",
+  "shared_media_bookmark_add": "حفظ كإشارة مرجعية",
+  "shared_media_bookmark_remove": "إزالة الإشارة المرجعية",
   "conversation_block_contact": "حظر {username}",
   "@conversation_block_contact": {
     "placeholders": {

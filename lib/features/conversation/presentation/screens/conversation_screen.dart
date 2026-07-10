@@ -232,6 +232,10 @@ class ConversationScreen extends StatefulWidget {
   final ConversationMediaViewerBuilder? mediaViewerBuilder;
   final BackgroundPreference backgroundPreference;
 
+  /// 233: transiently highlights one message row (Go to Message reveal).
+  /// Purely decorative — the row identity stays `ValueKey('msg-<id>')`.
+  final String? highlightedMessageId;
+
   /// 231: direct received-media core actions. All three are optional; when
   /// none is provided the media tiles keep their pre-231 behavior (tap-to-view
   /// only, row-level long press).
@@ -308,6 +312,7 @@ class ConversationScreen extends StatefulWidget {
     this.allowEditAction = true,
     this.mediaViewerBuilder,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
+    this.highlightedMessageId,
     this.onMediaEgress,
     this.onLoadMediaInfo,
     this.onForwardMedia,
@@ -781,6 +786,18 @@ class _ConversationScreenState extends State<ConversationScreen> {
             if (!message.isDeleted && widget.onQuoteReply != null) {
               bubble = SwipeToQuoteBubble(
                 onQuoteTriggered: () => widget.onQuoteReply!(message.id),
+                child: bubble,
+              );
+            }
+
+            // 233: transient Go to Message highlight around the exact row.
+            if (widget.highlightedMessageId == message.id) {
+              bubble = DecoratedBox(
+                key: ValueKey('conversation-highlight-${message.id}'),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  color: const Color.fromRGBO(59, 130, 246, 0.18),
+                ),
                 child: bubble,
               );
             }

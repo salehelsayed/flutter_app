@@ -190,6 +190,17 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/share/application/share_batch_delivery_coordinator_test.dart"
   "test/features/share/presentation/share_target_picker_wired_test.dart"
   "test/features/conversation/domain/models/message_payload_test.dart"
+  # 233: 1:1 shared media library — strict direct-scoped paging/filters/
+  # cursors, cross-message typed viewer + lazy continuation, scoped-page
+  # bookmarks, batch save/share with the ten-item ceiling, confirmed
+  # whole-message batch delete, Go to Message, and the frozen local/
+  # transport-free boundary contract.
+  "test/features/conversation/presentation/screens/conversation_shared_media_library_test.dart"
+  "test/features/conversation/presentation/screens/conversation_shared_media_viewer_test.dart"
+  "test/features/conversation/presentation/screens/conversation_shared_media_go_to_message_test.dart"
+  "test/features/conversation/application/direct_media_library_batch_actions_test.dart"
+  "test/features/conversation/application/direct_media_library_batch_delete_test.dart"
+  "test/features/conversation/application/direct_media_library_boundary_test.dart"
 )
 
 readonly FEED_TESTS=(

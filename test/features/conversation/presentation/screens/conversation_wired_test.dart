@@ -349,6 +349,10 @@ class FakeMessageRepository
   int deleteMessageCallCount = 0;
   Completer<void>? getMessagesPageGate;
   List<ConversationMessage>? getMessagesPageSnapshot;
+
+  /// 233 sentinel: the exact (limit, beforeTimestamp) of every page request,
+  /// so pagination tests can prove the 50-row window and cursor use.
+  final List<(int, String?)> getMessagesPageRequests = <(int, String?)>[];
   final StreamController<ConversationMessage> _messageChangeController =
       StreamController<ConversationMessage>.broadcast();
 
@@ -445,6 +449,7 @@ class FakeMessageRepository
     String? beforeTimestamp,
   }) async {
     getMessagesPageCalls++;
+    getMessagesPageRequests.add((limit, beforeTimestamp));
     final gate = getMessagesPageGate;
     if (gate != null && !gate.isCompleted) {
       await gate.future;
@@ -9273,6 +9278,69 @@ void main() {
         expect(downloadCalls.single.$1, 'att-evicted-ui');
         expect(downloadCalls.single.$2, MediaOwnerLane.direct,
             reason: 'the explicit retry stays owner-aware');
+      },
+    );
+  });
+
+  // ── 233 sentinel: direct pagination window preservation ──────────────────
+  group('233 direct pagination preservation', () {
+    testWidgets(
+      'initial fifty and older page append without resetting the window',
+      (tester) async {
+        tester.view.physicalSize = const Size(1080, 2160);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final messageRepo = FakeMessageRepository();
+        String tsOf(int i) =>
+            DateTime.utc(2026, 2, 11, 10, 0, 0, i).toIso8601String();
+        for (var i = 0; i < 60; i++) {
+          final ts = tsOf(i);
+          messageRepo.store['msg-233-$i'] = ConversationMessage(
+            id: 'msg-233-$i',
+            contactPeerId: makeContact().peerId,
+            senderPeerId: makeContact().peerId,
+            text: 'letter $i of 233',
+            timestamp: ts,
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: ts,
+          );
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: messageRepo,
+          chatListener: ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
+            messageRepo: messageRepo,
+            contactRepo: FakeContactRepository(),
+          ),
+          sendFn: _instantSuccessSendFn,
+        );
+        await tester.pump(const Duration(milliseconds: 300));
+
+        // Exactly one initial page at the literal 50-row window, no cursor.
+        expect(messageRepo.getMessagesPageRequests, [(50, null)]);
+        expect(find.textContaining('letter 59 of 233'), findsOneWidget);
+
+        // Scrolling toward the load edge of the reversed list appends ONE
+        // older page whose cursor is the current window's oldest timestamp.
+        await tester.drag(find.byType(ListView).first, const Offset(0, 80));
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pump(const Duration(milliseconds: 400));
+
+        expect(messageRepo.getMessagesPageRequests, hasLength(2));
+        expect(messageRepo.getMessagesPageRequests.last, (50, tsOf(10)));
+
+        // The loaded window was appended, not replaced: the live edge is
+        // still present without any third page request (no window reset).
+        await tester.drag(find.byType(ListView).first, const Offset(0, -400));
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(find.textContaining('letter 59 of 233'), findsOneWidget);
+        expect(messageRepo.getMessagesPageRequests, hasLength(2));
       },
     );
   });

@@ -158,6 +158,136 @@ String _defaultEgressRequestId() => const Uuid().v4();
 
 bool _defaultFileExists(String resolvedPath) => File(resolvedPath).existsSync();
 
+/// 233: the settled decision for ONE current direct row — either a typed
+/// plan-231 denial or a qualified egress candidate built from the RELOADED
+/// row (never a caller snapshot).
+class DirectMediaCurrentRowDecision {
+  const DirectMediaCurrentRowDecision.denied(DirectMediaEgressDenial this.denial)
+      : parent = null,
+        current = null,
+        storedPath = null;
+
+  const DirectMediaCurrentRowDecision.qualified({
+    required ConversationMessage this.parent,
+    required MediaAttachment this.current,
+    required String this.storedPath,
+  }) : denial = null;
+
+  final DirectMediaEgressDenial? denial;
+  final ConversationMessage? parent;
+  final MediaAttachment? current;
+  final String? storedPath;
+
+  bool get isQualified => denial == null;
+
+  ReceivedMediaEgressCandidate get candidate => ReceivedMediaEgressCandidate(
+    attachmentId: current!.id,
+    storedPath: storedPath!,
+    mime: current!.mime,
+  );
+}
+
+/// Plan 231's current-row candidate qualification, extracted (233) so the
+/// single-item controller and the shared-media batch coordinator apply ONE
+/// fail-closed policy. Reloads the parent message and the current
+/// [MediaOwnerLane.direct] attachment row immediately before any
+/// irreversible egress; viewer/library path/MIME snapshots are never egress
+/// authority.
+Future<DirectMediaCurrentRowDecision> qualifyCurrentDirectMediaRow({
+  required DirectReceivedMediaActionIdentity identity,
+  required DirectParentMessageLoader loadParentMessage,
+  required MediaAttachmentRepository mediaAttachmentRepo,
+  DirectMediaLaneQualifier qualifier = defaultDirectMediaLaneQualifier,
+  String Function(String storedPath) resolveStoredPath =
+      MediaFileManager.resolveStoredPathSync,
+  bool Function(String resolvedPath) fileExists = _defaultFileExists,
+}) async {
+  final parent = await loadParentMessage(identity.messageId);
+  if (parent == null) {
+    return const DirectMediaCurrentRowDecision.denied(
+      DirectMediaEgressDenial.parentNotFound,
+    );
+  }
+  if (parent.isDeleted) {
+    return const DirectMediaCurrentRowDecision.denied(
+      DirectMediaEgressDenial.parentDeleted,
+    );
+  }
+  if (!parent.isIncoming) {
+    return const DirectMediaCurrentRowDecision.denied(
+      DirectMediaEgressDenial.parentNotIncoming,
+    );
+  }
+
+  final rows = await mediaAttachmentRepo.getAttachmentsForMessage(
+    identity.messageId,
+    owner: MediaOwnerLane.direct,
+  );
+  MediaAttachment? current;
+  for (final row in rows) {
+    if (row.id == identity.attachmentId) {
+      current = row;
+      break;
+    }
+  }
+  if (current == null) {
+    return const DirectMediaCurrentRowDecision.denied(
+      DirectMediaEgressDenial.attachmentNotCurrent,
+    );
+  }
+  // The query is owner-scoped, but a returned row is re-verified — a
+  // legacy/misbehaving lookup must not launder an unresolved or foreign
+  // lane row into an egress.
+  if (current.ownerLane != MediaOwnerLane.direct) {
+    return const DirectMediaCurrentRowDecision.denied(
+      DirectMediaEgressDenial.wrongOwner,
+    );
+  }
+  if (current.downloadStatus == kMediaDownloadStatusIntegrityFailed) {
+    return const DirectMediaCurrentRowDecision.denied(
+      DirectMediaEgressDenial.integrityFailed,
+    );
+  }
+  if (current.downloadStatus != kMediaDownloadStatusDone) {
+    return const DirectMediaCurrentRowDecision.denied(
+      DirectMediaEgressDenial.notDownloaded,
+    );
+  }
+  final storedPath = current.localPath;
+  if (storedPath == null || storedPath.isEmpty) {
+    return const DirectMediaCurrentRowDecision.denied(
+      DirectMediaEgressDenial.fileMissing,
+    );
+  }
+  if (!fileExists(resolveStoredPath(storedPath))) {
+    return const DirectMediaCurrentRowDecision.denied(
+      DirectMediaEgressDenial.fileMissing,
+    );
+  }
+
+  final qualification = await qualifier(parent, current);
+  switch (qualification) {
+    case null:
+      return const DirectMediaCurrentRowDecision.denied(
+        DirectMediaEgressDenial.policyUnavailable,
+      );
+    case DirectMediaLaneQualification.expired:
+      return const DirectMediaCurrentRowDecision.denied(
+        DirectMediaEgressDenial.expired,
+      );
+    case DirectMediaLaneQualification.protected:
+      return const DirectMediaCurrentRowDecision.denied(
+        DirectMediaEgressDenial.protected,
+      );
+    case DirectMediaLaneQualification.eligible:
+      return DirectMediaCurrentRowDecision.qualified(
+        parent: parent,
+        current: current,
+        storedPath: storedPath,
+      );
+  }
+}
+
 class ReceivedMediaActionController {
   ReceivedMediaActionController({
     required DirectParentMessageLoader loadParentMessage,
@@ -194,97 +324,22 @@ class ReceivedMediaActionController {
     required DirectReceivedMediaActionIdentity identity,
     required MediaEgressDestination destination,
   }) async {
-    final parent = await _loadParentMessage(identity.messageId);
-    if (parent == null) {
-      return const DirectReceivedMediaEgressOutcome.denied(
-        DirectMediaEgressDenial.parentNotFound,
-      );
-    }
-    if (parent.isDeleted) {
-      return const DirectReceivedMediaEgressOutcome.denied(
-        DirectMediaEgressDenial.parentDeleted,
-      );
-    }
-    if (!parent.isIncoming) {
-      return const DirectReceivedMediaEgressOutcome.denied(
-        DirectMediaEgressDenial.parentNotIncoming,
-      );
-    }
-
-    final rows = await _mediaAttachmentRepo.getAttachmentsForMessage(
-      identity.messageId,
-      owner: MediaOwnerLane.direct,
+    final decision = await qualifyCurrentDirectMediaRow(
+      identity: identity,
+      loadParentMessage: _loadParentMessage,
+      mediaAttachmentRepo: _mediaAttachmentRepo,
+      qualifier: _qualifier,
+      resolveStoredPath: _resolveStoredPath,
+      fileExists: _fileExists,
     );
-    MediaAttachment? current;
-    for (final row in rows) {
-      if (row.id == identity.attachmentId) {
-        current = row;
-        break;
-      }
-    }
-    if (current == null) {
-      return const DirectReceivedMediaEgressOutcome.denied(
-        DirectMediaEgressDenial.attachmentNotCurrent,
-      );
-    }
-    // The query is owner-scoped, but a returned row is re-verified — a
-    // legacy/misbehaving lookup must not launder an unresolved or foreign
-    // lane row into an egress.
-    if (current.ownerLane != MediaOwnerLane.direct) {
-      return const DirectReceivedMediaEgressOutcome.denied(
-        DirectMediaEgressDenial.wrongOwner,
-      );
-    }
-    if (current.downloadStatus == kMediaDownloadStatusIntegrityFailed) {
-      return const DirectReceivedMediaEgressOutcome.denied(
-        DirectMediaEgressDenial.integrityFailed,
-      );
-    }
-    if (current.downloadStatus != kMediaDownloadStatusDone) {
-      return const DirectReceivedMediaEgressOutcome.denied(
-        DirectMediaEgressDenial.notDownloaded,
-      );
-    }
-    final storedPath = current.localPath;
-    if (storedPath == null || storedPath.isEmpty) {
-      return const DirectReceivedMediaEgressOutcome.denied(
-        DirectMediaEgressDenial.fileMissing,
-      );
-    }
-    if (!_fileExists(_resolveStoredPath(storedPath))) {
-      return const DirectReceivedMediaEgressOutcome.denied(
-        DirectMediaEgressDenial.fileMissing,
-      );
-    }
-
-    final qualification = await _qualifier(parent, current);
-    switch (qualification) {
-      case null:
-        return const DirectReceivedMediaEgressOutcome.denied(
-          DirectMediaEgressDenial.policyUnavailable,
-        );
-      case DirectMediaLaneQualification.expired:
-        return const DirectReceivedMediaEgressOutcome.denied(
-          DirectMediaEgressDenial.expired,
-        );
-      case DirectMediaLaneQualification.protected:
-        return const DirectReceivedMediaEgressOutcome.denied(
-          DirectMediaEgressDenial.protected,
-        );
-      case DirectMediaLaneQualification.eligible:
-        break;
+    if (!decision.isQualified) {
+      return DirectReceivedMediaEgressOutcome.denied(decision.denial!);
     }
 
     final result = await _egressService.perform(
       requestId: _requestIdFactory(),
       destination: destination,
-      selection: [
-        ReceivedMediaEgressCandidate(
-          attachmentId: current.id,
-          storedPath: storedPath,
-          mime: current.mime,
-        ),
-      ],
+      selection: [decision.candidate],
     );
     return DirectReceivedMediaEgressOutcome.performed(result);
   }
