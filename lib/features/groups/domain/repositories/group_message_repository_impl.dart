@@ -95,6 +95,11 @@ class GroupMessageRepositoryImpl
   dbRecordGroupMessageRetryFailureFn;
   final Future<int> Function()? dbClearGroupMessageRetryBackoffFn;
   final Future<void> Function(String id)? dbResetGroupMessageRetryStateFn;
+
+  /// 235: migration-069 tombstone row loader (`message_id -> row with
+  /// group_id`). Optional; null keeps [getLocalDeletionGroupId] conservative.
+  final Future<Map<String, Object?>?> Function(String messageId)?
+  dbLoadGroupMessageLocalDeletionFn;
   final Future<String?> Function(String groupId)? dbLoadGroupInboxCursorFn;
   final Future<List<Map<String, Object?>>> Function(
     String groupId,
@@ -135,6 +140,7 @@ class GroupMessageRepositoryImpl
     this.dbRecordGroupMessageRetryFailureFn,
     this.dbClearGroupMessageRetryBackoffFn,
     this.dbResetGroupMessageRetryStateFn,
+    this.dbLoadGroupMessageLocalDeletionFn,
     this.dbLoadGroupInboxCursorFn,
     this.dbLoadGroupMessageReceiptsFn,
     this.dbRunGroupInboxPageTransactionFn,
@@ -471,6 +477,14 @@ class GroupMessageRepositoryImpl
   @override
   Future<void> deleteMessage(String id) async {
     await dbDeleteGroupMessage(id);
+  }
+
+  @override
+  Future<String?> getLocalDeletionGroupId(String messageId) async {
+    final load = dbLoadGroupMessageLocalDeletionFn;
+    if (load == null) return null;
+    final row = await load(messageId);
+    return row?['group_id'] as String?;
   }
 
   @override

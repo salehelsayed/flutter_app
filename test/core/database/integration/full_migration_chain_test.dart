@@ -1452,7 +1452,7 @@ void main() {
 
   group('Production migration registries (TC-228-01)', () {
     test('production registries contain one ordered direct forwarded v97 entry', () {
-      expect(currentIdentityDatabaseVersion, 97);
+      expect(currentIdentityDatabaseVersion, 98);
       for (final registry in [
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -1463,6 +1463,23 @@ void main() {
         expect(index96, greaterThanOrEqualTo(0));
         expect(index97, index96 + 1);
         expect(registry[index97].name, '097_direct_message_forwarded');
+      }
+    });
+
+    // 235: DB v98 — group media deletion journal appended exactly once to
+    // BOTH production registries, immediately after v97.
+    test('production registries contain one ordered deletion journal v98 entry', () {
+      expect(currentIdentityDatabaseVersion, 98);
+      for (final registry in [
+        productionCreateMigrations,
+        productionUpgradeMigrations,
+      ]) {
+        expect(registry.where((entry) => entry.version == 98), hasLength(1));
+        final index97 = registry.indexWhere((entry) => entry.version == 97);
+        final index98 = registry.indexWhere((entry) => entry.version == 98);
+        expect(index97, greaterThanOrEqualTo(0));
+        expect(index98, index97 + 1);
+        expect(registry[index98].name, '098_group_media_deletion_journal');
       }
     });
 
@@ -1601,7 +1618,7 @@ void main() {
       () async {
         // TC-228-13: v96 is the current version and appears exactly once, as
         // the final entry, in BOTH production registry branches.
-        expect(currentIdentityDatabaseVersion, 97);
+        expect(currentIdentityDatabaseVersion, 98);
         expect(
           productionCreateMigrations.where((e) => e.version == 96).length,
           1,

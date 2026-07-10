@@ -110,8 +110,7 @@ class GroupMediaInfoSheet extends StatelessWidget {
     );
   }
 
-  String _kindLabel(AppLocalizations l10n) =>
-      attachment.mediaType == 'video'
+  String _kindLabel(AppLocalizations l10n) => attachment.mediaType == 'video'
       ? l10n.group_media_info_kind_video
       : l10n.group_media_info_kind_image;
 
@@ -178,10 +177,7 @@ class _InfoRow extends StatelessWidget {
               ),
             ),
           ),
-          if (icon != null) ...[
-            Icon(icon, size: 16),
-            const SizedBox(width: 6),
-          ],
+          if (icon != null) ...[Icon(icon, size: 16), const SizedBox(width: 6)],
           Expanded(
             child: Text(value, key: valueKey, style: textTheme.bodyMedium),
           ),

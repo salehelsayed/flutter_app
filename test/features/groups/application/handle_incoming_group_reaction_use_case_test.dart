@@ -893,4 +893,71 @@ void main() {
       expect(await reactionRepo.getReactionsForMessage('msg-1'), hasLength(1));
     },
   );
+
+  // 235 (TC-235-07R): a Delete-for-me'd exact (group, message) target is
+  // DELETED, not late — later reactions are discarded, never buffered into
+  // group_pending_reactions or any retry path.
+  test(
+    'GMA-07R locally deleted exact group parent cannot refill reaction buffers',
+    () async {
+      final pendingRepo = InMemoryGroupPendingReactionRepository();
+
+      // The exact tombstone for (group-1, msg-deleted): discard.
+      msgRepo.seedLocalDeletion(messageId: 'msg-deleted', groupId: 'group-1');
+      final (deletedResult, deletedChange) = await handleIncomingGroupReaction(
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        msgRepo: msgRepo,
+        pendingReactionRepo: pendingRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        reactionJson: makeReactionJson(messageId: 'msg-deleted'),
+      );
+      expect(
+        deletedResult,
+        HandleGroupReactionResult.discardedLocallyDeleted,
+      );
+      expect(deletedChange, isNull);
+      expect(
+        await pendingRepo.getPendingReactionsForMessage(
+          groupId: 'group-1',
+          messageId: 'msg-deleted',
+        ),
+        isEmpty,
+        reason: 'a discarded reaction must never enter the pending buffer',
+      );
+      expect(
+        await reactionRepo.getReactionsForMessage('msg-deleted'),
+        isEmpty,
+      );
+
+      // A tombstone belonging to ANOTHER group does not discard this group's
+      // late reaction — it buffers exactly as before (INV-R4).
+      msgRepo.seedLocalDeletion(
+        messageId: 'msg-other-group-deleted',
+        groupId: 'group-9',
+      );
+      final (bufferedResult, _) = await handleIncomingGroupReaction(
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        msgRepo: msgRepo,
+        pendingReactionRepo: pendingRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        reactionJson: makeReactionJson(messageId: 'msg-other-group-deleted'),
+      );
+      expect(
+        bufferedResult,
+        HandleGroupReactionResult.bufferedPendingMessage,
+        reason: "another group's tombstone is not this group's deletion",
+      );
+      expect(
+        await pendingRepo.getPendingReactionsForMessage(
+          groupId: 'group-1',
+          messageId: 'msg-other-group-deleted',
+        ),
+        hasLength(1),
+      );
+    },
+  );
 }

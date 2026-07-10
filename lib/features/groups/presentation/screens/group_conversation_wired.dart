@@ -329,6 +329,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   // row before every egress call; the delete coordinator is UI-injected only
   // until the v98 journal persistence slice lands.
   GroupReceivedMediaActionsController? _mediaActionsController;
+
+  /// 235: injected coordinator wins; otherwise the process-wide production
+  /// default set by main() (null in tests that set neither -> Delete hidden).
+  GroupMediaDeleteForMeCoordinator? _mediaDeleteForMeCoordinator;
   final Set<String> _deleteForMeInFlight = <String>{};
 
   // Reaction state
@@ -490,6 +494,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                 mediaFileManager: widget.mediaFileManager,
               )
             : null);
+    _mediaDeleteForMeCoordinator =
+        widget.mediaDeleteForMeCoordinator ??
+        defaultGroupMediaDeleteForMeCoordinator;
     _isLifecycleResumed = _currentLifecycleAllowsVisibleRead();
     _draftText = widget.initialText ?? '';
     widget.groupConversationTracker?.setActive(_activeGroupConversationKey);
@@ -1263,7 +1270,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     }
   }
 
-
   Future<void> _loadIdentity() async {
     try {
       final identity = await widget.identityRepo.loadIdentity();
@@ -1531,8 +1537,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   /// announcement is never a third storage owner.
   MediaConversationKind get _mediaConversationKind =>
       _group.type == GroupType.announcement
-          ? MediaConversationKind.announcement
-          : MediaConversationKind.discussion;
+      ? MediaConversationKind.announcement
+      : MediaConversationKind.discussion;
 
   /// 229: policy check run immediately before each automatic group transfer.
   /// An untrusted-row policy throw fails closed (no transfer).
@@ -1553,42 +1559,41 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   void _startListening() {
-    _messageSubscription = widget.groupMessageListener.groupMessageStream
-        .listen(
-          (message) {
-            if (message.groupId == widget.group.id) {
-              unawaited(_applyMessageUpdate(message));
-              if (message.id.startsWith('sys-group_metadata_updated:') ||
-                  message.id.startsWith('sys-group_dissolved:') ||
-                  message.id.startsWith('sys-member_role_updated:')) {
-                // Group-row changes (name/avatar, dissolve, self's role for the
-                // announcement gate) reload the visible group row.
-                unawaited(_refreshVisibleGroup());
-              }
-              if (message.id.startsWith('sys-members_added:') ||
-                  message.id.startsWith('sys-member_added:') ||
-                  message.id.startsWith('sys-member_removed:') ||
-                  message.id.startsWith('sys-member_joined:') ||
-                  message.id.startsWith('sys-member_role_updated:')) {
-                // B5: a live membership/role change must recompute composer
-                // write-access WITHOUT requiring the user to leave and re-enter.
-                // _refreshVisibleGroup only reloads the group row;
-                // _loadSecurityStatus re-derives _isCurrentUserActiveMember and
-                // _hasCurrentSendKey and setStates them — making the composer
-                // reappear on a live re-add (B3) and disappear on a live
-                // removal (B2).
-                unawaited(_loadSecurityStatus());
-              }
-            }
-          },
-          onError: (error) {
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'GROUP_CONV_FL_STREAM_ERROR',
-              details: {'error': error.toString()},
-            );
-          },
+    _messageSubscription = widget.groupMessageListener.groupMessageStream.listen(
+      (message) {
+        if (message.groupId == widget.group.id) {
+          unawaited(_applyMessageUpdate(message));
+          if (message.id.startsWith('sys-group_metadata_updated:') ||
+              message.id.startsWith('sys-group_dissolved:') ||
+              message.id.startsWith('sys-member_role_updated:')) {
+            // Group-row changes (name/avatar, dissolve, self's role for the
+            // announcement gate) reload the visible group row.
+            unawaited(_refreshVisibleGroup());
+          }
+          if (message.id.startsWith('sys-members_added:') ||
+              message.id.startsWith('sys-member_added:') ||
+              message.id.startsWith('sys-member_removed:') ||
+              message.id.startsWith('sys-member_joined:') ||
+              message.id.startsWith('sys-member_role_updated:')) {
+            // B5: a live membership/role change must recompute composer
+            // write-access WITHOUT requiring the user to leave and re-enter.
+            // _refreshVisibleGroup only reloads the group row;
+            // _loadSecurityStatus re-derives _isCurrentUserActiveMember and
+            // _hasCurrentSendKey and setStates them — making the composer
+            // reappear on a live re-add (B3) and disappear on a live
+            // removal (B2).
+            unawaited(_loadSecurityStatus());
+          }
+        }
+      },
+      onError: (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_CONV_FL_STREAM_ERROR',
+          details: {'error': error.toString()},
         );
+      },
+    );
 
     _removedSubscription = widget.groupMessageListener.groupRemovedStream
         .listen((groupId) {
@@ -3345,10 +3350,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         // Recovery eligibility: permissive cross-type backstop, not per-type
         // SEND caps — never refuse to recover already-received media that is
         // within the cross-type maximum.
-        GroupMediaSizePolicy.validateAttachments(
-          [attachment],
-          perMediaLimitBytes: kGroupMediaPerAttachmentLimitBytes,
-        ).isValid &&
+        GroupMediaSizePolicy.validateAttachments([
+          attachment,
+        ], perMediaLimitBytes: kGroupMediaPerAttachmentLimitBytes).isValid &&
         GroupMediaIntegrityPolicy.hasRequiredVerificationMetadata(attachment);
   }
 
@@ -3374,8 +3378,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     // shown in _mediaMap) MUST still re-resolve, or a recovered image would
     // never refresh.
     final alreadyShown = _messages.any((m) => m.id == latestMessage.id);
-    final shownMedia =
-        _mediaMap[latestMessage.id] ?? const <MediaAttachment>[];
+    final shownMedia = _mediaMap[latestMessage.id] ?? const <MediaAttachment>[];
     final shouldResolveMedia =
         !alreadyShown || message.media.isNotEmpty || shownMedia.isNotEmpty;
     final media = shouldResolveMedia
@@ -3773,7 +3776,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         // total message budget get a strip-level note (there is no per-chip
         // index to mark). Suppressed when any attachment is over its own cap —
         // that per-chip reject already disables Send, so the two never double up.
-        nextHasTotalSizeOverflow = nextInvalidIndices.isEmpty &&
+        nextHasTotalSizeOverflow =
+            nextInvalidIndices.isEmpty &&
             pendingMediaTotalSizeOverflow(_pendingAttachments);
       }
     }
@@ -4718,7 +4722,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         MediaViewerAction.share,
       if (capabilities.contains(GroupReceivedMediaAction.info))
         MediaViewerAction.info,
-      if (widget.mediaDeleteForMeCoordinator != null &&
+      if (_mediaDeleteForMeCoordinator != null &&
           capabilities.contains(GroupReceivedMediaAction.deleteForMe))
         MediaViewerAction.delete,
       if (capabilities.contains(GroupReceivedMediaAction.reply))
@@ -4731,7 +4735,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       messageId: attachment.messageId,
       kind: attachment.mediaType == 'video'
           ? MediaViewerKind.video
-          : (attachment.isAnimated ? MediaViewerKind.gif : MediaViewerKind.image),
+          : (attachment.isAnimated
+                ? MediaViewerKind.gif
+                : MediaViewerKind.image),
       mime: attachment.mime,
       owner: MediaOwnerLane.group,
       localPath: localPath == null
@@ -4780,7 +4786,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       case MediaViewerAction.info:
         final message = _messageById(item.messageId);
         MediaAttachment? attachment;
-        for (final row in _mediaMap[item.messageId] ?? const <MediaAttachment>[]) {
+        for (final row
+            in _mediaMap[item.messageId] ?? const <MediaAttachment>[]) {
           if (row.id == item.attachmentId) {
             attachment = row;
             break;
@@ -4870,7 +4877,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   /// Cancel is a zero-op; a second confirm while one is in flight for the
   /// same parent coalesces to a no-op.
   Future<bool> _confirmAndDeleteForMe(String messageId) async {
-    final coordinator = widget.mediaDeleteForMeCoordinator;
+    final coordinator = _mediaDeleteForMeCoordinator;
     if (coordinator == null || !mounted) return false;
     final l10n = AppLocalizations.of(context)!;
     final confirmed = await showDialog<bool>(
@@ -4896,10 +4903,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     final flightKey = '${_group.id}:$messageId';
     if (!_deleteForMeInFlight.add(flightKey)) return false;
     try {
-      await coordinator.deleteForMe(
-        groupId: _group.id,
-        messageId: messageId,
-      );
+      await coordinator.deleteForMe(groupId: _group.id, messageId: messageId);
       return true;
     } finally {
       _deleteForMeInFlight.remove(flightKey);
@@ -5743,7 +5747,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             onMediaShare: _mediaActionsController != null
                 ? _onMediaShare
                 : null,
-            onMediaDeleteForMe: widget.mediaDeleteForMeCoordinator != null
+            onMediaDeleteForMe: _mediaDeleteForMeCoordinator != null
                 ? _onMediaDeleteForMe
                 : null,
             reactions: _reactions,

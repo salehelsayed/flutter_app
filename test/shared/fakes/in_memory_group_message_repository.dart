@@ -21,6 +21,11 @@ class InMemoryGroupMessageRepository
   final Map<String, String> _inboxCursors = {};
   final Map<String, GroupMessageReceipt> _receipts = {};
   final Set<String> _localDeletionTombstones = {};
+
+  /// 235: tombstone `message_id -> group_id` identity, mirroring the
+  /// migration-069 journal (kept beside the legacy id set so IR-020 replay
+  /// behavior is unchanged).
+  final Map<String, String> _localDeletionGroupIds = {};
   final StreamController<GroupOutgoingLocalMessageChange>
   _outgoingLocalMessageChangesController =
       StreamController<GroupOutgoingLocalMessageChange>.broadcast();
@@ -218,7 +223,18 @@ class InMemoryGroupMessageRepository
     final removed = _messages.remove(id);
     if (removed != null) {
       _localDeletionTombstones.add(id);
+      _localDeletionGroupIds[id] = removed.groupId;
     }
+  }
+
+  @override
+  Future<String?> getLocalDeletionGroupId(String messageId) async =>
+      _localDeletionGroupIds[messageId];
+
+  /// 235 test seam: seeds a tombstone identity directly.
+  void seedLocalDeletion({required String messageId, required String groupId}) {
+    _localDeletionTombstones.add(messageId);
+    _localDeletionGroupIds[messageId] = groupId;
   }
 
   @override
@@ -357,6 +373,7 @@ class InMemoryGroupMessageRepository
     for (final entry in toRemove) {
       _messages.remove(entry.key);
       _localDeletionTombstones.add(entry.key);
+      _localDeletionGroupIds[entry.key] = entry.value.groupId;
     }
     return toRemove.length;
   }

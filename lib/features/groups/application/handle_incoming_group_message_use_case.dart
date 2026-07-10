@@ -125,6 +125,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
       }
       await _enrichExistingDuplicateMessage(
         msgRepo: msgRepo,
+        groupId: groupId,
         messageId: stableMessageId,
         quotedMessageId: quotedMessageId,
         media: media,
@@ -508,6 +509,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
       }
       await _enrichExistingDuplicateMessage(
         msgRepo: msgRepo,
+        groupId: groupId,
         messageId: stableMessageId,
         quotedMessageId: quotedMessageId,
         media: media,
@@ -545,6 +547,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         !_isRepairPlaceholder(existingByLogicalDelivery)) {
       await _enrichExistingDuplicateMessage(
         msgRepo: msgRepo,
+        groupId: groupId,
         messageId: existingByLogicalDelivery.id,
         quotedMessageId: quotedMessageId,
         media: media,
@@ -599,6 +602,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     if (canonicalMessageId != null) {
       await _enrichExistingDuplicateMessage(
         msgRepo: msgRepo,
+        groupId: groupId,
         messageId: canonicalMessageId,
         quotedMessageId: quotedMessageId,
         media: media,
@@ -690,8 +694,12 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   // 6. Save to repo
   await msgRepo.saveMessage(message);
 
-  // 7. Save media attachments (pending for relay download)
+  // 7. Save media attachments (pending for relay download). 235: the final
+  // attachment write re-verifies the exact (group_id, message_id) parent and
+  // the deletion journal INSIDE its own transaction — a parent silently
+  // rejected by the migration-069 tombstone must not acquire attachment rows.
   await _saveIncomingMediaAttachments(
+    groupId: groupId,
     messageId: resolvedMessageId,
     media: media,
     mediaAttachmentRepo: mediaAttachmentRepo,
@@ -1147,6 +1155,7 @@ Future<GroupMessage?> _reconcileOutgoingSelfEchoDuplicate({
   );
   await msgRepo.saveMessage(reconciled);
   await _saveIncomingMediaAttachments(
+    groupId: groupId,
     messageId: messageId,
     media: media,
     mediaAttachmentRepo: mediaAttachmentRepo,
@@ -1207,6 +1216,7 @@ DateTime _normalizeIncomingMessageTimestamp({
 
 Future<void> _enrichExistingDuplicateMessage({
   required GroupMessageRepository msgRepo,
+  required String groupId,
   required String messageId,
   String? quotedMessageId,
   List<Map<String, dynamic>>? media,
@@ -1223,6 +1233,7 @@ Future<void> _enrichExistingDuplicateMessage({
   }
 
   await _saveIncomingMediaAttachments(
+    groupId: groupId,
     messageId: messageId,
     media: media,
     mediaAttachmentRepo: mediaAttachmentRepo,
@@ -1230,11 +1241,18 @@ Future<void> _enrichExistingDuplicateMessage({
 }
 
 Future<void> _saveIncomingMediaAttachments({
+  required String groupId,
   required String messageId,
   List<Map<String, dynamic>>? media,
   MediaAttachmentRepository? mediaAttachmentRepo,
 }) async {
   if (media == null || mediaAttachmentRepo == null) return;
+  // 235: prefer the guarded final write (exact-parent + deletion-journal
+  // check inside the row-write transaction). A repository without the
+  // capability keeps the legacy behavior.
+  final guardedRepo = mediaAttachmentRepo is GroupGuardedMediaAttachmentSave
+      ? mediaAttachmentRepo as GroupGuardedMediaAttachmentSave
+      : null;
 
   final existingAttachments = await mediaAttachmentRepo
       .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group);
@@ -1256,10 +1274,17 @@ Future<void> _saveIncomingMediaAttachments({
           ),
         );
     if (!existingIds.add(attachment.id)) continue;
-    await mediaAttachmentRepo.saveAttachment(
-      attachment,
-      owner: MediaOwnerLane.group,
-    );
+    if (guardedRepo != null) {
+      await guardedRepo.saveGroupAttachmentGuarded(
+        attachment,
+        groupId: groupId,
+      );
+    } else {
+      await mediaAttachmentRepo.saveAttachment(
+        attachment,
+        owner: MediaOwnerLane.group,
+      );
+    }
   }
 }
 

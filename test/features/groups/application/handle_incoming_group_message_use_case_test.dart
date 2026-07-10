@@ -1,8 +1,21 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_media_deletion_journal_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_message_local_deletions_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
+import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
+import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository_impl.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import '../../../core/secure_storage/fake_secure_key_store.dart';
 
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -3353,5 +3366,321 @@ void main() {
       expect(result2, isNull); // duplicate
       expect(mediaRepo.count, 1); // only saved once
     });
+  });
+
+  // ---------------------------------------------------------------------
+  // 235 (TC-235-09): the final attachment write verifies the exact
+  // (group_id, message_id) parent and the deletion journal INSIDE its own
+  // transaction — production DB helpers, not fakes.
+  // ---------------------------------------------------------------------
+  group('235 guarded incoming media persistence', () {
+    late Database db;
+    late FakeSecureKeyStore keyStore;
+    late GroupMessageRepositoryImpl realMsgRepo;
+    late MediaAttachmentRepositoryImpl realMediaRepo;
+    late InMemoryGroupRepository liveGroupRepo;
+
+    setUp(() async {
+      sqfliteFfiInit();
+      databaseFactory = databaseFactoryFfi;
+      db = await databaseFactoryFfi.openDatabase(
+        inMemoryDatabasePath,
+        options: OpenDatabaseOptions(singleInstance: false),
+      );
+      await runProductionOnCreate(db, 98);
+      keyStore = FakeSecureKeyStore();
+      realMsgRepo = GroupMessageRepositoryImpl(
+        dbInsertGroupMessage: (row) => dbInsertGroupMessage(db, row),
+        dbLoadGroupMessagesPage: (groupId, {limit = 50, offset = 0}) =>
+            dbLoadGroupMessagesPage(db, groupId, limit: limit, offset: offset),
+        dbLoadGroupMessage: (id) => dbLoadGroupMessage(db, id),
+        dbLoadLatestGroupMessage: (groupId) =>
+            dbLoadLatestGroupMessage(db, groupId),
+        dbUpdateGroupMessageStatus: (id, status) =>
+            dbUpdateGroupMessageStatus(db, id, status),
+        dbCountGroupMessages: (groupId) => dbCountGroupMessages(db, groupId),
+        dbCountUnreadGroupMessages: (groupId) =>
+            dbCountUnreadGroupMessages(db, groupId),
+        dbCountTotalUnreadGroupMessages: () =>
+            dbCountTotalUnreadGroupMessages(db),
+        dbMarkGroupMessagesAsRead: (groupId) =>
+            dbMarkGroupMessagesAsRead(db, groupId),
+        dbDeleteGroupMessage: (id) => dbDeleteGroupMessage(db, id),
+        dbExistsGroupMessageByContent:
+            (groupId, senderPeerId, text, timestamp) =>
+                dbExistsGroupMessageByContent(
+                  db,
+                  groupId,
+                  senderPeerId,
+                  text,
+                  timestamp,
+                ),
+        dbDeleteGroupMessagesForGroup: (groupId) =>
+            dbDeleteGroupMessagesForGroup(db, groupId),
+        dbLoadGroupThreadSummaries: (groupIds) =>
+            dbLoadGroupThreadSummaries(db, groupIds),
+        dbLoadGroupMessageLocalDeletionFn: (messageId) =>
+            dbLoadGroupMessageLocalDeletion(db, messageId),
+      );
+      realMediaRepo = MediaAttachmentRepositoryImpl(
+        dbSaveMediaAttachmentPreservingLocalState: (row) =>
+            dbSaveMediaAttachmentPreservingLocalState(db, row),
+        dbLoadMediaForMessage: (messageId, ownerLane) =>
+            dbLoadMediaForMessage(db, messageId, ownerLane: ownerLane),
+        dbLoadMediaById: (id) => dbLoadMediaById(db, id),
+        dbLoadMediaForMessages: (messageIds, ownerLane) =>
+            dbLoadMediaForMessages(db, messageIds, ownerLane: ownerLane),
+        dbUpdateMediaLocalPath: (id, localPath, downloadStatus) =>
+            dbUpdateMediaLocalPath(db, id, localPath, downloadStatus),
+        dbUpdateMediaDownloadStatus: (id, downloadStatus) =>
+            dbUpdateMediaDownloadStatus(db, id, downloadStatus),
+        dbDeleteMediaForMessage: (messageId, ownerLane) =>
+            dbDeleteMediaForMessage(db, messageId, ownerLane: ownerLane),
+        dbDeleteMediaForContact: (contactPeerId) =>
+            dbDeleteMediaForContact(db, contactPeerId),
+        dbMarkUploadPendingAttachmentsFailedForMessage:
+            (messageId, ownerLane) =>
+                dbMarkUploadPendingAttachmentsFailedForMessage(
+                  db,
+                  messageId,
+                  ownerLane: ownerLane,
+                ),
+        dbLoadPendingMediaDownloads: () => dbLoadPendingMediaDownloads(db),
+        dbLoadUploadPendingAttachments:
+            ({int limit = 25, required String ownerLane}) =>
+                dbLoadUploadPendingAttachments(
+                  db,
+                  limit: limit,
+                  ownerLane: ownerLane,
+                ),
+        dbSetMediaBookmarked: (id, bookmarked) =>
+            dbSetMediaBookmarked(db, id, bookmarked: bookmarked),
+        dbUpdateMediaPlaybackPosition: (id, positionMs) =>
+            dbUpdateMediaPlaybackPosition(db, id, positionMs),
+        dbLoadMediaLibraryPage:
+            ({
+              required String scopeKind,
+              required String scopeId,
+              required List<String> mediaTypes,
+              required bool bookmarkedOnly,
+              required int limit,
+              String? afterTimestamp,
+              String? afterMessageId,
+              String? afterAttachmentId,
+            }) => dbLoadMediaLibraryPage(
+              db,
+              scopeKind: scopeKind,
+              scopeId: scopeId,
+              mediaTypes: mediaTypes,
+              bookmarkedOnly: bookmarkedOnly,
+              limit: limit,
+              afterTimestamp: afterTimestamp,
+              afterMessageId: afterMessageId,
+              afterAttachmentId: afterAttachmentId,
+            ),
+        dbSaveGroupMediaAttachmentGuarded: (row, {required String groupId}) =>
+            dbSaveGroupMediaAttachmentGuarded(db, row, groupId: groupId),
+        secureKeyStore: keyStore,
+        lifecycleLock: MediaAttachmentLifecycleLock(),
+      );
+      liveGroupRepo = InMemoryGroupRepository();
+      for (final groupId in ['group-a', 'group-b']) {
+        await liveGroupRepo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: 'Group $groupId',
+            type: GroupType.chat,
+            topicName: 'topic-$groupId',
+            createdAt: DateTime.now().toUtc(),
+            createdBy: 'peer-admin',
+            myRole: GroupRole.admin,
+          ),
+        );
+        await liveGroupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: 'peer-sender',
+            username: 'Sender',
+            role: MemberRole.writer,
+            joinedAt: DateTime.utc(2026, 7, 1),
+          ),
+        );
+      }
+    });
+
+    tearDown(() async {
+      await db.close();
+    });
+
+    test(
+      'GMA-09 transactional parent and journal guard closes save delete race',
+      () async {
+        // Group A receives msg-shared with media, then deletes it for me —
+        // the tombstone (message_id-keyed) now silently rejects ANY same-ID
+        // parent insert.
+        await handleIncomingGroupMessage(
+          groupRepo: liveGroupRepo,
+          msgRepo: realMsgRepo,
+          mediaAttachmentRepo: realMediaRepo,
+          groupId: 'group-a',
+          senderId: 'peer-sender',
+          senderUsername: 'Sender',
+          keyEpoch: 0,
+          text: 'group A original',
+          timestamp: '2026-07-10T10:00:00.000Z',
+          messageId: 'msg-shared',
+          media: _gird003Media(
+            id: 'att-group-a',
+            createdAt: '2026-07-10T10:00:00.000Z',
+          ),
+        );
+        expect(
+          await realMediaRepo.getAttachmentsForMessage(
+            'msg-shared',
+            owner: MediaOwnerLane.group,
+          ),
+          hasLength(1),
+        );
+        final prepared = await dbPrepareGroupMediaDeleteForMe(
+          db,
+          groupId: 'group-a',
+          messageId: 'msg-shared',
+          operationId: 'op-a',
+        );
+        expect(prepared.outcome, GroupMediaDeletePrepareOutcome.prepared);
+
+        // Group B now receives the SAME message id. The parent insert is
+        // silently rejected by group A's tombstone — so the guarded final
+        // write must refuse every attachment: zero rows, zero secure keys.
+        await handleIncomingGroupMessage(
+          groupRepo: liveGroupRepo,
+          msgRepo: realMsgRepo,
+          mediaAttachmentRepo: realMediaRepo,
+          groupId: 'group-b',
+          senderId: 'peer-sender',
+          senderUsername: 'Sender',
+          keyEpoch: 0,
+          text: 'group B same-ID message',
+          timestamp: '2026-07-10T10:05:00.000Z',
+          messageId: 'msg-shared',
+          media: _gird003Media(
+            id: 'att-group-b',
+            createdAt: '2026-07-10T10:05:00.000Z',
+          ),
+        );
+        expect(
+          (await db.query(
+            'group_messages',
+            where: 'id = ?',
+            whereArgs: ['msg-shared'],
+          )),
+          isEmpty,
+          reason: 'the tombstone rejected the group-B parent',
+        );
+        final rowsAfterB = await db.query(
+          'media_attachments',
+          where: 'id = ?',
+          whereArgs: ['att-group-b'],
+        );
+        expect(
+          rowsAfterB,
+          isEmpty,
+          reason: 'no unjournaled attachment row for a rejected parent',
+        );
+        expect(
+          await keyStore.containsKey(
+            mediaAttachmentEncryptionKeyStoreName('att-group-b'),
+          ),
+          isFalse,
+          reason: 'the refused save compensates its own key write',
+        );
+
+        // An active journal reserves its attachment ID against re-save even
+        // under a LIVE parent: incoming media whose blob id is journaled must
+        // not re-acquire a row or key.
+        await db.insert('group_media_deletion_journal', {
+          'attachment_id': 'att-reserved',
+          'operation_id': 'op-r',
+          'message_id': 'msg-old-deleted',
+          'group_id': 'group-b',
+          'operation_intent': 'delete_for_me',
+          'normalized_mime': 'image/png',
+          'canonical_relative_path': null,
+          'created_at': '2026-07-10T09:00:00.000Z',
+        });
+        await handleIncomingGroupMessage(
+          groupRepo: liveGroupRepo,
+          msgRepo: realMsgRepo,
+          mediaAttachmentRepo: realMediaRepo,
+          groupId: 'group-b',
+          senderId: 'peer-sender',
+          senderUsername: 'Sender',
+          keyEpoch: 0,
+          text: 'live parent, reserved attachment',
+          timestamp: '2026-07-10T10:10:00.000Z',
+          messageId: 'msg-live',
+          media: _gird003Media(
+            id: 'att-reserved',
+            createdAt: '2026-07-10T10:10:00.000Z',
+          ),
+        );
+        expect(
+          (await db.query(
+            'group_messages',
+            where: 'id = ?',
+            whereArgs: ['msg-live'],
+          )),
+          hasLength(1),
+          reason: 'the live parent itself is saved',
+        );
+        expect(
+          (await db.query(
+            'media_attachments',
+            where: 'id = ?',
+            whereArgs: ['att-reserved'],
+          )),
+          isEmpty,
+          reason: 'a journal reservation blocks the attachment re-save',
+        );
+        expect(
+          await keyStore.containsKey(
+            mediaAttachmentEncryptionKeyStoreName('att-reserved'),
+          ),
+          isFalse,
+        );
+
+        // A normal incoming message under a live parent still persists media
+        // through the guarded path (the guard is not a blanket refusal).
+        await handleIncomingGroupMessage(
+          groupRepo: liveGroupRepo,
+          msgRepo: realMsgRepo,
+          mediaAttachmentRepo: realMediaRepo,
+          groupId: 'group-b',
+          senderId: 'peer-sender',
+          senderUsername: 'Sender',
+          keyEpoch: 0,
+          text: 'plain delivery',
+          timestamp: '2026-07-10T10:15:00.000Z',
+          messageId: 'msg-plain',
+          media: _gird003Media(
+            id: 'att-plain',
+            createdAt: '2026-07-10T10:15:00.000Z',
+          ),
+        );
+        final plainRows = await db.query(
+          'media_attachments',
+          where: 'id = ?',
+          whereArgs: ['att-plain'],
+        );
+        expect(plainRows, hasLength(1));
+        expect(plainRows.single['owner_lane'], 'group');
+        expect(
+          await keyStore.containsKey(
+            mediaAttachmentEncryptionKeyStoreName('att-plain'),
+          ),
+          isTrue,
+        );
+      },
+    );
   });
 }

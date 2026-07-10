@@ -47,6 +47,14 @@ abstract class GroupMessageRepository {
     String logicalDeliveryId,
   ) async => null;
 
+  /// 235: the migration-069 local-deletion tombstone's group id for a
+  /// message, or null when the message is not locally deleted.
+  ///
+  /// Implementations without tombstone access return null so lightweight
+  /// fakes stay conservative (no tombstone knowledge -> incoming reactions
+  /// keep their pre-235 buffering behavior).
+  Future<String?> getLocalDeletionGroupId(String messageId) async => null;
+
   /// Retrieves the most recent message for a group.
   Future<GroupMessage?> getLatestMessage(String groupId);
 

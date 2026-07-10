@@ -89,6 +89,23 @@ abstract class MediaAttachmentByIdLookup {
   Future<MediaAttachment?> getAttachmentById(String id);
 }
 
+/// Optional capability (235): the guarded FINAL write for incoming GROUP
+/// media.
+///
+/// In the SAME transaction as the attachment-row write it verifies a live
+/// exact `(groupId, messageId)` parent and the absence of an active
+/// `group_media_deletion_journal` reservation for the attachment ID; when the
+/// guard refuses it returns false with ZERO row/secure-key side effects. This
+/// closes the save-vs-delete race that a pre-write reload cannot: a same-ID
+/// parent silently rejected by the migration-069 tombstone must never acquire
+/// group-owned attachment rows.
+abstract class GroupGuardedMediaAttachmentSave {
+  Future<bool> saveGroupAttachmentGuarded(
+    MediaAttachment attachment, {
+    required String groupId,
+  });
+}
+
 /// Optional capability: a key-free batch lookup of [MediaPreviewDescriptor]s
 /// for messages, used by the orbit chat-list to label media without paying a
 /// `SecureKeyStore.read` per attachment on the hot screen-load path.

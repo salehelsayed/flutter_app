@@ -10,5 +10,15 @@ abstract class GroupMediaDeleteForMeCoordinator {
   /// Deletes the exact `(groupId, messageId)` parent and its group-owned
   /// media for this device only. Must be idempotent: a call after the parent
   /// is already tombstoned/absent is a no-op.
-  Future<void> deleteForMe({required String groupId, required String messageId});
+  Future<void> deleteForMe({
+    required String groupId,
+    required String messageId,
+  });
 }
+
+/// 235: process-wide production coordinator, set once by `main()` (the same
+/// pattern as 229's `defaultMediaAutoDownloadDecider`) so every shell that
+/// opens a group conversation gets Delete-for-me without threading a param
+/// through each route chain. An explicitly injected coordinator always wins;
+/// tests that set neither keep the action hidden.
+GroupMediaDeleteForMeCoordinator? defaultGroupMediaDeleteForMeCoordinator;

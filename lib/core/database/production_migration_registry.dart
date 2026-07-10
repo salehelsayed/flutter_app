@@ -97,6 +97,7 @@ import 'migrations/094_group_messages_group_ts_index.dart';
 import 'migrations/095_intro_review_seen.dart';
 import 'migrations/096_media_library_state.dart';
 import 'migrations/097_direct_message_forwarded.dart';
+import 'migrations/098_group_media_deletion_journal.dart';
 
 /// One ordered production migration step: the schema version it belongs to,
 /// its migration-file stem, and the migration function itself.
@@ -215,6 +216,7 @@ final List<ProductionMigrationEntry> productionCreateMigrations =
       ProductionMigrationEntry(95, '095_intro_review_seen', runIntroReviewSeenMigration),
       ProductionMigrationEntry(96, '096_media_library_state', runMediaLibraryStateMigration),
       ProductionMigrationEntry(97, '097_direct_message_forwarded', runDirectMessageForwardedMigration),
+      ProductionMigrationEntry(98, '098_group_media_deletion_journal', runGroupMediaDeletionJournalMigration),
     ]);
 
 /// The EXACT ordered upgrade (onUpgrade) guard sequence from main.dart.
@@ -323,6 +325,7 @@ final List<ProductionMigrationEntry> productionUpgradeMigrations =
       ProductionMigrationEntry(95, '095_intro_review_seen', runIntroReviewSeenMigration),
       ProductionMigrationEntry(96, '096_media_library_state', runMediaLibraryStateMigration),
       ProductionMigrationEntry(97, '097_direct_message_forwarded', runDirectMessageForwardedMigration),
+      ProductionMigrationEntry(98, '098_group_media_deletion_journal', runGroupMediaDeletionJournalMigration),
     ]);
 
 /// Production onCreate callback: runs every create entry whose version is

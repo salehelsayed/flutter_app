@@ -1,6 +1,6 @@
 # 235 - Group Received Media Core Actions
 
-Status: UI/policy/egress-adapter slice IMPLEMENTED (host-green) — persistence slice prerequisite-blocked on plan 232 v97
+Status: IMPLEMENTED (both slices) — UI slice c88bf7a39; persistence slice complete: DB v98 journal, atomic delete-prepare, cleanup saga, lifecycle wiring, Android+iOS SQLCipher proofs PASSED; production Delete-for-me LIVE
 Type: New Feature
 Spec: free-text intent — add ordinary received-image/video actions to discussion groups without changing announcement or group-delivery semantics
 Classification: prerequisite-blocked
@@ -250,17 +250,17 @@ git diff --check
 - Analyzer closure is scoped plus baseline-qualified. Any new issue in an owned file fails even when full-repo baseline is non-zero.
 - No Go/libp2p/wire behavior changes are permitted.
 
-- [ ] Plan 232 v97 landed; Plan 235 exclusively owns v98; Plan 236/240 version references are rebased.
-- [ ] Every behavior has a named causal test or justified boundary proof.
-- [ ] Self-contained journal is the only cleanup authority; wrong-group orphans survive and missing-row cleanup stays canonical/path-safe.
-- [ ] Delete preparation is atomic and no external I/O occurs before commit.
-- [ ] File/key/DB failures converge after fresh-process restart with per-item isolation.
-- [ ] Incoming media final-write requires exact parent/no journal; save/delete and download/cleanup races leave no orphan row, key, path, or file.
-- [ ] Cold-start, resume-before-network-gate, error-isolation, and production main wiring are proven.
-- [ ] Bubble/viewer actions reach only injected coordinators; cancel is zero-op and confirm creates exactly one durable operation.
-- [ ] Pending reactions and pending/failed outbox rows are exact-group deleted; stored outbox/ordinary reactions survive; later reactions are not re-buffered.
-- [ ] Announcement/QA and direct Reply/Edit/Copy/Delete sentinels pass.
-- [ ] Every available Android/iOS real-plugin SQLCipher proof, family gate, normalized analyzer contract, and `git diff --check` passes; unavailable families are evidenced N/A.
+- [x] Plan 232 v97 landed; Plan 235 exclusively owns v98; Plan 236/240 version references are rebased.
+- [x] Every behavior has a named causal test or justified boundary proof.
+- [x] Self-contained journal is the only cleanup authority; wrong-group orphans survive and missing-row cleanup stays canonical/path-safe.
+- [x] Delete preparation is atomic and no external I/O occurs before commit.
+- [x] File/key/DB failures converge after fresh-process restart with per-item isolation.
+- [x] Incoming media final-write requires exact parent/no journal; save/delete and download/cleanup races leave no orphan row, key, path, or file.
+- [x] Cold-start, resume-before-network-gate, error-isolation, and production main wiring are proven.
+- [x] Bubble/viewer actions reach only injected coordinators; cancel is zero-op and confirm creates exactly one durable operation.
+- [x] Pending reactions and pending/failed outbox rows are exact-group deleted; stored outbox/ordinary reactions survive; later reactions are not re-buffered.
+- [x] Announcement/QA and direct Reply/Edit/Copy/Delete sentinels pass.
+- [x] Every available Android/iOS real-plugin SQLCipher proof, family gate, normalized analyzer contract, and `git diff --check` passes; unavailable families are evidenced N/A. (Android emulator-5554 + iOS iPhone-17-Pro sim GMA-06D PASSED; groups lane 1309 green; core-host-all 298 suites green; zero new analyzer diagnostics in plan-owned files.)
 
 ## Handoff
 
@@ -276,4 +276,6 @@ git diff --check
 |---|---|---|---|---|---|---|
 | 2026-07-10 | replanned, not started | plan only | source counterexample audit | Former orphan-journal design refuted; replacement contract defined | Plan 232 v97 and Plan 236/240 version rebase required | resolve migration sequence, then first causal RED |
 | 2026-07-10 | 236/240 version rebase DONE | Test-Flight-Improv/236-*, 240-* | all five plan-235 rg gates pass | 236 owns v99 (`099_group_messages_is_forwarded`, complete-v98 predecessor incl. journal); 240 references follow | none | UI-parallel slice |
+| 2026-07-10 | CLOSED at plan tier | all | groups lane 1309 GREEN (one load-induced voice-test timeout during a parallel device build; green in isolation and on idle rerun); core-host-all 298 suites GREEN; analyzer diff: 1 new info owned by the in-flight plan-233 session's untracked file, zero in plan-235 files; git diff --check clean; graph refreshed | Android emulator + iOS simulator GMA-06D PASSED | none | commit |
+| 2026-07-10 | persistence slice IMPLEMENTED | migration `098_group_media_deletion_journal` (+ both registries, v98 bump); `group_media_deletion_journal_db_helpers` (atomic `dbPrepareGroupMediaDeleteForMe`, paged cursor load, atomic finalize); `DeleteGroupMediaForMeUseCase` (single-flight, one UUID op); `GroupMediaDeletionJournalReconciler` (file→key→DB saga, page 100, per-item isolation, quarantine); guarded final write `dbSaveGroupMediaAttachmentGuarded` + `GroupGuardedMediaAttachmentSave` capability (+ key-write compensation under the new `MediaAttachmentLifecycleLock`); journal anti-join in group `dbCommitMediaDownloadLocalPath`; tombstone reaction discard (`getLocalDeletionGroupId` + `discardedLocallyDeleted`); `handleAppResumed` pre-gate cleanup hook; main.dart cold-start unawaited pass + `defaultGroupMediaDeleteForMeCoordinator` (229 decider pattern) + notification-route/orbit injection — production Delete-for-me is LIVE | GMA-06 GREEN (+ registry-arm/CHECK mutations re-red); full chain 13/13; GMA-07 GREEN incl. forced-rollback + single-flight; GMA-07R GREEN; GMA-08 GREEN (restart convergence, missing-row journal identity, quarantine, orphan survival); GMA-09 GREEN (+ guard-bypass mutation re-red); GMA-09D GREEN (+ journal-blind-commit mutation re-red; direct lane byte-identical); GMA-10/10R GREEN (cleanup BEFORE denied gate, error isolation, main source anchors); Android emulator GMA-06D PASSED (cipher_version, CHECK, rerun, reopen, wrong password, downgrade refusal) | none | iOS proof + groups/core-host lanes + analyzer + commit |
 | 2026-07-10 | UI slice IMPLEMENTED (host-green) | policy + egress adapter + delete seam + info sheet (new: `group_received_media_action_policy.dart`, `group_received_media_actions.dart`, `group_media_delete_for_me_coordinator.dart`, `group_media_info_sheet.dart`); group screen/wired; shared overlay/grid/letter-card/viewer + l10n (co-landed in d32abbaaf by the concurrent plan-231 session) | causal RED then GREEN: GMA-01 (policy absent → compile RED); focused GREEN GMA-01/02/02b/03/04/05/11/12/13; 7 mutations re-red (policy type/lane/state guards, hard-coded index 0, stale first-page identity, skipped requalification, wrong-lane reload); full `group_conversation_wired_test.dart` + `group_conversation_screen_test.dart` + 230 viewer/boundary + letter-card + overlay suites GREEN; direct Reply/Edit/Copy/Delete + IR-020 + owner-isolation + replay + announcement sentinels GREEN | TC-235-01/02/03/04/05/11/12/13 closed at host tier. TC-235-06/06D/07/08/09/10 (v98 journal migration, atomic delete prepare, cleanup saga, races, lifecycle wiring, SQLCipher device proof) REMAIN OPEN: DB still v96, plan 232 v97 in flight in a concurrent session | land after plan 232 v97: reserve v98, migration 098 + journal saga + lifecycle wiring, then acceptance |

@@ -123,75 +123,7 @@ Future<void> dbSaveMediaAttachmentPreservingLocalState(
     // dbWriteTransaction (never raw db.transaction): the zone guard makes a
     // bridge call inside this merge impossible to introduce silently.
     await dbWriteTransaction(db, (txn) async {
-      final existingRows = await txn.query(
-        'media_attachments',
-        where: 'id = ?',
-        whereArgs: [id],
-        limit: 1,
-      );
-      if (existingRows.isEmpty) {
-        await txn.insert('media_attachments', row);
-        return;
-      }
-
-      final existing = existingRows.first;
-      if (existing['owner_lane'] != row['owner_lane'] ||
-          existing['message_id'] != row['message_id']) {
-        throw MediaAttachmentOwnerViolation(
-          'save would re-parent attachment '
-          '${id.length > 8 ? id.substring(0, 8) : id} from '
-          '(${existing['owner_lane']}, ${existing['message_id']}) to '
-          '(${row['owner_lane']}, ${row['message_id']})',
-        );
-      }
-
-      final merged = Map<String, Object?>.from(row);
-      // 229: a user-evicted local copy survives ordinary replay (wire rows
-      // decode as `pending` with no path — they must not re-arm a transfer
-      // or resurrect a path). Only an explicit local retry, which writes
-      // `downloading`, may leave the evicted state through this save path;
-      // the conditional download commit is the only path back to `done`.
-      if (existing['download_status'] == kMediaDownloadStatusEvicted &&
-          merged['download_status'] != kMediaDownloadStatusDownloading) {
-        merged['download_status'] = kMediaDownloadStatusEvicted;
-        merged['local_path'] = existing['local_path'];
-      }
-      // Local-only viewer state always survives an ordinary replay.
-      merged['is_bookmarked'] = existing['is_bookmarked'];
-      var position =
-          ((existing['last_playback_position_ms'] as num?)?.toInt()) ?? 0;
-      final durationMs = (merged['duration_ms'] as num?)?.toInt();
-      if (durationMs != null && durationMs >= 0 && position > durationMs) {
-        // A replay supplied a (newly) known duration — re-clamp the stored
-        // resume position instead of trusting a stale overshoot.
-        position = durationMs;
-      }
-      merged['last_playback_position_ms'] = position;
-
-      if (shouldPreserveCompletedMediaLocalPath(
-        existingStatus: existing['download_status'] as String?,
-        existingPath: existing['local_path'] as String?,
-        incomingStatus: merged['download_status'] as String?,
-        incomingPath: merged['local_path'] as String?,
-      )) {
-        emitFlowEvent(
-          layer: 'DB',
-          event: 'MEDIA_DB_SAVE_PRESERVED_COMPLETED_LOCAL_PATH',
-          details: {
-            'id': id.length > 8 ? id.substring(0, 8) : id,
-            'incomingStatus': merged['download_status'],
-          },
-        );
-        merged['local_path'] = existing['local_path'];
-        merged['download_status'] = existing['download_status'];
-      }
-
-      await txn.update(
-        'media_attachments',
-        merged,
-        where: 'id = ?',
-        whereArgs: [id],
-      );
+      await _applyMediaAttachmentPreservingSave(txn, row, id);
     });
 
     emitFlowEvent(
@@ -203,6 +135,148 @@ Future<void> dbSaveMediaAttachmentPreservingLocalState(
     emitFlowEvent(
       layer: 'DB',
       event: 'MEDIA_DB_SAVE_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+/// The shared preserving-save merge body. MUST run inside a
+/// [dbWriteTransaction]; both the plain and the 235 group-guarded save reuse
+/// this exact logic so their preservation semantics can never drift.
+Future<void> _applyMediaAttachmentPreservingSave(
+  DatabaseExecutor txn,
+  Map<String, Object?> row,
+  String id,
+) async {
+  final existingRows = await txn.query(
+    'media_attachments',
+    where: 'id = ?',
+    whereArgs: [id],
+    limit: 1,
+  );
+  if (existingRows.isEmpty) {
+    await txn.insert('media_attachments', row);
+    return;
+  }
+
+  final existing = existingRows.first;
+  if (existing['owner_lane'] != row['owner_lane'] ||
+      existing['message_id'] != row['message_id']) {
+    throw MediaAttachmentOwnerViolation(
+      'save would re-parent attachment '
+      '${id.length > 8 ? id.substring(0, 8) : id} from '
+      '(${existing['owner_lane']}, ${existing['message_id']}) to '
+      '(${row['owner_lane']}, ${row['message_id']})',
+    );
+  }
+
+  final merged = Map<String, Object?>.from(row);
+  // 229: a user-evicted local copy survives ordinary replay (wire rows
+  // decode as `pending` with no path — they must not re-arm a transfer
+  // or resurrect a path). Only an explicit local retry, which writes
+  // `downloading`, may leave the evicted state through this save path;
+  // the conditional download commit is the only path back to `done`.
+  if (existing['download_status'] == kMediaDownloadStatusEvicted &&
+      merged['download_status'] != kMediaDownloadStatusDownloading) {
+    merged['download_status'] = kMediaDownloadStatusEvicted;
+    merged['local_path'] = existing['local_path'];
+  }
+  // Local-only viewer state always survives an ordinary replay.
+  merged['is_bookmarked'] = existing['is_bookmarked'];
+  var position =
+      ((existing['last_playback_position_ms'] as num?)?.toInt()) ?? 0;
+  final durationMs = (merged['duration_ms'] as num?)?.toInt();
+  if (durationMs != null && durationMs >= 0 && position > durationMs) {
+    // A replay supplied a (newly) known duration — re-clamp the stored
+    // resume position instead of trusting a stale overshoot.
+    position = durationMs;
+  }
+  merged['last_playback_position_ms'] = position;
+
+  if (shouldPreserveCompletedMediaLocalPath(
+    existingStatus: existing['download_status'] as String?,
+    existingPath: existing['local_path'] as String?,
+    incomingStatus: merged['download_status'] as String?,
+    incomingPath: merged['local_path'] as String?,
+  )) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MEDIA_DB_SAVE_PRESERVED_COMPLETED_LOCAL_PATH',
+      details: {
+        'id': id.length > 8 ? id.substring(0, 8) : id,
+        'incomingStatus': merged['download_status'],
+      },
+    );
+    merged['local_path'] = existing['local_path'];
+    merged['download_status'] = existing['download_status'];
+  }
+
+  await txn.update(
+    'media_attachments',
+    merged,
+    where: 'id = ?',
+    whereArgs: [id],
+  );
+}
+
+/// 235: guarded final write for INCOMING group media.
+///
+/// Same preserving-save semantics as [dbSaveMediaAttachmentPreservingLocalState]
+/// but, in the SAME transaction as the attachment-row write, it verifies:
+///  - a live exact `(group_id, message_id)` parent row exists (a same-ID
+///    parent silently rejected by the migration-069 tombstone — or one that
+///    belongs to another group — must not acquire attachments), and
+///  - no `group_media_deletion_journal` row reserves the attachment ID (an
+///    active deletion operation blocks re-save/re-parent).
+///
+/// Returns true when the row was written; false when the guard refused (no
+/// side effect at all — the caller must also skip secure-key writes).
+Future<bool> dbSaveGroupMediaAttachmentGuarded(
+  Database db,
+  Map<String, Object?> row, {
+  required String groupId,
+}) async {
+  final id = row['id'] as String? ?? '';
+  final messageId = row['message_id'] as String? ?? '';
+
+  try {
+    final saved = await dbWriteTransaction(db, (txn) async {
+      final parentRows = await txn.query(
+        'group_messages',
+        columns: ['id'],
+        where: 'id = ? AND group_id = ?',
+        whereArgs: [messageId, groupId],
+        limit: 1,
+      );
+      if (parentRows.isEmpty) {
+        return false;
+      }
+      final journalRows = await txn.query(
+        'group_media_deletion_journal',
+        columns: ['attachment_id'],
+        where: 'attachment_id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      if (journalRows.isNotEmpty) {
+        return false;
+      }
+      await _applyMediaAttachmentPreservingSave(txn, row, id);
+      return true;
+    });
+    emitFlowEvent(
+      layer: 'DB',
+      event: saved
+          ? 'MEDIA_DB_GROUP_GUARDED_SAVE_SUCCESS'
+          : 'MEDIA_DB_GROUP_GUARDED_SAVE_REFUSED',
+      details: {'id': id.length > 8 ? id.substring(0, 8) : id},
+    );
+    return saved;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'MEDIA_DB_GROUP_GUARDED_SAVE_ERROR',
       details: {'error': e.toString()},
     );
     rethrow;
@@ -462,10 +536,18 @@ Future<int> dbCommitMediaDownloadLocalPath(
   required String ownerLane,
   required String localPath,
 }) async {
+  // 235: a GROUP commit anti-joins active deletion-journal rows so a download
+  // that lost to Delete-for-me can never promote/restore a local path. The
+  // direct lane keeps the pre-235 statement byte-identical (its journal is a
+  // different plan's contract).
+  final journalAntiJoin = ownerLane == 'group'
+      ? 'AND NOT EXISTS (SELECT 1 FROM group_media_deletion_journal j '
+            'WHERE j.attachment_id = media_attachments.id) '
+      : '';
   final affected = await db.rawUpdate(
     'UPDATE media_attachments SET local_path = ?, download_status = ?, '
     'download_retry_count = 0 '
-    'WHERE id = ? AND owner_lane = ? AND download_status = ?',
+    'WHERE id = ? AND owner_lane = ? AND download_status = ? $journalAntiJoin',
     [localPath, kMediaDownloadStatusDone, id, ownerLane,
         kMediaDownloadStatusDownloading],
   );

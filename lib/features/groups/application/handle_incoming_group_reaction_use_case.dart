@@ -25,6 +25,12 @@ enum HandleGroupReactionResult {
   /// yet, so it was durably buffered for replay when the message lands
   /// (INV-R4) instead of being dropped as [unknownMessage].
   bufferedPendingMessage,
+
+  /// 235: the exact `(groupId, messageId)` target was locally deleted
+  /// (migration-069 tombstone). The reaction is discarded — never buffered
+  /// into `group_pending_reactions` or a retry path — so a Delete-for-me
+  /// cannot be refilled by late reactions.
+  discardedLocallyDeleted,
   messageGroupMismatch,
   unknownSender,
   senderMismatch,
@@ -148,6 +154,27 @@ handleIncomingGroupReaction({
   if (msgRepo != null) {
     final targetMessage = await msgRepo.getMessage(payload.messageId);
     if (targetMessage == null) {
+      // 235: a locally tombstoned exact (groupId, messageId) target is
+      // DELETED, not merely late — discard instead of buffering so a
+      // Delete-for-me cannot be refilled by later reactions. A tombstone
+      // belonging to another group does not discard (that message id was
+      // never this group's deletion).
+      final tombstoneGroupId = await msgRepo.getLocalDeletionGroupId(
+        payload.messageId,
+      );
+      if (tombstoneGroupId != null && tombstoneGroupId == groupId) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_REACTION_DISCARDED_LOCALLY_DELETED',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'messageId': payload.messageId.length > 8
+                ? payload.messageId.substring(0, 8)
+                : payload.messageId,
+          },
+        );
+        return (HandleGroupReactionResult.discardedLocallyDeleted, null);
+      }
       // The reaction is fully validated but its target message has not landed
       // yet. When a durable buffer is wired, retain it for replay on message
       // arrival (INV-R4) instead of dropping it as unknownMessage. Buffering

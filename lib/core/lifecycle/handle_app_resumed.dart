@@ -74,6 +74,14 @@ Future<bool?> handleAppResumed({
   /// the gate denies everything while the stale pause persists.
   Future<bool> Function()? recoverInterruptedExportPause,
 
+  /// 235: one bounded pass over the group media deletion journal
+  /// ([GroupMediaDeletionJournalReconciler.runBounded] in production). It is
+  /// LOCAL-ONLY work (file/key/row cleanup for already-committed deletes), so
+  /// it runs BEFORE the account-migration network gate — a denied gate must
+  /// not leave committed deletions half-cleaned. Errors are isolated; resume
+  /// proceeds regardless.
+  Future<void> Function()? groupMediaDeletionCleanupFn,
+
   /// FDC-04 (DESIGN-3/SRC-1): resolves the single active conversation peer so
   /// resume can eagerly warm ONLY it (PS-4 — never the roster). In production
   /// wired to `ActiveConversationTracker.activePeerId`. Null / null-return /
@@ -113,6 +121,26 @@ Future<bool?> handleAppResumed({
       emitFlowEvent(
         layer: 'FL',
         event: 'APP_LIFECYCLE_RESUME_EXPORT_PAUSE_RECOVERY_FAILED',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
+  // 235: local deletion-journal cleanup runs BEFORE the network gate — it has
+  // no network side effect and must converge even while account migration
+  // denies every networked resume step.
+  if (groupMediaDeletionCleanupFn != null) {
+    try {
+      await groupMediaDeletionCleanupFn();
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'APP_LIFECYCLE_RESUME_GROUP_MEDIA_CLEANUP_DONE',
+        details: {},
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'APP_LIFECYCLE_RESUME_GROUP_MEDIA_CLEANUP_FAILED',
         details: {'error': e.toString()},
       );
     }

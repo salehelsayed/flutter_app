@@ -45,6 +45,7 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 import 'package:flutter_app/features/home/application/identity_avatar_resolver.dart';
 import 'package:flutter_app/features/contacts/application/archive_contact_use_case.dart';
 import 'package:flutter_app/features/groups/application/archive_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_media_delete_for_me_coordinator.dart';
 import 'package:flutter_app/features/groups/application/unarchive_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
@@ -137,6 +138,10 @@ class OrbitWired extends StatefulWidget {
   final GroupHistoryGapRepairRepository? groupHistoryGapRepairRepository;
   final GroupReactionReplayOutboxRepository?
   groupReactionReplayOutboxRepository;
+
+  /// 235: production Delete-for-me coordinator, threaded into every group
+  /// conversation this shell opens. Null keeps the action hidden.
+  final GroupMediaDeleteForMeCoordinator? groupMediaDeleteForMeCoordinator;
   final GroupMessageListener? groupMessageListener;
   final GroupInviteListener? groupInviteListener;
   final Future<void> Function()? waitForGroupMembershipUpdateIdle;
@@ -205,6 +210,7 @@ class OrbitWired extends StatefulWidget {
     this.groupPendingKeyRepairRepository,
     this.groupHistoryGapRepairRepository,
     this.groupReactionReplayOutboxRepository,
+    this.groupMediaDeleteForMeCoordinator,
     this.groupMessageListener,
     this.groupInviteListener,
     this.waitForGroupMembershipUpdateIdle,
@@ -2808,6 +2814,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               contactRepo: widget.contactRepo,
               p2pService: widget.p2pService,
               mediaAttachmentRepo: widget.mediaAttachmentRepo,
+              mediaDeleteForMeCoordinator:
+                  widget.groupMediaDeleteForMeCoordinator,
               mediaFileManager: widget.mediaFileManager,
               imageProcessor: widget.imageProcessor,
               qualityPreference: _qualityPreference,

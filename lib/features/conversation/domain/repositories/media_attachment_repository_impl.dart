@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
+import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
@@ -30,7 +31,8 @@ class MediaAttachmentRepositoryImpl
         MediaLibraryStateRepository,
         MediaLibraryRepository,
         MediaDownloadStateRepository,
-        MediaStorageInventoryRepository {
+        MediaStorageInventoryRepository,
+        GroupGuardedMediaAttachmentSave {
   final Future<void> Function(Map<String, Object?> row)
   dbSaveMediaAttachmentPreservingLocalState;
   final Future<List<Map<String, Object?>>> Function(
@@ -111,7 +113,18 @@ class MediaAttachmentRepositoryImpl
   dbClaimMediaEvicted;
   final Future<int> Function(String id, {required String ownerLane})?
   dbFinalizeMediaEvictedPathCleared;
+
+  // 235: guarded final write for incoming GROUP media (parent + deletion-
+  // journal check in the SAME transaction as the row write). Optional like
+  // the CAS closures; the capability fails closed when missing.
+  final Future<bool> Function(Map<String, Object?> row, {required String groupId})?
+  dbSaveGroupMediaAttachmentGuarded;
+
   final SecureKeyStore? secureKeyStore;
+
+  /// 235: serializes row/key/file work per attachment across the guarded
+  /// save, the download commit, and the deletion-journal cleanup saga.
+  final MediaAttachmentLifecycleLock lifecycleLock;
 
   MediaAttachmentRepositoryImpl({
     required this.dbSaveMediaAttachmentPreservingLocalState,
@@ -133,8 +146,10 @@ class MediaAttachmentRepositoryImpl
     this.dbCommitMediaDownloadLocalPath,
     this.dbClaimMediaEvicted,
     this.dbFinalizeMediaEvictedPathCleared,
+    this.dbSaveGroupMediaAttachmentGuarded,
     this.secureKeyStore,
-  });
+    MediaAttachmentLifecycleLock? lifecycleLock,
+  }) : lifecycleLock = lifecycleLock ?? mediaAttachmentLifecycleLock;
 
   T _requireCasClosure<T>(T? closure, String name) {
     if (closure == null) {
@@ -167,8 +182,50 @@ class MediaAttachmentRepositoryImpl
       dbCommitMediaDownloadLocalPath,
       'commitMediaDownloadLocalPath',
     );
-    return await commit(id, ownerLane: owner.dbValue, localPath: localPath) >
-        0;
+    // 235: the commit shares the attachment lifecycle lock with the guarded
+    // group save and the deletion-journal cleanup saga so a cleanup never
+    // interleaves with a promotion on the same attachment. The SQL CAS (plus
+    // the group journal anti-join) remains the correctness authority.
+    return lifecycleLock.synchronized(
+      id,
+      () async =>
+          await commit(id, ownerLane: owner.dbValue, localPath: localPath) > 0,
+    );
+  }
+
+  @override
+  Future<bool> saveGroupAttachmentGuarded(
+    MediaAttachment attachment, {
+    required String groupId,
+  }) async {
+    final guarded = _requireCasClosure(
+      dbSaveGroupMediaAttachmentGuarded,
+      'saveGroupAttachmentGuarded',
+    );
+    if (attachment.ownerLane != null &&
+        attachment.ownerLane != MediaOwnerLane.group) {
+      throw MediaAttachmentOwnerViolation(
+        'guarded group save received a row stamped '
+        '${attachment.ownerLane!.dbValue}',
+      );
+    }
+    final stamped = attachment.copyWith(ownerLane: MediaOwnerLane.group);
+    return lifecycleLock.synchronized(stamped.id, () async {
+      // _toStorageRow writes the secure encryption key BEFORE the guarded
+      // transaction. When the guard refuses (delete/tombstone won) the save
+      // must leave ZERO side effects, so a key that did not exist before is
+      // compensated away — under the same lock, so cleanup cannot interleave.
+      final keyName = mediaAttachmentEncryptionKeyStoreName(stamped.id);
+      final store = secureKeyStore;
+      final keyExistedBefore =
+          store != null && await store.containsKey(keyName);
+      final row = await _toStorageRow(stamped);
+      final saved = await guarded(row, groupId: groupId);
+      if (!saved && store != null && !keyExistedBefore) {
+        await store.delete(keyName);
+      }
+      return saved;
+    });
   }
 
   @override
