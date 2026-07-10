@@ -7,8 +7,11 @@ import 'package:flutter_test/flutter_test.dart';
 // 235: pure capability policy for received-media actions in discussion groups.
 // Save/Share require the current row to be displayable-verified; Info and
 // Delete-for-me apply to any incoming discussion image/video; Reply follows
-// canWrite. Outgoing, non-visual, non-group-lane, announcement, and QA rows
-// get no received-media action at all.
+// canWrite. Outgoing, non-visual, non-group-lane, and QA rows get no
+// received-media action at all.
+// 239: announcement recipients get the same local received-media actions
+// (Save/Share verified-only, Info/Delete always) but NEVER Reply — not even
+// a writable admin.
 
 const _validContentHash =
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -157,13 +160,8 @@ void main() {
           reason: 'audio attachments get no received-media action',
         );
 
-        // Announcement and QA groups get none even for verified incoming
-        // media with write access.
-        expect(
-          _capabilities(groupType: GroupType.announcement),
-          isEmpty,
-          reason: 'announcement rows get no received-media action',
-        );
+        // QA groups get none even for verified incoming media with write
+        // access. (The announcement capability contract is GMA-13's.)
         expect(
           _capabilities(groupType: GroupType.qa),
           isEmpty,
@@ -183,6 +181,99 @@ void main() {
           _capabilities(attachment: _attachment(ownerLane: null)),
           isEmpty,
           reason: 'unresolved-lane rows get no group media action',
+        );
+      },
+    );
+
+    test(
+      'GMA-13 announcement member and admin get core media capabilities without reply while qa stays empty',
+      () {
+        const coreActions = {
+          GroupReceivedMediaAction.save,
+          GroupReceivedMediaAction.share,
+          GroupReceivedMediaAction.deleteForMe,
+          GroupReceivedMediaAction.info,
+        };
+
+        // Member (canWrite=false) and admin (canWrite=true) receive the SAME
+        // four capabilities: announcement write permission never leaks Reply.
+        for (final canWrite in [false, true]) {
+          expect(
+            _capabilities(
+              groupType: GroupType.announcement,
+              canWrite: canWrite,
+            ),
+            coreActions,
+            reason: 'verified incoming announcement image exposes exactly '
+                'Save/Share/Info/Delete for me (canWrite=$canWrite)',
+          );
+          expect(
+            _capabilities(
+              groupType: GroupType.announcement,
+              canWrite: canWrite,
+              attachment: _attachment(
+                mime: 'video/mp4',
+                mediaType: 'video',
+                localPath: 'media/group-1/att-1.mp4',
+              ),
+            ),
+            coreActions,
+            reason: 'verified incoming announcement video exposes exactly '
+                'Save/Share/Info/Delete for me (canWrite=$canWrite)',
+          );
+
+          // Unverified rows keep only the local metadata/deletion actions.
+          expect(
+            _capabilities(
+              groupType: GroupType.announcement,
+              canWrite: canWrite,
+              attachment: _attachment(downloadStatus: 'pending'),
+            ),
+            {
+              GroupReceivedMediaAction.deleteForMe,
+              GroupReceivedMediaAction.info,
+            },
+            reason: 'unverified announcement media keeps only Info and '
+                'Delete for me (canWrite=$canWrite)',
+          );
+        }
+
+        // Direction/type/lane negatives hold for announcements too.
+        expect(
+          _capabilities(groupType: GroupType.announcement, isIncoming: false),
+          isEmpty,
+          reason: 'outgoing announcement media gets no received-media action',
+        );
+        expect(
+          _capabilities(
+            groupType: GroupType.announcement,
+            attachment: _attachment(mime: 'audio/mp4', mediaType: 'audio'),
+          ),
+          isEmpty,
+          reason: 'announcement audio gets no received-media action',
+        );
+        expect(
+          _capabilities(
+            groupType: GroupType.announcement,
+            attachment: _attachment(ownerLane: MediaOwnerLane.direct),
+          ),
+          isEmpty,
+          reason: 'direct-owned collision rows stay excluded in announcements',
+        );
+        expect(
+          _capabilities(
+            groupType: GroupType.announcement,
+            attachment: _attachment(ownerLane: null),
+          ),
+          isEmpty,
+          reason: 'unresolved-lane rows stay excluded in announcements',
+        );
+
+        // QA fails closed wholesale.
+        expect(
+          _capabilities(groupType: GroupType.qa),
+          isEmpty,
+          reason: 'QA rows get no received-media action',
         );
       },
     );

@@ -7,7 +7,8 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// 235: privacy-minimized Info sheet for one received group media attachment.
 ///
-/// Renders ONLY the approved fields: kind, size when known, sender display
+/// Renders ONLY the approved fields: kind, MIME, size when known, image
+/// dimensions or video duration when persisted (239), sender display
 /// identity, sent time, transfer/integrity state, and caption. Storage,
 /// crypto, and transport internals — local path, content/thumbnail hashes,
 /// encryption key/nonce/scheme, peer or relay diagnostics — must NEVER render
@@ -57,7 +58,9 @@ class GroupMediaInfoSheet extends StatelessWidget {
     final trimmedCaption = caption?.trim();
 
     return SafeArea(
-      child: Padding(
+      // 239: the expanded field list can exceed the sheet's max height on
+      // short viewports; scroll instead of overflowing.
+      child: SingleChildScrollView(
         key: GroupMediaInfoSheet.sheetKey,
         padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
         child: Column(
@@ -77,6 +80,13 @@ class GroupMediaInfoSheet extends StatelessWidget {
                   ? Icons.videocam_outlined
                   : Icons.image_outlined,
             ),
+            // 239: persisted MIME plus conditional dimensions/duration reuse
+            // the 1:1 media-info labels and formats.
+            _InfoRow(
+              label: l10n.media_info_type,
+              value: attachment.mime,
+              valueKey: const ValueKey('group-media-info-mime'),
+            ),
             _InfoRow(
               label: l10n.group_media_info_sender,
               value: senderDisplayName,
@@ -92,6 +102,21 @@ class GroupMediaInfoSheet extends StatelessWidget {
                 label: l10n.group_media_info_size,
                 value: _formatBytes(attachment.size),
                 valueKey: const ValueKey('group-media-info-size'),
+              ),
+            if (attachment.mediaType != 'video' &&
+                attachment.width != null &&
+                attachment.height != null)
+              _InfoRow(
+                label: l10n.media_info_dimensions,
+                value: '${attachment.width} × ${attachment.height}',
+                valueKey: const ValueKey('group-media-info-dimensions'),
+              ),
+            if (attachment.mediaType == 'video' &&
+                attachment.durationMs != null)
+              _InfoRow(
+                label: l10n.media_info_duration,
+                value: _formatDurationMs(attachment.durationMs!),
+                valueKey: const ValueKey('group-media-info-duration'),
               ),
             _InfoRow(
               label: l10n.group_media_info_state,
@@ -130,6 +155,13 @@ class GroupMediaInfoSheet extends StatelessWidget {
     }
     return l10n.group_media_info_state_unavailable;
   }
+}
+
+String _formatDurationMs(int durationMs) {
+  final totalSeconds = (durationMs / 1000).round();
+  final minutes = totalSeconds ~/ 60;
+  final seconds = totalSeconds % 60;
+  return '$minutes:${seconds.toString().padLeft(2, '0')}';
 }
 
 String _formatBytes(int bytes) {

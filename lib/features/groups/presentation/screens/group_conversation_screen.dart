@@ -824,9 +824,9 @@ class GroupConversationScreen extends StatelessWidget {
                           mediaCapabilities: capabilities,
                         );
                       } else if (canOpenContextOverlay) {
-                        // No media action applies (outgoing, announcement,
-                        // QA, ...): keep the pre-235 behavior where a tile
-                        // long-press opened the plain message overlay.
+                        // No media action applies (outgoing, QA, ...): keep
+                        // the pre-235 behavior where a tile long-press opened
+                        // the plain message overlay.
                         _showMessageContextOverlay(
                           message,
                           cardContext: cardContext,
@@ -1023,12 +1023,20 @@ class GroupConversationScreen extends StatelessWidget {
     final ownReaction = ownPeerId != null
         ? messageReactions.where((r) => r.senderPeerId == ownPeerId).firstOrNull
         : null;
-    final showReplyAction = canWrite && onQuoteReply != null;
+    // 239: a media-target overlay derives Reply from the policy capability
+    // set, not raw canWrite — a writable announcement admin gets the same
+    // four received-media actions as a member and never Reply. The plain
+    // (non-media) message overlay keeps its pre-239 canWrite behavior.
+    final showReplyAction =
+        canWrite &&
+        onQuoteReply != null &&
+        (mediaTarget == null ||
+            mediaCapabilities.contains(GroupReceivedMediaAction.reply));
     final showCopyAction = message.text.trim().isNotEmpty;
     final showReactionBar = onReactionSelected != null;
     // 235: received-media entries for the exact long-pressed attachment. The
-    // policy already excluded outgoing, non-visual, non-group-lane,
-    // announcement, and QA rows.
+    // policy already excluded outgoing, non-visual, non-group-lane, and QA
+    // rows.
     final showSaveAction =
         mediaTarget != null &&
         mediaCapabilities.contains(GroupReceivedMediaAction.save) &&

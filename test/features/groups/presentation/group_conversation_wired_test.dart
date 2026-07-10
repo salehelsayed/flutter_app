@@ -56,6 +56,7 @@ import 'package:flutter_app/core/media/received_media_egress_service.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/groups/application/group_media_delete_for_me_coordinator.dart';
 import 'package:flutter_app/features/groups/application/group_received_media_actions.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_media_info_sheet.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
@@ -14294,30 +14295,48 @@ void main() {
     );
 
     testWidgets(
-      'GMA-13 announcement and qa exclude discussion media actions',
+      'GMA-13 announcement member and admin expose core media actions without reply while qa stays excluded',
       (tester) async {
         tester.view.physicalSize = const Size(1200, 4000);
         tester.view.devicePixelRatio = 1.0;
         addTearDown(tester.view.resetPhysicalSize);
         addTearDown(tester.view.resetDevicePixelRatio);
-        for (final group in [
-          makeAnnouncementGroup(role: GroupRole.member),
-          GroupModel(
-            id: 'group-1',
-            name: 'QA Group',
-            type: GroupType.qa,
-            topicName: 'topic-1',
-            description: 'QA',
-            createdAt: DateTime.now().toUtc(),
-            createdBy: 'peer-admin',
-            myRole: GroupRole.member,
-          ),
-        ]) {
+
+        Future<void> settleCanWrite(bool expected) async {
+          for (var i = 0; i < 40; i++) {
+            final screen = tester.widget<GroupConversationScreen>(
+              find.byType(GroupConversationScreen),
+            );
+            if (screen.canWrite == expected) break;
+            await tester.runAsync(() async {
+              await Future<void>.delayed(const Duration(milliseconds: 25));
+            });
+            await tester.pump();
+          }
+          expect(
+            tester
+                .widget<GroupConversationScreen>(
+                  find.byType(GroupConversationScreen),
+                )
+                .canWrite,
+            expected,
+          );
+        }
+
+        final commandsBefore = bridge.commandLog.length;
+
+        // 239: member (canWrite=false) and admin (canWrite=true) get the SAME
+        // received-media actions. The admin case is causal for the overlay
+        // change — raw canWrite would leak Reply onto announcement media.
+        for (final role in [GroupRole.member, GroupRole.admin]) {
+          final group = makeAnnouncementGroup(role: role);
           await groupRepo.saveGroup(group);
           await saveActiveGroupMembers(groupRepo, group);
+          final messageId = 'msg-${role.name}';
+          final attachmentId = 'att-${role.name}';
           await seedIncomingDoneImage(
-            messageId: 'msg-${group.type.name}',
-            attachmentId: 'att-${group.type.name}',
+            messageId: messageId,
+            attachmentId: attachmentId,
           );
           final controller = RecordingGroupMediaActionsController(
             messageRepository: msgRepo,
@@ -14335,51 +14354,187 @@ void main() {
               mediaDeleteForMeCoordinator: deleteCoordinator,
             ),
           );
-          final messageId = 'msg-${group.type.name}';
-          final attachmentId = 'att-${group.type.name}';
           await pumpUntilMediaLoaded(tester, messageId);
+          await settleCanWrite(role == GroupRole.admin);
+          final cellKey = ValueKey('media-grid-cell-$messageId-$attachmentId');
 
-          // Tile long-press never offers the received-media entries.
-          await tester.longPress(
-            find.byKey(ValueKey('media-grid-cell-$messageId-$attachmentId')),
-          );
+          // Tile long-press offers exactly the four received-media entries —
+          // and never Reply, even for the writable admin.
+          await tester.longPress(find.byKey(cellKey));
           await pumpFrames(tester, count: 4);
           expect(
             find.byKey(MessageContextOverlay.saveActionKey),
-            findsNothing,
-            reason: '${group.type} must not offer Save',
+            findsOneWidget,
+            reason: '$role announcement media must offer Save',
           );
-          expect(find.byKey(MessageContextOverlay.shareActionKey), findsNothing);
-          expect(find.byKey(MessageContextOverlay.infoActionKey), findsNothing);
+          expect(
+            find.byKey(MessageContextOverlay.shareActionKey),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(MessageContextOverlay.infoActionKey),
+            findsOneWidget,
+          );
           expect(
             find.byKey(MessageContextOverlay.deleteActionKey),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(MessageContextOverlay.replyActionKey),
             findsNothing,
+            reason: '$role must never see Reply on announcement media',
           );
-          // Dismiss whatever overlay (if any) is open.
-          if (tester.any(find.byKey(MessageContextOverlay.backdropKey))) {
-            await tester.tapAt(const Offset(5, 5));
-            await pumpFrames(tester, count: 10);
-          }
 
-          // Viewing stays available, but the viewer carries no action slot.
-          await tester.tap(
-            find.byKey(ValueKey('media-grid-cell-$messageId-$attachmentId')),
-          );
+          // Save reaches ONLY the injected controller with exact identity.
+          await tester.tap(find.byKey(MessageContextOverlay.saveActionKey));
+          await pumpFrames(tester, count: 10);
+          expect(controller.saves, ['group-1/$messageId/$attachmentId']);
+          expect(controller.egressServiceTouched, isFalse);
+
+          // Info opens the existing sheet.
+          await tester.longPress(find.byKey(cellKey));
+          await pumpFrames(tester, count: 4);
+          await tester.tap(find.byKey(MessageContextOverlay.infoActionKey));
+          await pumpFrames(tester, count: 10);
+          expect(find.byKey(GroupMediaInfoSheet.sheetKey), findsOneWidget);
+          await tester.tapAt(const Offset(5, 5));
+          await pumpFrames(tester, count: 10);
+
+          // Viewer carries the same four actions and never Reply.
+          await tester.tap(find.byKey(cellKey));
           await pumpFrames(tester, count: 4);
           expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
-          for (final action in MediaViewerAction.values) {
+          for (final action in [
+            MediaViewerAction.save,
+            MediaViewerAction.share,
+            MediaViewerAction.info,
+            MediaViewerAction.delete,
+          ]) {
+            expect(
+              find.byKey(ValueKey('media_action_${action.name}')),
+              findsOneWidget,
+              reason: '$role announcement viewer must offer ${action.name}',
+            );
+          }
+          for (final action in [
+            MediaViewerAction.reply,
+            MediaViewerAction.forward,
+            MediaViewerAction.bookmark,
+          ]) {
             expect(
               find.byKey(ValueKey('media_action_${action.name}')),
               findsNothing,
-              reason: '${group.type} viewer must not offer ${action.name}',
+              reason: '$role announcement viewer must not offer '
+                  '${action.name}',
             );
           }
-          expect(controller.saves, isEmpty);
-          expect(controller.shares, isEmpty);
-          expect(deleteCoordinator.calls, isEmpty);
+          await tester.tap(find.byKey(const ValueKey('media_action_share')));
+          await pumpFrames(tester, count: 4);
+          expect(controller.shares, ['group-1/$messageId/$attachmentId']);
           await tester.tap(find.byIcon(Icons.arrow_back));
           await pumpFrames(tester, count: 10);
+
+          // Delete: cancel is a zero-op; one confirm dispatches exactly one
+          // existing delete-coordinator operation.
+          await tester.longPress(find.byKey(cellKey));
+          await pumpFrames(tester, count: 4);
+          await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
+          await pumpFrames(tester, count: 10);
+          await tester.tap(
+            find.byKey(const ValueKey('group-media-delete-cancel')),
+          );
+          await pumpFrames(tester, count: 10);
+          expect(deleteCoordinator.calls, isEmpty);
+          await tester.longPress(find.byKey(cellKey));
+          await pumpFrames(tester, count: 4);
+          await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
+          await pumpFrames(tester, count: 10);
+          await tester.tap(
+            find.byKey(const ValueKey('group-media-delete-confirm')),
+          );
+          await pumpFrames(tester, count: 10);
+          expect(deleteCoordinator.calls, ['group-1/$messageId']);
         }
+
+        // No send/publish/batch-delivery seam was touched by any action.
+        expect(
+          bridge.commandLog.skip(commandsBefore).where(
+            (raw) =>
+                raw.contains('group:publish') ||
+                raw.contains('group:sendReliable') ||
+                raw.contains('group:inboxStore'),
+          ),
+          isEmpty,
+        );
+
+        // QA stays excluded wholesale (plans beyond 242 own its actions).
+        final qaGroup = GroupModel(
+          id: 'group-1',
+          name: 'QA Group',
+          type: GroupType.qa,
+          topicName: 'topic-1',
+          description: 'QA',
+          createdAt: DateTime.now().toUtc(),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.member,
+        );
+        await groupRepo.saveGroup(qaGroup);
+        await saveActiveGroupMembers(groupRepo, qaGroup);
+        await seedIncomingDoneImage(messageId: 'msg-qa', attachmentId: 'att-qa');
+        final qaController = RecordingGroupMediaActionsController(
+          messageRepository: msgRepo,
+          mediaAttachmentRepository: mediaAttachmentRepo,
+        );
+        final qaDeleteCoordinator = RecordingGroupMediaDeleteForMeCoordinator();
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpWidget(
+          buildWidget(
+            group: qaGroup,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            mediaActionsController: qaController,
+            mediaDeleteForMeCoordinator: qaDeleteCoordinator,
+          ),
+        );
+        await pumpUntilMediaLoaded(tester, 'msg-qa');
+
+        // Tile long-press never offers the received-media entries.
+        await tester.longPress(
+          find.byKey(const ValueKey('media-grid-cell-msg-qa-att-qa')),
+        );
+        await pumpFrames(tester, count: 4);
+        expect(
+          find.byKey(MessageContextOverlay.saveActionKey),
+          findsNothing,
+          reason: 'QA must not offer Save',
+        );
+        expect(find.byKey(MessageContextOverlay.shareActionKey), findsNothing);
+        expect(find.byKey(MessageContextOverlay.infoActionKey), findsNothing);
+        expect(find.byKey(MessageContextOverlay.deleteActionKey), findsNothing);
+        // Dismiss whatever overlay (if any) is open.
+        if (tester.any(find.byKey(MessageContextOverlay.backdropKey))) {
+          await tester.tapAt(const Offset(5, 5));
+          await pumpFrames(tester, count: 10);
+        }
+
+        // Viewing stays available, but the viewer carries no action slot.
+        await tester.tap(
+          find.byKey(const ValueKey('media-grid-cell-msg-qa-att-qa')),
+        );
+        await pumpFrames(tester, count: 4);
+        expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+        for (final action in MediaViewerAction.values) {
+          expect(
+            find.byKey(ValueKey('media_action_${action.name}')),
+            findsNothing,
+            reason: 'QA viewer must not offer ${action.name}',
+          );
+        }
+        expect(qaController.saves, isEmpty);
+        expect(qaController.shares, isEmpty);
+        expect(qaDeleteCoordinator.calls, isEmpty);
+        await tester.tap(find.byIcon(Icons.arrow_back));
+        await pumpFrames(tester, count: 10);
       },
     );
   });

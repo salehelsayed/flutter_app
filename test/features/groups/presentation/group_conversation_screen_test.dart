@@ -3229,5 +3229,149 @@ void main() {
         expect(find.textContaining('media/'), findsNothing);
       },
     );
+
+    testWidgets(
+      'GMA-12M group media info includes MIME and conditional dimensions or duration',
+      (tester) async {
+        const sentinelRawPeerId = 'peer-sentinel-raw-transport-id';
+
+        GroupMessage infoMessage(String id) => GroupMessage(
+          id: id,
+          groupId: 'group-1',
+          senderPeerId: sentinelRawPeerId,
+          senderUsername: 'Alice Wire',
+          text: 'holiday picture',
+          timestamp: DateTime.utc(2026, 7, 9, 18, 45),
+          createdAt: DateTime.utc(2026, 7, 9, 18, 45),
+          isIncoming: true,
+        );
+        final members = {
+          sentinelRawPeerId: GroupMember(
+            groupId: 'group-1',
+            peerId: sentinelRawPeerId,
+            username: 'Alice Member',
+            role: MemberRole.writer,
+            joinedAt: DateTime.utc(2026, 7, 1),
+          ),
+        };
+        MediaAttachment infoAttachment({
+          required String id,
+          required String messageId,
+          required String mime,
+          required String mediaType,
+          int? width,
+          int? height,
+          int? durationMs,
+        }) => MediaAttachment(
+          id: id,
+          messageId: messageId,
+          mime: mime,
+          size: 2048,
+          mediaType: mediaType,
+          localPath: 'media/group-1/sentinel-secret-path.bin',
+          downloadStatus: 'done',
+          contentHash: _validContentHash,
+          encryptionKeyBase64: 'sentinel-key-material-base64',
+          encryptionNonce: 'sentinel-nonce-material',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          createdAt: '2026-07-09T18:45:00.000Z',
+          ownerLane: MediaOwnerLane.group,
+          width: width,
+          height: height,
+          durationMs: durationMs,
+        );
+
+        Future<void> openInfoSheet(String cellKey) async {
+          await openMediaOverlay(tester, cellKey);
+          await tapOverlayAction(tester, MessageContextOverlay.infoActionKey);
+          // Let the bottom sheet finish animating in.
+          await tester.pump(const Duration(milliseconds: 350));
+          expect(find.byKey(GroupMediaInfoSheet.sheetKey), findsOneWidget);
+        }
+
+        String infoValue(String key) =>
+            tester.widget<Text>(find.byKey(ValueKey(key))).data!;
+
+        // Image: MIME + dimensions render; no duration row.
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [infoMessage('msg-img')],
+            membersByPeerId: members,
+            mediaMap: {
+              'msg-img': [
+                infoAttachment(
+                  id: 'att-img',
+                  messageId: 'msg-img',
+                  mime: 'image/jpeg',
+                  mediaType: 'image',
+                  width: 1024,
+                  height: 768,
+                ),
+              ],
+            },
+            onQuoteReply: (_) {},
+            onReactionSelected: (_, _) {},
+          ),
+        );
+        await tester.pump();
+        await openInfoSheet('media-grid-cell-msg-img-att-img');
+
+        expect(infoValue('group-media-info-mime'), 'image/jpeg');
+        expect(infoValue('group-media-info-dimensions'), '1024 × 768');
+        expect(
+          find.byKey(const ValueKey('group-media-info-duration')),
+          findsNothing,
+          reason: 'an image row never renders a duration',
+        );
+        // Existing approved fields stay intact.
+        expect(infoValue('group-media-info-kind'), 'Image');
+        expect(infoValue('group-media-info-sender'), 'Alice Member');
+        expect(infoValue('group-media-info-size'), '2 KB');
+        expect(infoValue('group-media-info-state'), 'Downloaded and verified');
+        expect(infoValue('group-media-info-caption'), 'holiday picture');
+        // Redaction holds with the expanded fields.
+        expect(find.textContaining('sentinel'), findsNothing);
+        expect(find.textContaining(sentinelRawPeerId), findsNothing);
+        expect(find.textContaining('media/group-1'), findsNothing);
+
+        // Video: MIME + formatted duration render; dimensions never render
+        // for a video even when width/height metadata exists.
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [infoMessage('msg-vid')],
+            membersByPeerId: members,
+            mediaMap: {
+              'msg-vid': [
+                infoAttachment(
+                  id: 'att-vid',
+                  messageId: 'msg-vid',
+                  mime: 'video/mp4',
+                  mediaType: 'video',
+                  width: 1920,
+                  height: 1080,
+                  durationMs: 65000,
+                ),
+              ],
+            },
+            onQuoteReply: (_) {},
+            onReactionSelected: (_, _) {},
+          ),
+        );
+        await tester.pump();
+        await openInfoSheet('media-grid-cell-msg-vid-att-vid');
+
+        expect(infoValue('group-media-info-mime'), 'video/mp4');
+        expect(infoValue('group-media-info-duration'), '1:05');
+        expect(
+          find.byKey(const ValueKey('group-media-info-dimensions')),
+          findsNothing,
+          reason: 'a video row renders duration, not dimensions',
+        );
+        expect(infoValue('group-media-info-kind'), 'Video');
+        expect(find.textContaining('sentinel'), findsNothing);
+        expect(find.textContaining(sentinelRawPeerId), findsNothing);
+      },
+    );
   });
 }
