@@ -239,6 +239,12 @@ plan is refreshed/reviewed.
 | [247-announcement-media-private-reply-routing-tdd-plan.md](247-announcement-media-private-reply-routing-tdd-plan.md) | Evidence-gated | Reply Privately routing into a 1:1 draft after an explicit identity/context/product decision; never publishes to the announcement. |
 | [251-announcement-shared-media-batch-forwarding-tdd-plan.md](251-announcement-shared-media-batch-forwarding-tdd-plan.md) | Evidence-gated | Multi-source announcement Forward output/provenance/caption/order/cap/retry semantics while retaining destination publisher authorization. |
 
+## 3B. Introduction notification follow-up (2026-07-10)
+
+| Plan | Status | Owns / boundary |
+|---|---|---|
+| [252-intro-accept-notification-copy-chat-routing-tdd-plan.md](252-intro-accept-notification-copy-chat-routing-tdd-plan.md) | Implemented host+relay-green 2026-07-10 (all host/relay/gate tiers GREEN; D1/D2 three-party device proof PENDING a staging relay running the 252 relay build — harness + discovery registered; see plan Execution Progress) | Action-aware, role-neutral introduction-accept notification copy plus introducer-only notification-tap routing to the originating A-B chat; preserves generic incoming-intro/group-invite Orbit routing and defers exact-name encrypted previews. |
+
 ---
 
 ## 4. Dead Code
