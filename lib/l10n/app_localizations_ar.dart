@@ -1912,6 +1912,39 @@ class AppLocalizationsAr extends AppLocalizations {
   String get media_video_load_failed => 'تعذر تحميل الفيديو';
 
   @override
+  String get media_viewer_action_save => 'حفظ';
+
+  @override
+  String get media_viewer_action_share => 'مشاركة';
+
+  @override
+  String get media_viewer_action_forward => 'إعادة توجيه';
+
+  @override
+  String get media_viewer_action_delete => 'حذف';
+
+  @override
+  String get media_viewer_action_bookmark => 'إشارة مرجعية';
+
+  @override
+  String get media_viewer_play => 'تشغيل';
+
+  @override
+  String get media_viewer_pause => 'إيقاف مؤقت';
+
+  @override
+  String get media_viewer_skip_back => 'إرجاع ١٠ ثوانٍ';
+
+  @override
+  String get media_viewer_skip_forward => 'تقديم ١٠ ثوانٍ';
+
+  @override
+  String get media_viewer_mute => 'كتم الصوت';
+
+  @override
+  String get media_viewer_unmute => 'إلغاء الكتم';
+
+  @override
   String get conversation_introduce_to_circle => 'عرّفه إلى دائرتك';
 
   @override

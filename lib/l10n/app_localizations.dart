@@ -3200,6 +3200,72 @@ abstract class AppLocalizations {
   /// **'Could not load video'**
   String get media_video_load_failed;
 
+  /// No description provided for @media_viewer_action_save.
+  ///
+  /// In en, this message translates to:
+  /// **'Save'**
+  String get media_viewer_action_save;
+
+  /// No description provided for @media_viewer_action_share.
+  ///
+  /// In en, this message translates to:
+  /// **'Share'**
+  String get media_viewer_action_share;
+
+  /// No description provided for @media_viewer_action_forward.
+  ///
+  /// In en, this message translates to:
+  /// **'Forward'**
+  String get media_viewer_action_forward;
+
+  /// No description provided for @media_viewer_action_delete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get media_viewer_action_delete;
+
+  /// No description provided for @media_viewer_action_bookmark.
+  ///
+  /// In en, this message translates to:
+  /// **'Bookmark'**
+  String get media_viewer_action_bookmark;
+
+  /// No description provided for @media_viewer_play.
+  ///
+  /// In en, this message translates to:
+  /// **'Play'**
+  String get media_viewer_play;
+
+  /// No description provided for @media_viewer_pause.
+  ///
+  /// In en, this message translates to:
+  /// **'Pause'**
+  String get media_viewer_pause;
+
+  /// No description provided for @media_viewer_skip_back.
+  ///
+  /// In en, this message translates to:
+  /// **'Back 10 seconds'**
+  String get media_viewer_skip_back;
+
+  /// No description provided for @media_viewer_skip_forward.
+  ///
+  /// In en, this message translates to:
+  /// **'Forward 10 seconds'**
+  String get media_viewer_skip_forward;
+
+  /// No description provided for @media_viewer_mute.
+  ///
+  /// In en, this message translates to:
+  /// **'Mute'**
+  String get media_viewer_mute;
+
+  /// No description provided for @media_viewer_unmute.
+  ///
+  /// In en, this message translates to:
+  /// **'Unmute'**
+  String get media_viewer_unmute;
+
   /// No description provided for @conversation_introduce_to_circle.
   ///
   /// In en, this message translates to:

@@ -1882,6 +1882,39 @@ class AppLocalizationsEn extends AppLocalizations {
   String get media_video_load_failed => 'Could not load video';
 
   @override
+  String get media_viewer_action_save => 'Save';
+
+  @override
+  String get media_viewer_action_share => 'Share';
+
+  @override
+  String get media_viewer_action_forward => 'Forward';
+
+  @override
+  String get media_viewer_action_delete => 'Delete';
+
+  @override
+  String get media_viewer_action_bookmark => 'Bookmark';
+
+  @override
+  String get media_viewer_play => 'Play';
+
+  @override
+  String get media_viewer_pause => 'Pause';
+
+  @override
+  String get media_viewer_skip_back => 'Back 10 seconds';
+
+  @override
+  String get media_viewer_skip_forward => 'Forward 10 seconds';
+
+  @override
+  String get media_viewer_mute => 'Mute';
+
+  @override
+  String get media_viewer_unmute => 'Unmute';
+
+  @override
   String get conversation_introduce_to_circle => 'Introduce to your circle';
 
   @override

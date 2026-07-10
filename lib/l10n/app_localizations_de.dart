@@ -1930,6 +1930,39 @@ class AppLocalizationsDe extends AppLocalizations {
   String get media_video_load_failed => 'Video konnte nicht geladen werden';
 
   @override
+  String get media_viewer_action_save => 'Speichern';
+
+  @override
+  String get media_viewer_action_share => 'Teilen';
+
+  @override
+  String get media_viewer_action_forward => 'Weiterleiten';
+
+  @override
+  String get media_viewer_action_delete => 'Löschen';
+
+  @override
+  String get media_viewer_action_bookmark => 'Lesezeichen';
+
+  @override
+  String get media_viewer_play => 'Abspielen';
+
+  @override
+  String get media_viewer_pause => 'Pause';
+
+  @override
+  String get media_viewer_skip_back => '10 Sekunden zurück';
+
+  @override
+  String get media_viewer_skip_forward => '10 Sekunden vor';
+
+  @override
+  String get media_viewer_mute => 'Stummschalten';
+
+  @override
+  String get media_viewer_unmute => 'Ton ein';
+
+  @override
   String get conversation_introduce_to_circle => 'Deinem Kreis vorstellen';
 
   @override
