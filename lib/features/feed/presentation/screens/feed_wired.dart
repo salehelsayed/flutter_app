@@ -9,6 +9,7 @@ import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -842,10 +843,11 @@ class _FeedWiredState extends State<FeedWired>
 
   Future<List<MediaAttachment>> _loadResolvedAttachmentsForMessage(
     String messageId, {
+    required MediaOwnerLane owner,
     bool requireGroupMediaIntegrity = false,
   }) async {
     final attachments = await widget.mediaAttachmentRepository
-        .getAttachmentsForMessage(messageId);
+        .getAttachmentsForMessage(messageId, owner: owner);
     if (attachments.isEmpty) return const <MediaAttachment>[];
 
     if (requireGroupMediaIntegrity) {
@@ -1122,7 +1124,10 @@ class _FeedWiredState extends State<FeedWired>
       final displayMessage = message.copyWith(
         media: message.isDeleted
             ? const <MediaAttachment>[]
-            : await _loadResolvedAttachmentsForMessage(message.id),
+            : await _loadResolvedAttachmentsForMessage(
+                message.id,
+                owner: MediaOwnerLane.direct,
+              ),
       );
       final currentThread = _threadForContact(contact.peerId);
       final merge = _mergeContactThreadMessages(
@@ -1264,6 +1269,7 @@ class _FeedWiredState extends State<FeedWired>
       final displayMessage = message.copyWith(
         media: await _loadResolvedAttachmentsForMessage(
           message.id,
+          owner: MediaOwnerLane.group,
           requireGroupMediaIntegrity: true,
         ),
       );

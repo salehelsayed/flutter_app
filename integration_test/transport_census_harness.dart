@@ -220,6 +220,14 @@ Future<_Stack> _buildFreshStack() async {
     dbUpdateMessageStatus: (id, status) =>
         dbUpdateMessageStatus(db, id, status),
     dbLoadMessage: (id) => dbLoadMessage(db, id),
+    dbExistsMessageByContent: (contactPeerId, senderPeerId, text, timestamp) =>
+        dbExistsMessageByContent(
+          db,
+          contactPeerId,
+          senderPeerId,
+          text,
+          timestamp,
+        ),
     dbCountMessagesForContact: (contactPeerId) =>
         dbCountMessagesForContact(db, contactPeerId),
     dbMarkConversationAsRead: (contactPeerId) =>

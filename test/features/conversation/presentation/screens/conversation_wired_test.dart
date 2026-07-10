@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
@@ -317,12 +318,15 @@ class InFlightAtFirstSaveMediaRepository extends FakeMediaAttachmentRepository {
   final Map<String, bool> inFlightAtFirstSave = {};
 
   @override
-  Future<void> saveAttachment(MediaAttachment attachment) async {
+  Future<void> saveAttachment(
+    MediaAttachment attachment, {
+    required MediaOwnerLane owner,
+  }) async {
     inFlightAtFirstSave.putIfAbsent(
       attachment.id,
       () => mediaUploadInFlightTracker.isInFlight(attachment.id),
     );
-    await super.saveAttachment(attachment);
+    await super.saveAttachment(attachment, owner: owner);
   }
 }
 
@@ -842,6 +846,35 @@ class InboxRetryP2PService extends FakeP2PService {
   }) async {
     storeInInboxCallCount++;
     return true;
+  }
+}
+
+/// 228 TC-228-05B: records the lane and post-terminalization row statuses of
+/// every [markUploadPendingAttachmentsFailedForMessage] call, so a widget
+/// flow that afterwards deletes its own lane's rows can still prove the
+/// direct row BECAME upload_failed (and that no sibling lane was touched).
+class TerminalizationRecordingMediaAttachmentRepository
+    extends FakeMediaAttachmentRepository {
+  final List<MediaOwnerLane> terminalizedLanes = [];
+  final Map<String, String> statusAfterTerminalization = {};
+
+  @override
+  Future<int> markUploadPendingAttachmentsFailedForMessage(
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async {
+    final count = await super.markUploadPendingAttachmentsFailedForMessage(
+      messageId,
+      owner: owner,
+    );
+    terminalizedLanes.add(owner);
+    for (final attachment in await getAttachmentsForMessage(
+      messageId,
+      owner: owner,
+    )) {
+      statusAfterTerminalization[attachment.id] = attachment.downloadStatus;
+    }
+    return count;
   }
 }
 
@@ -2198,6 +2231,7 @@ void main() {
             for (final attachment in mediaAttachments) {
               await mediaAttachmentRepo.saveAttachment(
                 attachment.copyWith(messageId: messageId!),
+                owner: MediaOwnerLane.direct,
               );
             }
           }
@@ -2268,12 +2302,15 @@ void main() {
 
         final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
           sentMessageId!,
+          owner: MediaOwnerLane.direct,
         );
         expect(uploadedBlobId, isNotNull);
         expect(attachments.length, 1);
         expect(attachments.single.id, uploadedBlobId);
         expect(attachments.single.downloadStatus, 'done');
-        final pending = await mediaAttachmentRepo.getUploadPendingAttachments();
+        final pending = await mediaAttachmentRepo.getUploadPendingAttachments(
+          owner: MediaOwnerLane.direct,
+        );
         expect(
           pending.where((attachment) => attachment.messageId == sentMessageId!),
           isEmpty,
@@ -2896,6 +2933,7 @@ void main() {
             for (final attachment in mediaAttachments) {
               await mediaAttachmentRepo.saveAttachment(
                 attachment.copyWith(messageId: messageId!),
+                owner: MediaOwnerLane.direct,
               );
             }
           }
@@ -2991,7 +3029,10 @@ void main() {
 
         expect(sentMessageId, isNotNull);
         final finalAttachments = await mediaAttachmentRepo
-            .getAttachmentsForMessage(sentMessageId!);
+            .getAttachmentsForMessage(
+              sentMessageId!,
+              owner: MediaOwnerLane.direct,
+            );
         expect(finalAttachments.single.mime, 'image/gif');
         expect(finalAttachments.single.isAnimated, isTrue);
         expect(finalAttachments.single.id, uploadedBlobId);
@@ -3307,7 +3348,10 @@ void main() {
         media: [failedAttachment],
       );
       await messageRepo.saveMessage(message);
-      await mediaAttachmentRepo.saveAttachment(failedAttachment);
+      await mediaAttachmentRepo.saveAttachment(
+        failedAttachment,
+        owner: MediaOwnerLane.direct,
+      );
 
       var downloadCalls = 0;
       MediaAttachment? requestedAttachment;
@@ -3317,6 +3361,7 @@ void main() {
         required MediaFileManager mediaFileManager,
         required MediaAttachment attachment,
         required String contactPeerId,
+        required MediaOwnerLane owner,
       }) async {
         downloadCalls++;
         requestedAttachment = attachment;
@@ -3327,7 +3372,7 @@ void main() {
           localPath: recoveredFile.path,
           downloadStatus: 'done',
         );
-        await mediaAttachmentRepo.saveAttachment(recovered);
+        await mediaAttachmentRepo.saveAttachment(recovered, owner: owner);
         return recovered;
       }
 
@@ -6888,7 +6933,10 @@ void main() {
           media: [durableAttachment],
         );
         await messageRepo.saveMessage(voiceMessage);
-        await mediaAttachmentRepo.saveAttachment(durableAttachment);
+        await mediaAttachmentRepo.saveAttachment(
+          durableAttachment,
+          owner: MediaOwnerLane.direct,
+        );
 
         var downloadCalls = 0;
         Future<MediaAttachment?> countingDownloadFn({
@@ -6897,6 +6945,7 @@ void main() {
           required MediaFileManager mediaFileManager,
           required MediaAttachment attachment,
           required String contactPeerId,
+          required MediaOwnerLane owner,
         }) async {
           downloadCalls += 1;
           return null;
@@ -7083,6 +7132,7 @@ void main() {
                     timestamp ?? DateTime.now().toUtc().toIso8601String(),
                 waveform: waveform,
               ),
+              owner: MediaOwnerLane.direct,
             );
           }
 
@@ -7141,11 +7191,14 @@ void main() {
         );
         final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
           sentMessage.id,
+          owner: MediaOwnerLane.direct,
         );
         expect(attachments.length, 1);
         expect(attachments.single.id, capturedBlobId);
         expect(attachments.single.downloadStatus, 'done');
-        final pending = await mediaAttachmentRepo.getUploadPendingAttachments();
+        final pending = await mediaAttachmentRepo.getUploadPendingAttachments(
+          owner: MediaOwnerLane.direct,
+        );
         expect(
           pending.where((attachment) => attachment.messageId == sentMessage.id),
           isEmpty,
@@ -7207,6 +7260,7 @@ void main() {
                     timestamp ?? DateTime.now().toUtc().toIso8601String(),
                 waveform: waveform,
               ),
+              owner: MediaOwnerLane.direct,
             );
           }
 
@@ -7257,12 +7311,15 @@ void main() {
         );
         final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
           sentMessage.id,
+          owner: MediaOwnerLane.direct,
         );
         expect(capturedBlobId, isNotNull);
         expect(attachments.length, 1);
         expect(attachments.single.id, capturedBlobId);
         expect(attachments.single.downloadStatus, 'done');
-        final pending = await mediaAttachmentRepo.getUploadPendingAttachments();
+        final pending = await mediaAttachmentRepo.getUploadPendingAttachments(
+          owner: MediaOwnerLane.direct,
+        );
         expect(
           pending.where((attachment) => attachment.messageId == sentMessage.id),
           isEmpty,
@@ -7774,7 +7831,10 @@ void main() {
         expect(messageRepo.store.values.single.status, 'failed');
         final failedMessageId = messageRepo.store.values.single.id;
         final storedAttachments = await mediaAttachmentRepo
-            .getAttachmentsForMessage(failedMessageId);
+            .getAttachmentsForMessage(
+              failedMessageId,
+              owner: MediaOwnerLane.direct,
+            );
         expect(storedAttachments, hasLength(1));
         expect(storedAttachments.single.downloadStatus, 'upload_cancelled');
         expect(sendCalls, 0);
@@ -7907,7 +7967,10 @@ void main() {
         expect(messageRepo.store.values.single.status, 'failed');
         final failedMessageId = messageRepo.store.values.single.id;
         final storedAttachments = await mediaAttachmentRepo
-            .getAttachmentsForMessage(failedMessageId);
+            .getAttachmentsForMessage(
+              failedMessageId,
+              owner: MediaOwnerLane.direct,
+            );
         expect(storedAttachments, hasLength(1));
         expect(storedAttachments.single.downloadStatus, 'upload_cancelled');
       },
@@ -8044,7 +8107,10 @@ void main() {
 
       expect(messageRepo.store.containsKey(failedMessage.id), isFalse);
       expect(
-        await mediaAttachmentRepo.getAttachmentsForMessage(failedMessage.id),
+        await mediaAttachmentRepo.getAttachmentsForMessage(
+          failedMessage.id,
+          owner: MediaOwnerLane.direct,
+        ),
         isEmpty,
       );
       expect(
@@ -8056,6 +8122,126 @@ void main() {
         ),
       );
     });
+
+    testWidgets(
+      'direct terminalization preserves same id group pending media',
+      (tester) async {
+        // 228 TC-228-05B: a GROUP message can legally share this message id.
+        // The failed-media delete control terminalizes and cleans up the
+        // DIRECT lane only — the same-ID group sibling row must stay
+        // upload_pending and keep its file.
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final mediaAttachmentRepo =
+            TerminalizationRecordingMediaAttachmentRepository();
+        final mediaFileManager = FakeMediaFileManager();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final failedMessage = ConversationMessage(
+          id: 'collide-lane-msg',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeIdentity().peerId,
+          text: '',
+          timestamp: '2026-02-11T10:05:00.000Z',
+          status: 'failed',
+          isIncoming: false,
+          createdAt: '2026-02-11T10:05:00.000Z',
+          media: const [
+            MediaAttachment(
+              id: 'att-collide-direct',
+              messageId: 'collide-lane-msg',
+              mime: 'image/jpeg',
+              size: 10,
+              mediaType: 'image',
+              localPath:
+                  'pending_uploads/collide-lane-msg/att-collide-direct.jpg',
+              downloadStatus: 'upload_pending',
+              createdAt: '2026-02-11T10:05:00.000Z',
+            ),
+          ],
+        );
+        await messageRepo.saveMessage(failedMessage);
+        mediaAttachmentRepo.seedAttachments(
+          messageId: failedMessage.id,
+          attachments: failedMessage.media,
+        );
+        // Same-ID sibling in the GROUP lane (different attachment id).
+        await mediaAttachmentRepo.saveAttachment(
+          const MediaAttachment(
+            id: 'att-collide-group',
+            messageId: 'collide-lane-msg',
+            mime: 'image/jpeg',
+            size: 10,
+            mediaType: 'image',
+            localPath:
+                'pending_uploads/collide-lane-msg/att-collide-group.jpg',
+            downloadStatus: 'upload_pending',
+            createdAt: '2026-02-11T10:05:00.000Z',
+          ),
+          owner: MediaOwnerLane.group,
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+        );
+        await tester.pump(const Duration(milliseconds: 500));
+
+        await tester.tap(
+          find.byKey(const ValueKey('failed-media-delete-collide-lane-msg')),
+        );
+        await tester.pump(const Duration(milliseconds: 500));
+
+        // The flow terminalized ONLY the direct lane, and the direct row
+        // became upload_failed before its owner-scoped removal.
+        expect(mediaAttachmentRepo.terminalizedLanes, [MediaOwnerLane.direct]);
+        expect(
+          mediaAttachmentRepo.statusAfterTerminalization['att-collide-direct'],
+          'upload_failed',
+        );
+        expect(
+          await mediaAttachmentRepo.getAttachmentsForMessage(
+            failedMessage.id,
+            owner: MediaOwnerLane.direct,
+          ),
+          isEmpty,
+        );
+        expect(
+          mediaFileManager.deletedFilePaths,
+          contains(
+            endsWith('pending_uploads/collide-lane-msg/att-collide-direct.jpg'),
+          ),
+        );
+
+        // The same-ID group sibling row is STILL upload_pending and its
+        // file was never deleted.
+        final groupSiblings = await mediaAttachmentRepo
+            .getAttachmentsForMessage(
+              failedMessage.id,
+              owner: MediaOwnerLane.group,
+            );
+        expect(groupSiblings.single.id, 'att-collide-group');
+        expect(groupSiblings.single.downloadStatus, 'upload_pending');
+        expect(
+          mediaFileManager.deletedFilePaths,
+          isNot(
+            contains(
+              endsWith(
+                'pending_uploads/collide-lane-msg/att-collide-group.jpg',
+              ),
+            ),
+          ),
+        );
+      },
+    );
 
     testWidgets(
       'send failure after upload restores quote draft and attachments',

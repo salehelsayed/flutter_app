@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -260,7 +261,7 @@ void main() {
         }
 
         final attachments = await user.mediaAttachmentRepo
-            .getAttachmentsForMessage(matches.single.id);
+            .getAttachmentsForMessage(matches.single.id, owner: MediaOwnerLane.group);
         if (attachments.length != 1 ||
             attachments.single.downloadStatus != 'done' ||
             attachments.single.localPath == null) {
@@ -284,7 +285,7 @@ void main() {
     final deadline = DateTime.now().add(const Duration(seconds: 3));
     while (DateTime.now().isBefore(deadline)) {
       final attachments = await user.mediaAttachmentRepo
-          .getAttachmentsForMessage(messageId);
+          .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group);
       if (attachments.length == 1 &&
           attachments.single.downloadStatus == expectedStatus) {
         return;
@@ -324,7 +325,7 @@ void main() {
         .where((message) => message.isIncoming && message.text == messageText)
         .single;
     final attachments = await user.mediaAttachmentRepo.getAttachmentsForMessage(
-      received.id,
+      received.id, owner: MediaOwnerLane.group,
     );
     expect(attachments, hasLength(1), reason: '${user.username}: $messageText');
 
@@ -367,7 +368,7 @@ void main() {
     expect(outgoing.status, isNot('failed'));
 
     final attachments = await user.mediaAttachmentRepo.getAttachmentsForMessage(
-      outgoing.id,
+      outgoing.id, owner: MediaOwnerLane.group,
     );
     expect(attachments, hasLength(1), reason: '$messageText outgoing');
 
@@ -761,7 +762,7 @@ void main() {
               .single;
           expect(incoming.id, sentMessage!.id, reason: user.username);
           final attachments = await user.mediaAttachmentRepo
-              .getAttachmentsForMessage(incoming.id);
+              .getAttachmentsForMessage(incoming.id, owner: MediaOwnerLane.group);
           expect(
             attachments,
             hasLength(variants.length),
@@ -827,7 +828,7 @@ void main() {
                 .toList();
             if (incoming.length == 1) {
               final attachments = await user.mediaAttachmentRepo
-                  .getAttachmentsForMessage(incoming.single.id);
+                  .getAttachmentsForMessage(incoming.single.id, owner: MediaOwnerLane.group);
               final allDone =
                   attachments.length == variants.length &&
                   attachments.every(
@@ -856,7 +857,7 @@ void main() {
             )
             .single;
         final outgoingAttachments = await alice.mediaAttachmentRepo
-            .getAttachmentsForMessage(outgoing.id);
+            .getAttachmentsForMessage(outgoing.id, owner: MediaOwnerLane.group);
         expect(outgoingAttachments, hasLength(variants.length));
 
         final deliveryRecords = network.deliveryRecords
@@ -944,7 +945,7 @@ void main() {
           mediaFileManager: bobMediaFileManager,
           attachment: failedAttachment,
           contactPeerId: groupId,
-          enforceGroupMediaPolicy: true,
+          enforceGroupMediaPolicy: true, owner: MediaOwnerLane.group,
         );
 
         // The retry identifies the under-sized stale partial (< plaintext +
@@ -1069,7 +1070,7 @@ void main() {
           groupId,
         )).where((message) => message.isIncoming).single;
         final attachments = await bob.mediaAttachmentRepo
-            .getAttachmentsForMessage(incoming.id);
+            .getAttachmentsForMessage(incoming.id, owner: MediaOwnerLane.group);
         expect(attachments, hasLength(1));
         expectNoFragmentsInJson(
           attachments.map((attachment) => attachment.toJson()).toList(),
@@ -1602,7 +1603,7 @@ void main() {
         expect(bobIncoming.isIncoming, isTrue);
         expect(bobIncoming.keyGeneration, 2);
         final bobAttachments = await bob.mediaAttachmentRepo
-            .getAttachmentsForMessage(bobIncoming.id);
+            .getAttachmentsForMessage(bobIncoming.id, owner: MediaOwnerLane.group);
         expect(bobAttachments, hasLength(1));
         expect(bobAttachments.single.id, image.id);
         expect(
@@ -1624,7 +1625,7 @@ void main() {
         );
         expect(
           await charlie.mediaAttachmentRepo.getAttachmentsForMessage(
-            sentMessage.id,
+            sentMessage.id, owner: MediaOwnerLane.group,
           ),
           isEmpty,
         );
@@ -1782,7 +1783,7 @@ void main() {
       );
       expect(
         await charlie.mediaAttachmentRepo.getAttachmentsForMessage(
-          removedSent.id,
+          removedSent.id, owner: MediaOwnerLane.group,
         ),
         isEmpty,
       );
@@ -1891,7 +1892,7 @@ void main() {
       );
       expect(
         await charlie.mediaAttachmentRepo.getAttachmentsForMessage(
-          removedSent.id,
+          removedSent.id, owner: MediaOwnerLane.group,
         ),
         isEmpty,
       );
@@ -1990,7 +1991,7 @@ void main() {
           groupId,
         )).where((message) => message.id == 'msg-tampered-fake-network').single;
         final attachments = await bob.mediaAttachmentRepo
-            .getAttachmentsForMessage(received.id);
+            .getAttachmentsForMessage(received.id, owner: MediaOwnerLane.group);
         expect(attachments, hasLength(1));
         expect(
           attachments.single.downloadStatus,

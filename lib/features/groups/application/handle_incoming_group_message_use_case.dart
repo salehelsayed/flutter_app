@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
@@ -852,7 +853,7 @@ Future<String?> _findCanonicalIncomingMediaRetryMessageId({
   }
 
   final attachmentsByMessage = await mediaAttachmentRepo
-      .getAttachmentsForMessages(candidateIds);
+      .getAttachmentsForMessages(candidateIds, owner: MediaOwnerLane.group);
   for (final candidateId in candidateIds) {
     final candidateMediaIdentity = _strictMediaIdentityFromSavedAttachments(
       attachmentsByMessage[candidateId],
@@ -1236,7 +1237,7 @@ Future<void> _saveIncomingMediaAttachments({
   if (media == null || mediaAttachmentRepo == null) return;
 
   final existingAttachments = await mediaAttachmentRepo
-      .getAttachmentsForMessage(messageId);
+      .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group);
   final existingIds = existingAttachments
       .map((attachment) => attachment.id)
       .toSet();
@@ -1255,7 +1256,10 @@ Future<void> _saveIncomingMediaAttachments({
           ),
         );
     if (!existingIds.add(attachment.id)) continue;
-    await mediaAttachmentRepo.saveAttachment(attachment);
+    await mediaAttachmentRepo.saveAttachment(
+      attachment,
+      owner: MediaOwnerLane.group,
+    );
   }
 }
 

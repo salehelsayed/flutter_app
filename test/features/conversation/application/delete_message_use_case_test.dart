@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
@@ -11,6 +12,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
+import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../core/bridge/fake_bridge.dart';
 import '../domain/repositories/fake_media_attachment_repository.dart';
@@ -128,7 +130,10 @@ void main() {
         expect(count, 1);
         expect(await messageRepo.getMessage(message.id), isNull);
         expect(
-          await mediaAttachmentRepo.getAttachmentsForMessage(message.id),
+          await mediaAttachmentRepo.getAttachmentsForMessage(
+            message.id,
+            owner: MediaOwnerLane.direct,
+          ),
           isEmpty,
         );
         expect(await reactionRepo.getReactionsForMessage(message.id), isEmpty);
@@ -139,6 +144,96 @@ void main() {
         expect(
           mediaFileManager.deletedFilePaths,
           isNot(contains('/tmp/external/photo.jpg')),
+        );
+      },
+    );
+
+    test(
+      'delete for me cleanup preserves same id group and unresolved media',
+      () async {
+        // 228 TC-228-11W: direct and group message ids can legally collide.
+        // Delete-for-me cleanup runs against the REAL repository
+        // (production-registry schema) and must remove ONLY direct-owned
+        // rows and app-owned files — the same-ID group sibling and the
+        // legacy 'unresolved' row survive byte-identical, and no file
+        // deletion is recorded for the group sibling's path.
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+
+        final message = makeMessage(id: 'msg-collide');
+        messageRepo.seed([message]);
+        await fixture.seedDirectParent(
+          message.id,
+          contactPeerId: message.contactPeerId,
+        );
+        await fixture.seedGroupParent(message.id);
+
+        await fixture.repo.saveAttachment(
+          makeAttachment(
+            id: 'att-collide-direct',
+            messageId: message.id,
+            localPath: 'media/msg-collide/photo.jpg',
+          ),
+          owner: MediaOwnerLane.direct,
+        );
+        await fixture.repo.saveAttachment(
+          makeAttachment(
+            id: 'att-collide-group',
+            messageId: message.id,
+            localPath: 'media/msg-collide/group-photo.jpg',
+          ),
+          owner: MediaOwnerLane.group,
+        );
+        // Legacy row: addressable through NO lane, must survive cleanup.
+        await fixture.db.insert('media_attachments', {
+          'id': 'att-collide-unresolved',
+          'message_id': message.id,
+          'owner_lane': kMediaOwnerLaneUnresolved,
+          'mime': 'image/jpeg',
+          'size': 2048,
+          'media_type': 'image',
+          'download_status': 'done',
+          'created_at': '2026-03-31T10:00:02.000Z',
+        });
+
+        final groupRowBefore = await fixture.rawAttachmentRow(
+          'att-collide-group',
+        );
+        final unresolvedRowBefore = await fixture.rawAttachmentRow(
+          'att-collide-unresolved',
+        );
+        expect(groupRowBefore, isNotNull);
+        expect(unresolvedRowBefore, isNotNull);
+
+        final count = await deleteMessageForMe(
+          message: message,
+          messageRepo: messageRepo,
+          reactionRepo: reactionRepo,
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: mediaFileManager,
+        );
+
+        expect(count, 1);
+        expect(await messageRepo.getMessage(message.id), isNull);
+        // Direct-owned row and its message-owned file are gone.
+        expect(await fixture.rawAttachmentRow('att-collide-direct'), isNull);
+        expect(
+          mediaFileManager.deletedFilePaths,
+          contains(endsWith('media/msg-collide/photo.jpg')),
+        );
+        // Same-ID group sibling and unresolved legacy rows are untouched.
+        expect(
+          await fixture.rawAttachmentRow('att-collide-group'),
+          groupRowBefore,
+        );
+        expect(
+          await fixture.rawAttachmentRow('att-collide-unresolved'),
+          unresolvedRowBefore,
+        );
+        // NO file deletion recorded for the group sibling's path.
+        expect(
+          mediaFileManager.deletedFilePaths,
+          isNot(contains(endsWith('media/msg-collide/group-photo.jpg'))),
         );
       },
     );

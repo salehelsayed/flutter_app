@@ -6,6 +6,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -173,6 +174,7 @@ void main() {
             downloadStatus: 'upload_pending',
             createdAt: DateTime.now().toUtc().toIso8601String(),
           ),
+          owner: MediaOwnerLane.direct,
         );
 
         final (result, _) = await sendChatMessage(
@@ -209,11 +211,17 @@ void main() {
         expect(result, SendChatMessageResult.success);
         final attachments = await aliceMediaRepo.getAttachmentsForMessage(
           messageId,
+          owner: MediaOwnerLane.direct,
         );
         expect(attachments.length, 1);
         expect(attachments.single.id, 'uploaded-final-id');
         expect(attachments.single.downloadStatus, 'done');
-        expect(await aliceMediaRepo.getUploadPendingAttachments(), isEmpty);
+        expect(
+          await aliceMediaRepo.getUploadPendingAttachments(
+            owner: MediaOwnerLane.direct,
+          ),
+          isEmpty,
+        );
       },
     );
 
@@ -278,6 +286,7 @@ void main() {
         // Verify media persisted
         final attachments = await mediaRepo.getAttachmentsForMessage(
           'msg-with-media-001',
+          owner: MediaOwnerLane.direct,
         );
         expect(attachments.length, 1);
         expect(attachments.first.id, 'blob-100');

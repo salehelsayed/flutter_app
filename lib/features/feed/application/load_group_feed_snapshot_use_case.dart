@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/feed/application/group_feed_media_verification.dart';
@@ -50,7 +51,10 @@ Future<GroupThreadFeedItem?> loadGroupFeedSnapshot({
   // Batch-attach media to group messages, resolving relative paths
   if (mediaAttachmentRepo != null && messages.isNotEmpty) {
     final ids = messages.map((m) => m.id).toList();
-    final mediaMap = await mediaAttachmentRepo.getAttachmentsForMessages(ids);
+    final mediaMap = await mediaAttachmentRepo.getAttachmentsForMessages(
+      ids,
+      owner: MediaOwnerLane.group,
+    );
     if (mediaMap.isNotEmpty) {
       final resolvedMap = <String, List<MediaAttachment>>{};
       for (final entry in mediaMap.entries) {

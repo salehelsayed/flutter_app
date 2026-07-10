@@ -9,6 +9,7 @@
 
 import 'dart:async';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -395,26 +396,38 @@ class _FakeP2PService implements P2PService {
 
 class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   @override
-  Future<void> saveAttachment(MediaAttachment a) async {}
+  Future<void> saveAttachment(
+    MediaAttachment a, {
+    required MediaOwnerLane owner,
+  }) async {}
   @override
-  Future<List<MediaAttachment>> getAttachmentsForMessage(String mid) async =>
-      [];
+  Future<List<MediaAttachment>> getAttachmentsForMessage(
+    String mid, {
+    required MediaOwnerLane owner,
+  }) async => [];
   @override
   Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-    List<String> mids,
-  ) async => {};
+    List<String> mids, {
+    required MediaOwnerLane owner,
+  }) async => {};
   @override
   Future<int> deleteAttachmentsForContact(String contactPeerId) async => 0;
   @override
-  Future<int> deleteAttachmentsForMessage(String messageId) async => 0;
+  Future<int> deleteAttachmentsForMessage(
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => 0;
   @override
   Future<int> markUploadPendingAttachmentsFailedForMessage(
-    String messageId,
-  ) async => 0;
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => 0;
   @override
   Future<List<MediaAttachment>> getPendingDownloads() async => [];
   @override
-  Future<List<MediaAttachment>> getUploadPendingAttachments() async => [];
+  Future<List<MediaAttachment>> getUploadPendingAttachments({
+    required MediaOwnerLane owner,
+  }) async => [];
   @override
   Future<void> updateDownloadStatus(String id, String downloadStatus) async {}
   @override

@@ -7,6 +7,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart'
     as group_dissolve;
@@ -720,7 +721,7 @@ void main() {
         expect(bobRows, hasLength(1));
         expect(bobRows.single.id, failedRow.id);
         expect(
-          await bob.mediaAttachmentRepo.getAttachmentsForMessage(failedRow.id),
+          await bob.mediaAttachmentRepo.getAttachmentsForMessage(failedRow.id, owner: MediaOwnerLane.group),
           hasLength(1),
         );
       } finally {

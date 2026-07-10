@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -15,6 +16,8 @@ import 'package:flutter_app/features/introduction/domain/models/introduction_mod
 import 'package:flutter_app/features/introduction/domain/models/introduction_outbox_delivery.dart';
 import 'package:flutter_app/features/introduction/domain/models/pending_introduction_response.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
+
+import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
 
 class FakeContactRepository implements ContactRepository {
   final List<String> deletedPeerIds = [];
@@ -170,17 +173,22 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   FakeMediaAttachmentRepository({this.operations});
 
   @override
-  Future<void> saveAttachment(MediaAttachment attachment) async {}
+  Future<void> saveAttachment(
+    MediaAttachment attachment, {
+    required MediaOwnerLane owner,
+  }) async {}
 
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
-    String messageId,
-  ) async => const [];
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => const [];
 
   @override
   Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-    List<String> messageIds,
-  ) async => const {};
+    List<String> messageIds, {
+    required MediaOwnerLane owner,
+  }) async => const {};
 
   @override
   Future<void> updateLocalPath(String id, String localPath) async {}
@@ -189,7 +197,10 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   Future<void> updateDownloadStatus(String id, String downloadStatus) async {}
 
   @override
-  Future<int> deleteAttachmentsForMessage(String messageId) async => 0;
+  Future<int> deleteAttachmentsForMessage(
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => 0;
 
   @override
   Future<int> deleteAttachmentsForContact(String contactPeerId) async {
@@ -200,14 +211,17 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 
   @override
   Future<int> markUploadPendingAttachmentsFailedForMessage(
-    String messageId,
-  ) async => 0;
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => 0;
 
   @override
   Future<List<MediaAttachment>> getPendingDownloads() async => const [];
 
   @override
-  Future<List<MediaAttachment>> getUploadPendingAttachments() async => const [];
+  Future<List<MediaAttachment>> getUploadPendingAttachments({
+    required MediaOwnerLane owner,
+  }) async => const [];
 }
 
 class FakeReactionRepository implements ReactionRepository {
@@ -580,6 +594,79 @@ void main() {
             'messages:peer-1234567890',
             'contact:peer-1234567890',
           ]),
+        );
+      },
+    );
+
+    test(
+      'contact deletion preserves same id group and unresolved media',
+      () async {
+        // 228 TC-228-05B: `messages.id` and `group_messages.id` are
+        // independent table-local keys, so the SAME message id can legally
+        // exist in both lanes. Contact cleanup runs against the REAL
+        // repository (production-registry schema) and must delete ONLY the
+        // contact's direct-owned rows — the same-ID group sibling and the
+        // legacy 'unresolved' row survive byte-identical.
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+
+        const peerId = 'peer-1234567890';
+        const collidingMessageId = 'msg-collide';
+        await fixture.seedDirectParent(
+          collidingMessageId,
+          contactPeerId: peerId,
+        );
+        await fixture.seedGroupParent(collidingMessageId);
+
+        MediaAttachment makeCollidingAttachment(String id) => MediaAttachment(
+          id: id,
+          messageId: collidingMessageId,
+          mime: 'image/jpeg',
+          size: 2048,
+          mediaType: 'image',
+          downloadStatus: 'done',
+          createdAt: '2026-04-01T00:00:00.000Z',
+        );
+
+        await fixture.repo.saveAttachment(
+          makeCollidingAttachment('att-direct'),
+          owner: MediaOwnerLane.direct,
+        );
+        await fixture.repo.saveAttachment(
+          makeCollidingAttachment('att-group'),
+          owner: MediaOwnerLane.group,
+        );
+        // Legacy row: addressable through NO lane, must survive cleanup.
+        await fixture.db.insert('media_attachments', {
+          'id': 'att-unresolved',
+          'message_id': collidingMessageId,
+          'owner_lane': kMediaOwnerLaneUnresolved,
+          'mime': 'image/jpeg',
+          'size': 2048,
+          'media_type': 'image',
+          'download_status': 'done',
+          'created_at': '2026-04-01T00:00:00.000Z',
+        });
+
+        final groupRowBefore = await fixture.rawAttachmentRow('att-group');
+        final unresolvedRowBefore = await fixture.rawAttachmentRow(
+          'att-unresolved',
+        );
+        expect(groupRowBefore, isNotNull);
+        expect(unresolvedRowBefore, isNotNull);
+
+        await deleteContactAndMessages(
+          contactRepo: FakeContactRepository(),
+          messageRepo: FakeMessageRepository(),
+          peerId: peerId,
+          mediaAttachmentRepo: fixture.repo,
+        );
+
+        expect(await fixture.rawAttachmentRow('att-direct'), isNull);
+        expect(await fixture.rawAttachmentRow('att-group'), groupRowBefore);
+        expect(
+          await fixture.rawAttachmentRow('att-unresolved'),
+          unresolvedRowBefore,
         );
       },
     );

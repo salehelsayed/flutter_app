@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/account_migration/application/migration_file_manifest_builder.dart';
 import 'package:flutter_app/features/account_migration/domain/models/migration_file_manifest.dart';
@@ -1100,6 +1101,7 @@ void main() {
           downloadStatus: 'done',
           createdAt: '2026-02-09T12:00:00.000Z',
         ),
+        owner: MediaOwnerLane.group,
       );
 
       final items = await loadGroupFeedItems(
@@ -1176,6 +1178,7 @@ void main() {
             encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             createdAt: '2026-02-09T12:00:00.000Z',
           ),
+          owner: MediaOwnerLane.group,
         );
 
         final items = await loadGroupFeedItems(
@@ -1301,6 +1304,7 @@ void main() {
             encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             createdAt: '2026-02-09T12:00:00.000Z',
           ),
+          owner: MediaOwnerLane.group,
         );
 
         final items = await loadGroupFeedItems(
@@ -1380,6 +1384,7 @@ void main() {
           downloadStatus: 'done',
           createdAt: '2026-02-09T12:00:00.000Z',
         ),
+        owner: MediaOwnerLane.group,
       );
 
       final result = await loadFeed(
@@ -1435,6 +1440,7 @@ void main() {
             downloadStatus: 'done',
             createdAt: '2026-03-01T08:00:00.000Z',
           ),
+          owner: MediaOwnerLane.direct,
         );
         await mediaAttachmentRepo.saveAttachment(
           const MediaAttachment(
@@ -1447,6 +1453,7 @@ void main() {
             downloadStatus: 'done',
             createdAt: '2026-03-01T08:00:00.000Z',
           ),
+          owner: MediaOwnerLane.direct,
         );
         final mediaFileManager = FakeMediaFileManager();
 
@@ -1540,6 +1547,7 @@ void main() {
             encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             createdAt: '2026-02-09T12:00:00.000Z',
           ),
+          owner: MediaOwnerLane.group,
         );
         const missingRelative = 'media/groups/sync-missing.jpg';
         final missingAbsolute = MediaFileManager.resolveStoredPathSync(
@@ -1563,6 +1571,7 @@ void main() {
             encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             createdAt: '2026-02-09T12:01:00.000Z',
           ),
+          owner: MediaOwnerLane.group,
         );
 
         final items = await loadGroupFeedItems(

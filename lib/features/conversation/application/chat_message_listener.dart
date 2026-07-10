@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
@@ -181,6 +182,7 @@ class ChatMessageListener {
     try {
       final attachments = await mediaAttachmentRepo!.getAttachmentsForMessage(
         message.id,
+        owner: MediaOwnerLane.direct,
       );
       if (attachments.isEmpty) return;
 
@@ -197,6 +199,7 @@ class ChatMessageListener {
             mediaFileManager: mediaFileManager!,
             attachment: attachment,
             contactPeerId: message.contactPeerId,
+            owner: MediaOwnerLane.direct,
           );
           if (result != null) {
             downloadedMedia.add(result);
@@ -205,7 +208,10 @@ class ChatMessageListener {
             // download_failed (relay not-found / budget exhausted) isn't shown
             // as a retryable `failed` (INV-DL-1).
             final persisted = await mediaAttachmentRepo!
-                .getAttachmentsForMessage(message.id);
+                .getAttachmentsForMessage(
+                  message.id,
+                  owner: MediaOwnerLane.direct,
+                );
             final match = persisted.where((a) => a.id == attachment.id);
             downloadedMedia.add(
               match.isEmpty

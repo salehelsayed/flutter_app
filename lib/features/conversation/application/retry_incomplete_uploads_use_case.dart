@@ -1,6 +1,7 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -75,7 +76,7 @@ Future<int> retryIncompleteUploads({
   );
 
   final pendingAttachments = await mediaAttachmentRepo
-      .getUploadPendingAttachments();
+      .getUploadPendingAttachments(owner: MediaOwnerLane.direct);
   if (pendingAttachments.isEmpty) {
     emitFlowEvent(
       layer: 'FL',
@@ -183,6 +184,7 @@ Future<int> retryIncompleteUploads({
       // so we can combine them with newly-uploaded ones for the send call.
       final allAttachments = await mediaAttachmentRepo.getAttachmentsForMessage(
         messageId,
+        owner: MediaOwnerLane.direct,
       );
 
       // 2. Re-upload ALL pending attachments for this message.
@@ -283,7 +285,10 @@ Future<int> retryIncompleteUploads({
           messageId: msg.id,
           downloadStatus: 'done',
         );
-        await mediaAttachmentRepo.saveAttachment(completedAttachment);
+        await mediaAttachmentRepo.saveAttachment(
+          completedAttachment,
+          owner: MediaOwnerLane.direct,
+        );
 
         // KC-2 (112 Phase 3): the re-upload minted a fresh key/nonce, so a
         // persisted wire envelope (the Section-4 crash-replay contract,
@@ -347,6 +352,7 @@ Future<int> retryIncompleteUploads({
                 downloadStatus: 'upload_failed',
                 uploadRetryCount: newRetryCount,
               ),
+              owner: MediaOwnerLane.direct,
             );
           } else {
             // Transient: keep as upload_pending for next retry cycle
@@ -355,6 +361,7 @@ Future<int> retryIncompleteUploads({
                 downloadStatus: 'upload_pending', // Still retryable
                 uploadRetryCount: newRetryCount,
               ),
+              owner: MediaOwnerLane.direct,
             );
           }
         }
@@ -378,7 +385,7 @@ Future<int> retryIncompleteUploads({
 
       final refreshedMsg = await messageRepo.getMessage(messageId);
       final refreshedAttachments = await mediaAttachmentRepo
-          .getAttachmentsForMessage(messageId);
+          .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.direct);
       final abortReason = _lateSendAbortReason(
         message: refreshedMsg,
         attachments: refreshedAttachments,
@@ -487,6 +494,7 @@ Future<MediaAttachment?> _latestAttachmentForMessage({
 }) async {
   final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
     messageId,
+    owner: MediaOwnerLane.direct,
   );
   for (final attachment in attachments) {
     if (attachment.id == attachmentId) {

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
@@ -14,7 +15,10 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   final List<MediaAttachment> saved = [];
 
   @override
-  Future<void> saveAttachment(MediaAttachment attachment) async {
+  Future<void> saveAttachment(
+    MediaAttachment attachment, {
+    required MediaOwnerLane owner,
+  }) async {
     saved.add(attachment);
   }
 
@@ -22,17 +26,22 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   Future<int> deleteAttachmentsForContact(String contactPeerId) async => 0;
 
   @override
-  Future<int> deleteAttachmentsForMessage(String messageId) async => 0;
+  Future<int> deleteAttachmentsForMessage(
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => 0;
 
   @override
   Future<int> markUploadPendingAttachmentsFailedForMessage(
-    String messageId,
-  ) async => 0;
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => 0;
 
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
-    String messageId,
-  ) async {
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async {
     return saved
         .where((attachment) => attachment.messageId == messageId)
         .toList();
@@ -40,11 +49,15 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 
   @override
   Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-    List<String> messageIds,
-  ) async {
+    List<String> messageIds, {
+    required MediaOwnerLane owner,
+  }) async {
     final result = <String, List<MediaAttachment>>{};
     for (final messageId in messageIds) {
-      final attachments = await getAttachmentsForMessage(messageId);
+      final attachments = await getAttachmentsForMessage(
+        messageId,
+        owner: MediaOwnerLane.direct,
+      );
       if (attachments.isNotEmpty) {
         result[messageId] = attachments;
       }
@@ -56,7 +69,9 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   Future<List<MediaAttachment>> getPendingDownloads() async => const [];
 
   @override
-  Future<List<MediaAttachment>> getUploadPendingAttachments() async => [];
+  Future<List<MediaAttachment>> getUploadPendingAttachments({
+    required MediaOwnerLane owner,
+  }) async => [];
 
   @override
   Future<void> updateDownloadStatus(String id, String downloadStatus) async {}
@@ -410,72 +425,66 @@ void main() {
 
     // --- 112 Phase 2.3: voice inherits the 1:1 blob-encryption flip ---
     group('blob encryption', () {
-      test(
-        'voice upload produces encrypted attachment metadata and passes the '
-        'send gate',
-        () async {
-          final recording = createRecording();
+      test('voice upload produces encrypted attachment metadata and passes the '
+          'send gate', () async {
+        final recording = createRecording();
 
-          final (result, message) = await sendVoiceMessage(
-            p2pService: p2pService,
-            messageRepo: messageRepo,
-            targetPeerId: 'target-peer',
-            senderPeerId: 'my-peer',
-            senderUsername: 'Me',
-            recording: recording,
-            bridge: bridge,
-            recipientMlKemPublicKey: mlKemKey,
-            mediaAttachmentRepo: mediaAttachmentRepo,
-          );
+        final (result, message) = await sendVoiceMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          recording: recording,
+          bridge: bridge,
+          recipientMlKemPublicKey: mlKemKey,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+        );
 
-          expect(result, SendVoiceMessageResult.success);
-          expect(message, isNotNull);
-          expect(
-            bridge.commandLog,
-            containsAllInOrder(['blob:keygen', 'blob:encrypt', 'media:upload']),
-          );
-          final attachment = mediaAttachmentRepo.saved.first;
-          expect(attachment.encryptionKeyBase64, isNotNull);
-          expect(attachment.encryptionNonce, isNotNull);
-          expect(
-            attachment.encryptionScheme,
-            kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-          );
-          expect(attachment.contentHash, isNotNull);
-        },
-      );
+        expect(result, SendVoiceMessageResult.success);
+        expect(message, isNotNull);
+        expect(
+          bridge.commandLog,
+          containsAllInOrder(['blob:keygen', 'blob:encrypt', 'media:upload']),
+        );
+        final attachment = mediaAttachmentRepo.saved.first;
+        expect(attachment.encryptionKeyBase64, isNotNull);
+        expect(attachment.encryptionNonce, isNotNull);
+        expect(
+          attachment.encryptionScheme,
+          kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+        expect(attachment.contentHash, isNotNull);
+      });
 
-      test(
-        'voice temp recording deleted after durable copy and successful '
-        'upload',
-        () async {
-          final recording = createRecording(
-            filePath:
-                '${tempDir.path}/voice_temp_cleanup_'
-                '${DateTime.now().microsecondsSinceEpoch}.m4a',
-          );
-          final recordingFile = File(recording.filePath);
-          expect(recordingFile.existsSync(), isTrue);
+      test('voice temp recording deleted after durable copy and successful '
+          'upload', () async {
+        final recording = createRecording(
+          filePath:
+              '${tempDir.path}/voice_temp_cleanup_'
+              '${DateTime.now().microsecondsSinceEpoch}.m4a',
+        );
+        final recordingFile = File(recording.filePath);
+        expect(recordingFile.existsSync(), isTrue);
 
-          final (result, _) = await sendVoiceMessage(
-            p2pService: p2pService,
-            messageRepo: messageRepo,
-            targetPeerId: 'target-peer',
-            senderPeerId: 'my-peer',
-            senderUsername: 'Me',
-            recording: recording,
-            bridge: bridge,
-            recipientMlKemPublicKey: mlKemKey,
-            mediaAttachmentRepo: mediaAttachmentRepo,
-            mediaFileManager: FakeMediaFileManager(),
-          );
+        final (result, _) = await sendVoiceMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          recording: recording,
+          bridge: bridge,
+          recipientMlKemPublicKey: mlKemKey,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: FakeMediaFileManager(),
+        );
 
-          expect(result, SendVoiceMessageResult.success);
-          // The recorder temp (`voice_<ts>.m4a`) is plaintext residue once
-          // the durable copy is the render source — it must be unlinked.
-          expect(recordingFile.existsSync(), isFalse);
-        },
-      );
+        expect(result, SendVoiceMessageResult.success);
+        // The recorder temp (`voice_<ts>.m4a`) is plaintext residue once
+        // the durable copy is the render source — it must be unlinked.
+        expect(recordingFile.existsSync(), isFalse);
+      });
     });
   });
 }

@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
@@ -263,6 +264,7 @@ Future<void> _persistDurableVoiceCopyOnUploadFailure({
         createdAt: DateTime.now().toUtc().toIso8601String(),
         waveform: waveform,
       ),
+      owner: MediaOwnerLane.direct,
     );
 
     emitFlowEvent(

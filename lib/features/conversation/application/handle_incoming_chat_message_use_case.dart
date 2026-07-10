@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/app_owned_media_delete_telemetry.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/core/utils/chat_console_logger.dart';
@@ -551,7 +552,10 @@ handleIncomingChatMessage({
       final attachment = MediaAttachment.fromJson(
         mediaJson,
       ).copyWith(messageId: payload.id);
-      await mediaAttachmentRepo.saveAttachment(attachment);
+      await mediaAttachmentRepo.saveAttachment(
+        attachment,
+        owner: MediaOwnerLane.direct,
+      );
       parsedAttachments.add(attachment);
     }
   }
@@ -763,7 +767,7 @@ Future<void> _repairDuplicateReplayMedia({
   }
 
   final existingAttachments = await mediaAttachmentRepo
-      .getAttachmentsForMessage(payload.id);
+      .getAttachmentsForMessage(payload.id, owner: MediaOwnerLane.direct);
   final existingById = {
     for (final attachment in existingAttachments) attachment.id: attachment,
   };
@@ -791,7 +795,10 @@ Future<void> _repairDuplicateReplayMedia({
           existing: existing,
         );
       }
-      await mediaAttachmentRepo.saveAttachment(incoming);
+      await mediaAttachmentRepo.saveAttachment(
+        incoming,
+        owner: MediaOwnerLane.direct,
+      );
       repairedCount++;
     }
   }

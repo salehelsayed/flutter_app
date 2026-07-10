@@ -6,6 +6,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
@@ -317,7 +318,7 @@ void main() {
         expect(messages.single.text, isEmpty);
 
         final attachments = await harness.member.mediaAttachmentRepo
-            .getAttachmentsForMessage('group-media-msg-1');
+            .getAttachmentsForMessage('group-media-msg-1', owner: MediaOwnerLane.group);
         expect(attachments, hasLength(1));
         final image = attachments.single;
         expect(image.id, 'blob-foreground-image');
@@ -394,7 +395,7 @@ void main() {
         expect(messages.single.id, 'group-media-tampered-msg');
 
         final attachments = await harness.member.mediaAttachmentRepo
-            .getAttachmentsForMessage('group-media-tampered-msg');
+            .getAttachmentsForMessage('group-media-tampered-msg', owner: MediaOwnerLane.group);
         expect(attachments, hasLength(1));
         expect(
           attachments.single.downloadStatus,
@@ -461,6 +462,7 @@ void main() {
         expect(
           await harness.member.mediaAttachmentRepo.getAttachmentsForMessage(
             'group-oversized-media-msg',
+            owner: MediaOwnerLane.group,
           ),
           isEmpty,
         );

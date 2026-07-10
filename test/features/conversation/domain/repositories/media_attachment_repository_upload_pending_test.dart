@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 
 import 'fake_media_attachment_repository.dart';
@@ -31,7 +32,9 @@ void main() {
     });
 
     test('returns empty list when no attachments seeded', () async {
-      final result = await repo.getUploadPendingAttachments();
+      final result = await repo.getUploadPendingAttachments(
+        owner: MediaOwnerLane.direct,
+      );
       expect(result, isEmpty);
     });
 
@@ -51,7 +54,9 @@ void main() {
             downloadStatus: 'pending'),
       ]);
 
-      final result = await repo.getUploadPendingAttachments();
+      final result = await repo.getUploadPendingAttachments(
+        owner: MediaOwnerLane.direct,
+      );
       expect(result.length, 1);
       expect(result.first.id, 'att-1');
     });
@@ -68,7 +73,9 @@ void main() {
             downloadStatus: 'upload_pending'),
       ]);
 
-      final result = await repo.getUploadPendingAttachments();
+      final result = await repo.getUploadPendingAttachments(
+        owner: MediaOwnerLane.direct,
+      );
       expect(result.length, 2);
     });
 
@@ -82,7 +89,9 @@ void main() {
         ),
       ]);
 
-      final result = await repo.getUploadPendingAttachments();
+      final result = await repo.getUploadPendingAttachments(
+        owner: MediaOwnerLane.direct,
+      );
       expect(result.first.localPath, '/var/mobile/recordings/voice.m4a');
     });
 
@@ -94,7 +103,9 @@ void main() {
             downloadStatus: 'upload_failed'),
       ]);
 
-      final result = await repo.getUploadPendingAttachments();
+      final result = await repo.getUploadPendingAttachments(
+        owner: MediaOwnerLane.direct,
+      );
       expect(result, isEmpty);
     });
   });

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -331,6 +332,7 @@ _retryFailedGroupMessageCandidate({
   final textOnlyRetry = _isTextOnlyRetryPayload(msg);
   final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
     msg.id,
+    owner: MediaOwnerLane.group,
   );
   final hasPendingUploadAttachments = attachments.any(
     (attachment) => attachment.downloadStatus == 'upload_pending',

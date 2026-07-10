@@ -15,6 +15,7 @@ import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/downsample_waveform.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
@@ -119,6 +120,7 @@ typedef DownloadMediaFn =
       required MediaFileManager mediaFileManager,
       required MediaAttachment attachment,
       required String contactPeerId,
+      required MediaOwnerLane owner,
     });
 
 typedef EditChatMessageFn =
@@ -416,7 +418,10 @@ class _ConversationWiredState extends State<ConversationWired>
         localPath: durableRelativePath,
         downloadStatus: 'upload_pending',
       );
-      await mediaAttachmentRepo.saveAttachment(durableAttachment);
+      await mediaAttachmentRepo.saveAttachment(
+        durableAttachment,
+        owner: MediaOwnerLane.direct,
+      );
       preparedUploads.add(
         _PreparedConversationMediaUpload(
           source: pending,
@@ -786,6 +791,7 @@ class _ConversationWiredState extends State<ConversationWired>
 
     final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
       messageId,
+      owner: MediaOwnerLane.direct,
     );
     for (final attachment in attachments) {
       if (attachment.downloadStatus != 'upload_pending') {
@@ -793,6 +799,7 @@ class _ConversationWiredState extends State<ConversationWired>
       }
       await mediaAttachmentRepo.saveAttachment(
         attachment.copyWith(downloadStatus: 'upload_cancelled'),
+        owner: MediaOwnerLane.direct,
       );
     }
   }
@@ -1396,7 +1403,7 @@ class _ConversationWiredState extends State<ConversationWired>
 
     for (final message in messages) {
       final storedAttachments = await mediaAttachmentRepo
-          .getAttachmentsForMessage(message.id);
+          .getAttachmentsForMessage(message.id, owner: MediaOwnerLane.direct);
       if (storedAttachments.isEmpty) {
         continue;
       }
@@ -1414,6 +1421,7 @@ class _ConversationWiredState extends State<ConversationWired>
               mediaFileManager: mediaFileManager,
               attachment: resolved,
               contactPeerId: message.contactPeerId,
+              owner: MediaOwnerLane.direct,
             );
           } catch (_) {
             downloaded = null;
@@ -1430,6 +1438,7 @@ class _ConversationWiredState extends State<ConversationWired>
             try {
               final rows = await mediaAttachmentRepo.getAttachmentsForMessage(
                 message.id,
+                owner: MediaOwnerLane.direct,
               );
               final matches = rows.where((a) => a.id == resolved.id);
               persisted = matches.isEmpty ? null : matches.first;
@@ -1771,6 +1780,7 @@ class _ConversationWiredState extends State<ConversationWired>
     try {
       final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
         messageId,
+        owner: MediaOwnerLane.direct,
       );
       final attachment = attachments
           .where((candidate) => candidate.id == attachmentId)
@@ -1786,6 +1796,7 @@ class _ConversationWiredState extends State<ConversationWired>
         mediaFileManager: mediaFileManager,
         attachment: resolved,
         contactPeerId: _contact.peerId,
+        owner: MediaOwnerLane.direct,
       );
       MediaAttachment refreshedAttachment;
       if (downloaded != null) {
@@ -1795,6 +1806,7 @@ class _ConversationWiredState extends State<ConversationWired>
         // shown as a retryable `failed` (INV-DL-1) — mirrors the group path.
         final rows = await mediaAttachmentRepo.getAttachmentsForMessage(
           messageId,
+          owner: MediaOwnerLane.direct,
         );
         final matches = rows.where((a) => a.id == resolved.id);
         refreshedAttachment = matches.isEmpty
@@ -2401,7 +2413,10 @@ class _ConversationWiredState extends State<ConversationWired>
                     downloadStatus: 'done',
                   ),
                 );
-                await widget.mediaAttachmentRepo!.saveAttachment(stableResult);
+                await widget.mediaAttachmentRepo!.saveAttachment(
+                  stableResult,
+                  owner: MediaOwnerLane.direct,
+                );
                 uploadedAttachments.add(stableResult);
               } else {
                 uploadedAttachments.add(result);
@@ -2839,7 +2854,10 @@ class _ConversationWiredState extends State<ConversationWired>
   Future<void> _onDeleteFailedMedia(String messageId) async {
     final mediaAttachmentRepo = widget.mediaAttachmentRepo;
     final storedAttachments =
-        await mediaAttachmentRepo?.getAttachmentsForMessage(messageId) ??
+        await mediaAttachmentRepo?.getAttachmentsForMessage(
+          messageId,
+          owner: MediaOwnerLane.direct,
+        ) ??
         const <MediaAttachment>[];
     final storedPaths = storedAttachments.map(
       (attachment) => attachment.localPath,
@@ -2847,12 +2865,16 @@ class _ConversationWiredState extends State<ConversationWired>
 
     await mediaAttachmentRepo?.markUploadPendingAttachmentsFailedForMessage(
       messageId,
+      owner: MediaOwnerLane.direct,
     );
     await widget.mediaFileManager?.deleteOwnedPendingUploadFilesForMessage(
       messageId: messageId,
       storedPaths: storedPaths,
     );
-    await mediaAttachmentRepo?.deleteAttachmentsForMessage(messageId);
+    await mediaAttachmentRepo?.deleteAttachmentsForMessage(
+      messageId,
+      owner: MediaOwnerLane.direct,
+    );
     await widget.messageRepo.deleteMessage(messageId);
 
     _removeLocalMessage(messageId);
@@ -4122,6 +4144,7 @@ class _ConversationWiredState extends State<ConversationWired>
             messageId: messageId,
             downloadStatus: 'upload_pending',
           ),
+          owner: MediaOwnerLane.direct,
         );
       }
     } catch (e) {
@@ -4176,6 +4199,7 @@ class _ConversationWiredState extends State<ConversationWired>
 
     final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
       messageId,
+      owner: MediaOwnerLane.direct,
     );
     if (attachments.isEmpty) {
       return fallbackMedia ?? const <MediaAttachment>[];

@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleState;
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -217,7 +218,10 @@ class _FakeMediaAttachmentRepo implements MediaAttachmentRepository {
   }
 
   @override
-  Future<void> saveAttachment(MediaAttachment attachment) async {
+  Future<void> saveAttachment(
+    MediaAttachment attachment, {
+    required MediaOwnerLane owner,
+  }) async {
     // Upsert by id (like the real repo / other fakes), not blind-append, so a
     // re-read returns the latest status and rows don't accumulate duplicates.
     final list = _store.putIfAbsent(attachment.messageId, () => []);
@@ -227,8 +231,9 @@ class _FakeMediaAttachmentRepo implements MediaAttachmentRepository {
 
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
-    String messageId,
-  ) async =>
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async =>
       // Return a COPY (like the real repo + the other fakes): the auto-download
       // loop iterates this list while downloadMedia upserts into the repo, so
       // handing out the live backing list causes a concurrent-modification.
@@ -236,8 +241,9 @@ class _FakeMediaAttachmentRepo implements MediaAttachmentRepository {
 
   @override
   Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-    List<String> messageIds,
-  ) async {
+    List<String> messageIds, {
+    required MediaOwnerLane owner,
+  }) async {
     final result = <String, List<MediaAttachment>>{};
     for (final id in messageIds) {
       final atts = _store[id];
@@ -259,21 +265,27 @@ class _FakeMediaAttachmentRepo implements MediaAttachmentRepository {
   }
 
   @override
-  Future<int> deleteAttachmentsForMessage(String messageId) async => 0;
+  Future<int> deleteAttachmentsForMessage(
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => 0;
 
   @override
   Future<int> deleteAttachmentsForContact(String contactPeerId) async => 0;
 
   @override
   Future<int> markUploadPendingAttachmentsFailedForMessage(
-    String messageId,
-  ) async => 0;
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => 0;
 
   @override
   Future<List<MediaAttachment>> getPendingDownloads() async => [];
 
   @override
-  Future<List<MediaAttachment>> getUploadPendingAttachments() async => [];
+  Future<List<MediaAttachment>> getUploadPendingAttachments({
+    required MediaOwnerLane owner,
+  }) async => [];
 }
 
 class _FakeBridge implements Bridge {
@@ -619,48 +631,46 @@ void main() {
       },
     );
 
-    test(
-      '147: a prefetch HIT (predecryptedText supplied) skips the listener '
-      'ML-KEM key load and persists from the supplied plaintext',
-      () async {
-        const senderPeerId = 'sender-peer-predecrypt-hit';
-        contactRepo.seedContact(_makeContact(senderPeerId));
-        var keyLoads = 0;
-        // A decrypt that would FAIL if it ran — so a green `stored` outcome
-        // proves the handler used the supplied predecryptedText, not the bridge.
-        final bridge = _FakeDecryptBridge(
-          decryptResponse: {'ok': false, 'errorCode': 'DECRYPT_FAILED'},
-        );
-        final listener = createListener(
-          bridge: bridge,
-          getOwnMlKemSecretKey: () async {
-            keyLoads++;
-            return 'own-secret-key';
-          },
-        );
+    test('147: a prefetch HIT (predecryptedText supplied) skips the listener '
+        'ML-KEM key load and persists from the supplied plaintext', () async {
+      const senderPeerId = 'sender-peer-predecrypt-hit';
+      contactRepo.seedContact(_makeContact(senderPeerId));
+      var keyLoads = 0;
+      // A decrypt that would FAIL if it ran — so a green `stored` outcome
+      // proves the handler used the supplied predecryptedText, not the bridge.
+      final bridge = _FakeDecryptBridge(
+        decryptResponse: {'ok': false, 'errorCode': 'DECRYPT_FAILED'},
+      );
+      final listener = createListener(
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async {
+          keyLoads++;
+          return 'own-secret-key';
+        },
+      );
 
-        final inner = jsonEncode({
-          'id': 'msg-prefetch-hit-001',
-          'text': 'prefetched',
-          'senderPeerId': senderPeerId,
-          'senderUsername': 'Alice',
-          'timestamp': DateTime.now().toUtc().toIso8601String(),
-        });
+      final inner = jsonEncode({
+        'id': 'msg-prefetch-hit-001',
+        'text': 'prefetched',
+        'senderPeerId': senderPeerId,
+        'senderUsername': 'Alice',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
 
-        final outcome = await listener.processIncomingMessage(
-          _makeV2EncryptedChatMessage(
-            from: senderPeerId,
-          ).copyWith(predecryptedText: inner),
-        );
+      final outcome = await listener.processIncomingMessage(
+        _makeV2EncryptedChatMessage(
+          from: senderPeerId,
+        ).copyWith(predecryptedText: inner),
+      );
 
-        expect(outcome.state, ChatMessageProcessState.stored);
-        expect(
-          keyLoads,
-          0,
-          reason: 'a prefetch hit must not load the ML-KEM secret in the listener',
-        );
-      },
-    );
+      expect(outcome.state, ChatMessageProcessState.stored);
+      expect(
+        keyLoads,
+        0,
+        reason:
+            'a prefetch hit must not load the ML-KEM secret in the listener',
+      );
+    });
 
     test(
       'maps decryptionDeferred result to decryptionDeferred state',
@@ -1444,41 +1454,43 @@ void main() {
       },
     );
 
-    test('marks attachment terminal download_failed on relay not-found',
-        () async {
-      final senderPeerId = 'sender-peer-003';
-      contactRepo.seedContact(_makeContact(senderPeerId));
+    test(
+      'marks attachment terminal download_failed on relay not-found',
+      () async {
+        final senderPeerId = 'sender-peer-003';
+        contactRepo.seedContact(_makeContact(senderPeerId));
 
-      // handleIncomingChatMessage persists media from wire JSON
-      bridge.downloadResponse = {
-        'ok': false,
-        'errorCode': 'NOT_FOUND',
-        'errorMessage': 'Blob not found',
-      };
+        // handleIncomingChatMessage persists media from wire JSON
+        bridge.downloadResponse = {
+          'ok': false,
+          'errorCode': 'NOT_FOUND',
+          'errorMessage': 'Blob not found',
+        };
 
-      final listener = createListener();
-      listener.start();
+        final listener = createListener();
+        listener.start();
 
-      final emitted = <ConversationMessage>[];
-      listener.incomingMessageStream.listen(emitted.add);
+        final emitted = <ConversationMessage>[];
+        listener.incomingMessageStream.listen(emitted.add);
 
-      chatStreamController.add(
-        _makeChatMessage(
-          from: senderPeerId,
-          id: 'msg-test-003',
-          media: _testMediaJson,
-        ),
-      );
+        chatStreamController.add(
+          _makeChatMessage(
+            from: senderPeerId,
+            id: 'msg-test-003',
+            media: _testMediaJson,
+          ),
+        );
 
-      await Future.delayed(const Duration(milliseconds: 200));
+        await Future.delayed(const Duration(milliseconds: 200));
 
-      expect(emitted.length, 2);
-      // 'Blob not found' is a relay-unavailable response -> honest terminal
-      // download_failed, not a retryable failed (INV-DL-4).
-      expect(emitted[1].media[0].downloadStatus, 'download_failed');
+        expect(emitted.length, 2);
+        // 'Blob not found' is a relay-unavailable response -> honest terminal
+        // download_failed, not a retryable failed (INV-DL-4).
+        expect(emitted[1].media[0].downloadStatus, 'download_failed');
 
-      listener.dispose();
-    });
+        listener.dispose();
+      },
+    );
 
     test('handles bridge exception during download gracefully', () async {
       final senderPeerId = 'sender-peer-004';

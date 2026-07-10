@@ -16,6 +16,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart';
@@ -280,6 +281,7 @@ void main() {
         mediaFileManager: bobFileManager,
         attachment: persisted,
         contactPeerId: _alicePeerId,
+        owner: MediaOwnerLane.direct,
       );
       expect(downloaded, isNotNull);
       expect(downloaded!.downloadStatus, kMediaDownloadStatusDone);
@@ -342,6 +344,7 @@ void main() {
       mediaFileManager: bobFileManager,
       attachment: persisted,
       contactPeerId: _alicePeerId,
+      owner: MediaOwnerLane.direct,
     );
     expect(downloaded, isNotNull);
     expect(downloaded!.downloadStatus, kMediaDownloadStatusDone);
@@ -378,6 +381,7 @@ void main() {
         downloadStatus: 'pending',
         clearLocalPath: true,
       ),
+      owner: MediaOwnerLane.direct,
     );
     final persisted = (await bobMediaRepo.getPendingDownloads()).single;
     final downloaded = await downloadMedia(
@@ -386,6 +390,7 @@ void main() {
       mediaFileManager: bobFileManager,
       attachment: persisted,
       contactPeerId: _alicePeerId,
+      owner: MediaOwnerLane.direct,
     );
 
     expect(downloaded, isNotNull);
@@ -425,6 +430,7 @@ void main() {
           downloadStatus: 'pending',
           clearLocalPath: true,
         ),
+        owner: MediaOwnerLane.direct,
       );
       final persisted = (await bobMediaRepo.getPendingDownloads()).single;
       final downloaded = await downloadMedia(
@@ -433,6 +439,7 @@ void main() {
         mediaFileManager: bobFileManager,
         attachment: persisted,
         contactPeerId: _alicePeerId,
+        owner: MediaOwnerLane.direct,
       );
 
       expect(downloaded, isNotNull);

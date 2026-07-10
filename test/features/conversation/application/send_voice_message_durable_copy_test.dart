@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
@@ -17,7 +18,10 @@ class _RecordingMediaAttachmentRepository implements MediaAttachmentRepository {
   final List<MediaAttachment> saved = [];
 
   @override
-  Future<void> saveAttachment(MediaAttachment attachment) async {
+  Future<void> saveAttachment(
+    MediaAttachment attachment, {
+    required MediaOwnerLane owner,
+  }) async {
     saved.add(attachment);
   }
 
@@ -25,28 +29,36 @@ class _RecordingMediaAttachmentRepository implements MediaAttachmentRepository {
   Future<int> deleteAttachmentsForContact(String contactPeerId) async => 0;
 
   @override
-  Future<int> deleteAttachmentsForMessage(String messageId) async => 0;
+  Future<int> deleteAttachmentsForMessage(
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => 0;
 
   @override
   Future<int> markUploadPendingAttachmentsFailedForMessage(
-    String messageId,
-  ) async => 0;
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => 0;
 
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
-    String messageId,
-  ) async => saved.where((a) => a.messageId == messageId).toList();
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => saved.where((a) => a.messageId == messageId).toList();
 
   @override
   Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-    List<String> messageIds,
-  ) async => {};
+    List<String> messageIds, {
+    required MediaOwnerLane owner,
+  }) async => {};
 
   @override
   Future<List<MediaAttachment>> getPendingDownloads() async => const [];
 
   @override
-  Future<List<MediaAttachment>> getUploadPendingAttachments() async => const [];
+  Future<List<MediaAttachment>> getUploadPendingAttachments({
+    required MediaOwnerLane owner,
+  }) async => const [];
 
   @override
   Future<void> updateDownloadStatus(String id, String downloadStatus) async {}
@@ -151,45 +163,40 @@ void main() {
       },
     );
 
-    test(
-      'durable copy survives deletion of the recorder temp file',
-      () async {
-        // The whole point: deleting the OS temp (eviction / container
-        // rotation) must NOT lose the sender's voice note — the durable copy
-        // is an independent file under the owned media dir.
-        bridge.responses['media:upload'] = {'ok': false};
-        const blobId = 'voice-blob-survives-1';
-        final recording = createRecording();
+    test('durable copy survives deletion of the recorder temp file', () async {
+      // The whole point: deleting the OS temp (eviction / container
+      // rotation) must NOT lose the sender's voice note — the durable copy
+      // is an independent file under the owned media dir.
+      bridge.responses['media:upload'] = {'ok': false};
+      const blobId = 'voice-blob-survives-1';
+      final recording = createRecording();
 
-        await sendVoiceMessage(
-          p2pService: p2pService,
-          messageRepo: messageRepo,
-          targetPeerId: 'target-peer',
-          senderPeerId: 'my-peer',
-          senderUsername: 'Me',
-          recording: recording,
-          bridge: bridge,
-          recipientMlKemPublicKey: mlKemKey,
-          mediaAttachmentRepo: mediaAttachmentRepo,
-          mediaFileManager: mediaFileManager,
-          messageId: 'msg-survives-1',
-          blobId: blobId,
-        );
+      await sendVoiceMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+        recording: recording,
+        bridge: bridge,
+        recipientMlKemPublicKey: mlKemKey,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        mediaFileManager: mediaFileManager,
+        messageId: 'msg-survives-1',
+        blobId: blobId,
+      );
 
-        final saved = mediaAttachmentRepo.saved.firstWhere(
-          (a) => a.id == blobId,
-        );
-        final durablePath = saved.localPath!;
+      final saved = mediaAttachmentRepo.saved.firstWhere((a) => a.id == blobId);
+      final durablePath = saved.localPath!;
 
-        // Simulate OS temp eviction.
-        final temp = File(recording.filePath);
-        if (temp.existsSync()) temp.deleteSync();
+      // Simulate OS temp eviction.
+      final temp = File(recording.filePath);
+      if (temp.existsSync()) temp.deleteSync();
 
-        // The durable copy is an independent owned file — untouched.
-        expect(File(durablePath).existsSync(), isTrue);
-        expect(durablePath, isNot(recording.filePath));
-      },
-    );
+      // The durable copy is an independent owned file — untouched.
+      expect(File(durablePath).existsSync(), isTrue);
+      expect(durablePath, isNot(recording.filePath));
+    });
 
     test(
       'no durable row is forced on the success path (upload owns durability)',

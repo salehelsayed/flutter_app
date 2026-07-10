@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 
@@ -4263,6 +4264,54 @@ void main() {
       expect(saved, isTrue);
     });
 
+    // 228: the group outgoing path must persist media under the GROUP lane —
+    // every saveAttachment call carries MediaOwnerLane.group, never direct.
+    test('outgoing media save passes group owner', () async {
+      final recordedLanes = <MediaOwnerLane?>[];
+      mediaRepo.onSaveAttachment = (att) => recordedLanes.add(att.ownerLane);
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'Check this out',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        mediaAttachments: [testAttachment],
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(message, isNotNull);
+      expect(recordedLanes, isNotEmpty);
+      expect(
+        recordedLanes.toSet(),
+        {MediaOwnerLane.group},
+        reason: 'every group outgoing media save must pass the group lane',
+      );
+      final savedAttachment = await mediaRepo.getAttachmentById('att-1');
+      expect(savedAttachment, isNotNull);
+      expect(savedAttachment!.ownerLane, MediaOwnerLane.group);
+      // Lane-scoped read-back: the direct lane must never see this attachment.
+      expect(
+        await mediaRepo.getAttachmentsForMessage(
+          savedAttachment.messageId,
+          owner: MediaOwnerLane.direct,
+        ),
+        isEmpty,
+      );
+      expect(
+        (await mediaRepo.getAttachmentsForMessage(
+          savedAttachment.messageId,
+          owner: MediaOwnerLane.group,
+        )).single.id,
+        'att-1',
+      );
+    });
+
     test('includes GIF metadata in publish and inbox payloads', () async {
       final gifAttachment = testAttachment.copyWith(
         id: 'gif-att-1',
@@ -4530,7 +4579,7 @@ void main() {
             encryptionKeyBase64: 'key-fixture',
             encryptionNonce: 'nonce-fixture',
             encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-          ),
+          ), owner: MediaOwnerLane.group,
         );
 
         final (result, _) = await sendGroupMessage(
@@ -4556,7 +4605,7 @@ void main() {
         expect(result, SendGroupMessageResult.success);
 
         final savedAttachments = await mediaRepo.getAttachmentsForMessage(
-          messageId,
+          messageId, owner: MediaOwnerLane.group,
         );
         expect(savedAttachments, hasLength(1));
         expect(savedAttachments.single.id, 'final-attachment');
@@ -5044,7 +5093,7 @@ void main() {
 
         expect(mediaRepo.count, 1);
         final savedAttachments = await mediaRepo.getAttachmentsForMessage(
-          messageId,
+          messageId, owner: MediaOwnerLane.group,
         );
         expect(savedAttachments, hasLength(1));
       },
@@ -5169,7 +5218,7 @@ void main() {
         expect(replayPayload['media'], expectedMedia);
 
         final savedAttachments = await mediaRepo.getAttachmentsForMessage(
-          messageId,
+          messageId, owner: MediaOwnerLane.group,
         );
         expect(savedAttachments, hasLength(variants.length));
         expect(savedAttachments.map((a) => a.toJson()).toList(), expectedMedia);

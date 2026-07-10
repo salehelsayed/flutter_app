@@ -42,8 +42,11 @@ void main() {
       ]);
     });
 
-    test('TC-207-23 bumps identity database version to 95', () {
-      expect(currentIdentityDatabaseVersion, 95);
+    test('TC-207-23 bumps identity database version to at least 95', () {
+      // 096 (228 media library state) superseded the head pin; the exact
+      // current-version assertion lives in full_migration_chain_test.dart
+      // (TC-228-13).
+      expect(currentIdentityDatabaseVersion, greaterThanOrEqualTo(95));
     });
   });
 }

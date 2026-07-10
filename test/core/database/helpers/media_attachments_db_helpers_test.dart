@@ -1,12 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
-import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
-import 'package:flutter_app/core/database/migrations/010_media_attachments.dart';
-import 'package:flutter_app/core/database/migrations/058_media_attachment_integrity_columns.dart';
-import 'package:flutter_app/core/database/migrations/059_media_attachment_encryption_columns.dart';
-import 'package:flutter_app/core/database/migrations/089_media_attachment_download_retry_column.dart';
+import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
+import 'package:flutter_app/core/database/production_migration_registry.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 
 void main() {
   late Database db;
@@ -18,15 +15,9 @@ void main() {
 
   setUp(() async {
     db = await openDatabase(inMemoryDatabasePath, version: 1);
-    // Need identity + messages tables for the subquery in dbDeleteMediaForContact
-    await runIdentityTableMigration(db);
-    await runMessagesTableMigration(db);
-    await runMediaAttachmentsMigration(db);
-    await runMediaAttachmentIntegrityColumnsMigration(db);
-    await runMediaAttachmentEncryptionColumnsMigration(db);
-    // Migration 089 adds download_retry_count, which dbUpdateMediaLocalPath now
-    // resets to 0 on a successful local-path commit (INV-DL-2).
-    await runMediaAttachmentDownloadRetryColumnMigration(db);
+    // 228: build the CURRENT production schema through the shared registry —
+    // the owner-lane tests need messages, group_messages and migration 096.
+    await runProductionOnCreate(db, currentIdentityDatabaseVersion);
   });
 
   tearDown(() async {
@@ -50,10 +41,12 @@ void main() {
     String? encryptionKeyBase64,
     String? encryptionNonce,
     String? encryptionScheme,
+    String ownerLane = 'direct',
   }) {
     return {
       'id': id,
       'message_id': messageId,
+      'owner_lane': ownerLane,
       'mime': mime,
       'size': size,
       'media_type': mediaType,
@@ -140,7 +133,7 @@ void main() {
 
   group('dbLoadMediaForMessage', () {
     test('returns empty list when no matches', () async {
-      final rows = await dbLoadMediaForMessage(db, 'nonexistent');
+      final rows = await dbLoadMediaForMessage(db, 'nonexistent', ownerLane: 'direct');
       expect(rows, isEmpty);
     });
 
@@ -166,7 +159,7 @@ void main() {
         makeAttachmentRow(id: 'blob-3', messageId: 'msg-B'),
       );
 
-      final rows = await dbLoadMediaForMessage(db, 'msg-A');
+      final rows = await dbLoadMediaForMessage(db, 'msg-A', ownerLane: 'direct');
       expect(rows.length, 2);
       expect(rows[0]['id'], 'blob-1');
       expect(rows[1]['id'], 'blob-2');
@@ -175,7 +168,7 @@ void main() {
 
   group('dbLoadMediaForMessages', () {
     test('returns empty list for empty messageIds', () async {
-      final rows = await dbLoadMediaForMessages(db, []);
+      final rows = await dbLoadMediaForMessages(db, [], ownerLane: 'direct');
       expect(rows, isEmpty);
     });
 
@@ -205,7 +198,7 @@ void main() {
         ),
       );
 
-      final rows = await dbLoadMediaForMessages(db, ['msg-A', 'msg-B']);
+      final rows = await dbLoadMediaForMessages(db, ['msg-A', 'msg-B'], ownerLane: 'direct');
       expect(rows.length, 2);
       expect(rows[0]['id'], 'blob-1');
       expect(rows[1]['id'], 'blob-2');
@@ -229,7 +222,7 @@ void main() {
         ),
       );
 
-      final rows = await dbLoadMediaForMessages(db, ['msg-A']);
+      final rows = await dbLoadMediaForMessages(db, ['msg-A'], ownerLane: 'direct');
       expect(rows.length, 2);
       expect(rows[0]['id'], 'blob-1');
       expect(rows[1]['id'], 'blob-2');
@@ -319,7 +312,7 @@ void main() {
         makeAttachmentRow(id: 'blob-3', messageId: 'msg-B'),
       );
 
-      final count = await dbDeleteMediaForMessage(db, 'msg-A');
+      final count = await dbDeleteMediaForMessage(db, 'msg-A', ownerLane: 'direct');
       expect(count, 2);
 
       final remaining = await db.query('media_attachments');
@@ -328,7 +321,7 @@ void main() {
     });
 
     test('returns 0 when no matches', () async {
-      final count = await dbDeleteMediaForMessage(db, 'nonexistent');
+      final count = await dbDeleteMediaForMessage(db, 'nonexistent', ownerLane: 'direct');
       expect(count, 0);
     });
   });
@@ -418,5 +411,215 @@ void main() {
       final rows = await dbLoadPendingMediaDownloads(db);
       expect(rows, isEmpty);
     });
+  });
+
+  // --- 228 TC-228-05: owner-lane isolation under parent-ID collision ---
+
+  group('owner lane isolation', () {
+    Future<void> seedCollisionParents(String id) async {
+      await db.insert('messages', makeMessageRow(id: id));
+      await db.insert('group_messages', {
+        'id': id,
+        'group_id': 'group-1',
+        'sender_peer_id': 'peer-g',
+        'sender_username': 'GroupSender',
+        'text': 'group parent $id',
+        'timestamp': '2026-02-20T10:00:00.000Z',
+        'key_generation': 0,
+        'status': 'delivered',
+        'is_incoming': 1,
+        'created_at': '2026-02-20T10:00:01.000Z',
+      });
+    }
+
+    test(
+      'owner scoped load and delete isolate equal direct and group message '
+      'ids',
+      () async {
+        // The SAME message id exists as a direct AND a group parent.
+        await seedCollisionParents('msg-shared');
+        await dbInsertMediaAttachment(
+          db,
+          makeAttachmentRow(
+            id: 'att-direct',
+            messageId: 'msg-shared',
+            ownerLane: MediaOwnerLane.direct.dbValue,
+          ),
+        );
+        await dbInsertMediaAttachment(
+          db,
+          makeAttachmentRow(
+            id: 'att-group',
+            messageId: 'msg-shared',
+            ownerLane: MediaOwnerLane.group.dbValue,
+          ),
+        );
+        await dbInsertMediaAttachment(
+          db,
+          makeAttachmentRow(
+            id: 'att-legacy',
+            messageId: 'msg-shared',
+            ownerLane: kMediaOwnerLaneUnresolved,
+          ),
+        );
+
+        // Loads return only their lane — never the sibling or legacy row.
+        final directRows = await dbLoadMediaForMessage(
+          db,
+          'msg-shared',
+          ownerLane: 'direct',
+        );
+        expect(directRows.map((r) => r['id']), ['att-direct']);
+        final groupRows = await dbLoadMediaForMessage(
+          db,
+          'msg-shared',
+          ownerLane: 'group',
+        );
+        expect(groupRows.map((r) => r['id']), ['att-group']);
+        final directMulti = await dbLoadMediaForMessages(
+          db,
+          ['msg-shared'],
+          ownerLane: 'direct',
+        );
+        expect(directMulti.map((r) => r['id']), ['att-direct']);
+
+        // Deleting the direct lane preserves group and unresolved rows.
+        final directDeleted = await dbDeleteMediaForMessage(
+          db,
+          'msg-shared',
+          ownerLane: 'direct',
+        );
+        expect(directDeleted, 1);
+        var remaining = (await db.query(
+          'media_attachments',
+        )).map((r) => r['id']).toList();
+        expect(remaining, containsAll(['att-group', 'att-legacy']));
+        expect(remaining, isNot(contains('att-direct')));
+
+        // Re-seed direct and delete the group lane: direct+legacy survive.
+        await dbInsertMediaAttachment(
+          db,
+          makeAttachmentRow(
+            id: 'att-direct',
+            messageId: 'msg-shared',
+            ownerLane: 'direct',
+          ),
+        );
+        final groupDeleted = await dbDeleteMediaForMessage(
+          db,
+          'msg-shared',
+          ownerLane: 'group',
+        );
+        expect(groupDeleted, 1);
+        remaining = (await db.query(
+          'media_attachments',
+        )).map((r) => r['id']).toList();
+        expect(remaining, containsAll(['att-direct', 'att-legacy']));
+        expect(remaining, isNot(contains('att-group')));
+      },
+    );
+
+    test(
+      'contact cleanup removes only direct-owned rows for the contact',
+      () async {
+        await seedCollisionParents('msg-shared');
+        await dbInsertMediaAttachment(
+          db,
+          makeAttachmentRow(
+            id: 'att-direct',
+            messageId: 'msg-shared',
+            ownerLane: 'direct',
+          ),
+        );
+        await dbInsertMediaAttachment(
+          db,
+          makeAttachmentRow(
+            id: 'att-group',
+            messageId: 'msg-shared',
+            ownerLane: 'group',
+          ),
+        );
+        await dbInsertMediaAttachment(
+          db,
+          makeAttachmentRow(
+            id: 'att-legacy',
+            messageId: 'msg-shared',
+            ownerLane: kMediaOwnerLaneUnresolved,
+          ),
+        );
+
+        // makeMessageRow defaults contact_peer_id to 'contact-A'.
+        final count = await dbDeleteMediaForContact(db, 'contact-A');
+        expect(count, 1);
+        final remaining = (await db.query(
+          'media_attachments',
+        )).map((r) => r['id']).toList();
+        expect(remaining, containsAll(['att-group', 'att-legacy']));
+        expect(remaining, isNot(contains('att-direct')));
+      },
+    );
+
+    test(
+      'upload pending load filters owner in SQL before the limit',
+      () async {
+        await seedCollisionParents('msg-shared');
+        // Ten group upload-pending rows created BEFORE one direct row: an
+        // after-limit filter of limit=5 would return zero direct rows.
+        for (var i = 0; i < 10; i += 1) {
+          await dbInsertMediaAttachment(
+            db,
+            makeAttachmentRow(
+              id: 'att-g-$i',
+              messageId: 'msg-shared',
+              ownerLane: 'group',
+              downloadStatus: 'upload_pending',
+              createdAt: '2026-02-20T09:00:0$i.000Z',
+            ),
+          );
+        }
+        await dbInsertMediaAttachment(
+          db,
+          makeAttachmentRow(
+            id: 'att-d-late',
+            messageId: 'msg-shared',
+            ownerLane: 'direct',
+            downloadStatus: 'upload_pending',
+            createdAt: '2026-02-20T10:00:00.000Z',
+          ),
+        );
+
+        final directPending = await dbLoadUploadPendingAttachments(
+          db,
+          limit: 5,
+          ownerLane: 'direct',
+        );
+        expect(directPending.map((r) => r['id']), ['att-d-late']);
+
+        final groupPending = await dbLoadUploadPendingAttachments(
+          db,
+          limit: 5,
+          ownerLane: 'group',
+        );
+        expect(groupPending, hasLength(5));
+        expect(
+          groupPending.every((r) => r['owner_lane'] == 'group'),
+          isTrue,
+        );
+
+        // Owner-scoped terminalization flips only its lane.
+        final flipped = await dbMarkUploadPendingAttachmentsFailedForMessage(
+          db,
+          'msg-shared',
+          ownerLane: 'direct',
+        );
+        expect(flipped, 1);
+        final groupStill = await dbLoadUploadPendingAttachments(
+          db,
+          limit: 50,
+          ownerLane: 'group',
+        );
+        expect(groupStill, hasLength(10));
+      },
+    );
   });
 }

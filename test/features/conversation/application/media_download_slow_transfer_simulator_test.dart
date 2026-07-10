@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -84,15 +85,20 @@ class _RecorderRepo implements MediaAttachmentRepository {
   final List<(String, String)> localPathUpdates = [];
 
   @override
-  Future<void> saveAttachment(MediaAttachment attachment) async {}
+  Future<void> saveAttachment(
+    MediaAttachment attachment, {
+    required MediaOwnerLane owner,
+  }) async {}
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
-    String messageId,
-  ) async => const [];
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => const [];
   @override
   Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-    List<String> messageIds,
-  ) async => const {};
+    List<String> messageIds, {
+    required MediaOwnerLane owner,
+  }) async => const {};
   @override
   Future<void> updateLocalPath(String id, String localPath) async {
     localPathUpdates.add((id, localPath));
@@ -104,18 +110,23 @@ class _RecorderRepo implements MediaAttachmentRepository {
   }
 
   @override
-  Future<int> deleteAttachmentsForMessage(String messageId) async => 0;
+  Future<int> deleteAttachmentsForMessage(
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => 0;
   @override
   Future<int> deleteAttachmentsForContact(String contactPeerId) async => 0;
   @override
   Future<int> markUploadPendingAttachmentsFailedForMessage(
-    String messageId,
-  ) async => 0;
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => 0;
   @override
   Future<List<MediaAttachment>> getPendingDownloads() async => const [];
   @override
-  Future<List<MediaAttachment>> getUploadPendingAttachments() async =>
-      const [];
+  Future<List<MediaAttachment>> getUploadPendingAttachments({
+    required MediaOwnerLane owner,
+  }) async => const [];
 }
 
 class _TempMediaFileManager extends MediaFileManager {
@@ -167,76 +178,72 @@ void main() {
     }
   });
 
-  test(
-    'slow steady transfer with progress completes; stalled transfer fails '
-    'with typed stall code',
-    () async {
-      // --- slow but steady: progress events outlive the stall budget ---
-      final slowBridge = _SlowWritingBridge(
-        delay: const Duration(milliseconds: 400),
-      );
-      final ticker = Timer.periodic(const Duration(milliseconds: 40), (_) {
-        emitMediaDownloadProgressEvent({
-          'id': attachment.id,
-          'receivedBytes': 1,
-          'totalBytes': 3,
-          'fromPeerId': 'relay-sim',
-        });
+  test('slow steady transfer with progress completes; stalled transfer fails '
+      'with typed stall code', () async {
+    // --- slow but steady: progress events outlive the stall budget ---
+    final slowBridge = _SlowWritingBridge(
+      delay: const Duration(milliseconds: 400),
+    );
+    final ticker = Timer.periodic(const Duration(milliseconds: 40), (_) {
+      emitMediaDownloadProgressEvent({
+        'id': attachment.id,
+        'receivedBytes': 1,
+        'totalBytes': 3,
+        'fromPeerId': 'relay-sim',
       });
+    });
 
-      MediaAttachment? slowResult;
-      try {
-        slowResult = await downloadMedia(
-          bridge: slowBridge,
-          mediaAttachmentRepo: repo,
-          mediaFileManager: fileManager,
-          attachment: attachment,
-          contactPeerId: 'contact-sim',
-          transferStallTimeout: const Duration(milliseconds: 150),
-          transferMaxTimeout: const Duration(seconds: 10),
-        );
-      } finally {
-        ticker.cancel();
-      }
-
-      expect(
-        slowResult,
-        isNotNull,
-        reason: 'a moving transfer must never die on a fixed wall clock',
-      );
-      expect(slowResult!.downloadStatus, 'done');
-
-      // --- genuinely stalled: typed watchdog code + preserved artifact ---
-      final stalledResult = await downloadMedia(
-        bridge: _HangingBridge(),
+    MediaAttachment? slowResult;
+    try {
+      slowResult = await downloadMedia(
+        owner: MediaOwnerLane.direct,
+        bridge: slowBridge,
         mediaAttachmentRepo: repo,
         mediaFileManager: fileManager,
-        attachment: attachment.copyWith(id: 'blob-stalled-001'),
+        attachment: attachment,
         contactPeerId: 'contact-sim',
-        transferStallTimeout: const Duration(milliseconds: 120),
+        transferStallTimeout: const Duration(milliseconds: 150),
         transferMaxTimeout: const Duration(seconds: 10),
       );
+    } finally {
+      ticker.cancel();
+    }
 
-      expect(stalledResult, isNull);
-      expect(
-        repo.downloadStatusUpdates.last,
-        ('blob-stalled-001', 'failed'),
-      );
+    expect(
+      slowResult,
+      isNotNull,
+      reason: 'a moving transfer must never die on a fixed wall clock',
+    );
+    expect(slowResult!.downloadStatus, 'done');
 
-      final watchdogEvent = flowEvents.firstWhere(
-        (event) => event['event'] == 'MEDIA_TRANSFER_WATCHDOG_TIMEOUT',
-      );
-      final details = watchdogEvent['details'] as Map<String, dynamic>;
-      expect(details['reason'], 'stalled_no_progress');
-      expect(details['operation'], 'media:download');
+    // --- genuinely stalled: typed watchdog code + preserved artifact ---
+    final stalledResult = await downloadMedia(
+      owner: MediaOwnerLane.direct,
+      bridge: _HangingBridge(),
+      mediaAttachmentRepo: repo,
+      mediaFileManager: fileManager,
+      attachment: attachment.copyWith(id: 'blob-stalled-001'),
+      contactPeerId: 'contact-sim',
+      transferStallTimeout: const Duration(milliseconds: 120),
+      transferMaxTimeout: const Duration(seconds: 10),
+    );
 
-      expect(
-        flowEvents.any(
-          (event) => event['event'] == 'MEDIA_DOWNLOAD_PART_PRESERVED',
-        ),
-        isTrue,
-        reason: 'stall failures must preserve staged bytes, never delete',
-      );
-    },
-  );
+    expect(stalledResult, isNull);
+    expect(repo.downloadStatusUpdates.last, ('blob-stalled-001', 'failed'));
+
+    final watchdogEvent = flowEvents.firstWhere(
+      (event) => event['event'] == 'MEDIA_TRANSFER_WATCHDOG_TIMEOUT',
+    );
+    final details = watchdogEvent['details'] as Map<String, dynamic>;
+    expect(details['reason'], 'stalled_no_progress');
+    expect(details['operation'], 'media:download');
+
+    expect(
+      flowEvents.any(
+        (event) => event['event'] == 'MEDIA_DOWNLOAD_PART_PRESERVED',
+      ),
+      isTrue,
+      reason: 'stall failures must preserve staged bytes, never delete',
+    );
+  });
 }

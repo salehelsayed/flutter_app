@@ -6,6 +6,7 @@ import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
@@ -98,7 +99,7 @@ Future<int> retryIncompleteGroupUploads({
   _retryIncompleteGroupUploadsInFlight = true;
   try {
     final allPendingAttachments = await mediaAttachmentRepo
-        .getUploadPendingAttachments();
+        .getUploadPendingAttachments(owner: MediaOwnerLane.group);
     final pendingAttachments = messageId == null
         ? allPendingAttachments
         : allPendingAttachments
@@ -199,7 +200,7 @@ Future<int> retryIncompleteGroupUploads({
         }
 
         final allAttachments = await mediaAttachmentRepo
-            .getAttachmentsForMessage(messageId);
+            .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group);
 
         final group = await groupRepo.getGroup(parentMessage.groupId);
         if (group == null) {
@@ -231,6 +232,7 @@ Future<int> retryIncompleteGroupUploads({
           if (!validation.isValid) {
             await mediaAttachmentRepo.saveAttachment(
               attachment.copyWith(downloadStatus: 'upload_failed'),
+              owner: MediaOwnerLane.group,
             );
             emitFlowEvent(
               layer: 'FL',
@@ -276,6 +278,7 @@ Future<int> retryIncompleteGroupUploads({
           if (!fileValidation.isValid) {
             await mediaAttachmentRepo.saveAttachment(
               attachment.copyWith(downloadStatus: 'upload_failed'),
+              owner: MediaOwnerLane.group,
             );
             emitFlowEvent(
               layer: 'FL',
@@ -321,7 +324,10 @@ Future<int> retryIncompleteGroupUploads({
               size: resolvedSize,
               downloadStatus: 'upload_failed',
             );
-            await mediaAttachmentRepo.saveAttachment(failed);
+            await mediaAttachmentRepo.saveAttachment(
+              failed,
+              owner: MediaOwnerLane.group,
+            );
             resolvedPendingAttachments[attachment.id] = failed;
             emitFlowEvent(
               layer: 'FL',
@@ -375,6 +381,7 @@ Future<int> retryIncompleteGroupUploads({
                     : 'upload_pending',
                 uploadRetryCount: retryCount,
               ),
+              owner: MediaOwnerLane.group,
             );
           }
           emitFlowEvent(
@@ -404,6 +411,7 @@ Future<int> retryIncompleteGroupUploads({
             await mediaAttachmentRepo.saveAttachment(
               (resolvedPendingAttachments[attachment.id] ?? attachment)
                   .copyWith(downloadStatus: 'upload_failed'),
+              owner: MediaOwnerLane.group,
             );
           }
           emitFlowEvent(
@@ -468,7 +476,10 @@ Future<int> retryIncompleteGroupUploads({
             uploadRetryCount: plan.pendingAttachment.uploadRetryCount,
             contentHash: contentHash,
           );
-          await mediaAttachmentRepo.saveAttachment(completed);
+          await mediaAttachmentRepo.saveAttachment(
+            completed,
+            owner: MediaOwnerLane.group,
+          );
         }
 
         if (failedPlans.isNotEmpty) {
@@ -482,6 +493,7 @@ Future<int> retryIncompleteGroupUploads({
                     : 'upload_pending',
                 uploadRetryCount: nextRetryCount,
               ),
+              owner: MediaOwnerLane.group,
             );
           }
 
@@ -501,7 +513,7 @@ Future<int> retryIncompleteGroupUploads({
 
         final refreshedMessage = await groupMsgRepo.getMessage(messageId);
         final refreshedAttachments = await mediaAttachmentRepo
-            .getAttachmentsForMessage(messageId);
+            .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group);
         final abortReason = _lateGroupSendAbortReason(
           message: refreshedMessage,
           attachments: refreshedAttachments,

@@ -6,6 +6,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_preview_de
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/conversation_thread_summary_repository.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/orbit/application/load_latest_media_descriptors.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 
@@ -31,6 +32,7 @@ Future<List<OrbitFriend>> loadOrbitData({
     final descriptors = await loadLatestMediaDescriptors(
       mediaAttachmentRepo: mediaAttachmentRepo,
       messageIds: _previewableLatestIds(summaries.values),
+      owner: MediaOwnerLane.direct,
     );
     final friends = contacts
         .map(
@@ -92,6 +94,7 @@ Future<OrbitFriend?> loadOrbitFriendSnapshot({
     final descriptors = await loadLatestMediaDescriptors(
       mediaAttachmentRepo: mediaAttachmentRepo,
       messageIds: _previewableLatestIds([summary]),
+      owner: MediaOwnerLane.direct,
     );
     final friend = _buildOrbitFriend(
       contact: contact,

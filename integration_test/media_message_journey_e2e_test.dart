@@ -9,6 +9,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
@@ -980,9 +981,9 @@ Future<void> _waitForOneToOneDelivery(
       return false;
     }
     final ibraAttachments = await harness.ibraChatUser.mediaAttachmentRepo
-        .getAttachmentsForMessage(ibraMessage.last.id);
+        .getAttachmentsForMessage(ibraMessage.last.id, owner: MediaOwnerLane.direct);
     final salehAttachments = await harness.salehChatUser.mediaAttachmentRepo
-        .getAttachmentsForMessage(salehMessage.last.id);
+        .getAttachmentsForMessage(salehMessage.last.id, owner: MediaOwnerLane.direct);
     return ibraAttachments.length == 1 && salehAttachments.length == 1;
   });
 }
@@ -1011,9 +1012,9 @@ Future<void> _waitForGroupDelivery(
       return false;
     }
     final ibraAttachments = await harness.ibraGroupUser.mediaAttachmentRepo
-        .getAttachmentsForMessage(ibraMessage.last.id);
+        .getAttachmentsForMessage(ibraMessage.last.id, owner: MediaOwnerLane.group);
     final salehAttachments = await harness.salehGroupUser.mediaAttachmentRepo
-        .getAttachmentsForMessage(salehMessage.last.id);
+        .getAttachmentsForMessage(salehMessage.last.id, owner: MediaOwnerLane.group);
     return ibraAttachments.length == 1 && salehAttachments.length == 1;
   });
 }

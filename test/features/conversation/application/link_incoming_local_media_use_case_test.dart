@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -89,7 +90,10 @@ void main() {
     'happy: pending attachment → persists, repoints local path, links',
     () async {
       final repo = InMemoryMediaAttachmentRepository();
-      await repo.saveAttachment(pendingAttachment());
+      await repo.saveAttachment(
+        pendingAttachment(),
+        owner: MediaOwnerLane.direct,
+      );
 
       var persistCallCount = 0;
       String? persistMediaId;
@@ -112,7 +116,10 @@ void main() {
       expect(persistMediaId, 'media-1');
       expect(persistFrom, 'peer-A');
       // the attachment row was repointed and marked done (no longer pending).
-      final stored = (await repo.getAttachmentsForMessage('msg-1')).single;
+      final stored = (await repo.getAttachmentsForMessage(
+        'msg-1',
+        owner: MediaOwnerLane.direct,
+      )).single;
       expect(stored.localPath, '/persistent/media-1');
       expect(stored.downloadStatus, 'done');
       expect(await repo.getPendingDownloads(), isEmpty);
@@ -173,13 +180,19 @@ void main() {
       );
 
       await Future<void>.delayed(const Duration(milliseconds: 10));
-      await repo.saveAttachment(pendingAttachment());
+      await repo.saveAttachment(
+        pendingAttachment(),
+        owner: MediaOwnerLane.direct,
+      );
 
       final outcome = await outcomeFuture;
 
       expect(outcome, LinkLocalMediaOutcome.linked);
       expect(persistCallCount, 1);
-      final stored = (await repo.getAttachmentsForMessage('msg-1')).single;
+      final stored = (await repo.getAttachmentsForMessage(
+        'msg-1',
+        owner: MediaOwnerLane.direct,
+      )).single;
       expect(stored.localPath, '/persistent/media-1');
       expect(stored.downloadStatus, 'done');
       expect(
@@ -194,7 +207,10 @@ void main() {
     'race: fallback marks row failed before local ready → repairs from local media',
     () async {
       final repo = InMemoryMediaAttachmentRepository();
-      await repo.saveAttachment(pendingAttachment(downloadStatus: 'failed'));
+      await repo.saveAttachment(
+        pendingAttachment(downloadStatus: 'failed'),
+        owner: MediaOwnerLane.direct,
+      );
 
       var persistCallCount = 0;
       final outcome = await linkIncomingLocalMedia(
@@ -209,7 +225,10 @@ void main() {
 
       expect(outcome, LinkLocalMediaOutcome.linked);
       expect(persistCallCount, 1);
-      final stored = (await repo.getAttachmentsForMessage('msg-1')).single;
+      final stored = (await repo.getAttachmentsForMessage(
+        'msg-1',
+        owner: MediaOwnerLane.direct,
+      )).single;
       expect(stored.localPath, '/persistent/media-1');
       expect(stored.downloadStatus, 'done');
       expect(
@@ -227,6 +246,7 @@ void main() {
       // so it is no longer in the pending set.
       final repo = InMemoryMediaAttachmentRepository();
       await repo.saveAttachment(
+        owner: MediaOwnerLane.direct,
         pendingAttachment(downloadStatus: 'done', localPath: '/relay/media-1'),
       );
 
@@ -244,7 +264,10 @@ void main() {
       expect(outcome, LinkLocalMediaOutcome.skippedNotPending);
       expect(persistCallCount, 0, reason: 'must not clobber a done attachment');
       // the relay-completed row is untouched.
-      final stored = (await repo.getAttachmentsForMessage('msg-1')).single;
+      final stored = (await repo.getAttachmentsForMessage(
+        'msg-1',
+        owner: MediaOwnerLane.direct,
+      )).single;
       expect(stored.downloadStatus, 'done');
       expect(stored.localPath, '/relay/media-1');
       expect(eventNames(), ['LOCAL_MEDIA_RECEIVE_SKIP_NOT_PENDING']);
@@ -253,7 +276,10 @@ void main() {
 
   test('persist failure: returns null → does not update local path', () async {
     final repo = InMemoryMediaAttachmentRepository();
-    await repo.saveAttachment(pendingAttachment());
+    await repo.saveAttachment(
+      pendingAttachment(),
+      owner: MediaOwnerLane.direct,
+    );
 
     final outcome = await linkIncomingLocalMedia(
       media: mediaReady(),
@@ -263,7 +289,10 @@ void main() {
 
     expect(outcome, LinkLocalMediaOutcome.persistFailed);
     // attachment stays pending with no local path (no clobber on failure).
-    final stored = (await repo.getAttachmentsForMessage('msg-1')).single;
+    final stored = (await repo.getAttachmentsForMessage(
+      'msg-1',
+      owner: MediaOwnerLane.direct,
+    )).single;
     expect(stored.localPath, isNull);
     expect(stored.downloadStatus, 'pending');
     expect(await repo.getPendingDownloads(), hasLength(1));
@@ -272,7 +301,10 @@ void main() {
 
   test('error path: persist throws → swallowed, reports error', () async {
     final repo = InMemoryMediaAttachmentRepository();
-    await repo.saveAttachment(pendingAttachment());
+    await repo.saveAttachment(
+      pendingAttachment(),
+      owner: MediaOwnerLane.direct,
+    );
 
     final outcome = await linkIncomingLocalMedia(
       media: mediaReady(),
@@ -283,7 +315,10 @@ void main() {
 
     expect(outcome, LinkLocalMediaOutcome.error);
     // attachment untouched; the incoming pipeline did not crash.
-    final stored = (await repo.getAttachmentsForMessage('msg-1')).single;
+    final stored = (await repo.getAttachmentsForMessage(
+      'msg-1',
+      owner: MediaOwnerLane.direct,
+    )).single;
     expect(stored.localPath, isNull);
     expect(stored.downloadStatus, 'pending');
     expect(eventNames(), ['LOCAL_MEDIA_RECEIVE_ERROR']);
@@ -292,92 +327,67 @@ void main() {
 
   // --- 112 Phase 1.5: enc-staged LAN artifacts defer to decrypt-adopt ---
   group('enc-staged artifacts', () {
-    test(
-      'linkIncomingLocalMedia never links or completes an enc-staged '
-      'artifact',
-      () async {
-        final repo = InMemoryMediaAttachmentRepository();
-        await repo.saveAttachment(
-          pendingAttachment().copyWith(
-            encryptionKeyBase64: 'k',
-            encryptionNonce: 'n',
-            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-          ),
-        );
-        final fileManager = FakeMediaFileManager();
-        final scratchDir = Directory.systemTemp.createTempSync(
-          'lan_enc_link_',
-        );
-        addTearDown(() => scratchDir.deleteSync(recursive: true));
-        final ciphertext = List<int>.filled(272, 5);
-        final persistedFile = File('${scratchDir.path}/media-1.enc')
-          ..writeAsBytesSync(ciphertext);
-
-        final outcome = await linkIncomingLocalMedia(
-          media: mediaReady(enc: true),
-          mediaAttachmentRepo: repo,
-          persistMedia: (mediaId, fromPeerId) async => persistedFile.path,
-          mediaFileManager: fileManager,
-        );
-
-        expect(outcome, LinkLocalMediaOutcome.stagedForDecrypt);
-        // Deferral pin: completion happens ONLY via decrypt-adopt — the row
-        // must stay pending with no local path.
-        final stored = (await repo.getAttachmentsForMessage('msg-1')).single;
-        expect(stored.localPath, isNull);
-        expect(stored.downloadStatus, 'pending');
-        // The ciphertext moved to the exact staging path the download
-        // adoption seam expects ('$absolutePath.enc' under the ROW's mime).
-        final absolutePath = await fileManager.localPathForAttachment(
-          contactPeerId: 'peer-A',
-          blobId: 'media-1',
-          mime: 'image/jpeg',
-        );
-        final staged = File('$absolutePath.enc');
-        addTearDown(() {
-          if (staged.existsSync()) {
-            staged.deleteSync();
-          }
-        });
-        expect(staged.existsSync(), isTrue);
-        expect(staged.readAsBytesSync(), ciphertext);
-        expect(persistedFile.existsSync(), isFalse);
-      },
-    );
-
-    test(
-      'LAN/relay dedupe rule still holds for encrypted artifacts',
-      () async {
-        final repo = InMemoryMediaAttachmentRepository();
-        await repo.saveAttachment(
-          pendingAttachment(
-            downloadStatus: 'done',
-            localPath: '/relay/media-1',
-          ).copyWith(encryptionKeyBase64: 'k', encryptionNonce: 'n'),
-        );
-
-        var persistCallCount = 0;
-        final outcome = await linkIncomingLocalMedia(
-          media: mediaReady(enc: true),
-          mediaAttachmentRepo: repo,
-          persistMedia: (mediaId, fromPeerId) async {
-            persistCallCount++;
-            return '/persistent/media-1';
-          },
-          mediaFileManager: FakeMediaFileManager(),
-          pendingLookupGrace: Duration.zero,
-        );
-
-        expect(outcome, LinkLocalMediaOutcome.skippedNotPending);
-        expect(persistCallCount, 0);
-      },
-    );
-
-    test('enc media without row key material is never linked', () async {
-      // Defensive: ciphertext bytes must never be promoted through the
-      // plaintext link path, even if the row lacks key material.
+    test('linkIncomingLocalMedia never links or completes an enc-staged '
+        'artifact', () async {
       final repo = InMemoryMediaAttachmentRepository();
-      await repo.saveAttachment(pendingAttachment());
+      await repo.saveAttachment(
+        owner: MediaOwnerLane.direct,
+        pendingAttachment().copyWith(
+          encryptionKeyBase64: 'k',
+          encryptionNonce: 'n',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        ),
+      );
+      final fileManager = FakeMediaFileManager();
+      final scratchDir = Directory.systemTemp.createTempSync('lan_enc_link_');
+      addTearDown(() => scratchDir.deleteSync(recursive: true));
+      final ciphertext = List<int>.filled(272, 5);
+      final persistedFile = File('${scratchDir.path}/media-1.enc')
+        ..writeAsBytesSync(ciphertext);
+
+      final outcome = await linkIncomingLocalMedia(
+        media: mediaReady(enc: true),
+        mediaAttachmentRepo: repo,
+        persistMedia: (mediaId, fromPeerId) async => persistedFile.path,
+        mediaFileManager: fileManager,
+      );
+
+      expect(outcome, LinkLocalMediaOutcome.stagedForDecrypt);
+      // Deferral pin: completion happens ONLY via decrypt-adopt — the row
+      // must stay pending with no local path.
+      final stored = (await repo.getAttachmentsForMessage(
+        'msg-1',
+        owner: MediaOwnerLane.direct,
+      )).single;
+      expect(stored.localPath, isNull);
+      expect(stored.downloadStatus, 'pending');
+      // The ciphertext moved to the exact staging path the download
+      // adoption seam expects ('$absolutePath.enc' under the ROW's mime).
+      final absolutePath = await fileManager.localPathForAttachment(
+        contactPeerId: 'peer-A',
+        blobId: 'media-1',
+        mime: 'image/jpeg',
+      );
+      final staged = File('$absolutePath.enc');
+      addTearDown(() {
+        if (staged.existsSync()) {
+          staged.deleteSync();
+        }
+      });
+      expect(staged.existsSync(), isTrue);
+      expect(staged.readAsBytesSync(), ciphertext);
+      expect(persistedFile.existsSync(), isFalse);
+    });
+
+    test('LAN/relay dedupe rule still holds for encrypted artifacts', () async {
+      final repo = InMemoryMediaAttachmentRepository();
+      await repo.saveAttachment(
+        owner: MediaOwnerLane.direct,
+        pendingAttachment(
+          downloadStatus: 'done',
+          localPath: '/relay/media-1',
+        ).copyWith(encryptionKeyBase64: 'k', encryptionNonce: 'n'),
+      );
 
       var persistCallCount = 0;
       final outcome = await linkIncomingLocalMedia(
@@ -393,7 +403,35 @@ void main() {
 
       expect(outcome, LinkLocalMediaOutcome.skippedNotPending);
       expect(persistCallCount, 0);
-      final stored = (await repo.getAttachmentsForMessage('msg-1')).single;
+    });
+
+    test('enc media without row key material is never linked', () async {
+      // Defensive: ciphertext bytes must never be promoted through the
+      // plaintext link path, even if the row lacks key material.
+      final repo = InMemoryMediaAttachmentRepository();
+      await repo.saveAttachment(
+        pendingAttachment(),
+        owner: MediaOwnerLane.direct,
+      );
+
+      var persistCallCount = 0;
+      final outcome = await linkIncomingLocalMedia(
+        media: mediaReady(enc: true),
+        mediaAttachmentRepo: repo,
+        persistMedia: (mediaId, fromPeerId) async {
+          persistCallCount++;
+          return '/persistent/media-1';
+        },
+        mediaFileManager: FakeMediaFileManager(),
+        pendingLookupGrace: Duration.zero,
+      );
+
+      expect(outcome, LinkLocalMediaOutcome.skippedNotPending);
+      expect(persistCallCount, 0);
+      final stored = (await repo.getAttachmentsForMessage(
+        'msg-1',
+        owner: MediaOwnerLane.direct,
+      )).single;
       expect(stored.localPath, isNull);
     });
   });

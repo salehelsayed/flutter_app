@@ -9,6 +9,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
@@ -81,7 +82,7 @@ class _StableLocalVoiceP2PService extends core_fake_p2p.FakeP2PService {
     String? encScheme,
   }) async {
     observedMediaId = mediaId;
-    final pending = await mediaAttachmentRepo.getUploadPendingAttachments();
+    final pending = await mediaAttachmentRepo.getUploadPendingAttachments(owner: MediaOwnerLane.direct);
     if (pending.isNotEmpty) {
       observedPendingAttachmentId = pending.single.id;
     }
@@ -519,7 +520,7 @@ void main() {
                   }) async {
                     uploadedBlobId = blobId;
                     final pending = await mediaAttachmentRepo
-                        .getUploadPendingAttachments();
+                        .getUploadPendingAttachments(owner: MediaOwnerLane.direct);
                     optimisticAttachmentId = pending.single.id;
                     return MediaAttachment(
                       id: blobId ?? 'server-generated-image-id',
@@ -568,9 +569,9 @@ void main() {
         )).last;
         await _pumpUntilAsync(tester, () async {
           final currentAttachments = await mediaAttachmentRepo
-              .getAttachmentsForMessage(sentMessage.id);
+              .getAttachmentsForMessage(sentMessage.id, owner: MediaOwnerLane.direct);
           final pending = await mediaAttachmentRepo
-              .getUploadPendingAttachments();
+              .getUploadPendingAttachments(owner: MediaOwnerLane.direct);
           return currentAttachments.length == 1 &&
               currentAttachments.single.id == optimisticAttachmentId &&
               currentAttachments.single.downloadStatus == 'done' &&
@@ -578,6 +579,7 @@ void main() {
         });
         final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
           sentMessage.id,
+          owner: MediaOwnerLane.direct,
         );
 
         expect(optimisticAttachmentId, isNotNull);
@@ -586,7 +588,7 @@ void main() {
         expect(attachments.single.id, optimisticAttachmentId);
         expect(attachments.single.downloadStatus, 'done');
         expect(
-          await mediaAttachmentRepo.getUploadPendingAttachments(),
+          await mediaAttachmentRepo.getUploadPendingAttachments(owner: MediaOwnerLane.direct),
           isEmpty,
         );
         await _pumpFrames(tester);
@@ -743,7 +745,7 @@ void main() {
             (message) => !message.isIncoming,
           );
           final attachments = await mediaAttachmentRepo
-              .getAttachmentsForMessage(sentMessage.id);
+              .getAttachmentsForMessage(sentMessage.id, owner: MediaOwnerLane.direct);
           return attachments.length == 1 &&
               attachments.single.downloadStatus == 'done';
         });
@@ -753,6 +755,7 @@ void main() {
         )).lastWhere((message) => !message.isIncoming);
         final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
           sentMessage.id,
+          owner: MediaOwnerLane.direct,
         );
 
         expect(originalDeletedDuringUpload, isTrue);
@@ -764,7 +767,7 @@ void main() {
         expect(attachments, hasLength(1));
         expect(attachments.single.downloadStatus, 'done');
         expect(
-          await mediaAttachmentRepo.getUploadPendingAttachments(),
+          await mediaAttachmentRepo.getUploadPendingAttachments(owner: MediaOwnerLane.direct),
           isEmpty,
         );
         await tester.pumpWidget(const SizedBox.shrink());
@@ -888,6 +891,7 @@ void main() {
             downloadStatus: 'done',
             createdAt: messageTimestamp,
           ),
+          owner: MediaOwnerLane.direct,
         );
 
         await tester.pumpWidget(
@@ -918,7 +922,7 @@ void main() {
 
         await _pumpUntilAsync(tester, () async {
           final attachments = await mediaAttachmentRepo
-              .getAttachmentsForMessage(messageId);
+              .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.direct);
           final resolvedPath = p.join(tempDir.path, storedRelativePath);
           if (attachments.length != 1 || !File(resolvedPath).existsSync()) {
             return false;
@@ -936,6 +940,7 @@ void main() {
 
         final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
           messageId,
+          owner: MediaOwnerLane.direct,
         );
         expect(attachments, hasLength(1));
         expect(attachments.single.localPath, storedRelativePath);
@@ -1043,6 +1048,7 @@ void main() {
         )).last;
         final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
           sentMessage.id,
+          owner: MediaOwnerLane.direct,
         );
 
         expect(p2pService.observedPendingAttachmentId, isNotNull);
@@ -1054,7 +1060,7 @@ void main() {
         expect(attachments.single.id, p2pService.observedPendingAttachmentId);
         expect(attachments.single.downloadStatus, 'done');
         expect(
-          await mediaAttachmentRepo.getUploadPendingAttachments(),
+          await mediaAttachmentRepo.getUploadPendingAttachments(owner: MediaOwnerLane.direct),
           isEmpty,
         );
 
@@ -1229,20 +1235,20 @@ void main() {
           text: 'Announcement photo',
         );
         final senderAttachments = await admin.mediaAttachmentRepo
-            .getAttachmentsForMessage(sent.id);
+            .getAttachmentsForMessage(sent.id, owner: MediaOwnerLane.group);
         final readerMessage = (await reader.msgRepo.getMessagesPage(
           groupId,
           limit: 100,
         )).firstWhere((message) => message.id == sent.id);
         final readerAttachments = await reader.mediaAttachmentRepo
-            .getAttachmentsForMessage(readerMessage.id);
+            .getAttachmentsForMessage(readerMessage.id, owner: MediaOwnerLane.group);
 
         expect(uploadedBlobId, isNotNull);
         expect(senderAttachments, hasLength(1));
         expect(senderAttachments.single.id, uploadedBlobId);
         expect(senderAttachments.single.downloadStatus, 'done');
         expect(
-          await admin.mediaAttachmentRepo.getUploadPendingAttachments(),
+          await admin.mediaAttachmentRepo.getUploadPendingAttachments(owner: MediaOwnerLane.group),
           isEmpty,
         );
         expect(readerAttachments, hasLength(1));
@@ -1267,7 +1273,7 @@ void main() {
 
         await _pumpUntilAsync(tester, () async {
           final downloaded = await reader.mediaAttachmentRepo
-              .getAttachmentsForMessage(readerMessage.id);
+              .getAttachmentsForMessage(readerMessage.id, owner: MediaOwnerLane.group);
           if (downloaded.length != 1) {
             return false;
           }
@@ -1447,12 +1453,13 @@ void main() {
             encryptionNonce: _fixtureEncryptionNonce,
             encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
           ),
+          owner: MediaOwnerLane.group,
         );
 
         streamController.add(incomingMessage);
         await _pumpUntilAsync(tester, () async {
           final attachments = await mediaAttachmentRepo
-              .getAttachmentsForMessage(messageId);
+              .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group);
           if (attachments.length != 1 ||
               attachments.single.downloadStatus != 'done' ||
               attachments.single.localPath == null) {
@@ -1565,6 +1572,7 @@ void main() {
             encryptionNonce: _fixtureEncryptionNonce,
             encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
           ),
+          owner: MediaOwnerLane.group,
         );
 
         await tester.pumpWidget(
@@ -1601,7 +1609,7 @@ void main() {
 
         await _pumpUntilAsync(tester, () async {
           final attachments = await mediaAttachmentRepo
-              .getAttachmentsForMessage(messageId);
+              .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group);
           final resolvedPath = p.join(tempDir.path, storedRelativePath);
           if (attachments.length != 1 || !File(resolvedPath).existsSync()) {
             return false;
@@ -1617,6 +1625,7 @@ void main() {
 
         final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
           messageId,
+          owner: MediaOwnerLane.group,
         );
         expect(attachments, hasLength(1));
         expect(attachments.single.localPath, storedRelativePath);

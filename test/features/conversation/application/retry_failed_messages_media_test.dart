@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
@@ -39,15 +40,19 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
-    String messageId,
-  ) async {
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async {
     getAttachmentsForMessageCallCount++;
     lastQueriedMessageId = messageId;
     return _attachments.where((a) => a.messageId == messageId).toList();
   }
 
   @override
-  Future<void> saveAttachment(MediaAttachment attachment) async {
+  Future<void> saveAttachment(
+    MediaAttachment attachment, {
+    required MediaOwnerLane owner,
+  }) async {
     saveAttachmentCallCount++;
     final idx = _attachments.indexWhere((a) => a.id == attachment.id);
     if (idx >= 0) {
@@ -59,11 +64,15 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 
   @override
   Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-    List<String> messageIds,
-  ) async {
+    List<String> messageIds, {
+    required MediaOwnerLane owner,
+  }) async {
     final result = <String, List<MediaAttachment>>{};
     for (final messageId in messageIds) {
-      final attachments = await getAttachmentsForMessage(messageId);
+      final attachments = await getAttachmentsForMessage(
+        messageId,
+        owner: MediaOwnerLane.direct,
+      );
       if (attachments.isNotEmpty) {
         result[messageId] = attachments;
       }
@@ -75,12 +84,16 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   Future<int> deleteAttachmentsForContact(String contactPeerId) async => 0;
 
   @override
-  Future<int> deleteAttachmentsForMessage(String messageId) async => 0;
+  Future<int> deleteAttachmentsForMessage(
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => 0;
 
   @override
   Future<int> markUploadPendingAttachmentsFailedForMessage(
-    String messageId,
-  ) async {
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async {
     var count = 0;
     for (var i = 0; i < _attachments.length; i++) {
       final attachment = _attachments[i];
@@ -97,7 +110,9 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   Future<List<MediaAttachment>> getPendingDownloads() async => const [];
 
   @override
-  Future<List<MediaAttachment>> getUploadPendingAttachments() async => [];
+  Future<List<MediaAttachment>> getUploadPendingAttachments({
+    required MediaOwnerLane owner,
+  }) async => [];
 
   @override
   Future<void> updateDownloadStatus(String id, String downloadStatus) async {}

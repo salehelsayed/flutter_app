@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
@@ -439,7 +440,10 @@ Future<void> cleanupDeletedMessageArtifacts({
   MediaFileManager? mediaFileManager,
 }) async {
   final attachments =
-      await mediaAttachmentRepo?.getAttachmentsForMessage(message.id) ??
+      await mediaAttachmentRepo?.getAttachmentsForMessage(
+        message.id,
+        owner: MediaOwnerLane.direct,
+      ) ??
       const <MediaAttachment>[];
   final storedPaths = attachments
       .map((attachment) => attachment.localPath)
@@ -448,9 +452,13 @@ Future<void> cleanupDeletedMessageArtifacts({
 
   await mediaAttachmentRepo?.markUploadPendingAttachmentsFailedForMessage(
     message.id,
+    owner: MediaOwnerLane.direct,
   );
   await reactionRepo?.deleteReactionsForMessage(message.id);
-  await mediaAttachmentRepo?.deleteAttachmentsForMessage(message.id);
+  await mediaAttachmentRepo?.deleteAttachmentsForMessage(
+    message.id,
+    owner: MediaOwnerLane.direct,
+  );
 
   if (mediaFileManager == null) return;
   for (final storedPath in storedPaths) {

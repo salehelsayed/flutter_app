@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/features/conversation/application/link_incoming_local_media_use_case.dart';
@@ -14,24 +15,28 @@ import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 /// side already staged the ciphertext to a temp path, so `persistMedia` just
 /// hands that path back (mirrors the production main.dart wiring).
 void main() {
-  MediaAttachment encPendingAttachment() => MediaAttachment(
-    id: 'media-1',
-    messageId: 'msg-1',
-    mime: 'image/jpeg',
-    size: 272,
-    mediaType: 'image',
-    downloadStatus: 'pending',
-    createdAt: '2026-05-30T00:00:00.000Z',
-  ).copyWith(
-    encryptionKeyBase64: 'k',
-    encryptionNonce: 'n',
-    encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-  );
+  MediaAttachment encPendingAttachment() =>
+      MediaAttachment(
+        id: 'media-1',
+        messageId: 'msg-1',
+        mime: 'image/jpeg',
+        size: 272,
+        mediaType: 'image',
+        downloadStatus: 'pending',
+        createdAt: '2026-05-30T00:00:00.000Z',
+      ).copyWith(
+        encryptionKeyBase64: 'k',
+        encryptionNonce: 'n',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      );
 
   test('TD9: media:lan_received → LocalMediaReady.fromJson → staged at '
       '<canonical>.enc, row stays pending, Go temp consumed', () async {
     final repo = InMemoryMediaAttachmentRepository();
-    await repo.saveAttachment(encPendingAttachment());
+    await repo.saveAttachment(
+      encPendingAttachment(),
+      owner: MediaOwnerLane.direct,
+    );
 
     final fileManager = FakeMediaFileManager();
     final scratch = Directory.systemTemp.createTempSync('fdc15_td9_');
@@ -83,25 +88,31 @@ void main() {
     expect(goStaged.existsSync(), isFalse);
 
     // Completion happens ONLY via decrypt-adopt — the row stays pending.
-    final stored = (await repo.getAttachmentsForMessage('msg-1')).single;
+    final stored = (await repo.getAttachmentsForMessage(
+      'msg-1',
+      owner: MediaOwnerLane.direct,
+    )).single;
     expect(stored.localPath, isNull);
     expect(stored.downloadStatus, 'pending');
   });
 
-  test('TD9b (control): LocalMediaReady.fromJson preserves enc/encScheme so the '
-      'bytes are staged for decrypt-adopt, never rendered raw', () {
-    final media = LocalMediaReady.fromJson(<String, dynamic>{
-      'id': 'm',
-      'from': 'p',
-      'to': 's',
-      'mime': 'application/octet-stream',
-      'size': 1,
-      'localPath': '/tmp/x',
-      'sha256': 'h',
-      'enc': true,
-      'encScheme': 'blob-aes-gcm-v1',
-    });
-    expect(media.enc, isTrue);
-    expect(media.encScheme, 'blob-aes-gcm-v1');
-  });
+  test(
+    'TD9b (control): LocalMediaReady.fromJson preserves enc/encScheme so the '
+    'bytes are staged for decrypt-adopt, never rendered raw',
+    () {
+      final media = LocalMediaReady.fromJson(<String, dynamic>{
+        'id': 'm',
+        'from': 'p',
+        'to': 's',
+        'mime': 'application/octet-stream',
+        'size': 1,
+        'localPath': '/tmp/x',
+        'sha256': 'h',
+        'enc': true,
+        'encScheme': 'blob-aes-gcm-v1',
+      });
+      expect(media.enc, isTrue);
+      expect(media.encScheme, 'blob-aes-gcm-v1');
+    },
+  );
 }

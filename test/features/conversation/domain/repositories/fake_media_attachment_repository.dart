@@ -1,11 +1,24 @@
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 
 /// In-memory [MediaAttachmentRepository] for tests.
 ///
 /// Stores attachments in a list, configurable callbacks, tracks saves.
+///
+/// 228: owner-enforcing — every save stamps the caller's typed lane, reads
+/// filter by lane, and a same-ID save under another lane (or parent) throws
+/// [MediaAttachmentOwnerViolation] exactly like the production repository,
+/// so a wrong enum at a caller fails the test instead of being hidden by an
+/// untyped fake. Seeded attachments without an explicit lane default to
+/// [seedOwnerLane] (direct unless overridden).
 class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
+  FakeMediaAttachmentRepository({this.seedOwnerLane = MediaOwnerLane.direct});
+
   final List<MediaAttachment> _attachments = [];
+
+  /// Lane stamped onto seeded attachments that carry none.
+  final MediaOwnerLane seedOwnerLane;
 
   // Pre-upload ordering hook
   void Function(MediaAttachment att)? onSaveAttachment;
@@ -15,14 +28,22 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   List<MediaAttachment> get allSavedAttachments =>
       List.unmodifiable(_savedAttachments);
 
+  /// Lanes passed to [saveAttachment], in call order.
+  final savedOwnerLanes = <MediaOwnerLane>[];
+
   MediaAttachment? get lastSavedAttachment =>
       _savedAttachments.isNotEmpty ? _savedAttachments.last : null;
+
+  MediaAttachment _withSeedLane(MediaAttachment attachment) =>
+      attachment.ownerLane == null
+          ? attachment.copyWith(ownerLane: seedOwnerLane)
+          : attachment;
 
   /// Seed attachments for testing.
   void seed(List<MediaAttachment> attachments) {
     _attachments
       ..clear()
-      ..addAll(attachments);
+      ..addAll(attachments.map(_withSeedLane));
   }
 
   /// Seed attachments for a specific message (append, don't clear).
@@ -30,40 +51,66 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
     required String messageId,
     required List<MediaAttachment> attachments,
   }) {
-    _attachments.addAll(attachments);
+    _attachments.addAll(attachments.map(_withSeedLane));
   }
 
   // Track getAttachmentsForMessage calls
   int getAttachmentsForMessageCallCount = 0;
 
   @override
-  Future<void> saveAttachment(MediaAttachment attachment) async {
-    onSaveAttachment?.call(attachment);
-    _savedAttachments.add(attachment);
-    // Upsert by ID
+  Future<void> saveAttachment(
+    MediaAttachment attachment, {
+    required MediaOwnerLane owner,
+  }) async {
+    if (attachment.ownerLane != null && attachment.ownerLane != owner) {
+      throw MediaAttachmentOwnerViolation(
+        'attachment ${attachment.id} is stamped ${attachment.ownerLane!.dbValue} '
+        'but the caller passed ${owner.dbValue}',
+      );
+    }
+    final stamped = attachment.copyWith(ownerLane: owner);
     final idx = _attachments.indexWhere((a) => a.id == attachment.id);
     if (idx >= 0) {
-      _attachments[idx] = attachment;
+      final existing = _attachments[idx];
+      if (existing.ownerLane != owner ||
+          existing.messageId != stamped.messageId) {
+        throw MediaAttachmentOwnerViolation(
+          'save would re-parent attachment ${attachment.id} from '
+          '(${existing.ownerLane?.dbValue}, ${existing.messageId}) to '
+          '(${owner.dbValue}, ${stamped.messageId})',
+        );
+      }
+    }
+    onSaveAttachment?.call(stamped);
+    _savedAttachments.add(stamped);
+    savedOwnerLanes.add(owner);
+    // Upsert by ID
+    if (idx >= 0) {
+      _attachments[idx] = stamped;
     } else {
-      _attachments.add(attachment);
+      _attachments.add(stamped);
     }
   }
 
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
-    String messageId,
-  ) async {
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async {
     getAttachmentsForMessageCallCount++;
-    return _attachments.where((a) => a.messageId == messageId).toList();
+    return _attachments
+        .where((a) => a.messageId == messageId && a.ownerLane == owner)
+        .toList();
   }
 
   @override
   Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-    List<String> messageIds,
-  ) async {
+    List<String> messageIds, {
+    required MediaOwnerLane owner,
+  }) async {
     final result = <String, List<MediaAttachment>>{};
     for (final a in _attachments) {
-      if (messageIds.contains(a.messageId)) {
+      if (messageIds.contains(a.messageId) && a.ownerLane == owner) {
         result.putIfAbsent(a.messageId, () => []).add(a);
       }
     }
@@ -92,9 +139,14 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   }
 
   @override
-  Future<int> deleteAttachmentsForMessage(String messageId) async {
+  Future<int> deleteAttachmentsForMessage(
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async {
     final before = _attachments.length;
-    _attachments.removeWhere((a) => a.messageId == messageId);
+    _attachments.removeWhere(
+      (a) => a.messageId == messageId && a.ownerLane == owner,
+    );
     return before - _attachments.length;
   }
 
@@ -106,12 +158,14 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 
   @override
   Future<int> markUploadPendingAttachmentsFailedForMessage(
-    String messageId,
-  ) async {
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async {
     var count = 0;
     for (var i = 0; i < _attachments.length; i++) {
       final attachment = _attachments[i];
       if (attachment.messageId == messageId &&
+          attachment.ownerLane == owner &&
           attachment.downloadStatus == 'upload_pending') {
         _attachments[i] = attachment.copyWith(downloadStatus: 'upload_failed');
         count++;
@@ -126,9 +180,14 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   }
 
   @override
-  Future<List<MediaAttachment>> getUploadPendingAttachments() async {
+  Future<List<MediaAttachment>> getUploadPendingAttachments({
+    required MediaOwnerLane owner,
+  }) async {
     return _attachments
-        .where((a) => a.downloadStatus == 'upload_pending')
+        .where(
+          (a) =>
+              a.downloadStatus == 'upload_pending' && a.ownerLane == owner,
+        )
         .toList();
   }
 }

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -866,6 +867,7 @@ void main() {
             downloadStatus: 'upload_pending',
             createdAt: timestamp,
           ),
+          owner: MediaOwnerLane.direct,
         );
 
         aliceBridge.throwOnSend = true;
@@ -877,6 +879,7 @@ void main() {
         final pendingAttachment =
             (await aliceMediaAttachmentRepo.getAttachmentsForMessage(
               messageId,
+              owner: MediaOwnerLane.direct,
             )).single;
         expect(pendingAttachment.id, attachmentId);
         expect(pendingAttachment.downloadStatus, 'upload_pending');
@@ -901,7 +904,7 @@ void main() {
         final recoveredMessage = await alice.messageRepo.getMessage(messageId);
         expect(recoveredMessage?.status, anyOf('delivered', 'sent'));
         final recoveredAttachments = await aliceMediaAttachmentRepo
-            .getAttachmentsForMessage(messageId);
+            .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.direct);
         expect(recoveredAttachments, hasLength(1));
         expect(recoveredAttachments.single.id, attachmentId);
         expect(recoveredAttachments.single.downloadStatus, 'done');
@@ -951,6 +954,7 @@ void main() {
             downloadStatus: 'upload_pending',
             createdAt: timestamp,
           ),
+          owner: MediaOwnerLane.direct,
         );
 
         aliceBridge.throwOnSend = true;
@@ -971,6 +975,7 @@ void main() {
         final recoveredAttachment =
             (await aliceMediaAttachmentRepo.getAttachmentsForMessage(
               messageId,
+              owner: MediaOwnerLane.direct,
             )).single;
         expect(recoveredAttachment.id, attachmentId);
         expect(recoveredAttachment.downloadStatus, 'done');
@@ -1068,6 +1073,7 @@ void main() {
         final pendingAttachment =
             (await aliceMediaAttachmentRepo.getAttachmentsForMessage(
               stuckMessage.id,
+              owner: MediaOwnerLane.direct,
             )).single;
         expect(pendingAttachment.downloadStatus, 'upload_pending');
         expect(pendingAttachment.durationMs, 4100);
@@ -1104,6 +1110,7 @@ void main() {
         final recoveredAttachment =
             (await aliceMediaAttachmentRepo.getAttachmentsForMessage(
               stuckMessage.id,
+              owner: MediaOwnerLane.direct,
             )).single;
         expect(recoveredAttachment.downloadStatus, 'done');
 

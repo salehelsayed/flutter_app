@@ -1,23 +1,45 @@
-import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'dart:convert';
+
+import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 
 import '../models/media_attachment.dart';
+import '../models/media_library.dart';
 import '../models/media_preview_descriptor.dart';
 import 'media_attachment_repository.dart';
 
 /// Implementation of MediaAttachmentRepository using database helper functions.
+///
+/// 228 ownership contract: every message-scoped closure takes the owner-lane
+/// string as its final argument, and [saveAttachment] validates the immutable
+/// `(attachmentId, ownerLane, messageId)` identity BEFORE `_toStorageRow` or
+/// any secure-store side effect. The save closure
+/// ([dbSaveMediaAttachmentPreservingLocalState]) must merge atomically,
+/// preserving local-only owner/bookmark/playback state and a completed local
+/// path, and re-validate identity inside the write transaction as the final
+/// race guard.
 class MediaAttachmentRepositoryImpl
     implements
         MediaAttachmentRepository,
         MediaAttachmentByIdLookup,
-        MediaPreviewDescriptorLookup {
-  final Future<void> Function(Map<String, Object?> row) dbInsertMediaAttachment;
-  final Future<List<Map<String, Object?>>> Function(String messageId)
+        MediaPreviewDescriptorLookup,
+        MediaLibraryStateRepository,
+        MediaLibraryRepository {
+  final Future<void> Function(Map<String, Object?> row)
+  dbSaveMediaAttachmentPreservingLocalState;
+  final Future<List<Map<String, Object?>>> Function(
+    String messageId,
+    String ownerLane,
+  )
   dbLoadMediaForMessage;
   final Future<Map<String, Object?>?> Function(String id) dbLoadMediaById;
-  final Future<List<Map<String, Object?>>> Function(List<String> messageIds)
+  final Future<List<Map<String, Object?>>> Function(
+    List<String> messageIds,
+    String ownerLane,
+  )
   dbLoadMediaForMessages;
   final Future<void> Function(
     String id,
@@ -27,18 +49,36 @@ class MediaAttachmentRepositoryImpl
   dbUpdateMediaLocalPath;
   final Future<void> Function(String id, String downloadStatus)
   dbUpdateMediaDownloadStatus;
-  final Future<int> Function(String messageId) dbDeleteMediaForMessage;
+  final Future<int> Function(String messageId, String ownerLane)
+  dbDeleteMediaForMessage;
   final Future<int> Function(String contactPeerId) dbDeleteMediaForContact;
-  final Future<int> Function(String messageId)
+  final Future<int> Function(String messageId, String ownerLane)
   dbMarkUploadPendingAttachmentsFailedForMessage;
   final Future<List<Map<String, Object?>>> Function()
   dbLoadPendingMediaDownloads;
-  final Future<List<Map<String, Object?>>> Function({int limit})
+  final Future<List<Map<String, Object?>>> Function({
+    int limit,
+    required String ownerLane,
+  })
   dbLoadUploadPendingAttachments;
+  final Future<void> Function(String id, bool bookmarked) dbSetMediaBookmarked;
+  final Future<void> Function(String id, int positionMs)
+  dbUpdateMediaPlaybackPosition;
+  final Future<List<Map<String, Object?>>> Function({
+    required String scopeKind,
+    required String scopeId,
+    required List<String> mediaTypes,
+    required bool bookmarkedOnly,
+    required int limit,
+    String? afterTimestamp,
+    String? afterMessageId,
+    String? afterAttachmentId,
+  })
+  dbLoadMediaLibraryPage;
   final SecureKeyStore? secureKeyStore;
 
   MediaAttachmentRepositoryImpl({
-    required this.dbInsertMediaAttachment,
+    required this.dbSaveMediaAttachmentPreservingLocalState,
     required this.dbLoadMediaForMessage,
     required this.dbLoadMediaById,
     required this.dbLoadMediaForMessages,
@@ -49,11 +89,17 @@ class MediaAttachmentRepositoryImpl
     required this.dbMarkUploadPendingAttachmentsFailedForMessage,
     required this.dbLoadPendingMediaDownloads,
     required this.dbLoadUploadPendingAttachments,
+    required this.dbSetMediaBookmarked,
+    required this.dbUpdateMediaPlaybackPosition,
+    required this.dbLoadMediaLibraryPage,
     this.secureKeyStore,
   });
 
   @override
-  Future<void> saveAttachment(MediaAttachment attachment) async {
+  Future<void> saveAttachment(
+    MediaAttachment attachment, {
+    required MediaOwnerLane owner,
+  }) async {
     emitFlowEvent(
       layer: 'FL',
       event: 'MEDIA_REPO_SAVE_START',
@@ -61,14 +107,42 @@ class MediaAttachmentRepositoryImpl
         'id': attachment.id.length > 8
             ? attachment.id.substring(0, 8)
             : attachment.id,
+        'ownerLane': owner.dbValue,
       },
     );
 
     try {
-      final storageAttachment = await _preserveCompletedLocalPathIfNeeded(
-        attachment,
+      // A model stamped with a DIFFERENT lane than the caller's typed owner
+      // is a caller bug — fail closed before any side effect.
+      if (attachment.ownerLane != null && attachment.ownerLane != owner) {
+        throw MediaAttachmentOwnerViolation(
+          'attachment ${attachment.id} is stamped ${attachment.ownerLane!.dbValue} '
+          'but the caller passed ${owner.dbValue}',
+        );
+      }
+      final stamped = attachment.copyWith(ownerLane: owner);
+
+      // Immutable-identity validation BEFORE _toStorageRow or any
+      // secure-store side effect (TC-228-04K): a rejected cross-owner or
+      // cross-parent save must leave the existing row, secure-store
+      // reference/value and decryptability unchanged.
+      final existingRow = await dbLoadMediaById(stamped.id);
+      if (existingRow != null) {
+        final existingOwner = existingRow['owner_lane'] as String?;
+        final existingMessageId = existingRow['message_id'] as String?;
+        if (existingOwner != owner.dbValue ||
+            existingMessageId != stamped.messageId) {
+          throw MediaAttachmentOwnerViolation(
+            'save would re-parent attachment ${stamped.id} from '
+            '($existingOwner, $existingMessageId) to '
+            '(${owner.dbValue}, ${stamped.messageId})',
+          );
+        }
+      }
+
+      await dbSaveMediaAttachmentPreservingLocalState(
+        await _toStorageRow(stamped),
       );
-      await dbInsertMediaAttachment(await _toStorageRow(storageAttachment));
 
       emitFlowEvent(
         layer: 'FL',
@@ -91,9 +165,10 @@ class MediaAttachmentRepositoryImpl
 
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
-    String messageId,
-  ) async {
-    final rows = await dbLoadMediaForMessage(messageId);
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async {
+    final rows = await dbLoadMediaForMessage(messageId, owner.dbValue);
     return _attachmentsFromRows(rows);
   }
 
@@ -106,11 +181,12 @@ class MediaAttachmentRepositoryImpl
 
   @override
   Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-    List<String> messageIds,
-  ) async {
+    List<String> messageIds, {
+    required MediaOwnerLane owner,
+  }) async {
     if (messageIds.isEmpty) return {};
 
-    final rows = await dbLoadMediaForMessages(messageIds);
+    final rows = await dbLoadMediaForMessages(messageIds, owner.dbValue);
     final Map<String, List<MediaAttachment>> result = {};
     for (final attachment in await _attachmentsFromRows(rows)) {
       result.putIfAbsent(attachment.messageId, () => []).add(attachment);
@@ -120,11 +196,12 @@ class MediaAttachmentRepositoryImpl
 
   @override
   Future<Map<String, MediaPreviewDescriptor>> getMediaPreviewDescriptors(
-    List<String> messageIds,
-  ) async {
+    List<String> messageIds, {
+    required MediaOwnerLane owner,
+  }) async {
     if (messageIds.isEmpty) return {};
 
-    final rows = await dbLoadMediaForMessages(messageIds);
+    final rows = await dbLoadMediaForMessages(messageIds, owner.dbValue);
     // Parse rows WITHOUT _hydrateRow: a preview label is derived purely from
     // media_type/mime/count and never needs the decryption key, so we skip the
     // per-attachment SecureKeyStore.read this path would otherwise pay once per
@@ -153,7 +230,91 @@ class MediaAttachmentRepositoryImpl
   }
 
   @override
-  Future<int> deleteAttachmentsForMessage(String messageId) async {
+  Future<void> setBookmarked(String id, {required bool bookmarked}) async {
+    await dbSetMediaBookmarked(id, bookmarked);
+  }
+
+  @override
+  Future<MediaLibraryPage> getMediaLibraryPage({
+    required MediaLibraryScope scope,
+    MediaLibraryFilter filter = const MediaLibraryFilter(),
+    int limit = 50,
+    String? cursor,
+  }) async {
+    // Every argument-contract failure happens HERE, before any SQL.
+    if (limit < 1 || limit > kMediaLibraryMaxPageSize) {
+      throw ArgumentError.value(
+        limit,
+        'limit',
+        'must be within 1..$kMediaLibraryMaxPageSize',
+      );
+    }
+    _MediaLibraryCursor? after;
+    if (cursor != null) {
+      after = _MediaLibraryCursor.decode(cursor);
+      if (after.scopeKind != scope.lane.dbValue ||
+          after.scopeId != scope.id ||
+          after.kind != filter.kind.name ||
+          after.bookmarkedOnly != filter.bookmarkedOnly) {
+        throw ArgumentError.value(
+          cursor,
+          'cursor',
+          'cursor was minted for a different scope/filter signature',
+        );
+      }
+    }
+
+    final rows = await dbLoadMediaLibraryPage(
+      scopeKind: scope.lane.dbValue,
+      scopeId: scope.id,
+      mediaTypes: filter.kind.mediaTypes,
+      bookmarkedOnly: filter.bookmarkedOnly,
+      limit: limit,
+      afterTimestamp: after?.timestamp,
+      afterMessageId: after?.messageId,
+      afterAttachmentId: after?.attachmentId,
+    );
+
+    final entries = <MediaLibraryEntry>[];
+    for (final row in rows) {
+      final attachmentMap = await _hydrateRow(
+        mediaLibraryRowToAttachmentMap(row),
+      );
+      entries.add(
+        MediaLibraryEntry(
+          attachment: MediaAttachment.fromMap(attachmentMap),
+          parentTimestamp: row['parent_timestamp'] as String,
+          parentSenderPeerId: row['parent_sender_peer_id'] as String?,
+        ),
+      );
+    }
+
+    String? nextCursor;
+    if (entries.length == limit) {
+      final last = entries.last;
+      nextCursor = _MediaLibraryCursor(
+        scopeKind: scope.lane.dbValue,
+        scopeId: scope.id,
+        kind: filter.kind.name,
+        bookmarkedOnly: filter.bookmarkedOnly,
+        timestamp: last.parentTimestamp,
+        messageId: last.attachment.messageId,
+        attachmentId: last.attachment.id,
+      ).encode();
+    }
+    return MediaLibraryPage(entries: entries, nextCursor: nextCursor);
+  }
+
+  @override
+  Future<void> updatePlaybackPosition(String id, int positionMs) async {
+    await dbUpdateMediaPlaybackPosition(id, positionMs);
+  }
+
+  @override
+  Future<int> deleteAttachmentsForMessage(
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async {
     emitFlowEvent(
       layer: 'FL',
       event: 'MEDIA_REPO_DELETE_FOR_MESSAGE_START',
@@ -161,11 +322,12 @@ class MediaAttachmentRepositoryImpl
         'messageId': messageId.length > 8
             ? messageId.substring(0, 8)
             : messageId,
+        'ownerLane': owner.dbValue,
       },
     );
 
     try {
-      final count = await dbDeleteMediaForMessage(messageId);
+      final count = await dbDeleteMediaForMessage(messageId, owner.dbValue);
 
       emitFlowEvent(
         layer: 'FL',
@@ -218,8 +380,9 @@ class MediaAttachmentRepositoryImpl
 
   @override
   Future<int> markUploadPendingAttachmentsFailedForMessage(
-    String messageId,
-  ) async {
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async {
     emitFlowEvent(
       layer: 'FL',
       event: 'MEDIA_REPO_TERMINALIZE_UPLOADS_START',
@@ -227,12 +390,14 @@ class MediaAttachmentRepositoryImpl
         'messageId': messageId.length > 8
             ? messageId.substring(0, 8)
             : messageId,
+        'ownerLane': owner.dbValue,
       },
     );
 
     try {
       final count = await dbMarkUploadPendingAttachmentsFailedForMessage(
         messageId,
+        owner.dbValue,
       );
       emitFlowEvent(
         layer: 'FL',
@@ -257,8 +422,12 @@ class MediaAttachmentRepositoryImpl
   }
 
   @override
-  Future<List<MediaAttachment>> getUploadPendingAttachments() async {
-    final rows = await dbLoadUploadPendingAttachments();
+  Future<List<MediaAttachment>> getUploadPendingAttachments({
+    required MediaOwnerLane owner,
+  }) async {
+    final rows = await dbLoadUploadPendingAttachments(
+      ownerLane: owner.dbValue,
+    );
     return _attachmentsFromRows(rows);
   }
 
@@ -277,79 +446,6 @@ class MediaAttachmentRepositoryImpl
     await store.write(secureStoreKey, key);
     row['encryption_key_base64'] = secureStoreReferenceForKey(secureStoreKey);
     return row;
-  }
-
-  Future<MediaAttachment> _preserveCompletedLocalPathIfNeeded(
-    MediaAttachment attachment,
-  ) async {
-    final existingRow = await dbLoadMediaById(attachment.id);
-    if (existingRow == null) {
-      return attachment;
-    }
-
-    final existing = MediaAttachment.fromMap(await _hydrateRow(existingRow));
-    if (!_shouldPreserveCompletedLocalPath(
-      existing: existing,
-      incoming: attachment,
-    )) {
-      return attachment;
-    }
-
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'MEDIA_REPO_SAVE_PRESERVED_COMPLETED_LOCAL_PATH',
-      details: {
-        'id': attachment.id.length > 8
-            ? attachment.id.substring(0, 8)
-            : attachment.id,
-        'incomingStatus': attachment.downloadStatus,
-      },
-    );
-    return attachment.copyWith(
-      localPath: existing.localPath,
-      downloadStatus: kMediaDownloadStatusDone,
-    );
-  }
-
-  bool _shouldPreserveCompletedLocalPath({
-    required MediaAttachment existing,
-    required MediaAttachment incoming,
-  }) {
-    if (existing.downloadStatus != kMediaDownloadStatusDone ||
-        !_hasLocalPath(existing.localPath)) {
-      return false;
-    }
-
-    if (_nonTerminalMediaStatuses.contains(incoming.downloadStatus)) {
-      return true;
-    }
-
-    if (incoming.downloadStatus == kMediaDownloadStatusDone) {
-      if (!_hasLocalPath(incoming.localPath)) {
-        return true;
-      }
-      return _isTransientLocalPath(incoming.localPath) &&
-          !_isTransientLocalPath(existing.localPath);
-    }
-
-    return false;
-  }
-
-  static const Set<String> _nonTerminalMediaStatuses = {
-    kMediaDownloadStatusPending,
-    kMediaDownloadStatusDownloading,
-    kMediaDownloadStatusUploadPending,
-  };
-
-  bool _hasLocalPath(String? path) => path != null && path.trim().isNotEmpty;
-
-  bool _isTransientLocalPath(String? path) {
-    if (path == null || path.isEmpty) {
-      return false;
-    }
-    final normalized = path.replaceAll('\\', '/');
-    return normalized.startsWith('pending_uploads/') ||
-        normalized.contains('/pending_uploads/');
   }
 
   Future<List<MediaAttachment>> _attachmentsFromRows(
@@ -381,5 +477,65 @@ class MediaAttachmentRepositoryImpl
     }
 
     return Map<String, Object?>.from(row)..['encryption_key_base64'] = hydrated;
+  }
+}
+
+/// Opaque keyset cursor for [MediaAttachmentRepositoryImpl.getMediaLibraryPage].
+/// Embeds the complete scope/filter signature alongside the keyset position so
+/// a cursor can never be replayed under another query signature.
+class _MediaLibraryCursor {
+  const _MediaLibraryCursor({
+    required this.scopeKind,
+    required this.scopeId,
+    required this.kind,
+    required this.bookmarkedOnly,
+    required this.timestamp,
+    required this.messageId,
+    required this.attachmentId,
+  });
+
+  final String scopeKind;
+  final String scopeId;
+  final String kind;
+  final bool bookmarkedOnly;
+  final String timestamp;
+  final String messageId;
+  final String attachmentId;
+
+  String encode() => base64Url.encode(
+    utf8.encode(
+      jsonEncode({
+        'v': 1,
+        'scopeKind': scopeKind,
+        'scopeId': scopeId,
+        'kind': kind,
+        'bookmarkedOnly': bookmarkedOnly,
+        'ts': timestamp,
+        'mid': messageId,
+        'aid': attachmentId,
+      }),
+    ),
+  );
+
+  static _MediaLibraryCursor decode(String cursor) {
+    try {
+      final decoded =
+          jsonDecode(utf8.decode(base64Url.decode(cursor)))
+              as Map<String, dynamic>;
+      if (decoded['v'] != 1) {
+        throw const FormatException('unknown cursor version');
+      }
+      return _MediaLibraryCursor(
+        scopeKind: decoded['scopeKind'] as String,
+        scopeId: decoded['scopeId'] as String,
+        kind: decoded['kind'] as String,
+        bookmarkedOnly: decoded['bookmarkedOnly'] as bool,
+        timestamp: decoded['ts'] as String,
+        messageId: decoded['mid'] as String,
+        attachmentId: decoded['aid'] as String,
+      );
+    } catch (e) {
+      throw ArgumentError.value(cursor, 'cursor', 'malformed cursor: $e');
+    }
   }
 }

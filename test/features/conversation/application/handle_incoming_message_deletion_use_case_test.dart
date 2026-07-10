@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_message_deletion_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -156,7 +157,10 @@ void main() {
         expect(stored, isNotNull);
         expect(stored!.isDeleted, isTrue);
         expect(
-          await mediaAttachmentRepo.getAttachmentsForMessage('msg-1'),
+          await mediaAttachmentRepo.getAttachmentsForMessage(
+            'msg-1',
+            owner: MediaOwnerLane.direct,
+          ),
           isEmpty,
         );
         expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);

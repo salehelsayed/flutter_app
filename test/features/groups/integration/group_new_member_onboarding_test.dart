@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
     as group_send;
@@ -140,7 +141,7 @@ void main() {
       var doneCount = 0;
       for (final message in messages) {
         final attachments = await user.mediaAttachmentRepo
-            .getAttachmentsForMessage(message.id);
+            .getAttachmentsForMessage(message.id, owner: MediaOwnerLane.group);
         doneCount += attachments
             .where((attachment) => attachment.downloadStatus == 'done')
             .length;
@@ -201,7 +202,7 @@ void main() {
     expect(received.keyGeneration, keyGeneration, reason: user.username);
 
     final attachments = await user.mediaAttachmentRepo.getAttachmentsForMessage(
-      received.id,
+      received.id, owner: MediaOwnerLane.group,
     );
     expect(attachments, hasLength(1), reason: '${user.username}: $messageText');
 
@@ -360,7 +361,7 @@ void main() {
             (message) => message.text == text,
           );
           final attachments = await bob.mediaAttachmentRepo
-              .getAttachmentsForMessage(message.id);
+              .getAttachmentsForMessage(message.id, owner: MediaOwnerLane.group);
           expect(attachments, hasLength(1), reason: text);
           return attachments.single;
         }
@@ -699,7 +700,7 @@ void main() {
           ]) {
             expect(
               await recipient.mediaAttachmentRepo.getAttachmentsForMessage(
-                preJoinMessage!.id,
+                preJoinMessage!.id, owner: MediaOwnerLane.group,
               ),
               isEmpty,
               reason: recipient.username,

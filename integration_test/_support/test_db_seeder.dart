@@ -30,7 +30,9 @@ import 'dart:io';
 
 import 'package:sqflite_sqlcipher/sqflite.dart' as sqlcipher;
 
+import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
+import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 
 // Canonical migration list — KEEP THE ORDER. This mirrors the inline opener in
@@ -66,10 +68,17 @@ import 'package:flutter_app/core/database/migrations/075_contacts_ml_kem_key_upd
 import 'package:flutter_app/core/database/migrations/077_message_relay_custody.dart';
 import 'package:flutter_app/core/database/migrations/079_message_dedup_key.dart';
 
-/// Default DB-schema version for the canonical bootstrap. This matches the
-/// current production migration head used by `transport_e2e_test.dart` and
+/// Default DB-schema version for the HISTORICAL bootstrap below. This matches
+/// the migration head used by `transport_e2e_test.dart` and
 /// `wifi_relay_fallback_smoke_test.dart`. Lower-version harnesses MUST pass
 /// their own [version] (e.g. 44) so the schema is preserved exactly.
+///
+/// 228 (TC-228-13H): this is an EXPLICITLY VERSIONED HISTORICAL schema. A
+/// fixture that instantiates `MediaAttachmentRepositoryImpl` or persists
+/// `MediaAttachment.toMap()` MUST use [openCurrentProductionE2EDatabase]
+/// instead — the v96 media model writes owner/bookmark/playback columns that
+/// these historical schemas do not have (such a write fails at runtime by
+/// design; historical fixtures may not write the v96 model).
 const int kCanonicalE2EDbVersion = 79;
 
 /// The shared default DB-name dart-define key (`E2E_DB_NAME`). Provided for
@@ -218,5 +227,26 @@ Future<sqlcipher.Database> openE2EDatabase({
     onCreate: (db, _) => _runCreateMigrations(db, version),
     onUpgrade: (db, oldVersion, _) =>
         _runUpgradeMigrations(db, oldVersion, version),
+  );
+}
+
+/// 228 (TC-228-13H): opens a fresh encrypted test database at the CURRENT
+/// production schema through the SHARED production registry — never a
+/// hand-maintained migration list that can silently drift from main.dart.
+///
+/// Every fixture that instantiates `MediaAttachmentRepositoryImpl` or
+/// persists `MediaAttachment.toMap()` must open through this (the v96 media
+/// model requires migration 096's owner/bookmark/playback columns).
+Future<sqlcipher.Database> openCurrentProductionE2EDatabase({
+  required SecureKeyStore secureKeyStore,
+  required String dbName,
+}) async {
+  await deleteTestDatabase(dbName);
+  return openEncryptedDatabase(
+    secureKeyStore: secureKeyStore,
+    dbName: dbName,
+    version: currentIdentityDatabaseVersion,
+    onCreate: runProductionOnCreate,
+    onUpgrade: runProductionOnUpgrade,
   );
 }

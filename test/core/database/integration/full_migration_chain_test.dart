@@ -5,8 +5,13 @@
 // 1b. Step-by-step upgrade preserves seeded data
 // 1c. Idempotent migrations can be re-run safely
 
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import 'package:flutter_app/core/database/app_database_version.dart';
+import 'package:flutter_app/core/database/production_migration_registry.dart';
 
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
@@ -64,8 +69,6 @@ import 'package:flutter_app/core/database/migrations/064_group_welcome_key_packa
 import 'package:flutter_app/core/database/migrations/065_group_history_gap_repairs.dart';
 import 'package:flutter_app/core/database/migrations/066_group_sync_receipts.dart';
 import 'package:flutter_app/core/database/migrations/067_group_invite_delivery_attempts.dart';
-import 'package:flutter_app/core/database/migrations/090_group_invite_delivery_attempts_revoked_declined.dart';
-import 'package:flutter_app/core/database/migrations/091_pending_group_invites_inviter_mlkem.dart';
 import 'package:flutter_app/core/database/migrations/068_removed_group_member_snapshots.dart';
 import 'package:flutter_app/core/database/migrations/069_group_message_local_deletions.dart';
 import 'package:flutter_app/core/database/migrations/070_group_key_rotation_drafts.dart';
@@ -81,11 +84,6 @@ import 'package:flutter_app/core/database/migrations/081_group_pending_reactions
 import 'package:flutter_app/core/database/migrations/082_message_reaction_tombstone.dart';
 import 'package:flutter_app/core/database/migrations/083_groups_last_membership_event_id.dart';
 import 'package:flutter_app/core/database/migrations/086_pending_group_broadcasts.dart';
-import 'package:flutter_app/core/database/migrations/084_group_member_device_snapshots.dart';
-import 'package:flutter_app/core/database/migrations/085_pending_sibling_devices.dart';
-import 'package:flutter_app/core/database/migrations/087_group_message_retry_backoff_columns.dart';
-import 'package:flutter_app/core/database/migrations/088_group_rejoin_state.dart';
-import 'package:flutter_app/core/database/migrations/089_media_attachment_download_retry_column.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
@@ -122,79 +120,10 @@ void main() {
   }
 
   Future<void> runFreshInstallMigrations(Database db) async {
-    await runIdentityTableMigration(db);
-    await runMessagesTableMigration(db);
-    await runMlKemKeysMigration(db);
-    await runSecretNullChecksMigration(db);
-    await runReadAtColumnMigration(db);
-    await runArchiveColumnsMigration(db);
-    await runBlockColumnsMigration(db);
-    await runQuotedMessageIdMigration(db);
-    await runMediaAttachmentsMigration(db);
-    await runMediaAttachmentReliabilityColumnsMigration(db);
-    await runAvatarVersionMigration(db);
-    await runTransportColumnMigration(db);
-    await runWaveformColumnMigration(db);
-    await runWireEnvelopeMigration(db);
-    await runMessageStatusCleanupMigration(db);
-    await runMessageReactionsMigration(db);
-    await runGroupsTablesMigration(db);
-    await runGroupMessagesTablesMigration(db);
-    await runIntroductionsTableMigration(db);
-    await runIntroBannerColumnsMigration(db);
-    await runContactIntroducedByMigration(db);
-    await runIntroductionKeysMigration(db);
-    await runIntroductionRecipientKeysMigration(db);
-    await runContactIntroducedByPeerIdMigration(db);
-    await runIntroductionAlreadyConnectedMigration(db);
-    await runGroupQuotedMessageIdMigration(db);
-    await runMessagesEditedAtMigration(db);
-    await runMessagesDeletedStateMigration(db);
-    await runInboxStagingEntriesMigration(db);
-    await runPendingIntroductionResponsesMigration(db);
-    await runIntroductionOutboxMigration(db);
-    await runGroupsLastMembershipEventAtMigration(db);
-    await runGroupsMetadataColumnsMigration(db);
-    await runGroupsMuteColumnMigration(db);
-    await runPendingGroupInvitesMigration(db);
-    await runGroupsDissolveColumnsMigration(db);
-    await runGroupsBacklogRetentionColumnsMigration(db);
-    await runGroupReactionReplayOutboxMigration(db);
-    await runGroupInviteRevocationsMigration(db);
-    await runGroupInviteConsumptionsMigration(db);
-    await runGroupMemberPermissionsMigration(db);
-    await runMediaAttachmentIntegrityColumnsMigration(db);
-    await runMediaAttachmentEncryptionColumnsMigration(db);
-    await runGroupEventLogMigration(db);
-    await runGroupMessageTransportPeerIdMigration(db);
-    await runGroupMemberDeviceIdentitiesMigration(db);
-    await runGroupPendingKeyRepairsMigration(db);
-    await runGroupWelcomeKeyPackageTombstonesMigration(db);
-    await runGroupHistoryGapRepairsMigration(db);
-    await runGroupSyncReceiptsMigration(db);
-    await runGroupInviteDeliveryAttemptsMigration(db);
-    await runRemovedGroupMemberSnapshotsMigration(db);
-    await runGroupMessageLocalDeletionsMigration(db);
-    await runGroupKeyRotationDraftsMigration(db);
-    await runPendingIntroductionResponseTransportSenderMigration(db);
-    await runGroupPendingMembershipMessagesMigration(db);
-    await runGroupMessageLastSendAttemptAtMigration(db);
-    await runGroupMessageLogicalDeliveryIdMigration(db);
-    await runMessageRelayCustodyMigration(db);
-    await runGroupPendingKeyDistributionsMigration(db);
-    await runMessageDedupKeyMigration(db);
-    await runGroupPendingKeyRepairsStatusIndexMigration(db);
-    await runGroupPendingReactionsMigration(db);
-    await runMessageReactionTombstoneMigration(db);
-    await runGroupsLastMembershipEventIdMigration(db);
-    await runGroupMemberDeviceSnapshotsMigration(db);
-    await runPendingSiblingDevicesMigration(db);
-    await runPendingGroupBroadcastsMigration(db);
-    await runGroupMessageRetryBackoffColumnsMigration(db);
-    await runGroupRejoinStateMigration(db);
-    await runMediaAttachmentDownloadRetryColumnMigration(db);
-    await runGroupInviteDeliveryAttemptsRevokedDeclinedMigration(db);
-    await runPendingGroupInvitesInviterMlKemMigration(db);
+    // 228 TC-228-01: the fresh-install chain is no longer hand-maintained —
+    // it delegates to the shared, order-locked production registry so this
+    // fixture can never silently drift from main.dart again.
+    await runProductionOnCreate(db, 95);
 
     final chainIndexNames = (await db.query(
       'sqlite_master',
@@ -1514,4 +1443,273 @@ void main() {
       },
     );
   });
+
+  group('Production migration registries (TC-228-01)', () {
+    // The exact onCreate call order in main.dart through v95. Fresh installs
+    // deliberately skip 004 (nullable secrets — 005 already ships nullable +
+    // CHECK) and run 005 inline; 042 runs immediately after 010.
+    const expectedCreateOrder = <int>[
+      1, 2, 3, 5, 6, 7, 8, 9, 10, 42, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+      21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38,
+      39, 40, 41, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57,
+      58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75,
+      76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93,
+      94, 95,
+    ];
+    // The exact onUpgrade guard order in main.dart through v95. Upgrades run
+    // 004 but defer 005 to post-open (main.dart runs it after secrets
+    // migration); 042 runs immediately after 010, before 011.
+    const expectedUpgradeOrder = <int>[
+      2, 3, 4, 6, 7, 8, 9, 10, 42, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+      22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+      40, 41, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
+      59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76,
+      77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94,
+      95,
+    ];
+
+    Future<void> expectV95Artifacts(Database db) async {
+      final userVersion = (await db.rawQuery(
+        'PRAGMA user_version',
+      )).first.values.first;
+      expect(userVersion, 95);
+      final tables = await getRegistryTableNames(db);
+      // 092 + 095 table artifacts.
+      expect(tables, contains('feed_cleared_threads'));
+      expect(tables, contains('intro_review_seen'));
+      // 093 + 094 index artifacts.
+      final indexNames = (await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='index'",
+      )).map((r) => r['name'] as String).toList();
+      expect(indexNames, contains('idx_messages_contact_ts'));
+      expect(indexNames, contains('idx_group_messages_group_ts'));
+    }
+
+    test(
+      'production registries preserve the exact ordered v95 baseline',
+      () async {
+        // Manifest lock: the shared registries expose the literal ordered
+        // production create/upgrade sequences through v95.
+        final createVersions = productionCreateMigrations
+            .sublist(0, expectedCreateOrder.length)
+            .map((e) => e.version)
+            .toList();
+        final upgradeVersions = productionUpgradeMigrations
+            .sublist(0, expectedUpgradeOrder.length)
+            .map((e) => e.version)
+            .toList();
+        expect(createVersions, expectedCreateOrder);
+        expect(upgradeVersions, expectedUpgradeOrder);
+
+        // Intentional create/upgrade branch differences through v95 stay
+        // intact: create skips 004 and runs 005 inline; upgrade runs 004 and
+        // defers 005 to the post-open step in main.dart.
+        expect(createVersions, isNot(contains(4)));
+        expect(createVersions, contains(5));
+        expect(upgradeVersions, contains(4));
+        expect(upgradeVersions, isNot(contains(5)));
+
+        final tempDir = await Directory.systemTemp.createTemp(
+          'registry_v95_baseline_',
+        );
+        try {
+          // Fresh create at literal target v95 via the production callback.
+          final createPath = '${tempDir.path}/create_v95.db';
+          final created = await databaseFactoryFfi.openDatabase(
+            createPath,
+            options: OpenDatabaseOptions(
+              version: 95,
+              onCreate: runProductionOnCreate,
+              onUpgrade: runProductionOnUpgrade,
+            ),
+          );
+          try {
+            await expectV95Artifacts(created);
+          } finally {
+            await created.close();
+          }
+
+          // v1 -> v95 via the production upgrade callback preserves rows.
+          final upgradePath = '${tempDir.path}/upgrade_v95.db';
+          final legacy = await databaseFactoryFfi.openDatabase(
+            upgradePath,
+            options: OpenDatabaseOptions(
+              version: 1,
+              onCreate: (db, version) => runIdentityTableMigration(db),
+            ),
+          );
+          await legacy.insert('contacts', {
+            'peer_id': 'contact-registry-baseline',
+            'public_key': 'pk-registry',
+            'rendezvous': '/rv/registry',
+            'username': 'RegistryContact',
+            'signature': 'sig-registry',
+            'scanned_at': '2026-01-01T00:00:00Z',
+          });
+          await legacy.close();
+
+          final upgraded = await databaseFactoryFfi.openDatabase(
+            upgradePath,
+            options: OpenDatabaseOptions(
+              version: 95,
+              onCreate: runProductionOnCreate,
+              onUpgrade: runProductionOnUpgrade,
+            ),
+          );
+          try {
+            await expectV95Artifacts(upgraded);
+            final contact = await upgraded.query(
+              'contacts',
+              where: 'peer_id = ?',
+              whereArgs: ['contact-registry-baseline'],
+            );
+            expect(contact, hasLength(1));
+            expect(contact.single['username'], 'RegistryContact');
+          } finally {
+            await upgraded.close();
+          }
+        } finally {
+          await tempDir.delete(recursive: true);
+        }
+      },
+    );
+
+    test(
+      'production create and v95 upgrade registries include media library '
+      'state v96',
+      () async {
+        // TC-228-13: v96 is the current version and appears exactly once, as
+        // the final entry, in BOTH production registry branches.
+        expect(currentIdentityDatabaseVersion, 96);
+        expect(
+          productionCreateMigrations.where((e) => e.version == 96).length,
+          1,
+        );
+        expect(
+          productionUpgradeMigrations.where((e) => e.version == 96).length,
+          1,
+        );
+        expect(productionCreateMigrations.last.version, 96);
+        expect(productionUpgradeMigrations.last.version, 96);
+        expect(
+          productionCreateMigrations.last.name,
+          '096_media_library_state',
+        );
+
+        Future<void> expectV96Artifacts(Database db) async {
+          final userVersion = (await db.rawQuery(
+            'PRAGMA user_version',
+          )).first.values.first;
+          expect(userVersion, 96);
+          final cols = (await db.rawQuery(
+            'PRAGMA table_info(media_attachments)',
+          )).map((c) => c['name'] as String).toSet();
+          expect(
+            cols,
+            containsAll([
+              'owner_lane',
+              'is_bookmarked',
+              'last_playback_position_ms',
+            ]),
+          );
+          final indexNames = (await db.rawQuery(
+            "SELECT name FROM sqlite_master WHERE type='index' "
+            "AND tbl_name='media_attachments'",
+          )).map((r) => r['name'] as String).toList();
+          expect(indexNames, contains('idx_media_attachments_owner_message'));
+          expect(
+            indexNames,
+            contains('idx_media_attachments_owner_bookmark_message'),
+          );
+        }
+
+        final tempDir = await Directory.systemTemp.createTemp(
+          'registry_v96_inclusion_',
+        );
+        try {
+          // Fresh create at the current version reaches v96.
+          final createPath = '${tempDir.path}/create_v96.db';
+          final created = await databaseFactoryFfi.openDatabase(
+            createPath,
+            options: OpenDatabaseOptions(
+              version: currentIdentityDatabaseVersion,
+              onCreate: runProductionOnCreate,
+              onUpgrade: runProductionOnUpgrade,
+            ),
+          );
+          try {
+            await expectV96Artifacts(created);
+          } finally {
+            await created.close();
+          }
+
+          // Literal v95 database (production create callback), seeded, then
+          // reopened through the production v96 upgrade callback.
+          final upgradePath = '${tempDir.path}/upgrade_v96.db';
+          final v95 = await databaseFactoryFfi.openDatabase(
+            upgradePath,
+            options: OpenDatabaseOptions(
+              version: 95,
+              onCreate: runProductionOnCreate,
+              onUpgrade: runProductionOnUpgrade,
+            ),
+          );
+          await v95.insert('messages', {
+            'id': 'msg-v96-upgrade',
+            'contact_peer_id': 'contact-1',
+            'sender_peer_id': 'contact-1',
+            'text': 'pre-upgrade parent',
+            'timestamp': '2026-07-01T00:00:00.000Z',
+            'status': 'delivered',
+            'is_incoming': 1,
+            'created_at': '2026-07-01T00:00:00.000Z',
+          });
+          await v95.insert('media_attachments', {
+            'id': 'att-v96-upgrade',
+            'message_id': 'msg-v96-upgrade',
+            'mime': 'image/jpeg',
+            'size': 42,
+            'media_type': 'image',
+            'download_status': 'done',
+            'created_at': '2026-07-01T00:00:01.000Z',
+          });
+          await v95.close();
+
+          final upgraded = await databaseFactoryFfi.openDatabase(
+            upgradePath,
+            options: OpenDatabaseOptions(
+              version: currentIdentityDatabaseVersion,
+              onCreate: runProductionOnCreate,
+              onUpgrade: runProductionOnUpgrade,
+            ),
+          );
+          try {
+            await expectV96Artifacts(upgraded);
+            final att = await upgraded.query(
+              'media_attachments',
+              where: 'id = ?',
+              whereArgs: ['att-v96-upgrade'],
+            );
+            expect(att, hasLength(1));
+            expect(att.single['owner_lane'], 'direct');
+            expect(att.single['is_bookmarked'], 0);
+            expect(att.single['last_playback_position_ms'], 0);
+          } finally {
+            await upgraded.close();
+          }
+        } finally {
+          await tempDir.delete(recursive: true);
+        }
+      },
+    );
+  });
+}
+
+/// Helper shared by the registry tests (outside the main group so it can be
+/// used without the group-scoped `db`).
+Future<List<String>> getRegistryTableNames(Database db) async {
+  final rows = await db.rawQuery(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+  );
+  return rows.map((r) => r['name'] as String).toList()..sort();
 }

@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 
 void main() {
@@ -678,6 +679,116 @@ void main() {
           expect(copy.downloadStatus, 'pending');
         });
       });
+    });
+
+    // --- 228 TC-228-03: owner lane + local viewer state ---
+
+    group('owner lane and local viewer state', () {
+      test(
+        'owner and library state are local only across map and wire '
+        'serialization',
+        () {
+          const attachment = MediaAttachment(
+            id: 'att-local-state',
+            messageId: 'msg-local-state',
+            mime: 'video/mp4',
+            size: 10,
+            mediaType: 'video',
+            durationMs: 9000,
+            downloadStatus: 'done',
+            createdAt: '2026-07-01T00:00:00.000Z',
+            ownerLane: MediaOwnerLane.group,
+            isBookmarked: true,
+            lastPlaybackPositionMs: 4200,
+          );
+
+          // toMap writes all three local columns; fromMap round-trips them.
+          final map = attachment.toMap();
+          expect(map['owner_lane'], 'group');
+          expect(map['is_bookmarked'], 1);
+          expect(map['last_playback_position_ms'], 4200);
+          final restored = MediaAttachment.fromMap(map);
+          expect(restored.ownerLane, MediaOwnerLane.group);
+          expect(restored.isBookmarked, isTrue);
+          expect(restored.lastPlaybackPositionMs, 4200);
+
+          // Direct lane round-trips too.
+          final directMap = attachment
+              .copyWith(ownerLane: MediaOwnerLane.direct)
+              .toMap();
+          expect(directMap['owner_lane'], 'direct');
+          expect(
+            MediaAttachment.fromMap(directMap).ownerLane,
+            MediaOwnerLane.direct,
+          );
+
+          // Legacy/unresolved rows hydrate to a null owner and write back
+          // 'unresolved' — never a defaulted direct/group.
+          final unresolvedMap = Map<String, dynamic>.from(map)
+            ..['owner_lane'] = 'unresolved';
+          final unresolved = MediaAttachment.fromMap(unresolvedMap);
+          expect(unresolved.ownerLane, isNull);
+          expect(unresolved.toMap()['owner_lane'], 'unresolved');
+
+          // fromMap tolerates pre-v96 rows without the local columns.
+          final legacyMap = Map<String, dynamic>.from(map)
+            ..remove('owner_lane')
+            ..remove('is_bookmarked')
+            ..remove('last_playback_position_ms');
+          final legacy = MediaAttachment.fromMap(legacyMap);
+          expect(legacy.ownerLane, isNull);
+          expect(legacy.isBookmarked, isFalse);
+          expect(legacy.lastPlaybackPositionMs, 0);
+
+          // copyWith updates and preserves all three.
+          final copied = attachment.copyWith(
+            ownerLane: MediaOwnerLane.direct,
+            isBookmarked: false,
+            lastPlaybackPositionMs: 0,
+          );
+          expect(copied.ownerLane, MediaOwnerLane.direct);
+          expect(copied.isBookmarked, isFalse);
+          expect(copied.lastPlaybackPositionMs, 0);
+          final preserved = attachment.copyWith(downloadStatus: 'pending');
+          expect(preserved.ownerLane, MediaOwnerLane.group);
+          expect(preserved.isBookmarked, isTrue);
+          expect(preserved.lastPlaybackPositionMs, 4200);
+
+          // Wire JSON must not leak local state under any key casing.
+          final json = attachment.toJson();
+          for (final key in const [
+            'ownerLane',
+            'owner_lane',
+            'isBookmarked',
+            'is_bookmarked',
+            'lastPlaybackPositionMs',
+            'last_playback_position_ms',
+          ]) {
+            expect(
+              json.containsKey(key),
+              isFalse,
+              reason: 'wire JSON must not leak $key',
+            );
+          }
+
+          // Hostile wire JSON cannot smuggle trusted local state in.
+          final parsed = MediaAttachment.fromJson({
+            'id': 'att-wire',
+            'mime': 'video/mp4',
+            'size': 10,
+            'mediaType': 'video',
+            'ownerLane': 'direct',
+            'owner_lane': 'direct',
+            'isBookmarked': true,
+            'is_bookmarked': 1,
+            'lastPlaybackPositionMs': 999,
+            'last_playback_position_ms': 999,
+          });
+          expect(parsed.ownerLane, isNull);
+          expect(parsed.isBookmarked, isFalse);
+          expect(parsed.lastPlaybackPositionMs, 0);
+        },
+      );
     });
   });
 }

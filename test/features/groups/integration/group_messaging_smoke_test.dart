@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
@@ -18605,14 +18606,14 @@ Future<void> _runGe023MediaReaddEntitlement(
           .toList();
       if (matchingMessages.length != 1) return false;
       final attachments = await user.mediaAttachmentRepo
-          .getAttachmentsForMessage(messageId);
+          .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group);
       return attachments.length == 1 && attachments.single.id == attachmentId;
     }, maxTicks: 80);
 
     final messages = await user.loadGroupMessages(groupId);
     final message = messages.singleWhere((message) => message.id == messageId);
     final attachments = await user.mediaAttachmentRepo.getAttachmentsForMessage(
-      messageId,
+      messageId, owner: MediaOwnerLane.group,
     );
     final attachment = attachments.single;
     expect(message.isIncoming, isIncoming);
@@ -18642,7 +18643,7 @@ Future<void> _runGe023MediaReaddEntitlement(
       reason: '${user.username} must not receive removed-window media',
     );
     expect(
-      await user.mediaAttachmentRepo.getAttachmentsForMessage(messageId),
+      await user.mediaAttachmentRepo.getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group),
       isEmpty,
       reason: '${user.username} must not persist removed-window media',
     );

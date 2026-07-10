@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/features/conversation/application/load_conversation_use_case.dart';
@@ -131,19 +132,24 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   FakeMediaAttachmentRepository({this.mediaByMessage = const {}});
 
   @override
-  Future<void> saveAttachment(MediaAttachment attachment) async {}
+  Future<void> saveAttachment(
+    MediaAttachment attachment, {
+    required MediaOwnerLane owner,
+  }) async {}
 
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
-    String messageId,
-  ) async {
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async {
     return mediaByMessage[messageId] ?? [];
   }
 
   @override
   Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-    List<String> messageIds,
-  ) async {
+    List<String> messageIds, {
+    required MediaOwnerLane owner,
+  }) async {
     final result = <String, List<MediaAttachment>>{};
     for (final id in messageIds) {
       final media = mediaByMessage[id];
@@ -161,21 +167,27 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   Future<void> updateDownloadStatus(String id, String downloadStatus) async {}
 
   @override
-  Future<int> deleteAttachmentsForMessage(String messageId) async => 0;
+  Future<int> deleteAttachmentsForMessage(
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => 0;
 
   @override
   Future<int> deleteAttachmentsForContact(String contactPeerId) async => 0;
 
   @override
   Future<int> markUploadPendingAttachmentsFailedForMessage(
-    String messageId,
-  ) async => 0;
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => 0;
 
   @override
   Future<List<MediaAttachment>> getPendingDownloads() async => [];
 
   @override
-  Future<List<MediaAttachment>> getUploadPendingAttachments() async => [];
+  Future<List<MediaAttachment>> getUploadPendingAttachments({
+    required MediaOwnerLane owner,
+  }) async => [];
 }
 
 void main() {
@@ -499,69 +511,66 @@ void main() {
       addTearDown(MediaFileManager.debugResetDocumentsDirCache);
     });
 
-    test(
-      'TC-162-01: _attachMedia resolves via resolveStoredPathSync '
-      '(no awaited resolveStoredPath per attachment)',
-      () async {
-        final messageRepo = FakeMessageRepository(
-          messagesByContact: {
-            'contact-A': [
-              ConversationMessage(
-                id: 'msg-1',
-                contactPeerId: 'contact-A',
-                senderPeerId: 'contact-A',
-                text: 'Photo',
-                timestamp: '2026-02-09T10:00:00.000Z',
-                status: 'delivered',
-                isIncoming: true,
-                createdAt: '2026-02-09T10:00:01.000Z',
-              ),
-            ],
-          },
-        );
-        final mediaRepo = FakeMediaAttachmentRepository(
-          mediaByMessage: {
-            'msg-1': [
-              const MediaAttachment(
-                id: 'blob-001',
-                messageId: 'msg-1',
-                mime: 'image/jpeg',
-                size: 245000,
-                mediaType: 'image',
-                localPath: 'media/contact-A/blob-001.jpg',
-                downloadStatus: 'done',
-                createdAt: '2026-02-09T10:00:00.000Z',
-              ),
-              const MediaAttachment(
-                id: 'blob-002',
-                messageId: 'msg-1',
-                mime: 'image/jpeg',
-                size: 311000,
-                mediaType: 'image',
-                localPath: 'media/contact-A/blob-002.jpg',
-                downloadStatus: 'done',
-                createdAt: '2026-02-09T10:00:00.000Z',
-              ),
-            ],
-          },
-        );
+    test('TC-162-01: _attachMedia resolves via resolveStoredPathSync '
+        '(no awaited resolveStoredPath per attachment)', () async {
+      final messageRepo = FakeMessageRepository(
+        messagesByContact: {
+          'contact-A': [
+            ConversationMessage(
+              id: 'msg-1',
+              contactPeerId: 'contact-A',
+              senderPeerId: 'contact-A',
+              text: 'Photo',
+              timestamp: '2026-02-09T10:00:00.000Z',
+              status: 'delivered',
+              isIncoming: true,
+              createdAt: '2026-02-09T10:00:01.000Z',
+            ),
+          ],
+        },
+      );
+      final mediaRepo = FakeMediaAttachmentRepository(
+        mediaByMessage: {
+          'msg-1': [
+            const MediaAttachment(
+              id: 'blob-001',
+              messageId: 'msg-1',
+              mime: 'image/jpeg',
+              size: 245000,
+              mediaType: 'image',
+              localPath: 'media/contact-A/blob-001.jpg',
+              downloadStatus: 'done',
+              createdAt: '2026-02-09T10:00:00.000Z',
+            ),
+            const MediaAttachment(
+              id: 'blob-002',
+              messageId: 'msg-1',
+              mime: 'image/jpeg',
+              size: 311000,
+              mediaType: 'image',
+              localPath: 'media/contact-A/blob-002.jpg',
+              downloadStatus: 'done',
+              createdAt: '2026-02-09T10:00:00.000Z',
+            ),
+          ],
+        },
+      );
 
-        final result = await loadConversation(
-          messageRepo: messageRepo,
-          contactPeerId: 'contact-A',
-          mediaAttachmentRepo: mediaRepo,
-          mediaFileManager: fakeFileManager,
-        );
+      final result = await loadConversation(
+        messageRepo: messageRepo,
+        contactPeerId: 'contact-A',
+        mediaAttachmentRepo: mediaRepo,
+        mediaFileManager: fakeFileManager,
+      );
 
-        // (a) zero awaited async resolves — the loop must use the sync twin.
-        expect(fakeFileManager.resolveStoredPathCount, 0);
-        // (b) each path resolved exactly as the static twin would resolve it.
-        expect(result.single.media.map((m) => m.localPath).toList(), [
-          MediaFileManager.resolveStoredPathSync('media/contact-A/blob-001.jpg'),
-          MediaFileManager.resolveStoredPathSync('media/contact-A/blob-002.jpg'),
-        ]);
-      },
-    );
+      // (a) zero awaited async resolves — the loop must use the sync twin.
+      expect(fakeFileManager.resolveStoredPathCount, 0);
+      // (b) each path resolved exactly as the static twin would resolve it.
+      expect(result.single.media.map((m) => m.localPath).toList(), [
+        MediaFileManager.resolveStoredPathSync('media/contact-A/blob-001.jpg'),
+        MediaFileManager.resolveStoredPathSync('media/contact-A/blob-002.jpg'),
+      ]);
+    });
 
     test('resolves relative paths to absolute in loadConversation', () async {
       final messageRepo = FakeMessageRepository(

@@ -6,6 +6,7 @@ import 'package:flutter_app/features/groups/domain/models/group_thread_summary.d
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_thread_summary_repository.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/orbit/application/load_latest_media_descriptors.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 
@@ -43,6 +44,7 @@ Future<List<OrbitGroup>> loadOrbitGroups({
     final descriptors = await loadLatestMediaDescriptors(
       mediaAttachmentRepo: mediaAttachmentRepo,
       messageIds: _latestMessageIds(summaries.values),
+      owner: MediaOwnerLane.group,
     );
     final orbitGroups = groups
         .map(
@@ -103,6 +105,7 @@ Future<OrbitGroup?> loadOrbitGroupSnapshot({
     final descriptors = await loadLatestMediaDescriptors(
       mediaAttachmentRepo: mediaAttachmentRepo,
       messageIds: _latestMessageIds([summary]),
+      owner: MediaOwnerLane.group,
     );
     final orbitGroup = _buildOrbitGroup(
       group: group,

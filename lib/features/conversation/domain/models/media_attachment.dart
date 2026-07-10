@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:flutter_app/core/media/media_owner_lane.dart';
+
 const kMediaAttachmentEncryptionSchemeBlobAesGcmV1 = 'blob_aes_256_gcm_v1';
 
 /// Opaque mime advertised to the transport/relay for encrypted 1:1 uploads
@@ -74,6 +76,19 @@ class MediaAttachment {
   /// Versioned encryption scheme for encrypted media blobs.
   final String? encryptionScheme;
 
+  /// LOCAL-ONLY (228): which message lane owns this attachment. Null means
+  /// the row is legacy `'unresolved'` (or wire-parsed) and has no trusted
+  /// owner. Never serialized onto wire JSON.
+  final MediaOwnerLane? ownerLane;
+
+  /// LOCAL-ONLY (228): user bookmark flag for the shared media library.
+  /// Never serialized onto wire JSON.
+  final bool isBookmarked;
+
+  /// LOCAL-ONLY (228): durable video resume position in milliseconds
+  /// (0 = start/completed). Never serialized onto wire JSON.
+  final int lastPlaybackPositionMs;
+
   const MediaAttachment({
     required this.id,
     required this.messageId,
@@ -94,6 +109,9 @@ class MediaAttachment {
     this.encryptionKeyBase64,
     this.encryptionNonce,
     this.encryptionScheme,
+    this.ownerLane,
+    this.isBookmarked = false,
+    this.lastPlaybackPositionMs = 0,
   });
 
   bool get isAnimated => mime == 'image/gif';
@@ -157,6 +175,10 @@ class MediaAttachment {
       encryptionKeyBase64: map['encryption_key_base64'] as String?,
       encryptionNonce: map['encryption_nonce'] as String?,
       encryptionScheme: map['encryption_scheme'] as String?,
+      ownerLane: mediaOwnerLaneFromDbValue(map['owner_lane'] as String?),
+      isBookmarked: ((map['is_bookmarked'] as num?)?.toInt() ?? 0) != 0,
+      lastPlaybackPositionMs:
+          (map['last_playback_position_ms'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -182,6 +204,10 @@ class MediaAttachment {
       'encryption_key_base64': encryptionKeyBase64,
       'encryption_nonce': encryptionNonce,
       'encryption_scheme': encryptionScheme,
+      // LOCAL-ONLY columns (228) — DB map only, never wire JSON.
+      'owner_lane': ownerLane?.dbValue ?? kMediaOwnerLaneUnresolved,
+      'is_bookmarked': isBookmarked ? 1 : 0,
+      'last_playback_position_ms': lastPlaybackPositionMs,
     };
   }
 
@@ -268,6 +294,9 @@ class MediaAttachment {
     bool clearEncryptionNonce = false,
     String? encryptionScheme,
     bool clearEncryptionScheme = false,
+    MediaOwnerLane? ownerLane,
+    bool? isBookmarked,
+    int? lastPlaybackPositionMs,
   }) {
     return MediaAttachment(
       id: id ?? this.id,
@@ -297,6 +326,10 @@ class MediaAttachment {
       encryptionScheme: clearEncryptionScheme
           ? null
           : (encryptionScheme ?? this.encryptionScheme),
+      ownerLane: ownerLane ?? this.ownerLane,
+      isBookmarked: isBookmarked ?? this.isBookmarked,
+      lastPlaybackPositionMs:
+          lastPlaybackPositionMs ?? this.lastPlaybackPositionMs,
     );
   }
 

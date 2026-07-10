@@ -8,6 +8,7 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -549,6 +550,7 @@ Future<void> _persistOutgoingMedia({
     final expectedIds = attachments.map((attachment) => attachment.id).toSet();
     final existing = await mediaAttachmentRepo.getAttachmentsForMessage(
       messageId,
+      owner: MediaOwnerLane.group,
     );
     final hasStaleUploadPending = existing.any(
       (attachment) =>
@@ -556,12 +558,18 @@ Future<void> _persistOutgoingMedia({
           !expectedIds.contains(attachment.id),
     );
     if (hasStaleUploadPending) {
-      await mediaAttachmentRepo.deleteAttachmentsForMessage(messageId);
+      await mediaAttachmentRepo.deleteAttachmentsForMessage(
+        messageId,
+        owner: MediaOwnerLane.group,
+      );
     }
   }
 
   for (final attachment in attachments) {
-    await mediaAttachmentRepo.saveAttachment(attachment);
+    await mediaAttachmentRepo.saveAttachment(
+      attachment,
+      owner: MediaOwnerLane.group,
+    );
   }
 }
 
@@ -1613,6 +1621,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       for (final a in groupMediaAttachments) {
         await mediaAttachmentRepo.saveAttachment(
           a.copyWith(messageId: resolvedMessageId),
+          owner: MediaOwnerLane.group,
         );
       }
     }

@@ -10,6 +10,7 @@ import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -178,11 +179,12 @@ void _scheduleGroupMediaDownloadPostCommitProbes({
 Future<List<MediaAttachment>> _localMediaAttachmentCandidates({
   required MediaAttachmentRepository mediaAttachmentRepo,
   required MediaAttachment attachment,
+  required MediaOwnerLane owner,
 }) async {
   final candidates = <MediaAttachment>[attachment];
   try {
     final storedAttachments = await mediaAttachmentRepo
-        .getAttachmentsForMessage(attachment.messageId);
+        .getAttachmentsForMessage(attachment.messageId, owner: owner);
     candidates.insertAll(
       0,
       storedAttachments.where((stored) => stored.id == attachment.id),
@@ -260,10 +262,12 @@ Future<List<Map<String, Object?>>> _collectLocalMediaCandidateDiagnostics({
   required MediaFileManager mediaFileManager,
   required MediaAttachment attachment,
   required bool allowStatusRepair,
+  required MediaOwnerLane owner,
 }) async {
   final candidates = await _localMediaAttachmentCandidates(
     mediaAttachmentRepo: mediaAttachmentRepo,
     attachment: attachment,
+    owner: owner,
   );
   final diagnostics = <Map<String, Object?>>[];
   for (var i = 0; i < candidates.length; i += 1) {
@@ -314,6 +318,7 @@ Future<MediaAttachment?> downloadMedia({
   required MediaFileManager mediaFileManager,
   required MediaAttachment attachment,
   required String contactPeerId,
+  required MediaOwnerLane owner,
   bool enforceGroupMediaPolicy = false,
   Duration? transferStallTimeout,
   Duration? transferMaxTimeout,
@@ -388,6 +393,7 @@ Future<MediaAttachment?> downloadMedia({
                 downloadRetryCount: nextCount,
                 clearLocalPath: clearLocalPath,
               ),
+              owner: owner,
             );
           } catch (_) {}
           return status;
@@ -408,6 +414,7 @@ Future<MediaAttachment?> downloadMedia({
               attachment.copyWith(
                 downloadStatus: kMediaDownloadStatusDownloadFailed,
               ),
+              owner: owner,
             );
           } catch (_) {}
         }
@@ -423,6 +430,7 @@ Future<MediaAttachment?> downloadMedia({
           final candidates = await _localMediaAttachmentCandidates(
             mediaAttachmentRepo: mediaAttachmentRepo,
             attachment: attachment,
+            owner: owner,
           );
 
           for (final candidate in candidates) {
@@ -610,6 +618,7 @@ Future<MediaAttachment?> downloadMedia({
                 downloadStatus: kMediaDownloadStatusIntegrityFailed,
                 clearLocalPath: true,
               ),
+              owner: owner,
             );
           } catch (_) {}
           for (final file in files) {
@@ -821,6 +830,7 @@ Future<MediaAttachment?> downloadMedia({
                     downloadStatus: kMediaDownloadStatusIntegrityFailed,
                     clearLocalPath: true,
                   ),
+                  owner: owner,
                 );
               } catch (_) {}
             } else {
@@ -1406,6 +1416,7 @@ Future<MediaAttachment?> downloadMedia({
             mediaFileManager: mediaFileManager,
             attachment: attachment,
             allowStatusRepair: !enforceGroupMediaPolicy,
+            owner: owner,
           );
           final localMissReason = _mediaDownloadLocalMissReason(
             localDiagnostics,
@@ -1472,6 +1483,7 @@ Future<MediaAttachment?> downloadMedia({
                   clearLocalPath: true,
                   downloadStatus: kMediaDownloadStatusFailed,
                 ),
+                owner: owner,
               );
             } catch (_) {}
           }

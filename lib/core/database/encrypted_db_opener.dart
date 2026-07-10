@@ -254,6 +254,14 @@ Future<Database> openEncryptedDatabase({
     onConfigure: _configureDbBusyTimeout,
     onCreate: onCreate,
     onUpgrade: onUpgrade,
+    // 228: DB v96 is a one-way supported release floor. Without this callback
+    // the pinned sqflite_common would LOWER user_version on a downgrade open
+    // even though no migration ran, letting an older model's INSERT OR REPLACE
+    // silently reset newer local-state columns. Fail closed instead: a
+    // requested version below the on-disk user_version throws and leaves the
+    // database untouched. A manually sideloaded pre-v96 binary is unsupported
+    // and requires profile reset/restore — it is never a compatible rollback.
+    onDowngrade: onDatabaseVersionChangeError,
   );
   openStopwatch.stop();
 

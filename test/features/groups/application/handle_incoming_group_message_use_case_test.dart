@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
@@ -1701,11 +1702,11 @@ void main() {
       expect(canonical!.logicalDeliveryId, 'logical-delivery-shared-1');
       expect(canonical.quotedMessageId, 'logical-parent-row');
       expect(
-        await mediaRepo.getAttachmentsForMessage('logical-local-row-a'),
+        await mediaRepo.getAttachmentsForMessage('logical-local-row-a', owner: MediaOwnerLane.group),
         hasLength(1),
       );
       expect(
-        await mediaRepo.getAttachmentsForMessage('logical-local-row-b'),
+        await mediaRepo.getAttachmentsForMessage('logical-local-row-b', owner: MediaOwnerLane.group),
         isEmpty,
       );
 
@@ -2314,7 +2315,7 @@ void main() {
     expect(mediaRepo.count, 1);
 
     final attachments = await mediaRepo.getAttachmentsForMessage(
-      sharedMessageId,
+      sharedMessageId, owner: MediaOwnerLane.group,
     );
     expect(attachments, hasLength(1));
     expect(attachments.first.id, 'blob-repair-1');
@@ -2651,7 +2652,7 @@ void main() {
       expect(mediaRepo.count, 1);
 
       // Verify attachment has the message's ID
-      final attachments = await mediaRepo.getAttachmentsForMessage(result!.id);
+      final attachments = await mediaRepo.getAttachmentsForMessage(result!.id, owner: MediaOwnerLane.group);
       expect(attachments.length, 1);
       expect(attachments.first.mime, 'image/jpeg');
     });
@@ -2689,6 +2690,110 @@ void main() {
       final pending = await mediaRepo.getPendingDownloads();
       expect(pending.length, 1);
       expect(pending.first.downloadStatus, 'pending');
+    });
+
+    // 228: the group incoming path must persist media under the GROUP lane —
+    // every saveAttachment call carries MediaOwnerLane.group, never direct.
+    // Announcement-backed groups are still the GROUP lane: there is no third
+    // lane, so both the chat-type and announcement-type fixtures must record
+    // MediaOwnerLane.group.
+    test('incoming media save passes group owner', () async {
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'group-announce-1',
+          name: 'Announcement Group',
+          type: GroupType.announcement,
+          topicName: 'group-topic-announce-1',
+          createdAt: DateTime.now().toUtc(),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.member,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-announce-1',
+          peerId: 'peer-sender',
+          username: 'Sender',
+          role: MemberRole.writer,
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final recordedLanes = <MediaOwnerLane?>[];
+      mediaRepo.onSaveAttachment = (att) => recordedLanes.add(att.ownerLane);
+
+      List<Map<String, dynamic>> mediaFor(String blobId) => [
+        {
+          'id': blobId,
+          'mime': 'image/jpeg',
+          'size': 12345,
+          'mediaType': 'image',
+          'contentHash': _validContentHash,
+          'encryptionKeyBase64': 'key-fixture',
+          'encryptionNonce': 'nonce-fixture',
+          'encryptionScheme': 'blob_aes_256_gcm_v1',
+          'downloadStatus': 'pending',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      ];
+
+      final chatResult = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Chat-group media',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        media: mediaFor('blob-owner-chat'),
+        mediaAttachmentRepo: mediaRepo,
+      );
+      final announcementResult = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-announce-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Announcement-group media',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        media: mediaFor('blob-owner-announce'),
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(chatResult, isNotNull);
+      expect(announcementResult, isNotNull);
+      expect(recordedLanes, hasLength(2));
+      expect(
+        recordedLanes.toSet(),
+        {MediaOwnerLane.group},
+        reason:
+            'every group incoming media save must pass the group lane — '
+            'announcements included, never direct or a third lane',
+      );
+      // Lane-scoped read-back: the direct lane must never see these rows.
+      expect(
+        await mediaRepo.getAttachmentsForMessage(
+          chatResult!.id,
+          owner: MediaOwnerLane.direct,
+        ),
+        isEmpty,
+      );
+      expect(
+        await mediaRepo.getAttachmentsForMessage(
+          announcementResult!.id,
+          owner: MediaOwnerLane.direct,
+        ),
+        isEmpty,
+      );
+      expect(
+        (await mediaRepo.getAttachmentsForMessage(
+          announcementResult.id,
+          owner: MediaOwnerLane.group,
+        )).single.id,
+        'blob-owner-announce',
+      );
     });
 
     test(
@@ -2738,10 +2843,10 @@ void main() {
         expect(await msgRepo.getMessage(remintedMessageId), isNull);
 
         final originalAttachments = await mediaRepo.getAttachmentsForMessage(
-          originalMessageId,
+          originalMessageId, owner: MediaOwnerLane.group,
         );
         final duplicateAttachments = await mediaRepo.getAttachmentsForMessage(
-          remintedMessageId,
+          remintedMessageId, owner: MediaOwnerLane.group,
         );
         expect(originalAttachments, hasLength(1));
         expect(originalAttachments.single.id, 'blob-gird003-shared');
@@ -2797,10 +2902,10 @@ void main() {
         expect(msgRepo.count, 2);
 
         final firstAttachments = await mediaRepo.getAttachmentsForMessage(
-          firstMessageId,
+          firstMessageId, owner: MediaOwnerLane.group,
         );
         final secondAttachments = await mediaRepo.getAttachmentsForMessage(
-          secondMessageId,
+          secondMessageId, owner: MediaOwnerLane.group,
         );
         expect(firstAttachments, hasLength(1));
         expect(firstAttachments.single.id, 'blob-gird003-intentional-a');

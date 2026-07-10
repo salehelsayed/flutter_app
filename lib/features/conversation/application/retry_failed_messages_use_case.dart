@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
@@ -652,7 +653,10 @@ _resolveAttachmentsForRetry({
 }) async {
   // Load any persisted attachments for this message
   final persistedAttachments =
-      await mediaAttachmentRepo?.getAttachmentsForMessage(messageId) ??
+      await mediaAttachmentRepo?.getAttachmentsForMessage(
+        messageId,
+        owner: MediaOwnerLane.direct,
+      ) ??
       const <MediaAttachment>[];
 
   if (persistedAttachments.any(

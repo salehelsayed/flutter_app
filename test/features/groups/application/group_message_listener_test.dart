@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/database/db_write_transaction.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
@@ -11414,7 +11415,7 @@ void main() {
           // 112: the in-flight dedup key is policy-aware — only same-policy
           // callers share a future. The listener below downloads with the
           // group policy, so this pre-flight call must too.
-          enforceGroupMediaPolicy: true,
+          enforceGroupMediaPolicy: true, owner: MediaOwnerLane.group,
         );
         await Future<void>.delayed(Duration.zero);
 
@@ -11464,7 +11465,7 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 50));
 
         final savedAttachments = await mediaRepo.getAttachmentsForMessage(
-          'msg-group-1',
+          'msg-group-1', owner: MediaOwnerLane.group,
         );
         expect(savedAttachments.single.downloadStatus, 'done');
         expect(savedAttachments.single.localPath, startsWith('media/'));
@@ -12119,10 +12120,10 @@ void main() {
         expect(await msgRepo.getMessage(remintedMessageId), isNull);
 
         final originalAttachments = await mediaRepo.getAttachmentsForMessage(
-          originalMessageId,
+          originalMessageId, owner: MediaOwnerLane.group,
         );
         final duplicateAttachments = await mediaRepo.getAttachmentsForMessage(
-          remintedMessageId,
+          remintedMessageId, owner: MediaOwnerLane.group,
         );
         expect(originalAttachments, hasLength(1));
         expect(originalAttachments.single.id, 'blob-gird003-listener-shared');
@@ -12240,7 +12241,7 @@ void main() {
         expect(saved.keyGeneration, 7);
         expect(saved.status, 'delivered');
 
-        final attachments = await mediaRepo.getAttachmentsForMessage(messageId);
+        final attachments = await mediaRepo.getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group);
         expect(attachments, hasLength(1));
         expect(attachments.single.id, 'lp013-media-1');
         expect(attachments.single.mime, 'image/png');

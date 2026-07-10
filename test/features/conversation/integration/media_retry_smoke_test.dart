@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/application/recover_stuck_sending_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
@@ -30,13 +31,17 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
-    String messageId,
-  ) async {
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async {
     return _attachments.where((a) => a.messageId == messageId).toList();
   }
 
   @override
-  Future<void> saveAttachment(MediaAttachment attachment) async {
+  Future<void> saveAttachment(
+    MediaAttachment attachment, {
+    required MediaOwnerLane owner,
+  }) async {
     final idx = _attachments.indexWhere((a) => a.id == attachment.id);
     if (idx >= 0) {
       _attachments[idx] = attachment;
@@ -47,11 +52,12 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 
   @override
   Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-    List<String> messageIds,
-  ) async {
+    List<String> messageIds, {
+    required MediaOwnerLane owner,
+  }) async {
     final result = <String, List<MediaAttachment>>{};
     for (final id in messageIds) {
-      final atts = await getAttachmentsForMessage(id);
+      final atts = await getAttachmentsForMessage(id, owner: owner);
       if (atts.isNotEmpty) result[id] = atts;
     }
     return result;
@@ -60,7 +66,10 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   @override
   Future<int> deleteAttachmentsForContact(String contactPeerId) async => 0;
   @override
-  Future<int> deleteAttachmentsForMessage(String messageId) async {
+  Future<int> deleteAttachmentsForMessage(
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async {
     final before = _attachments.length;
     _attachments.removeWhere((attachment) => attachment.messageId == messageId);
     return before - _attachments.length;
@@ -68,8 +77,9 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 
   @override
   Future<int> markUploadPendingAttachmentsFailedForMessage(
-    String messageId,
-  ) async {
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async {
     var count = 0;
     for (var i = 0; i < _attachments.length; i++) {
       final attachment = _attachments[i];
@@ -85,7 +95,9 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   @override
   Future<List<MediaAttachment>> getPendingDownloads() async => const [];
   @override
-  Future<List<MediaAttachment>> getUploadPendingAttachments() async => [];
+  Future<List<MediaAttachment>> getUploadPendingAttachments({
+    required MediaOwnerLane owner,
+  }) async => [];
   @override
   Future<void> updateDownloadStatus(String id, String downloadStatus) async {}
   @override
@@ -169,12 +181,15 @@ void main() {
         expect(result, SendChatMessageResult.success);
         final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
           'msg-smoke-stable-001',
+          owner: MediaOwnerLane.direct,
         );
         expect(attachments.length, 1);
         expect(attachments.single.id, 'uploaded-final-id');
         expect(attachments.single.downloadStatus, 'done');
         expect(
-          await mediaAttachmentRepo.getUploadPendingAttachments(),
+          await mediaAttachmentRepo.getUploadPendingAttachments(
+            owner: MediaOwnerLane.direct,
+          ),
           isEmpty,
         );
 

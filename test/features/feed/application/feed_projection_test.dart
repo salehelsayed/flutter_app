@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -687,6 +688,7 @@ void main() {
           downloadStatus: 'done',
           createdAt: '2026-02-01T11:00:00Z',
         ),
+        owner: MediaOwnerLane.group,
       );
 
       final snapshot = await loadGroupFeedSnapshot(
@@ -752,6 +754,7 @@ void main() {
             encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             createdAt: '2026-02-01T11:00:00Z',
           ),
+          owner: MediaOwnerLane.group,
         );
 
         final snapshot = await loadGroupFeedSnapshot(

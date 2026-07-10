@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 
@@ -19,6 +20,7 @@ void main() {
 
         // Pre-upload save (this is the contract conversation_wired must fulfill)
         await fakeMediaRepo.saveAttachment(
+          owner: MediaOwnerLane.direct,
           MediaAttachment(
             id: 'att-pre',
             messageId: 'msg-1',
@@ -32,15 +34,18 @@ void main() {
         );
         callOrder.add('uploadMedia');
 
-        final saveIdx =
-            callOrder.indexWhere((e) => e.startsWith('saveAttachment'));
+        final saveIdx = callOrder.indexWhere(
+          (e) => e.startsWith('saveAttachment'),
+        );
         final uploadIdx = callOrder.indexOf('uploadMedia');
 
         expect(saveIdx, isNot(-1));
         expect(uploadIdx, isNot(-1));
-        expect(saveIdx < uploadIdx, isTrue,
-            reason:
-                'saveAttachment(upload_pending) must precede uploadMedia');
+        expect(
+          saveIdx < uploadIdx,
+          isTrue,
+          reason: 'saveAttachment(upload_pending) must precede uploadMedia',
+        );
         expect(firstSavedStatus, 'upload_pending');
       },
     );
@@ -50,10 +55,10 @@ void main() {
       () async {
         final savedStatuses = <String>[];
         final fakeMediaRepo = FakeMediaAttachmentRepository()
-          ..onSaveAttachment =
-              (att) => savedStatuses.add(att.downloadStatus);
+          ..onSaveAttachment = (att) => savedStatuses.add(att.downloadStatus);
 
         await fakeMediaRepo.saveAttachment(
+          owner: MediaOwnerLane.direct,
           MediaAttachment(
             id: 'att-1',
             messageId: 'msg-1',
@@ -67,6 +72,7 @@ void main() {
         );
 
         await fakeMediaRepo.saveAttachment(
+          owner: MediaOwnerLane.direct,
           MediaAttachment(
             id: 'blob-abc',
             messageId: 'msg-1',
@@ -79,9 +85,7 @@ void main() {
           ),
         );
 
-        expect(
-            savedStatuses,
-            containsAllInOrder(['upload_pending', 'done']));
+        expect(savedStatuses, containsAllInOrder(['upload_pending', 'done']));
       },
     );
 
@@ -90,10 +94,10 @@ void main() {
       () async {
         final savedStatuses = <String>[];
         final fakeMediaRepo = FakeMediaAttachmentRepository()
-          ..onSaveAttachment =
-              (att) => savedStatuses.add(att.downloadStatus);
+          ..onSaveAttachment = (att) => savedStatuses.add(att.downloadStatus);
 
         await fakeMediaRepo.saveAttachment(
+          owner: MediaOwnerLane.direct,
           MediaAttachment(
             id: 'att-1',
             messageId: 'msg-1',
@@ -120,6 +124,7 @@ void main() {
           ..onSaveAttachment = (att) => savedAtt = att;
 
         await fakeMediaRepo.saveAttachment(
+          owner: MediaOwnerLane.direct,
           MediaAttachment(
             id: 'voice-att-pre',
             messageId: 'msg-voice-1',

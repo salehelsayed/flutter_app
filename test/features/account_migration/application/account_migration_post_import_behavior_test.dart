@@ -15,6 +15,7 @@ import 'dart:io';
 
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
@@ -194,7 +195,7 @@ void main() {
         downloadStatus: 'done',
         createdAt: '2026-06-10T08:00:00.000Z',
       );
-      await repo.saveAttachment(oneToOne);
+      await repo.saveAttachment(oneToOne, owner: MediaOwnerLane.direct);
 
       const groupPath = 'media/imported-group-1/blob-group.jpg';
       await _writeRelative(tempDir, groupPath, 'group-image-bytes');
@@ -212,7 +213,7 @@ void main() {
         encryptionNonce: 'imported-nonce',
         encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
       );
-      await repo.saveAttachment(groupAttachment);
+      await repo.saveAttachment(groupAttachment, owner: MediaOwnerLane.group);
 
       await downloadMedia(
         bridge: bridge,
@@ -220,6 +221,7 @@ void main() {
         mediaFileManager: fileManager,
         attachment: oneToOne,
         contactPeerId: 'peer-bob',
+        owner: MediaOwnerLane.direct,
       );
       await downloadMedia(
         bridge: bridge,
@@ -227,6 +229,7 @@ void main() {
         mediaFileManager: fileManager,
         attachment: groupAttachment,
         contactPeerId: 'imported-group-1',
+        owner: MediaOwnerLane.group,
         enforceGroupMediaPolicy: true,
       );
 

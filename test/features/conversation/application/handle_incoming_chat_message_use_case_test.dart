@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -250,8 +251,15 @@ class FakeMessageRepository implements MessageRepository {
 class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   final List<MediaAttachment> saved = [];
 
+  /// 228: lanes passed to [saveAttachment], in call order.
+  final savedOwnerLanes = <MediaOwnerLane>[];
+
   @override
-  Future<void> saveAttachment(MediaAttachment attachment) async {
+  Future<void> saveAttachment(
+    MediaAttachment attachment, {
+    required MediaOwnerLane owner,
+  }) async {
+    savedOwnerLanes.add(owner);
     final index = saved.indexWhere((saved) => saved.id == attachment.id);
     if (index == -1) {
       saved.add(attachment);
@@ -262,15 +270,17 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
-    String messageId,
-  ) async {
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async {
     return saved.where((a) => a.messageId == messageId).toList();
   }
 
   @override
   Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-    List<String> messageIds,
-  ) async => {};
+    List<String> messageIds, {
+    required MediaOwnerLane owner,
+  }) async => {};
 
   @override
   Future<void> updateLocalPath(String id, String localPath) async {}
@@ -279,21 +289,27 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   Future<void> updateDownloadStatus(String id, String downloadStatus) async {}
 
   @override
-  Future<int> deleteAttachmentsForMessage(String messageId) async => 0;
+  Future<int> deleteAttachmentsForMessage(
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => 0;
 
   @override
   Future<int> deleteAttachmentsForContact(String contactPeerId) async => 0;
 
   @override
   Future<int> markUploadPendingAttachmentsFailedForMessage(
-    String messageId,
-  ) async => 0;
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => 0;
 
   @override
   Future<List<MediaAttachment>> getPendingDownloads() async => [];
 
   @override
-  Future<List<MediaAttachment>> getUploadPendingAttachments() async => [];
+  Future<List<MediaAttachment>> getUploadPendingAttachments({
+    required MediaOwnerLane owner,
+  }) async => [];
 }
 
 class FakeDecryptBridge implements Bridge {
@@ -690,7 +706,9 @@ void main() {
           debugSetFlowEventSink(flow.add);
           addTearDown(() => debugSetFlowEventSink(null));
           messageRepo = FakeMessageRepository(
-            existingMessages: {'existing-1': existingIncoming(dedupKey: 'src-1')},
+            existingMessages: {
+              'existing-1': existingIncoming(dedupKey: 'src-1'),
+            },
           );
           final message = buildP2PMessage(
             buildValidChatJson(
@@ -716,45 +734,58 @@ void main() {
       );
 
       // Case 2: no false-positive — same text, DIFFERENT dedupKey → persists.
-      test('does NOT dedup identical text under a different dedupKey', () async {
-        messageRepo = FakeMessageRepository(
-          existingMessages: {'existing-1': existingIncoming(dedupKey: 'src-1')},
-        );
-        final message = buildP2PMessage(
-          buildValidChatJson(
-            id: 'msg-uuid-002',
-            dedupKey: 'src-2',
-            timestamp: '2099-01-01T00:00:00.000Z',
-          ),
-        );
-        final (result, _, __) = await handleIncomingChatMessage(
-          message: message,
-          messageRepo: messageRepo,
-          contactRepo: contactRepo,
-        );
-        expect(result, HandleChatMessageResult.chatMessage);
-        expect(messageRepo.saved, hasLength(1));
-      });
+      test(
+        'does NOT dedup identical text under a different dedupKey',
+        () async {
+          messageRepo = FakeMessageRepository(
+            existingMessages: {
+              'existing-1': existingIncoming(dedupKey: 'src-1'),
+            },
+          );
+          final message = buildP2PMessage(
+            buildValidChatJson(
+              id: 'msg-uuid-002',
+              dedupKey: 'src-2',
+              timestamp: '2099-01-01T00:00:00.000Z',
+            ),
+          );
+          final (result, _, __) = await handleIncomingChatMessage(
+            message: message,
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+          );
+          expect(result, HandleChatMessageResult.chatMessage);
+          expect(messageRepo.saved, hasLength(1));
+        },
+      );
 
       // Case 3a: keyless + same timestamp → tier-1 fallback dedups (CONTENT).
-      test('keyless arrival still hits tier-1 (same content+timestamp)', () async {
-        final flow = <Map<String, dynamic>>[];
-        debugSetFlowEventSink(flow.add);
-        addTearDown(() => debugSetFlowEventSink(null));
-        messageRepo = FakeMessageRepository(
-          existingMessages: {'existing-1': existingIncoming()},
-        );
-        final message = buildP2PMessage(buildValidChatJson(id: 'msg-uuid-002'));
-        final (result, _, __) = await handleIncomingChatMessage(
-          message: message,
-          messageRepo: messageRepo,
-          contactRepo: contactRepo,
-        );
-        expect(result, HandleChatMessageResult.duplicate);
-        final events = flow.map((e) => e['event']).toList();
-        expect(events, contains('CHAT_MSG_RECEIVE_DUPLICATE_CONTENT'));
-        expect(events, isNot(contains('CHAT_MSG_RECEIVE_DUPLICATE_DEDUP_KEY')));
-      });
+      test(
+        'keyless arrival still hits tier-1 (same content+timestamp)',
+        () async {
+          final flow = <Map<String, dynamic>>[];
+          debugSetFlowEventSink(flow.add);
+          addTearDown(() => debugSetFlowEventSink(null));
+          messageRepo = FakeMessageRepository(
+            existingMessages: {'existing-1': existingIncoming()},
+          );
+          final message = buildP2PMessage(
+            buildValidChatJson(id: 'msg-uuid-002'),
+          );
+          final (result, _, __) = await handleIncomingChatMessage(
+            message: message,
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+          );
+          expect(result, HandleChatMessageResult.duplicate);
+          final events = flow.map((e) => e['event']).toList();
+          expect(events, contains('CHAT_MSG_RECEIVE_DUPLICATE_CONTENT'));
+          expect(
+            events,
+            isNot(contains('CHAT_MSG_RECEIVE_DUPLICATE_DEDUP_KEY')),
+          );
+        },
+      );
 
       // Case 3b: keyless + different timestamp → persists (tier-1 miss).
       test('keyless arrival with a different timestamp persists', () async {
@@ -778,25 +809,30 @@ void main() {
 
       // Case 4: keyed but UNMATCHED → persists, authoritatively (does NOT fall
       // back to tier-1 even though text+timestamp match the existing row).
-      test('keyed-but-unmatched persists even when text+timestamp match tier-1', () async {
-        messageRepo = FakeMessageRepository(
-          existingMessages: {'existing-1': existingIncoming(dedupKey: 'src-1')},
-        );
-        final message = buildP2PMessage(
-          buildValidChatJson(id: 'msg-uuid-002', dedupKey: 'src-9'),
-        );
-        final (result, _, __) = await handleIncomingChatMessage(
-          message: message,
-          messageRepo: messageRepo,
-          contactRepo: contactRepo,
-        );
-        expect(
-          result,
-          HandleChatMessageResult.chatMessage,
-          reason: 'a keyed message is authoritative — no tier-1 fallback',
-        );
-        expect(messageRepo.saved, hasLength(1));
-      });
+      test(
+        'keyed-but-unmatched persists even when text+timestamp match tier-1',
+        () async {
+          messageRepo = FakeMessageRepository(
+            existingMessages: {
+              'existing-1': existingIncoming(dedupKey: 'src-1'),
+            },
+          );
+          final message = buildP2PMessage(
+            buildValidChatJson(id: 'msg-uuid-002', dedupKey: 'src-9'),
+          );
+          final (result, _, __) = await handleIncomingChatMessage(
+            message: message,
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+          );
+          expect(
+            result,
+            HandleChatMessageResult.chatMessage,
+            reason: 'a keyed message is authoritative — no tier-1 fallback',
+          );
+          expect(messageRepo.saved, hasLength(1));
+        },
+      );
 
       // Case 5 (D3): re-mint a receipt for the forward's FRESH id on a tier-2
       // duplicate (so the sender's forward row reaches delivered).
@@ -825,31 +861,34 @@ void main() {
 
       // Case 6 (D4): my OUTGOING row with the same key must NOT dedup the
       // contact's genuine inbound — the sender_peer_id + is_incoming guards.
-      test('does NOT dedup the contact inbound against my own outgoing row', () async {
-        messageRepo = FakeMessageRepository(
-          existingMessages: {
-            'existing-1': existingIncoming(
-              isIncoming: false,
-              senderPeer: 'my-peer',
+      test(
+        'does NOT dedup the contact inbound against my own outgoing row',
+        () async {
+          messageRepo = FakeMessageRepository(
+            existingMessages: {
+              'existing-1': existingIncoming(
+                isIncoming: false,
+                senderPeer: 'my-peer',
+                dedupKey: 'X',
+              ),
+            },
+          );
+          final message = buildP2PMessage(
+            buildValidChatJson(
+              id: 'inbound-msg-001',
               dedupKey: 'X',
+              timestamp: '2099-01-01T00:00:00.000Z',
             ),
-          },
-        );
-        final message = buildP2PMessage(
-          buildValidChatJson(
-            id: 'inbound-msg-001',
-            dedupKey: 'X',
-            timestamp: '2099-01-01T00:00:00.000Z',
-          ),
-        );
-        final (result, _, __) = await handleIncomingChatMessage(
-          message: message,
-          messageRepo: messageRepo,
-          contactRepo: contactRepo,
-        );
-        expect(result, HandleChatMessageResult.chatMessage);
-        expect(messageRepo.saved, hasLength(1));
-      });
+          );
+          final (result, _, __) = await handleIncomingChatMessage(
+            message: message,
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+          );
+          expect(result, HandleChatMessageResult.chatMessage);
+          expect(messageRepo.saved, hasLength(1));
+        },
+      );
     });
 
     test(
@@ -922,6 +961,7 @@ void main() {
         );
         final mediaRepo = FakeMediaAttachmentRepository();
         await mediaRepo.saveAttachment(
+          owner: MediaOwnerLane.direct,
           const MediaAttachment(
             id: attachmentId,
             messageId: messageId,
@@ -956,7 +996,10 @@ void main() {
         expect(result, HandleChatMessageResult.duplicate);
         expect(msg, isNull);
         expect(messageRepo.saved, isEmpty);
-        final attachments = await mediaRepo.getAttachmentsForMessage(messageId);
+        final attachments = await mediaRepo.getAttachmentsForMessage(
+          messageId,
+          owner: MediaOwnerLane.direct,
+        );
         expect(attachments, hasLength(1));
         expect(attachments.single.id, attachmentId);
         expect(attachments.single.downloadStatus, 'pending');
@@ -982,6 +1025,7 @@ void main() {
       );
       final mediaRepo = FakeMediaAttachmentRepository();
       await mediaRepo.saveAttachment(
+        owner: MediaOwnerLane.direct,
         const MediaAttachment(
           id: attachmentId,
           messageId: messageId,
@@ -1037,7 +1081,10 @@ void main() {
 
       expect(result, HandleChatMessageResult.duplicate);
       expect(msg, isNull);
-      final attachments = await mediaRepo.getAttachmentsForMessage(messageId);
+      final attachments = await mediaRepo.getAttachmentsForMessage(
+        messageId,
+        owner: MediaOwnerLane.direct,
+      );
       expect(attachments, hasLength(1));
       expect(attachments.single.downloadStatus, 'pending');
       expect(attachments.single.encryptionKeyBase64, 'new-key');
@@ -2006,6 +2053,40 @@ void main() {
         expect(mediaRepo.saved[1].durationMs, 30000);
       });
 
+      // 228: the 1:1 incoming path must persist media under the DIRECT lane —
+      // every saveAttachment call carries MediaOwnerLane.direct, never group.
+      test('incoming media save passes direct owner', () async {
+        final mediaArray = [
+          {
+            'id': 'blob-owner-direct-001',
+            'mime': 'image/jpeg',
+            'size': 1000,
+            'mediaType': 'image',
+          },
+        ];
+        final message = buildP2PMessage(
+          buildChatJsonWithMedia(id: 'msg-owner-lane-001', media: mediaArray),
+        );
+
+        final (result, msg, _) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(result, HandleChatMessageResult.chatMessage);
+        expect(msg, isNotNull);
+        expect(mediaRepo.saved, hasLength(1));
+        expect(mediaRepo.saved.single.id, 'blob-owner-direct-001');
+        expect(mediaRepo.savedOwnerLanes, hasLength(1));
+        expect(
+          mediaRepo.savedOwnerLanes.toSet(),
+          {MediaOwnerLane.direct},
+          reason: 'every 1:1 incoming media save must pass the direct lane',
+        );
+      });
+
       test('does not persist media when payload has no media', () async {
         final message = buildP2PMessage(buildChatJsonWithMedia());
 
@@ -2390,35 +2471,32 @@ void main() {
       // NOT try to observe a microtask-deferred decision: a microtask drains
       // before the awaiting test continuation resumes, so MINT_SKIPPED is
       // present at assert-time regardless of where it was emitted.)
-      test(
-        'mint decision stays synchronous and on-path — a skip emits '
-        'MINT_SKIPPED and schedules no send',
-        () async {
-          final flow = <Map<String, dynamic>>[];
-          debugSetFlowEventSink(flow.add);
-          addTearDown(() => debugSetFlowEventSink(null));
-          final receiptIds = <String>[];
+      test('mint decision stays synchronous and on-path — a skip emits '
+          'MINT_SKIPPED and schedules no send', () async {
+        final flow = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flow.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+        final receiptIds = <String>[];
 
-          await handleIncomingChatMessage(
-            message: buildP2PMessage(
-              buildValidChatJson(id: 'msg-skip-onpath-01'),
-            ),
-            messageRepo: messageRepo,
-            contactRepo: contactRepo,
-            transport: null, // non-inbox, no staged id
-            sendDeliveryReceipt: (id) async => receiptIds.add(id),
-            confirmatoryDirectLanEnabled: false,
-          );
+        await handleIncomingChatMessage(
+          message: buildP2PMessage(
+            buildValidChatJson(id: 'msg-skip-onpath-01'),
+          ),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          transport: null, // non-inbox, no staged id
+          sendDeliveryReceipt: (id) async => receiptIds.add(id),
+          confirmatoryDirectLanEnabled: false,
+        );
 
-          final events = flow.map((e) => e['event']).toList();
-          expect(events, contains('DELIVERY_RECEIPT_MINT_SKIPPED'));
-          final skip = flow.firstWhere(
-            (e) => e['event'] == 'DELIVERY_RECEIPT_MINT_SKIPPED',
-          );
-          expect((skip['details'] as Map)['reason'], 'nonInbox');
-          expect(receiptIds, isEmpty);
-        },
-      );
+        final events = flow.map((e) => e['event']).toList();
+        expect(events, contains('DELIVERY_RECEIPT_MINT_SKIPPED'));
+        final skip = flow.firstWhere(
+          (e) => e['event'] == 'DELIVERY_RECEIPT_MINT_SKIPPED',
+        );
+        expect((skip['details'] as Map)['reason'], 'nonInbox');
+        expect(receiptIds, isEmpty);
+      });
 
       // TC-05: the duplicate-receive re-mint site (`:342`) is also detached.
       // RED on HEAD: the dup path awaits the send → blocks → .timeout fires.
@@ -2459,33 +2537,30 @@ void main() {
       // TC-06: 132 anti-suppression lock — the confirmatory direct/LAN receipt
       // must be DEFERRED, not dropped. Passes on HEAD (flag default true);
       // mutation that adds a direct:/lan: skip of the send re-reds.
-      test(
-        'confirmatory direct/LAN receipt is deferred but still sent (not '
-        'suppressed)',
-        () async {
-          final flow = <Map<String, dynamic>>[];
-          debugSetFlowEventSink(flow.add);
-          addTearDown(() => debugSetFlowEventSink(null));
-          final receiptIds = <String>[];
+      test('confirmatory direct/LAN receipt is deferred but still sent (not '
+          'suppressed)', () async {
+        final flow = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flow.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+        final receiptIds = <String>[];
 
-          await handleIncomingChatMessage(
-            message: buildP2PMessage(
-              buildValidChatJson(id: 'msg-direct-defer-01'),
-            ),
-            messageRepo: messageRepo,
-            contactRepo: contactRepo,
-            transport: 'direct',
-            stagedEntryId: 'direct:abc',
-            sendDeliveryReceipt: (id) async => receiptIds.add(id),
-            // default confirmatory flag (true)
-          );
-          await pumpEventQueue();
+        await handleIncomingChatMessage(
+          message: buildP2PMessage(
+            buildValidChatJson(id: 'msg-direct-defer-01'),
+          ),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          transport: 'direct',
+          stagedEntryId: 'direct:abc',
+          sendDeliveryReceipt: (id) async => receiptIds.add(id),
+          // default confirmatory flag (true)
+        );
+        await pumpEventQueue();
 
-          expect(receiptIds, ['msg-direct-defer-01']);
-          final events = flow.map((e) => e['event']).toList();
-          expect(events, isNot(contains('DELIVERY_RECEIPT_MINT_SKIPPED')));
-        },
-      );
+        expect(receiptIds, ['msg-direct-defer-01']);
+        final events = flow.map((e) => e['event']).toList();
+        expect(events, isNot(contains('DELIVERY_RECEIPT_MINT_SKIPPED')));
+      });
 
       // TC-08: a SYNCHRONOUSLY-throwing hook (throws before returning a Future)
       // must still be caught — the old `try { await ... } catch` caught sync
@@ -2493,34 +2568,31 @@ void main() {
       // sync throw escape (the `.catchError` is never attached), throwing out of
       // the handler AFTER persist; `Future.sync(() => ...).catchError(...)`
       // restores full coverage.
-      test(
-        'a receipt hook that throws synchronously is caught and logged, not '
-        'unhandled',
-        () async {
-          final flow = <Map<String, dynamic>>[];
-          debugSetFlowEventSink(flow.add);
-          addTearDown(() => debugSetFlowEventSink(null));
+      test('a receipt hook that throws synchronously is caught and logged, not '
+          'unhandled', () async {
+        final flow = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flow.add);
+        addTearDown(() => debugSetFlowEventSink(null));
 
-          final (result, msg, _) = await handleIncomingChatMessage(
-            message: buildP2PMessage(buildValidChatJson(id: 'msg-syncthrow-01')),
-            messageRepo: messageRepo,
-            contactRepo: contactRepo,
-            transport: 'inbox',
-            stagedEntryId: 'relay-syncthrow-1',
-            sendDeliveryReceipt: (_) {
-              throw StateError('boom-sync'); // throws BEFORE returning a Future
-            },
-          );
-          await pumpEventQueue();
+        final (result, msg, _) = await handleIncomingChatMessage(
+          message: buildP2PMessage(buildValidChatJson(id: 'msg-syncthrow-01')),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          transport: 'inbox',
+          stagedEntryId: 'relay-syncthrow-1',
+          sendDeliveryReceipt: (_) {
+            throw StateError('boom-sync'); // throws BEFORE returning a Future
+          },
+        );
+        await pumpEventQueue();
 
-          // The handler returned cleanly (the sync throw did not escape past the
-          // persist) and the breadcrumb was still emitted.
-          expect(result, HandleChatMessageResult.chatMessage);
-          expect(msg, isNotNull);
-          final events = flow.map((e) => e['event']).toList();
-          expect(events, contains('DELIVERY_RECEIPT_HOOK_ERROR'));
-        },
-      );
+        // The handler returned cleanly (the sync throw did not escape past the
+        // persist) and the breadcrumb was still emitted.
+        expect(result, HandleChatMessageResult.chatMessage);
+        expect(msg, isNotNull);
+        final events = flow.map((e) => e['event']).toList();
+        expect(events, contains('DELIVERY_RECEIPT_HOOK_ERROR'));
+      });
     });
   });
 
@@ -2549,36 +2621,33 @@ void main() {
       });
     }
 
-    test(
-      '147 TC-A6: uses predecryptedText when provided and does not call the '
-      'bridge decrypt',
-      () async {
-        // A bridge whose decrypt THROWS if invoked — the only way this test
-        // persists a message is by skipping the decrypt entirely.
-        final bridge = ThrowingDecryptBridge();
-        final (result, stored, _) = await handleIncomingChatMessage(
-          message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
-          messageRepo: messageRepo,
-          contactRepo: contactRepo,
-          bridge: bridge,
-          ownMlKemSecretKey: 'secret-key',
-          predecryptedText: innerPayloadJson(
-            id: 'msg-predecrypt-1',
-            text: 'hello',
-          ),
-        );
+    test('147 TC-A6: uses predecryptedText when provided and does not call the '
+        'bridge decrypt', () async {
+      // A bridge whose decrypt THROWS if invoked — the only way this test
+      // persists a message is by skipping the decrypt entirely.
+      final bridge = ThrowingDecryptBridge();
+      final (result, stored, _) = await handleIncomingChatMessage(
+        message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        ownMlKemSecretKey: 'secret-key',
+        predecryptedText: innerPayloadJson(
+          id: 'msg-predecrypt-1',
+          text: 'hello',
+        ),
+      );
 
-        expect(result, HandleChatMessageResult.chatMessage);
-        expect(stored?.text, 'hello');
-        expect(
-          bridge.decryptCallCount,
-          0,
-          reason: 'a supplied predecryptedText must skip the bridge decrypt',
-        );
-        final persisted = await messageRepo.getMessage('msg-predecrypt-1');
-        expect(persisted?.text, 'hello');
-      },
-    );
+      expect(result, HandleChatMessageResult.chatMessage);
+      expect(stored?.text, 'hello');
+      expect(
+        bridge.decryptCallCount,
+        0,
+        reason: 'a supplied predecryptedText must skip the bridge decrypt',
+      );
+      final persisted = await messageRepo.getMessage('msg-predecrypt-1');
+      expect(persisted?.text, 'hello');
+    });
 
     test(
       '147 TC-A3: an edit supplied via predecryptedText materializes over its '
@@ -2627,7 +2696,9 @@ void main() {
           reason: 'the edit applied over its committed base',
         );
         expect(
-          lines.any((l) => l.contains('CHAT_MSG_RECEIVE_EDIT_MISSING_ORIGINAL')),
+          lines.any(
+            (l) => l.contains('CHAT_MSG_RECEIVE_EDIT_MISSING_ORIGINAL'),
+          ),
           isFalse,
           reason: 'base committed first → the edit must not be orphaned',
         );
@@ -2690,29 +2761,26 @@ void main() {
           isBlocked: isBlocked,
         );
 
-    test(
-      'returns null WITHOUT decrypting for a blocked sender',
-      () async {
-        final bridge = ThrowingDecryptBridge(); // decrypt throws if reached
-        final contactRepo = InMemoryContactRepository()
-          ..addTestContact(contact(senderPeerId, isBlocked: true));
+    test('returns null WITHOUT decrypting for a blocked sender', () async {
+      final bridge = ThrowingDecryptBridge(); // decrypt throws if reached
+      final contactRepo = InMemoryContactRepository()
+        ..addTestContact(contact(senderPeerId, isBlocked: true));
 
-        final result = await predecryptStagedInboxChatEntry(
-          message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
-          contactRepo: contactRepo,
-          bridge: bridge,
-          loadOwnMlKemSecretKey: () async => 'secret',
-          loadOwnMlKemSecretKeyRing: () async => const [],
-        );
+      final result = await predecryptStagedInboxChatEntry(
+        message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+        contactRepo: contactRepo,
+        bridge: bridge,
+        loadOwnMlKemSecretKey: () async => 'secret',
+        loadOwnMlKemSecretKeyRing: () async => const [],
+      );
 
-        expect(result, isNull, reason: 'a blocked sender yields no plaintext');
-        expect(
-          bridge.decryptCallCount,
-          0,
-          reason: 'blocked ciphertext must never be decrypted into memory',
-        );
-      },
-    );
+      expect(result, isNull, reason: 'a blocked sender yields no plaintext');
+      expect(
+        bridge.decryptCallCount,
+        0,
+        reason: 'blocked ciphertext must never be decrypted into memory',
+      );
+    });
 
     test('decrypts a non-blocked known sender', () async {
       final bridge = FakeDecryptBridge()

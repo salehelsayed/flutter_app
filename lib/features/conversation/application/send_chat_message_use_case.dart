@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/local_discovery/lan_ack.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/chat_console_logger.dart';
@@ -2040,6 +2041,7 @@ Future<void> _persistOutgoingMedia({
     final expectedIds = attachments.map((attachment) => attachment.id).toSet();
     final existing = await mediaAttachmentRepo.getAttachmentsForMessage(
       messageId,
+      owner: MediaOwnerLane.direct,
     );
     final hasStaleUploadPending = existing.any(
       (attachment) =>
@@ -2047,12 +2049,18 @@ Future<void> _persistOutgoingMedia({
           !expectedIds.contains(attachment.id),
     );
     if (hasStaleUploadPending) {
-      await mediaAttachmentRepo.deleteAttachmentsForMessage(messageId);
+      await mediaAttachmentRepo.deleteAttachmentsForMessage(
+        messageId,
+        owner: MediaOwnerLane.direct,
+      );
     }
   }
 
   for (final attachment in attachments) {
-    await mediaAttachmentRepo.saveAttachment(attachment);
+    await mediaAttachmentRepo.saveAttachment(
+      attachment,
+      owner: MediaOwnerLane.direct,
+    );
   }
 }
 

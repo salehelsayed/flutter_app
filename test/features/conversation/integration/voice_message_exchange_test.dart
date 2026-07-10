@@ -7,6 +7,7 @@
 /// Uses the same TestUser / FakeP2PNetwork infrastructure as text message tests.
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -141,6 +142,7 @@ void main() {
         // Verify media attachment on the stored message
         final attachments = await aliceMediaRepo.getAttachmentsForMessage(
           convo.first.id,
+          owner: MediaOwnerLane.direct,
         );
         expect(attachments.length, 1);
         expect(attachments.first.mediaType, 'audio');

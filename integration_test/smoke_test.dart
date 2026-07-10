@@ -2,26 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
-import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
-import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
-import 'package:flutter_app/core/database/migrations/003_mlkem_keys.dart';
-import 'package:flutter_app/core/database/migrations/005_secret_null_checks.dart';
-import 'package:flutter_app/core/database/migrations/006_read_at_column.dart';
-import 'package:flutter_app/core/database/migrations/007_archive_columns.dart';
-import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
-import 'package:flutter_app/core/database/migrations/009_quoted_message_id.dart';
-import 'package:flutter_app/core/database/migrations/010_media_attachments.dart';
-import 'package:flutter_app/core/database/migrations/011_avatar_version.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
-import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository_impl.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
@@ -41,6 +32,7 @@ import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
 import '../test/shared/fakes/in_memory_post_repository.dart';
 import '../test/shared/fakes/in_memory_posts_privacy_settings_repository.dart';
 import '_support/fake_secure_key_store.dart';
+import '_support/test_db_seeder.dart';
 import '../test/shared/fakes/in_memory_feed_cleared_repository.dart';
 
 void main() {
@@ -84,33 +76,12 @@ void main() {
     final pendingPostTargetStore = PendingPostTargetStore();
 
     print('[TEST] Step 1: Initialize database...');
-    final db = await openEncryptedDatabase(
+    // 228 (TC-228-13H): this fixture instantiates the REAL media repository,
+    // so it must open at the CURRENT production schema through the shared
+    // registry — never a hand-maintained historical migration list.
+    final db = await openCurrentProductionE2EDatabase(
       secureKeyStore: secureKeyStore,
       dbName: dbName,
-      version: 11,
-      onCreate: (db, version) async {
-        await runIdentityTableMigration(db);
-        await runMessagesTableMigration(db);
-        await runMlKemKeysMigration(db);
-        await runSecretNullChecksMigration(db);
-        await runReadAtColumnMigration(db);
-        await runArchiveColumnsMigration(db);
-        await runBlockColumnsMigration(db);
-        await runQuotedMessageIdMigration(db);
-        await runMediaAttachmentsMigration(db);
-        await runAvatarVersionMigration(db);
-      },
-      onUpgrade: (db, oldVersion, newVersion) async {
-        if (oldVersion < 2) await runMessagesTableMigration(db);
-        if (oldVersion < 3) await runMlKemKeysMigration(db);
-        if (oldVersion < 5) await runSecretNullChecksMigration(db);
-        if (oldVersion < 6) await runReadAtColumnMigration(db);
-        if (oldVersion < 7) await runArchiveColumnsMigration(db);
-        if (oldVersion < 8) await runBlockColumnsMigration(db);
-        if (oldVersion < 9) await runQuotedMessageIdMigration(db);
-        if (oldVersion < 10) await runMediaAttachmentsMigration(db);
-        if (oldVersion < 11) await runAvatarVersionMigration(db);
-      },
     );
     print('[TEST] Database initialized');
 
@@ -167,6 +138,15 @@ void main() {
       dbDeleteMessagesForContact: (contactPeerId) =>
           dbDeleteMessagesForContact(db, contactPeerId),
       dbDeleteMessage: (id) => dbDeleteMessage(db, id),
+      dbExistsMessageByContent:
+          (contactPeerId, senderPeerId, text, timestamp) =>
+              dbExistsMessageByContent(
+                db,
+                contactPeerId,
+                senderPeerId,
+                text,
+                timestamp,
+              ),
       dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) =>
           dbLoadMessagesPage(
             db,
@@ -207,25 +187,60 @@ void main() {
     );
 
     final mediaAttachmentRepository = MediaAttachmentRepositoryImpl(
-      dbInsertMediaAttachment: (row) => dbInsertMediaAttachment(db, row),
-      dbLoadMediaForMessage: (messageId) =>
-          dbLoadMediaForMessage(db, messageId),
+      dbSaveMediaAttachmentPreservingLocalState: (row) =>
+          dbSaveMediaAttachmentPreservingLocalState(db, row),
+      dbLoadMediaForMessage: (messageId, ownerLane) =>
+          dbLoadMediaForMessage(db, messageId, ownerLane: ownerLane),
       dbLoadMediaById: (id) => dbLoadMediaById(db, id),
-      dbLoadMediaForMessages: (messageIds) =>
-          dbLoadMediaForMessages(db, messageIds),
+      dbLoadMediaForMessages: (messageIds, ownerLane) =>
+          dbLoadMediaForMessages(db, messageIds, ownerLane: ownerLane),
       dbUpdateMediaLocalPath: (id, localPath, downloadStatus) =>
           dbUpdateMediaLocalPath(db, id, localPath, downloadStatus),
       dbUpdateMediaDownloadStatus: (id, downloadStatus) =>
           dbUpdateMediaDownloadStatus(db, id, downloadStatus),
-      dbDeleteMediaForMessage: (messageId) =>
-          dbDeleteMediaForMessage(db, messageId),
+      dbDeleteMediaForMessage: (messageId, ownerLane) =>
+          dbDeleteMediaForMessage(db, messageId, ownerLane: ownerLane),
       dbDeleteMediaForContact: (contactPeerId) =>
           dbDeleteMediaForContact(db, contactPeerId),
-      dbMarkUploadPendingAttachmentsFailedForMessage: (messageId) =>
-          dbMarkUploadPendingAttachmentsFailedForMessage(db, messageId),
+      dbMarkUploadPendingAttachmentsFailedForMessage: (messageId, ownerLane) =>
+          dbMarkUploadPendingAttachmentsFailedForMessage(
+            db,
+            messageId,
+            ownerLane: ownerLane,
+          ),
       dbLoadPendingMediaDownloads: () => dbLoadPendingMediaDownloads(db),
-      dbLoadUploadPendingAttachments: ({int limit = 50}) =>
-          dbLoadUploadPendingAttachments(db, limit: limit),
+      dbLoadUploadPendingAttachments:
+          ({int limit = 50, required String ownerLane}) =>
+              dbLoadUploadPendingAttachments(
+                db,
+                limit: limit,
+                ownerLane: ownerLane,
+              ),
+      dbSetMediaBookmarked: (id, bookmarked) =>
+          dbSetMediaBookmarked(db, id, bookmarked: bookmarked),
+      dbUpdateMediaPlaybackPosition: (id, positionMs) =>
+          dbUpdateMediaPlaybackPosition(db, id, positionMs),
+      dbLoadMediaLibraryPage:
+          ({
+            required String scopeKind,
+            required String scopeId,
+            required List<String> mediaTypes,
+            required bool bookmarkedOnly,
+            required int limit,
+            String? afterTimestamp,
+            String? afterMessageId,
+            String? afterAttachmentId,
+          }) => dbLoadMediaLibraryPage(
+            db,
+            scopeKind: scopeKind,
+            scopeId: scopeId,
+            mediaTypes: mediaTypes,
+            bookmarkedOnly: bookmarkedOnly,
+            limit: limit,
+            afterTimestamp: afterTimestamp,
+            afterMessageId: afterMessageId,
+            afterAttachmentId: afterAttachmentId,
+          ),
     );
 
     print('[TEST] Step 3: Initialize Go bridge...');
@@ -362,6 +377,59 @@ void main() {
       print('[TEST] ERROR: No identity found in database');
       fail('Identity not created');
     }
+
+    // 228 (TC-228-13H): representative owner-state round-trip through the
+    // REAL repository on the CURRENT production schema — direct/group owner
+    // plus bookmark and video-resume state survive an encrypted save/load.
+    print('[TEST] Step 9: 228 media owner-state round-trip...');
+    await mediaAttachmentRepository.saveAttachment(
+      const MediaAttachment(
+        id: 'smoke-att-direct',
+        messageId: 'smoke-msg',
+        mime: 'image/jpeg',
+        size: 1,
+        mediaType: 'image',
+        downloadStatus: 'done',
+        createdAt: '2026-07-10T00:00:00.000Z',
+      ),
+      owner: MediaOwnerLane.direct,
+    );
+    await mediaAttachmentRepository.saveAttachment(
+      const MediaAttachment(
+        id: 'smoke-att-group',
+        messageId: 'smoke-msg',
+        mime: 'video/mp4',
+        size: 1,
+        mediaType: 'video',
+        durationMs: 9000,
+        downloadStatus: 'done',
+        createdAt: '2026-07-10T00:00:01.000Z',
+      ),
+      owner: MediaOwnerLane.group,
+    );
+    await mediaAttachmentRepository.setBookmarked(
+      'smoke-att-direct',
+      bookmarked: true,
+    );
+    await mediaAttachmentRepository.updatePlaybackPosition(
+      'smoke-att-group',
+      4200,
+    );
+    final directBack = await mediaAttachmentRepository.getAttachmentsForMessage(
+      'smoke-msg',
+      owner: MediaOwnerLane.direct,
+    );
+    expect(directBack.map((a) => a.id), ['smoke-att-direct']);
+    expect(directBack.single.ownerLane, MediaOwnerLane.direct);
+    expect(directBack.single.isBookmarked, isTrue);
+    final groupBack = await mediaAttachmentRepository.getAttachmentsForMessage(
+      'smoke-msg',
+      owner: MediaOwnerLane.group,
+    );
+    expect(groupBack.map((a) => a.id), ['smoke-att-group']);
+    expect(groupBack.single.ownerLane, MediaOwnerLane.group);
+    expect(groupBack.single.lastPlaybackPositionMs, 4200);
+    print('[TEST] PASS: owner-state round-trip on current schema');
 
     // Cleanup
     contactRequestListener.dispose();

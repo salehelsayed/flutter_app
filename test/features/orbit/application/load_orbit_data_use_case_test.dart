@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -439,6 +440,7 @@ void main() {
       final mediaRepo = InMemoryMediaAttachmentRepository();
       await mediaRepo.saveAttachment(
         attachment(mime: 'audio/mp4', mediaType: 'audio'),
+        owner: MediaOwnerLane.direct,
       );
 
       final result = await loadOrbitData(
@@ -458,8 +460,14 @@ void main() {
         latestMessages: {'peer-A': mediaLatest()},
       );
       final mediaRepo = InMemoryMediaAttachmentRepository();
-      await mediaRepo.saveAttachment(attachment(id: 'b1'));
-      await mediaRepo.saveAttachment(attachment(id: 'b2'));
+      await mediaRepo.saveAttachment(
+        attachment(id: 'b1'),
+        owner: MediaOwnerLane.direct,
+      );
+      await mediaRepo.saveAttachment(
+        attachment(id: 'b2'),
+        owner: MediaOwnerLane.direct,
+      );
 
       final result = await loadOrbitData(
         contactRepo: FakeContactRepository(contacts: [_makeContact('peer-A')]),
@@ -476,7 +484,10 @@ void main() {
         latestMessages: {'peer-A': mediaLatest(text: 'Look at this')},
       );
       final mediaRepo = InMemoryMediaAttachmentRepository();
-      await mediaRepo.saveAttachment(attachment());
+      await mediaRepo.saveAttachment(
+        attachment(),
+        owner: MediaOwnerLane.direct,
+      );
 
       final result = await loadOrbitData(
         contactRepo: FakeContactRepository(contacts: [_makeContact('peer-A')]),
@@ -495,7 +506,10 @@ void main() {
         },
       );
       final mediaRepo = InMemoryMediaAttachmentRepository();
-      await mediaRepo.saveAttachment(attachment());
+      await mediaRepo.saveAttachment(
+        attachment(),
+        owner: MediaOwnerLane.direct,
+      );
 
       final result = await loadOrbitData(
         contactRepo: FakeContactRepository(contacts: [_makeContact('peer-A')]),

@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/load_conversation_use_case.dart';
@@ -198,7 +199,11 @@ Future<List<GroupThreadFeedItem>> loadGroupFeedItems({
   // Batch-attach media to group messages, resolving relative paths
   if (mediaAttachmentRepo != null && allGroupMessages.isNotEmpty) {
     final ids = allGroupMessages.map((m) => m.id).toList();
-    final mediaMap = await mediaAttachmentRepo.getAttachmentsForMessages(ids);
+    final mediaMap = await mediaAttachmentRepo.getAttachmentsForMessages(
+      ids,
+      // These ids come from group_messages — group lane, not direct.
+      owner: MediaOwnerLane.group,
+    );
     if (mediaMap.isNotEmpty) {
       final resolvedMap = <String, List<MediaAttachment>>{};
       for (final entry in mediaMap.entries) {

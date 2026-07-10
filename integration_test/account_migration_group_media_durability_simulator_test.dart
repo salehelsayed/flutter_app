@@ -10,6 +10,7 @@ import 'package:sqflite_sqlcipher/sqflite.dart' as sqlcipher;
 
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_bundle_transfer.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
@@ -120,6 +121,7 @@ void main() {
             contentHash: relayContentHash,
             createdAt: now,
           ),
+          owner: MediaOwnerLane.group,
         );
 
         final feedItems = await loadGroupFeedItems(

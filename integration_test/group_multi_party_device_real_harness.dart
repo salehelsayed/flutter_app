@@ -11,6 +11,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
@@ -1589,6 +1590,7 @@ Future<List<MediaAttachment>> _downloadPl006ActiveRecipientMedia({
   await waitForCondition(() async {
     attachments = await stack.mediaAttachmentRepo.getAttachmentsForMessage(
       messageId,
+      owner: MediaOwnerLane.group,
     );
     return attachments.length == expectedCount;
   }, timeout: const Duration(seconds: 120));
@@ -1604,6 +1606,7 @@ Future<List<MediaAttachment>> _downloadPl006ActiveRecipientMedia({
       mediaFileManager: mediaFileManager,
       attachment: attachment,
       contactPeerId: groupId,
+      owner: MediaOwnerLane.group,
       enforceGroupMediaPolicy: true,
     );
   }
@@ -1611,6 +1614,7 @@ Future<List<MediaAttachment>> _downloadPl006ActiveRecipientMedia({
   await waitForCondition(() async {
     attachments = await stack.mediaAttachmentRepo.getAttachmentsForMessage(
       messageId,
+      owner: MediaOwnerLane.group,
     );
     return attachments.length == expectedCount &&
         attachments.every((attachment) => attachment.downloadStatus == 'done');
@@ -2492,6 +2496,7 @@ Future<List<Map<String, dynamic>>> _mediaProofsForMessage({
 }) async {
   final attachments = await stack.mediaAttachmentRepo.getAttachmentsForMessage(
     messageId,
+    owner: MediaOwnerLane.group,
   );
   return _mediaAttachmentProofs(attachments);
 }
@@ -26803,6 +26808,7 @@ Future<void> _runGm004Charlie(
       pl006MediaRowsAfterRemoval =
           (await stack.mediaAttachmentRepo.getAttachmentsForMessage(
             aliceMessageId,
+            owner: MediaOwnerLane.group,
           )).length;
     }
     pl006PendingDownloadsAfterRemoval =
@@ -28969,6 +28975,7 @@ Future<void> _runGm006Charlie(
       pl007RemovedWindowMediaRowsBeforeReadd =
           (await stack.mediaAttachmentRepo.getAttachmentsForMessage(
             removedMessageId,
+            owner: MediaOwnerLane.group,
           )).length;
     }
     pl007PendingDownloadsBeforeReadd =
@@ -29207,6 +29214,7 @@ Future<void> _runGm006Charlie(
       pl007RemovedWindowMediaRowsAfterReadd =
           (await stack.mediaAttachmentRepo.getAttachmentsForMessage(
             removedMessageId,
+            owner: MediaOwnerLane.group,
           )).length;
     }
     pl007PendingDownloadsAfterPostReadd =
@@ -45671,6 +45679,7 @@ Future<void> _runGe023Charlie(
   final removedWindowAttachmentCount =
       (await stack.mediaAttachmentRepo.getAttachmentsForMessage(
         removedSent['messageId'] as String,
+        owner: MediaOwnerLane.group,
       )).length;
 
   final readdFixture = await waitForSharedJson(

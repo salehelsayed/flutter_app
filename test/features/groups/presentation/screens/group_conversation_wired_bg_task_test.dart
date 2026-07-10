@@ -9,6 +9,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
@@ -742,7 +743,7 @@ void main() {
         await pumpFrames(tester, count: 5);
 
         final messageId =
-            (await mediaRepo.getUploadPendingAttachments()).single.messageId;
+            (await mediaRepo.getUploadPendingAttachments(owner: MediaOwnerLane.group)).single.messageId;
         final persistedBeforeUnmount = await msgRepo.getMessage(messageId);
         expect(persistedBeforeUnmount, isNotNull);
         expect(persistedBeforeUnmount!.status, 'sending');
@@ -910,7 +911,7 @@ void main() {
             durationMs: 1300,
             waveform: [0.2, 0.7, 0.3],
             createdAt: '2026-01-01T12:00:00.000Z',
-          ),
+          ), owner: MediaOwnerLane.group,
         );
 
         await _pumpGroupConversationWired(
@@ -1563,7 +1564,7 @@ void main() {
         expect(saved.status, 'sent');
 
         final savedAttachments = await mediaRepo.getAttachmentsForMessage(
-          sentMessageId,
+          sentMessageId, owner: MediaOwnerLane.group,
         );
         expect(
           savedAttachments.any((attachment) => attachment.id == uploadedBlobId),

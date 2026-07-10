@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -297,6 +298,7 @@ void main() {
           downloadStatus: 'done',
           createdAt: '2026-03-01T00:00:00.000Z',
         ),
+        owner: MediaOwnerLane.group,
       );
 
       final result = await loadOrbitGroups(

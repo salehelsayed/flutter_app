@@ -7,6 +7,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
@@ -1070,7 +1071,10 @@ class GroupMessageListener {
         await _requestReceivedMessageKeyRepairIfLocalEpochIsBehind(result);
         final persistedAttachments = _mediaAttachmentRepo == null
             ? <MediaAttachment>[]
-            : await _mediaAttachmentRepo.getAttachmentsForMessage(result.id);
+            : await _mediaAttachmentRepo.getAttachmentsForMessage(
+                result.id,
+                owner: MediaOwnerLane.group,
+              );
 
         // Show notification for incoming group messages (skip own messages)
         if (senderId != selfPeerId &&
@@ -1714,6 +1718,7 @@ class GroupMessageListener {
 
       final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
         message.id,
+        owner: MediaOwnerLane.group,
       );
       if (attachments.isEmpty) return;
 
@@ -1726,6 +1731,7 @@ class GroupMessageListener {
             mediaFileManager: mediaFileManager,
             attachment: attachment,
             contactPeerId: message.groupId,
+            owner: MediaOwnerLane.group,
             enforceGroupMediaPolicy: true,
           );
         } catch (e) {

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/create_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
@@ -388,7 +389,7 @@ void main() {
       final readerMessages = await reader.loadGroupMessages(created.id);
       expect(readerMessages, hasLength(1));
       final deliveredMedia = await reader.mediaAttachmentRepo
-          .getAttachmentsForMessage(readerMessages.single.id);
+          .getAttachmentsForMessage(readerMessages.single.id, owner: MediaOwnerLane.group);
       expect(deliveredMedia, hasLength(1));
       expect(deliveredMedia.single.mime, 'image/gif');
       expect(deliveredMedia.single.isAnimated, isTrue);

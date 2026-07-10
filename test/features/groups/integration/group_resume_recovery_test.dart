@@ -12,6 +12,7 @@ import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/services/pending_message_retrier.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
@@ -1408,7 +1409,7 @@ Future<void> _section10WidgetMediaLifecycleProof(
     'bridge:bg:end',
   );
   final senderMedia = await admin.mediaAttachmentRepo.getAttachmentsForMessage(
-    sent.id,
+    sent.id, owner: MediaOwnerLane.group,
   );
   expect(senderMedia, hasLength(1));
   expect(senderMedia.single.id, uploadedBlobId);
@@ -1420,7 +1421,7 @@ Future<void> _section10WidgetMediaLifecycleProof(
   );
   expect(onlineDelivered.keyGeneration, 4);
   final onlineReaderMedia = await onlineReader.mediaAttachmentRepo
-      .getAttachmentsForMessage(onlineDelivered.id);
+      .getAttachmentsForMessage(onlineDelivered.id, owner: MediaOwnerLane.group);
   expect(onlineReaderMedia, hasLength(1));
   expect(onlineReaderMedia.single.id, uploadedBlobId);
 
@@ -1430,7 +1431,7 @@ Future<void> _section10WidgetMediaLifecycleProof(
   );
   expect(readerDelivered.keyGeneration, 4);
   final readerMedia = await reader.mediaAttachmentRepo.getAttachmentsForMessage(
-    readerDelivered.id,
+    readerDelivered.id, owner: MediaOwnerLane.group,
   );
   expect(readerMedia, hasLength(1));
   expect(readerMedia.single.id, uploadedBlobId);
@@ -1612,7 +1613,7 @@ Future<void> _section10WidgetVoiceLifecycleProof(
     (message) => message.id == sent.id,
   );
   final onlineReaderMedia = await onlineReader.mediaAttachmentRepo
-      .getAttachmentsForMessage(onlineDelivered.id);
+      .getAttachmentsForMessage(onlineDelivered.id, owner: MediaOwnerLane.group);
   expect(onlineReaderMedia, hasLength(1));
   expect(onlineReaderMedia.single.mediaType, 'audio');
 
@@ -1621,7 +1622,7 @@ Future<void> _section10WidgetVoiceLifecycleProof(
     (message) => message.id == sent.id,
   );
   final readerMedia = await reader.mediaAttachmentRepo.getAttachmentsForMessage(
-    readerDelivered.id,
+    readerDelivered.id, owner: MediaOwnerLane.group,
   );
   expect(readerMedia, hasLength(1));
   expect(readerMedia.single.mediaType, 'audio');
@@ -3426,7 +3427,7 @@ void main() {
 
         Future<MediaAttachment> onlyAttachment(String messageId) async {
           final attachments = await bob.mediaAttachmentRepo
-              .getAttachmentsForMessage(messageId);
+              .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group);
           expect(attachments, hasLength(1));
           return attachments.single;
         }
@@ -5434,7 +5435,7 @@ void main() {
         expect(delivered.keyGeneration, 4);
 
         final deliveredMedia = await reader.mediaAttachmentRepo
-            .getAttachmentsForMessage(delivered.id);
+            .getAttachmentsForMessage(delivered.id, owner: MediaOwnerLane.group);
         expect(deliveredMedia, hasLength(1));
         expect(deliveredMedia.single.id, 'att-proof-1');
         expect(deliveredMedia.single.mediaType, 'image');
@@ -11374,7 +11375,7 @@ void main() {
             hasLength(1),
           );
           final media = await bob.mediaAttachmentRepo.getAttachmentsForMessage(
-            mediaMessageId,
+            mediaMessageId, owner: MediaOwnerLane.group,
           );
           expect(media, hasLength(1));
           expect(media.single.id, 'st013-offline-media-att');

@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -2551,7 +2552,7 @@ void main() {
       expect(await msgRepo.getInboxCursor('group-1'), 'st013-cursor-page2');
       expect(await msgRepo.getMessage('st013-media-msg'), isNotNull);
       expect(
-        await mediaRepo.getAttachmentsForMessage('st013-media-msg'),
+        await mediaRepo.getAttachmentsForMessage('st013-media-msg', owner: MediaOwnerLane.group),
         isEmpty,
       );
 
@@ -2581,7 +2582,7 @@ void main() {
         );
       }
       final attachments = await mediaRepo.getAttachmentsForMessage(
-        'st013-media-msg',
+        'st013-media-msg', owner: MediaOwnerLane.group,
       );
       expect(attachments, hasLength(1));
       expect(attachments.single.id, 'st013-media-att');
@@ -8202,7 +8203,7 @@ void main() {
       expect(msgRepo.count, 1);
 
       final attachments = await mediaRepo.getAttachmentsForMessage(
-        'msg-repair-1',
+        'msg-repair-1', owner: MediaOwnerLane.group,
       );
       expect(attachments, hasLength(2));
       final byId = {
@@ -8241,7 +8242,7 @@ void main() {
 
       expect(msgRepo.count, 1);
       expect(
-        await mediaRepo.getAttachmentsForMessage('msg-repair-1'),
+        await mediaRepo.getAttachmentsForMessage('msg-repair-1', owner: MediaOwnerLane.group),
         hasLength(2),
       );
     },
@@ -8884,7 +8885,7 @@ void main() {
       expect(saved.readAt, isNull);
       expect(await msgRepo.getInboxCursor('group-1'), 'cursor-de004');
 
-      final attachments = await mediaRepo.getAttachmentsForMessage(messageId);
+      final attachments = await mediaRepo.getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group);
       expect(attachments, hasLength(1));
       expect(attachments.single.id, 'de004-replay-image');
 
@@ -9905,7 +9906,7 @@ void main() {
       expect(saved, isNotNull);
       expect(saved!.quotedMessageId, 'msg-parent-1');
 
-      final attachments = await mediaRepo.getAttachmentsForMessage(saved.id);
+      final attachments = await mediaRepo.getAttachmentsForMessage(saved.id, owner: MediaOwnerLane.group);
       expect(attachments, hasLength(4));
 
       final byId = {
@@ -10037,7 +10038,7 @@ void main() {
       expect(saved.quotedMessageId, parentMessageId);
       expect(saved.keyGeneration, 1);
 
-      final attachments = await mediaRepo.getAttachmentsForMessage(messageId);
+      final attachments = await mediaRepo.getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group);
       expect(attachments, hasLength(4));
       final byId = {
         for (final attachment in attachments) attachment.id: attachment,

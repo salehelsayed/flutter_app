@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
@@ -238,21 +239,26 @@ class _FakeMediaAttachmentRepo implements MediaAttachmentRepository {
   final Map<String, List<MediaAttachment>> _attachmentsByMessage = {};
 
   @override
-  Future<void> saveAttachment(MediaAttachment attachment) async {
+  Future<void> saveAttachment(
+    MediaAttachment attachment, {
+    required MediaOwnerLane owner,
+  }) async {
     seedAttachment(attachment);
   }
 
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
-    String messageId,
-  ) async => List<MediaAttachment>.of(
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => List<MediaAttachment>.of(
     _attachmentsByMessage[messageId] ?? const <MediaAttachment>[],
   );
 
   @override
   Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-    List<String> messageIds,
-  ) async => {
+    List<String> messageIds, {
+    required MediaOwnerLane owner,
+  }) async => {
     for (final messageId in messageIds)
       if (_attachmentsByMessage.containsKey(messageId))
         messageId: List<MediaAttachment>.of(_attachmentsByMessage[messageId]!),
@@ -283,21 +289,27 @@ class _FakeMediaAttachmentRepo implements MediaAttachmentRepository {
   }
 
   @override
-  Future<int> deleteAttachmentsForMessage(String messageId) async => 0;
+  Future<int> deleteAttachmentsForMessage(
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => 0;
 
   @override
   Future<int> deleteAttachmentsForContact(String contactPeerId) async => 0;
 
   @override
   Future<int> markUploadPendingAttachmentsFailedForMessage(
-    String messageId,
-  ) async => 0;
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async => 0;
 
   @override
   Future<List<MediaAttachment>> getPendingDownloads() async => [];
 
   @override
-  Future<List<MediaAttachment>> getUploadPendingAttachments() async => [];
+  Future<List<MediaAttachment>> getUploadPendingAttachments({
+    required MediaOwnerLane owner,
+  }) async => [];
 
   void seedAttachment(MediaAttachment attachment) {
     final attachments = _attachmentsByMessage.putIfAbsent(
@@ -456,6 +468,7 @@ void main() {
   group('downloadMedia', () {
     test('returns updated attachment on success', () async {
       final result = await downloadMedia(
+        owner: MediaOwnerLane.direct,
         bridge: bridge,
         mediaAttachmentRepo: mediaRepo,
         mediaFileManager: fileManager,
@@ -474,6 +487,7 @@ void main() {
 
     test('sends correct command to bridge', () async {
       await downloadMedia(
+        owner: MediaOwnerLane.direct,
         bridge: bridge,
         mediaAttachmentRepo: mediaRepo,
         mediaFileManager: fileManager,
@@ -490,6 +504,7 @@ void main() {
 
     test('transitions status: pending → downloading → done', () async {
       await downloadMedia(
+        owner: MediaOwnerLane.direct,
         bridge: bridge,
         mediaAttachmentRepo: mediaRepo,
         mediaFileManager: fileManager,
@@ -510,6 +525,7 @@ void main() {
 
     test('stores relative path in DB for persistence', () async {
       await downloadMedia(
+        owner: MediaOwnerLane.direct,
         bridge: bridge,
         mediaAttachmentRepo: mediaRepo,
         mediaFileManager: fileManager,
@@ -529,6 +545,7 @@ void main() {
 
     test('returns absolute path for immediate UI display', () async {
       final result = await downloadMedia(
+        owner: MediaOwnerLane.direct,
         bridge: bridge,
         mediaAttachmentRepo: mediaRepo,
         mediaFileManager: fileManager,
@@ -546,6 +563,7 @@ void main() {
 
     test('sends media:delete for the blob after successful commit', () async {
       final result = await downloadMedia(
+        owner: MediaOwnerLane.direct,
         bridge: bridge,
         mediaAttachmentRepo: mediaRepo,
         mediaFileManager: fileManager,
@@ -571,6 +589,7 @@ void main() {
 
       final events = await captureFlowEvents(() async {
         final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: bridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -606,6 +625,7 @@ void main() {
       };
 
       final result = await downloadMedia(
+        owner: MediaOwnerLane.direct,
         bridge: bridge,
         mediaAttachmentRepo: mediaRepo,
         mediaFileManager: fileManager,
@@ -629,6 +649,7 @@ void main() {
       };
 
       final result = await downloadMedia(
+        owner: MediaOwnerLane.direct,
         bridge: bridge,
         mediaAttachmentRepo: mediaRepo,
         mediaFileManager: fileManager,
@@ -643,95 +664,99 @@ void main() {
       expect(mediaRepo.downloadStatusUpdates[1].$2, 'failed');
     });
 
-    test(
-      'increments download_retry_count on a transient failure and flips to '
-      'download_failed at the ceiling (INV-DL-1)',
-      () async {
-        bridge.downloadResponse = {
-          'ok': false,
-          'errorMessage': 'relay temporarily unavailable',
-        };
+    test('increments download_retry_count on a transient failure and flips to '
+        'download_failed at the ceiling (INV-DL-1)', () async {
+      bridge.downloadResponse = {
+        'ok': false,
+        'errorMessage': 'relay temporarily unavailable',
+      };
 
-        // First transient failure: count 0 -> 1, still the retryable `failed`.
-        await downloadMedia(
-          bridge: bridge,
-          mediaAttachmentRepo: mediaRepo,
-          mediaFileManager: fileManager,
-          attachment: testAttachment,
-          contactPeerId: 'contact-A',
-        );
-        var stored = (await mediaRepo.getAttachmentsForMessage(
-          'msg-001',
-        )).firstWhere((a) => a.id == testAttachment.id);
-        expect(stored.downloadStatus, kMediaDownloadStatusFailed);
-        expect(stored.downloadRetryCount, 1);
-
-        // One short of the ceiling: the next failure becomes terminal.
-        await downloadMedia(
-          bridge: bridge,
-          mediaAttachmentRepo: mediaRepo,
-          mediaFileManager: fileManager,
-          attachment: testAttachment.copyWith(
-            downloadRetryCount: kMaxDownloadRetries - 1,
-          ),
-          contactPeerId: 'contact-A',
-        );
-        stored = (await mediaRepo.getAttachmentsForMessage(
-          'msg-001',
-        )).firstWhere((a) => a.id == testAttachment.id);
-        expect(stored.downloadStatus, kMediaDownloadStatusDownloadFailed);
-        expect(stored.downloadRetryCount, kMaxDownloadRetries);
-      },
-    );
-
-    test(
-      'relay not found short-circuits to download_failed without burning the '
-      'retry budget (INV-DL-4)',
-      () async {
-        bridge.downloadResponse = {'ok': false, 'errorMessage': 'not found'};
-        // Seed a partially-used budget; the short-circuit must NOT increment it.
-        mediaRepo.seedAttachment(
-          testAttachment.copyWith(downloadRetryCount: 1),
-        );
-
-        final result = await downloadMedia(
-          bridge: bridge,
-          mediaAttachmentRepo: mediaRepo,
-          mediaFileManager: fileManager,
-          attachment: testAttachment.copyWith(downloadRetryCount: 1),
-          contactPeerId: 'contact-A',
-        );
-
-        expect(result, isNull);
-        final stored = (await mediaRepo.getAttachmentsForMessage(
-          'msg-001',
-        )).firstWhere((a) => a.id == testAttachment.id);
-        expect(stored.downloadStatus, kMediaDownloadStatusDownloadFailed);
-        // Budget unchanged: the relay-unavailable terminal burns 0 retries.
-        expect(stored.downloadRetryCount, 1);
-      },
-    );
-
-    test('a successful download resets download_retry_count to 0 (INV-DL-2)',
-        () async {
-      // Start from a partially-used budget.
-      mediaRepo.seedAttachment(testAttachment.copyWith(downloadRetryCount: 2));
-
-      final result = await downloadMedia(
+      // First transient failure: count 0 -> 1, still the retryable `failed`.
+      await downloadMedia(
+        owner: MediaOwnerLane.direct,
         bridge: bridge,
         mediaAttachmentRepo: mediaRepo,
         mediaFileManager: fileManager,
-        attachment: testAttachment.copyWith(downloadRetryCount: 2),
+        attachment: testAttachment,
+        contactPeerId: 'contact-A',
+      );
+      var stored = (await mediaRepo.getAttachmentsForMessage(
+        owner: MediaOwnerLane.direct,
+        'msg-001',
+      )).firstWhere((a) => a.id == testAttachment.id);
+      expect(stored.downloadStatus, kMediaDownloadStatusFailed);
+      expect(stored.downloadRetryCount, 1);
+
+      // One short of the ceiling: the next failure becomes terminal.
+      await downloadMedia(
+        owner: MediaOwnerLane.direct,
+        bridge: bridge,
+        mediaAttachmentRepo: mediaRepo,
+        mediaFileManager: fileManager,
+        attachment: testAttachment.copyWith(
+          downloadRetryCount: kMaxDownloadRetries - 1,
+        ),
+        contactPeerId: 'contact-A',
+      );
+      stored = (await mediaRepo.getAttachmentsForMessage(
+        owner: MediaOwnerLane.direct,
+        'msg-001',
+      )).firstWhere((a) => a.id == testAttachment.id);
+      expect(stored.downloadStatus, kMediaDownloadStatusDownloadFailed);
+      expect(stored.downloadRetryCount, kMaxDownloadRetries);
+    });
+
+    test('relay not found short-circuits to download_failed without burning the '
+        'retry budget (INV-DL-4)', () async {
+      bridge.downloadResponse = {'ok': false, 'errorMessage': 'not found'};
+      // Seed a partially-used budget; the short-circuit must NOT increment it.
+      mediaRepo.seedAttachment(testAttachment.copyWith(downloadRetryCount: 1));
+
+      final result = await downloadMedia(
+        owner: MediaOwnerLane.direct,
+        bridge: bridge,
+        mediaAttachmentRepo: mediaRepo,
+        mediaFileManager: fileManager,
+        attachment: testAttachment.copyWith(downloadRetryCount: 1),
         contactPeerId: 'contact-A',
       );
 
-      expect(result, isNotNull);
-      expect(result!.downloadStatus, kMediaDownloadStatusDone);
+      expect(result, isNull);
       final stored = (await mediaRepo.getAttachmentsForMessage(
+        owner: MediaOwnerLane.direct,
         'msg-001',
       )).firstWhere((a) => a.id == testAttachment.id);
-      expect(stored.downloadRetryCount, 0);
+      expect(stored.downloadStatus, kMediaDownloadStatusDownloadFailed);
+      // Budget unchanged: the relay-unavailable terminal burns 0 retries.
+      expect(stored.downloadRetryCount, 1);
     });
+
+    test(
+      'a successful download resets download_retry_count to 0 (INV-DL-2)',
+      () async {
+        // Start from a partially-used budget.
+        mediaRepo.seedAttachment(
+          testAttachment.copyWith(downloadRetryCount: 2),
+        );
+
+        final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: testAttachment.copyWith(downloadRetryCount: 2),
+          contactPeerId: 'contact-A',
+        );
+
+        expect(result, isNotNull);
+        expect(result!.downloadStatus, kMediaDownloadStatusDone);
+        final stored = (await mediaRepo.getAttachmentsForMessage(
+          owner: MediaOwnerLane.direct,
+          'msg-001',
+        )).firstWhere((a) => a.id == testAttachment.id);
+        expect(stored.downloadRetryCount, 0);
+      },
+    );
 
     test(
       'repeated transient failures converge to terminal download_failed within '
@@ -755,6 +780,7 @@ void main() {
             reason: 'bounded retries must converge, never retry forever',
           );
           await downloadMedia(
+            owner: MediaOwnerLane.direct,
             bridge: bridge,
             mediaAttachmentRepo: mediaRepo,
             mediaFileManager: fileManager,
@@ -762,6 +788,7 @@ void main() {
             contactPeerId: 'contact-A',
           );
           current = (await mediaRepo.getAttachmentsForMessage(
+            owner: MediaOwnerLane.direct,
             'msg-001',
           )).firstWhere((a) => a.id == testAttachment.id);
         }
@@ -799,6 +826,7 @@ void main() {
         };
 
         final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: bridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -844,6 +872,7 @@ void main() {
         };
 
         final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: bridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -890,6 +919,7 @@ void main() {
           };
 
         final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: bridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -923,6 +953,7 @@ void main() {
         };
 
       final result = await downloadMedia(
+        owner: MediaOwnerLane.direct,
         bridge: bridge,
         mediaAttachmentRepo: mediaRepo,
         mediaFileManager: fileManager,
@@ -972,6 +1003,7 @@ void main() {
         };
 
         final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: bridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -1013,6 +1045,7 @@ void main() {
         };
 
         final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: bridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -1034,65 +1067,69 @@ void main() {
     test(
       'PL-013 keeps the staged partial on failed download and retry succeeds',
       () async {
-      // Contract update (P0-C): the Dart side no longer destroys staged bytes
-      // on a transient bridge failure — the Go side already removes genuine
-      // partials it produced (pinned by TestPL013... in node/media_test.go),
-      // and an incomplete leftover is ignored by adoption and overwritten by
-      // the retry.
-      final retryBridge = _FailOncePartialDownloadBridge()
-        ..downloadedBytes = const <int>[1, 2, 3];
+        // Contract update (P0-C): the Dart side no longer destroys staged bytes
+        // on a transient bridge failure — the Go side already removes genuine
+        // partials it produced (pinned by TestPL013... in node/media_test.go),
+        // and an incomplete leftover is ignored by adoption and overwritten by
+        // the retry.
+        final retryBridge = _FailOncePartialDownloadBridge()
+          ..downloadedBytes = const <int>[1, 2, 3];
 
-      final firstResult = await downloadMedia(
-        bridge: retryBridge,
-        mediaAttachmentRepo: mediaRepo,
-        mediaFileManager: fileManager,
-        attachment: testAttachment,
-        contactPeerId: 'group-pl013',
-      );
+        final firstResult = await downloadMedia(
+          owner: MediaOwnerLane.direct,
+          bridge: retryBridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: testAttachment,
+          contactPeerId: 'group-pl013',
+        );
 
-      expect(firstResult, isNull);
-      expect(retryBridge.firstOutputPath, isNotNull);
-      expect(
-        File(retryBridge.firstOutputPath!).existsSync(),
-        isTrue,
-        reason: 'transient failure preserves the staged artifact',
-      );
-      expect(
-        mediaRepo.downloadStatusUpdates,
-        equals([
-          ('blob-download-001', 'downloading'),
-          ('blob-download-001', 'failed'),
-        ]),
-      );
-      expect(mediaRepo.localPathUpdates, isEmpty);
+        expect(firstResult, isNull);
+        expect(retryBridge.firstOutputPath, isNotNull);
+        expect(
+          File(retryBridge.firstOutputPath!).existsSync(),
+          isTrue,
+          reason: 'transient failure preserves the staged artifact',
+        );
+        expect(
+          mediaRepo.downloadStatusUpdates,
+          equals([
+            ('blob-download-001', 'downloading'),
+            ('blob-download-001', 'failed'),
+          ]),
+        );
+        expect(mediaRepo.localPathUpdates, isEmpty);
 
-      final retryResult = await downloadMedia(
-        bridge: retryBridge,
-        mediaAttachmentRepo: mediaRepo,
-        mediaFileManager: fileManager,
-        attachment: testAttachment,
-        contactPeerId: 'group-pl013',
-      );
+        final retryResult = await downloadMedia(
+          owner: MediaOwnerLane.direct,
+          bridge: retryBridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: testAttachment,
+          contactPeerId: 'group-pl013',
+        );
 
-      expect(retryResult, isNotNull);
-      expect(retryResult!.downloadStatus, 'done');
-      expect(File(retryResult.localPath!).existsSync(), isTrue);
-      expect(
-        mediaRepo.downloadStatusUpdates,
-        equals([
-          ('blob-download-001', 'downloading'),
-          ('blob-download-001', 'failed'),
-          ('blob-download-001', 'downloading'),
-        ]),
-      );
-      expect(mediaRepo.localPathUpdates, hasLength(1));
-    });
+        expect(retryResult, isNotNull);
+        expect(retryResult!.downloadStatus, 'done');
+        expect(File(retryResult.localPath!).existsSync(), isTrue);
+        expect(
+          mediaRepo.downloadStatusUpdates,
+          equals([
+            ('blob-download-001', 'downloading'),
+            ('blob-download-001', 'failed'),
+            ('blob-download-001', 'downloading'),
+          ]),
+        );
+        expect(mediaRepo.localPathUpdates, hasLength(1));
+      },
+    );
 
     test('watchdog timeout preserves the .part file', () async {
       final timeoutBridge = _TimeoutAfterWriteBridge();
       final sizedAttachment = testAttachment.copyWith(size: 3);
 
       final result = await downloadMedia(
+        owner: MediaOwnerLane.direct,
         bridge: timeoutBridge,
         mediaAttachmentRepo: mediaRepo,
         mediaFileManager: fileManager,
@@ -1106,8 +1143,7 @@ void main() {
         'failed',
         reason: 'row goes failed so the UI can offer retry',
       );
-      final partPath =
-          '${tempDir.path}/contact-A/blob-download-001.jpg.part';
+      final partPath = '${tempDir.path}/contact-A/blob-download-001.jpg.part';
       expect(
         await File(partPath).exists(),
         isTrue,
@@ -1117,13 +1153,13 @@ void main() {
 
     test('retry adopts complete .part without bridge call', () async {
       final sizedAttachment = testAttachment.copyWith(size: 3);
-      final partPath =
-          '${tempDir.path}/contact-A/blob-download-001.jpg.part';
+      final partPath = '${tempDir.path}/contact-A/blob-download-001.jpg.part';
       final partFile = File(partPath);
       await partFile.parent.create(recursive: true);
       await partFile.writeAsBytes(const [1, 2, 3], flush: true);
 
       final result = await downloadMedia(
+        owner: MediaOwnerLane.direct,
         bridge: bridge,
         mediaAttachmentRepo: mediaRepo,
         mediaFileManager: fileManager,
@@ -1152,13 +1188,13 @@ void main() {
 
     test('retry ignores incomplete .part and re-downloads', () async {
       final sizedAttachment = testAttachment.copyWith(size: 3);
-      final partPath =
-          '${tempDir.path}/contact-A/blob-download-001.jpg.part';
+      final partPath = '${tempDir.path}/contact-A/blob-download-001.jpg.part';
       final partFile = File(partPath);
       await partFile.parent.create(recursive: true);
       await partFile.writeAsBytes(const [9, 9], flush: true);
 
       final result = await downloadMedia(
+        owner: MediaOwnerLane.direct,
         bridge: bridge,
         mediaAttachmentRepo: mediaRepo,
         mediaFileManager: fileManager,
@@ -1179,6 +1215,7 @@ void main() {
       final throwBridge = _ThrowingBridge();
 
       final result = await downloadMedia(
+        owner: MediaOwnerLane.direct,
         bridge: throwBridge,
         mediaAttachmentRepo: mediaRepo,
         mediaFileManager: fileManager,
@@ -1197,6 +1234,7 @@ void main() {
 
     test('preserves original attachment fields in result', () async {
       final result = await downloadMedia(
+        owner: MediaOwnerLane.direct,
         bridge: bridge,
         mediaAttachmentRepo: mediaRepo,
         mediaFileManager: fileManager,
@@ -1218,6 +1256,7 @@ void main() {
         bridge.skipFileWrite = true;
 
         final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: bridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -1268,6 +1307,7 @@ void main() {
 
         final events = await captureFlowEvents(() async {
           final result = await downloadMedia(
+            owner: MediaOwnerLane.direct,
             bridge: bridge,
             mediaAttachmentRepo: mediaRepo,
             mediaFileManager: fileManager,
@@ -1314,6 +1354,7 @@ void main() {
         };
 
         final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: bridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -1343,6 +1384,7 @@ void main() {
       'group policy rejects oversized declared attachment before media download',
       () async {
         final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: bridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -1382,6 +1424,7 @@ void main() {
         };
 
         final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: bridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -1419,6 +1462,7 @@ void main() {
       };
 
       final result = await downloadMedia(
+        owner: MediaOwnerLane.direct,
         bridge: bridge,
         mediaAttachmentRepo: mediaRepo,
         mediaFileManager: fileManager,
@@ -1453,6 +1497,7 @@ void main() {
         };
 
         final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: bridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -1504,6 +1549,7 @@ void main() {
         await encryptedCompanion.writeAsBytes(encrypted, flush: true);
 
         final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: bridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -1544,6 +1590,7 @@ void main() {
       };
 
       final result = await downloadMedia(
+        owner: MediaOwnerLane.direct,
         bridge: bridge,
         mediaAttachmentRepo: mediaRepo,
         mediaFileManager: fileManager,
@@ -1592,6 +1639,7 @@ void main() {
         };
 
         final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: bridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -1625,6 +1673,7 @@ void main() {
         };
 
         final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: bridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -1661,6 +1710,7 @@ void main() {
         };
 
         final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: bridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -1693,6 +1743,7 @@ void main() {
 
     test('group policy rejects missing content hash before download', () async {
       final result = await downloadMedia(
+        owner: MediaOwnerLane.direct,
         bridge: bridge,
         mediaAttachmentRepo: mediaRepo,
         mediaFileManager: fileManager,
@@ -1714,6 +1765,7 @@ void main() {
       'group policy rejects missing encryption metadata before download',
       () async {
         final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: bridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -1737,6 +1789,7 @@ void main() {
       () async {
         final events = await captureFlowEvents(() async {
           await downloadMedia(
+            owner: MediaOwnerLane.direct,
             bridge: bridge,
             mediaAttachmentRepo: mediaRepo,
             mediaFileManager: fileManager,
@@ -1776,6 +1829,7 @@ void main() {
 
         final events = await captureFlowEvents(() async {
           await downloadMedia(
+            owner: MediaOwnerLane.direct,
             bridge: bridge,
             mediaAttachmentRepo: mediaRepo,
             mediaFileManager: fileManager,
@@ -1866,6 +1920,7 @@ void main() {
         final delayedBridge = _DelayedBridge();
 
         final firstFuture = downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: delayedBridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -1875,6 +1930,7 @@ void main() {
         await Future<void>.delayed(Duration.zero);
 
         final secondFuture = downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: delayedBridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -1913,6 +1969,7 @@ void main() {
           };
 
         final firstFuture = downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: delayedBridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -1922,6 +1979,7 @@ void main() {
         await Future<void>.delayed(Duration.zero);
 
         final secondFuture = downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: delayedBridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -1963,6 +2021,7 @@ void main() {
         );
 
         final successful = await downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: bridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -1978,6 +2037,7 @@ void main() {
         final staleRepo = _FakeMediaAttachmentRepo()
           ..seedAttachment(groupAttachment);
         final failed = await downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: _ThrowingBridge(),
           mediaAttachmentRepo: staleRepo,
           mediaFileManager: fileManager,
@@ -2019,6 +2079,7 @@ void main() {
           };
 
           final result = await downloadMedia(
+            owner: MediaOwnerLane.direct,
             bridge: bridge,
             mediaAttachmentRepo: mediaRepo,
             mediaFileManager: fileManager,
@@ -2052,6 +2113,7 @@ void main() {
           };
 
           final result = await downloadMedia(
+            owner: MediaOwnerLane.direct,
             bridge: bridge,
             mediaAttachmentRepo: mediaRepo,
             mediaFileManager: fileManager,
@@ -2069,10 +2131,10 @@ void main() {
           expect(File('$absolutePath.part').existsSync(), isFalse);
           // Staged ciphertext preserved for retry — relay copy stays alive.
           expect(File('$absolutePath.enc').existsSync(), isTrue);
-          expect(
-            mediaRepo.downloadStatusUpdates.last,
-            ('blob-download-001', kMediaDownloadStatusIntegrityFailed),
-          );
+          expect(mediaRepo.downloadStatusUpdates.last, (
+            'blob-download-001',
+            kMediaDownloadStatusIntegrityFailed,
+          ));
           expect(mediaRepo.localPathUpdates, isEmpty);
           expect(bridge.deleteRequests, isEmpty);
         },
@@ -2093,6 +2155,7 @@ void main() {
         };
 
         final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: bridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -2126,6 +2189,7 @@ void main() {
         };
 
         final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: bridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -2140,10 +2204,10 @@ void main() {
         );
 
         expect(result, isNull);
-        expect(
-          mediaRepo.downloadStatusUpdates.last,
-          ('blob-download-001', kMediaDownloadStatusIntegrityFailed),
-        );
+        expect(mediaRepo.downloadStatusUpdates.last, (
+          'blob-download-001',
+          kMediaDownloadStatusIntegrityFailed,
+        ));
         expect(mediaRepo.localPathUpdates, isEmpty);
         final absolutePath = await fileManager.localPathForAttachment(
           contactPeerId: 'contact-A',
@@ -2171,6 +2235,7 @@ void main() {
           };
 
           final result = await downloadMedia(
+            owner: MediaOwnerLane.direct,
             bridge: bridge,
             mediaAttachmentRepo: mediaRepo,
             mediaFileManager: fileManager,
@@ -2190,10 +2255,10 @@ void main() {
           );
           expect(File(absolutePath).existsSync(), isFalse);
           expect(File('$absolutePath.enc').existsSync(), isTrue);
-          expect(
-            mediaRepo.downloadStatusUpdates.last,
-            ('blob-download-001', kMediaDownloadStatusIntegrityFailed),
-          );
+          expect(mediaRepo.downloadStatusUpdates.last, (
+            'blob-download-001',
+            kMediaDownloadStatusIntegrityFailed,
+          ));
           expect(bridge.deleteRequests, isEmpty);
         },
       );
@@ -2211,6 +2276,7 @@ void main() {
           };
 
           final result = await downloadMedia(
+            owner: MediaOwnerLane.direct,
             bridge: bridge,
             mediaAttachmentRepo: mediaRepo,
             mediaFileManager: fileManager,
@@ -2224,10 +2290,10 @@ void main() {
 
           expect(result, isNull);
           expect(bridge.commandLog, isNot(contains('blob:decrypt')));
-          expect(
-            mediaRepo.downloadStatusUpdates.last,
-            ('blob-download-001', kMediaDownloadStatusIntegrityFailed),
-          );
+          expect(mediaRepo.downloadStatusUpdates.last, (
+            'blob-download-001',
+            kMediaDownloadStatusIntegrityFailed,
+          ));
           expect(mediaRepo.localPathUpdates, isEmpty);
           final absolutePath = await fileManager.localPathForAttachment(
             contactPeerId: 'contact-A',
@@ -2239,49 +2305,48 @@ void main() {
         },
       );
 
-      test(
-        'transient bridge failure during decrypt keeps .enc and stays '
-        'retryable',
-        () async {
-          final encrypted = _encryptedBytes(_jpegBytes);
-          bridge.downloadedBytes = encrypted;
-          bridge.downloadResponse = {
-            'ok': true,
-            'id': 'blob-download-001',
-            'mime': 'image/jpeg',
-            'size': encrypted.length,
-          };
-          bridge.throwOnDecrypt = true;
+      test('transient bridge failure during decrypt keeps .enc and stays '
+          'retryable', () async {
+        final encrypted = _encryptedBytes(_jpegBytes);
+        bridge.downloadedBytes = encrypted;
+        bridge.downloadResponse = {
+          'ok': true,
+          'id': 'blob-download-001',
+          'mime': 'image/jpeg',
+          'size': encrypted.length,
+        };
+        bridge.throwOnDecrypt = true;
 
-          final result = await downloadMedia(
-            bridge: bridge,
-            mediaAttachmentRepo: mediaRepo,
-            mediaFileManager: fileManager,
-            attachment: _encryptedGroupAttachment(testAttachment, _jpegBytes),
-            contactPeerId: 'contact-A',
-          );
+        final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: _encryptedGroupAttachment(testAttachment, _jpegBytes),
+          contactPeerId: 'contact-A',
+        );
 
-          expect(result, isNull);
-          // Retryable failed — NOT integrity_failed: the ciphertext was
-          // never cryptographically evaluated.
-          expect(
-            mediaRepo.downloadStatusUpdates.last,
-            ('blob-download-001', kMediaDownloadStatusFailed),
-          );
-          final absolutePath = await fileManager.localPathForAttachment(
-            contactPeerId: 'contact-A',
-            blobId: 'blob-download-001',
-            mime: 'image/jpeg',
-          );
-          expect(File('$absolutePath.enc').existsSync(), isTrue);
-          expect(bridge.deleteRequests, isEmpty);
-        },
-      );
+        expect(result, isNull);
+        // Retryable failed — NOT integrity_failed: the ciphertext was
+        // never cryptographically evaluated.
+        expect(mediaRepo.downloadStatusUpdates.last, (
+          'blob-download-001',
+          kMediaDownloadStatusFailed,
+        ));
+        final absolutePath = await fileManager.localPathForAttachment(
+          contactPeerId: 'contact-A',
+          blobId: 'blob-download-001',
+          mime: 'image/jpeg',
+        );
+        expect(File('$absolutePath.enc').existsSync(), isTrue);
+        expect(bridge.deleteRequests, isEmpty);
+      });
 
       test('legacy plaintext direct attachment stays decrypt-free', () async {
         // Green pin guarding the mixed-version grace window: no key
         // material → today's `.part` staging + promote + ack, no decrypt.
         final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: bridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -2298,65 +2363,16 @@ void main() {
         expect(bridge.deleteRequests, hasLength(1));
       });
 
-      test(
-        'retry adopts complete encrypted staged artifact via '
-        'decrypt-then-promote',
-        () async {
-          // 'cipher:kkkk:nnn:' prefix is exactly 16 bytes, so the fake
-          // ciphertext is plaintext + 16 — matching the real AES-GCM tag
-          // overhead the adoption gate expects.
-          const key = 'kkkk';
-          const nonce = 'nnn';
-          final encrypted = _encryptedBytes(_jpegBytes, key: key, nonce: nonce);
-          expect(encrypted.length, _jpegBytes.length + 16);
-
-          final attachment = _encryptedGroupAttachment(
-            testAttachment,
-            _jpegBytes,
-            key: key,
-            nonce: nonce,
-            contentHash: _hashBytes(encrypted),
-          );
-          final absolutePath = await fileManager.localPathForAttachment(
-            contactPeerId: 'contact-A',
-            blobId: attachment.id,
-            mime: attachment.mime,
-          );
-          final staged = File('$absolutePath.enc');
-          await staged.parent.create(recursive: true);
-          await staged.writeAsBytes(encrypted, flush: true);
-
-          var localPathUpdatesAtDeleteTime = -1;
-          bridge.onDeleteRequest = () {
-            localPathUpdatesAtDeleteTime = mediaRepo.localPathUpdates.length;
-          };
-
-          final result = await downloadMedia(
-            bridge: bridge,
-            mediaAttachmentRepo: mediaRepo,
-            mediaFileManager: fileManager,
-            attachment: attachment,
-            contactPeerId: 'contact-A',
-          );
-
-          expect(result, isNotNull);
-          expect(result!.downloadStatus, kMediaDownloadStatusDone);
-          expect(File(absolutePath).readAsBytesSync(), _jpegBytes);
-          expect(bridge.commandLog, isNot(contains('media:download')));
-          expect(
-            bridge.commandLog.where((cmd) => cmd == 'blob:decrypt'),
-            hasLength(1),
-          );
-          await waitForAckDelete(bridge);
-          expect(bridge.deleteRequests, hasLength(1));
-          expect(localPathUpdatesAtDeleteTime, 1);
-        },
-      );
-
-      test('adoption ignores encrypted artifact with wrong staged size', () async {
+      test('retry adopts complete encrypted staged artifact via '
+          'decrypt-then-promote', () async {
+        // 'cipher:kkkk:nnn:' prefix is exactly 16 bytes, so the fake
+        // ciphertext is plaintext + 16 — matching the real AES-GCM tag
+        // overhead the adoption gate expects.
         const key = 'kkkk';
         const nonce = 'nnn';
         final encrypted = _encryptedBytes(_jpegBytes, key: key, nonce: nonce);
+        expect(encrypted.length, _jpegBytes.length + 16);
+
         final attachment = _encryptedGroupAttachment(
           testAttachment,
           _jpegBytes,
@@ -2371,21 +2387,15 @@ void main() {
         );
         final staged = File('$absolutePath.enc');
         await staged.parent.create(recursive: true);
-        // Truncated artifact — a genuine partial; must NOT be adopted.
-        await staged.writeAsBytes(
-          encrypted.sublist(0, encrypted.length - 3),
-          flush: true,
-        );
+        await staged.writeAsBytes(encrypted, flush: true);
 
-        bridge.downloadedBytes = encrypted;
-        bridge.downloadResponse = {
-          'ok': true,
-          'id': attachment.id,
-          'mime': attachment.mime,
-          'size': encrypted.length,
+        var localPathUpdatesAtDeleteTime = -1;
+        bridge.onDeleteRequest = () {
+          localPathUpdatesAtDeleteTime = mediaRepo.localPathUpdates.length;
         };
 
         final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
           bridge: bridge,
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: fileManager,
@@ -2395,10 +2405,67 @@ void main() {
 
         expect(result, isNotNull);
         expect(result!.downloadStatus, kMediaDownloadStatusDone);
-        // PL-013 preserved: genuine partials re-download.
-        expect(bridge.commandLog, contains('media:download'));
         expect(File(absolutePath).readAsBytesSync(), _jpegBytes);
+        expect(bridge.commandLog, isNot(contains('media:download')));
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'blob:decrypt'),
+          hasLength(1),
+        );
+        await waitForAckDelete(bridge);
+        expect(bridge.deleteRequests, hasLength(1));
+        expect(localPathUpdatesAtDeleteTime, 1);
       });
+
+      test(
+        'adoption ignores encrypted artifact with wrong staged size',
+        () async {
+          const key = 'kkkk';
+          const nonce = 'nnn';
+          final encrypted = _encryptedBytes(_jpegBytes, key: key, nonce: nonce);
+          final attachment = _encryptedGroupAttachment(
+            testAttachment,
+            _jpegBytes,
+            key: key,
+            nonce: nonce,
+            contentHash: _hashBytes(encrypted),
+          );
+          final absolutePath = await fileManager.localPathForAttachment(
+            contactPeerId: 'contact-A',
+            blobId: attachment.id,
+            mime: attachment.mime,
+          );
+          final staged = File('$absolutePath.enc');
+          await staged.parent.create(recursive: true);
+          // Truncated artifact — a genuine partial; must NOT be adopted.
+          await staged.writeAsBytes(
+            encrypted.sublist(0, encrypted.length - 3),
+            flush: true,
+          );
+
+          bridge.downloadedBytes = encrypted;
+          bridge.downloadResponse = {
+            'ok': true,
+            'id': attachment.id,
+            'mime': attachment.mime,
+            'size': encrypted.length,
+          };
+
+          final result = await downloadMedia(
+            owner: MediaOwnerLane.direct,
+            bridge: bridge,
+            mediaAttachmentRepo: mediaRepo,
+            mediaFileManager: fileManager,
+            attachment: attachment,
+            contactPeerId: 'contact-A',
+          );
+
+          expect(result, isNotNull);
+          expect(result!.downloadStatus, kMediaDownloadStatusDone);
+          // PL-013 preserved: genuine partials re-download.
+          expect(bridge.commandLog, contains('media:download'));
+          expect(File(absolutePath).readAsBytesSync(), _jpegBytes);
+        },
+      );
     });
   });
 }

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
     as group_send;
@@ -93,7 +94,7 @@ void main() {
       var doneCount = 0;
       for (final message in messages) {
         final attachments = await user.mediaAttachmentRepo
-            .getAttachmentsForMessage(message.id);
+            .getAttachmentsForMessage(message.id, owner: MediaOwnerLane.group);
         doneCount += attachments
             .where((attachment) => attachment.downloadStatus == 'done')
             .length;
@@ -257,7 +258,7 @@ void main() {
             (message) => message.text == text,
           );
           final attachments = await reader.mediaAttachmentRepo
-              .getAttachmentsForMessage(message.id);
+              .getAttachmentsForMessage(message.id, owner: MediaOwnerLane.group);
           expect(attachments, hasLength(1), reason: text);
           return attachments.single;
         }
