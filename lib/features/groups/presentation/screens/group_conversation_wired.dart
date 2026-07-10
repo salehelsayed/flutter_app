@@ -24,6 +24,9 @@ import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
+import 'package:flutter_app/core/media/received_media_egress.dart';
+import 'package:flutter_app/core/media/received_media_egress_service.dart';
+import 'package:flutter_app/core/widgets/quiet_confirm.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/notification_tap_timing.dart';
@@ -37,9 +40,13 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
+import 'package:flutter_app/features/groups/application/group_media_delete_for_me_coordinator.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
+import 'package:flutter_app/features/groups/application/group_received_media_action_policy.dart';
+import 'package:flutter_app/features/groups/application/group_received_media_actions.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
+import 'package:flutter_app/features/groups/application/group_sender_display_name.dart';
 import 'package:flutter_app/features/conversation/application/load_reactions_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
@@ -66,6 +73,7 @@ import 'package:flutter_app/features/groups/presentation/group_backlog_retention
 import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_wired.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_media_info_sheet.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_reaction_details_sheet.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/settings/application/media_download_policy.dart';
@@ -73,8 +81,9 @@ import 'package:flutter_app/features/settings/domain/models/background_preferenc
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/media_download_preferences.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
-import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
+import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
+import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
 
 class _PreparedGroupMediaUpload {
   final PendingComposerMedia source;
@@ -189,6 +198,17 @@ class GroupConversationWired extends StatefulWidget {
   /// user-authoritative and never gated by this decider.
   final MediaAutoDownloadDecider? autoDownloadDecider;
 
+  /// 235: Save/Share qualification adapter. Null (production default when a
+  /// media repository is available) constructs the real controller over
+  /// [ReceivedMediaEgressService]; tests inject a recording controller. The
+  /// UI never calls the native egress gateway or a delivery seam directly.
+  final GroupReceivedMediaActionsController? mediaActionsController;
+
+  /// 235: whole-message local delete seam. Production wiring stays null until
+  /// the plan-235 persistence slice (DB v98 deletion journal) lands; while
+  /// null the Delete-for-me action is not offered.
+  final GroupMediaDeleteForMeCoordinator? mediaDeleteForMeCoordinator;
+
   const GroupConversationWired({
     super.key,
     required this.group,
@@ -221,6 +241,8 @@ class GroupConversationWired extends StatefulWidget {
     this.notificationTappedAt,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
     this.autoDownloadDecider,
+    this.mediaActionsController,
+    this.mediaDeleteForMeCoordinator,
   });
 
   @override
@@ -302,6 +324,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   List<PendingComposerMedia> _pendingAttachments = [];
   final _composerState = ValueNotifier(const ConversationComposerViewState());
   Map<String, List<MediaAttachment>> _mediaMap = {};
+
+  // 235: received-media action seams. The controller requalifies the reloaded
+  // row before every egress call; the delete coordinator is UI-injected only
+  // until the v98 journal persistence slice lands.
+  GroupReceivedMediaActionsController? _mediaActionsController;
+  final Set<String> _deleteForMeInFlight = <String>{};
 
   // Reaction state
   Map<String, List<MessageReaction>> _reactions = {};
@@ -451,6 +479,17 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _group = widget.group;
+    final mediaRepo = widget.mediaAttachmentRepo;
+    _mediaActionsController =
+        widget.mediaActionsController ??
+        (mediaRepo != null
+            ? GroupReceivedMediaActionsController(
+                messageRepository: widget.msgRepo,
+                mediaAttachmentRepository: mediaRepo,
+                egressService: ReceivedMediaEgressService(),
+                mediaFileManager: widget.mediaFileManager,
+              )
+            : null);
     _isLifecycleResumed = _currentLifecycleAllowsVisibleRead();
     _draftText = widget.initialText ?? '';
     widget.groupConversationTracker?.setActive(_activeGroupConversationKey);
@@ -4605,28 +4644,265 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     final visual = attachments
         .where((a) => a.mediaType == 'image' || a.mediaType == 'video')
         .toList();
-    if (index < visual.length &&
-        GroupMediaIntegrityPolicy.canDisplayVerifiedGroupMedia(visual[index])) {
-      final allPaths = visual
-          .where(GroupMediaIntegrityPolicy.canDisplayVerifiedGroupMedia)
-          .map((a) => a.localPath!)
-          .toList();
-      if (allPaths.isEmpty) return;
-      final tappedPath = visual[index].localPath!;
-      final startIndex = allPaths
-          .indexOf(tappedPath)
-          .clamp(0, allPaths.length - 1)
-          .toInt();
+    if (index >= visual.length ||
+        !GroupMediaIntegrityPolicy.canDisplayVerifiedGroupMedia(
+          visual[index],
+        )) {
+      return;
+    }
+    // 235: typed viewer with exact per-attachment identity. The page list is
+    // ONLY this parent's displayable attachments — no conversation-wide swipe
+    // navigation (library navigation is plan 237).
+    final displayable = visual
+        .where(GroupMediaIntegrityPolicy.canDisplayVerifiedGroupMedia)
+        .toList();
+    if (displayable.isEmpty) return;
+    final tappedId = visual[index].id;
+    var startIndex = displayable.indexWhere((a) => a.id == tappedId);
+    if (startIndex < 0) startIndex = 0;
+    final message = _messageById(messageId);
+    final items = displayable
+        .map((attachment) => _viewerItemFor(message, attachment))
+        .toList();
 
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => FullScreenImageViewer(
-            localPath: tappedPath,
-            allPaths: allPaths,
-            initialIndex: startIndex,
-          ),
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => FullScreenTypedMediaViewer(
+          items: items,
+          initialIndex: startIndex,
+          onAction: _onViewerAction,
         ),
+      ),
+    );
+  }
+
+  GroupMessage? _messageById(String messageId) {
+    for (final message in _messages) {
+      if (message.id == messageId) return message;
+    }
+    return null;
+  }
+
+  String? _senderLabelFor(GroupMessage? message) {
+    if (message == null) return null;
+    if (!message.isIncoming) {
+      return AppLocalizations.of(context)!.feed_you;
+    }
+    return resolveGroupSenderDisplayName(
+      senderPeerId: message.senderPeerId,
+      wireSenderUsername: message.senderUsername,
+      member: _membersByPeerId[message.senderPeerId],
+      preferMemberName: true,
+    );
+  }
+
+  MediaViewerItem _viewerItemFor(
+    GroupMessage? message,
+    MediaAttachment attachment,
+  ) {
+    // No trusted parent row -> no capabilities; the item stays view-only.
+    final capabilities = message == null
+        ? const <GroupReceivedMediaAction>{}
+        : GroupReceivedMediaActionPolicy.capabilitiesFor(
+            groupType: _group.type,
+            isIncoming: message.isIncoming,
+            attachment: attachment,
+            canWrite: _canWrite,
+          );
+    final allowed = <MediaViewerAction>{
+      if (_mediaActionsController != null &&
+          capabilities.contains(GroupReceivedMediaAction.save))
+        MediaViewerAction.save,
+      if (_mediaActionsController != null &&
+          capabilities.contains(GroupReceivedMediaAction.share))
+        MediaViewerAction.share,
+      if (capabilities.contains(GroupReceivedMediaAction.info))
+        MediaViewerAction.info,
+      if (widget.mediaDeleteForMeCoordinator != null &&
+          capabilities.contains(GroupReceivedMediaAction.deleteForMe))
+        MediaViewerAction.delete,
+      if (capabilities.contains(GroupReceivedMediaAction.reply))
+        MediaViewerAction.reply,
+    };
+    final localPath = attachment.localPath;
+    final caption = message?.text.trim();
+    return MediaViewerItem(
+      attachmentId: attachment.id,
+      messageId: attachment.messageId,
+      kind: attachment.mediaType == 'video'
+          ? MediaViewerKind.video
+          : (attachment.isAnimated ? MediaViewerKind.gif : MediaViewerKind.image),
+      mime: attachment.mime,
+      owner: MediaOwnerLane.group,
+      localPath: localPath == null
+          ? null
+          : MediaFileManager.resolveStoredPathSync(localPath),
+      sizeBytes: attachment.size > 0 ? attachment.size : null,
+      width: attachment.width,
+      height: attachment.height,
+      durationMs: attachment.durationMs,
+      caption: caption == null || caption.isEmpty ? null : caption,
+      senderLabel: _senderLabelFor(message),
+      timestamp: message?.timestamp,
+      capabilities: MediaViewerActionCapabilities(allowed: allowed),
+    );
+  }
+
+  Future<MediaViewerActionResult> _onViewerAction(
+    MediaViewerItem item,
+    MediaViewerAction action,
+  ) async {
+    switch (action) {
+      case MediaViewerAction.save:
+        final controller = _mediaActionsController;
+        if (controller == null) return MediaViewerActionResult.failure;
+        final attempt = await controller.save(
+          groupId: _group.id,
+          messageId: item.messageId,
+          attachmentId: item.attachmentId,
+        );
+        return _egressAttemptToViewerResult(attempt);
+      case MediaViewerAction.share:
+        final controller = _mediaActionsController;
+        if (controller == null) return MediaViewerActionResult.failure;
+        final attempt = await controller.share(
+          groupId: _group.id,
+          messageId: item.messageId,
+          attachmentId: item.attachmentId,
+        );
+        return _egressAttemptToViewerResult(attempt);
+      case MediaViewerAction.delete:
+        final deleted = await _confirmAndDeleteForMe(item.messageId);
+        if (!deleted) return MediaViewerActionResult.cancelled;
+        // The parent (and its media) is gone locally; leave the viewer.
+        if (mounted) Navigator.of(context).pop();
+        return MediaViewerActionResult.success;
+      case MediaViewerAction.info:
+        final message = _messageById(item.messageId);
+        MediaAttachment? attachment;
+        for (final row in _mediaMap[item.messageId] ?? const <MediaAttachment>[]) {
+          if (row.id == item.attachmentId) {
+            attachment = row;
+            break;
+          }
+        }
+        if (message == null || attachment == null || !mounted) {
+          return MediaViewerActionResult.failure;
+        }
+        await GroupMediaInfoSheet.show(
+          context,
+          attachment: attachment,
+          senderDisplayName: _senderLabelFor(message) ?? '',
+          sentAt: message.timestamp,
+          caption: message.text,
+        );
+        return MediaViewerActionResult.success;
+      case MediaViewerAction.reply:
+        if (!_canWrite) return MediaViewerActionResult.failure;
+        if (mounted) Navigator.of(context).pop();
+        _onQuoteReply(item.messageId);
+        return MediaViewerActionResult.success;
+      case MediaViewerAction.forward:
+      case MediaViewerAction.bookmark:
+        // Not offered by plan 235 (forward is plan 236; bookmark is the
+        // library surface). Capabilities never include them here.
+        return MediaViewerActionResult.failure;
+    }
+  }
+
+  MediaViewerActionResult _egressAttemptToViewerResult(
+    GroupReceivedMediaEgressAttempt attempt,
+  ) {
+    final result = attempt.result;
+    if (result == null) return MediaViewerActionResult.failure;
+    switch (result.outcome) {
+      case MediaEgressOutcome.saved:
+      case MediaEgressOutcome.presented:
+        return MediaViewerActionResult.success;
+      case MediaEgressOutcome.cancelled:
+        return MediaViewerActionResult.cancelled;
+      case MediaEgressOutcome.partial:
+      case MediaEgressOutcome.busy:
+      case MediaEgressOutcome.permissionDenied:
+      case MediaEgressOutcome.rejected:
+      case MediaEgressOutcome.platformFailure:
+        return MediaViewerActionResult.failure;
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // 235: bubble-initiated received-media actions
+  // ---------------------------------------------------------------------
+
+  Future<void> _onMediaSave(String messageId, String attachmentId) async {
+    final controller = _mediaActionsController;
+    if (controller == null) return;
+    final attempt = await controller.save(
+      groupId: _group.id,
+      messageId: messageId,
+      attachmentId: attachmentId,
+    );
+    if (!mounted) return;
+    if (attempt.result?.outcome == MediaEgressOutcome.saved) {
+      showQuietConfirm(
+        context,
+        AppLocalizations.of(context)!.group_media_saved_confirm,
       );
+    }
+  }
+
+  Future<void> _onMediaShare(String messageId, String attachmentId) async {
+    final controller = _mediaActionsController;
+    if (controller == null) return;
+    // The OS share sheet is its own visible outcome; no extra confirm cue.
+    await controller.share(
+      groupId: _group.id,
+      messageId: messageId,
+      attachmentId: attachmentId,
+    );
+  }
+
+  Future<void> _onMediaDeleteForMe(String messageId) async {
+    await _confirmAndDeleteForMe(messageId);
+  }
+
+  /// Returns true only when the user confirmed AND the coordinator ran.
+  /// Cancel is a zero-op; a second confirm while one is in flight for the
+  /// same parent coalesces to a no-op.
+  Future<bool> _confirmAndDeleteForMe(String messageId) async {
+    final coordinator = widget.mediaDeleteForMeCoordinator;
+    if (coordinator == null || !mounted) return false;
+    final l10n = AppLocalizations.of(context)!;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.group_media_delete_for_me_title),
+        content: Text(l10n.group_media_delete_for_me_body),
+        actions: [
+          TextButton(
+            key: const ValueKey('group-media-delete-cancel'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(l10n.group_media_delete_for_me_cancel),
+          ),
+          TextButton(
+            key: const ValueKey('group-media-delete-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(l10n.group_media_delete_for_me_confirm),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return false;
+    final flightKey = '${_group.id}:$messageId';
+    if (!_deleteForMeInFlight.add(flightKey)) return false;
+    try {
+      await coordinator.deleteForMe(
+        groupId: _group.id,
+        messageId: messageId,
+      );
+      return true;
+    } finally {
+      _deleteForMeInFlight.remove(flightKey);
     }
   }
 
@@ -5463,6 +5739,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                 : null,
             recordingState: _composerViewState.recordingState,
             onMediaTap: _onMediaTap,
+            onMediaSave: _mediaActionsController != null ? _onMediaSave : null,
+            onMediaShare: _mediaActionsController != null
+                ? _onMediaShare
+                : null,
+            onMediaDeleteForMe: widget.mediaDeleteForMeCoordinator != null
+                ? _onMediaDeleteForMe
+                : null,
             reactions: _reactions,
             onReactionTap: _onReactionTap,
             onReactionSelected: _canMutateReactions

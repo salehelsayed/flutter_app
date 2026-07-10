@@ -51,8 +51,14 @@ import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/settings/application/media_download_policy.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/media_download_preferences.dart';
-import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
+import 'package:flutter_app/core/media/received_media_egress.dart';
+import 'package:flutter_app/core/media/received_media_egress_service.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
+import 'package:flutter_app/features/groups/application/group_media_delete_for_me_coordinator.dart';
+import 'package:flutter_app/features/groups/application/group_received_media_actions.dart';
+import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
+import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
@@ -1051,6 +1057,8 @@ void main() {
       CountingGroupMessageRepository? messageRepo,
       GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
       MediaAutoDownloadDecider? autoDownloadDecider,
+      GroupReceivedMediaActionsController? mediaActionsController,
+      GroupMediaDeleteForMeCoordinator? mediaDeleteForMeCoordinator,
     }) {
       final g = group ?? makeChatGroup();
       final effectiveMsgRepo = messageRepo ?? msgRepo;
@@ -1091,6 +1099,8 @@ void main() {
           groupConversationTracker: groupConversationTracker,
           inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
           autoDownloadDecider: autoDownloadDecider,
+          mediaActionsController: mediaActionsController,
+          mediaDeleteForMeCoordinator: mediaDeleteForMeCoordinator,
         ),
       );
     }
@@ -5366,7 +5376,7 @@ void main() {
 
         await tester.tap(find.byType(MediaGrid));
         await pumpFrames(tester, count: 4);
-        expect(find.byType(FullScreenImageViewer), findsOneWidget);
+        expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
         if (!downloadGate.isCompleted) {
           downloadGate.complete();
         }
@@ -5658,7 +5668,7 @@ void main() {
 
         await tester.tap(find.byType(MediaGrid));
         await pumpFrames(tester, count: 4);
-        expect(find.byType(FullScreenImageViewer), findsOneWidget);
+        expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
         if (!downloadGate.isCompleted) {
           downloadGate.complete();
         }
@@ -5823,7 +5833,7 @@ void main() {
 
         await tester.tap(find.byType(MediaGrid));
         await pumpFrames(tester, count: 4);
-        expect(find.byType(FullScreenImageViewer), findsOneWidget);
+        expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
         if (!downloadGate.isCompleted) {
           downloadGate.complete();
         }
@@ -13909,5 +13919,545 @@ void main() {
       },
     );
   });
+
+  // -------------------------------------------------------------------------
+  // 235: received-media core actions (typed viewer + injected coordinators)
+  // -------------------------------------------------------------------------
+  group('235 received media actions', () {
+    late FakeMediaFileManager mediaFileManager;
+
+    setUp(() {
+      mediaFileManager = FakeMediaFileManager();
+    });
+
+    tearDown(() {
+      final root = Directory(FakeMediaFileManager.testRootPath);
+      if (root.existsSync()) root.deleteSync(recursive: true);
+    });
+
+    /// Seeds an incoming persisted message with one DONE, verified image
+    /// attachment backed by a real decodable file, and returns the absolute
+    /// stored path.
+    Future<String> seedIncomingDoneImage({
+      required String messageId,
+      required String attachmentId,
+      String caption = 'photo caption',
+      String senderPeerId = 'peer-alice',
+    }) async {
+      await msgRepo.saveMessage(
+        makeMessage(
+          id: messageId,
+          text: caption,
+          senderPeerId: senderPeerId,
+        ),
+      );
+      final relativePath = mediaFileManager.relativePathForAttachment(
+        contactPeerId: 'group-1',
+        blobId: attachmentId,
+        mime: 'image/png',
+      );
+      final absolutePath = await mediaFileManager.resolveStoredPath(
+        relativePath,
+      );
+      final mediaFile = File(absolutePath);
+      mediaFile.parent.createSync(recursive: true);
+      mediaFile.writeAsBytesSync(_tinyPngBytes, flush: true);
+      await mediaAttachmentRepo.saveAttachment(
+        MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/png',
+          size: _tinyPngBytes.length,
+          mediaType: 'image',
+          localPath: absolutePath,
+          downloadStatus: kMediaDownloadStatusDone,
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+          contentHash: _validContentHash,
+          encryptionKeyBase64: 'a2V5',
+          encryptionNonce: 'bm9uY2U=',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        ),
+        owner: MediaOwnerLane.group,
+      );
+      return absolutePath;
+    }
+
+    // The initial load performs REAL file I/O (path resolve + existence
+    // checks), which only completes inside tester.runAsync — fake-async
+    // pumps alone would hang it forever.
+    Future<void> pumpUntilMediaLoaded(
+      WidgetTester tester,
+      String messageId, {
+      int expectedCount = 1,
+    }) async {
+      for (var i = 0; i < 40; i++) {
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 25));
+        });
+        await tester.pump();
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        if ((screen.mediaMap[messageId]?.length ?? 0) >= expectedCount) {
+          return;
+        }
+      }
+      fail('media for $messageId did not load');
+    }
+
+    testWidgets(
+      'GMA-03 viewer selection and reopen preserve exact attachment identity',
+      (tester) async {
+        tester.view.physicalSize = const Size(1200, 4000);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        await seedIncomingDoneImage(messageId: 'msg-a', attachmentId: 'att-a');
+        // Second attachment on the SAME parent.
+        final relativeB = mediaFileManager.relativePathForAttachment(
+          contactPeerId: 'group-1',
+          blobId: 'att-b',
+          mime: 'image/png',
+        );
+        final absoluteB = await mediaFileManager.resolveStoredPath(relativeB);
+        File(absoluteB)
+          ..parent.createSync(recursive: true)
+          ..writeAsBytesSync(_tinyPngBytes, flush: true);
+        await mediaAttachmentRepo.saveAttachment(
+          MediaAttachment(
+            id: 'att-b',
+            messageId: 'msg-a',
+            mime: 'image/png',
+            size: _tinyPngBytes.length,
+            mediaType: 'image',
+            localPath: absoluteB,
+            downloadStatus: kMediaDownloadStatusDone,
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+            contentHash: _validContentHash,
+            encryptionKeyBase64: 'a2V5',
+            encryptionNonce: 'bm9uY2U=',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ),
+          owner: MediaOwnerLane.group,
+        );
+        // A DIFFERENT parent with its own attachment.
+        await seedIncomingDoneImage(messageId: 'msg-b', attachmentId: 'att-c');
+
+        final controller = RecordingGroupMediaActionsController(
+          messageRepository: msgRepo,
+          mediaAttachmentRepository: mediaAttachmentRepo,
+        );
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            mediaActionsController: controller,
+          ),
+        );
+        await pumpUntilMediaLoaded(tester, 'msg-a', expectedCount: 2);
+        await pumpUntilMediaLoaded(tester, 'msg-b');
+
+        // Open the viewer on the SECOND attachment of msg-a.
+        await tester.tap(
+          find.byKey(const ValueKey('media-grid-cell-msg-a-att-b')),
+        );
+        await pumpFrames(tester, count: 4);
+        expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+        var viewer = tester.widget<FullScreenTypedMediaViewer>(
+          find.byType(FullScreenTypedMediaViewer),
+        );
+        expect(
+          viewer.items.map((item) => item.attachmentId).toList(),
+          ['att-a', 'att-b'],
+          reason: 'viewer pages are ONLY this parent\'s attachments — '
+              'no conversation-wide swipe navigation',
+        );
+        expect(viewer.initialIndex, 1);
+        expect(viewer.items[1].messageId, 'msg-a');
+
+        // The dispatched action carries the exact selected item.
+        await tester.tap(find.byKey(const ValueKey('media_action_save')));
+        await pumpFrames(tester, count: 4);
+        expect(controller.saves, ['group-1/msg-a/att-b']);
+
+        // Reopen from a different parent: identity follows the new parent.
+        await tester.tap(find.byIcon(Icons.arrow_back));
+        await pumpFrames(tester, count: 10);
+        expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
+        await tester.tap(
+          find.byKey(const ValueKey('media-grid-cell-msg-b-att-c')),
+        );
+        await pumpFrames(tester, count: 4);
+        viewer = tester.widget<FullScreenTypedMediaViewer>(
+          find.byType(FullScreenTypedMediaViewer),
+        );
+        expect(
+          viewer.items.map((item) => item.attachmentId).toList(),
+          ['att-c'],
+        );
+        expect(viewer.initialIndex, 0);
+        await tester.tap(find.byKey(const ValueKey('media_action_save')));
+        await pumpFrames(tester, count: 4);
+        expect(controller.saves, [
+          'group-1/msg-a/att-b',
+          'group-1/msg-b/att-c',
+        ]);
+      },
+    );
+
+    testWidgets('GMA-05 media reply reuses existing group quote flow', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1200, 4000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      await saveActiveGroupMembers(groupRepo, group);
+      await seedIncomingDoneImage(
+        messageId: 'msg-m',
+        attachmentId: 'att-1',
+        caption: 'reply to this photo',
+      );
+      await tester.pumpWidget(
+        buildWidget(
+          group: group,
+          mediaRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+          mediaActionsController: RecordingGroupMediaActionsController(
+            messageRepository: msgRepo,
+            mediaAttachmentRepository: mediaAttachmentRepo,
+          ),
+        ),
+      );
+      await pumpUntilMediaLoaded(tester, 'msg-m');
+
+      // Viewer Reply pops the viewer and arms the existing quote composer.
+      await tester.tap(
+        find.byKey(const ValueKey('media-grid-cell-msg-m-att-1')),
+      );
+      await pumpFrames(tester, count: 4);
+      expect(find.byKey(const ValueKey('media_action_reply')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('media_action_reply')));
+      await pumpFrames(tester, count: 10);
+      expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
+      final screen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      expect(screen.activeQuoteText, 'reply to this photo');
+
+      // canWrite == false (no current send key): the viewer offers no Reply
+      // slot at all. Empty membership is deliberately ambiguous (startup
+      // window) and never infers removal, so the missing-key gate is the
+      // deterministic read-only lever here.
+      final readOnlyGroup = makeChatGroup(role: GroupRole.member);
+      groupRepo = InMemoryGroupRepository();
+      await groupRepo.saveGroup(readOnlyGroup);
+      await saveActiveGroupMembers(groupRepo, readOnlyGroup);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpWidget(
+        buildWidget(
+          group: readOnlyGroup,
+          mediaRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+          mediaActionsController: RecordingGroupMediaActionsController(
+            messageRepository: msgRepo,
+            mediaAttachmentRepository: mediaAttachmentRepo,
+          ),
+        ),
+      );
+      await pumpUntilMediaLoaded(tester, 'msg-m');
+      // Wait for the security-status load to settle the write gate.
+      for (var i = 0; i < 40; i++) {
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        if (!screen.canWrite) break;
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 25));
+        });
+        await tester.pump();
+      }
+      expect(
+        tester
+            .widget<GroupConversationScreen>(
+              find.byType(GroupConversationScreen),
+            )
+            .canWrite,
+        isFalse,
+        reason: 'self is not an active member -> read-only',
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('media-grid-cell-msg-m-att-1')),
+      );
+      await pumpFrames(tester, count: 4);
+      expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+      expect(find.byKey(const ValueKey('media_action_reply')), findsNothing);
+      expect(find.byKey(const ValueKey('media_action_save')), findsOneWidget);
+    });
+
+    testWidgets(
+      'GMA-11 wired media actions reach only injected coordinators',
+      (tester) async {
+        tester.view.physicalSize = const Size(1200, 4000);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        await seedIncomingDoneImage(messageId: 'msg-m', attachmentId: 'att-1');
+        final controller = RecordingGroupMediaActionsController(
+          messageRepository: msgRepo,
+          mediaAttachmentRepository: mediaAttachmentRepo,
+        );
+        final deleteCoordinator = RecordingGroupMediaDeleteForMeCoordinator();
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            mediaActionsController: controller,
+            mediaDeleteForMeCoordinator: deleteCoordinator,
+          ),
+        );
+        await pumpUntilMediaLoaded(tester, 'msg-m');
+        final commandsBefore = bridge.commandLog.length;
+
+        // Bubble long-press → Save reaches ONLY the injected controller.
+        await tester.longPress(
+          find.byKey(const ValueKey('media-grid-cell-msg-m-att-1')),
+        );
+        await pumpFrames(tester, count: 4);
+        await tester.tap(find.byKey(MessageContextOverlay.saveActionKey));
+        await pumpFrames(tester, count: 10);
+        expect(controller.saves, ['group-1/msg-m/att-1']);
+        expect(controller.egressServiceTouched, isFalse);
+
+        // Viewer Share reaches ONLY the injected controller.
+        await tester.tap(
+          find.byKey(const ValueKey('media-grid-cell-msg-m-att-1')),
+        );
+        await pumpFrames(tester, count: 4);
+        await tester.tap(find.byKey(const ValueKey('media_action_share')));
+        await pumpFrames(tester, count: 4);
+        expect(controller.shares, ['group-1/msg-m/att-1']);
+        await tester.tap(find.byIcon(Icons.arrow_back));
+        await pumpFrames(tester, count: 10);
+
+        // Delete: cancel is a zero-op.
+        await tester.longPress(
+          find.byKey(const ValueKey('media-grid-cell-msg-m-att-1')),
+        );
+        await pumpFrames(tester, count: 4);
+        await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
+        await pumpFrames(tester, count: 10);
+        expect(
+          find.byKey(const ValueKey('group-media-delete-confirm')),
+          findsOneWidget,
+        );
+        await tester.tap(
+          find.byKey(const ValueKey('group-media-delete-cancel')),
+        );
+        await pumpFrames(tester, count: 10);
+        expect(deleteCoordinator.calls, isEmpty);
+
+        // One confirm yields exactly one coordinator operation.
+        await tester.longPress(
+          find.byKey(const ValueKey('media-grid-cell-msg-m-att-1')),
+        );
+        await pumpFrames(tester, count: 4);
+        await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
+        await pumpFrames(tester, count: 10);
+        await tester.tap(
+          find.byKey(const ValueKey('group-media-delete-confirm')),
+        );
+        await pumpFrames(tester, count: 10);
+        expect(deleteCoordinator.calls, ['group-1/msg-m']);
+
+        // No send/publish/batch-delivery seam was touched by any action.
+        expect(
+          bridge.commandLog.skip(commandsBefore).where(
+            (raw) =>
+                raw.contains('group:publish') ||
+                raw.contains('group:sendReliable') ||
+                raw.contains('group:inboxStore'),
+          ),
+          isEmpty,
+        );
+      },
+    );
+
+    testWidgets(
+      'GMA-13 announcement and qa exclude discussion media actions',
+      (tester) async {
+        tester.view.physicalSize = const Size(1200, 4000);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        for (final group in [
+          makeAnnouncementGroup(role: GroupRole.member),
+          GroupModel(
+            id: 'group-1',
+            name: 'QA Group',
+            type: GroupType.qa,
+            topicName: 'topic-1',
+            description: 'QA',
+            createdAt: DateTime.now().toUtc(),
+            createdBy: 'peer-admin',
+            myRole: GroupRole.member,
+          ),
+        ]) {
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          await seedIncomingDoneImage(
+            messageId: 'msg-${group.type.name}',
+            attachmentId: 'att-${group.type.name}',
+          );
+          final controller = RecordingGroupMediaActionsController(
+            messageRepository: msgRepo,
+            mediaAttachmentRepository: mediaAttachmentRepo,
+          );
+          final deleteCoordinator =
+              RecordingGroupMediaDeleteForMeCoordinator();
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: mediaFileManager,
+              mediaActionsController: controller,
+              mediaDeleteForMeCoordinator: deleteCoordinator,
+            ),
+          );
+          final messageId = 'msg-${group.type.name}';
+          final attachmentId = 'att-${group.type.name}';
+          await pumpUntilMediaLoaded(tester, messageId);
+
+          // Tile long-press never offers the received-media entries.
+          await tester.longPress(
+            find.byKey(ValueKey('media-grid-cell-$messageId-$attachmentId')),
+          );
+          await pumpFrames(tester, count: 4);
+          expect(
+            find.byKey(MessageContextOverlay.saveActionKey),
+            findsNothing,
+            reason: '${group.type} must not offer Save',
+          );
+          expect(find.byKey(MessageContextOverlay.shareActionKey), findsNothing);
+          expect(find.byKey(MessageContextOverlay.infoActionKey), findsNothing);
+          expect(
+            find.byKey(MessageContextOverlay.deleteActionKey),
+            findsNothing,
+          );
+          // Dismiss whatever overlay (if any) is open.
+          if (tester.any(find.byKey(MessageContextOverlay.backdropKey))) {
+            await tester.tapAt(const Offset(5, 5));
+            await pumpFrames(tester, count: 10);
+          }
+
+          // Viewing stays available, but the viewer carries no action slot.
+          await tester.tap(
+            find.byKey(ValueKey('media-grid-cell-$messageId-$attachmentId')),
+          );
+          await pumpFrames(tester, count: 4);
+          expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+          for (final action in MediaViewerAction.values) {
+            expect(
+              find.byKey(ValueKey('media_action_${action.name}')),
+              findsNothing,
+              reason: '${group.type} viewer must not offer ${action.name}',
+            );
+          }
+          expect(controller.saves, isEmpty);
+          expect(controller.shares, isEmpty);
+          expect(deleteCoordinator.calls, isEmpty);
+          await tester.tap(find.byIcon(Icons.arrow_back));
+          await pumpFrames(tester, count: 10);
+        }
+      },
+    );
   });
+  });
+}
+
+/// 235: records Save/Share requests without touching the egress service; the
+/// service underneath THROWS so any UI bypass of the injected coordinator is
+/// loud.
+class RecordingGroupMediaActionsController
+    extends GroupReceivedMediaActionsController {
+  RecordingGroupMediaActionsController({
+    required super.messageRepository,
+    required super.mediaAttachmentRepository,
+  }) : super(egressService: _ThrowingEgressService());
+
+  final List<String> saves = [];
+  final List<String> shares = [];
+
+  bool get egressServiceTouched =>
+      (egressService as _ThrowingEgressService).touched;
+
+  @override
+  Future<GroupReceivedMediaEgressAttempt> save({
+    required String groupId,
+    required String messageId,
+    required String attachmentId,
+  }) async {
+    saves.add('$groupId/$messageId/$attachmentId');
+    return GroupReceivedMediaEgressAttempt.performed(
+      MediaEgressResult(
+        requestId: 'recorded-save',
+        outcome: MediaEgressOutcome.saved,
+        items: const [],
+      ),
+    );
+  }
+
+  @override
+  Future<GroupReceivedMediaEgressAttempt> share({
+    required String groupId,
+    required String messageId,
+    required String attachmentId,
+  }) async {
+    shares.add('$groupId/$messageId/$attachmentId');
+    return GroupReceivedMediaEgressAttempt.performed(
+      MediaEgressResult(
+        requestId: 'recorded-share',
+        outcome: MediaEgressOutcome.presented,
+        items: const [],
+      ),
+    );
+  }
+}
+
+class _ThrowingEgressService extends ReceivedMediaEgressService {
+  bool touched = false;
+
+  @override
+  Future<MediaEgressResult> perform({
+    required String requestId,
+    required MediaEgressDestination destination,
+    required List<ReceivedMediaEgressCandidate> selection,
+  }) async {
+    touched = true;
+    throw StateError('UI must never reach the egress service directly');
+  }
+}
+
+class RecordingGroupMediaDeleteForMeCoordinator
+    implements GroupMediaDeleteForMeCoordinator {
+  final List<String> calls = [];
+
+  @override
+  Future<void> deleteForMe({
+    required String groupId,
+    required String messageId,
+  }) async {
+    calls.add('$groupId/$messageId');
+  }
 }

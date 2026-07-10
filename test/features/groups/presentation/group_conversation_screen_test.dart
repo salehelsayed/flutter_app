@@ -8,6 +8,7 @@ import 'package:intl/intl.dart' as intl;
 
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -27,6 +28,7 @@ import 'package:flutter_app/features/groups/domain/models/group_pending_key_repa
 import 'package:flutter_app/features/groups/presentation/group_backlog_retention_notice.dart';
 import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_media_info_sheet.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
@@ -104,6 +106,9 @@ void main() {
     onRetryUnavailableMedia,
     Set<String> retryingFailedMessageIds = const {},
     void Function(String messageId, int index)? onMediaTap,
+    void Function(String messageId, String attachmentId)? onMediaSave,
+    void Function(String messageId, String attachmentId)? onMediaShare,
+    ValueChanged<String>? onMediaDeleteForMe,
     Map<String, List<MediaAttachment>> mediaMap = const {},
     Map<String, List<MessageReaction>> reactions = const {},
     void Function(String messageId, String emoji)? onReactionSelected,
@@ -146,6 +151,9 @@ void main() {
           onRetryUnavailableMedia: onRetryUnavailableMedia,
           retryingFailedMessageIds: retryingFailedMessageIds,
           onMediaTap: onMediaTap,
+          onMediaSave: onMediaSave,
+          onMediaShare: onMediaShare,
+          onMediaDeleteForMe: onMediaDeleteForMe,
           mediaMap: mediaMap,
           reactions: reactions,
           onReactionSelected: onReactionSelected,
@@ -2922,6 +2930,303 @@ void main() {
         expect(cardFor('g1').showAvatar, isTrue);
         expect(cardFor('g2').avatarOutsideBubble, isTrue);
         expect(cardFor('g2').showAvatar, isFalse);
+      },
+    );
+  });
+
+  // ---------------------------------------------------------------------
+  // 235: received-media core actions (bubble surface)
+  // ---------------------------------------------------------------------
+
+  group('235 received media actions', () {
+    final mediaMessage = GroupMessage(
+      id: 'msg-media',
+      groupId: 'group-1',
+      senderPeerId: 'peer-2',
+      senderUsername: 'Alice',
+      text: 'two attachments',
+      timestamp: DateTime.utc(2026, 7, 10, 9, 30),
+      createdAt: DateTime.utc(2026, 7, 10, 9, 30),
+      isIncoming: true,
+    );
+
+    MediaAttachment groupOwnedImage({
+      required String id,
+      String messageId = 'msg-media',
+      String? localPath,
+    }) {
+      return MediaAttachment(
+        id: id,
+        messageId: messageId,
+        mime: 'image/jpeg',
+        size: 2048,
+        mediaType: 'image',
+        localPath: localPath ?? 'media/group-1/$id.jpg',
+        downloadStatus: 'done',
+        contentHash: _validContentHash,
+        encryptionKeyBase64: _validEncryptionKey,
+        encryptionNonce: _validEncryptionNonce,
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        createdAt: '2026-07-10T09:30:00.000Z',
+        ownerLane: MediaOwnerLane.group,
+      );
+    }
+
+    Future<void> openMediaOverlay(WidgetTester tester, String cellKey) async {
+      await tester.longPress(find.byKey(ValueKey(cellKey)));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+    }
+
+    Future<void> tapOverlayAction(WidgetTester tester, Key actionKey) async {
+      await tester.tap(find.byKey(actionKey));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+    }
+
+    testWidgets(
+      'GMA-02 attachment long press targets one item and preserves reply copy reactions',
+      (tester) async {
+        final saveCalls = <String>[];
+        final shareCalls = <String>[];
+        final deleteCalls = <String>[];
+        final reactionCalls = <String>[];
+        String? quoteReplyId;
+
+        Widget widget() => buildTestWidget(
+          messages: [mediaMessage],
+          mediaMap: {
+            'msg-media': [
+              groupOwnedImage(id: 'att-a'),
+              groupOwnedImage(id: 'att-b'),
+            ],
+          },
+          onMediaSave: (messageId, attachmentId) =>
+              saveCalls.add('$messageId/$attachmentId'),
+          onMediaShare: (messageId, attachmentId) =>
+              shareCalls.add('$messageId/$attachmentId'),
+          onMediaDeleteForMe: deleteCalls.add,
+          onQuoteReply: (messageId) => quoteReplyId = messageId,
+          onReactionSelected: (messageId, emoji) =>
+              reactionCalls.add('$messageId/$emoji'),
+        );
+
+        await tester.pumpWidget(widget());
+        await tester.pump();
+
+        // Long-press the SECOND attachment: the overlay carries att-b exactly,
+        // while reaction bar, Reply, and Copy remain available.
+        await openMediaOverlay(tester, 'media-grid-cell-msg-media-att-b');
+        expect(
+          find.byKey(MessageContextOverlay.reactionBarKey),
+          findsOneWidget,
+        );
+        expect(find.byKey(MessageContextOverlay.replyActionKey), findsOneWidget);
+        expect(find.byKey(MessageContextOverlay.copyActionKey), findsOneWidget);
+        expect(find.byKey(MessageContextOverlay.saveActionKey), findsOneWidget);
+        expect(
+          find.byKey(MessageContextOverlay.shareActionKey),
+          findsOneWidget,
+        );
+        expect(find.byKey(MessageContextOverlay.infoActionKey), findsOneWidget);
+        expect(
+          find.byKey(MessageContextOverlay.deleteActionKey),
+          findsOneWidget,
+        );
+
+        await tapOverlayAction(tester, MessageContextOverlay.saveActionKey);
+        expect(saveCalls, ['msg-media/att-b']);
+        expect(shareCalls, isEmpty);
+        expect(deleteCalls, isEmpty);
+
+        // Long-press the FIRST attachment: Share carries att-a exactly once.
+        await openMediaOverlay(tester, 'media-grid-cell-msg-media-att-a');
+        await tapOverlayAction(tester, MessageContextOverlay.shareActionKey);
+        expect(shareCalls, ['msg-media/att-a']);
+        expect(saveCalls, hasLength(1));
+
+        // Delete for me is whole-message.
+        await openMediaOverlay(tester, 'media-grid-cell-msg-media-att-a');
+        await tapOverlayAction(tester, MessageContextOverlay.deleteActionKey);
+        expect(deleteCalls, ['msg-media']);
+
+        // Reply from the media overlay reuses the existing quote callback.
+        await openMediaOverlay(tester, 'media-grid-cell-msg-media-att-b');
+        await tapOverlayAction(tester, MessageContextOverlay.replyActionKey);
+        expect(quoteReplyId, 'msg-media');
+
+        // The reaction bar in the media overlay still reaches the existing
+        // reaction callback.
+        await openMediaOverlay(tester, 'media-grid-cell-msg-media-att-a');
+        await tester.tap(find.text('👍'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+        expect(reactionCalls, ['msg-media/👍']);
+      },
+    );
+
+    testWidgets(
+      'GMA-02b outgoing and read-only rows expose no media action entries',
+      (tester) async {
+        final outgoing = GroupMessage(
+          id: 'msg-out',
+          groupId: 'group-1',
+          senderPeerId: 'peer-1',
+          text: 'mine',
+          timestamp: DateTime.utc(2026, 7, 10, 9, 40),
+          createdAt: DateTime.utc(2026, 7, 10, 9, 40),
+          isIncoming: false,
+        );
+
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [outgoing],
+            mediaMap: {
+              'msg-out': [groupOwnedImage(id: 'att-out', messageId: 'msg-out')],
+            },
+            onMediaSave: (_, _) => fail('outgoing media must not offer Save'),
+            onMediaShare: (_, _) => fail('outgoing media must not offer Share'),
+            onMediaDeleteForMe: (_) =>
+                fail('outgoing media must not offer Delete for me'),
+            onQuoteReply: (_) {},
+            onReactionSelected: (_, _) {},
+          ),
+        );
+        await tester.pump();
+
+        // The tile long-press falls back to the plain message overlay.
+        await openMediaOverlay(tester, 'media-grid-cell-msg-out-att-out');
+        expect(
+          find.byKey(MessageContextOverlay.overlayKey),
+          findsOneWidget,
+        );
+        expect(find.byKey(MessageContextOverlay.saveActionKey), findsNothing);
+        expect(find.byKey(MessageContextOverlay.shareActionKey), findsNothing);
+        expect(find.byKey(MessageContextOverlay.infoActionKey), findsNothing);
+        expect(find.byKey(MessageContextOverlay.deleteActionKey), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'GMA-12 media info redacts storage crypto and transport secrets',
+      (tester) async {
+        const sentinelRawPeerId = 'peer-sentinel-raw-transport-id';
+        const sentinelPath = 'media/group-1/sentinel-secret-path.jpg';
+        // Valid 64-hex so the row is displayable-verified, but recognizable.
+        const sentinelHash =
+            'facefacefacefacefacefacefacefacefacefacefacefacefacefaceface'
+            'face';
+        const sentinelKey = 'sentinel-key-material-base64';
+        const sentinelNonce = 'sentinel-nonce-material';
+
+        final infoMessage = GroupMessage(
+          id: 'msg-info',
+          groupId: 'group-1',
+          senderPeerId: sentinelRawPeerId,
+          senderUsername: 'Alice Wire',
+          text: 'holiday picture',
+          timestamp: DateTime.utc(2026, 7, 9, 18, 45),
+          createdAt: DateTime.utc(2026, 7, 9, 18, 45),
+          isIncoming: true,
+        );
+        final attachment = MediaAttachment(
+          id: 'att-info',
+          messageId: 'msg-info',
+          mime: 'image/jpeg',
+          size: 2048,
+          mediaType: 'image',
+          localPath: sentinelPath,
+          downloadStatus: 'done',
+          contentHash: sentinelHash,
+          encryptionKeyBase64: sentinelKey,
+          encryptionNonce: sentinelNonce,
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          createdAt: '2026-07-09T18:45:00.000Z',
+          ownerLane: MediaOwnerLane.group,
+        );
+
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [infoMessage],
+            membersByPeerId: {
+              sentinelRawPeerId: GroupMember(
+                groupId: 'group-1',
+                peerId: sentinelRawPeerId,
+                username: 'Alice Member',
+                role: MemberRole.writer,
+                joinedAt: DateTime.utc(2026, 7, 1),
+              ),
+            },
+            mediaMap: {
+              'msg-info': [attachment],
+            },
+            onQuoteReply: (_) {},
+            onReactionSelected: (_, _) {},
+          ),
+        );
+        await tester.pump();
+
+        await openMediaOverlay(tester, 'media-grid-cell-msg-info-att-info');
+        expect(find.byKey(MessageContextOverlay.infoActionKey), findsOneWidget);
+        await tapOverlayAction(tester, MessageContextOverlay.infoActionKey);
+        // Let the bottom sheet finish animating in.
+        await tester.pump(const Duration(milliseconds: 350));
+
+        expect(find.byKey(GroupMediaInfoSheet.sheetKey), findsOneWidget);
+
+        // Approved fields only: kind, sender display identity, sent time,
+        // size, transfer/integrity state, caption.
+        expect(
+          tester
+              .widget<Text>(
+                find.byKey(const ValueKey('group-media-info-kind')),
+              )
+              .data,
+          'Image',
+        );
+        expect(
+          tester
+              .widget<Text>(
+                find.byKey(const ValueKey('group-media-info-sender')),
+              )
+              .data,
+          'Alice Member',
+        );
+        expect(
+          find.byKey(const ValueKey('group-media-info-sent-time')),
+          findsOneWidget,
+        );
+        expect(
+          tester
+              .widget<Text>(
+                find.byKey(const ValueKey('group-media-info-size')),
+              )
+              .data,
+          '2 KB',
+        );
+        expect(
+          tester
+              .widget<Text>(
+                find.byKey(const ValueKey('group-media-info-state')),
+              )
+              .data,
+          'Downloaded and verified',
+        );
+        expect(
+          tester
+              .widget<Text>(
+                find.byKey(const ValueKey('group-media-info-caption')),
+              )
+              .data,
+          'holiday picture',
+        );
+
+        // Redaction: storage, crypto, and transport internals never render.
+        expect(find.textContaining('sentinel'), findsNothing);
+        expect(find.textContaining('face'), findsNothing);
+        expect(find.textContaining(sentinelPath), findsNothing);
+        expect(find.textContaining(sentinelRawPeerId), findsNothing);
+        expect(find.textContaining('media/'), findsNothing);
       },
     );
   });

@@ -11,7 +11,9 @@ Closure tier: host
 | Time | Role | Files inspected | Decision/blocker | Next action |
 |---|---|---|---|---|
 | 2026-07-09 | Evidence Collector | `graphify-arch` query; `share_target_picker_wired.dart`; `share_batch_delivery_coordinator.dart`; `send_group_message_use_case.dart`; announcement integration tests; Go group validator | The repo already has multi-select contact/group delivery, caption editing, per-target upload, and send-time group revalidation, but no message/viewer Forward entry or announcement-source request | adapt the existing share flow; do not add another transport or picker |
-| 2026-07-09 | Planner | direct/group forwarding plans 232/236 and DB sequencing from current DB v95 | Plan 232 owns direct `isForwarded`/inner provenance and DB v97; plan 236 owns backward-compatible encrypted group `isForwarded` and DB v98. Announcement forwarding can adapt both without a new field/frame | define source eligibility, target-scoped provenance, and no-source-publish discriminators |
+| 2026-07-09 | Planner | direct/group forwarding plans 232/236 and DB sequencing from current DB v95 | Plan 232 owns direct `isForwarded`/inner provenance and DB v97; plan 236 owns backward-compatible encrypted group `isForwarded` and DB v99. Announcement forwarding can adapt both without a new field/frame | define source eligibility, target-scoped provenance, and no-source-publish discriminators |
+| 2026-07-10 | Replanner (version rebase) | plan 235 audit disposition; plan 236 rebase | Plan 235 claimed v98 for its group media deletion journal; plan 236's forwarded marker moved to DB v99 and this plan's references follow. | none — still blocked on plans 232/235/236 landing in order |
+| 2026-07-10 | Planner refresh | revised plan 228 owner contract; plans 232/236 destination write seams; announcement source resolver; share provenance/codec boundaries | Announcement source media is local owner `group`; contact destination attachments persist as `direct` via plan 232 and group/announcement destinations as `group` via plan 236. Owner is local DB state only and must never enter Forward provenance or any wire map. | add owner collision/source-destination tests without expanding transport scope |
 
 ## Problem And Evidence
 
@@ -22,23 +24,25 @@ Closure tier: host
 - Confirmed caption mechanism: the picker initializes `_captionController` from `ShareIntent.text` at `lib/features/share/presentation/screens/share_target_picker_wired.dart:107` and builds a trimmed copy at `:465`.
 - Confirmed per-target delivery: `DefaultShareBatchDeliveryCoordinator.deliver` processes source media once, then iterates targets at `lib/features/share/application/share_batch_delivery_coordinator.dart:163`; `_sendToContact` mints a new attachment ID and calls encrypted `uploadMedia` per contact at `:279`; `_sendToGroup` mints a new attachment ID, loads destination members as `allowedPeers`, uploads, and calls `sendGroupMessage` at `:382`.
 - Confirmed source gap: `GroupConversationScreen` and `FullScreenImageViewer` have no Forward callback/action (`lib/features/groups/presentation/screens/group_conversation_screen.dart:41`; `lib/shared/widgets/media/full_screen_image_viewer.dart:19`). `ShareIntent` represents external input only and carries text/file paths, with no source message policy at `lib/core/services/share_intent_model.dart:1`.
+- Confirmed local-owner gap: HEAD attachment repository/helpers resolve by untyped `message_id`; revised plan 228 requires `MediaOwnerLane.group` for announcement source reads, `direct` for contact-destination writes, and `group` for group/announcement-destination writes. Direct/group parent IDs can collide and `unresolved` must remain excluded.
 - Confirmed authorization backstops: Flutter refuses non-admin announcement sends before network at `lib/features/groups/application/send_group_message_use_case.dart:809`; Go rejects a non-admin `group_message` at `go-mknoon/node/pubsub.go:1605` and `:1963`.
 - Existing coverage: `test/features/share/application/share_batch_delivery_coordinator_test.dart::processes shared media once before fanout across target kinds` covers bounded preprocessing; its media-encryption tests cover encrypted contact upload; `test/features/groups/integration/announcement_new_reader_onboarding_test.dart` proves a reader's text/image/video/voice send attempts are unauthorized with no `group:publish` increase.
-- Missing coverage: no source-message-to-`ShareIntent` adapter, no announcement reader Forward UI, no caption-mode contract, no explicit blocked-contact filter, no direct/group forward-marker handoff, no source-announcement-vs-destination event discriminator, and no target-partial-failure retry test for this entry path.
+- Missing coverage: no group-owner source-to-`ShareIntent` adapter, no announcement reader Forward UI, no caption-mode contract, no explicit blocked-contact filter, no destination direct/group owner handoff, no proof that owner stays out of provenance/wire, no source-announcement-vs-destination event discriminator, and no target-partial-failure retry test for this entry path.
 - Refuted findings: this feature does not require a new libp2p protocol, relay endpoint, or group encryption primitive. Existing share and group send paths already cross those boundaries.
 - Unresolved findings: N/A — direct marker/provenance ownership is fixed by plan 232 and group marker/wire ownership by plan 236; this plan supplies their accepted inputs but owns neither schema/wire contract.
-- Affected production, test, and gate files: announcement message/viewer actions, a new `AnnouncementMediaForwardRequest` adapter into `ShareIntent`, `ShareTargetPickerWired` source-policy inputs, `DefaultShareBatchDeliveryCoordinator` forwarding metadata handoff, announcement/share tests, and `GROUP_TESTS` registration.
+- Affected production, test, and gate files: announcement message/viewer actions, a group-owner `AnnouncementMediaForwardRequest` resolver into `ShareIntent`, `ShareTargetPickerWired` source-policy inputs, plan-232/236 destination adapters in `DefaultShareBatchDeliveryCoordinator`, announcement/share owner-boundary tests, and `GROUP_TESTS` registration.
 
 ## Scope Contract And Guard
 
 In scope:
-- Add Forward to eligible incoming announcement image/video actions. Eligibility requires a persisted incoming non-system message, a displayable verified local file for every selected attachment, and lifecycle policy `canForward == true` when plan 242 metadata is present.
-- Convert selected attachments into an announcement-scoped forward request containing source group/message/attachment identities, resolved file paths, and one caption mode: keep, remove, or edit. Build a `ShareIntent` only after re-loading and validating those rows.
+- Add Forward to eligible incoming announcement image/video actions. Eligibility requires a persisted incoming non-system group message, a `MediaOwnerLane.group` attachment with a displayable verified local file, and lifecycle policy `canForward == true` when plan 242 metadata is present. Same-ID direct and unresolved rows never qualify.
+- Convert selected group-owned attachments into an announcement-scoped local forward request containing source group/message/attachment identities, resolved file paths, and one caption mode: keep, remove, or edit. Build a `ShareIntent` only after owner-aware re-load/validation; do not serialize the local owner or source identities into provenance/wire.
 - Reuse `ShareTargetPickerWired` search/multi-select UI. Allowed contacts are active and unblocked. Allowed groups remain exactly `_isWritableGroupTarget`: active membership/key, not archived/dissolved, and admin role for announcement destinations.
 - Revalidate every selected target immediately before delivery. Keep failed targets selected and report sent/queued/failed per target, matching the existing batch result behavior.
 - Process media once for sizing/compression but mint a fresh outgoing message/attachment ID and run the destination upload/encryption path separately for each target. Never reuse another target's media key/nonce or an incoming attachment ID as an outgoing blob ID.
 - Reuse plan 236's `GroupMediaForwardRequest` and optional encrypted `isForwarded` field for group destinations. Forwarded metadata contains only the boolean marker; it does not reveal the source group, original sender, message ID, or caption provenance.
 - Contact destinations use plan 232's accepted `isForwarded: true` and encrypted-inner provenance slot. Generate an opaque target-scoped operation key for each contact, retain it across failed/queued retry, and never derive it from or serialize the source group, original sender, source message, or attachment identity.
+- Destination attachment persistence delegates to the accepted lane owners: plan 232 supplies local `MediaOwnerLane.direct` for contacts; plan 236 supplies local `MediaOwnerLane.group` for chat/announcement groups. There is no `announcement` owner lane, and owner never appears in `ForwardProvenance`, `ShareIntent`, direct/group payloads, outer envelopes, retry wire data, or diagnostics.
 
 Must preserve:
 - Source announcement stays read-only and receives no new local/outgoing message -> TC-240-07 and existing `announcement_new_reader_onboarding_test` unauthorized-send assertions.
@@ -53,6 +57,7 @@ Hard `Do not`:
 - Do not change Go framing, group topic names, validator roles, recipient calculation, relay custody, retry payloads, or encryption algorithms.
 - Do not reuse incoming blob IDs, encryption keys/nonces, content ownership, or sender attribution across destinations.
 - Do not put source group/sender/message/attachment IDs into the direct provenance slot, operation key, outer envelope, diagnostics, or recipient marker.
+- Do not put `MediaOwnerLane`, `owner_lane`, or an announcement-owner surrogate into provenance, payloads, envelopes, operation keys, relay metadata, or logs.
 - Do not change discussion/chat behavior except through the already-approved plan-236 shared group forwarding contract.
 
 Deferred / accepted difference:
@@ -61,8 +66,9 @@ Deferred / accepted difference:
 - Private/protected/view-once denial is finalized by plans 238/242; until those lifecycle states can exist, normal media remains forwardable.
 
 Dependencies:
+- `Test-Flight-Improv/228-shared-media-library-bookmark-persistence-tdd-plan.md` must land first and supplies DB v96, required local `MediaOwnerLane.direct/group`, unresolved exclusion, owner-aware media APIs, and collision tests.
 - `Test-Flight-Improv/232-1to1-received-media-forwarding-tdd-plan.md` must land first and supplies direct `isForwarded`, encrypted-inner provenance, recipient rendering, retry/reopen behavior, and DB v97 `messages.is_forwarded`.
-- `Test-Flight-Improv/236-group-received-media-forwarding-tdd-plan.md` must land first and supplies `GroupMediaForwardRequest`, `GroupMessage.isForwarded`, backward-compatible encrypted payload propagation, and DB v98 `group_messages.is_forwarded`.
+- `Test-Flight-Improv/236-group-received-media-forwarding-tdd-plan.md` must land first and supplies `GroupMediaForwardRequest`, `GroupMessage.isForwarded`, backward-compatible encrypted payload propagation, and DB v99 `group_messages.is_forwarded`.
 - `Test-Flight-Improv/230-shared-typed-media-viewer-tdd-plan.md` supplies the typed viewer Forward capability/callback.
 - This plan allocates no migration and introduces no new wire contract.
 
@@ -81,6 +87,7 @@ Dependencies:
 | TC-240-09 | Go still rejects any non-admin attempt to publish a group message into an announcement destination | `go-mknoon/node/pubsub_test.go::TestIsAllowedWriter_AnnouncementMemberBlocked` and `::TestInviteLifecycle_AnnouncementGroup_NewWriterCannotPublish` | GREEN sentinel / Go node unit, real envelope authorization | GREEN on HEAD -> remains GREEN; no Go production edit expected | allow writer/reader role or bypass `isAllowedWriter` -> sentinel red | `(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run TestIsAllowedWriter_AnnouncementMemberBlocked -count=1 && GOTOOLCHAIN=go1.25.0 go test ./node -run TestInviteLifecycle_AnnouncementGroup_NewWriterCannotPublish -count=1)`; AUTO Go preservation command |
 | TC-240-10 | Legacy/non-forwarded group media still decodes as `isForwarded == false` and discussion sends are unchanged | plan-236 `test/features/groups/application/group_message_listener_test.dart::GMF-08 live forwarded marker roundtrips with legacy false fallback` plus `test/features/groups/integration/group_messaging_smoke_test.dart` | GREEN sentinel / plan-236 host fixture and existing group smoke | GREEN after 236 -> remains GREEN during announcement adapter work | default absent marker to true or alter ordinary group request creation -> sentinel red | `flutter test test/features/groups/application/group_message_listener_test.dart --plain-name 'GMF-08 live forwarded marker roundtrips with legacy false fallback' && flutter test test/features/groups/integration/group_messaging_smoke_test.dart`; AUTO / existing `GROUP_TESTS` |
 | TC-240-11 | Every contact destination receives plan-232 `isForwarded == true` and a distinct opaque target-scoped operation key that survives retry without exposing source identity | `test/features/share/application/announcement_forward_contact_marker_test.dart::contact forward marker and opaque per-target key survive retry without source attribution` | application host / real coordinator with two contact targets, one fail-then-retry sender, payload/log capture | HEAD announcement adapter has no provenance; after 232 generic direct forwarding exists but cannot identify this source flow -> each contact receives marker true and its own stable retry key; outgoing id/crypto stay fresh; source group/sender/message/attachment values are absent | derive key from source ID, reuse one key across contacts, drop marker, or remint key on retry -> TC-240-11 red | `flutter test test/features/share/application/announcement_forward_contact_marker_test.dart`; AUTO plus `GROUP_TESTS`; DB/wire/rendering proof inherited from 232 |
+| TC-240-12 | Source and destination local ownership is exact: announcement source resolves only `group`; contact outputs persist `direct`; group/announcement outputs persist `group`; direct/unresolved source collisions are excluded; owner is absent from provenance/wire | `test/features/share/application/announcement_forward_media_owner_contract_test.dart::announcement forward uses group source direct group destinations and no owner wire field` | application host / recording owner-aware source/destination repositories, literal same-ID collision rows, captured `ShareIntent`, direct/group inner+outer payloads and diagnostics | HEAD compile RED: plan-228 owner contract/announcement adapter absent -> exact owner calls and exclusion pass while every captured serialized surface lacks owner keys/values | use untyped source lookup, pass group owner to contact, invent announcement owner, or serialize owner into provenance/payload -> TC-240-12 red | `flutter test test/features/share/application/announcement_forward_media_owner_contract_test.dart`; AUTO plus `GROUP_TESTS` |
 
 ### Test Notes
 
@@ -88,17 +95,18 @@ Dependencies:
 - TC-240-05 asserts only the boolean marker supported by plan 236. Keys such as `originalSender`, `sourceGroupId`, `sourceMessageId`, and `forwardedFrom` must be absent from decrypted inner payload, retry payload, and emitted event.
 - TC-240-07 uses group ID as the shared-result discriminator: target event present and source event absent. Merely asserting one successful result is insufficient.
 - TC-240-11 captures the contact call and encrypted-inner payload after the plan-232 codec. The target-scoped operation key must be byte-equal between first attempt/retry for that target, unequal across contacts, and non-equal/non-containing with every source identity fixture.
+- TC-240-12 records repository owner arguments separately from serialization. A fake that simply returns prefiltered source media is vacuous; it must fail on missing/wrong owner and include group/direct/unresolved same-ID rows. Owner values must be absent from both encrypted inner and outer wire maps, not merely hidden from UI.
 - Contacts and groups can have different delivery outcomes; the picker summary and retained-selection behavior must remain per target.
 
 ## Implementation Steps
 
-1. Snapshot `git status --short`; verify plans 232/236 are accepted and their DB v97/v98 model/payload tests are green; add TC-240-01 through TC-240-11 before announcement production edits.
-2. Add immutable announcement forward request/caption-mode policy that re-loads source message and attachments, resolves owned paths, and rejects system/outgoing/missing/unverified/lifecycle-denied inputs. Stop-if: adapter would need raw group keys or a new transport frame.
+1. Snapshot `git status --short`; verify plans 228/232/235/236 are accepted and DB v96-v99 owner/model/journal/payload tests are green; add TC-240-01 through TC-240-12 before announcement production edits.
+2. Add immutable announcement forward request/caption-mode policy that re-loads source attachments with `MediaOwnerLane.group`, resolves owned paths, and rejects direct/unresolved collisions plus system/outgoing/missing/unverified/lifecycle-denied inputs. Stop-if: adapter would need raw group keys, owner serialization, or a new transport frame.
 3. Expose the Forward callback through the shared plan-230 viewer and announcement message action model; open the existing `ShareTargetPickerWired` with the composed `ShareIntent` and forwarding context.
 4. Tighten forward target policy for blocked contacts while preserving the existing destination-group checks and send-time revalidation.
-5. Thread plan-232 marker plus opaque target-scoped retry-stable provenance into contact delivery and plan-236 forwarding metadata into group delivery. Do not edit either schema/codec or introduce a third wire contract.
+5. Thread plan-232 marker/provenance and local direct-owner save into contact delivery; thread plan-236 marker and local group-owner save into group delivery. Keep owner below serialization and do not edit either schema/codec or introduce a third wire contract.
 6. Add target-discriminated tests and register the new announcement/share headline suites in `GROUP_TESTS`.
-7. Run focused GREEN, group/share preservation, Go auth sentinel, feature-host-all, analyzer, and diff hygiene.
+7. Run focused GREEN, the curated `groups` lane gate, exact share/direct dependency sentinels, the Go authorization sentinel, analyzer, and diff hygiene.
 
 ## Risks And Blind Spots
 
@@ -107,10 +115,17 @@ Dependencies:
 - Source and destination are both group IDs and could be confused -> TC-240-07 asserts destination-present/source-absent commands.
 - Forward marker propagation can be lost in offline retry -> TC-240-05 uses both live and replay paths inherited from plan 236.
 - Contact forwarding can silently render as an ordinary send or leak/link source identity -> TC-240-11 locks the plan-232 marker and per-target opaque stable key.
+- Local owner can cross-read a same-ID row or leak into encrypted/outer provenance -> TC-240-12 locks source/destination owner calls and owner-free serialization.
 - Lifecycle / derived-state durability: source and target eligibility are re-loaded on invocation; destination durability remains plan-232 direct retry/reopen and plan-236 group send/replay, with TC-240-11 covering the adapter key across retry.
 - Sibling-surface consistency: TC-240-01 uses the one action/capability model shared by bubble and viewer.
 - Destructive-action side effects: N/A — forwarding does not delete or alter source state; TC-240-03/07/08 assert preservation.
-- Invariant re-verification under new transitions: TC-240-06 rechecks role/key/membership after selection; TC-240-04 rechecks independent destination material per send.
+- Invariant re-verification under new transitions: TC-240-06 rechecks role/key/membership; TC-240-04/12 recheck destination material and local owner per send.
+
+## Gate Cadence
+
+- Individual plan closure runs TC-240 focused tests, exact plan-232/236 and shared-picker dependency sentinels, the curated `groups` lane gate, and the Go authorization sentinel below.
+- Do not run `host-all`, `feature-host-all`, or `core-host-all` for Plan 240 closure; none adds causal coverage beyond those selected commands.
+- Run full `host-all` once after the forwarding/migration wave is complete, and once again at final media-rollout closure.
 
 ## Acceptance Gates
 
@@ -122,7 +137,7 @@ git status --short
 flutter test test/features/groups/presentation/announcement_received_media_forwarding_test.dart --plain-name 'reader opens Forward picker for verified media while announcement compose remains read-only'
 
 # Focused GREEN; expect exit 0 and zero failed tests
-flutter test test/features/groups/application/announcement_media_forward_request_test.dart test/features/groups/presentation/announcement_received_media_forwarding_test.dart test/features/groups/integration/announcement_received_media_forwarding_test.dart test/features/groups/integration/announcement_media_forward_marker_test.dart test/features/share/presentation/announcement_forward_target_policy_test.dart test/features/share/application/announcement_forward_batch_delivery_test.dart test/features/share/application/announcement_forward_contact_marker_test.dart
+flutter test test/features/groups/application/announcement_media_forward_request_test.dart test/features/groups/presentation/announcement_received_media_forwarding_test.dart test/features/groups/integration/announcement_received_media_forwarding_test.dart test/features/groups/integration/announcement_media_forward_marker_test.dart test/features/share/presentation/announcement_forward_target_policy_test.dart test/features/share/application/announcement_forward_batch_delivery_test.dart test/features/share/application/announcement_forward_contact_marker_test.dart test/features/share/application/announcement_forward_media_owner_contract_test.dart
 
 # Shared picker/coordinator preservation; expect exit 0
 flutter test test/features/share/presentation/share_target_picker_wired_test.dart test/features/share/application/share_batch_delivery_coordinator_test.dart
@@ -130,10 +145,10 @@ flutter test test/features/share/presentation/share_target_picker_wired_test.dar
 # Direct marker/provenance retry preservation from plan 232; expect exit 0
 flutter test test/features/conversation/domain/models/message_payload_test.dart --plain-name 'forward marker is legacy-safe inner-only and carries media plus dedup'
 flutter test test/features/conversation/integration/forwarded_media_retry_roundtrip_test.dart
+flutter test test/features/conversation/domain/repositories/media_attachment_owner_contract_test.dart --plain-name 'direct and group write seams require stable local ownership'
 
-# Named gates; expect new files selected and zero failures
+# Affected curated lane gate; expect new files selected and zero failures
 ./scripts/run_test_gates.sh groups
-./scripts/run_host_test_gates.sh feature-host-all
 
 # Go publisher authorization remains unchanged; expect package ok
 (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run 'TestIsAllowedWriter_AnnouncementMemberBlocked|TestInviteLifecycle_AnnouncementGroup_NewWriterCannotPublish' -count=1)
@@ -145,18 +160,19 @@ git diff --check
 
 ## Execution Interpretation And Done Criteria
 
-- Expected RED: TC-240-01 and TC-240-03 fail because no Forward action or announcement request exists; TC-240-04/05/07/11 fail on missing forwarding context/marker integration.
+- Expected RED: TC-240-01/03 fail because no Forward action/request exists; TC-240-04/05/07/11/12 fail on missing forwarding, marker and local-owner integration.
 - Green sentinel: TC-240-09 and TC-240-10 stay green; existing share coordinator/picker suites stay green.
 - Pre-existing dirty tree / known failure: record unrelated changes; do not edit the already-dirty `Test-Flight-Improv/00-INDEX.md` in this plan.
 - Environment blocker: no simulator/device is required because real group crypto/wire closure belongs to plan 236 and no wire contract changes here. Go commands must pin 1.25.0.
-- Scope drift: new protocol fields beyond plans 232/236, direct/group schema edits, source-announcement publication, source-derived provenance, or discussion behavior changes block completion.
+- Scope drift: new protocol fields beyond plans 232/236, owner on wire/provenance, a third announcement owner, direct/group schema edits, source-announcement publication, or discussion behavior changes block completion.
 
 - [ ] Every behavior has a named test or justified inherited proof.
 - [ ] Causal RED, focused GREEN, and representative mutation re-red are recorded.
-- [ ] Plan 232 DB v97 direct marker/retry gates and plan 236 DB v98 group live/replay marker gates are green before adapter acceptance.
+- [ ] Plan 232 DB v97 direct marker/retry gates and plan 236 DB v99 group live/replay marker gates are green before adapter acceptance.
+- [ ] Plan 228 DB v96 owner contract proves group-only source, direct/group destinations, unresolved exclusion and owner-free wire/provenance.
 - [ ] Per-target encryption/ID and source-absent event discrimination pass.
 - [ ] New tests are registered in `GROUP_TESTS` and AUTO feature discovery.
-- [ ] Go publisher sentinels, `groups`, and `feature-host-all` pass.
+- [ ] Go publisher sentinels, the curated `groups` gate, and exact share/direct dependency sentinels pass.
 - [ ] `flutter analyze` has no new issues; `git diff --check` is clean.
 - [ ] Scope Contract And Guard is respected.
 
@@ -164,8 +180,8 @@ git diff --check
 
 - First causal RED command: `flutter test test/features/groups/presentation/announcement_received_media_forwarding_test.dart --plain-name 'reader opens Forward picker for verified media while announcement compose remains read-only'`.
 - Preservation command: `(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run 'TestIsAllowedWriter_AnnouncementMemberBlocked|TestInviteLifecycle_AnnouncementGroup_NewWriterCannotPublish' -count=1)`.
-- Manual registration: add the seven new announcement/share forwarding test files to `GROUP_TESTS`; AUTO feature glob also discovers them.
-- Migration: none in this plan; reuse plan 232 DB v97 `messages.is_forwarded` and plan 236 DB v98 `group_messages.is_forwarded`. Do not allocate another version.
+- Manual registration: add the eight new announcement/share forwarding test files to `GROUP_TESTS`; AUTO feature glob also discovers them.
+- Migration: none in this plan; reuse plan 232 DB v97 `messages.is_forwarded` and plan 236 DB v99 `group_messages.is_forwarded`. Do not allocate another version.
 - Boundary closure: host announcement adapter; plan 232 owns direct SQLCipher/inner-payload/retry closure and plan 236 owns real group crypto/live/replay closure.
 - Unresolved evidence: none. Execution order is the only prerequisite: plans 232 and 236 before 240.
 

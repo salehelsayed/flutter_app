@@ -313,6 +313,12 @@ readonly GROUP_TESTS=(
   # gate, edit-hide, RTL, scrim/identity). Auto-globs into feature-host-all,
   # pinned here so the curated groups gate also locks the dock chrome.
   "test/features/orbit/presentation/screens/orbit_intro_dock_test.dart"
+  # 235 group received-media core actions: pure capability policy (chat-only,
+  # incoming-only, group-lane-only; verified gates Save/Share, canWrite gates
+  # Reply) + the requalifying egress adapter (exact parent/owner reload before
+  # every ReceivedMediaEgressService call; refusals make zero egress calls).
+  "test/features/groups/application/group_received_media_action_policy_test.dart"
+  "test/features/groups/application/group_received_media_actions_test.dart"
 )
 
 readonly POSTS_TESTS=(

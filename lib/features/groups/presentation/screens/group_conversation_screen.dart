@@ -20,6 +20,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/letter_ca
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
+import 'package:flutter_app/features/groups/application/group_received_media_action_policy.dart';
 import 'package:flutter_app/features/groups/application/group_sender_display_name.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -28,6 +29,7 @@ import 'package:flutter_app/features/groups/presentation/group_backlog_retention
 import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_dissolved_badge.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_media_info_sheet.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_type_badge.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
@@ -76,6 +78,15 @@ class GroupConversationScreen extends StatelessWidget {
   final List<double> amplitudeValues;
   final ValueListenable<ConversationComposerViewState>? composerStateListenable;
   final void Function(String messageId, int index)? onMediaTap;
+
+  /// 235: received-media actions for INCOMING discussion image/video rows.
+  /// Availability is decided per attachment by
+  /// [GroupReceivedMediaActionPolicy]; these callbacks carry the exact
+  /// attachment identity. Delete for me is whole-message (current group
+  /// persistence/tombstones are message-scoped).
+  final void Function(String messageId, String attachmentId)? onMediaSave;
+  final void Function(String messageId, String attachmentId)? onMediaShare;
+  final ValueChanged<String>? onMediaDeleteForMe;
   final Map<String, List<MessageReaction>> reactions;
   final void Function(String messageId, String emoji)? onReactionTap;
   final void Function(String messageId, String emoji)? onReactionSelected;
@@ -150,6 +161,9 @@ class GroupConversationScreen extends StatelessWidget {
     this.amplitudeValues = const [],
     this.composerStateListenable,
     this.onMediaTap,
+    this.onMediaSave,
+    this.onMediaShare,
+    this.onMediaDeleteForMe,
     this.reactions = const {},
     this.onReactionTap,
     this.onReactionSelected,
@@ -672,7 +686,17 @@ class GroupConversationScreen extends StatelessWidget {
         final showRunAvatar = runChrome.showAvatar && !isSystemRow;
         final showRunSenderName = runChrome.showSenderName && !isSystemRow;
 
-        LetterCard buildLetterCard({VoidCallback? onLongPress}) => LetterCard(
+        // 235: exact-attachment identity for received-media actions. The
+        // filter matches LetterCard._imageVideoMedia so the long-press index
+        // addresses the same tile the user pressed.
+        final visualMedia = messageMedia
+            .where((a) => a.mediaType == 'image' || a.mediaType == 'video')
+            .toList();
+
+        LetterCard buildLetterCard({
+          VoidCallback? onLongPress,
+          void Function(int index)? onMediaLongPress,
+        }) => LetterCard(
           senderPeerId: message.senderPeerId,
           senderName: isSent
               ? AppLocalizations.of(context)!.feed_you
@@ -710,6 +734,7 @@ class GroupConversationScreen extends StatelessWidget {
           onMediaTap: onMediaTap != null
               ? (index) => onMediaTap!(message.id, index)
               : null,
+          onMediaLongPress: onMediaLongPress,
           reactions: reactions[message.id] ?? const [],
           ownPeerId: ownPeerId,
           onReactionTap: onReactionTap != null
@@ -760,6 +785,51 @@ class GroupConversationScreen extends StatelessWidget {
                       cardContext: cardContext,
                       selectedMessage: buildLetterCard(),
                     )
+                  : null,
+              onMediaLongPress: visualMedia.isNotEmpty
+                  ? (index) {
+                      if (index < 0 || index >= visualMedia.length) return;
+                      final attachment = visualMedia[index];
+                      final capabilities =
+                          GroupReceivedMediaActionPolicy.capabilitiesFor(
+                            groupType: group.type,
+                            isIncoming: !isSent,
+                            attachment: attachment,
+                            canWrite: canWrite,
+                          );
+                      final hasMediaMenuEntry =
+                          (capabilities.contains(
+                                GroupReceivedMediaAction.save,
+                              ) &&
+                              onMediaSave != null) ||
+                          (capabilities.contains(
+                                GroupReceivedMediaAction.share,
+                              ) &&
+                              onMediaShare != null) ||
+                          capabilities.contains(GroupReceivedMediaAction.info) ||
+                          (capabilities.contains(
+                                GroupReceivedMediaAction.deleteForMe,
+                              ) &&
+                              onMediaDeleteForMe != null);
+                      if (hasMediaMenuEntry) {
+                        _showMessageContextOverlay(
+                          message,
+                          cardContext: cardContext,
+                          selectedMessage: buildLetterCard(),
+                          mediaTarget: attachment,
+                          mediaCapabilities: capabilities,
+                        );
+                      } else if (canOpenContextOverlay) {
+                        // No media action applies (outgoing, announcement,
+                        // QA, ...): keep the pre-235 behavior where a tile
+                        // long-press opened the plain message overlay.
+                        _showMessageContextOverlay(
+                          message,
+                          cardContext: cardContext,
+                          selectedMessage: buildLetterCard(),
+                        );
+                      }
+                    }
                   : null,
             ),
           ),
@@ -928,6 +998,8 @@ class GroupConversationScreen extends StatelessWidget {
     GroupMessage message, {
     required BuildContext cardContext,
     required Widget selectedMessage,
+    MediaAttachment? mediaTarget,
+    Set<GroupReceivedMediaAction> mediaCapabilities = const {},
   }) {
     final route = ModalRoute.of(cardContext);
     if (route != null && !route.isCurrent) return;
@@ -950,6 +1022,24 @@ class GroupConversationScreen extends StatelessWidget {
     final showReplyAction = canWrite && onQuoteReply != null;
     final showCopyAction = message.text.trim().isNotEmpty;
     final showReactionBar = onReactionSelected != null;
+    // 235: received-media entries for the exact long-pressed attachment. The
+    // policy already excluded outgoing, non-visual, non-group-lane,
+    // announcement, and QA rows.
+    final showSaveAction =
+        mediaTarget != null &&
+        mediaCapabilities.contains(GroupReceivedMediaAction.save) &&
+        onMediaSave != null;
+    final showShareAction =
+        mediaTarget != null &&
+        mediaCapabilities.contains(GroupReceivedMediaAction.share) &&
+        onMediaShare != null;
+    final showInfoAction =
+        mediaTarget != null &&
+        mediaCapabilities.contains(GroupReceivedMediaAction.info);
+    final showMediaDeleteAction =
+        mediaTarget != null &&
+        mediaCapabilities.contains(GroupReceivedMediaAction.deleteForMe) &&
+        onMediaDeleteForMe != null;
 
     showDialog(
       context: cardContext,
@@ -962,6 +1052,34 @@ class GroupConversationScreen extends StatelessWidget {
         showReactionBar: showReactionBar,
         showReplyAction: showReplyAction,
         showCopyAction: showCopyAction,
+        showSaveAction: showSaveAction,
+        showShareAction: showShareAction,
+        showInfoAction: showInfoAction,
+        showDeleteAction: showMediaDeleteAction,
+        onSaveTap: showSaveAction
+            ? () {
+                Navigator.of(dialogContext).pop();
+                onMediaSave?.call(message.id, mediaTarget.id);
+              }
+            : null,
+        onShareTap: showShareAction
+            ? () {
+                Navigator.of(dialogContext).pop();
+                onMediaShare?.call(message.id, mediaTarget.id);
+              }
+            : null,
+        onInfoTap: showInfoAction
+            ? () {
+                Navigator.of(dialogContext).pop();
+                _showMediaInfoSheet(cardContext, message, mediaTarget);
+              }
+            : null,
+        onDeleteTap: showMediaDeleteAction
+            ? () {
+                Navigator.of(dialogContext).pop();
+                onMediaDeleteForMe?.call(message.id);
+              }
+            : null,
         onDismiss: () => Navigator.of(dialogContext).pop(),
         onReactionSelected: showReactionBar
             ? (emoji) {
@@ -988,6 +1106,29 @@ class GroupConversationScreen extends StatelessWidget {
               }
             : null,
       ),
+    );
+  }
+
+  void _showMediaInfoSheet(
+    BuildContext context,
+    GroupMessage message,
+    MediaAttachment attachment,
+  ) {
+    if (!context.mounted) return;
+    final senderDisplayName = message.senderPeerId == ownPeerId
+        ? AppLocalizations.of(context)!.feed_you
+        : resolveGroupSenderDisplayName(
+            senderPeerId: message.senderPeerId,
+            wireSenderUsername: message.senderUsername,
+            member: membersByPeerId[message.senderPeerId],
+            preferMemberName: true,
+          );
+    GroupMediaInfoSheet.show(
+      context,
+      attachment: attachment,
+      senderDisplayName: senderDisplayName,
+      sentAt: message.timestamp,
+      caption: message.text,
     );
   }
 
