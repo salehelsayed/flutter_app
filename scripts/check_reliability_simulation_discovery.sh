@@ -109,6 +109,10 @@ classify_path() {
   esac
 
   case "$path" in
+    integration_test/received_media_native_egress_proof_test.dart)
+      record "ignored" "$path" "ignored" "manual Android/iOS received-media native egress proof outside default reliability-sim"
+      return
+      ;;
     integration_test/media_library_state_sqlcipher_proof_test.dart)
       record "ignored" "$path" "ignored" "manual Android/iOS media-library-state SQLCipher migration proof outside reliability-sim"
       return

@@ -4,6 +4,14 @@ Session 1 source of truth for named regression gates.
 
 If this document and `scripts/run_test_gates.sh` ever disagree, the script wins.
 
+## Mobile Target Availability Policy
+
+- Device-bound Flutter tests run only on targets discovered as available at execution time: USB-connected Android devices, USB-connected iPhones, available iOS simulators, and available Android emulators.
+- Record `flutter devices --machine` and the platform inventory command used to select explicit target IDs. Do not let Flutter choose implicitly when multiple devices are present.
+- A device model, OS version, or API band absent from the live inventory is `N/A (target unavailable by project policy)`. Its absence is not an environment blocker, evidence gap, failed gate, or reason to keep a plan open.
+- Version branches that lack a live target must retain causal host/native unit coverage and compile/availability coverage. If a matching emulator, simulator, or USB device is available, it may be used; otherwise no substitute hardware is required.
+- Plans and QA reviews created after this policy must not require unavailable physical hardware for closure. Optional extra-device confidence may be documented separately and must remain non-blocking.
+
 ## Session 1 Decisions
 
 - Canonical loading-state baseline file: `integration_test/loading_states_smoke_test.dart`

@@ -26,6 +26,7 @@ import UserNotifications
   private var diskSpaceChannel: FlutterMethodChannel?
   private let appGroupPathChannelName = "mknoon/app_group_path"
   private var appGroupPathChannel: FlutterMethodChannel?
+  private var receivedMediaEgressCoordinator: ReceivedMediaEgressCoordinator?
 
   // 191 (Fix N1): the FCM plugin's published UNUserNotificationCenterDelegate,
   // captured at plugin-registration time (scene-connect). Under UIScene the
@@ -191,6 +192,7 @@ import UserNotifications
     setupMigrationKeepAliveBridge(messenger: messenger)
     setupDiskSpaceBridge(messenger: messenger)
     setupAppGroupPathBridge(messenger: messenger)
+    receivedMediaEgressCoordinator = ReceivedMediaEgressCoordinator(messenger: messenger)
 
 #if canImport(GoMknoon)
     goBridge = GoBridge(messenger: messenger)

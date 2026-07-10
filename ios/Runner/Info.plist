@@ -57,6 +57,8 @@
 	<string>This app needs microphone access to record voice messages</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>To share photos and videos</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Save photos and videos you choose to your library</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

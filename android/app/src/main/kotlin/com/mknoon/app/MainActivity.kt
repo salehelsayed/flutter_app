@@ -9,11 +9,16 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private var goBridge: GoBridge? = null
+    private var receivedMediaEgressHandler: ReceivedMediaEgressHandler? = null
     // 180: native jmDNS resolver for the Android-discovers-iOS `.local` wall.
     private var mdnsResolver: MdnsResolver? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        receivedMediaEgressHandler = ReceivedMediaEgressHandler(
+            this,
+            flutterEngine.dartExecutor.binaryMessenger,
+        )
         goBridge = GoBridge(flutterEngine, applicationContext)
         // Move Account transfer keep-alive: Dart holds/releases a dataSync
         // foreground service so backgrounding mid-transfer cannot freeze the
@@ -108,5 +113,19 @@ class MainActivity : FlutterActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        receivedMediaEgressHandler?.onResume()
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        if (receivedMediaEgressHandler?.onRequestPermissionsResult(requestCode, grantResults) == true) return
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
     }
 }

@@ -66,6 +66,14 @@ through `29` remain historical execution artifacts. Reports `01` through `14`
 remain the rationale archive. The current closure state lives in Sections `8`,
 `9`, and `10` below.
 
+**Project-wide mobile target policy (2026-07-10):** Mobile device proof is
+availability-bounded. Run only on USB-connected Android/iPhone targets and
+available Android emulators/iOS simulators discovered at execution time. An
+absent model, OS version, or API band is N/A and non-blocking; retain causal
+host/native coverage for unavailable version branches. This rule governs Plan
+227 and all future specs, plans, QA verdicts, and closure docs. Canonical
+instructions live in `AGENTS.md` and `test-gate-definitions.md`.
+
 ---
 
 ## 1. Test Coverage
