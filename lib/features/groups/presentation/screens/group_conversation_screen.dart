@@ -609,8 +609,10 @@ class GroupConversationScreen extends StatelessWidget {
         }
         final message = item.message!;
         final isSent = message.senderPeerId == ownPeerId;
-        final (quotedText, isQuoteUnavailable) =
-            _resolveQuotedText(message, messagesById);
+        final (quotedText, isQuoteUnavailable) = _resolveQuotedText(
+          message,
+          messagesById,
+        );
         final messageMedia = mediaMap[message.id] ?? message.media;
         // Finding 05 Phase 4: a terminal send_failed row offers the same manual
         // retry affordance as a failed row — the retry re-arms it with a fresh
@@ -806,7 +808,9 @@ class GroupConversationScreen extends StatelessWidget {
                                 GroupReceivedMediaAction.share,
                               ) &&
                               onMediaShare != null) ||
-                          capabilities.contains(GroupReceivedMediaAction.info) ||
+                          capabilities.contains(
+                            GroupReceivedMediaAction.info,
+                          ) ||
                           (capabilities.contains(
                                 GroupReceivedMediaAction.deleteForMe,
                               ) &&
@@ -1356,8 +1360,10 @@ class GroupDisplayItem {
     this.isLastInGroup = true,
   });
 
-  factory GroupDisplayItem.dateSeparator(String label) =>
-      GroupDisplayItem._(type: GroupDisplayItemType.dateSeparator, dateLabel: label);
+  factory GroupDisplayItem.dateSeparator(String label) => GroupDisplayItem._(
+    type: GroupDisplayItemType.dateSeparator,
+    dateLabel: label,
+  );
 
   factory GroupDisplayItem.message(
     GroupMessage message, {
