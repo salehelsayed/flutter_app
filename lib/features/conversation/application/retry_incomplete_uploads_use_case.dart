@@ -146,10 +146,12 @@ Future<int> retryIncompleteUploads({
         layer: 'FL',
         event: 'RETRY_INCOMPLETE_UPLOAD_SKIP_IN_FLIGHT',
         details: {
-          'messageId':
-              messageId.length > 8 ? messageId.substring(0, 8) : messageId,
-          'attachmentId':
-              inFlightBlob.length > 8 ? inFlightBlob.substring(0, 8) : inFlightBlob,
+          'messageId': messageId.length > 8
+              ? messageId.substring(0, 8)
+              : messageId,
+          'attachmentId': inFlightBlob.length > 8
+              ? inFlightBlob.substring(0, 8)
+              : inFlightBlob,
         },
       );
       continue;
@@ -303,7 +305,9 @@ Future<int> retryIncompleteUploads({
         if (keyChanged) {
           final staleMsg = await messageRepo.getMessage(messageId);
           if (staleMsg != null && staleMsg.wireEnvelope != null) {
-            await messageRepo.saveMessage(staleMsg.copyWith(wireEnvelope: null));
+            await messageRepo.saveMessage(
+              staleMsg.copyWith(wireEnvelope: null),
+            );
             emitFlowEvent(
               layer: 'FL',
               event: 'RETRY_INCOMPLETE_UPLOAD_WIRE_ENVELOPE_INVALIDATED',
@@ -424,6 +428,8 @@ Future<int> retryIncompleteUploads({
         bridge: bridge,
         recipientMlKemPublicKey: contact?.mlKemPublicKey,
         quotedMessageId: refreshedMsg.quotedMessageId,
+        dedupKey: refreshedMsg.dedupKey,
+        isForwarded: refreshedMsg.isForwarded,
         mediaAttachments: fullAttachmentList,
         mediaAttachmentRepo: mediaAttachmentRepo,
         emitTimingEvent: false,

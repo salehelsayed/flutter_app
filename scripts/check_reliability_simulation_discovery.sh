@@ -117,6 +117,10 @@ classify_path() {
       record "ignored" "$path" "ignored" "manual Android/iOS media-library-state SQLCipher migration proof outside reliability-sim"
       return
       ;;
+    integration_test/direct_forwarded_marker_sqlcipher_proof_test.dart)
+      record "ignored" "$path" "ignored" "manual Android/iOS direct-forwarded v97 SQLCipher migration proof outside reliability-sim"
+      return
+      ;;
     integration_test/scripts/_android_app_package.dart|\
     integration_test/scripts/routing_smoke_group_criteria.dart|\
     integration_test/setup_device.dart|\

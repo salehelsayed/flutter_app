@@ -622,6 +622,9 @@ class AppLocalizationsDe extends AppLocalizations {
       'Nachricht in die Zwischenablage kopiert';
 
   @override
+  String get conversation_forwarded_marker => 'Weitergeleitet';
+
+  @override
   String get conversation_editing_message => 'Nachricht bearbeiten';
 
   @override

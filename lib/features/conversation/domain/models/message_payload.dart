@@ -31,6 +31,9 @@ class MessagePayload {
   /// legacy senders → receiver falls back to timestamp-exact tier-1.
   final String? dedupKey;
 
+  /// Direct-only forwarding marker. Rides v1 payload / encrypted v2 inner JSON.
+  final bool isForwarded;
+
   const MessagePayload({
     required this.id,
     required this.text,
@@ -42,6 +45,7 @@ class MessagePayload {
     this.quotedMessageId,
     this.media,
     this.dedupKey,
+    this.isForwarded = false,
   });
 
   bool get isEdit => action == actionEdit;
@@ -76,6 +80,7 @@ class MessagePayload {
       final editedAt = payload['editedAt'] as String?;
       final quotedMessageId = payload['quotedMessageId'] as String?;
       final dedupKey = payload['dedupKey'] as String?;
+      final isForwarded = payload['isForwarded'] == true;
 
       final rawMedia = payload['media'] as List<dynamic>?;
       final media = rawMedia
@@ -93,6 +98,7 @@ class MessagePayload {
         quotedMessageId: quotedMessageId,
         media: media,
         dedupKey: dedupKey,
+        isForwarded: isForwarded,
       );
     } catch (_) {
       return null;
@@ -112,6 +118,7 @@ class MessagePayload {
       if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
       if (media != null && media!.isNotEmpty) 'media': media,
       if (dedupKey != null) 'dedupKey': dedupKey,
+      if (isForwarded) 'isForwarded': true,
     };
     final envelope = {
       'type': 'chat_message',
@@ -190,6 +197,7 @@ class MessagePayload {
       final editedAt = payload['editedAt'] as String?;
       final quotedMessageId = payload['quotedMessageId'] as String?;
       final dedupKey = payload['dedupKey'] as String?;
+      final isForwarded = payload['isForwarded'] == true;
 
       final rawMedia = payload['media'] as List<dynamic>?;
       final media = rawMedia
@@ -207,6 +215,7 @@ class MessagePayload {
         quotedMessageId: quotedMessageId,
         media: media,
         dedupKey: dedupKey,
+        isForwarded: isForwarded,
       );
     } catch (_) {
       return null;
@@ -228,6 +237,7 @@ class MessagePayload {
       if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
       if (media != null && media!.isNotEmpty) 'media': media,
       if (dedupKey != null) 'dedupKey': dedupKey,
+      if (isForwarded) 'isForwarded': true,
     });
   }
 
@@ -259,6 +269,7 @@ class MessagePayload {
       transport: transport,
       wireEnvelope: wireEnvelope,
       dedupKey: dedupKey,
+      isForwarded: isForwarded,
     );
   }
 }

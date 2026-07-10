@@ -30,6 +30,7 @@ import 'package:flutter_app/features/settings/application/media_download_policy.
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/media_download_preferences.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/notification_tap_timing.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
@@ -40,6 +41,7 @@ import 'package:flutter_app/features/contacts/application/unblock_contact_use_ca
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/build_received_media_forward.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/confirmation_dialog.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
@@ -75,7 +77,12 @@ import 'package:flutter_app/features/introduction/application/insert_intro_syste
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/introduction/presentation/screens/friend_picker_wired.dart';
 import 'package:flutter_app/features/introduction/presentation/screens/sent_confirmation_wired.dart';
+import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
+import 'package:flutter_app/features/share/presentation/navigation/share_target_picker_route.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 import 'conversation_screen.dart';
 
@@ -265,6 +272,17 @@ class ConversationWired extends StatefulWidget {
   /// controller. Media actions stay unwired when [mediaAttachmentRepo] is
   /// absent and no controller is injected.
   final ReceivedMediaActionController? receivedMediaActionController;
+  final GroupRepository? forwardGroupRepository;
+  final GroupMessageRepository? forwardGroupMessageRepository;
+  final GroupInviteDeliveryAttemptRepository?
+  forwardGroupInviteDeliveryAttemptRepository;
+  final GroupMessageListener? forwardGroupMessageListener;
+  final ActiveConversationTracker? forwardGroupConversationTracker;
+
+  /// Injected by owners that can supply contact+group picker dependencies.
+  /// The pure conversation screen sees only a bounded forward callback.
+  final Future<void> Function(BuildContext context, ShareIntent shareIntent)?
+  receivedMediaForwardLauncher;
 
   const ConversationWired({
     super.key,
@@ -306,6 +324,12 @@ class ConversationWired extends StatefulWidget {
     this.transportMetrics,
     this.autoDownloadDecider,
     this.receivedMediaActionController,
+    this.forwardGroupRepository,
+    this.forwardGroupMessageRepository,
+    this.forwardGroupInviteDeliveryAttemptRepository,
+    this.forwardGroupMessageListener,
+    this.forwardGroupConversationTracker,
+    this.receivedMediaForwardLauncher,
   });
 
   @override
@@ -2074,6 +2098,63 @@ class _ConversationWiredState extends State<ConversationWired>
     final controller = _mediaActionController;
     if (controller == null) return null;
     return controller.loadInfo(identity);
+  }
+
+  Future<bool> _forwardDirectReceivedMedia(
+    String messageId, {
+    String? currentAttachmentId,
+  }) async {
+    final mediaRepo = widget.mediaAttachmentRepo;
+    final parent = await widget.messageRepo.getMessage(messageId);
+    if (mediaRepo == null || parent == null || !mounted) return false;
+    final result = await BuildReceivedMediaForward(
+      mediaAttachmentRepository: mediaRepo,
+    ).build(parent: parent, currentAttachmentId: currentAttachmentId);
+    final intent = result.draft?.shareIntent;
+    if (intent == null || !mounted) return false;
+
+    final injected = widget.receivedMediaForwardLauncher;
+    if (injected != null) {
+      await injected(context, intent);
+      return true;
+    }
+    final contacts = widget.contactRepo;
+    final bridge = widget.bridge;
+    final mediaManager = widget.mediaFileManager;
+    final imageProcessor = widget.imageProcessor;
+    if (contacts == null ||
+        bridge == null ||
+        mediaManager == null ||
+        imageProcessor == null) {
+      return false;
+    }
+    await Navigator.of(context).push(
+      buildShareTargetPickerRoute(
+        shareIntent: intent,
+        identityRepo: widget.identityRepo,
+        contactRepository: contacts,
+        messageRepository: widget.messageRepo,
+        mediaAttachmentRepository: mediaRepo,
+        chatMessageListener: widget.chatMessageListener,
+        bridge: bridge,
+        p2pService: widget.p2pService,
+        mediaFileManager: mediaManager,
+        imageProcessor: imageProcessor,
+        conversationTracker: widget.conversationTracker,
+        audioRecorderService: widget.audioRecorderService,
+        reactionRepository: widget.reactionRepo,
+        reactionListener: widget.reactionListener,
+        groupRepository: widget.forwardGroupRepository,
+        groupMessageRepository: widget.forwardGroupMessageRepository,
+        groupInviteDeliveryAttemptRepository:
+            widget.forwardGroupInviteDeliveryAttemptRepository,
+        groupMessageListener: widget.forwardGroupMessageListener,
+        groupConversationTracker: widget.forwardGroupConversationTracker,
+        introductionRepository: widget.introductionRepository,
+        appShellController: widget.appShellController,
+      ),
+    );
+    return true;
   }
 
   (String?, bool) _resolveActiveQuotePreview() {
@@ -4695,6 +4776,15 @@ class _ConversationWiredState extends State<ConversationWired>
               : null,
           onLoadMediaInfo: _mediaActionController != null
               ? _loadDirectMediaInfo
+              : null,
+          onForwardMedia:
+              widget.mediaAttachmentRepo != null &&
+                  (widget.receivedMediaForwardLauncher != null ||
+                      (widget.contactRepo != null &&
+                          widget.bridge != null &&
+                          widget.mediaFileManager != null &&
+                          widget.imageProcessor != null))
+              ? _forwardDirectReceivedMedia
               : null,
           onDeleteMediaMessage: _mediaActionController != null
               ? (messageId) => unawaited(_onDeleteMediaMessage(messageId))

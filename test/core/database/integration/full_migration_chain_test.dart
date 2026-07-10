@@ -303,6 +303,12 @@ void main() {
     await runMessageReactionTombstoneMigration(db);
     await runGroupsLastMembershipEventIdMigration(db);
     await runPendingGroupBroadcastsMigration(db);
+    // Plan 232 extends the legacy hand-driven fixture just far enough for the
+    // current direct-message row mapper. The production registry remains the
+    // source of the actual v97 migration function.
+    await productionUpgradeMigrations
+        .singleWhere((entry) => entry.version == 97)
+        .run(db);
   }
 
   MessageRepositoryImpl buildMessageRepository(Database db) {
@@ -1445,6 +1451,21 @@ void main() {
   });
 
   group('Production migration registries (TC-228-01)', () {
+    test('production registries contain one ordered direct forwarded v97 entry', () {
+      expect(currentIdentityDatabaseVersion, 97);
+      for (final registry in [
+        productionCreateMigrations,
+        productionUpgradeMigrations,
+      ]) {
+        expect(registry.where((entry) => entry.version == 97), hasLength(1));
+        final index96 = registry.indexWhere((entry) => entry.version == 96);
+        final index97 = registry.indexWhere((entry) => entry.version == 97);
+        expect(index96, greaterThanOrEqualTo(0));
+        expect(index97, index96 + 1);
+        expect(registry[index97].name, '097_direct_message_forwarded');
+      }
+    });
+
     // The exact onCreate call order in main.dart through v95. Fresh installs
     // deliberately skip 004 (nullable secrets — 005 already ships nullable +
     // CHECK) and run 005 inline; 042 runs immediately after 010.
@@ -1580,7 +1601,7 @@ void main() {
       () async {
         // TC-228-13: v96 is the current version and appears exactly once, as
         // the final entry, in BOTH production registry branches.
-        expect(currentIdentityDatabaseVersion, 96);
+        expect(currentIdentityDatabaseVersion, 97);
         expect(
           productionCreateMigrations.where((e) => e.version == 96).length,
           1,
@@ -1589,18 +1610,24 @@ void main() {
           productionUpgradeMigrations.where((e) => e.version == 96).length,
           1,
         );
-        expect(productionCreateMigrations.last.version, 96);
-        expect(productionUpgradeMigrations.last.version, 96);
+        final create96 = productionCreateMigrations.indexWhere(
+          (entry) => entry.version == 96,
+        );
+        final upgrade96 = productionUpgradeMigrations.indexWhere(
+          (entry) => entry.version == 96,
+        );
         expect(
-          productionCreateMigrations.last.name,
+          productionCreateMigrations[create96].name,
           '096_media_library_state',
         );
+        expect(productionCreateMigrations[create96 + 1].version, 97);
+        expect(productionUpgradeMigrations[upgrade96 + 1].version, 97);
 
         Future<void> expectV96Artifacts(Database db) async {
           final userVersion = (await db.rawQuery(
             'PRAGMA user_version',
           )).first.values.first;
-          expect(userVersion, 96);
+          expect(userVersion, currentIdentityDatabaseVersion);
           final cols = (await db.rawQuery(
             'PRAGMA table_info(media_attachments)',
           )).map((c) => c['name'] as String).toSet();

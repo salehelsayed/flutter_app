@@ -251,9 +251,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   String? messageId,
   String? timestamp,
   // F8 tier-2: a normal send stamps `dedupKey = its own id` (the default
-  // below); a forward/share passes the SOURCE message's dedupKey so the
-  // receiver dedups the re-minted (fresh id+timestamp) copy.
+  // below); one explicit Forward action passes its random operation token so
+  // retry/redelivery dedups without coupling later actions to the source.
   String? dedupKey,
+  bool isForwarded = false,
   String? createdAt,
   Bridge? bridge,
   String? recipientMlKemPublicKey,
@@ -416,8 +417,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final resolvedMessageId = messageId ?? _uuid.v4();
   final resolvedTimestamp =
       timestamp ?? DateTime.now().toUtc().toIso8601String();
-  // F8 tier-2: default a normal send's dedupKey to its own id; a forward keeps
-  // the propagated source key so a re-minted id+timestamp still dedups.
+  // F8 tier-2: default a normal send's dedupKey to its own id; one Forward
+  // action keeps its operation token when a destination id/timestamp is
+  // re-minted or retried.
   final resolvedDedupKey = dedupKey ?? resolvedMessageId;
   final resolvedEditedAt = action == MessagePayload.actionEdit
       ? (editedAt ?? DateTime.now().toUtc().toIso8601String())
@@ -446,6 +448,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         ?.map((attachment) => attachment.toJson())
         .toList(),
     dedupKey: resolvedDedupKey,
+    isForwarded: isForwarded,
   );
   logChatOutgoing(
     messageId: resolvedMessageId,
@@ -796,10 +799,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     if (presenceLookup != null) {
       presenceEmphasis = await presenceLookup
           .lookupRelayPresence(targetPeerId)
-          .timeout(
-            _presenceHintBudget,
-            onTimeout: () => RelayPresence.unknown,
-          );
+          .timeout(_presenceHintBudget, onTimeout: () => RelayPresence.unknown);
     }
     emitFlowEvent(
       layer: 'FL',
@@ -1401,6 +1401,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> editChatMessage({
     timestamp: originalMessage.timestamp,
     createdAt: originalMessage.createdAt,
     quotedMessageId: originalMessage.quotedMessageId,
+    dedupKey: originalMessage.dedupKey,
+    isForwarded: originalMessage.isForwarded,
     mediaAttachments: originalMessage.media,
     mediaAttachmentRepo: mediaAttachmentRepo,
     bridge: bridge,

@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/constants/media_constants.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
@@ -610,102 +611,412 @@ void main() {
     }
 
     test(
-      'share to a LAN peer still relay-uploads and the attachment carries '
-      'encryption metadata',
+      'production contact leg remints identity and persists forward provenance per target',
       () async {
-        final p2pService = _LanFakeP2PService(
-          initialState: const NodeState(
-            isStarted: true,
-            peerId: 'my-peer-id-12345',
+        final identityRepository = FakeIdentityRepository()
+          ..seed(_makeIdentity());
+        final contacts = InMemoryContactRepository();
+        final first = ContactModel(
+          peerId: 'peer-forward-one',
+          publicKey: 'pk-forward-one',
+          rendezvous: '/dns4/relay/tcp/443',
+          username: 'One',
+          signature: 'sig-forward-one',
+          scannedAt: '2026-07-10T08:00:00.000Z',
+          mlKemPublicKey: 'mlkem-forward-one',
+        );
+        final second = ContactModel(
+          peerId: 'peer-forward-two',
+          publicKey: 'pk-forward-two',
+          rendezvous: '/dns4/relay/tcp/443',
+          username: 'Two',
+          signature: 'sig-forward-two',
+          scannedAt: '2026-07-10T08:00:00.000Z',
+          mlKemPublicKey: 'mlkem-forward-two',
+        );
+        await contacts.addContact(first);
+        await contacts.addContact(second);
+        final dir = Directory.systemTemp.createTempSync('forward_contact_leg_');
+        addTearDown(() => dir.deleteSync(recursive: true));
+        final file = File('${dir.path}/source.jpg')
+          ..writeAsBytesSync([1, 2, 3]);
+        final messages = InMemoryMessageRepository();
+        final media = InMemoryMediaAttachmentRepository();
+        final coordinator = DefaultShareBatchDeliveryCoordinator(
+          identityRepository: identityRepository,
+          contactRepository: contacts,
+          messageRepository: messages,
+          mediaAttachmentRepository: media,
+          groupRepository: InMemoryGroupRepository(),
+          groupMessageRepository: InMemoryGroupMessageRepository(),
+          bridge: PassthroughCryptoBridge(),
+          p2pService: FakeP2PService(
+            initialState: const NodeState(
+              isStarted: true,
+              peerId: 'my-peer-id-12345',
+            ),
           ),
-        )..sendLocalMediaResult = true;
-
-        final outcome = await deliverOneImage(p2pService: p2pService);
-
-        // The G5 gate passes — the share is not rejected.
-        expect(
-          outcome.result.results.single.status,
-          isNot(ShareBatchTargetStatus.failed),
+          mediaFileManager: FakeMediaFileManager(),
+          imageProcessor: _imageProcessor(),
+          processSharedMediaFn: (_) async => ProcessedShareMediaBatch(
+            processedMedia: [PendingComposerMedia(file: file, budgetBytes: 3)],
+          ),
         );
-        // LAN best-effort happened…
-        expect(p2pService.sendLocalMediaCallCount, 1);
-        // …but the relay upload was made anyway (the LAN-XOR-relay
-        // `continue` is gone)…
-        expect(
-          outcome.bridge.commandLog,
-          containsAllInOrder(['blob:keygen', 'blob:encrypt', 'media:upload']),
+
+        final result = await coordinator.deliver(
+          shareIntent: ShareIntent(
+            type: ShareIntentType.mixed,
+            text: 'editable caption',
+            filePaths: [file.path],
+            forwardProvenance: const ForwardProvenance(
+              operationDedupKey: 'forward-operation-one',
+            ),
+          ),
+          targets: [
+            ShareTargetSelection.contact(first),
+            ShareTargetSelection.contact(second),
+          ],
         );
-        // …and the wire attachment carries the encryption metadata.
-        final attachment = wireMediaAttachment(p2pService);
-        expect(attachment['encryptionKeyBase64'], isNotNull);
-        expect(attachment['encryptionNonce'], isNotNull);
-        expect(attachment['encryptionScheme'], isNotNull);
-        expect(attachment['contentHash'], isNotNull);
+
+        expect(result.failureCount, 0);
+        final firstRows = await messages.getMessagesForContact(first.peerId);
+        final secondRows = await messages.getMessagesForContact(second.peerId);
+        expect(firstRows, hasLength(1));
+        expect(secondRows, hasLength(1));
+        expect(firstRows.single.id, isNot(secondRows.single.id));
+        expect(firstRows.single.timestamp, isNot(secondRows.single.timestamp));
+        expect(firstRows.single.dedupKey, 'forward-operation-one');
+        expect(secondRows.single.dedupKey, 'forward-operation-one');
+        expect(firstRows.single.isForwarded, isTrue);
+        expect(secondRows.single.isForwarded, isTrue);
+        final firstMedia = await media.getAttachmentsForMessage(
+          firstRows.single.id,
+          owner: MediaOwnerLane.direct,
+        );
+        final secondMedia = await media.getAttachmentsForMessage(
+          secondRows.single.id,
+          owner: MediaOwnerLane.direct,
+        );
+        expect(firstMedia, hasLength(1));
+        expect(secondMedia, hasLength(1));
+        expect(firstMedia.single.id, isNot(secondMedia.single.id));
+        expect(
+          firstMedia.single.encryptionKeyBase64,
+          isNot(secondMedia.single.encryptionKeyBase64),
+        );
+
+        final externalResult = await coordinator.deliver(
+          shareIntent: ShareIntent(
+            type: ShareIntentType.files,
+            filePaths: [file.path],
+          ),
+          targets: [ShareTargetSelection.contact(first)],
+        );
+        expect(externalResult.failureCount, 0);
+        final externalRow = (await messages.getMessagesForContact(
+          first.peerId,
+        )).singleWhere((row) => row.id != firstRows.single.id);
+        expect(externalRow.isForwarded, isFalse);
+        expect(externalRow.dedupKey, externalRow.id);
+        expect(externalRow.dedupKey, isNot('forward-operation-one'));
       },
     );
 
     test(
-      'share LAN send streams the encrypted artifact, never the raw shared '
-      'file',
+      'multi-target media forward preprocesses once and encrypts/uploads separately per contact',
       () async {
-        final p2pService = _LanFakeP2PService(
-          initialState: const NodeState(
-            isStarted: true,
-            peerId: 'my-peer-id-12345',
+        final identities = FakeIdentityRepository()..seed(_makeIdentity());
+        final contacts = InMemoryContactRepository();
+        final first = ContactModel(
+          peerId: 'peer-crypto-one',
+          publicKey: 'pk-one',
+          rendezvous: '/dns4/relay/tcp/443',
+          username: 'One',
+          signature: 'sig-one',
+          scannedAt: '2026-07-10T08:00:00.000Z',
+          mlKemPublicKey: 'mlkem-one',
+        );
+        final second = ContactModel(
+          peerId: 'peer-crypto-two',
+          publicKey: 'pk-two',
+          rendezvous: '/dns4/relay/tcp/443',
+          username: 'Two',
+          signature: 'sig-two',
+          scannedAt: '2026-07-10T08:00:00.000Z',
+          mlKemPublicKey: 'mlkem-two',
+        );
+        await contacts.addContact(first);
+        await contacts.addContact(second);
+        final dir = Directory.systemTemp.createTempSync('forward_crypto_');
+        addTearDown(() => dir.deleteSync(recursive: true));
+        final file = File('${dir.path}/source.jpg')
+          ..writeAsBytesSync([9, 8, 7]);
+        final sourceBytes = file.readAsBytesSync();
+        final messages = InMemoryMessageRepository();
+        final media = InMemoryMediaAttachmentRepository();
+        const sourceAttachment = MediaAttachment(
+          id: 'source-stored-blob',
+          messageId: 'source-message',
+          mime: 'image/jpeg',
+          size: 3,
+          mediaType: 'image',
+          localPath: '/source/library/source.jpg',
+          downloadStatus: 'done',
+          createdAt: '2026-07-10T07:59:00.000Z',
+          encryptionKeyBase64: 'source-stored-key',
+          encryptionNonce: 'source-stored-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ownerLane: MediaOwnerLane.direct,
+          isBookmarked: true,
+          lastPlaybackPositionMs: 88,
+        );
+        await media.saveAttachment(
+          sourceAttachment,
+          owner: MediaOwnerLane.direct,
+        );
+        final sourceBefore = (await media.getAttachmentsForMessage(
+          sourceAttachment.messageId,
+          owner: MediaOwnerLane.direct,
+        )).single;
+        var preprocessCount = 0;
+        final coordinator = DefaultShareBatchDeliveryCoordinator(
+          identityRepository: identities,
+          contactRepository: contacts,
+          messageRepository: messages,
+          mediaAttachmentRepository: media,
+          groupRepository: InMemoryGroupRepository(),
+          groupMessageRepository: InMemoryGroupMessageRepository(),
+          bridge: PassthroughCryptoBridge(),
+          p2pService: FakeP2PService(
+            initialState: const NodeState(
+              isStarted: true,
+              peerId: 'my-peer-id-12345',
+            ),
           ),
-        )..sendLocalMediaResult = true;
+          mediaFileManager: FakeMediaFileManager(),
+          imageProcessor: _imageProcessor(),
+          processSharedMediaFn: (_) async {
+            preprocessCount++;
+            return ProcessedShareMediaBatch(
+              processedMedia: [
+                PendingComposerMedia(file: file, budgetBytes: 3),
+              ],
+            );
+          },
+        );
 
-        await deliverOneImage(p2pService: p2pService);
+        await coordinator.deliver(
+          shareIntent: ShareIntent(
+            type: ShareIntentType.files,
+            filePaths: [file.path],
+            forwardProvenance: const ForwardProvenance(
+              operationDedupKey: 'operation-crypto',
+            ),
+          ),
+          targets: [
+            ShareTargetSelection.contact(first),
+            ShareTargetSelection.contact(second),
+          ],
+        );
 
-        expect(p2pService.sendLocalMediaCallCount, 1);
-        // 112 Phase 4: the LAN leg streams the ciphertext artifact under an
-        // enc-flagged opaque-mime offer — never the raw shared file.
+        expect(preprocessCount, 1);
+        final firstMessage = (await messages.getMessagesForContact(
+          first.peerId,
+        )).single;
+        final secondMessage = (await messages.getMessagesForContact(
+          second.peerId,
+        )).single;
+        final firstAttachment = (await media.getAttachmentsForMessage(
+          firstMessage.id,
+          owner: MediaOwnerLane.direct,
+        )).single;
+        final secondAttachment = (await media.getAttachmentsForMessage(
+          secondMessage.id,
+          owner: MediaOwnerLane.direct,
+        )).single;
+        expect(firstAttachment.id, isNot(secondAttachment.id));
         expect(
-          p2pService.lastSendLocalMediaFilePath,
-          isNot(endsWith('shared.jpg')),
-        );
-        expect(p2pService.lastSendLocalMediaFilePath, endsWith('.enc'));
-        expect(p2pService.lastSendLocalMediaEnc, isTrue);
-        expect(
-          p2pService.lastSendLocalMediaMime,
-          kOpaqueMediaTransportMime,
+          firstAttachment.encryptionKeyBase64,
+          isNot(secondAttachment.encryptionKeyBase64),
         );
         expect(
-          p2pService.lastSendLocalMediaEncScheme,
-          kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          firstAttachment.encryptionNonce,
+          isNot(secondAttachment.encryptionNonce),
         );
+        final sourceAfter = (await media.getAttachmentsForMessage(
+          sourceAttachment.messageId,
+          owner: MediaOwnerLane.direct,
+        )).single;
+        expect(sourceAfter.id, sourceBefore.id);
+        expect(
+          sourceAfter.encryptionKeyBase64,
+          sourceBefore.encryptionKeyBase64,
+        );
+        expect(sourceAfter.encryptionNonce, sourceBefore.encryptionNonce);
+        expect(sourceAfter.encryptionScheme, sourceBefore.encryptionScheme);
+        expect(sourceAfter.localPath, sourceBefore.localPath);
+        expect(sourceAfter.isBookmarked, sourceBefore.isBookmarked);
+        expect(
+          sourceAfter.lastPlaybackPositionMs,
+          sourceBefore.lastPlaybackPositionMs,
+        );
+        expect(firstAttachment.id, isNot(sourceAttachment.id));
+        expect(secondAttachment.id, isNot(sourceAttachment.id));
+        expect(
+          firstAttachment.encryptionKeyBase64,
+          isNot(sourceAttachment.encryptionKeyBase64),
+        );
+        expect(
+          secondAttachment.encryptionNonce,
+          isNot(sourceAttachment.encryptionNonce),
+        );
+        expect(file.readAsBytesSync(), sourceBytes);
       },
     );
 
-    test(
-      'share to a non-LAN contact produces encrypted attachment via '
-      'uploadMedia',
-      () async {
-        final p2pService = FakeP2PService(
-          initialState: const NodeState(
-            isStarted: true,
-            peerId: 'my-peer-id-12345',
-          ),
-        );
+    test('share to a LAN peer still relay-uploads and the attachment carries '
+        'encryption metadata', () async {
+      final p2pService = _LanFakeP2PService(
+        initialState: const NodeState(
+          isStarted: true,
+          peerId: 'my-peer-id-12345',
+        ),
+      )..sendLocalMediaResult = true;
 
-        final outcome = await deliverOneImage(p2pService: p2pService);
+      final outcome = await deliverOneImage(p2pService: p2pService);
 
-        expect(
-          outcome.result.results.single.status,
-          isNot(ShareBatchTargetStatus.failed),
-        );
-        expect(p2pService.sendLocalMediaCallCount, 0);
-        expect(
-          outcome.bridge.commandLog,
-          containsAllInOrder(['blob:keygen', 'blob:encrypt', 'media:upload']),
-        );
-        final attachment = wireMediaAttachment(p2pService);
-        expect(attachment['encryptionKeyBase64'], isNotNull);
-        expect(attachment['encryptionNonce'], isNotNull);
-        expect(attachment['encryptionScheme'], isNotNull);
-      },
-    );
+      // The G5 gate passes — the share is not rejected.
+      expect(
+        outcome.result.results.single.status,
+        isNot(ShareBatchTargetStatus.failed),
+      );
+      // LAN best-effort happened…
+      expect(p2pService.sendLocalMediaCallCount, 1);
+      // …but the relay upload was made anyway (the LAN-XOR-relay
+      // `continue` is gone)…
+      expect(
+        outcome.bridge.commandLog,
+        containsAllInOrder(['blob:keygen', 'blob:encrypt', 'media:upload']),
+      );
+      // …and the wire attachment carries the encryption metadata.
+      final attachment = wireMediaAttachment(p2pService);
+      expect(attachment['encryptionKeyBase64'], isNotNull);
+      expect(attachment['encryptionNonce'], isNotNull);
+      expect(attachment['encryptionScheme'], isNotNull);
+      expect(attachment['contentHash'], isNotNull);
+    });
+
+    test('share LAN send streams the encrypted artifact, never the raw shared '
+        'file', () async {
+      final p2pService = _LanFakeP2PService(
+        initialState: const NodeState(
+          isStarted: true,
+          peerId: 'my-peer-id-12345',
+        ),
+      )..sendLocalMediaResult = true;
+
+      await deliverOneImage(p2pService: p2pService);
+
+      expect(p2pService.sendLocalMediaCallCount, 1);
+      // 112 Phase 4: the LAN leg streams the ciphertext artifact under an
+      // enc-flagged opaque-mime offer — never the raw shared file.
+      expect(
+        p2pService.lastSendLocalMediaFilePath,
+        isNot(endsWith('shared.jpg')),
+      );
+      expect(p2pService.lastSendLocalMediaFilePath, endsWith('.enc'));
+      expect(p2pService.lastSendLocalMediaEnc, isTrue);
+      expect(p2pService.lastSendLocalMediaMime, kOpaqueMediaTransportMime);
+      expect(
+        p2pService.lastSendLocalMediaEncScheme,
+        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      );
+    });
+
+    test('share to a non-LAN contact produces encrypted attachment via '
+        'uploadMedia', () async {
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(
+          isStarted: true,
+          peerId: 'my-peer-id-12345',
+        ),
+      );
+
+      final outcome = await deliverOneImage(p2pService: p2pService);
+
+      expect(
+        outcome.result.results.single.status,
+        isNot(ShareBatchTargetStatus.failed),
+      );
+      expect(p2pService.sendLocalMediaCallCount, 0);
+      expect(
+        outcome.bridge.commandLog,
+        containsAllInOrder(['blob:keygen', 'blob:encrypt', 'media:upload']),
+      );
+      final attachment = wireMediaAttachment(p2pService);
+      expect(attachment['encryptionKeyBase64'], isNotNull);
+      expect(attachment['encryptionNonce'], isNotNull);
+      expect(attachment['encryptionScheme'], isNotNull);
+    });
   });
+
+  test(
+    'group forward target preserves publish contract and saves group owner',
+    () async {
+      final identities = FakeIdentityRepository()..seed(_makeIdentity());
+      final groups = InMemoryGroupRepository();
+      final groupMessages = InMemoryGroupMessageRepository();
+      final media = InMemoryMediaAttachmentRepository();
+      final group = _makeGroup('group-forward-owner', 'Forward Owners');
+      await groups.saveGroup(group);
+      await _seedGroupMembers(groups, group.id);
+      await _saveLatestGroupKey(groups, group.id);
+      final dir = Directory.systemTemp.createTempSync('forward_group_owner_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final file = File('${dir.path}/source.jpg')..writeAsBytesSync([1, 2, 3]);
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: identities,
+        contactRepository: InMemoryContactRepository(),
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: media,
+        groupRepository: groups,
+        groupMessageRepository: groupMessages,
+        bridge: _GroupShareBgBridge(
+          publishMessageId: 'group-forward-owner-message',
+          publishTopicPeers: 1,
+          inboxStoreOk: true,
+        ),
+        p2pService: FakeP2PService(),
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: _imageProcessor(),
+        processSharedMediaFn: (_) async => ProcessedShareMediaBatch(
+          processedMedia: [PendingComposerMedia(file: file, budgetBytes: 3)],
+        ),
+      );
+
+      final result = await coordinator.deliver(
+        shareIntent: ShareIntent(
+          type: ShareIntentType.mixed,
+          text: 'group caption',
+          filePaths: [file.path],
+          forwardProvenance: const ForwardProvenance(
+            operationDedupKey: 'direct-only-provenance',
+          ),
+        ),
+        targets: [ShareTargetSelection.group(group)],
+      );
+
+      expect(result.failureCount, 0);
+      final saved = (await groupMessages.getMessagesPage(group.id)).first;
+      expect(saved.text, 'group caption');
+      final attachments = await media.getAttachmentsForMessage(
+        saved.id,
+        owner: MediaOwnerLane.group,
+      );
+      expect(attachments, hasLength(1));
+      expect(attachments.single.ownerLane, MediaOwnerLane.group);
+    },
+  );
 }
 
 class _LanFakeP2PService extends FakeP2PService {
@@ -891,7 +1202,7 @@ class _GroupShareBgBridge extends FakeBridge {
       case 'group:inboxStore':
         return jsonEncode({'ok': inboxStoreOk});
       default:
-        return jsonEncode({'ok': true});
+        return super.send(message);
     }
   }
 }

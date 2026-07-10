@@ -3,8 +3,10 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository_impl.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 
 import '../../core/secure_storage/fake_secure_key_store.dart';
 
@@ -21,27 +23,39 @@ class RecordingSecureKeyStore extends FakeSecureKeyStore {
 }
 
 /// Real-database repository fixture (228): a [MediaAttachmentRepositoryImpl]
-/// wired over an in-memory sqflite FFI database built through the SHARED
-/// production registry at the CURRENT schema version — never a hand-rolled
-/// schema that can drift from main.dart.
+/// wired over a sqflite FFI database built through the SHARED production
+/// registry at the CURRENT schema version — in-memory by default, or
+/// file-backed when a test must prove a real close/reopen. It is never a
+/// hand-rolled schema that can drift from main.dart.
 class MediaRepositoryRealDbFixture {
-  MediaRepositoryRealDbFixture._(this.db, this.repo, this.secureKeyStore);
+  MediaRepositoryRealDbFixture._(
+    this.db,
+    this.repo,
+    this.messageRepo,
+    this.secureKeyStore,
+    this.databasePath,
+  );
 
   final Database db;
   final MediaAttachmentRepositoryImpl repo;
+  final MessageRepositoryImpl messageRepo;
   final RecordingSecureKeyStore secureKeyStore;
+  final String databasePath;
 
-  static Future<MediaRepositoryRealDbFixture> create() async {
+  static Future<MediaRepositoryRealDbFixture> create({
+    String databasePath = inMemoryDatabasePath,
+    RecordingSecureKeyStore? secureKeyStore,
+  }) async {
     sqfliteFfiInit();
     final db = await databaseFactoryFfi.openDatabase(
-      inMemoryDatabasePath,
+      databasePath,
       options: OpenDatabaseOptions(
         version: currentIdentityDatabaseVersion,
         onCreate: runProductionOnCreate,
         onUpgrade: runProductionOnUpgrade,
       ),
     );
-    final secureKeyStore = RecordingSecureKeyStore();
+    final effectiveSecureKeyStore = secureKeyStore ?? RecordingSecureKeyStore();
     final repo = MediaAttachmentRepositoryImpl(
       dbSaveMediaAttachmentPreservingLocalState: (row) =>
           dbSaveMediaAttachmentPreservingLocalState(db, row),
@@ -65,8 +79,13 @@ class MediaRepositoryRealDbFixture {
             ownerLane: ownerLane,
           ),
       dbLoadPendingMediaDownloads: () => dbLoadPendingMediaDownloads(db),
-      dbLoadUploadPendingAttachments: ({int limit = 50, required String ownerLane}) =>
-          dbLoadUploadPendingAttachments(db, limit: limit, ownerLane: ownerLane),
+      dbLoadUploadPendingAttachments:
+          ({int limit = 50, required String ownerLane}) =>
+              dbLoadUploadPendingAttachments(
+                db,
+                limit: limit,
+                ownerLane: ownerLane,
+              ),
       dbSetMediaBookmarked: (id, bookmarked) =>
           dbSetMediaBookmarked(db, id, bookmarked: bookmarked),
       dbUpdateMediaPlaybackPosition: (id, positionMs) =>
@@ -134,9 +153,27 @@ class MediaRepositoryRealDbFixture {
           ),
       dbFinalizeMediaEvictedPathCleared: (id, {required String ownerLane}) =>
           dbFinalizeMediaEvictedPathCleared(db, id, ownerLane: ownerLane),
-      secureKeyStore: secureKeyStore,
+      secureKeyStore: effectiveSecureKeyStore,
     );
-    return MediaRepositoryRealDbFixture._(db, repo, secureKeyStore);
+    return MediaRepositoryRealDbFixture._(
+      db,
+      repo,
+      _buildMessageRepository(db),
+      effectiveSecureKeyStore,
+      databasePath,
+    );
+  }
+
+  /// Closes and reopens a file-backed fixture with fresh repository objects.
+  ///
+  /// The secure store is intentionally retained: production secure storage
+  /// outlives a SQLite handle, while the repository and database handle do not.
+  Future<MediaRepositoryRealDbFixture> reopen() async {
+    if (databasePath == inMemoryDatabasePath) {
+      throw StateError('A file-backed database path is required for reopen');
+    }
+    await dispose();
+    return create(databasePath: databasePath, secureKeyStore: secureKeyStore);
   }
 
   /// Inserts a live direct parent row into `messages`.
@@ -192,4 +229,79 @@ class MediaRepositoryRealDbFixture {
   }
 
   Future<void> dispose() => db.close();
+}
+
+MessageRepositoryImpl _buildMessageRepository(Database db) {
+  return MessageRepositoryImpl(
+    dbInsertMessage: (row) => dbInsertMessage(db, row),
+    dbLoadMessagesForContact: (contactPeerId) =>
+        dbLoadMessagesForContact(db, contactPeerId),
+    dbLoadLatestMessageForContact: (contactPeerId) =>
+        dbLoadLatestMessageForContact(db, contactPeerId),
+    dbUpdateMessageStatus: (id, status) =>
+        dbUpdateMessageStatus(db, id, status),
+    dbLoadMessage: (id) => dbLoadMessage(db, id),
+    dbCountMessagesForContact: (contactPeerId) =>
+        dbCountMessagesForContact(db, contactPeerId),
+    dbMarkConversationAsRead: (contactPeerId) =>
+        dbMarkConversationAsRead(db, contactPeerId),
+    dbCountUnreadForContact: (contactPeerId) =>
+        dbCountUnreadForContact(db, contactPeerId),
+    dbCountTotalUnread: () => dbCountTotalUnread(db),
+    dbCountTotalUnreadExcludingArchived: () =>
+        dbCountTotalUnreadExcludingArchived(db),
+    dbDeleteMessagesForContact: (contactPeerId) =>
+        dbDeleteMessagesForContact(db, contactPeerId),
+    dbDeleteMessage: (id) => dbDeleteMessage(db, id),
+    dbExistsMessageByContent: (contactPeerId, senderPeerId, text, timestamp) =>
+        dbExistsMessageByContent(
+          db,
+          contactPeerId,
+          senderPeerId,
+          text,
+          timestamp,
+        ),
+    dbExistsMessageByDedupKey: (contactPeerId, senderPeerId, dedupKey) =>
+        dbExistsMessageByDedupKey(db, contactPeerId, senderPeerId, dedupKey),
+    dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) =>
+        dbLoadMessagesPage(
+          db,
+          contactPeerId,
+          limit: limit,
+          beforeTimestamp: beforeTimestamp,
+        ),
+    dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
+    dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
+        dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),
+    dbLoadConversationThreadSummaries: (contactPeerIds) =>
+        dbLoadConversationThreadSummaries(db, contactPeerIds),
+    dbRecoverStuckSendingMessages: ({required olderThan, limit = 50}) =>
+        dbRecoverStuckSendingMessages(db, olderThan: olderThan, limit: limit),
+    dbUpdateWireEnvelope: (id, wireEnvelope) =>
+        dbUpdateWireEnvelope(db, id, wireEnvelope),
+    dbLoadStuckSendingOutgoingMessages: ({required olderThan, limit = 50}) =>
+        dbLoadStuckSendingOutgoingMessages(
+          db,
+          olderThan: olderThan,
+          limit: limit,
+        ),
+    dbLoadSendingOutgoingMessages: () => dbLoadSendingOutgoingMessages(db),
+    dbConditionalTransitionStatus:
+        (id, {required fromStatus, required toStatus}) =>
+            dbConditionalTransitionStatus(
+              db,
+              id,
+              fromStatus: fromStatus,
+              toStatus: toStatus,
+            ),
+    dbLoadInboxCustodyOutgoingMessages:
+        ({required recheckOlderThan, limit = 50}) =>
+            dbLoadInboxCustodyOutgoingMessages(
+              db,
+              recheckOlderThan: recheckOlderThan,
+              limit: limit,
+            ),
+    dbMarkInboxCustodyChecked: (id, {relayExpiresAtMs}) =>
+        dbMarkInboxCustodyChecked(db, id, relayExpiresAtMs: relayExpiresAtMs),
+  );
 }

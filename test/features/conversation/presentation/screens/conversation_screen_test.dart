@@ -144,6 +144,7 @@ void main() {
     String? transport,
     String? senderPeerId,
     String? editedAt,
+    bool isForwarded = false,
   }) {
     return ConversationMessage(
       id: id,
@@ -158,6 +159,7 @@ void main() {
       status: status,
       isIncoming: isIncoming,
       createdAt: '2026-02-09T15:30:01.000Z',
+      isForwarded: isForwarded,
       media: media,
       quotedMessageId: quotedMessageId,
       deletedAt: deletedAt,
@@ -167,6 +169,38 @@ void main() {
       editedAt: editedAt,
     );
   }
+
+  testWidgets('screen marks only the forwarded conversation row', (tester) async {
+    await tester.pumpWidget(
+      buildTestWidget(
+        initialLoadDone: true,
+        messages: [
+          makeMessage(id: 'ordinary', text: 'ordinary'),
+          makeMessage(id: 'forwarded', text: 'forwarded', isForwarded: true),
+        ],
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(
+      find.byKey(const ValueKey('direct-forwarded-marker')),
+      findsOneWidget,
+    );
+    final forwardedCard = tester.widget<LetterCard>(
+      find.descendant(
+        of: find.byKey(const ValueKey('msg-forwarded')),
+        matching: find.byType(LetterCard),
+      ),
+    );
+    final ordinaryCard = tester.widget<LetterCard>(
+      find.descendant(
+        of: find.byKey(const ValueKey('msg-ordinary')),
+        matching: find.byType(LetterCard),
+      ),
+    );
+    expect(forwardedCard.isForwarded, isTrue);
+    expect(ordinaryCard.isForwarded, isFalse);
+  });
 
   // 145: the "catching up" affordance shown while the screen's relay drain is
   // in flight. Keyed (not text-matched) so it is robust to copy changes.

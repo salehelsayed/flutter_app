@@ -14,6 +14,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
@@ -24,6 +25,7 @@ import 'package:flutter_app/features/conversation/application/chat_message_liste
 import 'package:flutter_app/features/conversation/application/load_conversation_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -32,6 +34,7 @@ import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 
 // ─── Fake P2P Network ───────────────────────────────────────────────
 // Routes messages between two FakeP2PService instances.
@@ -227,8 +230,7 @@ class FakeP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
@@ -511,6 +513,7 @@ class TestUser {
   final String username;
   final FakeP2PService p2pService;
   final InMemoryMessageRepository messageRepo;
+  final InMemoryMediaAttachmentRepository mediaAttachmentRepo;
   final InMemoryContactRepository contactRepo;
   final ChatMessageListener chatListener;
   final PassthroughCryptoBridge bridge;
@@ -520,6 +523,7 @@ class TestUser {
     required this.username,
     required this.p2pService,
     required this.messageRepo,
+    required this.mediaAttachmentRepo,
     required this.contactRepo,
     required this.chatListener,
     required this.bridge,
@@ -534,6 +538,7 @@ class TestUser {
   }) {
     final p2p = FakeP2PService(peerId: peerId, network: network);
     final msgRepo = messageRepo ?? InMemoryMessageRepository();
+    final mediaRepo = InMemoryMediaAttachmentRepository();
     final contactsRepo = contactRepo ?? InMemoryContactRepository();
     final bridge = PassthroughCryptoBridge();
     final listener = ChatMessageListener(
@@ -541,6 +546,7 @@ class TestUser {
       messageRepo: msgRepo,
       contactRepo: contactsRepo,
       bridge: bridge,
+      mediaAttachmentRepo: mediaRepo,
       getOwnMlKemSecretKey: () async => 'test-own-mlkem-sk',
     );
 
@@ -549,6 +555,7 @@ class TestUser {
       username: username,
       p2pService: p2p,
       messageRepo: msgRepo,
+      mediaAttachmentRepo: mediaRepo,
       contactRepo: contactsRepo,
       chatListener: listener,
       bridge: bridge,
@@ -1316,13 +1323,14 @@ void main() {
     Future<int> bobRowCount() async =>
         (await bob.loadConversation(alice.peerId)).length;
 
-    // Drive a re-mint directly through the public send use case (no forward UI
-    // exists yet — D-LATENT): copy the source dedupKey, mint a fresh id + ts.
+    // Drive explicit operation identities and re-minted redeliveries directly
+    // through the public encrypted-v2 send seam.
     Future<void> forward(
       String text, {
       required String dedupKey,
       required String messageId,
       required String timestamp,
+      required List<MediaAttachment> attachments,
     }) async {
       final contact = await alice.contactRepo.getContact(bob.peerId);
       await sendChatMessage(
@@ -1337,63 +1345,136 @@ void main() {
         dedupKey: dedupKey,
         messageId: messageId,
         timestamp: timestamp,
+        isForwarded: true,
+        mediaAttachments: attachments,
       );
     }
 
+    List<MediaAttachment> forwardedVisuals(
+      String messageId,
+      String destinationPrefix,
+    ) => [
+      MediaAttachment(
+        id: '$destinationPrefix-image',
+        messageId: messageId,
+        mime: 'image/jpeg',
+        size: 11,
+        mediaType: 'image',
+        downloadStatus: 'done',
+        createdAt: '2099-01-01T00:00:00.000Z',
+        contentHash:
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        encryptionKeyBase64: '$destinationPrefix-image-key',
+        encryptionNonce: '$destinationPrefix-image-nonce',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      ),
+      MediaAttachment(
+        id: '$destinationPrefix-video',
+        messageId: messageId,
+        mime: 'video/mp4',
+        size: 22,
+        mediaType: 'video',
+        durationMs: 1000,
+        downloadStatus: 'done',
+        createdAt: '2099-01-01T00:00:00.000Z',
+        contentHash:
+            'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        encryptionKeyBase64: '$destinationPrefix-video-key',
+        encryptionNonce: '$destinationPrefix-video-nonce',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      ),
+    ];
+
     test(
-      'a forward (copied dedupKey, re-minted id+timestamp) does not double-card '
-      'on the receiver, and a genuine repeat still persists',
+      'same content explicit forwards persist while each operation redelivery key dedups',
       () async {
         final flow = <Map<String, dynamic>>[];
         debugSetFlowEventSink(flow.add);
         addTearDown(() => debugSetFlowEventSink(null));
 
-        // 1) Normal send → stamps dedupKey = own id; Bob persists exactly 1 row.
-        final (res1, sent1) = await alice.sendMessage(bob.peerId, 'Hello Bob!');
-        expect(res1, SendChatMessageResult.success);
+        // Operation A persists.
+        await forward(
+          'same forwarded caption',
+          dedupKey: 'forward-operation-a',
+          messageId: 'forward-a-original',
+          timestamp: '2099-01-01T00:00:00.000Z',
+          attachments: forwardedVisuals('forward-a-original', 'operation-a'),
+        );
         await waitUntil(
           () async => await bobRowCount() == 1,
-          reason: 'Bob should receive the first message',
+          reason: 'operation A should persist',
         );
-        final sourceKey = sent1!.dedupKey;
+        var bobRows = await bob.loadConversation(alice.peerId);
+        expect(bobRows.single.isForwarded, isTrue);
         expect(
-          sourceKey,
-          isNotNull,
-          reason: 'a normal send stamps dedupKey = its own id',
+          await bob.mediaAttachmentRepo.getAttachmentsForMessage(
+            bobRows.single.id,
+            owner: MediaOwnerLane.direct,
+          ),
+          hasLength(2),
         );
 
         flow.clear();
-
-        // 2) Forward of the SAME content: COPY dedupKey, RE-MINT id AND ts.
+        // A redelivery re-mints transport identity but retains operation A.
         await forward(
-          'Hello Bob!',
-          dedupKey: sourceKey!,
-          messageId: 'forward-fresh-id-0001',
-          timestamp: '2099-01-01T00:00:00.000Z',
+          'same forwarded caption',
+          dedupKey: 'forward-operation-a',
+          messageId: 'forward-a-redelivery',
+          timestamp: '2099-01-01T00:00:01.000Z',
+          attachments: forwardedVisuals('forward-a-redelivery', 'operation-a'),
         );
         await waitUntil(
-          () async =>
-              flow.any((e) => e['event'] == 'CHAT_MSG_RECEIVE_DUPLICATE_DEDUP_KEY'),
-          reason: 'the forward must be deduped on the receiver via the key',
+          () async => flow.any(
+            (e) => e['event'] == 'CHAT_MSG_RECEIVE_DUPLICATE_DEDUP_KEY',
+          ),
+          reason: 'operation A redelivery must dedup by operation key',
         );
-
-        // Assertion 1: still exactly 1 row (no double-card on HEAD = 2).
         expect(await bobRowCount(), 1);
-        // Assertion 2 (D1): deduped on the KEY, not content — proves the wire
-        // carried dedupKey through the v2 encrypt/decrypt leg and tier-2 (not
-        // tier-1) made the call.
+
+        // A later explicit action mints operation B. Identical content must
+        // persist because the key is action-scoped, never source/content scoped.
+        flow.clear();
+        await forward(
+          'same forwarded caption',
+          dedupKey: 'forward-operation-b',
+          messageId: 'forward-b-original',
+          timestamp: '2099-01-01T00:00:02.000Z',
+          attachments: forwardedVisuals('forward-b-original', 'operation-b'),
+        );
+        await waitUntil(
+          () async => await bobRowCount() == 2,
+          reason: 'operation B must persist despite identical content',
+        );
+        bobRows = await bob.loadConversation(alice.peerId);
+        expect(bobRows, hasLength(2));
+        for (final row in bobRows) {
+          expect(
+            await bob.mediaAttachmentRepo.getAttachmentsForMessage(
+              row.id,
+              owner: MediaOwnerLane.direct,
+            ),
+            hasLength(2),
+          );
+        }
+
+        flow.clear();
+        await forward(
+          'same forwarded caption',
+          dedupKey: 'forward-operation-b',
+          messageId: 'forward-b-redelivery',
+          timestamp: '2099-01-01T00:00:03.000Z',
+          attachments: forwardedVisuals('forward-b-redelivery', 'operation-b'),
+        );
+        await waitUntil(
+          () async => flow.any(
+            (e) => e['event'] == 'CHAT_MSG_RECEIVE_DUPLICATE_DEDUP_KEY',
+          ),
+          reason: 'operation B redelivery must dedup by operation key',
+        );
+        expect(await bobRowCount(), 2);
         final events = flow.map((e) => e['event']).toList();
         expect(events, contains('CHAT_MSG_RECEIVE_DUPLICATE_DEDUP_KEY'));
         expect(events, isNot(contains('CHAT_MSG_RECEIVE_DUPLICATE_CONTENT')));
-
-        // Assertion 4: no-false-positive — a genuine repeat of the SAME text
-        // (fresh own-id key) is NOT swallowed → Bob now shows 2 rows.
-        await alice.sendMessage(bob.peerId, 'Hello Bob!');
-        await waitUntil(
-          () async => await bobRowCount() == 2,
-          reason: 'a genuine repeat with a fresh dedupKey must persist',
-        );
-        expect(await bobRowCount(), 2);
       },
     );
   });

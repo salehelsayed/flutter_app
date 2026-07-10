@@ -21,6 +21,7 @@ class MessageContextOverlay extends StatefulWidget {
   // sites keep their exact Reply/Edit/Copy/Delete menu.
   static const saveActionKey = ValueKey('message-context-save-action');
   static const shareActionKey = ValueKey('message-context-share-action');
+  static const forwardActionKey = ValueKey('message-context-forward-action');
   static const infoActionKey = ValueKey('message-context-info-action');
 
   static const _reactionBarHeight = 60.0;
@@ -36,6 +37,7 @@ class MessageContextOverlay extends StatefulWidget {
   final bool showCopyAction;
   final bool showSaveAction;
   final bool showShareAction;
+  final bool showForwardAction;
   final bool showInfoAction;
   final bool showDeleteAction;
   final VoidCallback onDismiss;
@@ -46,6 +48,7 @@ class MessageContextOverlay extends StatefulWidget {
   final VoidCallback? onCopyTap;
   final VoidCallback? onSaveTap;
   final VoidCallback? onShareTap;
+  final VoidCallback? onForwardTap;
   final VoidCallback? onInfoTap;
   final VoidCallback? onDeleteTap;
 
@@ -60,6 +63,7 @@ class MessageContextOverlay extends StatefulWidget {
     this.showCopyAction = false,
     this.showSaveAction = false,
     this.showShareAction = false,
+    this.showForwardAction = false,
     this.showInfoAction = false,
     this.showDeleteAction = false,
     required this.onDismiss,
@@ -70,6 +74,7 @@ class MessageContextOverlay extends StatefulWidget {
     this.onCopyTap,
     this.onSaveTap,
     this.onShareTap,
+    this.onForwardTap,
     this.onInfoTap,
     this.onDeleteTap,
   });
@@ -100,6 +105,7 @@ class _MessageContextOverlayState extends State<MessageContextOverlay> {
         (widget.showCopyAction ? 1 : 0) +
         (widget.showSaveAction ? 1 : 0) +
         (widget.showShareAction ? 1 : 0) +
+        (widget.showForwardAction ? 1 : 0) +
         (widget.showInfoAction ? 1 : 0) +
         (widget.showDeleteAction ? 1 : 0);
     final hasMenu = actionCount > 0;
@@ -260,6 +266,7 @@ class _MessageContextOverlayState extends State<MessageContextOverlay> {
                     showCopyAction: widget.showCopyAction,
                     showSaveAction: widget.showSaveAction,
                     showShareAction: widget.showShareAction,
+                    showForwardAction: widget.showForwardAction,
                     showInfoAction: widget.showInfoAction,
                     showDeleteAction: widget.showDeleteAction,
                     onReplyTap: widget.onReplyTap != null
@@ -276,6 +283,9 @@ class _MessageContextOverlayState extends State<MessageContextOverlay> {
                         : null,
                     onShareTap: widget.onShareTap != null
                         ? () => _handleOnce(widget.onShareTap!)
+                        : null,
+                    onForwardTap: widget.onForwardTap != null
+                        ? () => _handleOnce(widget.onForwardTap!)
                         : null,
                     onInfoTap: widget.onInfoTap != null
                         ? () => _handleOnce(widget.onInfoTap!)
@@ -308,6 +318,7 @@ class _ContextMenuCard extends StatelessWidget {
   final bool showCopyAction;
   final bool showSaveAction;
   final bool showShareAction;
+  final bool showForwardAction;
   final bool showInfoAction;
   final bool showDeleteAction;
   final VoidCallback? onReplyTap;
@@ -315,6 +326,7 @@ class _ContextMenuCard extends StatelessWidget {
   final VoidCallback? onCopyTap;
   final VoidCallback? onSaveTap;
   final VoidCallback? onShareTap;
+  final VoidCallback? onForwardTap;
   final VoidCallback? onInfoTap;
   final VoidCallback? onDeleteTap;
 
@@ -325,6 +337,7 @@ class _ContextMenuCard extends StatelessWidget {
     required this.showCopyAction,
     required this.showSaveAction,
     required this.showShareAction,
+    required this.showForwardAction,
     required this.showInfoAction,
     required this.showDeleteAction,
     this.onReplyTap,
@@ -332,6 +345,7 @@ class _ContextMenuCard extends StatelessWidget {
     this.onCopyTap,
     this.onSaveTap,
     this.onShareTap,
+    this.onForwardTap,
     this.onInfoTap,
     this.onDeleteTap,
   });
@@ -381,6 +395,13 @@ class _ContextMenuCard extends StatelessWidget {
           icon: Icons.ios_share_rounded,
           label: l10n.conversation_context_share,
           onTap: onShareTap,
+        ),
+      if (showForwardAction)
+        _ContextMenuAction(
+          key: MessageContextOverlay.forwardActionKey,
+          icon: Icons.forward_rounded,
+          label: l10n.media_viewer_action_forward,
+          onTap: onForwardTap,
         ),
       if (showInfoAction)
         _ContextMenuAction(

@@ -17,6 +17,8 @@ import 'package:flutter_app/features/conversation/application/send_chat_message_
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart'
     as chat_use_case
     show sendChatMessage, editChatMessage;
+import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
@@ -31,6 +33,7 @@ import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart'
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../domain/repositories/fake_media_attachment_repository.dart';
+import '../../../shared/fakes/in_memory_contact_repository.dart';
 
 // -- Fake P2P Service --
 class FakeP2PService
@@ -1333,6 +1336,88 @@ void main() {
       expect(payload['action'], MessagePayload.actionEdit);
       expect(payload['editedAt'], isNotNull);
     });
+
+    test(
+      'edit preserves forwarded marker and operation dedup token end to end',
+      () async {
+        const original = ConversationMessage(
+          id: 'msg-forwarded-edit-001',
+          contactPeerId: 'target-peer',
+          senderPeerId: 'my-peer',
+          text: 'Original forwarded caption',
+          timestamp: '2026-07-10T10:00:00.000Z',
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: '2026-07-10T10:00:01.000Z',
+          dedupKey: 'forward-operation-edit',
+          isForwarded: true,
+        );
+
+        final (result, edited) = await editChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          originalMessage: original,
+          updatedText: 'Edited forwarded caption',
+          senderUsername: 'Me',
+        );
+        final inner = decodeWirePayload(p2pService.lastSentMessage!);
+
+        expect(result, SendChatMessageResult.success);
+        expect(edited, isNotNull);
+        expect(edited!.id, original.id);
+        expect(edited.dedupKey, 'forward-operation-edit');
+        expect(edited.isForwarded, isTrue);
+        expect(messageRepo.saved.last.dedupKey, 'forward-operation-edit');
+        expect(messageRepo.saved.last.isForwarded, isTrue);
+        expect(inner['action'], MessagePayload.actionEdit);
+        expect(inner['dedupKey'], 'forward-operation-edit');
+        expect(inner['isForwarded'], isTrue);
+
+        final receiverMessages = FakeMessageRepository();
+        receiverMessages.existingMessages[original.id] = original.copyWith(
+          contactPeerId: 'my-peer',
+          isIncoming: true,
+          status: 'delivered',
+        );
+        final receiverContacts = InMemoryContactRepository();
+        await receiverContacts.addContact(
+          const ContactModel(
+            peerId: 'my-peer',
+            publicKey: 'sender-public-key',
+            rendezvous: '/dns4/relay/tcp/443',
+            username: 'Me',
+            signature: 'sender-signature',
+            scannedAt: '2026-07-10T09:00:00.000Z',
+            mlKemPublicKey: 'sender-mlkem-public-key',
+          ),
+        );
+        final (
+          receiveResult,
+          receiverEdited,
+          _,
+        ) = await handleIncomingChatMessage(
+          message: ChatMessage(
+            from: 'my-peer',
+            to: 'target-peer',
+            content: p2pService.lastSentMessage!,
+            timestamp: edited.editedAt!,
+            isIncoming: true,
+          ),
+          messageRepo: receiverMessages,
+          contactRepo: receiverContacts,
+          bridge: PassthroughCryptoBridge(),
+          ownMlKemSecretKey: 'receiver-mlkem-secret-key',
+        );
+        expect(receiveResult, HandleChatMessageResult.chatMessage);
+        expect(receiverEdited, isNotNull);
+        expect(receiverEdited!.id, original.id);
+        expect(receiverEdited.dedupKey, 'forward-operation-edit');
+        expect(receiverEdited.isForwarded, isTrue);
+        expect(receiverEdited.text, 'Edited forwarded caption');
+        expect(receiverMessages.saved.last.dedupKey, 'forward-operation-edit');
+        expect(receiverMessages.saved.last.isForwarded, isTrue);
+      },
+    );
 
     test('editChatMessage rejects failed outgoing messages', () async {
       const failed = ConversationMessage(

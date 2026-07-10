@@ -317,6 +317,7 @@
   "conversation_context_share": "Share",
   "conversation_context_info": "Info",
   "conversation_context_copied": "Message copied to clipboard",
+  "conversation_forwarded_marker": "Forwarded",
   "conversation_editing_message": "Editing message",
   "conversation_cancel_edit": "Cancel",
   "conversation_edited_indicator": "(edited)",

@@ -275,6 +275,7 @@
   "conversation_context_share": "مشاركة",
   "conversation_context_info": "معلومات",
   "conversation_context_copied": "تم نسخ الرسالة إلى الحافظة",
+  "conversation_forwarded_marker": "تمت إعادة التوجيه",
   "conversation_editing_message": "تعديل الرسالة",
   "conversation_cancel_edit": "إلغاء",
   "conversation_edited_indicator": "(تم التعديل)",

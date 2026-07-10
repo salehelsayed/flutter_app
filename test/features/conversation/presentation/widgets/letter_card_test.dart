@@ -24,6 +24,7 @@ void main() {
     String? quotedText,
     bool isQuoteUnavailable = false,
     bool isEdited = false,
+    bool isForwarded = false,
     bool isDeleted = false,
     List<MediaAttachment> media = const [],
     List<MessageReaction> reactions = const [],
@@ -41,9 +42,10 @@ void main() {
     String? failedMediaActionKeySuffix,
     bool requireVerifiedContentHash = false,
     bool transportStatusGlyph = false,
+    Locale locale = const Locale('en'),
   }) {
     return MaterialApp(
-      locale: const Locale('en'),
+      locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       theme: ThemeData(extensions: <ThemeExtension<dynamic>>[readableColors]),
@@ -60,6 +62,7 @@ void main() {
             quotedText: quotedText,
             isQuoteUnavailable: isQuoteUnavailable,
             isEdited: isEdited,
+            isForwarded: isForwarded,
             isDeleted: isDeleted,
             media: media,
             reactions: reactions,
@@ -84,6 +87,35 @@ void main() {
   }
 
   group('LetterCard', () {
+    testWidgets(
+      'direct forwarded marker is attribution-free and legacy rows stay unmarked',
+      (tester) async {
+        for (final locale in const [Locale('en'), Locale('de'), Locale('ar')]) {
+          await tester.pumpWidget(
+            buildTestWidget(
+              locale: locale,
+              isForwarded: true,
+              text: 'forwarded body',
+            ),
+          );
+          await tester.pump();
+          expect(
+            find.byKey(const ValueKey('direct-forwarded-marker')),
+            findsOneWidget,
+          );
+          expect(find.textContaining('Alice'), findsWidgets);
+          expect(find.textContaining('source message'), findsNothing);
+          expect(find.textContaining('operation'), findsNothing);
+        }
+
+        await tester.pumpWidget(buildTestWidget(text: 'legacy body'));
+        expect(
+          find.byKey(const ValueKey('direct-forwarded-marker')),
+          findsNothing,
+        );
+      },
+    );
+
     group('received (incoming) card', () {
       testWidgets('shows sender name', (tester) async {
         await tester.pumpWidget(buildTestWidget(isIncoming: true));

@@ -364,6 +364,8 @@ Future<bool> _retryFailedMessageCandidate({
       bridge: bridge,
       recipientMlKemPublicKey: mlKemPk,
       quotedMessageId: msg.quotedMessageId,
+      dedupKey: msg.dedupKey,
+      isForwarded: msg.isForwarded,
       mediaAttachments: attachments,
       mediaAttachmentRepo: mediaAttachmentRepo,
       emitTimingEvent: false,

@@ -125,14 +125,14 @@ void main() {
         }
       }
 
-      // ── 3. Frozen pre-231 wired transport call-site inventory. ──────────
-      // Recorded from conversation_wired.dart immediately before plan-231
-      // execution (2026-07-10). These counts are the ALLOWLIST: existing
-      // messaging behavior owns them, and a media-action handler that reuses
-      // any delivery seam (or adds a new one) changes a count and fails here.
+      // ── 3. Frozen wired transport call-site inventory. ──────────────────
+      // Plan 232 adds one reviewed forwarding route. It passes the existing
+      // P2P service to the existing share picker, while Save/Share/Info remain
+      // local-only Plan 231 actions. These exact counts keep that exception
+      // bounded and prevent another media-action delivery seam from appearing.
       const wiredTransportBaseline = <String, int>{
-        'widget.p2pService': 16,
-        'widget.bridge': 25,
+        'widget.p2pService': 17,
+        'widget.bridge': 27,
         'widget.sendChatMessageFn(': 1,
         'widget.editChatMessageFn(': 1,
         'widget.deleteMessageForMeFn(': 1,
@@ -143,7 +143,7 @@ void main() {
         'prepareEncryptedMediaArtifactFn': 4,
         '.sendMessageWithReply(': 0,
         '.storeInInbox(': 0,
-        'ShareTargetPicker': 0,
+        'ShareTargetPicker': 1,
         'ShareBatch': 0,
       };
       final wiredSrc = read(wiredPath);
@@ -154,8 +154,7 @@ void main() {
           reason:
               'conversation_wired.dart transport call-site inventory drifted '
               'for "${entry.key}" — media actions must not add or reuse a '
-              'delivery seam (update this baseline ONLY for reviewed '
-              'non-media-action messaging work)',
+              'delivery seam outside the reviewed Plan 232 forwarding route',
         );
       }
 

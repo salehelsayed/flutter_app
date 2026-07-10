@@ -26,6 +26,10 @@ import 'package:flutter_app/features/conversation/presentation/navigation/conver
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
+import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 import 'package:flutter_app/features/settings/presentation/navigation/settings_route_transition.dart';
@@ -87,6 +91,12 @@ class PostsWired extends StatefulWidget {
   final ReactionListener? reactionListener;
   final IntroductionRepository? introductionRepository;
   final ActiveConversationTracker? conversationTracker;
+  final GroupRepository? groupRepository;
+  final GroupMessageRepository? groupMessageRepository;
+  final GroupInviteDeliveryAttemptRepository?
+      groupInviteDeliveryAttemptRepository;
+  final GroupMessageListener? groupMessageListener;
+  final ActiveConversationTracker? groupConversationTracker;
   final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
   final AccountMigrationSizeGate? accountMigrationSizeGate;
 
@@ -117,6 +127,11 @@ class PostsWired extends StatefulWidget {
     this.reactionListener,
     this.introductionRepository,
     this.conversationTracker,
+    this.groupRepository,
+    this.groupMessageRepository,
+    this.groupInviteDeliveryAttemptRepository,
+    this.groupMessageListener,
+    this.groupConversationTracker,
     this.accountMigrationRunTransfer,
     this.accountMigrationSizeGate,
   });
@@ -1004,6 +1019,12 @@ class _PostsWiredState extends State<PostsWired> {
           reactionRepo: widget.reactionRepo,
           reactionListener: widget.reactionListener,
           introductionRepository: widget.introductionRepository,
+          forwardGroupRepository: widget.groupRepository,
+          forwardGroupMessageRepository: widget.groupMessageRepository,
+          forwardGroupInviteDeliveryAttemptRepository:
+              widget.groupInviteDeliveryAttemptRepository,
+          forwardGroupMessageListener: widget.groupMessageListener,
+          forwardGroupConversationTracker: widget.groupConversationTracker,
           appShellController: _settingsAppShellController,
         ),
       ),

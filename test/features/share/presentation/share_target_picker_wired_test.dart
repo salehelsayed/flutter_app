@@ -666,6 +666,91 @@ void main() {
   });
 
   testWidgets(
+    'internal forward keeps operation identity for failed-only retry',
+    (tester) async {
+      final harness = _buildHarness();
+      final group = _makeGroup(
+        'group-forward',
+        'Forward Group',
+        GroupType.chat,
+        GroupRole.admin,
+      );
+      harness.contactRepository.addTestContact(activeContact);
+      await _saveWritableGroup(harness.groupRepository, group);
+      final coordinator = _SequencedRecordingBatchCoordinator([
+        ShareBatchDeliveryResult(
+          results: [
+            ShareBatchTargetResult(
+              target: ShareTargetSelection.contact(activeContact),
+              status: ShareBatchTargetStatus.sent,
+              detail: 'Sent.',
+            ),
+            ShareBatchTargetResult(
+              target: ShareTargetSelection.group(group),
+              status: ShareBatchTargetStatus.failed,
+              detail: 'Failed.',
+            ),
+          ],
+        ),
+        ShareBatchDeliveryResult(
+          results: [
+            ShareBatchTargetResult(
+              target: ShareTargetSelection.group(group),
+              status: ShareBatchTargetStatus.sent,
+              detail: 'Sent.',
+            ),
+          ],
+        ),
+      ]);
+
+      await pumpPicker(
+        tester,
+        contactRepository: harness.contactRepository,
+        groupRepository: harness.groupRepository,
+        messageRepository: harness.messageRepository,
+        mediaAttachmentRepository: harness.mediaAttachmentRepository,
+        identityRepository: harness.identityRepository,
+        chatMessageListener: harness.chatMessageListener,
+        groupMessageRepository: harness.groupMessageRepository,
+        groupMessageListener: harness.groupMessageListener,
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.mixed,
+          text: 'caption',
+          filePaths: ['/tmp/forward.jpg'],
+          forwardProvenance: ForwardProvenance(
+            operationDedupKey: 'stable-operation-token',
+          ),
+        ),
+        batchShareCoordinator: coordinator,
+      );
+      await tester.tap(
+        find.byKey(ValueKey('share-contact-${activeContact.peerId}')),
+      );
+      await tester.tap(find.byKey(ValueKey('share-group-${group.id}')));
+      await tester.pump();
+      await tester.tap(find.text('Send'));
+      await tester.pump();
+      await tester.tap(find.text('Send'));
+      await tester.pump();
+
+      expect(coordinator.intents, hasLength(2));
+      expect(
+        coordinator.intents.map(
+          (intent) => intent.forwardProvenance!.operationDedupKey,
+        ),
+        everyElement('stable-operation-token'),
+      );
+      expect(coordinator.targets.first.map((target) => target.key).toSet(), {
+        'contact:${activeContact.peerId}',
+        'group:${group.id}',
+      });
+      expect(coordinator.targets.last.map((target) => target.key).toSet(), {
+        'group:${group.id}',
+      });
+    },
+  );
+
+  testWidgets(
     'successful send with skipped oversized GIF surfaces warning text',
     (tester) async {
       final harness = _buildHarness();
@@ -916,6 +1001,25 @@ class _RecordingBatchCoordinator implements ShareBatchDeliveryCoordinator {
     lastShareIntent = shareIntent;
     lastTargets = List<ShareTargetSelection>.from(targets);
     return result;
+  }
+}
+
+class _SequencedRecordingBatchCoordinator
+    implements ShareBatchDeliveryCoordinator {
+  _SequencedRecordingBatchCoordinator(this.results);
+
+  final List<ShareBatchDeliveryResult> results;
+  final List<ShareIntent> intents = [];
+  final List<List<ShareTargetSelection>> targets = [];
+
+  @override
+  Future<ShareBatchDeliveryResult> deliver({
+    required ShareIntent shareIntent,
+    required List<ShareTargetSelection> targets,
+  }) async {
+    intents.add(shareIntent);
+    this.targets.add(List<ShareTargetSelection>.from(targets));
+    return results[intents.length - 1];
   }
 }
 

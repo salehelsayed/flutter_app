@@ -275,6 +275,7 @@
   "conversation_context_share": "Teilen",
   "conversation_context_info": "Info",
   "conversation_context_copied": "Nachricht in die Zwischenablage kopiert",
+  "conversation_forwarded_marker": "Weitergeleitet",
   "conversation_editing_message": "Nachricht bearbeiten",
   "conversation_cancel_edit": "Abbrechen",
   "conversation_edited_indicator": "(bearbeitet)",

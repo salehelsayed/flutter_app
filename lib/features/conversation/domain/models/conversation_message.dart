@@ -66,11 +66,15 @@ class ConversationMessage {
   /// ISO-8601 timestamp of the last custody-sweep check on an 'inboxed' row.
   final String? custodyCheckedAt;
 
-  /// F8 tier-2: wire-stamped, propagated source-message identifier (a normal
-  /// send stamps its own id; a forward copies the source's key). Survives a
-  /// forward's id+timestamp re-mint; the receiver dedups on
+  /// F8 tier-2: wire-stamped logical-delivery identifier (a normal send stamps
+  /// its own id; one explicit Forward action stamps a random operation token).
+  /// Survives that action's id+timestamp re-mint; the receiver dedups on
   /// `(contact_peer_id, sender_peer_id, dedup_key)`. NULL for legacy rows.
   final String? dedupKey;
+
+  /// Whether this direct message was created by an explicit in-app Forward.
+  /// Legacy database rows default to false.
+  final bool isForwarded;
 
   /// Transient media attachments — populated via copyWith() after batch-loading
   /// from media_attachments table. NOT serialized to DB.
@@ -96,6 +100,7 @@ class ConversationMessage {
     this.relayExpiresAt,
     this.custodyCheckedAt,
     this.dedupKey,
+    this.isForwarded = false,
     this.media = const [],
   });
 
@@ -121,6 +126,7 @@ class ConversationMessage {
       relayExpiresAt: map['relay_expires_at'] as int?,
       custodyCheckedAt: map['custody_checked_at'] as String?,
       dedupKey: map['dedup_key'] as String?,
+      isForwarded: ((map['is_forwarded'] as num?)?.toInt() ?? 0) == 1,
     );
   }
 
@@ -146,6 +152,7 @@ class ConversationMessage {
       'relay_expires_at': relayExpiresAt,
       'custody_checked_at': custodyCheckedAt,
       'dedup_key': dedupKey,
+      'is_forwarded': isForwarded ? 1 : 0,
     };
   }
 
@@ -173,6 +180,7 @@ class ConversationMessage {
     Object? relayExpiresAt = _sentinel,
     Object? custodyCheckedAt = _sentinel,
     Object? dedupKey = _sentinel,
+    bool? isForwarded,
     List<MediaAttachment>? media,
   }) {
     return ConversationMessage(
@@ -205,6 +213,7 @@ class ConversationMessage {
           ? this.custodyCheckedAt
           : custodyCheckedAt as String?,
       dedupKey: dedupKey == _sentinel ? this.dedupKey : dedupKey as String?,
+      isForwarded: isForwarded ?? this.isForwarded,
       media: media ?? this.media,
     );
   }

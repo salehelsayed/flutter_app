@@ -354,6 +354,8 @@ class DefaultShareBatchDeliveryCoordinator
       recipientMlKemPublicKey: resolvedContact.mlKemPublicKey,
       mediaAttachments: attachments.isEmpty ? null : attachments,
       mediaAttachmentRepo: mediaAttachmentRepository,
+      dedupKey: shareIntent.forwardProvenance?.operationDedupKey,
+      isForwarded: shareIntent.forwardProvenance != null,
     );
 
     return ShareBatchTargetResult(

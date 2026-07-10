@@ -44,8 +44,8 @@ abstract class MessageRepository {
 
   /// Returns true if an incoming message with the same wire-stamped `dedupKey`
   /// already exists (F8 tier-2). Unlike [existsByContent] (timestamp-exact),
-  /// this survives a forward/share that re-mints BOTH id and timestamp, because
-  /// the `dedupKey` is a propagated source-message id. Keyed on
+  /// this survives retry/redelivery that re-mints BOTH id and timestamp,
+  /// including one Forward action's random operation token. Keyed on
   /// `(contactPeerId, senderPeerId, dedupKey)` over incoming rows.
   Future<bool> existsByDedupKey(
     String contactPeerId,

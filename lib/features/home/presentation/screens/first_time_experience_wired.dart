@@ -324,6 +324,12 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
             reactionRepo: widget.reactionRepository,
             reactionListener: widget.reactionListener,
             introductionRepository: widget.introductionRepository,
+            forwardGroupRepository: widget.groupRepository,
+            forwardGroupMessageRepository: widget.groupMessageRepository,
+            forwardGroupInviteDeliveryAttemptRepository:
+                widget.groupInviteDeliveryAttemptRepository,
+            forwardGroupMessageListener: widget.groupMessageListener,
+            forwardGroupConversationTracker: widget.groupConversationTracker,
             appShellController: widget.appShellController,
             transportMetrics: widget.transportMetrics,
           ),

@@ -12,6 +12,42 @@ void main() {
   );
 
   group('MessagePayload', () {
+    test('forward marker is legacy-safe inner-only and carries media plus dedup', () {
+      const forwarded = MessagePayload(
+        id: 'forwarded-1',
+        text: 'caption',
+        senderPeerId: 'sender',
+        senderUsername: 'Sender',
+        timestamp: '2026-07-10T00:00:00.000Z',
+        dedupKey: 'operation-token',
+        isForwarded: true,
+        media: [
+          {'id': 'attachment-1', 'mime': 'image/jpeg', 'mediaType': 'image'},
+        ],
+      );
+
+      final v1 = MessagePayload.fromJson(forwarded.toJson())!;
+      final v2 = MessagePayload.fromDecryptedJson(forwarded.toInnerJson())!;
+      expect(v1.isForwarded, isTrue);
+      expect(v2.isForwarded, isTrue);
+      expect(v2.dedupKey, 'operation-token');
+      expect(v2.media, hasLength(1));
+      expect(MessagePayload.fromJson(testPayload.toJson())!.isForwarded, isFalse);
+
+      final outer = jsonDecode(
+        MessagePayload.buildEncryptedEnvelope(
+          id: forwarded.id,
+          senderPeerId: forwarded.senderPeerId,
+          senderUsername: forwarded.senderUsername,
+          kem: 'kem',
+          ciphertext: forwarded.toInnerJson(),
+          nonce: 'nonce',
+        ),
+      ) as Map<String, dynamic>;
+      expect(outer.keys, isNot(contains('isForwarded')));
+      expect(outer.keys, isNot(contains('dedupKey')));
+    });
+
     group('toJson / fromJson round-trip', () {
       test('round-trips correctly', () {
         final jsonString = testPayload.toJson();

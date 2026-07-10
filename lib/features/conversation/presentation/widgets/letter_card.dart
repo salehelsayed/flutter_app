@@ -47,6 +47,7 @@ class LetterCard extends StatelessWidget {
   final String? quotedText;
   final bool isQuoteUnavailable;
   final bool isEdited;
+  final bool isForwarded;
   final bool isDeleted;
   final List<MediaAttachment> media;
   final void Function(int index)? onMediaTap;
@@ -130,6 +131,7 @@ class LetterCard extends StatelessWidget {
     this.quotedText,
     this.isQuoteUnavailable = false,
     this.isEdited = false,
+    this.isForwarded = false,
     this.isDeleted = false,
     this.media = const [],
     this.onMediaTap,
@@ -381,6 +383,22 @@ class LetterCard extends StatelessWidget {
     final bodyLineHeight = compact ? 1.35 : 1.65;
     final bodyBottomPad = compact ? 6.0 : 8.0;
     return [
+      if (isForwarded && !isDeleted)
+        Padding(
+          padding: EdgeInsets.fromLTRB(16, bodyTopPad, 16, 2),
+          child: Semantics(
+            label: l10n.conversation_forwarded_marker,
+            child: Text(
+              l10n.conversation_forwarded_marker,
+              key: const ValueKey('direct-forwarded-marker'),
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: readableColors.textMuted,
+              ),
+            ),
+          ),
+        ),
       // Quote bar (if quoting another message)
       if (quotedText != null || isQuoteUnavailable)
         Padding(

@@ -1084,6 +1084,12 @@ abstract class AppLocalizations {
   /// **'Message copied to clipboard'**
   String get conversation_context_copied;
 
+  /// No description provided for @conversation_forwarded_marker.
+  ///
+  /// In en, this message translates to:
+  /// **'Forwarded'**
+  String get conversation_forwarded_marker;
+
   /// No description provided for @conversation_editing_message.
   ///
   /// In en, this message translates to:

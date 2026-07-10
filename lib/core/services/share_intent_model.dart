@@ -1,6 +1,16 @@
 /// Types of shared content from external apps.
 enum ShareIntentType { text, files, mixed }
 
+/// Internal-only provenance for one explicit received-media Forward action.
+///
+/// The token is random per action and intentionally contains no source message,
+/// sender, conversation, attachment, or caption identity.
+class ForwardProvenance {
+  final String operationDedupKey;
+
+  const ForwardProvenance({required this.operationDedupKey});
+}
+
 /// Represents content shared into the app from an external source.
 ///
 /// Created from `receive_sharing_intent` plugin data and passed through
@@ -15,7 +25,15 @@ class ShareIntent {
   /// Local file paths for shared files.
   final List<String> filePaths;
 
-  const ShareIntent({required this.type, this.text, this.filePaths = const []});
+  /// Null for external OS shares. Non-null only for an in-app Forward action.
+  final ForwardProvenance? forwardProvenance;
+
+  const ShareIntent({
+    required this.type,
+    this.text,
+    this.filePaths = const [],
+    this.forwardProvenance,
+  });
 
   /// Whether this intent contains text content.
   bool get hasText => text != null && text!.isNotEmpty;
@@ -27,6 +45,7 @@ class ShareIntent {
   ShareIntent copyWith({
     Object? text = _shareIntentTextUnchanged,
     List<String>? filePaths,
+    Object? forwardProvenance = _shareIntentProvenanceUnchanged,
   }) {
     final nextText = identical(text, _shareIntentTextUnchanged)
         ? this.text
@@ -36,6 +55,10 @@ class ShareIntent {
       type: _resolveType(text: nextText, filePaths: nextFilePaths),
       text: nextText,
       filePaths: nextFilePaths,
+      forwardProvenance:
+          identical(forwardProvenance, _shareIntentProvenanceUnchanged)
+          ? this.forwardProvenance
+          : forwardProvenance as ForwardProvenance?,
     );
   }
 
@@ -56,3 +79,4 @@ class ShareIntent {
 }
 
 const Object _shareIntentTextUnchanged = Object();
+const Object _shareIntentProvenanceUnchanged = Object();

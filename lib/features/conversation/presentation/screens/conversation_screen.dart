@@ -62,6 +62,9 @@ typedef DirectReceivedMediaInfoLoader =
       DirectReceivedMediaActionIdentity identity,
     );
 
+typedef DirectReceivedMediaForwardHandler =
+    Future<bool> Function(String messageId, {String? currentAttachmentId});
+
 @immutable
 class ConversationComposerViewState {
   final List<File> pendingAttachments;
@@ -234,6 +237,7 @@ class ConversationScreen extends StatefulWidget {
   /// only, row-level long press).
   final DirectReceivedMediaEgressHandler? onMediaEgress;
   final DirectReceivedMediaInfoLoader? onLoadMediaInfo;
+  final DirectReceivedMediaForwardHandler? onForwardMedia;
 
   /// Whole-message Delete for Me initiated from a media surface — the wired
   /// layer labels the confirmation as message+attachments removal.
@@ -306,6 +310,7 @@ class ConversationScreen extends StatefulWidget {
     this.backgroundPreference = BackgroundPreference.defaultBackground,
     this.onMediaEgress,
     this.onLoadMediaInfo,
+    this.onForwardMedia,
     this.onDeleteMediaMessage,
   });
 
@@ -698,6 +703,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
                 quotedText: quotedText,
                 isQuoteUnavailable: isQuoteUnavailable,
                 isEdited: message.editedAt != null && !message.isDeleted,
+                isForwarded: message.isForwarded,
                 isDeleted: message.isDeleted,
                 media: message.media,
                 reactions: message.isDeleted ? const [] : messageReactions,
@@ -974,6 +980,13 @@ class _ConversationScreenState extends State<ConversationScreen> {
           );
     final showSaveAction = mediaIdentity != null && widget.onMediaEgress != null;
     final showShareAction = showSaveAction;
+    final showForwardAction =
+        widget.onForwardMedia != null &&
+        !message.isDeleted &&
+        message.isIncoming &&
+        message.media.any(
+          (attachment) => _isDirectMediaActionEligible(message, attachment),
+        );
     final showInfoAction =
         mediaIdentity != null && widget.onLoadMediaInfo != null;
     final showMediaDeleteAction =
@@ -991,6 +1004,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
         showCopyAction: hasCopyAction,
         showSaveAction: showSaveAction,
         showShareAction: showShareAction,
+        showForwardAction: showForwardAction,
         showInfoAction: showInfoAction,
         showDeleteAction: mediaIdentity != null
             ? showMediaDeleteAction
@@ -1037,6 +1051,14 @@ class _ConversationScreenState extends State<ConversationScreen> {
                 );
               }
             : null,
+        onForwardTap: showForwardAction
+            ? () {
+                Navigator.of(dialogContext).pop();
+                unawaited(
+                  widget.onForwardMedia!(message.id),
+                );
+              }
+            : null,
         onInfoTap: showInfoAction
             ? () {
                 Navigator.of(dialogContext).pop();
@@ -1070,6 +1092,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
   bool get _hasDirectMediaActionSurface =>
       widget.onMediaEgress != null ||
       widget.onLoadMediaInfo != null ||
+      widget.onForwardMedia != null ||
       widget.onDeleteMediaMessage != null;
 
   /// 231: an attachment may surface media actions only when its CURRENT
@@ -1170,6 +1193,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
       }
       if (widget.onQuoteReply != null) allowed.add(MediaViewerAction.reply);
       if (widget.onLoadMediaInfo != null) allowed.add(MediaViewerAction.info);
+      if (widget.onForwardMedia != null) allowed.add(MediaViewerAction.forward);
       if (widget.onDeleteMediaMessage != null) {
         allowed.add(MediaViewerAction.delete);
       }
@@ -1252,8 +1276,15 @@ class _ConversationScreenState extends State<ConversationScreen> {
         });
         return MediaViewerActionResult.success;
       case MediaViewerAction.forward:
+        final launched = await widget.onForwardMedia?.call(
+          item.messageId,
+          currentAttachmentId: item.attachmentId,
+        );
+        return launched == true
+            ? MediaViewerActionResult.success
+            : MediaViewerActionResult.failure;
       case MediaViewerAction.bookmark:
-        // Plans 232/233 own these; the direct lane never authorizes them.
+        // Plan 233 owns bookmarks on this surface.
         return MediaViewerActionResult.failure;
     }
   }

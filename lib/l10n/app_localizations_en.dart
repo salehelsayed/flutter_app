@@ -611,6 +611,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get conversation_context_copied => 'Message copied to clipboard';
 
   @override
+  String get conversation_forwarded_marker => 'Forwarded';
+
+  @override
   String get conversation_editing_message => 'Editing message';
 
   @override

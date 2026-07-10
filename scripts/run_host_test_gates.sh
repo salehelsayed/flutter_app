@@ -76,6 +76,18 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/features/conversation/application/received_media_action_controller_test.dart"
   "test/features/conversation/application/received_media_action_transport_boundary_test.dart"
   "test/features/conversation/presentation/screens/conversation_wired_test.dart"
+  # 232: direct received-media forwarding draft, picker launch, retry/provenance,
+  # migration, and frozen Dart transport boundary.
+  "test/features/conversation/application/build_received_media_forward_test.dart"
+  "test/features/conversation/presentation/screens/conversation_received_media_forward_test.dart"
+  "test/features/conversation/integration/forwarded_media_retry_roundtrip_test.dart"
+  "test/features/conversation/application/direct_media_forward_transport_boundary_test.dart"
+  "test/core/database/migrations/097_direct_message_forwarded_test.dart"
+  "test/features/share/application/share_batch_delivery_coordinator_test.dart"
+  "test/features/share/presentation/share_target_picker_wired_test.dart"
+  "test/features/conversation/domain/models/message_payload_test.dart"
+  "test/features/conversation/presentation/widgets/letter_card_test.dart"
+  "test/features/conversation/presentation/screens/conversation_screen_test.dart"
 )
 
 readonly GO_BRIDGE_CONNECTED_PEER_TEST="go-mknoon/bridge/bridge_test.go"

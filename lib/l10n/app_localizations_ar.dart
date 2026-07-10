@@ -631,6 +631,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get conversation_context_copied => 'تم نسخ الرسالة إلى الحافظة';
 
   @override
+  String get conversation_forwarded_marker => 'تمت إعادة التوجيه';
+
+  @override
   String get conversation_editing_message => 'تعديل الرسالة';
 
   @override

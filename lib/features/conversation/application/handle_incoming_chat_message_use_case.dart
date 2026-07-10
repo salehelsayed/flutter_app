@@ -256,6 +256,7 @@ handleIncomingChatMessage({
     quotedMessageId: payload.quotedMessageId,
     media: payload.media,
     dedupKey: payload.dedupKey, // F8 tier-2: must survive the sanitize rebuild
+    isForwarded: payload.isForwarded,
   );
 
   final textPreview = buildTextPreview(payload.text);
@@ -417,8 +418,9 @@ handleIncomingChatMessage({
   // materialization and deleted-placeholder merges are intentional transitions
   // (existingMessage != null) and must not be swallowed.
   //
-  // Tier-2 (F8, wire-stamped `dedupKey`) takes PRECEDENCE: a propagated source
-  // id survives a forward/share that re-mints BOTH id and timestamp, which the
+  // Tier-2 (F8, wire-stamped `dedupKey`) takes PRECEDENCE: a logical delivery
+  // key (including one Forward action token) survives a re-mint of BOTH id and
+  // timestamp, which the
   // timestamp-exact tier-1 below cannot catch. A keyed-but-UNMATCHED arrival is
   // authoritatively new and does NOT fall back to tier-1. Tier-1
   // (timestamp-exact `existsByContent`) remains the legacy / keyless-sender
@@ -516,6 +518,8 @@ handleIncomingChatMessage({
           quotedMessageId:
               payload.quotedMessageId ?? existingMessage.quotedMessageId,
           transport: transport ?? existingMessage.transport,
+          dedupKey: payload.dedupKey,
+          isForwarded: payload.isForwarded,
         )
       : payload.toConversationMessage(
           contactPeerId: payload.senderPeerId,
@@ -717,11 +721,7 @@ Future<String?> predecryptIncomingChatEnvelope({
     // handler's MLKEM_RING_FALLBACK_USED at the `ok` case never fires for this
     // entry — emit it here so the live path and the drained path agree. Fires
     // exactly once per entry (a ring recovery is always a HIT → no double emit).
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'MLKEM_RING_FALLBACK_USED',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'MLKEM_RING_FALLBACK_USED', details: {});
   }
   return outcome.plaintext;
 }
