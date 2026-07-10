@@ -23,6 +23,7 @@ import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/media_storage_manager.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/received_media_egress.dart';
 import 'package:flutter_app/core/media/received_media_egress_service.dart';
@@ -44,6 +45,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/upload_pr
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/groups/application/group_media_delete_for_me_coordinator.dart';
+import 'package:flutter_app/features/groups/application/announcement_media_forward_request.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_policy.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
@@ -51,6 +53,9 @@ import 'package:flutter_app/features/share/presentation/navigation/share_target_
 import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
 import 'package:flutter_app/features/groups/application/group_received_media_action_policy.dart';
 import 'package:flutter_app/features/groups/application/group_received_media_actions.dart';
+import 'package:flutter_app/features/groups/application/group_shared_media_batch_actions.dart';
+import 'package:flutter_app/features/groups/application/group_shared_media_library_controller.dart';
+import 'package:flutter_app/features/groups/application/group_shared_media_navigation.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/group_sender_display_name.dart';
 import 'package:flutter_app/features/conversation/application/load_reactions_use_case.dart';
@@ -79,6 +84,7 @@ import 'package:flutter_app/features/groups/presentation/group_backlog_retention
 import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_wired.dart';
+import 'package:flutter_app/features/groups/presentation/screens/group_shared_media_library_screen.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_media_info_sheet.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_reaction_details_sheet.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -90,6 +96,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
+import 'package:path_provider/path_provider.dart';
 
 class _PreparedGroupMediaUpload {
   final PendingComposerMedia source;
@@ -312,6 +319,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   bool _groupFlushScheduled = false;
   bool _groupNeedsFlush = false;
   bool _groupWantsMarkRead = false;
+  int _messageLoadGeneration = 0;
+  int _messageLoadsInFlight = 0;
+  final Set<String> _insertedIdsDuringMessageLoad = <String>{};
 
   Map<String, GroupMember> _membersByPeerId = const {};
   String? _ownPeerId;
@@ -329,6 +339,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   final GlobalKey _highlightAnchorKey = GlobalKey();
   static const int _maxHighlightScrollRetries = 5;
   bool _highlightScrollResolved = false;
+  String? _highlightedMessageId;
+  final GroupSharedMediaAnchorRequestCoordinator _sharedMediaAnchorRequests =
+      GroupSharedMediaAnchorRequestCoordinator();
   bool _initialLoadDone = false;
   bool _isSending = false;
   Set<String> _retryingFailedMessageIds = const {};
@@ -509,6 +522,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _group = widget.group;
+    _highlightedMessageId = widget.initialHighlightedMessageId;
     final mediaRepo = widget.mediaAttachmentRepo;
     _mediaActionsController =
         widget.mediaActionsController ??
@@ -1400,6 +1414,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   Future<void> _loadMessages() async {
+    final loadGeneration = ++_messageLoadGeneration;
+    _messageLoadsInFlight++;
     var appliedMessages = false;
     try {
       final messages = await widget.msgRepo.getMessagesPage(widget.group.id);
@@ -1422,6 +1438,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         _historyGapRepair = historyGapRepair;
       });
       appliedMessages = true;
+      await _replayInsertedMessagesAfterLoad(
+        loadedMessages: messages,
+        loadGeneration: loadGeneration,
+      );
       // 144 finding: a persisted terminal send_failed bubble must reconstruct
       // its read-only latch on reopen. Re-run after the rows load (the security
       // status may have completed first, before _messages was populated).
@@ -1449,6 +1469,26 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         event: 'GROUP_CONV_FL_LOAD_MESSAGES_ERROR',
         details: {'error': e.toString()},
       );
+    } finally {
+      _messageLoadsInFlight--;
+      if (_messageLoadsInFlight == 0) {
+        _insertedIdsDuringMessageLoad.clear();
+      }
+    }
+  }
+
+  Future<void> _replayInsertedMessagesAfterLoad({
+    required List<GroupMessage> loadedMessages,
+    required int loadGeneration,
+  }) async {
+    if (_insertedIdsDuringMessageLoad.isEmpty) return;
+    final loadedIds = loadedMessages.map((message) => message.id).toSet();
+    final missingIds = _insertedIdsDuringMessageLoad
+        .where((messageId) => !loadedIds.contains(messageId))
+        .toList(growable: false);
+    for (final messageId in missingIds) {
+      if (!mounted || loadGeneration > _messageLoadGeneration) return;
+      await _hydrateInsertedOutgoingMessage(messageId);
     }
   }
 
@@ -1680,8 +1720,35 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (eventGroupId != widget.group.id) return;
     final messageId = change.messageId;
     final status = change.status;
-    if (messageId == null || status == null) return;
+    if (messageId == null) return;
+    if (change.isInserted) {
+      if (_messageLoadsInFlight > 0) {
+        _insertedIdsDuringMessageLoad.add(messageId);
+      }
+      unawaited(_hydrateInsertedOutgoingMessage(messageId));
+      return;
+    }
+    if (status == null) return;
     _updateLocalMessageStatus(messageId, status);
+  }
+
+  Future<void> _hydrateInsertedOutgoingMessage(String messageId) async {
+    if (!mounted || _messages.any((message) => message.id == messageId)) {
+      return;
+    }
+    final message = await widget.msgRepo.getMessage(messageId);
+    if (message == null || message.groupId != widget.group.id || !mounted) {
+      return;
+    }
+    final media = await _loadResolvedAttachmentsForMessage(messageId);
+    if (!mounted || _messages.any((entry) => entry.id == messageId)) {
+      return;
+    }
+    _enqueueGroupMessageUpdate(
+      message.copyWith(media: media),
+      media: media,
+      markAsRead: false,
+    );
   }
 
   Future<void> _handleCurrentGroupRemoved() async {
@@ -3888,7 +3955,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   /// not in the loaded page yet, a later [_loadMessages] retries; once resolved
   /// it never re-fights a user who scrolls away.
   void _scrollToHighlightedMessage() {
-    final targetId = widget.initialHighlightedMessageId;
+    final targetId = _highlightedMessageId;
     if (targetId == null || _highlightScrollResolved) return;
     final chronologicalIndex = _messages.indexWhere((m) => m.id == targetId);
     if (chronologicalIndex < 0) {
@@ -4904,13 +4971,53 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         imageProcessor == null) {
       return false;
     }
+
+    // The picker preview is presentation-only. Resolve it from a fresh,
+    // owner-scoped attachment lookup instead of putting a source path on the
+    // forward request (which remains stable identity only). Dispatch still
+    // re-runs the full source gate and never trusts this preview path.
+    final previewRows = await mediaRepo.getAttachmentsForMessage(
+      request.messageId,
+      owner: MediaOwnerLane.group,
+    );
+    MediaAttachment? previewAttachment;
+    for (final row in previewRows) {
+      if (row.id == request.attachmentId) {
+        previewAttachment = row;
+        break;
+      }
+    }
+    final storedPreviewPath = previewAttachment?.localPath?.trim();
+    if (previewAttachment == null ||
+        storedPreviewPath == null ||
+        storedPreviewPath.isEmpty ||
+        !GroupMediaForwardPolicy.canOfferForward(
+          groupType: _group.type,
+          isIncoming: true,
+          attachment: previewAttachment,
+        )) {
+      return false;
+    }
+    final resolvedPreviewPath = await mediaFileManager.resolveStoredPath(
+      storedPreviewPath,
+    );
+    if (!File(resolvedPreviewPath).existsSync() || !mounted) return false;
+
+    final initialCaption = switch (request) {
+      AnnouncementMediaForwardRequest announcement =>
+        announcement.composedCaption,
+      _ => request.initialCaption,
+    };
     await Navigator.of(context).push(
       buildShareTargetPickerRoute(
         shareIntent: ShareIntent(
-          type: request.initialCaption.isEmpty
+          type: initialCaption == null || initialCaption.isEmpty
               ? ShareIntentType.files
               : ShareIntentType.mixed,
-          text: request.initialCaption.isEmpty ? null : request.initialCaption,
+          text: initialCaption == null || initialCaption.isEmpty
+              ? null
+              : initialCaption,
+          filePaths: [resolvedPreviewPath],
         ),
         identityRepo: widget.identityRepo,
         contactRepository: widget.contactRepo,
@@ -5036,28 +5143,191 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     Navigator.of(context).pop();
   }
 
-  void _onInfo() {
-    Navigator.of(context)
-        .push(
-          MaterialPageRoute(
-            builder: (_) => GroupInfoWired(
-              group: _group,
-              groupRepo: widget.groupRepo,
-              msgRepo: widget.msgRepo,
-              inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
-              contactRepo: widget.contactRepo,
-              bridge: widget.bridge,
-              identityRepo: widget.identityRepo,
-              p2pService: widget.p2pService,
-              imageProcessor: widget.imageProcessor,
-              mediaPicker: widget.mediaPicker,
-              backgroundPreference: widget.backgroundPreference,
-            ),
-          ),
-        )
-        .then((_) {
-          unawaited(_refreshAfterInfoRoute());
-        });
+  Future<void> _onInfo() async {
+    final mediaRepo = widget.mediaAttachmentRepo;
+    final libraryAvailable =
+        (_group.type == GroupType.chat ||
+            _group.type == GroupType.announcement) &&
+        !_group.isDissolved &&
+        mediaRepo is MediaLibraryRepository &&
+        mediaRepo is MediaLibraryStateRepository;
+    final result = await Navigator.of(context).push<Object?>(
+      MaterialPageRoute(
+        builder: (_) => GroupInfoWired(
+          group: _group,
+          groupRepo: widget.groupRepo,
+          msgRepo: widget.msgRepo,
+          inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
+          contactRepo: widget.contactRepo,
+          bridge: widget.bridge,
+          identityRepo: widget.identityRepo,
+          p2pService: widget.p2pService,
+          imageProcessor: widget.imageProcessor,
+          mediaPicker: widget.mediaPicker,
+          backgroundPreference: widget.backgroundPreference,
+          sharedMediaRouteBuilder: libraryAvailable
+              ? (_, liveGroup) => _buildSharedMediaLibrary(
+                  liveGroup,
+                  mediaRepo as MediaAttachmentRepository,
+                )
+              : null,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    await _refreshAfterInfoRoute();
+    if (!mounted) return;
+    if (result is GroupSharedMediaGoToMessage) {
+      await _goToSharedMediaMessage(result);
+    }
+  }
+
+  Widget _buildSharedMediaLibrary(
+    GroupModel liveGroup,
+    MediaAttachmentRepository mediaRepo,
+  ) {
+    final libraryRepo = mediaRepo as MediaLibraryRepository;
+    final stateRepo = mediaRepo as MediaLibraryStateRepository;
+    final deleteCoordinator = _mediaDeleteForMeCoordinator;
+    final canEvict =
+        mediaRepo is MediaAttachmentByIdLookup &&
+        mediaRepo is MediaDownloadStateRepository;
+    final storage = canEvict
+        ? MediaStorageManager(
+            repository: mediaRepo,
+            documentsDirectoryProvider: () async =>
+                (await getApplicationDocumentsDirectory()).path,
+          )
+        : null;
+    final batchActions = GroupSharedMediaBatchActionsCoordinator(
+      messageRepository: widget.msgRepo,
+      mediaAttachmentRepository: mediaRepo,
+      egressService: ReceivedMediaEgressService(),
+      mediaFileManager: widget.mediaFileManager,
+      stateRepository: stateRepo,
+      clearLocalCopy: storage == null
+          ? null
+          : ({required scope, required attachmentId, required mime}) =>
+                storage.clearLocalCopy(
+                  scope: scope,
+                  attachmentId: attachmentId,
+                  mime: mime,
+                ),
+    );
+    final batchDelete = deleteCoordinator == null
+        ? null
+        : GroupSharedMediaBatchDeleteCoordinator(
+            messageRepository: widget.msgRepo,
+            coordinator: deleteCoordinator,
+          );
+    return GroupSharedMediaLibraryScreen(
+      groupId: liveGroup.id,
+      incomingOnly: liveGroup.type == GroupType.announcement,
+      libraryRepository: libraryRepo,
+      stateRepository: stateRepo,
+      capabilitiesForEntry: (entry) {
+        final attachment = entry.attachment;
+        final ownPeerId = _ownPeerId;
+        final senderPeerId = entry.parentSenderPeerId;
+        final incoming =
+            ownPeerId != null &&
+            senderPeerId != null &&
+            senderPeerId != ownPeerId;
+        final lifecycleRestricted =
+            _mediaActionsController?.isEgressRestricted(attachment) ?? false;
+        final egressEligible =
+            incoming &&
+            !lifecycleRestricted &&
+            GroupMediaIntegrityPolicy.canDisplayVerifiedGroupMedia(attachment);
+        final forwardEligible =
+            liveGroup.type == GroupType.chat &&
+            _canLaunchForward &&
+            GroupMediaForwardPolicy.canOfferForward(
+              groupType: liveGroup.type,
+              isIncoming: incoming,
+              attachment: attachment,
+              isLifecycleRestricted:
+                  _mediaActionsController?.isEgressRestricted,
+            );
+        return {
+          GroupSharedMediaAction.bookmark,
+          GroupSharedMediaAction.goToMessage,
+          if (deleteCoordinator != null) GroupSharedMediaAction.delete,
+          if (storage != null &&
+              attachment.downloadStatus == kMediaDownloadStatusDone &&
+              attachment.localPath != null)
+            GroupSharedMediaAction.evict,
+          if (egressEligible) ...{
+            GroupSharedMediaAction.save,
+            GroupSharedMediaAction.share,
+            if (forwardEligible) GroupSharedMediaAction.forward,
+          },
+        };
+      },
+      dispatchEgress: (identities, destination) => batchActions
+          .performBatchEgress(identities: identities, destination: destination),
+      dispatchDelete: deleteCoordinator == null
+          ? null
+          : (identities) =>
+                batchDelete!.perform(identities: identities, confirmed: true),
+      dispatchBookmark: (identities) => batchActions.performBatchBookmark(
+        identities: identities,
+        bookmarked: true,
+      ),
+      dispatchEviction: storage == null
+          ? null
+          : (entries) async {
+              final result = await batchActions.performBatchClear(
+                identities: [
+                  for (final entry in entries)
+                    GroupSharedMediaIdentity(
+                      groupId: liveGroup.id,
+                      messageId: entry.attachment.messageId,
+                      attachmentId: entry.attachment.id,
+                    ),
+                ],
+              );
+              return result.succeededIds;
+            },
+      dispatchForward: liveGroup.type == GroupType.chat && _canLaunchForward
+          ? (identity) => _forwardGroupReceivedMedia(
+              messageId: identity.messageId,
+              attachmentId: identity.attachmentId,
+            )
+          : null,
+      onMessagesDeleted: (messageIds) {
+        for (final messageId in messageIds) {
+          _removeLocalMessage(messageId);
+        }
+      },
+    );
+  }
+
+  Future<void> _goToSharedMediaMessage(
+    GroupSharedMediaGoToMessage result,
+  ) async {
+    final window = await _sharedMediaAnchorRequests.load(
+      repository: widget.msgRepo,
+      currentGroupId: _group.id,
+      requestedGroupId: result.groupId,
+      messageId: result.messageId,
+    );
+    if (!mounted || window == null || window.isEmpty) return;
+    final hydrated = await _loadResolvedMediaMap(window);
+    if (!mounted) return;
+    final byId = {for (final message in _messages) message.id: message};
+    for (final message in window) {
+      if (message.groupId == _group.id) byId[message.id] = message;
+    }
+    setState(() {
+      _messages = orderGroupMessagesForTimeline(byId.values);
+      _mediaMap = {..._mediaMap, ...hydrated};
+      _highlightedMessageId = result.messageId;
+      _highlightScrollResolved = false;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _scrollToHighlightedMessage();
+    });
   }
 
   bool _canWriteForGroup(GroupModel group) {
@@ -5841,7 +6111,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             messageLoadErrorText: _messageLoadErrorText,
             onRetryMessageLoad: _retryMessageLoad,
             scrollController: _scrollController,
-            highlightedMessageId: widget.initialHighlightedMessageId,
+            highlightedMessageId: _highlightedMessageId,
             highlightAnchorKey: _highlightAnchorKey,
             mediaMap: _mediaMap,
             composerStateListenable: _composerState,

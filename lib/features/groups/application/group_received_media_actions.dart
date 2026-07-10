@@ -32,6 +32,98 @@ class GroupReceivedMediaEgressAttempt {
   bool get performed => result != null;
 }
 
+/// Reloaded dispatch-time result shared by single-item and library batch
+/// egress. A denial carries no path/hash/key material.
+class GroupMediaCurrentRowDecision {
+  const GroupMediaCurrentRowDecision.qualified(this.candidate)
+    : refusalReason = null;
+
+  const GroupMediaCurrentRowDecision.refused(this.refusalReason)
+    : candidate = null;
+
+  final ReceivedMediaEgressCandidate? candidate;
+  final String? refusalReason;
+
+  bool get isQualified => candidate != null;
+}
+
+Future<bool> _defaultCurrentGroupFileExists(String path) => File(path).exists();
+
+/// Complete group-parent/attachment qualification used immediately before
+/// every Save/Share dispatch. Presentation snapshots are never authority.
+Future<GroupMediaCurrentRowDecision> qualifyCurrentGroupMediaRow({
+  required String groupId,
+  required String messageId,
+  required String attachmentId,
+  required GroupMessageRepository messageRepository,
+  required MediaAttachmentRepository mediaAttachmentRepository,
+  required MediaFileManager mediaFileManager,
+  required GroupMediaEgressRestriction isEgressRestricted,
+  Future<bool> Function(String resolvedPath) fileExists =
+      _defaultCurrentGroupFileExists,
+}) async {
+  final parent = await messageRepository.getMessage(messageId);
+  if (parent == null) {
+    return const GroupMediaCurrentRowDecision.refused('parent_missing');
+  }
+  if (parent.groupId != groupId) {
+    return const GroupMediaCurrentRowDecision.refused('wrong_group');
+  }
+  if (!parent.isIncoming) {
+    return const GroupMediaCurrentRowDecision.refused('not_incoming');
+  }
+
+  final rows = await mediaAttachmentRepository.getAttachmentsForMessage(
+    messageId,
+    owner: MediaOwnerLane.group,
+  );
+  MediaAttachment? attachment;
+  for (final row in rows) {
+    if (row.id == attachmentId) {
+      attachment = row;
+      break;
+    }
+  }
+  if (attachment == null) {
+    return const GroupMediaCurrentRowDecision.refused(
+      'attachment_not_group_owned',
+    );
+  }
+  if (attachment.ownerLane != MediaOwnerLane.group) {
+    return const GroupMediaCurrentRowDecision.refused(
+      'attachment_not_group_owned',
+    );
+  }
+  final mediaType = attachment.mediaType;
+  if (mediaType != 'image' && mediaType != 'video') {
+    return const GroupMediaCurrentRowDecision.refused('not_visual_media');
+  }
+  final normalizedMime = GroupMediaMimePolicy.normalizeMime(attachment.mime);
+  if (normalizedMime == null ||
+      GroupMediaMimePolicy.mediaTypeForMime(normalizedMime) != mediaType) {
+    return const GroupMediaCurrentRowDecision.refused('mime_not_allowed');
+  }
+  if (!GroupMediaIntegrityPolicy.canDisplayVerifiedGroupMedia(attachment)) {
+    return const GroupMediaCurrentRowDecision.refused('not_displayable');
+  }
+  if (isEgressRestricted(attachment)) {
+    return const GroupMediaCurrentRowDecision.refused('lifecycle_restricted');
+  }
+  final storedPath = await mediaFileManager.resolveStoredPath(
+    attachment.localPath!,
+  );
+  if (!await fileExists(storedPath)) {
+    return const GroupMediaCurrentRowDecision.refused('file_missing');
+  }
+  return GroupMediaCurrentRowDecision.qualified(
+    ReceivedMediaEgressCandidate(
+      attachmentId: attachment.id,
+      storedPath: storedPath,
+      mime: normalizedMime,
+    ),
+  );
+}
+
 /// 235: qualification adapter between group UI actions and
 /// [ReceivedMediaEgressService]. Never trusts viewer/bubble state: it reloads
 /// the exact `(group, message, attachment)` identity under the group owner
@@ -95,75 +187,23 @@ class GroupReceivedMediaActionsController {
     required String messageId,
     required String attachmentId,
   }) async {
-    // Exact parent: the untyped by-ID load is verified against the caller's
-    // group and direction. A same-ID direct message cannot satisfy this
-    // because group parents live in their own table.
-    final parent = await messageRepository.getMessage(messageId);
-    if (parent == null) {
-      return const GroupReceivedMediaEgressAttempt.refused('parent_missing');
-    }
-    if (parent.groupId != groupId) {
-      return const GroupReceivedMediaEgressAttempt.refused('wrong_group');
-    }
-    if (!parent.isIncoming) {
-      return const GroupReceivedMediaEgressAttempt.refused('not_incoming');
-    }
-
-    // Exact group-owned attachment: the owner-scoped load excludes direct
-    // same-ID collisions and unresolved legacy rows by construction.
-    final rows = await mediaAttachmentRepository.getAttachmentsForMessage(
-      messageId,
-      owner: MediaOwnerLane.group,
+    final decision = await qualifyCurrentGroupMediaRow(
+      groupId: groupId,
+      messageId: messageId,
+      attachmentId: attachmentId,
+      messageRepository: messageRepository,
+      mediaAttachmentRepository: mediaAttachmentRepository,
+      mediaFileManager: mediaFileManager,
+      isEgressRestricted: isEgressRestricted,
     );
-    MediaAttachment? attachment;
-    for (final row in rows) {
-      if (row.id == attachmentId) {
-        attachment = row;
-        break;
-      }
-    }
-    if (attachment == null) {
-      return const GroupReceivedMediaEgressAttempt.refused(
-        'attachment_not_group_owned',
-      );
-    }
-
-    // Requalify current state — never viewer/bubble metadata.
-    final mediaType = attachment.mediaType;
-    if (mediaType != 'image' && mediaType != 'video') {
-      return const GroupReceivedMediaEgressAttempt.refused('not_visual_media');
-    }
-    final normalizedMime = GroupMediaMimePolicy.normalizeMime(attachment.mime);
-    if (normalizedMime == null ||
-        GroupMediaMimePolicy.mediaTypeForMime(normalizedMime) != mediaType) {
-      return const GroupReceivedMediaEgressAttempt.refused('mime_not_allowed');
-    }
-    if (!GroupMediaIntegrityPolicy.canDisplayVerifiedGroupMedia(attachment)) {
-      return const GroupReceivedMediaEgressAttempt.refused('not_displayable');
-    }
-    if (isEgressRestricted(attachment)) {
-      return const GroupReceivedMediaEgressAttempt.refused(
-        'lifecycle_restricted',
-      );
-    }
-
-    final storedPath = await mediaFileManager.resolveStoredPath(
-      attachment.localPath!,
-    );
-    if (!await File(storedPath).exists()) {
-      return const GroupReceivedMediaEgressAttempt.refused('file_missing');
+    if (!decision.isQualified) {
+      return GroupReceivedMediaEgressAttempt.refused(decision.refusalReason!);
     }
 
     final result = await egressService.perform(
       requestId: requestIdFactory(),
       destination: destination,
-      selection: [
-        ReceivedMediaEgressCandidate(
-          attachmentId: attachment.id,
-          storedPath: storedPath,
-          mime: normalizedMime,
-        ),
-      ],
+      selection: [decision.candidate!],
     );
     return GroupReceivedMediaEgressAttempt.performed(result);
   }

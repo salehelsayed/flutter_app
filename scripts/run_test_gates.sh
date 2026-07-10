@@ -379,6 +379,38 @@ readonly GROUP_TESTS=(
   "test/features/groups/application/group_message_listener_test.dart"
   "test/features/groups/application/drain_group_offline_inbox_use_case_test.dart"
   "test/features/groups/integration/group_forwarding_transport_boundary_test.dart"
+  # 240 announcement received-media forwarding: announcement source adapter,
+  # caption modes, target policy/revalidation, per-target provenance, marker,
+  # owner boundary, and failed-only retry discrimination.
+  "test/features/groups/application/announcement_media_forward_request_test.dart"
+  "test/features/groups/presentation/announcement_received_media_forwarding_test.dart"
+  "test/features/groups/integration/announcement_received_media_forwarding_test.dart"
+  "test/features/groups/integration/announcement_media_forward_marker_test.dart"
+  "test/features/share/presentation/announcement_forward_target_policy_test.dart"
+  "test/features/share/application/announcement_forward_batch_delivery_test.dart"
+  "test/features/share/application/announcement_forward_contact_marker_test.dart"
+  "test/features/share/application/announcement_forward_media_owner_contract_test.dart"
+  # 237 discussion-group shared media: guarded entry, strict group scope,
+  # lazy typed viewer, bounded selection/actions, durable local state,
+  # bounded Go-to-message, refresh, and transport isolation.
+  "test/features/groups/presentation/group_shared_media_entry_test.dart"
+  "test/features/groups/application/group_shared_media_repository_contract_test.dart"
+  "test/features/groups/presentation/group_shared_media_screen_test.dart"
+  "test/features/groups/presentation/group_shared_media_wired_test.dart"
+  "test/features/groups/presentation/group_shared_media_go_to_message_test.dart"
+  "test/features/groups/application/group_media_batch_actions_test.dart"
+  "test/features/groups/integration/group_shared_media_bookmark_test.dart"
+  "test/features/groups/integration/group_shared_media_eviction_test.dart"
+  "test/features/groups/integration/group_shared_media_transport_boundary_test.dart"
+  # 241 announcement received-only shared media composition.
+  "test/features/groups/integration/announcement_media_library_repository_test.dart"
+  "test/features/groups/presentation/announcement_media_library_entry_test.dart"
+  "test/features/groups/presentation/announcement_media_library_paging_test.dart"
+  "test/features/groups/presentation/announcement_media_library_viewer_test.dart"
+  "test/features/groups/presentation/announcement_media_go_to_message_test.dart"
+  "test/features/groups/presentation/announcement_media_library_actions_test.dart"
+  "test/features/groups/application/announcement_media_library_batch_actions_test.dart"
+  "test/features/groups/application/announcement_media_library_batch_delete_test.dart"
 )
 
 readonly POSTS_TESTS=(

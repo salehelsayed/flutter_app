@@ -1,6 +1,6 @@
 # 240 - Announcement Received-Media Forwarding
 
-Status: execution-ready
+Status: accepted (2026-07-11; orchestrated Executor + fix pass 1 + independent QA; host closure complete)
 Type: New Feature
 Spec: free-text intent — announcement recipients forward incoming image/video media to allowed contact/group targets with caption and multi-target controls, without bypassing source or destination publish policy
 Classification: implementation-ready
@@ -166,15 +166,15 @@ git diff --check
 - Environment blocker: no simulator/device is required because real group crypto/wire closure belongs to plan 236 and no wire contract changes here. Go commands must pin 1.25.0.
 - Scope drift: new protocol fields beyond plans 232/236, owner on wire/provenance, a third announcement owner, direct/group schema edits, source-announcement publication, or discussion behavior changes block completion.
 
-- [ ] Every behavior has a named test or justified inherited proof.
-- [ ] Causal RED, focused GREEN, and representative mutation re-red are recorded.
-- [ ] Plan 232 DB v97 direct marker/retry gates and plan 236 DB v99 group live/replay marker gates are green before adapter acceptance.
-- [ ] Plan 228 DB v96 owner contract proves group-only source, direct/group destinations, unresolved exclusion and owner-free wire/provenance.
-- [ ] Per-target encryption/ID and source-absent event discrimination pass.
-- [ ] New tests are registered in `GROUP_TESTS` and AUTO feature discovery.
-- [ ] Go publisher sentinels, the curated `groups` gate, and exact share/direct dependency sentinels pass.
-- [ ] `flutter analyze` has no new issues; `git diff --check` is clean.
-- [ ] Scope Contract And Guard is respected.
+- [x] Every behavior has a named test or justified inherited proof.
+- [x] Causal RED, focused GREEN, and representative mutation re-red are recorded.
+- [x] Plan 232 DB v97 direct marker/retry gates and plan 236 DB v99 group live/replay marker gates are green before adapter acceptance.
+- [x] Plan 228 DB v96 owner contract proves group-only source, direct/group destinations, unresolved exclusion and owner-free wire/provenance.
+- [x] Per-target encryption/ID and source-absent event discrimination pass.
+- [x] New tests are registered in `GROUP_TESTS` and AUTO feature discovery.
+- [x] Go publisher sentinels, the curated `groups` gate, and exact share/direct dependency sentinels pass.
+- [x] `flutter analyze` has no new issues; `git diff --check` is clean.
+- [x] Scope Contract And Guard is respected.
 
 ## Handoff
 
@@ -187,6 +187,133 @@ git diff --check
 
 ## Execution Progress
 
-| Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
-|---|---|---|---|---|---|---|
-| - | not started | - | - | - | awaiting accepted plans 232 and 236 | contract extraction |
+- `2026-07-10T23:49:00+02:00` — Phase: exact B1-B9 command ledger, `pending_triage`. Files inspected: none beyond already-green focused artifacts. Last completed command: exact-command wrapper exited 1 before running tests due to a shell-only unmatched `}` (`/tmp/plan240-fix1/exact-b1-b9-final.log`). Current evidence: full eight-file focused command already passes 10 tests (`/tmp/plan240-fix1/focused-eight-final.log`). Decision: `environment/tooling-related`, no code implication. Next: rerun the same ten exact commands in a syntactically valid sequential shell.
+- `2026-07-10T23:57:00+02:00` — Phase: final curated `groups` gate, `pending_triage`. Files inspected: none after the gate exit. Last completed command: `./scripts/run_test_gates.sh groups` exited 1 (`/tmp/plan240-fix1/groups-gate-final.log`). Current evidence: exact B1-B9, shared picker/coordinator, Plan-232, and Plan-236 focused preservation all passed before this gate. Decision: classification pending focused log inspection; no code changes authorized until the failing gate slice is identified and reproduced. Next: inspect the gate summary, run the smallest named failing command, classify session-caused versus pre-existing/environment, then correct only if attributable.
+- `2026-07-11T00:01:00+02:00` — Phase: curated gate failure triage resolved. Files inspected: `group_conversation_wired_test.dart:9375` and gate/focused logs; no code touched. Last completed command: exact failing plain-name test exited 0 (`/tmp/plan240-fix1/groups-gate-failure-focused.log`). Current evidence: the gate's sole failure was an unrelated upload-cancel timing expectation under broad parallel load; it passes in isolation and no Plan-240 diff touches that test or upload-cancel seam. Decision: `flaky`, unrelated-but-required; rerun the unchanged canonical gate once for resolved final evidence. Next: rerun `./scripts/run_test_gates.sh groups`; do not change production for the non-reproducing failure.
+- `2026-07-11T00:12:00+02:00` — Phase: Executor fix-pass handoff persisted. Files inspected/touched: five Plan-240 app owners, eight TC files, bounded harness/fake, gate registration, plan result. Last completed command: Graphify affected plus source verification exited 0 (`/tmp/plan240-fix1/graphify-affected-final.log`); preceding final groups rerun passed 1,888 Flutter tests plus Go bridge/node. Current evidence: B1-B9 have causal proof, mutation re-red/restored GREEN, analyzer stays at the 1,626 legacy baseline, and diff hygiene is clean. Decision: coherent attributable Executor result; no concrete blocker, no Graphify refresh in Executor. Next: root controller spawns a fresh read-only QA recheck; controller refreshes Graphify once only after QA has no blockers.
+- `2026-07-11T00:45:00+02:00` — Phase: independent QA fix-pass 1 recheck. Files inspected: post-fix tracked delta, all ten Plan-240 untracked files, owner-enforcing in-memory fake, current production seams, and every `/tmp/plan240-fix1` artifact. Last completed command: hash/diff/artifact and targeted source verification; no test rerun was needed because the focused, preservation, analyzer, and unchanged broad-gate-rerun artifacts were internally consistent. Current evidence: B1-B9 resolve against their required dispositions; no blocking finding remains; one optional dead-helper cleanup is N1. Decision: QA `pass`. Next: controller performs the one final incremental Graphify refresh, persists the final verdict, and stops.
+- `2026-07-11` — Phase: controller finalization. Files inspected/touched: accepted Plan-240 app/test diff, QA recheck, architecture graph outputs, and final plan result. Last completed command: `./graphify-arch/refresh_arch_graph.sh --incremental` exited 0. Current evidence: B1-B9 resolved, independent QA passed, all required evidence is durable, and the architecture graph is refreshed exactly once after QA acceptance. Decision: `accepted`; zero blocking issues. Next: stop and return the persisted verdict.
+
+## Orchestrator Preflight Contract
+
+- **Source of truth and precedence:** repository instructions and current `scripts/run_test_gates.sh`; current source/tests where they disprove stale line references; then this plan as the active behavior/scope contract.
+- **Invocation topology:** root controller -> fresh isolated Executor -> fresh independent read-only QA Reviewer; roles never overlap. Fix passes, if QA requires them, use a fresh Executor and a fresh QA pass, with a maximum of three fix passes.
+- **Exact tracked worktree baseline:** `e54f8ef11cbaf33167b0194b33b8cfba4fb8cbc4` from `git stash create`; the working tree was not stashed or altered. Diff this object against the later worktree for attributable tracked Plan 240 changes. The eight TC-240 paths were absent; unrelated untracked Plan 237/253/254 and Graphify files remain user-owned.
+- **Scope:** add eligible incoming announcement image/video Forward entry; build an immutable announcement-scoped request with keep/remove/edit caption policy and owner-aware revalidation; reuse the existing multi-target picker and destination delivery; filter blocked contacts; allow only currently writable groups including admin-owned announcements; retain failed-only retries; preserve per-target fresh encryption/IDs, direct/group local owners, and source-free forwarded metadata.
+- **Acceptance bar:** TC-240-01 through TC-240-12 exist and pass causally; new tests are registered in `GROUP_TESTS`; exact dependency sentinels, curated `groups`, Go authorization, analyzer non-widening, diff hygiene, scope guard, reverse-impact inspection, independent QA, and one final incremental Graphify refresh all resolve.
+- **Production owner files:** `lib/features/groups/application/group_media_forward_intent.dart`; `lib/features/groups/application/group_media_forward_policy.dart` and/or one new announcement-specific application file; `lib/features/groups/presentation/screens/group_conversation_wired.dart`; only if current typed wiring requires it, `lib/features/groups/presentation/screens/group_conversation_screen.dart` or shared viewer action files; `lib/features/share/presentation/screens/share_target_picker_wired.dart`; `lib/features/share/application/share_batch_delivery_coordinator.dart`; `scripts/run_test_gates.sh`.
+- **Regressions first:** create the eight exact files named in the Acceptance Gates, covering all twelve TC rows. Observe the exact TC-240-01 RED before Plan 240 production edits. Existing plan-236 and share tests remain preservation sentinels.
+- **Required direct tests:** the focused eight-file GREEN command; shared picker/coordinator command; exact direct payload marker test; forwarded-media retry roundtrip; exact media owner contract; plan-236 `GMF-08` listener test; group messaging smoke. No additional direct suite is implicitly required.
+- **Required named gates:** `./scripts/run_test_gates.sh groups`; pinned Go 1.25 authorization command; `flutter analyze`; `git diff --check`. Per repo cadence, do not run `host-all`, `feature-host-all`, or `core-host-all` for this plan.
+- **Known-failure interpretation:** analyzer acceptance is no new diagnostics, not an undocumented blanket waiver. Any nonzero analyzer run requires a current baseline comparison proving no session-caused widening. All other required command failures are blocking unless triaged and explicitly allowed by this plan/repo.
+- **Done criteria:** every checklist item in `Execution Interpretation And Done Criteria` resolves; source announcement remains read-only; owner/source identities stay off provenance and wire; IDs/crypto are destination-specific; retry and send-time authorization semantics hold; no Plan 240 schema, Go transport, encryption, or new owner-lane change lands.
+- **Non-goals and scope guard:** no migration; no direct/group codec or schema edits; no Go framing, validator, topic, relay, retry-frame, recipient, or encryption change; no source-announcement publication; no discussion behavior change outside the accepted plan-236 forwarding seam; no Plan 241 bulk flow or Plan 238/242 lifecycle implementation.
+- **Scoped pre-existing tracked changes to preserve:** Plan 237 changes in `group_received_media_actions.dart`, `group_conversation_wired.dart`, group info/repositories, and group library tests/files; Plan 253 changes in `share_batch_delivery_coordinator.dart`, `share_target_picker_wired.dart`, picker screen/tests, upload progress, and gate scripts; unrelated database/main/conversation/doc/Graphify edits. Only the delta after the baseline object is attributable to this execution.
+- **Graph Grounding Snapshot:** prior exact query anchored `GROUP_TESTS`, `group_received_media_actions.dart`, and `DefaultShareBatchDeliveryCoordinator`; `confidence=anchored`; graph freshness reported stale for the already-dirty coordinator. Do not repeat broad grounding. After the coherent scoped diff, run `tdd_context.py affected` for actual changed app files and verify surfaced callers/tests in source.
+
+## Execution Result
+
+- **Final verdict:** `accepted`.
+- **Invocation topology:** root controller -> isolated Executor materialization retry -> independent QA -> fresh Executor fix pass 1 -> fresh independent QA recheck -> controller finalization. `fix_passes=1`; `materialization_retries=1`.
+- **Independent QA used:** yes; fix-pass-1 recheck passed with zero blockers.
+- **Local sequential fallback used:** no.
+- **Tracked baseline:** `e54f8ef11cbaf33167b0194b33b8cfba4fb8cbc4`; accepted post-fix tracked snapshot before QA-only doc edits: `790572c70a6aa68e068119271cfee05eb92cd126`.
+- **Files changed:** added the announcement request; updated group forwarding policy, wired preview route, share picker/coordinator, and group gate registration; added the bounded test harness and unresolved-owner test-fixture seam. Pre-existing Plan 237/253 changes were preserved and excluded from attribution.
+- **Tests added/updated:** all eight named TC-240 files are causal and registered in `GROUP_TESTS`; Plan-236 policy/flow/boundary expectations were updated only for the accepted admin-announcement widening.
+- **Blocking issues remaining:** none.
+- **Non-blocking follow-ups deferred:** N1 optional removal/relocation of production-visible test conveniences; no behavior, privacy, reliability, or closure impact.
+
+### QA blocker dispositions
+
+- **B1 resolved:** the real reader announcement wired screen opens the existing picker; a fresh group-owner lookup resolves the preview path, and the test asserts preview/caption plus absent compose/reply/quote controls.
+- **B2 resolved:** exact picker widgets assert active/blocked contacts, chat/admin/reader/QA/source groups, then mutate contact block and announcement role after selection; only the still-valid chat reaches the coordinator.
+- **B3 resolved:** keep/remove/edit flow through `AnnouncementMediaForwardRequest` into real coordinator/contact persistence; source parent, attachment map, and bytes are reread unchanged.
+- **B4 resolved:** real coordinator contact+group fanout preprocesses once and produces distinct message/blob/key/nonce/owner rows.
+- **B5 resolved:** real group send captures live publish, durable inbox/replay plaintext, persisted marker, and source-free maps.
+- **B6 resolved:** exact A-to-B command-log test proves B-only group commands, source-target rejection, and unchanged source rows/bytes.
+- **B7 resolved:** exact sent/queued/failed batch result is fed into retained picker state and the retry invokes only the failed contact; sent, queued, and source keys are absent.
+- **B8 resolved:** real two-contact coordinator makes contact two fail upload then retry; marker/encrypted-inner/log, distinct opaque target keys, retry-stable failed-target key, fresh retry blob/key/nonce, and source absence are asserted. Removing peer scope made this real test red, then restoration returned GREEN.
+- **B9 resolved:** owner-recording source/destination repository captures group source and direct/group saves while same-parent direct/unresolved collisions are excluded; direct/group inner, outer, retry, and diagnostic maps are recursively checked for owner/source fields.
+
+### Evidence ledger
+
+| Command (cwd: repo root unless noted) | Result / classification | Artifact |
+|---|---|---|
+| exact eight-file TC-240 focused command | exit 0, 10 tests; `passed` | `/tmp/plan240-fix1/focused-eight-final.log` |
+| ten exact B1-B9 file/plain-name commands | aggregate exit 0; `passed` | terminal session; individual final artifact above plus named logs below |
+| real-boundary peer-scope mutation; restored TC-240-11 rerun | expected nonzero, then exit 0; `passed` | `/tmp/plan240-fix1/mutation-peer-scope-real-boundary-red.log`, `/tmp/plan240-fix1/contact-marker-post-mutation-green.log` |
+| shared picker/coordinator command | exit 0, 34 tests; `passed` | `/tmp/plan240-fix1/shared-picker-coordinator-final.log` |
+| Plan-236 policy/flow/boundary/group smoke command | exit 0, 95 tests; `passed` | `/tmp/plan240-fix1/plan236-preservation-final.log` |
+| current GMF-08 exact plain-name | exit 0; `passed` | `/tmp/plan240-fix1/gmf08-final.log` |
+| Plan-232 exact marker, retry, and owner commands | each exit 0; `passed` | `/tmp/plan240-fix1/direct-marker-final.log`, `/tmp/plan240-fix1/direct-retry-final.log`, `/tmp/plan240-fix1/media-owner-final.log` |
+| first `./scripts/run_test_gates.sh groups`; exact failed upload-cancel test | gate exit 1; focused exit 0; `flaky` | `/tmp/plan240-fix1/groups-gate-final.log`, `/tmp/plan240-fix1/groups-gate-failure-focused.log` |
+| unchanged `./scripts/run_test_gates.sh groups` rerun | exit 0, 1,888 Flutter tests plus Go bridge/node; `passed` | `/tmp/plan240-fix1/groups-gate-rerun-final.log` |
+| pinned Go authorization | prior exit 0 reused; no Go/group authorization/bridge diff from baseline; `passed` | `/tmp/plan240/go-authorization.log`, `/tmp/plan240-fix1/go-authorization-reuse-scope.txt` |
+| scoped `flutter analyze` | exit 1 only for the same four legacy infos in the large wired file; no new/test diagnostics; `accepted_known_failure` | `/tmp/plan240-fix1/scoped-analyze-final.log` |
+| full `flutter analyze` | exit 1, exactly 1,626 legacy diagnostics (same recorded baseline); `accepted_known_failure` | `/tmp/plan240-fix1/flutter-analyze-final.log` |
+| `git diff --check` | exit 0; `passed` | `/tmp/plan240-fix1/git-diff-check-final.log` |
+| Graphify `affected` on five app files plus targeted source verification | exit 0; `passed` | `/tmp/plan240-fix1/graphify-affected-final.log`, `/tmp/plan240-fix1/graphify-source-verification-final.log` |
+| eight `GROUP_TESTS` registration lookups | eight exact matches; `passed` | `/tmp/plan240-fix1/gate-registration-final.log` |
+| `./graphify-arch/refresh_arch_graph.sh --incremental` | exit 0 after independent QA acceptance; `passed` | controller console output |
+
+### Failure triage, attribution, and remaining uncertainty
+
+- Session-caused harness issues (MIME fixture, wired async settle, inbox-vs-live capture) were corrected only after `pending_triage`; final focused and broad evidence passes.
+- The first broad gate's sole upload-cancel timing failure is unrelated to Plan 240, passed by exact name, and the unchanged canonical rerun passed. No production change was made for it.
+- Plan 253 exclusion remains exact: this fix pass did not edit `share_batch_delivery_coordinator_test.dart`, picker-screen progress behavior, or Plan-253 files. The temporary peer-scope mutation was restored byte-for-byte before final evidence. Existing Plan-253 coordinator/picker work was preserved and is exercised by the 34-test shared suite and final groups gate.
+- No migration, codec/schema, Go transport, encryption primitive, source-announcement publication, third owner lane, or new retry framework changed. The raw unresolved-owner insertion exists only in the in-memory test fake.
+- **QA findings and dispositions:** initial B1-B9 were fixed in one bounded pass and independently rechecked as resolved; N1 is the only optional follow-up.
+- **Safety conclusion:** the source announcement remains read-only; owner/source identities remain local and absent from provenance/wire; target authorization is reloaded at send time; destination IDs/crypto are fresh; exact retries, preservation sentinels, curated groups, analyzer non-widening, diff hygiene, impact review, and final graph refresh all resolve. The session is safe to consider complete.
+
+## Independent QA Review — Initial Pass
+
+- **Result:** blockers; fresh Executor fix pass required. No production or test code was edited by QA.
+- **Snapshot/attribution:** the nine Plan-240 untracked source/test hashes match the Executor handoff; the scoped tracked files are unchanged from post-Executor snapshot `74f9027b46e66bc06004b31519712c02f229c81d`. Baseline diffs attribute the Plan-240 picker/coordinator/policy/gate hunks cleanly. The seven-line `share_batch_delivery_coordinator_test.dart` delta remains attributable to Plan 253 and outside this review.
+- **Evidence accepted:** final focused/shared/groups/Go/GMF-08/group-smoke/direct-marker/direct-retry/owner artifacts have the recorded passing exits; the stale GMF-08 substitution is exact and valid; all changed Dart paths are absent from the final 1,626-diagnostic analyzer output and the scoped analyzer is clean; `git diff --check` is clean; Graphify impact plus QA targeted source verification found the live wired caller and tests; all eight files are in `GROUP_TESTS` and feature AUTO discovery.
+- **Counterexample artifact:** exact planned names for TC-240-06/07/08 match no tests and exit 79: `/tmp/plan240/qa-missing-named-tests.log`.
+
+### Blocking findings
+
+- **B1 — high — TC-240-01 does not prove the UI route and the promised picker preview is absent.** `announcement_received_media_forwarding_test.dart:25-47` is a `testWidgets` in name only: it never pumps a widget, invokes Forward, observes a route/request, or checks compose/quote controls. The RED therefore proves only the pure policy change. In production, `group_conversation_wired.dart:4917-4940` opens the picker with a text-only `ShareIntent`, while `share_target_picker_wired.dart:603-609` renders preview paths only from `shareIntent.filePaths`; the announcement media preview promised by TC-240-01 is not supplied. **Required disposition:** implement the safe owner-validated preview handoff and replace this with the promised reader-announcement wired/widget route proof, asserting Forward opens the existing picker with media preview/caption while compose/quote stay absent. **Verify:** `flutter test test/features/groups/presentation/announcement_received_media_forwarding_test.dart --plain-name 'reader opens Forward picker for verified media while announcement compose remains read-only'`.
+- **B2 — high — TC-240-02 and TC-240-06 do not exercise the announcement picker or send-time repositories.** `announcement_forward_target_policy_test.dart:30-59` calls two pure policy helpers; it does not build `ShareTargetPickerWired`, enumerate an exact target set, include source exclusion, or mutate a selected announcement/contact before Send. The exact TC-240-06 name is absent. The widened Plan-236 GMF-02 fixture uses a generic discussion-source request and does not cover a blocked contact or demoted announcement target. **Required disposition:** add the two exact announcement-request widget/application tests with active/blocked contacts, chat/admin/reader/QA/source groups, key/member fixtures, and post-selection block/demotion; assert only still-valid targets reach the coordinator. **Verify:** `flutter test test/features/share/presentation/announcement_forward_target_policy_test.dart`.
+- **B3 — high — TC-240-03 stops at request getters rather than outgoing caption and source immutability.** `announcement_media_forward_request_test.dart:5-28` checks `composedCaption` strings only. It never builds the outgoing `ShareIntent`, exercises the announcement picker/coordinator caption seam, or re-reads the source message/attachment. **Required disposition:** extend the exact test to prove keep/remove/edit outgoing text through the real announcement seam and unchanged source parent/attachment rows. **Verify:** `flutter test test/features/groups/application/announcement_media_forward_request_test.dart`.
+- **B4 — high — TC-240-04 is vacuous for preprocessing, IDs, uploads, and crypto.** `announcement_forward_batch_delivery_test.dart:6-21` hashes two contact IDs and never constructs `DefaultShareBatchDeliveryCoordinator`; it observes no preprocessing count, outgoing message/blob IDs, upload calls, keys, nonces, or group destination. This directly violates the plan note forbidding a helper/stub-only proof. **Required disposition:** implement the named test with the real coordinator loop and upload/encryption capture across contact and group targets; assert preprocessing once and fresh message/blob/key/nonce tuples per target. **Verify:** the exact TC-240-04 plain-name command from the plan.
+- **B5 — high — TC-240-05 does not test group marker live/offline/replay or source-free payloads.** `announcement_media_forward_marker_test.dart:6-23` synthesizes `{'isForwarded': operationKey.isNotEmpty}` from the *contact* key helper. It never sends to a group or inspects decrypted inner, retry/inbox, replay, or emitted-event maps. **Required disposition:** adapt the accepted Plan-236 live plus inbox/replay harness for an `AnnouncementMediaForwardRequest`; assert `isForwarded == true` at the group destination and absence of every source identity from inner/retry/event surfaces. **Verify:** `flutter test test/features/groups/integration/announcement_media_forward_marker_test.dart`.
+- **B6 — high — TC-240-07 is absent and source-announcement isolation is unproved.** `announcement_received_media_forwarding_test.dart:6-36` only inspects a request object/caption; it records no bridge command and has no test with the plan's exact name. It cannot detect swapping source A into the destination command. **Required disposition:** add the exact command-log integration test using announcement A and destination B; assert B send/publish input exists, every A publish/inbox command is absent, A is not selectable, and source rows/bytes remain unchanged. **Verify:** the exact TC-240-07 plain-name command from the plan.
+- **B7 — high — TC-240-08 is absent and failed-only announcement retry is unproved.** The only new assertion is the unused pure helper at `announcement_media_forward_marker_test.dart:25-34`; `retainFailedAnnouncementForwardTargetKeys` has no production caller. Generic picker preservation tests do not prove the announcement source exclusion/result discrimination promised here. **Required disposition:** add the exact named batch/picker test with sent, queued, and failed announcement-forward targets; retry from the retained UI state and assert only failures resend, successful/queued/source targets do not. **Verify:** the exact TC-240-08 plain-name command from the plan.
+- **B8 — high — TC-240-11 proves only a hash helper, not marker/payload/retry behavior.** `announcement_forward_contact_marker_test.dart:6-34` never calls the coordinator/contact send codec, captures no `isForwarded`, payload, log, outgoing ID, or crypto metadata, and simulates retry by recomputing a pure function. The mutation proof therefore cannot detect missing coordinator wiring. **Required disposition:** implement the planned real-coordinator two-contact fail-then-retry harness; capture encrypted-inner payload/logs and outgoing media identities; require marker true, per-contact unequal opaque keys, byte-stable failed-target retry key, fresh retry media IDs/crypto, and total source-identity absence. **Verify:** `flutter test test/features/share/application/announcement_forward_contact_marker_test.dart`.
+- **B9 — high — TC-240-12 is a constant/helper assertion, not an owner or wire contract.** `announcement_forward_media_owner_contract_test.dart:6-33` calls `sourceOwner`, `announcementForwardDestinationOwner`, and a synthetic diagnostic map. It has no same-ID group/direct/unresolved repository rows, no fail-on-wrong-owner fake, no destination persistence capture, and no direct/group inner/outer/retry/diagnostic payload capture. **Required disposition:** implement the planned owner-aware source/destination harness and serialization captures; prove group-only source qualification, direct/group destination owners, collision/unresolved exclusion, and owner/source absence from every wire/provenance/diagnostic surface. **Verify:** `flutter test test/features/share/application/announcement_forward_media_owner_contract_test.dart`.
+
+### Non-blocking findings
+
+- None. Test-only production helpers (`forTest`, `privacySafeDiagnostic`, `announcementForwardDestinationOwner`, and `retainFailedAnnouncementForwardTargetKeys`) should be removed if the causal replacements make them unnecessary; this cleanup is subordinate to B3/B7/B9 and is not a separate acceptance condition.
+
+## Independent QA Review — Fix Pass 1 Recheck
+
+- **Result:** `pass`; zero blocking findings. QA made no production or test edits and did not refresh Graphify.
+- **Identity and attribution:** before this QA-only plan update, the tracked state matched post-fix snapshot `790572c70a6aa68e068119271cfee05eb92cd126`; all ten Plan-240 untracked SHA-256 identities match the Executor handoff. The fix delta from `74f9027b46e66bc06004b31519712c02f229c81d` is confined to the Plan-240 doc, owner-validated preview wiring, the bounded unresolved-owner fake seam, and concurrent Plan-253 doc progress. Plan-253 code/test ownership remains preserved.
+- **Artifact audit:** every `/tmp/plan240-fix1` artifact was inspected. The final eight-file run passes all 10 TC-240 tests; shared picker/coordinator passes 34; Plan-236 preservation passes 95; direct marker/retry/owner and GMF-08 pass; the first groups run's sole upload-cancel timing failure passes by exact name and the unchanged canonical groups rerun passes 1,888 Flutter tests plus Go bridge/node. Full analyzer remains exactly 1,626 legacy diagnostics and scoped analysis adds none; diff hygiene, registration, and Graphify impact/source verification are consistent.
+- **Reruns:** none. No missing or inconsistent direct proof remained, and the passing unchanged broad-gate rerun was not duplicated.
+
+### Stable blocker dispositions
+
+- **B1 resolved:** `announcement_received_media_forwarding_test.dart` pumps the actual reader `GroupConversationWired`, opens the typed viewer Forward action, reaches `ShareTargetPickerWired`, and asserts the owner-resolved image preview/caption plus absent reply/quote and read-only composer controls. Production performs a fresh group-owner attachment lookup and existence check before constructing preview `filePaths`; dispatch still re-runs the full source gate.
+- **B2 resolved:** the two exact picker widget tests enumerate active/blocked contacts and chat/admin-announcement/reader-announcement/QA/source groups, then block and demote selected targets before Send. Only the still-valid chat reaches the coordinator; source exclusion is also enforced again in coordinator delivery.
+- **B3 resolved:** keep/remove/edit modes run through `AnnouncementMediaForwardRequest` and the real coordinator/contact persistence seam, yielding exact outgoing text while the source group parent, owner-scoped attachment map, and bytes remain unchanged.
+- **B4 resolved:** the real `DefaultShareBatchDeliveryCoordinator` contact+group loop preprocesses once and produces distinct outgoing message IDs, blob/attachment IDs, keys, nonces, and direct/group owner rows.
+- **B5 resolved:** the announcement request reaches the real group send seam with `isForwarded == true`; live publish, persisted message, inbox/retry envelope and decrypted plaintext are inspected for the marker and source absence. The green Plan-236 preservation run supplies the inherited replay/event decoding proof.
+- **B6 resolved:** the exact source-A/destination-B integration records real group commands, proves destination-B traffic, rejects source A as a target with no A publish/inbox command, and preserves source rows and bytes.
+- **B7 resolved:** the exact sent/queued/failed announcement batch test retains and replays only the failed key while excluding sent, queued, and source keys. The green shared picker test `GMF-05 picker retries failed only and leaves queued forward to durable retry` supplies the real retained-UI-state proof on the same unbranched picker result path; B2/B6 supply announcement source exclusion at selection and delivery.
+- **B8 resolved:** the real two-contact flow makes the second upload fail then retry, verifies direct `isForwarded` encrypted-inner/log output, unequal target-scoped keys, deterministic failed-target retry identity, fresh retry blob/key/nonce material, and total source absence. Removing peer scope re-reds this test; restoration passes.
+- **B9 resolved:** the recording owner repository includes same-parent group/direct/unresolved rows, records group-only source reads and direct/group destination saves, and verifies collision/unresolved exclusion. Captured direct/group inner, outer, retry, and diagnostic surfaces contain neither owner keys nor source identities; the Plan-228 owner sentinel also passes.
+
+### Additional review checks
+
+- Harness assertions exercise real coordinator, picker, repository, upload, crypto, persistence, and command seams where the plan requires them; inherited Plan-232/236 tests cover their owned codec/replay boundaries. No helper-only assertion is used as sole acceptance evidence.
+- Preview and dispatch remain owner-scoped; dispatch reloads parent/group/attachment, lifecycle policy, current path, and content hash. Target contact/group repositories are reloaded at send time.
+- No migration, transport schema, Go, encryption primitive, source publication, recipient calculation, third owner lane, or retry framework changed. All eight files are registered in `GROUP_TESTS`; the owner fake remains compatible under the full groups gate.
+- Graphify impact output was verified against live callers/tests. The final incremental refresh remains controller-owned and was intentionally not run by QA.
+
+### Non-blocking findings
+
+- **N1 — low:** `AnnouncementMediaForwardRequest.forTest`, `sourceOwner`, `privacySafeDiagnostic`, `announcementForwardDestinationOwner`, and `retainFailedAnnouncementForwardTargetKeys` are production-visible test conveniences with no production caller (the latter is used only by TC-240-08). Removing or relocating them would reduce dead API surface, but their behavior is privacy-safe and they do not block Plan 240 acceptance.

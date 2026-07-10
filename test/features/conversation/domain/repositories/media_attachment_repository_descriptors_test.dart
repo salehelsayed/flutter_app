@@ -72,6 +72,7 @@ void main() {
             required String scopeId,
             required List<String> mediaTypes,
             required bool bookmarkedOnly,
+            required bool incomingOnly,
             required int limit,
             String? afterTimestamp,
             String? afterMessageId,

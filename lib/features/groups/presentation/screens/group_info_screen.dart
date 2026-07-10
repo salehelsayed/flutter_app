@@ -40,6 +40,7 @@ class GroupInfoScreen extends StatelessWidget {
   final ValueChanged<GroupMember>? onRemoveMember;
   final ValueChanged<GroupMember>? onToggleAdminRole;
   final VoidCallback? onAddMember;
+  final VoidCallback? onOpenSharedMedia;
   final ValueChanged<GroupMember>? onResendInvite;
   final ValueChanged<GroupMember>? onRevokeInvite;
   final BackgroundPreference backgroundPreference;
@@ -70,6 +71,7 @@ class GroupInfoScreen extends StatelessWidget {
     this.onRemoveMember,
     this.onToggleAdminRole,
     this.onAddMember,
+    this.onOpenSharedMedia,
     this.onResendInvite,
     this.onRevokeInvite,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
@@ -120,12 +122,10 @@ class GroupInfoScreen extends StatelessWidget {
                             padding: const EdgeInsets.symmetric(horizontal: 16),
                             child: PendingSiblingDevicePrompt(
                               view: pending,
-                              onVerify: () => onVerifyPendingSiblingDevice?.call(
-                                pending.device,
-                              ),
-                              onReject: () => onRejectPendingSiblingDevice?.call(
-                                pending.device,
-                              ),
+                              onVerify: () => onVerifyPendingSiblingDevice
+                                  ?.call(pending.device),
+                              onReject: () => onRejectPendingSiblingDevice
+                                  ?.call(pending.device),
                             ),
                           ),
                         ],
@@ -258,8 +258,46 @@ class GroupInfoScreen extends StatelessWidget {
             _buildDissolvedStatusCard(context),
           ],
           const SizedBox(height: 20),
+          if (!group.isDissolved &&
+              (group.type == GroupType.chat ||
+                  group.type == GroupType.announcement) &&
+              onOpenSharedMedia != null) ...[
+            _buildSharedMediaEntry(context),
+            const SizedBox(height: 20),
+          ],
           _buildMutePreferenceCard(context),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSharedMediaEntry(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final actionBlue = _blueAccent(readableColors);
+    final l10n = AppLocalizations.of(context)!;
+
+    return Material(
+      color: readableColors.surfaceRaised,
+      borderRadius: BorderRadius.circular(16),
+      child: ListTile(
+        key: const ValueKey('group-shared-media-entry'),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: readableColors.divider, width: 0.5),
+        ),
+        leading: Icon(Icons.photo_library_outlined, color: actionBlue),
+        title: Text(
+          l10n.shared_media_title,
+          style: TextStyle(
+            color: readableColors.textPrimary,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        trailing: Icon(
+          Icons.chevron_right_rounded,
+          color: readableColors.iconSecondary,
+        ),
+        onTap: onOpenSharedMedia,
       ),
     );
   }

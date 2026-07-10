@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -19,6 +21,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_policy.dart';
+import 'package:flutter_app/features/groups/application/announcement_media_forward_request.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
@@ -31,6 +34,40 @@ import 'package:flutter_app/features/settings/domain/models/image_quality_prefer
 import 'share_target_selection.dart';
 
 const _shareBatchUuid = Uuid();
+
+/// Stable only for one action+contact retry and opaque outside this process.
+/// Source identities are not inputs and cannot appear in the resulting key.
+ForwardProvenance announcementForwardProvenanceForContact({
+  required ForwardProvenance base,
+  required String contactPeerId,
+}) => ForwardProvenance(
+  operationDedupKey: sha256
+      .convert(utf8.encode('${base.operationDedupKey}\u0000$contactPeerId'))
+      .toString(),
+);
+
+Set<String> retainFailedAnnouncementForwardTargetKeys({
+  required String sourceGroupId,
+  required Set<String> attemptedTargetKeys,
+  required Set<String> failedTargetKeys,
+}) => attemptedTargetKeys
+    .intersection(failedTargetKeys)
+    .where((key) => key != 'group:$sourceGroupId')
+    .toSet();
+
+bool canDeliverAnnouncementForwardToGroup({
+  required bool isArchived,
+  required bool isDissolved,
+  required bool isAnnouncement,
+  required bool isAdmin,
+  required bool hasLatestKey,
+  required bool isMember,
+}) =>
+    !isArchived &&
+    !isDissolved &&
+    (!isAnnouncement || isAdmin) &&
+    hasLatestKey &&
+    isMember;
 
 enum ShareBatchTargetStatus { sent, queued, failed }
 
@@ -400,6 +437,9 @@ class DefaultShareBatchDeliveryCoordinator
           shareIntent: shareIntent,
           target: target,
           processedMedia: processedMedia,
+          sourceGroupIdToExclude: request is AnnouncementMediaForwardRequest
+              ? request.groupId
+              : null,
         ),
       );
     }
@@ -419,6 +459,7 @@ class DefaultShareBatchDeliveryCoordinator
     required ShareIntent shareIntent,
     required ShareTargetSelection target,
     required List<PendingComposerMedia> processedMedia,
+    String? sourceGroupIdToExclude,
   }) async {
     ShareBatchTargetResult failed(String detail) {
       return ShareBatchTargetResult(
@@ -437,13 +478,22 @@ class DefaultShareBatchDeliveryCoordinator
           if (current == null) {
             return failed('Contact is no longer available.');
           }
+          if (!GroupMediaForwardPolicy.canTargetContact(current)) {
+            return failed('Contact is no longer available.');
+          }
           final mlKemKey = current.mlKemPublicKey?.trim();
           if (mlKemKey == null || mlKemKey.isEmpty) {
             return failed('Contact is missing required encryption support.');
           }
+          final targetIntent = shareIntent.copyWith(
+            forwardProvenance: announcementForwardProvenanceForContact(
+              base: shareIntent.forwardProvenance!,
+              contactPeerId: current.peerId,
+            ),
+          );
           return await (sendToContactFn ?? _sendToContact)(
             identity: identity,
-            shareIntent: shareIntent,
+            shareIntent: targetIntent,
             contact: current,
             processedMedia: processedMedia,
             uploadHooks: ShareBatchUploadHooks.none,
@@ -454,24 +504,28 @@ class DefaultShareBatchDeliveryCoordinator
           if (current == null) {
             return failed('Group was not found.');
           }
-          // Destination-lane filter: internal group-media forwarding posts
-          // only to discussion groups; announcement/QA authoring stays with
-          // its dedicated plans even for admins.
-          if (current.type != GroupType.chat) {
-            return failed('You can only forward to discussion groups.');
+          if (current.id == sourceGroupIdToExclude) {
+            return failed('The source announcement cannot be a destination.');
+          }
+          if (!GroupMediaForwardPolicy.canTargetGroup(current)) {
+            return failed('You no longer have permission to post there.');
           }
           if (current.isArchived || current.isDissolved) {
             return failed('You no longer have permission to post there.');
           }
           final latestKey = await groupRepo.getLatestKey(current.id);
-          if (latestKey == null) {
-            return failed('You no longer have permission to post there.');
-          }
           final members = await groupRepo.getMembers(current.id);
           final isMember = members.any(
             (member) => member.peerId == identity.peerId,
           );
-          if (!isMember) {
+          if (!canDeliverAnnouncementForwardToGroup(
+            isArchived: current.isArchived,
+            isDissolved: current.isDissolved,
+            isAnnouncement: current.type == GroupType.announcement,
+            isAdmin: current.myRole == GroupRole.admin,
+            hasLatestKey: latestKey != null,
+            isMember: isMember,
+          )) {
             return failed('You no longer have permission to post there.');
           }
           return await (sendToGroupFn ?? _sendToGroup)(

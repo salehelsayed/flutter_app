@@ -191,6 +191,87 @@ Future<List<Map<String, Object?>>> dbLoadGroupMessagesPage(
   }
 }
 
+/// Loads an indexed, bounded window around one live exact-group anchor.
+/// This is three constant-bounded queries (anchor, older side, newer side),
+/// never an offset/page scan. Locally deleted parents and synthetic removal
+/// cutoffs are excluded at the query boundary.
+Future<List<Map<String, Object?>>> dbLoadGroupMessagesAround(
+  DatabaseExecutor db,
+  String groupId,
+  String anchorMessageId, {
+  int before = 25,
+  int after = 25,
+}) async {
+  if (before < 0 || before > 25 || after < 0 || after > 25) {
+    throw ArgumentError('before and after must each be 0..25');
+  }
+  const live = '''
+    gm.group_id = ?
+    AND gm.id NOT LIKE ?
+    AND NOT EXISTS (
+      SELECT 1
+      FROM group_message_local_deletions deleted
+      WHERE deleted.message_id = gm.id
+        AND deleted.group_id = gm.group_id
+    )
+  ''';
+  final anchorRows = await db.rawQuery(
+    '''
+      SELECT gm.*
+      FROM group_messages gm
+      WHERE gm.id = ? AND $live
+      LIMIT 1
+    ''',
+    [anchorMessageId, groupId, _groupRemovalCutoffMessageIdLike],
+  );
+  if (anchorRows.isEmpty) return const [];
+  final anchor = anchorRows.single;
+  final timestamp = anchor['timestamp'] as String;
+  final id = anchor['id'] as String;
+
+  final older = before == 0
+      ? const <Map<String, Object?>>[]
+      : await db.rawQuery(
+          '''
+            SELECT gm.*
+            FROM group_messages gm
+            WHERE $live
+              AND (gm.timestamp < ? OR (gm.timestamp = ? AND gm.id < ?))
+            ORDER BY gm.timestamp DESC, gm.id DESC
+            LIMIT ?
+          ''',
+          [
+            groupId,
+            _groupRemovalCutoffMessageIdLike,
+            timestamp,
+            timestamp,
+            id,
+            before,
+          ],
+        );
+  final newer = after == 0
+      ? const <Map<String, Object?>>[]
+      : await db.rawQuery(
+          '''
+            SELECT gm.*
+            FROM group_messages gm
+            WHERE $live
+              AND (gm.timestamp > ? OR (gm.timestamp = ? AND gm.id > ?))
+            ORDER BY gm.timestamp ASC, gm.id ASC
+            LIMIT ?
+          ''',
+          [
+            groupId,
+            _groupRemovalCutoffMessageIdLike,
+            timestamp,
+            timestamp,
+            id,
+            after,
+          ],
+        );
+  return [...older.reversed, anchor, ...newer];
+}
+
 /// Loads all messages for a group, ordered by timestamp ASC, id ASC.
 Future<List<Map<String, Object?>>> dbLoadAllGroupMessages(
   DatabaseExecutor db,

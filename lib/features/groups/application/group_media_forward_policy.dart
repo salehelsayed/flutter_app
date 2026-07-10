@@ -6,8 +6,10 @@ import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/groups/application/announcement_media_forward_request.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -17,11 +19,12 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 /// attachment row. Plan 236 has no lifecycle metadata to consult, so the
 /// production default restricts nothing; plan 238 replaces it with the real
 /// policy. Forward fails closed whenever this returns true.
-typedef GroupMediaForwardRestriction = bool Function(MediaAttachment attachment);
+typedef GroupMediaForwardRestriction =
+    bool Function(MediaAttachment attachment);
 
 bool _neverRestricted(MediaAttachment _) => false;
 
-/// 236: pure Forward-offer policy for received media in discussion groups.
+/// Pure Forward-offer and destination policy for received group media.
 ///
 /// Fail-closed by construction, mirroring [GroupReceivedMediaActionPolicy]:
 /// only an INCOMING image/video row under the exact `MediaOwnerLane.group`
@@ -38,7 +41,9 @@ class GroupMediaForwardPolicy {
     required MediaAttachment attachment,
     GroupMediaForwardRestriction? isLifecycleRestricted,
   }) {
-    if (groupType != GroupType.chat) return false;
+    if (groupType != GroupType.chat && groupType != GroupType.announcement) {
+      return false;
+    }
     if (!isIncoming) return false;
     final mediaType = attachment.mediaType;
     if (mediaType != 'image' && mediaType != 'video') return false;
@@ -48,6 +53,17 @@ class GroupMediaForwardPolicy {
     }
     if ((isLifecycleRestricted ?? _neverRestricted)(attachment)) return false;
     return true;
+  }
+
+  static bool canTargetContact(ContactModel contact) =>
+      !contact.isArchived && !contact.isBlocked;
+
+  static bool canTargetGroup(GroupModel group) {
+    if (group.isArchived || group.isDissolved || group.type == GroupType.qa) {
+      return false;
+    }
+    return group.type != GroupType.announcement ||
+        group.myRole == GroupRole.admin;
   }
 }
 
@@ -82,7 +98,9 @@ class GroupMediaForwardRequestBuilder {
     required String messageId,
     required String attachmentId,
   }) async {
-    if (group.type != GroupType.chat) return null;
+    if (group.type != GroupType.chat && group.type != GroupType.announcement) {
+      return null;
+    }
     final parent = await messageRepository.getMessage(messageId);
     if (parent == null || parent.groupId != group.id || !parent.isIncoming) {
       return null;
@@ -113,6 +131,15 @@ class GroupMediaForwardRequestBuilder {
       operationTokenFactory: _operationTokenFactory,
     );
     if (provenance == null) return null;
+    if (group.type == GroupType.announcement) {
+      return AnnouncementMediaForwardRequest(
+        groupId: group.id,
+        messageId: messageId,
+        attachmentId: attachmentId,
+        initialCaption: parent.text,
+        provenance: provenance,
+      );
+    }
     return GroupMediaForwardRequest(
       groupId: group.id,
       messageId: messageId,
@@ -214,16 +241,16 @@ class GroupMediaForwardSourceGate {
       return const GroupMediaForwardSourceResult.denied('not_incoming');
     }
 
-    // Source-lane authority: only a discussion group can be forwarded FROM.
+    // Source-lane authority: received discussion and announcement media share
+    // the same group-owned local lane. QA media remains out of scope.
     final sourceGroup = await groupRepository.getGroup(request.groupId);
     if (sourceGroup == null) {
-      return const GroupMediaForwardSourceResult.denied(
-        'source_group_missing',
-      );
+      return const GroupMediaForwardSourceResult.denied('source_group_missing');
     }
-    if (sourceGroup.type != GroupType.chat) {
+    if (sourceGroup.type != GroupType.chat &&
+        sourceGroup.type != GroupType.announcement) {
       return const GroupMediaForwardSourceResult.denied(
-        'source_group_not_discussion',
+        'source_group_not_forwardable',
       );
     }
 
@@ -260,9 +287,7 @@ class GroupMediaForwardSourceGate {
       return const GroupMediaForwardSourceResult.denied('not_displayable');
     }
     if (isLifecycleRestricted(attachment)) {
-      return const GroupMediaForwardSourceResult.denied(
-        'lifecycle_restricted',
-      );
+      return const GroupMediaForwardSourceResult.denied('lifecycle_restricted');
     }
 
     final storedPath = await mediaFileManager.resolveStoredPath(

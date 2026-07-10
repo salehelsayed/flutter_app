@@ -29,6 +29,7 @@ import 'package:flutter_app/features/groups/application/group_membership_timelin
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
+import 'package:flutter_app/features/groups/application/group_shared_media_navigation.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/refresh_pending_group_invites_for_metadata_change_use_case.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
@@ -58,6 +59,7 @@ import 'package:flutter_app/features/groups/presentation/group_invite_status_pre
 import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
 import 'package:flutter_app/features/groups/presentation/screens/contact_picker_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_screen.dart';
+import 'package:flutter_app/features/groups/presentation/screens/group_shared_media_library_screen.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
@@ -78,6 +80,8 @@ class GroupInfoWired extends StatefulWidget {
   final MediaPicker? mediaPicker;
   final UploadGroupAvatarFn uploadGroupAvatarFn;
   final BackgroundPreference backgroundPreference;
+  final Widget Function(BuildContext context, GroupModel group)?
+  sharedMediaRouteBuilder;
 
   const GroupInfoWired({
     super.key,
@@ -93,6 +97,7 @@ class GroupInfoWired extends StatefulWidget {
     this.mediaPicker,
     this.uploadGroupAvatarFn = uploadGroupAvatar,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
+    this.sharedMediaRouteBuilder,
   });
 
   @override
@@ -163,7 +168,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             ? 1
             : 0,
       );
-      final pendingSiblingDeviceViews = await _loadPendingSiblingDevices(members);
+      final pendingSiblingDeviceViews = await _loadPendingSiblingDevices(
+        members,
+      );
       if (!mounted) return;
       setState(() {
         if (group != null) {
@@ -412,7 +419,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     }
   }
 
-  Future<void> _onVerifyPendingSiblingDevice(PendingSiblingDevice device) async {
+  Future<void> _onVerifyPendingSiblingDevice(
+    PendingSiblingDevice device,
+  ) async {
     final repo = widget.groupRepo;
     if (repo is! PendingSiblingDeviceRepository) return;
     await verifyAndAdmitPendingSiblingDevice(
@@ -423,7 +432,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     await _loadGroupInfo();
   }
 
-  Future<void> _onRejectPendingSiblingDevice(PendingSiblingDevice device) async {
+  Future<void> _onRejectPendingSiblingDevice(
+    PendingSiblingDevice device,
+  ) async {
     final repo = widget.groupRepo;
     if (repo is! PendingSiblingDeviceRepository) return;
     await rejectPendingSiblingDevice(
@@ -2267,6 +2278,23 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     Navigator.of(context).pop(_didMutateGroup);
   }
 
+  Future<void> _openSharedMedia() async {
+    final routeBuilder = widget.sharedMediaRouteBuilder;
+    if (routeBuilder == null) return;
+    final live = await resolveGroupSharedMediaRoute(
+      groupId: _group.id,
+      loadGroup: widget.groupRepo.getGroup,
+      includeAnnouncements: true,
+    );
+    if (!mounted || live == null) return;
+    final result = await Navigator.of(context)
+        .push<GroupSharedMediaLibraryResult>(
+          MaterialPageRoute(builder: (context) => routeBuilder(context, live)),
+        );
+    if (!mounted || result == null) return;
+    Navigator.of(context).pop(result);
+  }
+
   @override
   Widget build(BuildContext context) {
     final isAdmin = _group.myRole == GroupRole.admin;
@@ -2301,6 +2329,13 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       onRemoveMember: canManageGroup ? _confirmRemoveMember : null,
       onToggleAdminRole: canManageGroup ? _confirmRoleChange : null,
       onAddMember: canManageGroup ? _onAddMember : null,
+      onOpenSharedMedia:
+          widget.sharedMediaRouteBuilder != null &&
+              (_group.type == GroupType.chat ||
+                  _group.type == GroupType.announcement) &&
+              !_group.isDissolved
+          ? _openSharedMedia
+          : null,
       onResendInvite: canManageGroup && widget.inviteDeliveryAttemptRepo != null
           ? _onResendInvite
           : null,

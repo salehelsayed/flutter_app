@@ -24,19 +24,22 @@ class MediaLibraryFilter {
   const MediaLibraryFilter({
     this.kind = MediaLibraryKind.visual,
     this.bookmarkedOnly = false,
+    this.incomingOnly = false,
   });
 
   final MediaLibraryKind kind;
   final bool bookmarkedOnly;
+  final bool incomingOnly;
 
   @override
   bool operator ==(Object other) =>
       other is MediaLibraryFilter &&
       other.kind == kind &&
-      other.bookmarkedOnly == bookmarkedOnly;
+      other.bookmarkedOnly == bookmarkedOnly &&
+      other.incomingOnly == incomingOnly;
 
   @override
-  int get hashCode => Object.hash(kind, bookmarkedOnly);
+  int get hashCode => Object.hash(kind, bookmarkedOnly, incomingOnly);
 }
 
 /// A shared-media-library scope: one direct conversation or one group.

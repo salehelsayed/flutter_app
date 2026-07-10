@@ -129,6 +129,7 @@ void main() {
       'lib/features/groups/application/retry_incomplete_group_uploads_use_case.dart',
       'lib/features/groups/application/group_media_forward_intent.dart',
       'lib/features/groups/application/group_media_forward_policy.dart',
+      'lib/features/groups/application/announcement_media_forward_request.dart',
       'lib/features/groups/domain/models/group_message.dart',
       'lib/features/groups/presentation/screens/group_conversation_screen.dart',
       'lib/features/groups/presentation/screens/group_conversation_wired.dart',

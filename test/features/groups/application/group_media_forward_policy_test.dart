@@ -102,7 +102,6 @@ void main() {
       // Every broken dimension removes Forward. Table-driven: each row breaks
       // exactly one input.
       final denied = <String, bool>{
-        'announcement group': _canForward(groupType: GroupType.announcement),
         'qa group': _canForward(groupType: GroupType.qa),
         'outgoing message': _canForward(isIncoming: false),
         'audio attachment': _canForward(
@@ -146,6 +145,11 @@ void main() {
       denied.forEach((label, allowed) {
         expect(allowed, isFalse, reason: '$label must not offer Forward');
       });
+      expect(
+        _canForward(groupType: GroupType.announcement),
+        isTrue,
+        reason: 'plan 240 permits verified incoming announcement media',
+      );
 
       // 238 seam: an abstract lifecycle restriction (expiry / protection /
       // view-once) denies Forward without this plan knowing the concrete
@@ -213,10 +217,7 @@ void main() {
 
     /// Writes real bytes under the fake documents root and returns
     /// (relative stored path, sha256 hex of those exact bytes).
-    (String, String) writeMediaFile(
-      String name,
-      List<int> bytes,
-    ) {
+    (String, String) writeMediaFile(String name, List<int> bytes) {
       final file = File(p.join(mediaRoot.path, '$name.jpg'));
       file.parent.createSync(recursive: true);
       file.writeAsBytesSync(bytes);
@@ -340,7 +341,8 @@ void main() {
         expect(missingParent.isVerified, isFalse);
         expect(missingParent.denialReason, 'parent_missing');
 
-        // --- Source group is not a discussion group.
+        // --- Plan 240: an incoming announcement uses the same group owner
+        // lane and is a valid source after identical byte verification.
         await groupRepo.saveGroup(
           makeGroup(id: 'ann-1', type: GroupType.announcement),
         );
@@ -359,8 +361,7 @@ void main() {
         final announcementSource = await gate.verify(
           request(group: 'ann-1', message: 'msg-ann', attachment: 'att-ann'),
         );
-        expect(announcementSource.isVerified, isFalse);
-        expect(announcementSource.denialReason, 'source_group_not_discussion');
+        expect(announcementSource.isVerified, isTrue);
 
         // --- Ineligible current state: pending / quarantined rows.
         await messageRepo.saveMessage(makeMessage(id: 'msg-pending'));

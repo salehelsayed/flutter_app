@@ -26,6 +26,7 @@ typedef RunGroupInboxPageTransaction =
 class GroupMessageRepositoryImpl
     implements
         GroupMessageRepository,
+        GroupMessageAroundRepository,
         GroupThreadSummaryRepository,
         GroupThreadPreviewRepository,
         GroupMembershipRepairDeletionRepository,
@@ -37,6 +38,13 @@ class GroupMessageRepositoryImpl
     int offset,
   })
   dbLoadGroupMessagesPage;
+  final Future<List<Map<String, Object?>>> Function(
+    String groupId,
+    String anchorMessageId, {
+    int before,
+    int after,
+  })?
+  dbLoadGroupMessagesAroundFn;
   final Future<Map<String, Object?>?> Function(String id) dbLoadGroupMessage;
   final Future<Map<String, Object?>?> Function(
     String groupId,
@@ -115,6 +123,7 @@ class GroupMessageRepositoryImpl
   GroupMessageRepositoryImpl({
     required this.dbInsertGroupMessage,
     required this.dbLoadGroupMessagesPage,
+    this.dbLoadGroupMessagesAroundFn,
     required this.dbLoadGroupMessage,
     this.dbLoadGroupMessageByLogicalDeliveryIdFn,
     required this.dbLoadLatestGroupMessage,
@@ -154,7 +163,18 @@ class GroupMessageRepositoryImpl
     required GroupMessage? previous,
     required GroupMessage saved,
   }) {
-    if (previous == null || saved.isIncoming) return;
+    if (previous == null) {
+      if (!saved.isIncoming && saved.status == 'sending') {
+        _outgoingLocalMessageChangesController.add(
+          GroupOutgoingLocalMessageChange.inserted(
+            groupId: saved.groupId,
+            messageId: saved.id,
+          ),
+        );
+      }
+      return;
+    }
+    if (saved.isIncoming) return;
     if (previous.status == saved.status) return;
     _outgoingLocalMessageChangesController.add(
       GroupOutgoingLocalMessageChange.status(
@@ -348,6 +368,31 @@ class GroupMessageRepositoryImpl
     final row = await dbLoadGroupMessage(id);
     if (row == null) return null;
     return GroupMessage.fromMap(row);
+  }
+
+  @override
+  Future<List<GroupMessage>> getMessagesAround(
+    String groupId,
+    String anchorMessageId, {
+    int before = 25,
+    int after = 25,
+  }) async {
+    if (before < 0 || before > 25 || after < 0 || after > 25) {
+      throw ArgumentError('before and after must each be 0..25');
+    }
+    final fn = dbLoadGroupMessagesAroundFn;
+    if (fn == null) {
+      final anchor = await getMessage(anchorMessageId);
+      if (anchor == null || anchor.groupId != groupId) return const [];
+      return [anchor];
+    }
+    final rows = await fn(
+      groupId,
+      anchorMessageId,
+      before: before,
+      after: after,
+    );
+    return orderGroupMessagesForTimeline(rows.map(GroupMessage.fromMap));
   }
 
   @override

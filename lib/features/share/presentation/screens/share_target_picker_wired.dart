@@ -22,6 +22,8 @@ import 'package:flutter_app/features/conversation/domain/repositories/reaction_r
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
+import 'package:flutter_app/features/groups/application/group_media_forward_policy.dart';
+import 'package:flutter_app/features/groups/application/announcement_media_forward_request.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
@@ -117,10 +119,11 @@ class ShareTargetPickerWired extends StatefulWidget {
 
 class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
   late final TextEditingController _captionController = TextEditingController(
-    text:
-        widget.groupMediaForwardRequest?.initialCaption ??
-        widget.shareIntent.text ??
-        '',
+    text: switch (widget.groupMediaForwardRequest) {
+      AnnouncementMediaForwardRequest request => request.composedCaption ?? '',
+      GroupMediaForwardRequest request => request.initialCaption,
+      null => widget.shareIntent.text ?? '',
+    },
   );
   late ImageQualityPreference _qualityPreference = widget.qualityPreference;
   late ImageQualityPreference _videoQualityPreference =
@@ -164,7 +167,13 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
           Future.value(const <GroupModel>[]);
       final results = await Future.wait<Object>([contactsFuture, groupsFuture]);
 
-      final contacts = results[0] as List<ContactModel>;
+      final contacts = (results[0] as List<ContactModel>)
+          .where(
+            (contact) =>
+                widget.groupMediaForwardRequest == null ||
+                GroupMediaForwardPolicy.canTargetContact(contact),
+          )
+          .toList(growable: false);
       final groups = await _filterWritableGroups(
         results[1] as List<GroupModel>,
       );
@@ -278,11 +287,13 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
     if (group.isArchived || group.isDissolved) {
       return false;
     }
-    // 236: internal group-media forwarding posts only to discussion groups —
-    // announcement targets are excluded even for admins (announcement
-    // authoring stays with its dedicated plans), and QA likewise.
     if (widget.groupMediaForwardRequest != null &&
-        group.type != GroupType.chat) {
+        !GroupMediaForwardPolicy.canTargetGroup(group)) {
+      return false;
+    }
+    final forwardRequest = widget.groupMediaForwardRequest;
+    if (forwardRequest is AnnouncementMediaForwardRequest &&
+        group.id == forwardRequest.groupId) {
       return false;
     }
     if (group.type == GroupType.announcement &&
@@ -453,11 +464,20 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
 
   Future<List<ShareTargetSelection>>
   _resolveSelectedTargetsForDelivery() async {
-    final targets = <ShareTargetSelection>[
-      ..._contacts
-          .where((contact) => _selectedContactPeerIds.contains(contact.peerId))
-          .map(ShareTargetSelection.contact),
-    ];
+    final targets = <ShareTargetSelection>[];
+    for (final selected in _contacts.where(
+      (contact) => _selectedContactPeerIds.contains(contact.peerId),
+    )) {
+      final current = await widget.contactRepository.getContact(
+        selected.peerId,
+      );
+      if (current == null ||
+          (widget.groupMediaForwardRequest != null &&
+              !GroupMediaForwardPolicy.canTargetContact(current))) {
+        continue;
+      }
+      targets.add(ShareTargetSelection.contact(current));
+    }
 
     final groupRepository = widget.groupRepository;
     if (groupRepository == null || _selectedGroupIds.isEmpty) {

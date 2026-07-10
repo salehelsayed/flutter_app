@@ -219,9 +219,55 @@ abstract class GroupMessageRepository {
   }
 }
 
+/// Optional indexed implementation of the Plan-237 anchor-window query.
+abstract class GroupMessageAroundRepository {
+  Future<List<GroupMessage>> getMessagesAround(
+    String groupId,
+    String anchorMessageId, {
+    int before = 25,
+    int after = 25,
+  });
+}
+
+/// Compatibility-preserving typed entry point for existing lightweight fakes.
+/// Production implements [GroupMessageAroundRepository]; older fakes return
+/// only the exact anchor and never scan pages.
+extension GroupMessageAroundReader on GroupMessageRepository {
+  Future<List<GroupMessage>> getMessagesAround(
+    String groupId,
+    String anchorMessageId, {
+    int before = 25,
+    int after = 25,
+  }) async {
+    if (before < 0 || before > 25 || after < 0 || after > 25) {
+      throw ArgumentError('before and after must each be 0..25');
+    }
+    final repository = this;
+    if (repository is GroupMessageAroundRepository) {
+      return (repository as GroupMessageAroundRepository).getMessagesAround(
+        groupId,
+        anchorMessageId,
+        before: before,
+        after: after,
+      );
+    }
+    final anchor = await getMessage(anchorMessageId);
+    if (anchor == null || anchor.groupId != groupId) return const [];
+    return [anchor];
+  }
+}
+
 /// Local in-process notification for outgoing group row changes written by a
 /// repository implementation.
 class GroupOutgoingLocalMessageChange {
+  const GroupOutgoingLocalMessageChange.inserted({
+    required String groupId,
+    required String messageId,
+  }) : groupId = groupId,
+       messageId = messageId,
+       status = null,
+       reloadRequired = false;
+
   const GroupOutgoingLocalMessageChange.status({
     required String groupId,
     required String messageId,
@@ -240,6 +286,8 @@ class GroupOutgoingLocalMessageChange {
   final String? messageId;
   final String? status;
   final bool reloadRequired;
+
+  bool get isInserted => !reloadRequired && messageId != null && status == null;
 }
 
 /// Optional source for UI surfaces that want repository-local outgoing status

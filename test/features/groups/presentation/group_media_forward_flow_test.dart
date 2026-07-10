@@ -41,7 +41,7 @@ import '../../identity/domain/repositories/fake_identity_repository.dart';
 // from its repository immediately before its upload (a missing/ineligible
 // target is a failed result, never stale-picker fallback), seeds an editable
 // caption from the source without ever mutating the source, and never offers
-// or accepts an announcement/QA destination — even for admins.
+// or accepts a QA/non-admin announcement destination.
 
 const _localPeerId = 'my-peer-id-12345';
 const _srcGroupId = 'src-group';
@@ -120,7 +120,9 @@ void main() {
         mediaFileManager: fileManager,
         fileExists: (path) async => File(path).existsSync(),
         validateContentHash: ({required path, required expectedHash}) async {
-          final actual = sha256.convert(File(path).readAsBytesSync()).toString();
+          final actual = sha256
+              .convert(File(path).readAsBytesSync())
+              .toString();
           return actual == expectedHash
               ? const GroupMediaValidationResult.valid()
               : const GroupMediaValidationResult.invalid(
@@ -191,7 +193,10 @@ void main() {
     );
     final resolvedPaths = <String>[];
     for (final (index, attachmentId) in attachmentIds.indexed) {
-      final bytes = List<int>.generate(64 + index, (i) => (i * 7 + index) % 251);
+      final bytes = List<int>.generate(
+        64 + index,
+        (i) => (i * 7 + index) % 251,
+      );
       final file = File(p.join(sourceDir.path, '$attachmentId.jpg'));
       file.writeAsBytesSync(bytes);
       await mediaAttachmentRepository.saveAttachment(
@@ -343,15 +348,14 @@ void main() {
 
       await pumpPicker(tester, request: forwardRequest());
 
-      // Destination-lane filter: contacts and writable DISCUSSION groups
-      // only. Announcement (even as admin), QA, archived, dissolved, and the
-      // source group itself is a chat group so it may appear — but no
-      // non-chat lane ever does.
+      // Destination-lane filter: contacts, writable discussion groups, and
+      // admin-owned announcements. Reader announcements, QA, archived, and
+      // dissolved groups remain excluded.
       expect(find.text('Alice'), findsOneWidget);
       expect(find.text('Bob'), findsOneWidget);
       expect(find.text('Carol'), findsOneWidget);
       expect(find.text('Friends'), findsOneWidget);
-      expect(find.text('Admin Announcements'), findsNothing);
+      expect(find.text('Admin Announcements'), findsOneWidget);
       expect(find.text('Announcements'), findsNothing);
       expect(find.text('QA Corner'), findsNothing);
       expect(find.text('Archived Group'), findsNothing);
@@ -419,17 +423,20 @@ void main() {
         reason: 'a deleted destination group fails, never picker fallback',
       );
 
-      // Type changed away from discussion (repo copy is announcement now).
+      // Type changed to QA, which is never a forwarding destination.
       await _saveWritableGroup(
         groupRepository,
         _makeGroup(
           'dest-chat-2',
           'Second Friends',
-          GroupType.announcement,
+          GroupType.qa,
           GroupRole.admin,
         ),
       );
-      expect((await forwardTo(staleChat)).status, ShareBatchTargetStatus.failed);
+      expect(
+        (await forwardTo(staleChat)).status,
+        ShareBatchTargetStatus.failed,
+      );
 
       // Dissolved current copy.
       await groupRepository.saveGroup(
@@ -443,12 +450,19 @@ void main() {
           dissolvedAt: DateTime.parse('2026-03-09T08:00:00.000Z'),
         ),
       );
-      expect((await forwardTo(staleChat)).status, ShareBatchTargetStatus.failed);
+      expect(
+        (await forwardTo(staleChat)).status,
+        ShareBatchTargetStatus.failed,
+      );
 
       // Membership revoked (group present, key present, self not a member).
       await groupRepository.saveGroup(
-        _makeGroup('dest-chat-3', 'Third Friends', GroupType.chat,
-            GroupRole.member),
+        _makeGroup(
+          'dest-chat-3',
+          'Third Friends',
+          GroupType.chat,
+          GroupRole.member,
+        ),
       );
       await _saveGroupKey(groupRepository, 'dest-chat-3');
       final unjoined = _makeGroup(
@@ -461,8 +475,12 @@ void main() {
 
       // Missing current group key.
       await groupRepository.saveGroup(
-        _makeGroup('dest-chat-4', 'Fourth Friends', GroupType.chat,
-            GroupRole.member),
+        _makeGroup(
+          'dest-chat-4',
+          'Fourth Friends',
+          GroupType.chat,
+          GroupRole.member,
+        ),
       );
       await groupRepository.saveMember(
         _makeGroupMember(groupId: 'dest-chat-4', peerId: _localPeerId),
@@ -500,7 +518,10 @@ void main() {
         _makeGroup('dest-chat', 'Friends', GroupType.chat, GroupRole.member),
       );
 
-      await pumpPicker(tester, request: forwardRequest(attachmentId: 'src-att-2'));
+      await pumpPicker(
+        tester,
+        request: forwardRequest(attachmentId: 'src-att-2'),
+      );
 
       // The caption field seeds from the source caption.
       expect(find.text('original caption'), findsOneWidget);
@@ -508,10 +529,7 @@ void main() {
       await tester.tap(find.text('Alice'));
       await tester.tap(find.text('Friends'));
       await tester.pump();
-      await tester.enterText(
-        find.text('original caption'),
-        'edited caption',
-      );
+      await tester.enterText(find.text('original caption'), 'edited caption');
       await tapSendAndSettle(tester);
 
       // Only the viewer-selected attachment is read for delivery.
@@ -559,20 +577,18 @@ void main() {
   );
 
   testWidgets(
-    'GMF-12 discussion forwarding excludes announcements without changing their existing authoring rules',
+    'GMF-12 announcement forwarding allows admin destinations and preserves authoring rules',
     (tester) async {
       await seedForwardSource();
       await seedDestinations();
 
-      // Forward mode: the admin-writable announcement group is NOT a target.
+      // Plan 240 widens Forward mode to admin-writable announcement targets.
       await pumpPicker(tester, request: forwardRequest());
-      expect(find.text('Admin Announcements'), findsNothing);
+      expect(find.text('Admin Announcements'), findsOneWidget);
       expect(find.text('QA Corner'), findsNothing);
       expect(find.text('Friends'), findsOneWidget);
 
-      // Control — the SAME repositories through the ordinary OS-share picker
-      // still offer the admin announcement target: the forward filter narrows
-      // this flow only and leaves existing announcement authoring untouched.
+      // Control — ordinary OS share still offers the same admin target.
       await pumpPicker(
         tester,
         shareIntent: const ShareIntent(
@@ -582,8 +598,7 @@ void main() {
       );
       expect(find.text('Admin Announcements'), findsOneWidget);
 
-      // Coordinator-direct: even a handcrafted announcement target fails
-      // before any upload/send call.
+      // Coordinator-direct also accepts the current admin announcement target.
       final coordinator = buildCoordinator();
       final result = await coordinator.deliverGroupMediaForward(
         request: forwardRequest(),
@@ -599,8 +614,8 @@ void main() {
           ),
         ],
       );
-      expect(result.results.single.status, ShareBatchTargetStatus.failed);
-      expect(groupSends, isEmpty);
+      expect(result.results.single.status, ShareBatchTargetStatus.sent);
+      expect(groupSends.single.id, 'ann-admin');
     },
   );
 }
@@ -689,7 +704,9 @@ Future<void> _saveWritableGroup(
       peerId: peerId,
       role:
           memberRole ??
-          (group.myRole == GroupRole.admin ? MemberRole.admin : MemberRole.writer),
+          (group.myRole == GroupRole.admin
+              ? MemberRole.admin
+              : MemberRole.writer),
     ),
   );
   await _saveGroupKey(repository, group.id);

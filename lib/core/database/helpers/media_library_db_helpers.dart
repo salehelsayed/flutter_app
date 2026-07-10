@@ -64,6 +64,7 @@ Future<List<Map<String, Object?>>> dbLoadMediaLibraryPage(
   required String scopeId,
   required List<String> mediaTypes,
   required bool bookmarkedOnly,
+  bool incomingOnly = false,
   required int limit,
   String? afterTimestamp,
   String? afterMessageId,
@@ -86,6 +87,7 @@ Future<List<Map<String, Object?>>> dbLoadMediaLibraryPage(
       'scopeKind': scopeKind,
       'mediaTypes': mediaTypes,
       'bookmarkedOnly': bookmarkedOnly,
+      'incomingOnly': incomingOnly,
       'limit': limit,
     },
   );
@@ -119,6 +121,8 @@ Future<List<Map<String, Object?>>> dbLoadMediaLibraryPage(
       bookmarkPredicate = ' AND m.is_bookmarked = 1';
     }
 
+    final directionPredicate = incomingOnly ? ' AND p.is_incoming = 1' : '';
+
     var keysetPredicate = '';
     if (afterTimestamp != null &&
         afterMessageId != null &&
@@ -146,6 +150,7 @@ Future<List<Map<String, Object?>>> dbLoadMediaLibraryPage(
       'WHERE $parentPredicate '
       'AND m.media_type IN ($typePlaceholders)'
       '$bookmarkPredicate'
+      '$directionPredicate'
       '$keysetPredicate '
       'ORDER BY p.timestamp DESC, m.message_id DESC, m.id DESC '
       'LIMIT ?',

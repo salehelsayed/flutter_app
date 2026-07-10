@@ -74,6 +74,7 @@ class MediaAttachmentRepositoryImpl
     required String scopeId,
     required List<String> mediaTypes,
     required bool bookmarkedOnly,
+    required bool incomingOnly,
     required int limit,
     String? afterTimestamp,
     String? afterMessageId,
@@ -414,7 +415,8 @@ class MediaAttachmentRepositoryImpl
       if (after.scopeKind != scope.lane.dbValue ||
           after.scopeId != scope.id ||
           after.kind != filter.kind.name ||
-          after.bookmarkedOnly != filter.bookmarkedOnly) {
+          after.bookmarkedOnly != filter.bookmarkedOnly ||
+          after.incomingOnly != filter.incomingOnly) {
         throw ArgumentError.value(
           cursor,
           'cursor',
@@ -428,6 +430,7 @@ class MediaAttachmentRepositoryImpl
       scopeId: scope.id,
       mediaTypes: filter.kind.mediaTypes,
       bookmarkedOnly: filter.bookmarkedOnly,
+      incomingOnly: filter.incomingOnly,
       limit: limit,
       afterTimestamp: after?.timestamp,
       afterMessageId: after?.messageId,
@@ -456,6 +459,7 @@ class MediaAttachmentRepositoryImpl
         scopeId: scope.id,
         kind: filter.kind.name,
         bookmarkedOnly: filter.bookmarkedOnly,
+        incomingOnly: filter.incomingOnly,
         timestamp: last.parentTimestamp,
         messageId: last.attachment.messageId,
         attachmentId: last.attachment.id,
@@ -779,6 +783,7 @@ class _MediaLibraryCursor {
     required this.scopeId,
     required this.kind,
     required this.bookmarkedOnly,
+    required this.incomingOnly,
     required this.timestamp,
     required this.messageId,
     required this.attachmentId,
@@ -788,6 +793,7 @@ class _MediaLibraryCursor {
   final String scopeId;
   final String kind;
   final bool bookmarkedOnly;
+  final bool incomingOnly;
   final String timestamp;
   final String messageId;
   final String attachmentId;
@@ -795,11 +801,12 @@ class _MediaLibraryCursor {
   String encode() => base64Url.encode(
     utf8.encode(
       jsonEncode({
-        'v': 1,
+        'v': 2,
         'scopeKind': scopeKind,
         'scopeId': scopeId,
         'kind': kind,
         'bookmarkedOnly': bookmarkedOnly,
+        'incomingOnly': incomingOnly,
         'ts': timestamp,
         'mid': messageId,
         'aid': attachmentId,
@@ -812,7 +819,8 @@ class _MediaLibraryCursor {
       final decoded =
           jsonDecode(utf8.decode(base64Url.decode(cursor)))
               as Map<String, dynamic>;
-      if (decoded['v'] != 1) {
+      final version = decoded['v'];
+      if (version != 1 && version != 2) {
         throw const FormatException('unknown cursor version');
       }
       return _MediaLibraryCursor(
@@ -820,6 +828,8 @@ class _MediaLibraryCursor {
         scopeId: decoded['scopeId'] as String,
         kind: decoded['kind'] as String,
         bookmarkedOnly: decoded['bookmarkedOnly'] as bool,
+        incomingOnly:
+            version == 1 ? false : decoded['incomingOnly'] as bool,
         timestamp: decoded['ts'] as String,
         messageId: decoded['mid'] as String,
         attachmentId: decoded['aid'] as String,

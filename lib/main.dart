@@ -813,6 +813,7 @@ void main() async {
           required String scopeId,
           required List<String> mediaTypes,
           required bool bookmarkedOnly,
+          required bool incomingOnly,
           required int limit,
           String? afterTimestamp,
           String? afterMessageId,
@@ -823,6 +824,7 @@ void main() async {
           scopeId: scopeId,
           mediaTypes: mediaTypes,
           bookmarkedOnly: bookmarkedOnly,
+          incomingOnly: incomingOnly,
           limit: limit,
           afterTimestamp: afterTimestamp,
           afterMessageId: afterMessageId,
@@ -858,16 +860,13 @@ void main() async {
               localPath: localPath,
             ),
     dbClaimMediaEvicted:
-        (
-          id, {
-          required String ownerLane,
-          required String expectedLocalPath,
-        }) => dbClaimMediaEvicted(
-          db,
-          id,
-          ownerLane: ownerLane,
-          expectedLocalPath: expectedLocalPath,
-        ),
+        (id, {required String ownerLane, required String expectedLocalPath}) =>
+            dbClaimMediaEvicted(
+              db,
+              id,
+              ownerLane: ownerLane,
+              expectedLocalPath: expectedLocalPath,
+            ),
     dbFinalizeMediaEvictedPathCleared: (id, {required String ownerLane}) =>
         dbFinalizeMediaEvictedPathCleared(db, id, ownerLane: ownerLane),
     dbSaveGroupMediaAttachmentGuarded: (row, {required String groupId}) =>
@@ -881,13 +880,16 @@ void main() async {
   // BEFORE the account-migration network gate.
   final groupMediaDeletionReconciler = GroupMediaDeletionJournalReconciler(
     loadJournalPage:
-        ({required int limit, String? afterCreatedAt, String? afterAttachmentId}) =>
-            dbLoadGroupMediaDeletionJournalPage(
-              db,
-              limit: limit,
-              afterCreatedAt: afterCreatedAt,
-              afterAttachmentId: afterAttachmentId,
-            ),
+        ({
+          required int limit,
+          String? afterCreatedAt,
+          String? afterAttachmentId,
+        }) => dbLoadGroupMediaDeletionJournalPage(
+          db,
+          limit: limit,
+          afterCreatedAt: afterCreatedAt,
+          afterAttachmentId: afterAttachmentId,
+        ),
     loadAttachmentRow: (attachmentId) => dbLoadMediaById(db, attachmentId),
     loadLocalDeletionGroupId: (messageId) async {
       final row = await dbLoadGroupMessageLocalDeletion(db, messageId);
@@ -903,12 +905,13 @@ void main() async {
       );
       return rows.isNotEmpty;
     },
-    finalizeEntry: ({required String attachmentId, required String messageId}) =>
-        dbFinalizeGroupMediaDeletionJournalEntry(
-          db,
-          attachmentId: attachmentId,
-          messageId: messageId,
-        ),
+    finalizeEntry:
+        ({required String attachmentId, required String messageId}) =>
+            dbFinalizeGroupMediaDeletionJournalEntry(
+              db,
+              attachmentId: attachmentId,
+              messageId: messageId,
+            ),
     resolveStoredPath: (relativePath) =>
         MediaFileManager().resolveStoredPath(relativePath),
     secureKeyStore: secureKeyStore,
@@ -1145,6 +1148,15 @@ void main() async {
             limit: limit,
             offset: offset,
           ),
+      dbLoadGroupMessagesAroundFn:
+          (groupId, anchorMessageId, {before = 25, after = 25}) =>
+              dbLoadGroupMessagesAround(
+                executor,
+                groupId,
+                anchorMessageId,
+                before: before,
+                after: after,
+              ),
       dbLoadGroupMessage: (id) => dbLoadGroupMessage(executor, id),
       dbLoadGroupMessageByLogicalDeliveryIdFn:
           (groupId, senderPeerId, logicalDeliveryId) =>
@@ -3971,12 +3983,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                 groupConversationTracker: widget.groupConversationTracker,
                 conversationTracker: widget.conversationTracker,
               ),
-          openConversation: (contact, tappedAt) =>
-              _openConversationForContact(
-                navigator: navigator,
-                contact: contact,
-                notificationTappedAt: tappedAt,
-              ),
+          openConversation: (contact, tappedAt) => _openConversationForContact(
+            navigator: navigator,
+            contact: contact,
+            notificationTappedAt: tappedAt,
+          ),
           openIntros: () => _openIntroOrbitRoute(navigator: navigator),
         );
         return;

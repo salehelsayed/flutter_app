@@ -14,6 +14,16 @@ class InMemoryMediaAttachmentRepository
   final Map<String, MediaAttachment> _attachments = {};
   void Function(MediaAttachment attachment)? onSaveAttachment;
 
+  /// Owner-migration boundary fixture: installs a legacy/unresolved row
+  /// without weakening normal owner-enforcing writes. Production callers can
+  /// never reach this seam; owner-scoped reads must exclude the row.
+  void seedUnresolvedOwnerRowForTest(MediaAttachment attachment) {
+    if (attachment.ownerLane != null) {
+      throw ArgumentError('unresolved fixture must have ownerLane == null');
+    }
+    _attachments[attachment.id] = attachment;
+  }
+
   @override
   Future<void> saveAttachment(
     MediaAttachment attachment, {
@@ -102,8 +112,7 @@ class InMemoryMediaAttachmentRepository
   }) async {
     final keysToRemove = _attachments.entries
         .where(
-          (e) =>
-              e.value.messageId == messageId && e.value.ownerLane == owner,
+          (e) => e.value.messageId == messageId && e.value.ownerLane == owner,
         )
         .map((e) => e.key)
         .toList();
@@ -153,8 +162,7 @@ class InMemoryMediaAttachmentRepository
   }) async {
     return _attachments.values
         .where(
-          (a) =>
-              a.downloadStatus == 'upload_pending' && a.ownerLane == owner,
+          (a) => a.downloadStatus == 'upload_pending' && a.ownerLane == owner,
         )
         .toList();
   }
