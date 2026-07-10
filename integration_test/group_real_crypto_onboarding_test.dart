@@ -245,6 +245,116 @@ void main() {
         expect(oldKeyDecrypt['ok'], isNot(true));
       },
     );
+
+    testWidgets(
+      'GMF-11 forwarded marker survives real Go bridge group encryption and legacy absence defaults false',
+      (tester) async {
+        // 236: the native Go bridge accepts the optional isForwarded bool,
+        // places it in the ALREADY ENCRYPTED group payload extras (never an
+        // outer routing field), and real decryption returns it typed. Legacy
+        // absence stays false. No relay account is required: the reliable
+        // send runs with an explicit empty durable recipient set.
+        final alice = await _generateIdentity(
+          bridge: bridge,
+          username: 'Alice',
+        );
+        final nodeService = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: InMemoryInboxStagingRepository(),
+        );
+        addTearDown(() async {
+          await nodeService.stopNode();
+          nodeService.dispose();
+        });
+        expect(
+          await nodeService.startNodeCore(alice.privateKey, alice.peerId),
+          isTrue,
+        );
+
+        final groupRepo = InMemoryGroupRepository();
+        final group = await createGroup(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          name: 'Real Crypto Forwarding',
+          type: GroupType.chat,
+          creatorPeerId: alice.peerId,
+          creatorPublicKey: alice.publicKey,
+          creatorMlKemPublicKey: alice.mlKemPublicKey!,
+          creatorUsername: alice.username,
+        );
+        final groupKey = await groupRepo.getLatestKey(group.id);
+        expect(groupKey, isNotNull);
+
+        Future<Map<String, dynamic>> decryptedPayloadOf(
+          Map<String, dynamic> sendResult,
+        ) async {
+          expect(sendResult['ok'], isTrue, reason: '$sendResult');
+          final envelope =
+              jsonDecode(sendResult['envelope'] as String)
+                  as Map<String, dynamic>;
+          // Encrypted-extras-only: the OUTER envelope carries no marker.
+          expect(
+            envelope.containsKey('isForwarded'),
+            isFalse,
+            reason: 'the marker must never be an outer routing field',
+          );
+          final plaintext = await _groupDecrypt(
+            bridge: bridge,
+            groupKey: groupKey!.encryptedKey,
+            ciphertext: (envelope['encrypted'] as Map).cast<String, dynamic>(),
+          );
+          return jsonDecode(plaintext) as Map<String, dynamic>;
+        }
+
+        // Forwarded send: the REAL encrypted payload extras carry typed true.
+        final forwardedResult = await callGroupSendReliable(
+          bridge,
+          groupId: group.id,
+          text: 'real forwarded message',
+          senderPeerId: alice.peerId,
+          senderPublicKey: alice.publicKey,
+          senderPrivateKey: alice.privateKey,
+          senderUsername: alice.username,
+          messageId: 'gmf11-forwarded',
+          isForwarded: true,
+          recipientPeerIds: const [],
+          preserveRecipientPeerIds: true,
+        );
+        final forwardedPayload = await decryptedPayloadOf(forwardedResult);
+        final forwardedExtra =
+            (forwardedPayload['extra'] as Map?)?.cast<String, dynamic>();
+        expect(forwardedExtra, isNotNull);
+        expect(forwardedExtra!['isForwarded'], isTrue);
+        // The node's received-event mapping merges extras verbatim, so the
+        // Dart exact-bool decode sees typed true.
+        expect(forwardedExtra['isForwarded'] == true, isTrue);
+        expect(forwardedPayload['text'], 'real forwarded message');
+
+        // Legacy absence: an ordinary send carries NO marker anywhere and the
+        // Dart exact-bool decode stays false.
+        final legacyResult = await callGroupSendReliable(
+          bridge,
+          groupId: group.id,
+          text: 'real legacy message',
+          senderPeerId: alice.peerId,
+          senderPublicKey: alice.publicKey,
+          senderPrivateKey: alice.privateKey,
+          senderUsername: alice.username,
+          messageId: 'gmf11-legacy',
+          recipientPeerIds: const [],
+          preserveRecipientPeerIds: true,
+        );
+        final legacyPayload = await decryptedPayloadOf(legacyResult);
+        final legacyExtra =
+            (legacyPayload['extra'] as Map?)?.cast<String, dynamic>();
+        expect(
+          legacyExtra == null || !legacyExtra.containsKey('isForwarded'),
+          isTrue,
+          reason: 'legacy sends must not carry the marker key',
+        );
+        expect(legacyExtra?['isForwarded'] == true, isFalse);
+      },
+    );
   });
 }
 

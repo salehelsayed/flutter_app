@@ -378,6 +378,7 @@ _retryFailedGroupMessageCandidate({
       logicalDeliveryId: msg.logicalDeliveryId ?? msg.id,
       timestamp: msg.timestamp,
       quotedMessageId: msg.quotedMessageId,
+      isForwarded: msg.isForwarded,
       mediaAttachments: retryAttachments,
       mediaAttachmentRepo: mediaAttachmentRepo,
       inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,

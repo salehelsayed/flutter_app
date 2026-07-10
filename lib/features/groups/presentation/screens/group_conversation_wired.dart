@@ -28,6 +28,7 @@ import 'package:flutter_app/core/media/received_media_egress.dart';
 import 'package:flutter_app/core/media/received_media_egress_service.dart';
 import 'package:flutter_app/core/widgets/quiet_confirm.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/notification_tap_timing.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
@@ -40,8 +41,13 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
+import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/groups/application/group_media_delete_for_me_coordinator.dart';
+import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
+import 'package:flutter_app/features/groups/application/group_media_forward_policy.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/share/presentation/navigation/share_target_picker_route.dart';
 import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
 import 'package:flutter_app/features/groups/application/group_received_media_action_policy.dart';
 import 'package:flutter_app/features/groups/application/group_received_media_actions.dart';
@@ -209,6 +215,23 @@ class GroupConversationWired extends StatefulWidget {
   /// null the Delete-for-me action is not offered.
   final GroupMediaDeleteForMeCoordinator? mediaDeleteForMeCoordinator;
 
+  /// 236: bounded launcher for one ACCEPTED received-media Forward. Tests
+  /// inject a recorder; production leaves it null and falls back to pushing
+  /// the share target picker in forward mode via
+  /// [forwardMessageRepository]/[forwardChatMessageListener].
+  final Future<void> Function(
+    BuildContext context,
+    GroupMediaForwardRequest request,
+  )?
+  groupMediaForwardLauncher;
+
+  /// 236: 1:1-lane repositories needed only by the forward share-picker
+  /// route (contact destinations send through the direct message lane).
+  /// Forward is not offered when neither an injected launcher nor these
+  /// fallback dependencies are available.
+  final MessageRepository? forwardMessageRepository;
+  final ChatMessageListener? forwardChatMessageListener;
+
   const GroupConversationWired({
     super.key,
     required this.group,
@@ -243,6 +266,9 @@ class GroupConversationWired extends StatefulWidget {
     this.autoDownloadDecider,
     this.mediaActionsController,
     this.mediaDeleteForMeCoordinator,
+    this.groupMediaForwardLauncher,
+    this.forwardMessageRepository,
+    this.forwardChatMessageListener,
   });
 
   @override
@@ -4727,6 +4753,17 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         MediaViewerAction.delete,
       if (capabilities.contains(GroupReceivedMediaAction.reply))
         MediaViewerAction.reply,
+      // 236: Forward only for eligible incoming verified ordinary media in a
+      // discussion group, and only when a forward launch path exists. The
+      // request builder and the dispatch gate re-verify everything again.
+      if (_canLaunchForward &&
+          message != null &&
+          GroupMediaForwardPolicy.canOfferForward(
+            groupType: _group.type,
+            isIncoming: message.isIncoming,
+            attachment: attachment,
+          ))
+        MediaViewerAction.forward,
     };
     final localPath = attachment.localPath;
     final caption = message?.text.trim();
@@ -4810,11 +4847,89 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         _onQuoteReply(item.messageId);
         return MediaViewerActionResult.success;
       case MediaViewerAction.forward:
+        final launched = await _forwardGroupReceivedMedia(
+          messageId: item.messageId,
+          attachmentId: item.attachmentId,
+        );
+        return launched
+            ? MediaViewerActionResult.success
+            : MediaViewerActionResult.failure;
       case MediaViewerAction.bookmark:
-        // Not offered by plan 235 (forward is plan 236; bookmark is the
-        // library surface). Capabilities never include them here.
+        // Not offered here (bookmark is the library surface). Capabilities
+        // never include it on this screen.
         return MediaViewerActionResult.failure;
     }
+  }
+
+  /// 236: whether ANY forward launch path exists — an injected launcher, or
+  /// the full dependency set the fallback share-picker route needs.
+  bool get _canLaunchForward {
+    if (widget.groupMediaForwardLauncher != null) return true;
+    return widget.forwardMessageRepository != null &&
+        widget.forwardChatMessageListener != null &&
+        widget.mediaAttachmentRepo != null &&
+        widget.mediaFileManager != null &&
+        widget.imageProcessor != null;
+  }
+
+  /// 236: builds one accepted forward request from freshly reloaded rows and
+  /// opens the share target picker in forward mode. Only the stable
+  /// `(groupId, messageId, attachmentId)` identity and the seed caption cross
+  /// this boundary — dispatch re-verifies the source at send time.
+  Future<bool> _forwardGroupReceivedMedia({
+    required String messageId,
+    required String attachmentId,
+  }) async {
+    final mediaRepo = widget.mediaAttachmentRepo;
+    if (mediaRepo == null) return false;
+    final request = await GroupMediaForwardRequestBuilder(
+      messageRepository: widget.msgRepo,
+      mediaAttachmentRepository: mediaRepo,
+    ).build(group: _group, messageId: messageId, attachmentId: attachmentId);
+    if (request == null || !mounted) return false;
+
+    final injected = widget.groupMediaForwardLauncher;
+    if (injected != null) {
+      await injected(context, request);
+      return true;
+    }
+
+    final messageRepository = widget.forwardMessageRepository;
+    final chatMessageListener = widget.forwardChatMessageListener;
+    final mediaFileManager = widget.mediaFileManager;
+    final imageProcessor = widget.imageProcessor;
+    if (messageRepository == null ||
+        chatMessageListener == null ||
+        mediaFileManager == null ||
+        imageProcessor == null) {
+      return false;
+    }
+    await Navigator.of(context).push(
+      buildShareTargetPickerRoute(
+        shareIntent: ShareIntent(
+          type: request.initialCaption.isEmpty
+              ? ShareIntentType.files
+              : ShareIntentType.mixed,
+          text: request.initialCaption.isEmpty ? null : request.initialCaption,
+        ),
+        identityRepo: widget.identityRepo,
+        contactRepository: widget.contactRepo,
+        messageRepository: messageRepository,
+        mediaAttachmentRepository: mediaRepo,
+        chatMessageListener: chatMessageListener,
+        bridge: widget.bridge,
+        p2pService: widget.p2pService,
+        mediaFileManager: mediaFileManager,
+        imageProcessor: imageProcessor,
+        groupRepository: widget.groupRepo,
+        groupMessageRepository: widget.msgRepo,
+        groupInviteDeliveryAttemptRepository: widget.inviteDeliveryAttemptRepo,
+        groupMessageListener: widget.groupMessageListener,
+        groupConversationTracker: widget.groupConversationTracker,
+        groupMediaForwardRequest: request,
+      ),
+    );
+    return true;
   }
 
   MediaViewerActionResult _egressAttemptToViewerResult(

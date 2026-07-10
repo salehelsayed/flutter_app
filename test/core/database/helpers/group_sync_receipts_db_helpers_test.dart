@@ -8,6 +8,7 @@ import 'package:flutter_app/core/database/migrations/041_group_message_reliabili
 import 'package:flutter_app/core/database/migrations/061_group_message_transport_peer_id.dart';
 import 'package:flutter_app/core/database/migrations/066_group_sync_receipts.dart';
 import 'package:flutter_app/core/database/migrations/073_group_message_last_send_attempt_at.dart';
+import 'package:flutter_app/core/database/migrations/099_group_messages_is_forwarded.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message_receipt.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -183,4 +184,5 @@ Future<void> _runSchema(Database db) async {
   await runGroupMessageTransportPeerIdMigration(db);
   await runGroupSyncReceiptsMigration(db);
   await runGroupMessageLastSendAttemptAtMigration(db);
+  await runGroupMessagesIsForwardedMigration(db);
 }

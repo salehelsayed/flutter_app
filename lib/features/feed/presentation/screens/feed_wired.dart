@@ -1905,6 +1905,8 @@ class _FeedWiredState extends State<FeedWired>
               initialAttachments: initialAttachments,
               backgroundPreference:
                   widget.appShellController.backgroundPreference,
+              forwardMessageRepository: widget.messageRepository,
+              forwardChatMessageListener: widget.chatMessageListener,
             ),
           ),
         )

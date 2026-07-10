@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
+import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -740,6 +741,17 @@ class _RecordingBatchCoordinator implements ShareBatchDeliveryCoordinator {
     lastShareIntent = shareIntent;
     lastTargets = List<ShareTargetSelection>.from(targets);
     return _builder(targets);
+  }
+
+  @override
+  Future<ShareBatchDeliveryResult> deliverGroupMediaForward({
+    required GroupMediaForwardRequest request,
+    String? caption,
+    required List<ShareTargetSelection> targets,
+  }) {
+    throw UnimplementedError(
+      'OS share smoke coverage never dispatches a group-origin forward',
+    );
   }
 }
 

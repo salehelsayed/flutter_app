@@ -7,6 +7,7 @@ import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -44,6 +45,7 @@ void main() {
     required ShareIntent shareIntent,
     ShareBatchDeliveryCoordinator? batchShareCoordinator,
     Future<void> Function()? preSendReady,
+    GroupMediaForwardRequest? groupMediaForwardRequest,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -76,6 +78,7 @@ void main() {
         groupMessageListener: groupMessageListener,
         batchShareCoordinator: batchShareCoordinator,
         preSendReady: preSendReady,
+        groupMediaForwardRequest: groupMediaForwardRequest,
       ),
     );
   }
@@ -93,6 +96,7 @@ void main() {
     required ShareIntent shareIntent,
     ShareBatchDeliveryCoordinator? batchShareCoordinator,
     Future<void> Function()? preSendReady,
+    GroupMediaForwardRequest? groupMediaForwardRequest,
   }) async {
     await tester.pumpWidget(
       buildWidget(
@@ -107,6 +111,7 @@ void main() {
         shareIntent: shareIntent,
         batchShareCoordinator: batchShareCoordinator,
         preSendReady: preSendReady,
+        groupMediaForwardRequest: groupMediaForwardRequest,
       ),
     );
     await tester.pump();
@@ -751,6 +756,140 @@ void main() {
   );
 
   testWidgets(
+    'GMF-05 picker retries failed only and leaves queued forward to durable retry',
+    (tester) async {
+      // 236: a group-origin forward with deterministic sent/queued/failed
+      // targets. Only the FAILED target may be resubmitted from the picker;
+      // the queued target leaves the selection because its durable stored
+      // message/background lane exclusively owns its retry (TC-236-07R
+      // proves that lane preserves the original identity and marker).
+      final harness = _buildHarness();
+      final sentContact = _makeContact('peer-fwd-sent', 'SentAlice');
+      final failedContact = _makeContact('peer-fwd-failed', 'FailedCarol');
+      harness.contactRepository.addTestContact(sentContact);
+      harness.contactRepository.addTestContact(failedContact);
+      final queuedGroup = _makeGroup(
+        'group-fwd-queued',
+        'Queued Group',
+        GroupType.chat,
+        GroupRole.member,
+      );
+      await _saveWritableGroup(harness.groupRepository, queuedGroup);
+
+      final coordinator = _SequencedRecordingBatchCoordinator([
+        ShareBatchDeliveryResult(
+          results: [
+            ShareBatchTargetResult(
+              target: ShareTargetSelection.contact(sentContact),
+              status: ShareBatchTargetStatus.sent,
+              detail: 'Sent.',
+            ),
+            ShareBatchTargetResult(
+              target: ShareTargetSelection.group(queuedGroup),
+              status: ShareBatchTargetStatus.queued,
+              detail: 'Stored for offline group delivery.',
+            ),
+            ShareBatchTargetResult(
+              target: ShareTargetSelection.contact(failedContact),
+              status: ShareBatchTargetStatus.failed,
+              detail: 'Share failed.',
+            ),
+          ],
+        ),
+        ShareBatchDeliveryResult(
+          results: [
+            ShareBatchTargetResult(
+              target: ShareTargetSelection.contact(failedContact),
+              status: ShareBatchTargetStatus.sent,
+              detail: 'Sent.',
+            ),
+          ],
+        ),
+      ]);
+
+      const request = GroupMediaForwardRequest(
+        groupId: 'src-group',
+        messageId: 'src-msg',
+        attachmentId: 'src-att',
+        initialCaption: 'seed caption',
+        provenance: ForwardProvenance(
+          operationDedupKey: 'group-forward-op-5',
+        ),
+      );
+      await pumpPicker(
+        tester,
+        contactRepository: harness.contactRepository,
+        groupRepository: harness.groupRepository,
+        messageRepository: harness.messageRepository,
+        mediaAttachmentRepository: harness.mediaAttachmentRepository,
+        identityRepository: harness.identityRepository,
+        chatMessageListener: harness.chatMessageListener,
+        groupMessageRepository: harness.groupMessageRepository,
+        groupMessageListener: harness.groupMessageListener,
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.mixed,
+          text: 'seed caption',
+        ),
+        batchShareCoordinator: coordinator,
+        groupMediaForwardRequest: request,
+      );
+
+      await tester.tap(
+        find.byKey(ValueKey('share-contact-${sentContact.peerId}')),
+      );
+      await tester.tap(
+        find.byKey(ValueKey('share-group-${queuedGroup.id}')),
+      );
+      await tester.tap(
+        find.byKey(ValueKey('share-contact-${failedContact.peerId}')),
+      );
+      await tester.pump();
+      await tester.tap(find.text('Send'));
+      await tester.pump();
+
+      // Partial success stays per-target: the picker re-selects ONLY the
+      // failed target; the queued and sent targets left the selection.
+      await tester.tap(find.text('Send'));
+      await tester.pump();
+
+      expect(coordinator.forwardRequests, hasLength(2));
+      expect(coordinator.intents, isEmpty,
+          reason: 'forward mode never routes through the OS-share deliver');
+      // The retry re-dispatches the SAME forward operation identity.
+      expect(
+        coordinator.forwardRequests.map(
+          (request) => request.provenance.operationDedupKey,
+        ),
+        everyElement('group-forward-op-5'),
+      );
+      expect(coordinator.targets.first.map((target) => target.key).toSet(), {
+        'contact:${sentContact.peerId}',
+        'group:${queuedGroup.id}',
+        'contact:${failedContact.peerId}',
+      });
+      // Failed-only resubmission: exactly one call per queued/sent target
+      // across the whole flow, and the second dispatch carries only the
+      // failed contact.
+      expect(coordinator.targets.last.map((target) => target.key).toSet(), {
+        'contact:${failedContact.peerId}',
+      });
+      final allTargetKeys = coordinator.targets
+          .expand((targets) => targets.map((target) => target.key))
+          .toList(growable: false);
+      expect(
+        allTargetKeys.where((key) => key == 'group:${queuedGroup.id}').length,
+        1,
+        reason: 'the queued target is exclusively owned by durable retry',
+      );
+      expect(
+        allTargetKeys.where((key) => key == 'contact:${sentContact.peerId}').length,
+        1,
+        reason: 'sent targets never retry',
+      );
+    },
+  );
+
+  testWidgets(
     'successful send with skipped oversized GIF surfaces warning text',
     (tester) async {
       final harness = _buildHarness();
@@ -987,7 +1126,10 @@ Future<void> pumpPickerFrames(WidgetTester tester, {int count = 20}) async {
 class _RecordingBatchCoordinator implements ShareBatchDeliveryCoordinator {
   final ShareBatchDeliveryResult result;
   int deliverCallCount = 0;
+  int forwardCallCount = 0;
   ShareIntent? lastShareIntent;
+  GroupMediaForwardRequest? lastForwardRequest;
+  String? lastForwardCaption;
   List<ShareTargetSelection> lastTargets = const [];
 
   _RecordingBatchCoordinator({required this.result});
@@ -1002,6 +1144,19 @@ class _RecordingBatchCoordinator implements ShareBatchDeliveryCoordinator {
     lastTargets = List<ShareTargetSelection>.from(targets);
     return result;
   }
+
+  @override
+  Future<ShareBatchDeliveryResult> deliverGroupMediaForward({
+    required GroupMediaForwardRequest request,
+    String? caption,
+    required List<ShareTargetSelection> targets,
+  }) async {
+    forwardCallCount++;
+    lastForwardRequest = request;
+    lastForwardCaption = caption;
+    lastTargets = List<ShareTargetSelection>.from(targets);
+    return result;
+  }
 }
 
 class _SequencedRecordingBatchCoordinator
@@ -1010,7 +1165,11 @@ class _SequencedRecordingBatchCoordinator
 
   final List<ShareBatchDeliveryResult> results;
   final List<ShareIntent> intents = [];
+  final List<GroupMediaForwardRequest> forwardRequests = [];
+  final List<String?> forwardCaptions = [];
   final List<List<ShareTargetSelection>> targets = [];
+
+  int get _callCount => intents.length + forwardRequests.length;
 
   @override
   Future<ShareBatchDeliveryResult> deliver({
@@ -1019,7 +1178,19 @@ class _SequencedRecordingBatchCoordinator
   }) async {
     intents.add(shareIntent);
     this.targets.add(List<ShareTargetSelection>.from(targets));
-    return results[intents.length - 1];
+    return results[_callCount - 1];
+  }
+
+  @override
+  Future<ShareBatchDeliveryResult> deliverGroupMediaForward({
+    required GroupMediaForwardRequest request,
+    String? caption,
+    required List<ShareTargetSelection> targets,
+  }) async {
+    forwardRequests.add(request);
+    forwardCaptions.add(caption);
+    this.targets.add(List<ShareTargetSelection>.from(targets));
+    return results[_callCount - 1];
   }
 }
 

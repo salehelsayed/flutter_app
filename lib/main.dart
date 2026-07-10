@@ -4072,6 +4072,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               notificationTappedAt: tappedAt,
               backgroundPreference:
                   widget.appShellController.backgroundPreference,
+              forwardMessageRepository: widget.messageRepository,
+              forwardChatMessageListener: widget.chatMessageListener,
             ),
           ),
         );

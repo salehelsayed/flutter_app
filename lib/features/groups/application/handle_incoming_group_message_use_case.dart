@@ -39,6 +39,9 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   String? messageId,
   String? logicalDeliveryId,
   String? quotedMessageId,
+  // 236: exact-bool wire marker — absent/null/non-bool values decode false at
+  // every caller, so legacy senders can never mark a row forwarded.
+  bool isForwarded = false,
   List<Map<String, dynamic>>? media,
   MediaAttachmentRepository? mediaAttachmentRepo,
   AppendGroupEventLogEntry? appendGroupEventLogEntry,
@@ -688,6 +691,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     keyGeneration: keyEpoch,
     status: isSelfDelivery ? 'sent' : 'delivered',
     isIncoming: !isSelfDelivery,
+    isForwarded: isForwarded,
     createdAt: now,
   );
 

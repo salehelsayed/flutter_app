@@ -5219,3 +5219,75 @@ func TestBlobDecryptWrongKeyFails(t *testing.T) {
 		t.Fatalf("expected DECRYPT_ERROR, got %v", dec)
 	}
 }
+
+// 236 TC-236-11: the optional forwarded marker maps through BOTH group bridge
+// message commands' shared opts builder into the (encrypted-extra) message
+// options, exactly as a typed bool. Absence and explicit false add no key,
+// and a non-bool wire value fails the typed decode instead of coercing.
+func TestGMF11ForwardedMarkerMapsToPublishOptions(t *testing.T) {
+	base := `{
+		"groupId": "group-1",
+		"text": "forwarded body",
+		"senderPeerId": "peer-1",
+		"senderPublicKey": "pk-1",
+		"senderPrivateKey": "sk-1",
+		"senderUsername": "Alice",
+		"quotedMessageId": "quoted-1",
+		"logicalDeliveryId": "logical-1",
+		"recipientPeerIds": ["peer-2"],
+		"preserveRecipientPeerIds": true`
+
+	// Marker present: both the group:publish opts shape (includeRecipients
+	// false) and the group:sendReliable opts shape (includeRecipients true)
+	// carry the typed bool.
+	params, errJSON := decodeGroupBridgeMessageParams(base + `, "isForwarded": true}`)
+	if errJSON != "" {
+		t.Fatalf("decode failed: %s", errJSON)
+	}
+	if !params.IsForwarded {
+		t.Fatalf("IsForwarded must decode true")
+	}
+	publishOpts := buildGroupBridgeMessageOpts(params, false)
+	if forwarded, ok := publishOpts["isForwarded"].(bool); !ok || !forwarded {
+		t.Fatalf("group:publish opts must carry isForwarded=true, got %v", publishOpts["isForwarded"])
+	}
+	reliableOpts := buildGroupBridgeMessageOpts(params, true)
+	if forwarded, ok := reliableOpts["isForwarded"].(bool); !ok || !forwarded {
+		t.Fatalf("group:sendReliable opts must carry isForwarded=true, got %v", reliableOpts["isForwarded"])
+	}
+	// The marker is message-option metadata only — the existing routing
+	// fields are untouched next to it.
+	if reliableOpts["quotedMessageId"] != "quoted-1" {
+		t.Fatalf("quotedMessageId must survive alongside the marker")
+	}
+	if reliableOpts["logicalDeliveryId"] != "logical-1" {
+		t.Fatalf("logicalDeliveryId must survive alongside the marker")
+	}
+
+	// Absent marker: no key at all in either shape.
+	absentParams, errJSON := decodeGroupBridgeMessageParams(base + `}`)
+	if errJSON != "" {
+		t.Fatalf("decode failed: %s", errJSON)
+	}
+	if _, present := buildGroupBridgeMessageOpts(absentParams, false)["isForwarded"]; present {
+		t.Fatalf("absent marker must not add an isForwarded key (publish)")
+	}
+	if _, present := buildGroupBridgeMessageOpts(absentParams, true)["isForwarded"]; present {
+		t.Fatalf("absent marker must not add an isForwarded key (reliable)")
+	}
+
+	// Explicit false: still no key.
+	falseParams, errJSON := decodeGroupBridgeMessageParams(base + `, "isForwarded": false}`)
+	if errJSON != "" {
+		t.Fatalf("decode failed: %s", errJSON)
+	}
+	if _, present := buildGroupBridgeMessageOpts(falseParams, true)["isForwarded"]; present {
+		t.Fatalf("explicit false must not add an isForwarded key")
+	}
+
+	// A string "true" is NOT the typed marker: the decode fails instead of
+	// coercing.
+	if _, errJSON := decodeGroupBridgeMessageParams(base + `, "isForwarded": "true"}`); errJSON == "" {
+		t.Fatalf("a string isForwarded must fail the typed decode")
+	}
+}

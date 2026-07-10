@@ -711,6 +711,10 @@ class GroupConversationScreen extends StatelessWidget {
           text: message.text,
           time: timeFormat.format(message.timestamp.toLocal()),
           isIncoming: !isSent,
+          // 236: origin-minimizing durable marker — the label says only
+          // "Forwarded"; no source sender/group/message identity exists on
+          // the row at all.
+          isForwarded: message.isForwarded,
           bubbleLayout: true,
           isFirstInGroup: item.isFirstInGroup,
           isLastInGroup: item.isLastInGroup,

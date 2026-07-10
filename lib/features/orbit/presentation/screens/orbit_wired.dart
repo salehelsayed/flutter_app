@@ -2829,6 +2829,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               backgroundPreference:
                   widget.appShellController?.backgroundPreference ??
                   BackgroundPreference.defaultBackground,
+              forwardMessageRepository: widget.messageRepo,
+              forwardChatMessageListener: widget.chatMessageListener,
             ),
           ),
         )

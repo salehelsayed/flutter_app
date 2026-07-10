@@ -14,6 +14,7 @@ import 'package:flutter_app/features/conversation/application/reaction_listener.
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
+import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -49,6 +50,7 @@ Route<void> buildShareTargetPickerRoute({
   AppShellController? appShellController,
   Future<void> Function(ShareBatchDeliveryResult? result)? onClose,
   Future<void> Function()? preSendReady,
+  GroupMediaForwardRequest? groupMediaForwardRequest,
 }) {
   return MaterialPageRoute<void>(
     builder: (_) => ShareTargetPickerWired(
@@ -77,6 +79,7 @@ Route<void> buildShareTargetPickerRoute({
       appShellController: appShellController,
       onClose: onClose,
       preSendReady: preSendReady,
+      groupMediaForwardRequest: groupMediaForwardRequest,
     ),
   );
 }

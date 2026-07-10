@@ -405,6 +405,115 @@ void main() {
     );
 
     test(
+      'GMF-07U incomplete upload retry preserves forwarded identity',
+      () async {
+        // 236: the SECOND durable re-drive caller. A forwarded parent whose
+        // upload never completed re-sends with its ORIGINAL marker, message
+        // id, logical delivery id, and timestamp; an ordinary parent stays
+        // unmarked. Neither row is reminted.
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-fwd-upload',
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'forwarded upload retry',
+            timestamp: DateTime.utc(2026, 1, 1),
+            logicalDeliveryId: 'fwd-upload-logical-1',
+            status: 'failed',
+            isIncoming: false,
+            isForwarded: true,
+            createdAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-ord-upload',
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'ordinary upload retry',
+            timestamp: DateTime.utc(2026, 1, 1, 0, 1),
+            logicalDeliveryId: 'ord-upload-logical-1',
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1, 0, 1),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: 'upload-pending-fwd',
+            messageId: 'msg-fwd-upload',
+            localPath: 'pending_uploads/msg-fwd-upload/blob.jpg',
+          ),
+          owner: MediaOwnerLane.group,
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: 'upload-pending-ord',
+            messageId: 'msg-ord-upload',
+            localPath: 'pending_uploads/msg-ord-upload/blob.jpg',
+          ),
+          owner: MediaOwnerLane.group,
+        );
+        uploadFn.willReturnForPath(
+          await mediaFileManager.resolveStoredPath(
+            'pending_uploads/msg-fwd-upload/blob.jpg',
+          ),
+          _doneAttachment(id: 'upload-pending-fwd', messageId: 'msg-fwd-upload'),
+        );
+        uploadFn.willReturnForPath(
+          await mediaFileManager.resolveStoredPath(
+            'pending_uploads/msg-ord-upload/blob.jpg',
+          ),
+          _doneAttachment(id: 'upload-pending-ord', messageId: 'msg-ord-upload'),
+        );
+
+        final count = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+        );
+        expect(count, 2);
+
+        Map<String, dynamic> publishPayloadFor(String messageId) {
+          for (final raw in bridge.sentMessages.reversed) {
+            final parsed = jsonDecode(raw) as Map<String, dynamic>;
+            if (parsed['cmd'] != 'group:publish') continue;
+            final payload = parsed['payload'] as Map<String, dynamic>;
+            if (payload['messageId'] == messageId) return payload;
+          }
+          fail('missing group:publish for $messageId');
+        }
+
+        final forwardedPayload = publishPayloadFor('msg-fwd-upload');
+        expect(forwardedPayload['isForwarded'], isTrue);
+        expect(forwardedPayload['logicalDeliveryId'], 'fwd-upload-logical-1');
+        expect(forwardedPayload['timestamp'], '2026-01-01T00:00:00.000Z');
+        final ordinaryPayload = publishPayloadFor('msg-ord-upload');
+        expect(ordinaryPayload.containsKey('isForwarded'), isFalse);
+        expect(ordinaryPayload['logicalDeliveryId'], 'ord-upload-logical-1');
+
+        // In-place identity: no duplicate rows, markers preserved.
+        final rows = await groupMsgRepo.getMessagesPage('group-1', limit: 50);
+        expect(
+          rows.map((row) => row.id).toSet(),
+          {'msg-fwd-upload', 'msg-ord-upload'},
+        );
+        final forwardedRow = await groupMsgRepo.getMessage('msg-fwd-upload');
+        expect(forwardedRow!.isForwarded, isTrue);
+        expect(forwardedRow.logicalDeliveryId, 'fwd-upload-logical-1');
+        final ordinaryRow = await groupMsgRepo.getMessage('msg-ord-upload');
+        expect(ordinaryRow!.isForwarded, isFalse);
+      },
+    );
+
+    test(
       'MD-012 quarantined download failures are not picked up by incomplete upload retry',
       () async {
         await groupMsgRepo.saveMessage(

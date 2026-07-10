@@ -701,6 +701,193 @@ void main() {
   });
 
   test(
+    'GMF-07 forwarded marker survives reliable fallback wire and replay payloads',
+    () async {
+      Map<String, dynamic> publishPayloadFor(String messageId) {
+        for (final raw in bridge.sentMessages.reversed) {
+          final parsed = jsonDecode(raw) as Map<String, dynamic>;
+          if (parsed['cmd'] != 'group:publish') continue;
+          final payload = parsed['payload'] as Map<String, dynamic>;
+          if (payload['messageId'] == messageId) return payload;
+        }
+        fail('missing group:publish for $messageId');
+      }
+
+      Map<String, dynamic> replayPlaintextOf(GroupMessage message) {
+        final retryPayload =
+            jsonDecode(message.inboxRetryPayload!) as Map<String, dynamic>;
+        final envelope =
+            jsonDecode(retryPayload['message'] as String)
+                as Map<String, dynamic>;
+        // FakeBridge group.encrypt is a passthrough: the "ciphertext" IS the
+        // replay plaintext, so the encrypted-offline-replay seam is decodable.
+        return jsonDecode(envelope['ciphertext'] as String)
+            as Map<String, dynamic>;
+      }
+
+      // ---- Fallback publish mode, live ok + custody fail: the durable
+      // replay payload stays on the SENT row and carries the marker.
+      bridge.responses['group:inboxStore'] = {'ok': false};
+      final (fwdPubResult, fwdPubMessage) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'forwarded via publish',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: 'fwd-pub-1',
+        isForwarded: true,
+      );
+      expect(fwdPubResult, SendGroupMessageResult.success);
+      expect(fwdPubMessage!.isForwarded, isTrue, reason: 'final row marker');
+      expect(
+        (await msgRepo.getMessage('fwd-pub-1'))!.isForwarded,
+        isTrue,
+        reason: 'persisted row marker',
+      );
+      expect(publishPayloadFor('fwd-pub-1')['isForwarded'], isTrue);
+      expect(replayPlaintextOf(fwdPubMessage)['isForwarded'], isTrue);
+
+      // Ordinary control on the same seams: NO marker key anywhere.
+      final (_, ordPubMessage) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'ordinary via publish',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: 'ord-pub-1',
+      );
+      expect(ordPubMessage!.isForwarded, isFalse);
+      expect(
+        publishPayloadFor('ord-pub-1').containsKey('isForwarded'),
+        isFalse,
+        reason: 'ordinary sends must not carry the marker key at all',
+      );
+      expect(
+        replayPlaintextOf(ordPubMessage).containsKey('isForwarded'),
+        isFalse,
+      );
+
+      // ---- Failed publish: the retained wireEnvelope re-drives the marker.
+      bridge.responses['group:publish'] = {
+        'ok': false,
+        'errorCode': 'PUBLISH_FAILED',
+        'errorMessage': 'publish failed',
+      };
+      final (fwdFailResult, fwdFailMessage) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'forwarded but failed',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: 'fwd-pub-fail-1',
+        isForwarded: true,
+      );
+      expect(fwdFailResult, SendGroupMessageResult.error);
+      expect(fwdFailMessage!.status, 'failed');
+      expect(fwdFailMessage.isForwarded, isTrue);
+      final failedWire =
+          jsonDecode(fwdFailMessage.wireEnvelope!) as Map<String, dynamic>;
+      expect(failedWire['isForwarded'], isTrue);
+      final (_, ordFailMessage) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'ordinary but failed',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: 'ord-pub-fail-1',
+      );
+      expect(
+        (jsonDecode(ordFailMessage!.wireEnvelope!) as Map<String, dynamic>)
+            .containsKey('isForwarded'),
+        isFalse,
+      );
+
+      // ---- Reliable mode: the SAME marker rides group:sendReliable.
+      bridge.responses['group:publish'] = {'ok': true, 'messageId': 'msg-123'};
+      bridge.responses['group:sendReliable'] = {
+        'ok': true,
+        'messageId': 'fwd-rel-1',
+        'publishSucceeded': true,
+        'inboxStored': true,
+        'expectedRecipientCount': 1,
+        'topicPeerCount': 1,
+        'connectedTopicPeerCount': 1,
+        'recipientPeerIds': <String>['peer-2'],
+        'deliveryMode': 'live_and_inbox',
+        'envelope': '{"kind":"native-reliable-envelope"}',
+      };
+      final (fwdRelResult, fwdRelMessage) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'forwarded via reliable',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: 'fwd-rel-1',
+        isForwarded: true,
+      );
+      expect(fwdRelResult, SendGroupMessageResult.success);
+      expect(fwdRelMessage!.isForwarded, isTrue);
+      final reliablePayload = _groupSendReliablePayloadForMessage(
+        bridge,
+        'fwd-rel-1',
+      );
+      expect(reliablePayload['isForwarded'], isTrue);
+      bridge.responses['group:sendReliable'] = {
+        'ok': true,
+        'messageId': 'ord-rel-1',
+        'publishSucceeded': true,
+        'inboxStored': true,
+        'expectedRecipientCount': 1,
+        'topicPeerCount': 1,
+        'connectedTopicPeerCount': 1,
+        'recipientPeerIds': <String>['peer-2'],
+        'deliveryMode': 'live_and_inbox',
+        'envelope': '{"kind":"native-reliable-envelope"}',
+      };
+      final (_, ordRelMessage) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'ordinary via reliable',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: 'ord-rel-1',
+      );
+      expect(ordRelMessage!.isForwarded, isFalse);
+      expect(
+        _groupSendReliablePayloadForMessage(
+          bridge,
+          'ord-rel-1',
+        ).containsKey('isForwarded'),
+        isFalse,
+      );
+    },
+  );
+
+  test(
     'OB-002 publish failure emits safe group epoch and message metadata',
     () async {
       const groupId = 'group-ob002-publish-failure';

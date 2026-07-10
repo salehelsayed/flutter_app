@@ -16,6 +16,8 @@ import 'package:flutter_app/features/conversation/application/upload_media_use_c
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
+import 'package:flutter_app/features/groups/application/group_media_forward_policy.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
@@ -83,6 +85,17 @@ abstract class ShareBatchDeliveryCoordinator {
     required ShareIntent shareIntent,
     required List<ShareTargetSelection> targets,
   });
+
+  /// 236: one explicit accepted group-media Forward. Unlike [deliver], the
+  /// source is a stable `(groupId, messageId, attachmentId)` identity that is
+  /// reloaded and hash-verified at dispatch time, and every destination is
+  /// reloaded from its repository immediately before its upload — a missing
+  /// or ineligible target is a failed result, never a stale-picker fallback.
+  Future<ShareBatchDeliveryResult> deliverGroupMediaForward({
+    required GroupMediaForwardRequest request,
+    String? caption,
+    required List<ShareTargetSelection> targets,
+  });
 }
 
 typedef ProcessSharedMediaFn =
@@ -136,6 +149,10 @@ class DefaultShareBatchDeliveryCoordinator
   final SendToContactFn? sendToContactFn;
   final SendToGroupFn? sendToGroupFn;
 
+  /// 236 test seam: overrides the dispatch-time forward source gate. The
+  /// production default is built from this coordinator's own repositories.
+  final GroupMediaForwardSourceGate? groupMediaForwardSourceGate;
+
   const DefaultShareBatchDeliveryCoordinator({
     required this.identityRepository,
     required this.contactRepository,
@@ -153,6 +170,7 @@ class DefaultShareBatchDeliveryCoordinator
     this.processSharedMediaFn,
     this.sendToContactFn,
     this.sendToGroupFn,
+    this.groupMediaForwardSourceGate,
   });
 
   String? get _currentSenderDeviceId {
@@ -191,21 +209,34 @@ class DefaultShareBatchDeliveryCoordinator
     final results = <ShareBatchTargetResult>[];
 
     for (final target in targets) {
-      final result = switch (target.kind) {
-        ShareTargetSelectionKind.contact =>
-          await (sendToContactFn ?? _sendToContact)(
-            identity: identity,
-            shareIntent: shareIntent,
-            contact: target.requireContact,
-            processedMedia: processedMedia,
-          ),
-        ShareTargetSelectionKind.group => await (sendToGroupFn ?? _sendToGroup)(
-          identity: identity,
-          shareIntent: shareIntent,
-          group: target.requireGroup,
-          processedMedia: processedMedia,
-        ),
-      };
+      // 236 TC-236-03E: each target is its own exception boundary — one
+      // thrown target becomes one typed failed result and can never abort
+      // the targets after it.
+      ShareBatchTargetResult result;
+      try {
+        result = switch (target.kind) {
+          ShareTargetSelectionKind.contact =>
+            await (sendToContactFn ?? _sendToContact)(
+              identity: identity,
+              shareIntent: shareIntent,
+              contact: target.requireContact,
+              processedMedia: processedMedia,
+            ),
+          ShareTargetSelectionKind.group =>
+            await (sendToGroupFn ?? _sendToGroup)(
+              identity: identity,
+              shareIntent: shareIntent,
+              group: target.requireGroup,
+              processedMedia: processedMedia,
+            ),
+        };
+      } catch (_) {
+        result = ShareBatchTargetResult(
+          target: target,
+          status: ShareBatchTargetStatus.failed,
+          detail: 'Share failed.',
+        );
+      }
       results.add(result);
     }
 
@@ -214,6 +245,166 @@ class DefaultShareBatchDeliveryCoordinator
       skippedOversizedGifCount: processedBatch.skippedOversizedGifCount,
       skippedOversizedGifReason: processedBatch.skippedOversizedGifReason,
     );
+  }
+
+  @override
+  Future<ShareBatchDeliveryResult> deliverGroupMediaForward({
+    required GroupMediaForwardRequest request,
+    String? caption,
+    required List<ShareTargetSelection> targets,
+  }) async {
+    if (targets.isEmpty) {
+      return const ShareBatchDeliveryResult(results: []);
+    }
+
+    ShareBatchDeliveryResult failAll(String detail) {
+      return ShareBatchDeliveryResult(
+        results: targets
+            .map(
+              (target) => ShareBatchTargetResult(
+                target: target,
+                status: ShareBatchTargetStatus.failed,
+                detail: detail,
+              ),
+            )
+            .toList(growable: false),
+      );
+    }
+
+    final identity = await identityRepository.loadIdentity();
+    if (identity == null) {
+      return failAll('Identity unavailable.');
+    }
+    final groupRepo = groupRepository;
+    final groupMsgRepo = groupMessageRepository;
+    if (groupRepo == null || groupMsgRepo == null) {
+      return failAll('Group forwarding is unavailable.');
+    }
+
+    // Dispatch-time source verification: reload the exact parent and
+    // group-owned row and hash the CURRENT file before any target lookup,
+    // source read, or upload.
+    final gate =
+        groupMediaForwardSourceGate ??
+        GroupMediaForwardSourceGate(
+          groupRepository: groupRepo,
+          messageRepository: groupMsgRepo,
+          mediaAttachmentRepository: mediaAttachmentRepository,
+          mediaFileManager: mediaFileManager,
+        );
+    final sourceResult = await gate.verify(request);
+    final source = sourceResult.source;
+    if (source == null) {
+      return failAll('This media can no longer be forwarded.');
+    }
+
+    final trimmedCaption = caption?.trim() ?? '';
+    final shareIntent = ShareIntent(
+      type: trimmedCaption.isEmpty
+          ? ShareIntentType.files
+          : ShareIntentType.mixed,
+      text: trimmedCaption.isEmpty ? null : trimmedCaption,
+      filePaths: [source.resolvedPath],
+      forwardProvenance: request.provenance,
+    );
+
+    // Read/process the verified source bytes once; every destination below
+    // still gets its own fresh attachment id, encryption, and upload.
+    final processedBatch = await (processSharedMediaFn ?? _processSharedMedia)(
+      shareIntent,
+    );
+    final processedMedia = processedBatch.processedMedia;
+    final results = <ShareBatchTargetResult>[];
+    for (final target in targets) {
+      results.add(
+        await _deliverForwardTarget(
+          identity: identity,
+          shareIntent: shareIntent,
+          target: target,
+          processedMedia: processedMedia,
+        ),
+      );
+    }
+
+    return ShareBatchDeliveryResult(
+      results: results,
+      skippedOversizedGifCount: processedBatch.skippedOversizedGifCount,
+      skippedOversizedGifReason: processedBatch.skippedOversizedGifReason,
+    );
+  }
+
+  /// One forward destination: reload the CURRENT target from its repository
+  /// (a missing target is failure, never stale-picker fallback), require its
+  /// current authority, and isolate any thrown error to this target alone.
+  Future<ShareBatchTargetResult> _deliverForwardTarget({
+    required IdentityModel identity,
+    required ShareIntent shareIntent,
+    required ShareTargetSelection target,
+    required List<PendingComposerMedia> processedMedia,
+  }) async {
+    ShareBatchTargetResult failed(String detail) {
+      return ShareBatchTargetResult(
+        target: target,
+        status: ShareBatchTargetStatus.failed,
+        detail: detail,
+      );
+    }
+
+    try {
+      switch (target.kind) {
+        case ShareTargetSelectionKind.contact:
+          final current = await contactRepository.getContact(
+            target.requireContact.peerId,
+          );
+          if (current == null) {
+            return failed('Contact is no longer available.');
+          }
+          final mlKemKey = current.mlKemPublicKey?.trim();
+          if (mlKemKey == null || mlKemKey.isEmpty) {
+            return failed('Contact is missing required encryption support.');
+          }
+          return await (sendToContactFn ?? _sendToContact)(
+            identity: identity,
+            shareIntent: shareIntent,
+            contact: current,
+            processedMedia: processedMedia,
+          );
+        case ShareTargetSelectionKind.group:
+          final groupRepo = groupRepository!;
+          final current = await groupRepo.getGroup(target.requireGroup.id);
+          if (current == null) {
+            return failed('Group was not found.');
+          }
+          // Destination-lane filter: internal group-media forwarding posts
+          // only to discussion groups; announcement/QA authoring stays with
+          // its dedicated plans even for admins.
+          if (current.type != GroupType.chat) {
+            return failed('You can only forward to discussion groups.');
+          }
+          if (current.isArchived || current.isDissolved) {
+            return failed('You no longer have permission to post there.');
+          }
+          final latestKey = await groupRepo.getLatestKey(current.id);
+          if (latestKey == null) {
+            return failed('You no longer have permission to post there.');
+          }
+          final members = await groupRepo.getMembers(current.id);
+          final isMember = members.any(
+            (member) => member.peerId == identity.peerId,
+          );
+          if (!isMember) {
+            return failed('You no longer have permission to post there.');
+          }
+          return await (sendToGroupFn ?? _sendToGroup)(
+            identity: identity,
+            shareIntent: shareIntent,
+            group: current,
+            processedMedia: processedMedia,
+          );
+      }
+    } catch (_) {
+      return failed('Share failed.');
+    }
   }
 
   Future<ProcessedShareMediaBatch> _processSharedMedia(
@@ -449,6 +640,9 @@ class DefaultShareBatchDeliveryCoordinator
         mediaAttachments: attachments.isEmpty ? null : attachments,
         mediaAttachmentRepo: mediaAttachmentRepository,
         inviteDeliveryAttemptRepo: groupInviteDeliveryAttemptRepository,
+        // Only an explicit internal Forward carries provenance; OS shares
+        // and ordinary sends stay unmarked (TC-236-13).
+        isForwarded: shareIntent.forwardProvenance != null,
       );
       final pendingCompletion =
           result == SendGroupMessageResult.success &&

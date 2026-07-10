@@ -1004,6 +1004,8 @@ class GroupMessageListener {
       final mediaRaw = data['media'] as List<dynamic>?;
       final media = mediaRaw?.cast<Map<String, dynamic>>();
       final wireQuotedMessageId = data['quotedMessageId'] as String?;
+      // 236: exact-bool decode — absent/null/string values stay false.
+      final wireIsForwarded = data['isForwarded'] == true;
       final selfPeerId = await _resolveSelfPeerId();
       if (allowMembershipBuffer &&
           await _shouldBufferMembershipDependentMessage(
@@ -1037,6 +1039,7 @@ class GroupMessageListener {
         messageId: wireMessageId,
         logicalDeliveryId: wireLogicalDeliveryId,
         quotedMessageId: wireQuotedMessageId,
+        isForwarded: wireIsForwarded,
         media: media,
         mediaAttachmentRepo: _mediaAttachmentRepo,
         appendGroupEventLogEntry: _appendGroupEventLogEntry,
@@ -1443,6 +1446,7 @@ class GroupMessageListener {
         'messageId': message.id,
         if (message.quotedMessageId != null)
           'quotedMessageId': message.quotedMessageId,
+        if (message.isForwarded) 'isForwarded': true,
         if (message.media.isNotEmpty)
           'media': message.media
               .map((attachment) => attachment.toJson())

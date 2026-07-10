@@ -181,6 +181,8 @@ conversation/group/intros routing contract.
 
 ## 3A. Received-media actions program (2026-07-09)
 
+[Interactive received-media UX mockup](received-media-actions-ux-mockup.html) — standalone HTML prototype for 1:1, discussion, and announcement conversation/viewer/library/storage states, including Release 1 versus evidence-gated full-vision behavior.
+
 These plans split shared device/storage/viewer infrastructure from the three
 messaging lanes so local media UX cannot silently change 1:1 or group transport
 semantics. The ordered schema spine is `v96` (shared local media state) -> `v97`
@@ -189,18 +191,27 @@ private-media, reporting, and multi-source Forward plan is evidence-gated and
 reserves no database version. Plan `248` belongs to an unrelated theme track,
 so this program continues at `249`.
 
-Recommended execution order: shared plans `227`-`230`; lane core plans
-`231`/`235`/`239`; forwarding plans `232` -> `236` -> `240`; then library
-plans `233`/`237`/`241`. Evidence-gated plans reopen only after their recorded
-product, authority, native-platform, or wire decisions are accepted and the
-plan is refreshed/reviewed.
+Plan `228` is the hard local-storage boundary for every later media plan:
+attachments are explicitly `direct` or `group`, ambiguous/orphan legacy rows
+remain `unresolved` and fail closed, announcement media reuses `group`, cursors
+are bound to scope/filter, and later migrations extend one shared production
+create/upgrade registry. Downstream plan fixtures must include same-message-ID
+cross-lane collisions and must never serialize the local owner into wire or
+provenance data.
+
+Recommended execution order: plan `227` may proceed independently; land plan
+`228` before any repository/storage/viewer consumer, then shared plans
+`229`-`230`; lane core plans `231`/`235`/`239`; forwarding plans `232` -> `236`
+-> `240`; then library plans `233`/`237`/`241`. Evidence-gated plans reopen only
+after their recorded product, authority, native-platform, or wire decisions are
+accepted and the plan is refreshed/reviewed.
 
 #### Shared foundations
 
 | Plan | Status | Owns / boundary |
 |---|---|---|
 | [227-received-media-native-egress-foundation-tdd-plan.md](227-received-media-native-egress-foundation-tdd-plan.md) | Execution-ready | Single and bounded-list Save to Photos/Files plus external OS Share; native Android/iOS proof; no messaging transport. |
-| [228-shared-media-library-bookmark-persistence-tdd-plan.md](228-shared-media-library-bookmark-persistence-tdd-plan.md) | Execution-ready | Paged media-library source, bookmarks, and video resume state; DB `v96` with Android/iOS SQLCipher proof. |
+| [228-shared-media-library-bookmark-persistence-tdd-plan.md](228-shared-media-library-bookmark-persistence-tdd-plan.md) | Execution-ready (replanned after two not-ready reviews; no-downgrade floor required) | Owner-lane-safe library/retry/delete seams, replay- and key-safe local state, exact production registries/current encrypted fixtures, and DB `v96` physical Android/iOS SQLCipher upgrade/downgrade-floor proof. |
 | [229-cross-track-media-download-storage-controls-tdd-plan.md](229-cross-track-media-download-storage-controls-tdd-plan.md) | Implemented host-green 2026-07-10 (see plan Execution Progress) | Auto-download policy, local availability, eviction, clear-local-copy, and storage controls across lanes. |
 | [230-shared-typed-media-viewer-tdd-plan.md](230-shared-typed-media-viewer-tdd-plan.md) | Execution-ready | Typed current-item/action callback seam, safe Info metadata, and video seek/speed/mute/resume/lifecycle controls; callback-only and transport-free. |
 | [243-native-media-picture-in-picture-tdd-plan.md](243-native-media-picture-in-picture-tdd-plan.md) | Evidence-gated | Native video-only PiP ownership, capability, privacy, and Android/iOS device proof after a bounded platform spike. |
@@ -211,7 +222,7 @@ plan is refreshed/reviewed.
 |---|---|---|
 | [231-1to1-received-media-core-actions-tdd-plan.md](231-1to1-received-media-core-actions-tdd-plan.md) | Execution-ready | Bubble/viewer parity for Save, external Share, whole-message Delete for Me, Info, and Reply; local-only. |
 | [232-1to1-received-media-forwarding-tdd-plan.md](232-1to1-received-media-forwarding-tdd-plan.md) | Execution-ready | Single-source internal Forward, fresh per-target encryption, direct forwarded marker, and DB `v97`; no Go/libp2p change. |
-| [233-1to1-shared-media-library-batch-tdd-plan.md](233-1to1-shared-media-library-batch-tdd-plan.md) | Execution-ready | Conversation Shared Media, filters, Go to Message, and safe local batch actions; multi-source Forward excluded. |
+| [233-1to1-shared-media-library-batch-tdd-plan.md](233-1to1-shared-media-library-batch-tdd-plan.md) | Execution-ready — /tdd-review 2026-07-10: apply `233-review-fixlist.md` first (core bet sound; 4 material fixes on bookmark/over-cap/delete/in-viewer) | Conversation Shared Media, filters, Go to Message, and safe local batch actions; multi-source Forward excluded. |
 | [234-1to1-private-media-lifecycle-tdd-plan.md](234-1to1-private-media-lifecycle-tdd-plan.md) | Evidence-gated | View-once/disappearing/protected lifecycle, capture truth, notification privacy, multi-device/relay policy, and fresh `vNEXT` only after decisions. |
 | [244-1to1-received-media-reporting-tdd-plan.md](244-1to1-received-media-reporting-tdd-plan.md) | Evidence-gated | Report authority, payload minimization, retention, offline result, moderation side effects, and observable boundary proof. |
 | [249-1to1-shared-media-batch-forwarding-tdd-plan.md](249-1to1-shared-media-batch-forwarding-tdd-plan.md) | Evidence-gated | Multi-source Forward output, caption/order, provenance, selection cap, partial failure, and retry semantics. |
@@ -221,7 +232,7 @@ plan is refreshed/reviewed.
 | Plan | Status | Owns / boundary |
 |---|---|---|
 | [235-group-received-media-core-actions-tdd-plan.md](235-group-received-media-core-actions-tdd-plan.md) | Execution-ready | Discussion bubble/viewer Save, external Share, tombstone-safe Delete for Me, Info, and Reply; announcement sentinel included. |
-| [236-group-received-media-forwarding-tdd-plan.md](236-group-received-media-forwarding-tdd-plan.md) | Execution-ready | Single-source internal Forward, fresh destination encryption, group forwarded marker, and DB `v98`; only a narrow optional-bool Go bridge mapping, with no node/topic/auth/fanout/retry change. |
+| [236-group-received-media-forwarding-tdd-plan.md](236-group-received-media-forwarding-tdd-plan.md) | **IMPLEMENTED 2026-07-10 (host-green + device-proven: GMF-06D SQLCipher v99, GMF-11 real Go bridge)** | Single-source internal Forward, fresh destination encryption, group forwarded marker, and DB `v98`; only a narrow optional-bool Go bridge mapping, with no node/topic/auth/fanout/retry change. |
 | [237-group-shared-media-library-batch-tdd-plan.md](237-group-shared-media-library-batch-tdd-plan.md) | Execution-ready | Discussion Shared Media, paging/filtering, Go to Message, and bounded local batch actions; multi-source Forward excluded. |
 | [238-group-private-media-lifecycle-tdd-plan.md](238-group-private-media-lifecycle-tdd-plan.md) | Evidence-gated | Group view-once/disappearing/protected state, replay-safe cleanup, capture/notification truth, convergence/relay policy, and freshly allocated `vNEXT`. |
 | [245-group-received-media-reporting-tdd-plan.md](245-group-received-media-reporting-tdd-plan.md) | Evidence-gated | Group report authority, evidence envelope, moderator visibility, offline/retry behavior, retention, and transport/storage owner. |
@@ -244,6 +255,13 @@ plan is refreshed/reviewed.
 | Plan | Status | Owns / boundary |
 |---|---|---|
 | [252-intro-accept-notification-copy-chat-routing-tdd-plan.md](252-intro-accept-notification-copy-chat-routing-tdd-plan.md) | Implemented host+relay-green 2026-07-10 (all host/relay/gate tiers GREEN; D1/D2 three-party device proof PENDING a staging relay running the 252 relay build — harness + discovery registered; see plan Execution Progress) | Action-aware, role-neutral introduction-accept notification copy plus introducer-only notification-tap routing to the originating A-B chat; preserves generic incoming-intro/group-invite Orbit routing and defers exact-name encrypted previews. |
+
+## 3C. External share media UX follow-up (2026-07-10)
+
+| Plan | Status | Owns / boundary |
+|---|---|---|
+| [253-external-share-immediate-media-progress-tdd-plan.md](253-external-share-immediate-media-progress-tdd-plan.md) | **/tdd-review 2026-07-10 (8-agent wf_8903961d-19d) → READY-WITH-TIGHTENING**, apply [253-review-fixlist.md](253-review-fixlist.md) first (D1 80/D2 66/D3 70/D4 78/D5 68). Core rendering bet VERIFIED SOUND (4/4 funnels exact :1171/:1216/:1333/:2099; hydration `fallbackMedia` renders inline first-event media; both `messageChanges` consumers tolerant). Locked: **land 236 FIRST**; group-target blank frame **DEFERRED explicitly** (group pre-persist saves media-free, send_group_message_use_case.dart:1096); progress half = device-truth fixtures (ciphertext +16B GCM clamp, late-final-event double-count, no-injection production-default case — Go ALWAYS emits 0-byte+final events, media.go:380/:386) **+ 1 required share-sheet replay**; dual registration dry-run VACUOUS (run_test_gates.sh:898-903 delegates → rg-gate instead); picker needs wake-lock/PopScope or explicit deferral | External phone-share media publishes a renderable attachment on the first outgoing event, reuses the in-app byte-progress banner with upload/sending phases, and removes composer-covering share SnackBars in favor of inline actionable feedback; no native intake, DB, transport, or crypto change. |
+| [254-group-media-share-liveness-first-frame-tdd-plan.md](254-group-media-share-liveness-first-frame-tdd-plan.md) | TDD PLAN awaiting-review (BUG — the 253-review §D deferred group sibling; 4-agent verify→refute wf_1529ebbd-2fd). THREE confirmed defects, all worse than 253 assumed: (1) LIVENESS — external share/in-app Forward to an OPEN group conversation NEVER appears (new-row save emits NOTHING, repo impl :157; UI drops unknown-id status events :3721-3723; self-echo refuted at 3 layers); (2) blank-frame window with NO fill-in trigger; (3) FAILED media sends lose media PERMANENTLY (failure funnels never persist → retry skips `missing_media_attachments` forever). Fix F1/F2/F3 hazard-audited: repo `.inserted` event (+lockstep fake) + early stamped attachment persist before pre-persist :1096 (idempotent, no FK, placement pinned by 8 validation tests, plain saveAttachment NOT guarded) + targeted `_refreshMessageWithHydratedMedia` upsert (post-await unknown-recheck vs optimistic clobber; 159-coalesced vs drain bursts). 8 TCs host-only; NO coordinator/253/236 file overlap; new integration file needs GROUP_TESTS array add + rg gate; 1 intentional re-red (impl_test :458-521 count). | A group-targeted media share surfaces live with its thumbnail in an already-open group conversation, renders media on the first frame of a fresh mount mid-send, and a terminally-failed media send keeps its attachments and stays retryable; in-app optimistic display, status-in-place updates, queuedOffline UX, and all validation/reconciliation contracts unchanged. |
 
 ---
 

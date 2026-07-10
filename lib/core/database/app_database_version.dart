@@ -3,8 +3,11 @@
 // 235: DB v98 adds the local-only group_media_deletion_journal — the explicit
 // per-attachment cleanup authority for group received-media Delete-for-me
 // (no wire mapping, no cascade, empty legacy backfill).
+// 236: DB v99 adds the group-message forwarded marker
+// (group_messages.is_forwarded, default-false, 0/1 CHECK) after the v98
+// deletion journal.
 // v96+ remains a one-way supported release floor and builds
 // fail closed on downgrade opens
 // (encrypted_db_opener.dart passes onDatabaseVersionChangeError), and no
 // pre-v96 build may be installed over a profile already opened at v96.
-const int currentIdentityDatabaseVersion = 98;
+const int currentIdentityDatabaseVersion = 99;

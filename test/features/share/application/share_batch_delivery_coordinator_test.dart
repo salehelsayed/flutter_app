@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as path;
 
 import 'package:flutter_app/core/constants/media_constants.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
@@ -12,7 +14,9 @@ import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -961,7 +965,7 @@ void main() {
   });
 
   test(
-    'group forward target preserves publish contract and saves group owner',
+    'GMF-03O existing group owner persistence remains local and collision safe',
     () async {
       final identities = FakeIdentityRepository()..seed(_makeIdentity());
       final groups = InMemoryGroupRepository();
@@ -974,6 +978,11 @@ void main() {
       final dir = Directory.systemTemp.createTempSync('forward_group_owner_');
       addTearDown(() => dir.deleteSync(recursive: true));
       final file = File('${dir.path}/source.jpg')..writeAsBytesSync([1, 2, 3]);
+      final bridge = _GroupShareBgBridge(
+        publishMessageId: 'group-forward-owner-message',
+        publishTopicPeers: 1,
+        inboxStoreOk: true,
+      );
       final coordinator = DefaultShareBatchDeliveryCoordinator(
         identityRepository: identities,
         contactRepository: InMemoryContactRepository(),
@@ -981,11 +990,7 @@ void main() {
         mediaAttachmentRepository: media,
         groupRepository: groups,
         groupMessageRepository: groupMessages,
-        bridge: _GroupShareBgBridge(
-          publishMessageId: 'group-forward-owner-message',
-          publishTopicPeers: 1,
-          inboxStoreOk: true,
-        ),
+        bridge: bridge,
         p2pService: FakeP2PService(),
         mediaFileManager: FakeMediaFileManager(),
         imageProcessor: _imageProcessor(),
@@ -1015,6 +1020,463 @@ void main() {
       );
       expect(attachments, hasLength(1));
       expect(attachments.single.ownerLane, MediaOwnerLane.group);
+
+      // Strengthened: a same-parent-ID DIRECT collision row stays isolated —
+      // the owner-scoped group load never returns it, the direct lane never
+      // returns the group row, and neither replaces the other.
+      final collision = MediaAttachment(
+        id: 'direct-collision-att',
+        messageId: saved.id,
+        mime: 'image/jpeg',
+        size: 3,
+        mediaType: 'image',
+        downloadStatus: 'done',
+        createdAt: '2026-07-10T12:00:00.000Z',
+        ownerLane: MediaOwnerLane.direct,
+      );
+      await media.saveAttachment(collision, owner: MediaOwnerLane.direct);
+      final groupRows = await media.getAttachmentsForMessage(
+        saved.id,
+        owner: MediaOwnerLane.group,
+      );
+      expect(groupRows.map((row) => row.id), attachments.map((row) => row.id));
+      expect(
+        groupRows.every((row) => row.ownerLane == MediaOwnerLane.group),
+        isTrue,
+      );
+      final directRows = await media.getAttachmentsForMessage(
+        saved.id,
+        owner: MediaOwnerLane.direct,
+      );
+      expect(directRows.map((row) => row.id), ['direct-collision-att']);
+
+      // Local-only serialization: the published wire media maps carry no
+      // owner/local state.
+      final publishPayloads = bridge.sentMessages
+          .map((message) => jsonDecode(message) as Map<String, dynamic>)
+          .where((message) => message['cmd'] == 'group:publish')
+          .map((message) => message['payload'] as Map<String, dynamic>)
+          .toList(growable: false);
+      expect(publishPayloads, hasLength(1));
+      final wireMedia = (publishPayloads.single['media'] as List)
+          .cast<Map<String, dynamic>>();
+      for (final mediaMap in wireMedia) {
+        expect(mediaMap.containsKey('ownerLane'), isFalse);
+        expect(mediaMap.containsKey('owner'), isFalse);
+        expect(mediaMap.containsKey('localPath'), isFalse);
+      }
+    },
+  );
+
+  test(
+    'GMF-03 group origin forward reencrypts independently and keeps provenance local',
+    () async {
+      final identities = FakeIdentityRepository()..seed(_makeIdentity());
+      final contacts = InMemoryContactRepository();
+      final groups = InMemoryGroupRepository();
+      final groupMessages = InMemoryGroupMessageRepository();
+      final directMessages = InMemoryMessageRepository();
+      final media = InMemoryMediaAttachmentRepository();
+      final fileManager = FakeMediaFileManager();
+      // Private per-test source dir: the shared testRootPath is deleted by
+      // OTHER suites' teardowns under gate parallelism. Absolute stored paths
+      // pass through resolveStoredPath as-is.
+      final sourceDir = Directory.systemTemp.createTempSync('fwd_src_303_');
+      addTearDown(() {
+        if (sourceDir.existsSync()) sourceDir.deleteSync(recursive: true);
+      });
+
+      // Verified group SOURCE: incoming discussion media with real bytes
+      // whose stored hash matches, plus sentinel source crypto/identity
+      // values that must never reach any destination map.
+      const srcGroupId = 'src-group-303';
+      const srcMessageId = 'src-msg-303';
+      const srcAttachmentId = 'src-att-303';
+      const srcSenderPeerId = 'peer-source-sender-303';
+      const srcKey = 'source-key-sentinel-303';
+      const srcNonce = 'source-nonce-sentinel-303';
+      await groups.saveGroup(_makeGroup(srcGroupId, 'Source Group'));
+      await _seedGroupMembers(groups, srcGroupId);
+      await _saveLatestGroupKey(groups, srcGroupId);
+      await groupMessages.saveMessage(
+        GroupMessage(
+          id: srcMessageId,
+          groupId: srcGroupId,
+          senderPeerId: srcSenderPeerId,
+          text: 'source caption',
+          timestamp: DateTime.utc(2026, 7, 10, 12),
+          isIncoming: true,
+          createdAt: DateTime.utc(2026, 7, 10, 12),
+        ),
+      );
+      final srcBytes = List<int>.generate(128, (i) => (i * 13) % 251);
+      final srcFile = File(path.join(sourceDir.path, '$srcAttachmentId.jpg'));
+      srcFile.writeAsBytesSync(srcBytes);
+      final srcStoredPath = srcFile.path;
+      final srcHash = sha256.convert(srcBytes).toString();
+      await media.saveAttachment(
+        MediaAttachment(
+          id: srcAttachmentId,
+          messageId: srcMessageId,
+          mime: 'image/jpeg',
+          size: srcBytes.length,
+          mediaType: 'image',
+          localPath: srcStoredPath,
+          downloadStatus: 'done',
+          createdAt: '2026-07-10T12:00:00.000Z',
+          contentHash: srcHash,
+          encryptionKeyBase64: srcKey,
+          encryptionNonce: srcNonce,
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ownerLane: MediaOwnerLane.group,
+        ),
+        owner: MediaOwnerLane.group,
+      );
+
+      // Destinations: one contact with a current encryption key and one
+      // discussion group with its own current member set.
+      final destContact = ContactModel(
+        peerId: 'peer-dest-contact',
+        publicKey: 'pk-peer-dest-contact',
+        rendezvous: '/dns4/relay/tcp/443',
+        username: 'DestContact',
+        signature: 'sig-peer-dest-contact',
+        scannedAt: '2026-03-09T08:00:00.000Z',
+        mlKemPublicKey: 'mlkem-peer-dest-contact',
+      );
+      await contacts.addContact(destContact);
+      final destGroup = _makeGroup('dest-group-303', 'Destination Group');
+      await groups.saveGroup(destGroup);
+      await _seedGroupMembers(groups, destGroup.id);
+      await _saveLatestGroupKey(groups, destGroup.id);
+
+      final bridge = PassthroughCryptoBridge();
+      bridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'fwd-publish-303',
+        'topicPeers': 1,
+      };
+      // Keep the durable retry payload alive on the saved row (a fully
+      // successful send clears it): live publish succeeds, custody fails.
+      bridge.responses['group:inboxStore'] = {'ok': false};
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(
+          isStarted: true,
+          peerId: 'my-peer-id-12345',
+        ),
+      );
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: identities,
+        contactRepository: contacts,
+        messageRepository: directMessages,
+        mediaAttachmentRepository: media,
+        groupRepository: groups,
+        groupMessageRepository: groupMessages,
+        bridge: bridge,
+        p2pService: p2pService,
+        mediaFileManager: fileManager,
+        imageProcessor: _imageProcessor(),
+      );
+
+      final result = await coordinator.deliverGroupMediaForward(
+        request: GroupMediaForwardRequest(
+          groupId: srcGroupId,
+          messageId: srcMessageId,
+          attachmentId: srcAttachmentId,
+          initialCaption: 'source caption',
+          provenance: const ForwardProvenance(operationDedupKey: 'fwd-op-303'),
+        ),
+        caption: 'edited caption',
+        targets: [
+          ShareTargetSelection.contact(destContact),
+          ShareTargetSelection.group(destGroup),
+        ],
+      );
+
+      expect(result.results, hasLength(2));
+      expect(result.failureCount, 0, reason: result.results.map((r) => r.detail).join('; '));
+
+      // Two INDEPENDENT uploads: fresh distinct blob ids, and neither reuses
+      // the source attachment id.
+      final uploadPayloads = bridge.sentMessages
+          .map((message) => jsonDecode(message) as Map<String, dynamic>)
+          .where((message) => message['cmd'] == 'media:upload')
+          .map((message) => message['payload'] as Map<String, dynamic>)
+          .toList(growable: false);
+      expect(uploadPayloads, hasLength(2));
+      final uploadIds = uploadPayloads
+          .map((payload) => payload['id'] as String)
+          .toSet();
+      expect(uploadIds, hasLength(2));
+      expect(uploadIds.contains(srcAttachmentId), isFalse);
+      final contactUpload = uploadPayloads.firstWhere(
+        (payload) => payload['to'] == 'peer-dest-contact',
+      );
+      final groupUpload = uploadPayloads.firstWhere(
+        (payload) => payload['to'] == destGroup.id,
+      );
+      // The group upload is scoped to the destination group's CURRENT
+      // members; the contact upload has no group access list at all.
+      expect(
+        ((groupUpload['allowedPeers'] as List?) ?? const []).toSet(),
+        {'my-peer-id-12345', 'peer-writer'},
+      );
+      expect(contactUpload['allowedPeers'], isNull);
+
+      // Destination-side persisted rows carry FRESH crypto: two distinct new
+      // keys/nonces, neither equal to the source sentinel values. (The fake
+      // blob pipeline copies bytes, so contentHash equality is meaningless
+      // here — key/nonce/blob identity carry the re-encryption claim.)
+      final savedGroupMessage = (await groupMessages.getMessagesPage(
+        destGroup.id,
+      )).first;
+      final groupAttachment = (await media.getAttachmentsForMessage(
+        savedGroupMessage.id,
+        owner: MediaOwnerLane.group,
+      )).single;
+      final contactAttachments = await media.getAttachmentsForMessage(
+        (await directMessages.getMessagesForContact('peer-dest-contact'))
+            .first
+            .id,
+        owner: MediaOwnerLane.direct,
+      );
+      final contactAttachment = contactAttachments.single;
+      expect(groupAttachment.ownerLane, MediaOwnerLane.group);
+      expect(contactAttachment.ownerLane, MediaOwnerLane.direct);
+      expect(groupAttachment.id, isNot(srcAttachmentId));
+      expect(contactAttachment.id, isNot(srcAttachmentId));
+      expect(groupAttachment.id, isNot(contactAttachment.id));
+      expect(groupAttachment.encryptionKeyBase64, isNot(srcKey));
+      expect(contactAttachment.encryptionKeyBase64, isNot(srcKey));
+      expect(
+        groupAttachment.encryptionKeyBase64,
+        isNot(contactAttachment.encryptionKeyBase64),
+      );
+      expect(groupAttachment.encryptionNonce, isNot(srcNonce));
+      expect(contactAttachment.encryptionNonce, isNot(srcNonce));
+
+      // The forwarded marker rides every destination map; only the edited
+      // caption and the newly minted media join normal routing fields.
+      final publishPayload = bridge.sentMessages
+          .map((message) => jsonDecode(message) as Map<String, dynamic>)
+          .firstWhere((message) => message['cmd'] == 'group:publish')['payload']
+          as Map<String, dynamic>;
+      expect(publishPayload['text'], 'edited caption');
+      expect(publishPayload['isForwarded'], isTrue);
+      expect(savedGroupMessage.isForwarded, isTrue);
+      final contactWire = p2pService.lastSendMessageContent ??
+          p2pService.lastStoreInInboxMessage;
+      expect(contactWire, isNotNull);
+      final contactEnvelope = jsonDecode(contactWire!) as Map<String, dynamic>;
+      final contactInner = jsonDecode(
+        (contactEnvelope['encrypted'] as Map<String, dynamic>)['ciphertext']
+            as String,
+      ) as Map<String, dynamic>;
+      expect(contactInner['isForwarded'], isTrue);
+      expect(contactInner['text'], 'edited caption');
+
+      // NO source provenance in any destination wire/replay/retry map: the
+      // sentinel source identifiers and crypto values are absent everywhere.
+      final destinationMaps = <String>[
+        jsonEncode(publishPayload),
+        contactWire,
+        savedGroupMessage.wireEnvelope ?? '',
+        savedGroupMessage.inboxRetryPayload ?? '',
+      ].join('\n');
+      for (final sentinel in [
+        srcMessageId,
+        srcAttachmentId,
+        srcSenderPeerId,
+        srcKey,
+        srcNonce,
+        srcGroupId,
+      ]) {
+        expect(
+          destinationMaps.contains(sentinel),
+          isFalse,
+          reason: 'source sentinel "$sentinel" leaked into a destination map',
+        );
+      }
+      // The retained durable retry map re-drives the marker too (the
+      // passthrough crypto keeps the replay plaintext readable here; the full
+      // wire/replay seam matrix is TC-236-07's job).
+      expect(savedGroupMessage.inboxRetryPayload, isNotNull);
+      final retryPayload =
+          jsonDecode(savedGroupMessage.inboxRetryPayload!)
+              as Map<String, dynamic>;
+      final replayEnvelope =
+          jsonDecode(retryPayload['message'] as String) as Map<String, dynamic>;
+      final replayPlaintext =
+          jsonDecode(replayEnvelope['ciphertext'] as String)
+              as Map<String, dynamic>;
+      expect(replayPlaintext['isForwarded'], isTrue);
+    },
+  );
+
+  test(
+    'GMF-03E target exceptions are isolated without aborting later forwards',
+    () async {
+      final identities = FakeIdentityRepository()..seed(_makeIdentity());
+      final groups = InMemoryGroupRepository();
+      final groupMessages = InMemoryGroupMessageRepository();
+      final media = InMemoryMediaAttachmentRepository();
+      final fileManager = FakeMediaFileManager();
+      final sourceDir = Directory.systemTemp.createTempSync('fwd_src_30e_');
+      addTearDown(() {
+        if (sourceDir.existsSync()) sourceDir.deleteSync(recursive: true);
+      });
+
+      // Minimal verified source (same seeding as GMF-03).
+      const srcGroupId = 'src-group-30e';
+      const srcMessageId = 'src-msg-30e';
+      const srcAttachmentId = 'src-att-30e';
+      await groups.saveGroup(_makeGroup(srcGroupId, 'Source Group'));
+      await _seedGroupMembers(groups, srcGroupId);
+      await _saveLatestGroupKey(groups, srcGroupId);
+      await groupMessages.saveMessage(
+        GroupMessage(
+          id: srcMessageId,
+          groupId: srcGroupId,
+          senderPeerId: 'peer-sender',
+          text: 'caption',
+          timestamp: DateTime.utc(2026, 7, 10, 12),
+          isIncoming: true,
+          createdAt: DateTime.utc(2026, 7, 10, 12),
+        ),
+      );
+      final bytes = List<int>.filled(48, 5);
+      final file = File(path.join(sourceDir.path, '$srcAttachmentId.jpg'));
+      file.writeAsBytesSync(bytes);
+      await media.saveAttachment(
+        MediaAttachment(
+          id: srcAttachmentId,
+          messageId: srcMessageId,
+          mime: 'image/jpeg',
+          size: bytes.length,
+          mediaType: 'image',
+          localPath: file.path,
+          downloadStatus: 'done',
+          createdAt: '2026-07-10T12:00:00.000Z',
+          contentHash: sha256.convert(bytes).toString(),
+          encryptionKeyBase64: 'a2V5',
+          encryptionNonce: 'bm9uY2U=',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ownerLane: MediaOwnerLane.group,
+        ),
+        owner: MediaOwnerLane.group,
+      );
+
+      final contacts = InMemoryContactRepository();
+      final throwingContact = _makeMlKemContact('peer-throw-1', 'ThrowFirst');
+      final sentContact = _makeMlKemContact('peer-sent', 'SentSecond');
+      await contacts.addContact(throwingContact);
+      await contacts.addContact(sentContact);
+      final throwingGroup = _makeGroup('group-throw', 'Throwing Group');
+      await groups.saveGroup(throwingGroup);
+      await _seedGroupMembers(groups, throwingGroup.id);
+      await _saveLatestGroupKey(groups, throwingGroup.id);
+      final queuedGroup = _makeGroup('group-queued', 'Queued Group');
+      await groups.saveGroup(queuedGroup);
+      await _seedGroupMembers(groups, queuedGroup.id);
+      await _saveLatestGroupKey(groups, queuedGroup.id);
+
+      final callOrder = <String>[];
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: identities,
+        contactRepository: contacts,
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: media,
+        groupRepository: groups,
+        groupMessageRepository: groupMessages,
+        bridge: FakeBridge(),
+        p2pService: FakeP2PService(),
+        mediaFileManager: fileManager,
+        imageProcessor: _imageProcessor(),
+        sendToContactFn:
+            ({
+              required identity,
+              required shareIntent,
+              required contact,
+              required processedMedia,
+            }) async {
+              callOrder.add('contact:${contact.peerId}');
+              if (contact.peerId == 'peer-throw-1') {
+                throw StateError('first contact target exploded');
+              }
+              return ShareBatchTargetResult(
+                target: ShareTargetSelection.contact(contact),
+                status: ShareBatchTargetStatus.sent,
+                detail: 'Sent.',
+              );
+            },
+        sendToGroupFn:
+            ({
+              required identity,
+              required shareIntent,
+              required group,
+              required processedMedia,
+            }) async {
+              callOrder.add('group:${group.id}');
+              if (group.id == 'group-throw') {
+                throw StateError('middle group target exploded');
+              }
+              return ShareBatchTargetResult(
+                target: ShareTargetSelection.group(group),
+                status: ShareBatchTargetStatus.queued,
+                detail: 'Saved for retry.',
+              );
+            },
+      );
+
+      final result = await coordinator.deliverGroupMediaForward(
+        request: GroupMediaForwardRequest(
+          groupId: srcGroupId,
+          messageId: srcMessageId,
+          attachmentId: srcAttachmentId,
+          initialCaption: 'caption',
+          provenance: const ForwardProvenance(operationDedupKey: 'fwd-op-30e'),
+        ),
+        caption: 'caption',
+        targets: [
+          ShareTargetSelection.contact(throwingContact),
+          ShareTargetSelection.contact(sentContact),
+          ShareTargetSelection.group(throwingGroup),
+          ShareTargetSelection.group(queuedGroup),
+        ],
+      );
+
+      // Complete ORDERED result list: one failure per thrown target, and
+      // every later target still executed. Partial success stays truthful —
+      // never collapsed to all-success.
+      expect(result.results, hasLength(4));
+      expect(result.results[0].status, ShareBatchTargetStatus.failed);
+      expect(result.results[1].status, ShareBatchTargetStatus.sent);
+      expect(result.results[2].status, ShareBatchTargetStatus.failed);
+      expect(result.results[3].status, ShareBatchTargetStatus.queued);
+      expect(callOrder, [
+        'contact:peer-throw-1',
+        'contact:peer-sent',
+        'group:group-throw',
+        'group:group-queued',
+      ]);
+      expect(result.sentCount, 1);
+      expect(result.queuedCount, 1);
+      expect(result.failureCount, 2);
+
+      // The generic OS-share loop isolates exceptions the same way.
+      final genericResult = await coordinator.deliver(
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.text,
+          text: 'plain share',
+        ),
+        targets: [
+          ShareTargetSelection.contact(throwingContact),
+          ShareTargetSelection.contact(sentContact),
+        ],
+      );
+      expect(genericResult.results, hasLength(2));
+      expect(genericResult.results[0].status, ShareBatchTargetStatus.failed);
+      expect(genericResult.results[1].status, ShareBatchTargetStatus.sent);
     },
   );
 }
@@ -1038,6 +1500,18 @@ ImageProcessor _imageProcessor() {
         }) async => null,
     compressVideo: ({required path, required compress, onProgress}) async =>
         const VideoProcessResult(path: '/tmp/video.mp4'),
+  );
+}
+
+ContactModel _makeMlKemContact(String peerId, String username) {
+  return ContactModel(
+    peerId: peerId,
+    publicKey: 'pk-$peerId',
+    rendezvous: '/dns4/relay/tcp/443',
+    username: username,
+    signature: 'sig-$peerId',
+    scannedAt: '2026-03-09T08:00:00.000Z',
+    mlKemPublicKey: 'mlkem-$peerId',
   );
 }
 

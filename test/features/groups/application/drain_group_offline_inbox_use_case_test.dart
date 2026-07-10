@@ -948,6 +948,7 @@ void main() {
     String senderUsername = 'Sender',
     String? logicalDeliveryId,
     List<Map<String, dynamic>>? receipts,
+    Map<String, dynamic> extraPayloadFields = const {},
   }) async {
     final payload = repairMessage(
       id: id,
@@ -961,6 +962,7 @@ void main() {
     if (receipts != null) {
       payload['receipts'] = receipts;
     }
+    payload.addAll(extraPayloadFields);
     return {
       'from': senderId,
       'message': await signedReplayEnvelope(
@@ -3334,6 +3336,188 @@ void main() {
       expect(repair.status, groupHistoryGapRepairStatusRepaired);
       expect(repair.repairedMessageIds, ['gi026-repaired-head']);
       expect(await msgRepo.getMessage('gi026-repaired-head'), isNotNull);
+    },
+  );
+
+  test(
+    'GMF-09 ordinary drain and history gap repair preserve forwarded replay dedup',
+    () async {
+      await saveDefaultReplayKey();
+
+      // --- Ordinary offline drain: typed true survives; legacy/malformed
+      // wire values decode false.
+      bridge.addPage('group-1', '', [
+        await signedRelayMessage(
+          id: 'gmf09-drain-fwd',
+          text: 'Forwarded drained',
+          timestamp: DateTime.utc(2026, 7, 10, 12),
+          extraPayloadFields: const {'isForwarded': true},
+        ),
+        await signedRelayMessage(
+          id: 'gmf09-drain-legacy',
+          text: 'Legacy drained',
+          timestamp: DateTime.utc(2026, 7, 10, 12, 1),
+        ),
+        await signedRelayMessage(
+          id: 'gmf09-drain-malformed',
+          text: 'Malformed drained',
+          timestamp: DateTime.utc(2026, 7, 10, 12, 2),
+          extraPayloadFields: const {'isForwarded': 'true'},
+        ),
+      ], '');
+      final firstDrain = await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        selfPeerId: 'peer-local',
+      );
+      expect(firstDrain.isSuccessful, isTrue);
+      final drainedForwarded = await msgRepo.getMessage('gmf09-drain-fwd');
+      expect(drainedForwarded!.isForwarded, isTrue);
+      expect(
+        GroupMessage.fromMap(drainedForwarded.toMap()).isForwarded,
+        isTrue,
+        reason: 'the marker survives a persistence round-trip (restart)',
+      );
+      expect(
+        (await msgRepo.getMessage('gmf09-drain-legacy'))!.isForwarded,
+        isFalse,
+      );
+      expect(
+        (await msgRepo.getMessage('gmf09-drain-malformed'))!.isForwarded,
+        isFalse,
+        reason: 'a string "true" is not the typed marker',
+      );
+
+      // Replaying the SAME drained envelope produces ONE durable row and the
+      // marker survives the repeat. (Each drain advances the durable inbox
+      // cursor, so later pages are keyed at the CURRENT stored cursor.)
+      bridge.addPage('group-1', await msgRepo.getInboxCursor('group-1') ?? '', [
+        await signedRelayMessage(
+          id: 'gmf09-drain-fwd',
+          text: 'Forwarded drained',
+          timestamp: DateTime.utc(2026, 7, 10, 12),
+          extraPayloadFields: const {'isForwarded': true},
+        ),
+      ], '');
+      final repeatDrain = await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        selfPeerId: 'peer-local',
+      );
+      expect(repeatDrain.isSuccessful, isTrue);
+      final afterRepeat = await msgRepo.getMessagesPage('group-1', limit: 100);
+      expect(
+        afterRepeat.where((row) => row.id == 'gmf09-drain-fwd'),
+        hasLength(1),
+        reason: 'replaying the same envelope dedups to one row',
+      );
+      expect(
+        (await msgRepo.getMessage('gmf09-drain-fwd'))!.isForwarded,
+        isTrue,
+      );
+
+      // --- History-gap repair: the validated repaired range hands the SAME
+      // typed marker into persistence; legacy rows stay false.
+      final historyRepo = _InMemoryGroupHistoryGapRepairRepository();
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-good',
+          username: 'Good Source',
+          role: MemberRole.reader,
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      final repairedMessages = [
+        await signedRelayMessage(
+          id: 'gmf09-gap-fwd',
+          text: 'Forwarded repaired',
+          timestamp: DateTime.utc(2026, 7, 10, 13),
+          extraPayloadFields: const {'isForwarded': true},
+        ),
+        await signedRelayMessage(
+          id: 'gmf09-gap-legacy',
+          text: 'Legacy repaired',
+          timestamp: DateTime.utc(2026, 7, 10, 13, 1),
+        ),
+      ];
+      final gapRangeHash = computeGroupHistoryRangeHash(repairedMessages);
+      final cursorBeforeGap = await msgRepo.getInboxCursor('group-1') ?? '';
+      final gap = {
+        'groupId': 'group-1',
+        'gapId': 'gap-gmf09',
+        'missingAfterMessageId': 'gmf09-before',
+        'missingBeforeMessageId': 'gmf09-after',
+        'expectedRangeHash': gapRangeHash,
+        'expectedHeadMessageId': 'gmf09-gap-fwd',
+        'candidateSourcePeerIds': ['peer-good'],
+      };
+      bridge.addPage(
+        'group-1',
+        cursorBeforeGap,
+        const <Map<String, dynamic>>[],
+        '',
+        historyGaps: [gap],
+      );
+      Future<void> drainWithRepair() async {
+        await drainGroupOfflineInbox(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          selfPeerId: 'peer-local',
+          historyGapRepairRepo: historyRepo,
+          requestHistoryRepairRange:
+              ({required gap, required sourcePeerId, int limit = 50}) async {
+                return GroupHistoryRepairRangeResult(
+                  groupId: gap.groupId,
+                  gapId: gap.gapId,
+                  sourcePeerId: sourcePeerId,
+                  rangeHash: gap.expectedRangeHash,
+                  headMessageId: gap.expectedHeadMessageId,
+                  messages: repairedMessages,
+                );
+              },
+        );
+      }
+
+      await drainWithRepair();
+      final repairedForwarded = await msgRepo.getMessage('gmf09-gap-fwd');
+      expect(repairedForwarded!.isForwarded, isTrue);
+      expect(
+        GroupMessage.fromMap(repairedForwarded.toMap()).isForwarded,
+        isTrue,
+      );
+      expect(
+        (await msgRepo.getMessage('gmf09-gap-legacy'))!.isForwarded,
+        isFalse,
+      );
+
+      // Re-driving the same repaired range keeps one row per id with the
+      // marker intact.
+      bridge.addPage(
+        'group-1',
+        await msgRepo.getInboxCursor('group-1') ?? '',
+        const <Map<String, dynamic>>[],
+        '',
+        historyGaps: [
+          {...gap, 'gapId': 'gap-gmf09-repeat'},
+        ],
+      );
+      await drainWithRepair();
+      final afterRepairRepeat = await msgRepo.getMessagesPage(
+        'group-1',
+        limit: 100,
+      );
+      expect(
+        afterRepairRepeat.where((row) => row.id == 'gmf09-gap-fwd'),
+        hasLength(1),
+      );
+      expect(
+        (await msgRepo.getMessage('gmf09-gap-fwd'))!.isForwarded,
+        isTrue,
+      );
     },
   );
 

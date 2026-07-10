@@ -226,6 +226,88 @@ void main() {
     expect(find.text('Alice'), findsOneWidget);
   });
 
+  testWidgets('GMF-10 forwarded label is truthful and origin minimizing', (
+    tester,
+  ) async {
+    // 236: exactly ONE origin-minimizing "Forwarded" indicator for the true
+    // row; ordinary and legacy (pre-v99 map without the column) rows render
+    // none. The label carries no source sender/group/message identity — the
+    // durable row has no origin fields at all.
+    final forwarded = GroupMessage(
+      id: 'msg-fwd-10',
+      groupId: 'group-1',
+      senderPeerId: 'peer-2',
+      senderUsername: 'Alice',
+      text: 'forwarded body',
+      timestamp: DateTime.utc(2026, 7, 10, 12),
+      createdAt: DateTime.utc(2026, 7, 10, 12),
+      isIncoming: true,
+      isForwarded: true,
+    );
+    final ordinary = GroupMessage(
+      id: 'msg-ord-10',
+      groupId: 'group-1',
+      senderPeerId: 'peer-2',
+      senderUsername: 'Alice',
+      text: 'ordinary body',
+      timestamp: DateTime.utc(2026, 7, 10, 12, 1),
+      createdAt: DateTime.utc(2026, 7, 10, 12, 1),
+      isIncoming: true,
+    );
+    // A legacy row hydrated from a map WITHOUT the v99 column decodes false.
+    final legacy = GroupMessage.fromMap({
+      'id': 'msg-legacy-10',
+      'group_id': 'group-1',
+      'sender_peer_id': 'peer-2',
+      'sender_username': 'Alice',
+      'text': 'legacy body',
+      'timestamp': '2026-07-10T12:02:00.000Z',
+      'status': 'delivered',
+      'is_incoming': 1,
+      'created_at': '2026-07-10T12:02:00.000Z',
+    });
+    expect(legacy.isForwarded, isFalse);
+
+    await tester.pumpWidget(
+      buildTestWidget(messages: [forwarded, ordinary, legacy]),
+    );
+
+    final markerText = l10n.conversation_forwarded_marker;
+    expect(
+      find.text(markerText),
+      findsOneWidget,
+      reason: 'exactly one bubble carries the Forwarded indicator',
+    );
+    expect(
+      find.descendant(
+        of: messageRow('msg-fwd-10'),
+        matching: find.text(markerText),
+      ),
+      findsOneWidget,
+    );
+    for (final unmarked in ['msg-ord-10', 'msg-legacy-10']) {
+      expect(
+        find.descendant(
+          of: messageRow(unmarked),
+          matching: find.text(markerText),
+        ),
+        findsNothing,
+        reason: '$unmarked must not render a Forwarded indicator',
+      );
+    }
+
+    // Origin minimizing: the indicator is EXACTLY the localized marker — no
+    // "forwarded from …" style composition can smuggle sender/group/message
+    // identity into the label.
+    final markerWidget = tester.widget<Text>(find.text(markerText));
+    expect(markerWidget.data, markerText);
+    expect(
+      find.textContaining(RegExp('$markerText .')),
+      findsNothing,
+      reason: 'no composed forwarded-from label exists',
+    );
+  });
+
   // 210 TC #8: a persisted 'queued_offline' outgoing row reconstructs a CLOCK on
   // mount. The glyph is derived purely from the durable status, so a cold reopen
   // shows the same waiting-to-send affordance (no in-memory-only latch) — never

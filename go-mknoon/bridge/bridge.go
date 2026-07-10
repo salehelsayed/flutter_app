@@ -2006,6 +2006,7 @@ type groupBridgeMessageParams struct {
 	Timestamp                string                   `json:"timestamp,omitempty"`
 	QuotedMessageId          string                   `json:"quotedMessageId,omitempty"`
 	Media                    []map[string]interface{} `json:"media,omitempty"`
+	IsForwarded              bool                     `json:"isForwarded,omitempty"`
 	RecipientPeerIds         []string                 `json:"recipientPeerIds,omitempty"`
 	PreserveRecipientPeerIds bool                     `json:"preserveRecipientPeerIds,omitempty"`
 }
@@ -2050,6 +2051,12 @@ func buildGroupBridgeMessageOpts(params groupBridgeMessageParams, includeRecipie
 	}
 	if params.GroupName != "" {
 		opts["groupName"] = params.GroupName
+	}
+	// 236: optional forwarded marker. It joins the message opts and therefore
+	// travels ONLY inside the encrypted payload extras (buildGroupMessageExtra)
+	// — never an outer routing field.
+	if params.IsForwarded {
+		opts["isForwarded"] = true
 	}
 	if includeRecipients && params.PreserveRecipientPeerIds {
 		opts["recipientPeerIds"] = params.RecipientPeerIds

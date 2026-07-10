@@ -733,6 +733,9 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   GroupMessageIdFactory? messageIdFactory,
   DateTime? timestamp,
   String? quotedMessageId,
+  // 236: explicit internal Forward marker. Rides the encrypted payload extras
+  // plus every durable retry/replay map; never any outer routing field.
+  bool isForwarded = false,
   List<MediaAttachment>? mediaAttachments,
   MediaAttachmentRepository? mediaAttachmentRepo,
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
@@ -1012,6 +1015,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     if (quotedMessageId != null && quotedMessageId.isNotEmpty)
       'quotedMessageId': quotedMessageId,
     if (mediaJson != null && mediaJson.isNotEmpty) 'media': mediaJson,
+    if (isForwarded) 'isForwarded': true,
   });
 
   // 3c. Build inboxRetryPayload (exact inputs for callGroupInboxStore)
@@ -1030,6 +1034,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     if (quotedMessageId != null && quotedMessageId.isNotEmpty)
       'quotedMessageId': quotedMessageId,
     if (mediaJson != null && mediaJson.isNotEmpty) 'media': mediaJson,
+    if (isForwarded) 'isForwarded': true,
   });
   String? replayEnvelope;
   String? inboxRetryPayload;
@@ -1079,6 +1084,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     quotedMessageId: quotedMessageId,
     logicalDeliveryId: resolvedLogicalDeliveryId,
     keyGeneration: keyEpoch,
+    isForwarded: isForwarded,
     status: 'sending',
     isIncoming: false,
     createdAt: now,
@@ -1112,6 +1118,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       timestamp: now,
       quotedMessageId: quotedMessageId,
       media: mediaJson,
+      isForwarded: isForwarded,
       recipientPeerIds: recipientPeerIds,
       preserveRecipientPeerIds: true,
     );
@@ -1342,6 +1349,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     timestamp: now,
     quotedMessageId: quotedMessageId,
     media: mediaJson,
+    isForwarded: isForwarded,
   );
   bool? inboxResult;
   final inboxStopwatch = Stopwatch()..start();

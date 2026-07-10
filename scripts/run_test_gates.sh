@@ -360,6 +360,24 @@ readonly GROUP_TESTS=(
   "test/core/database/migrations/098_group_media_deletion_journal_test.dart"
   "test/core/lifecycle/group_media_deletion_reconciler_wiring_test.dart"
   "test/core/lifecycle/handle_app_resumed_group_media_cleanup_test.dart"
+  # 236 group received-media forwarding: Forward-offer policy + dispatch-time
+  # source gate, explicit-forward-only provenance, forward-mode picker
+  # filtering/revalidation/caption, coordinator re-encryption + per-target
+  # isolation + owner sentinel, failed-only picker retry, marker through
+  # send/reliable/publish/wire/replay + BOTH durable re-drive callers, live
+  # listener + durable membership buffer, ordinary drain + history-gap
+  # repair, bubble label, and the transport-boundary source contract.
+  "test/features/groups/application/group_media_forward_policy_test.dart"
+  "test/features/groups/application/group_media_forward_intent_test.dart"
+  "test/features/groups/presentation/group_media_forward_flow_test.dart"
+  "test/features/share/application/share_batch_delivery_coordinator_test.dart"
+  "test/features/share/presentation/share_target_picker_wired_test.dart"
+  "test/features/groups/application/send_group_message_use_case_test.dart"
+  "test/features/groups/application/retry_failed_group_messages_use_case_test.dart"
+  "test/features/groups/application/retry_incomplete_group_uploads_use_case_test.dart"
+  "test/features/groups/application/group_message_listener_test.dart"
+  "test/features/groups/application/drain_group_offline_inbox_use_case_test.dart"
+  "test/features/groups/integration/group_forwarding_transport_boundary_test.dart"
 )
 
 readonly POSTS_TESTS=(
@@ -681,6 +699,15 @@ array_contains() {
   return 1
 }
 
+# 236: exact non-vacuous Go legs for group-media forwarding — the bridge
+# JSON->options marker mapping plus the unchanged-node encrypted-extra
+# delivery sentinel (GK030). Wired into BOTH the `groups` and `all` gates.
+run_group_forwarding_go_bridge_gate() {
+  echo "=== Group Forwarding Go Bridge Gate ==="
+  (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge -run '^TestGMF11ForwardedMarkerMapsToPublishOptions$' -count=1)
+  (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run '^TestGK030PublishGroupMessagePreservesExtraFieldsInReceivedEvent$' -count=1)
+}
+
 classify_path() {
   local path="$1"
 
@@ -909,6 +936,7 @@ main() {
       ;;
     groups)
       run_gate_command "Group Messaging Gate" "${GROUP_TESTS[@]}"
+      run_group_forwarding_go_bridge_gate
       ;;
     posts)
       run_gate_command "Posts / Privacy Gate" "${POSTS_TESTS[@]}"
@@ -941,6 +969,7 @@ main() {
       run_gate_command "Feed / Surface Gate" "${FEED_TESTS[@]}"
       run_gate_command "Intro / Reintroduction Gate" "${INTRO_TESTS[@]}"
       run_gate_command "Group Messaging Gate" "${GROUP_TESTS[@]}"
+      run_group_forwarding_go_bridge_gate
       run_gate_command "Posts / Privacy Gate" "${POSTS_TESTS[@]}"
       run_transport_gate
       run_gate_command "Runtime Telemetry Gate" "${RUNTIME_TELEMETRY_TESTS[@]}"

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_app/core/database/helpers/group_media_deletion_journal_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_message_local_deletions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
+import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_storage_manager.dart';
@@ -183,7 +184,7 @@ void main() {
       inMemoryDatabasePath,
       options: OpenDatabaseOptions(singleInstance: false),
     );
-    await runProductionOnCreate(db, 98);
+    await runProductionOnCreate(db, currentIdentityDatabaseVersion);
     root = Directory.systemTemp.createTempSync('gma08_media_root');
     keyStore = _FailableSecureKeyStore();
     fileGateway = _FailableFileGateway();

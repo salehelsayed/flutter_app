@@ -125,6 +125,10 @@ classify_path() {
       record "ignored" "$path" "ignored" "manual Android/iOS group-media-deletion-journal v98 SQLCipher migration proof outside reliability-sim"
       return
       ;;
+    integration_test/group_forwarded_marker_db_proof_test.dart)
+      record "group" "$path" "test" "236 group forwarded-marker v99 SQLCipher migration proof (upgrade/wrong-password/downgrade/reopen)"
+      return
+      ;;
     integration_test/scripts/_android_app_package.dart|\
     integration_test/scripts/routing_smoke_group_criteria.dart|\
     integration_test/setup_device.dart|\

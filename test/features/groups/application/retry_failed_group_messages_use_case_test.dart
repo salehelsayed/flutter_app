@@ -87,6 +87,7 @@ GroupMessage _makeFailedGroupMessage({
   String? inboxRetryPayload,
   String? quotedMessageId,
   String? logicalDeliveryId,
+  bool isForwarded = false,
   List<Map<String, Object?>> media = const [],
 }) {
   final messageJson = {
@@ -115,6 +116,7 @@ GroupMessage _makeFailedGroupMessage({
     keyGeneration: 0,
     status: 'failed',
     isIncoming: false,
+    isForwarded: isForwarded,
     createdAt: DateTime.parse(timestampIso),
     wireEnvelope: jsonEncode({
       'groupId': 'group-1',
@@ -263,6 +265,83 @@ void main() {
         ),
       );
     }
+
+    test('GMF-07R failed group retry preserves forwarded identity', () async {
+      // 236: BOTH durable re-drive callers must rebuild sendGroupMessage with
+      // the row's ORIGINAL marker, message id, logical delivery id, and
+      // timestamp — never a reminted identity or a defaulted-false marker.
+      identityRepo.seed(_makeIdentity());
+      await saveRetryGroupWithMembers();
+      await msgRepo.saveMessage(
+        _makeFailedGroupMessage(
+          id: 'fwd-retry-1',
+          text: 'Forwarded retry',
+          timestampIso: '2026-01-15T12:00:00.000Z',
+          logicalDeliveryId: 'fwd-logical-1',
+          isForwarded: true,
+        ),
+      );
+      await msgRepo.saveMessage(
+        _makeFailedGroupMessage(
+          id: 'ord-retry-1',
+          text: 'Ordinary retry',
+          timestampIso: '2026-01-15T12:01:00.000Z',
+          logicalDeliveryId: 'ord-logical-1',
+        ),
+      );
+
+      final count = await retryFailedGroupMessages(
+        groupMsgRepo: msgRepo,
+        groupRepo: groupRepo,
+        identityRepo: identityRepo,
+        bridge: bridge,
+        mediaAttachmentRepo: mediaRepo,
+      );
+      expect(count, 2);
+
+      Map<String, dynamic> publishPayloadFor(String messageId) {
+        for (final raw in bridge.sentMessages.reversed) {
+          final parsed = jsonDecode(raw) as Map<String, dynamic>;
+          if (parsed['cmd'] != 'group:publish') continue;
+          final payload = parsed['payload'] as Map<String, dynamic>;
+          if (payload['messageId'] == messageId) return payload;
+        }
+        fail('missing group:publish for $messageId');
+      }
+
+      final forwardedPayload = publishPayloadFor('fwd-retry-1');
+      expect(forwardedPayload['isForwarded'], isTrue);
+      expect(forwardedPayload['logicalDeliveryId'], 'fwd-logical-1');
+      expect(
+        forwardedPayload['timestamp'],
+        '2026-01-15T12:00:00.000Z',
+        reason: 'the re-drive keeps the original timestamp',
+      );
+      final ordinaryPayload = publishPayloadFor('ord-retry-1');
+      expect(
+        ordinaryPayload.containsKey('isForwarded'),
+        isFalse,
+        reason: 'an ordinary row must never be re-driven as forwarded',
+      );
+      expect(ordinaryPayload['logicalDeliveryId'], 'ord-logical-1');
+
+      // In-place update: same rows, same identity, no duplicates.
+      final rows = await msgRepo.getMessagesPage('group-1', limit: 50);
+      expect(
+        rows.map((row) => row.id).toSet(),
+        {'fwd-retry-1', 'ord-retry-1'},
+        reason: 'no duplicate row appears after the re-drive',
+      );
+      final forwardedRow = await msgRepo.getMessage('fwd-retry-1');
+      expect(forwardedRow!.isForwarded, isTrue);
+      expect(forwardedRow.logicalDeliveryId, 'fwd-logical-1');
+      expect(
+        forwardedRow.timestamp.toUtc().toIso8601String(),
+        '2026-01-15T12:00:00.000Z',
+      );
+      final ordinaryRow = await msgRepo.getMessage('ord-retry-1');
+      expect(ordinaryRow!.isForwarded, isFalse);
+    });
 
     test('returns 0 when identity is null', () async {
       final count = await retryFailedGroupMessages(

@@ -5,6 +5,7 @@ import 'package:flutter_app/core/database/helpers/group_message_local_deletions_
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
+import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
@@ -3387,7 +3388,7 @@ void main() {
         inMemoryDatabasePath,
         options: OpenDatabaseOptions(singleInstance: false),
       );
-      await runProductionOnCreate(db, 98);
+      await runProductionOnCreate(db, currentIdentityDatabaseVersion);
       keyStore = FakeSecureKeyStore();
       realMsgRepo = GroupMessageRepositoryImpl(
         dbInsertGroupMessage: (row) => dbInsertGroupMessage(db, row),

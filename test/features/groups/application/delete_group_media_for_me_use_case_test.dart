@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/database/helpers/group_media_deletion_journal_db_helpers.dart';
+import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/features/groups/application/delete_group_media_for_me_use_case.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -99,7 +100,7 @@ void main() {
       inMemoryDatabasePath,
       options: OpenDatabaseOptions(singleInstance: false),
     );
-    await runProductionOnCreate(db, 98);
+    await runProductionOnCreate(db, currentIdentityDatabaseVersion);
   });
 
   tearDown(() async {

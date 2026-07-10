@@ -691,6 +691,7 @@ Future<void> _drainGroupInbox({
             'logicalDeliveryId': payload['logicalDeliveryId'],
           if (payload['quotedMessageId'] is String)
             'quotedMessageId': payload['quotedMessageId'],
+          if (payload['isForwarded'] == true) 'isForwarded': true,
           'media': ?media,
         }, rethrowOnError: true);
 
@@ -772,6 +773,7 @@ Future<void> _drainGroupInbox({
             'logicalDeliveryId': payload['logicalDeliveryId'],
           if (payload['quotedMessageId'] is String)
             'quotedMessageId': payload['quotedMessageId'],
+          if (payload['isForwarded'] == true) 'isForwarded': true,
           'media': ?media,
         }, rethrowOnError: true);
         GroupMessage? messageForLocalReceipts;
@@ -821,6 +823,7 @@ Future<void> _drainGroupInbox({
         messageId: wireMessageId,
         logicalDeliveryId: payload['logicalDeliveryId'] as String?,
         quotedMessageId: payload['quotedMessageId'] as String?,
+        isForwarded: payload['isForwarded'] == true,
         media: media,
         mediaAttachmentRepo: mediaAttachmentRepo,
         enforceSelfJoinedAtLowerBound: true,
@@ -1494,6 +1497,7 @@ Future<List<String>> _applyRepairedHistoryMessages({
           'logicalDeliveryId': payload['logicalDeliveryId'],
         if (payload['quotedMessageId'] is String)
           'quotedMessageId': payload['quotedMessageId'],
+        if (payload['isForwarded'] == true) 'isForwarded': true,
         'media': ?media,
       }, msgRepoOverride: msgRepo);
     } else {
@@ -1514,6 +1518,7 @@ Future<List<String>> _applyRepairedHistoryMessages({
         messageId: messageId,
         logicalDeliveryId: payload['logicalDeliveryId'] as String?,
         quotedMessageId: payload['quotedMessageId'] as String?,
+        isForwarded: payload['isForwarded'] == true,
         media: media,
         mediaAttachmentRepo: mediaAttachmentRepo,
         enforceSelfJoinedAtLowerBound: true,

@@ -19,6 +19,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
@@ -69,6 +70,13 @@ class ShareTargetPickerWired extends StatefulWidget {
   final Future<void> Function(ShareBatchDeliveryResult? result)? onClose;
   final Future<void> Function()? preSendReady;
 
+  /// 236: non-null puts the picker in group-media Forward mode. Destinations
+  /// narrow to contacts and writable `GroupType.chat` groups, and Send routes
+  /// through [ShareBatchDeliveryCoordinator.deliverGroupMediaForward] — the
+  /// dispatch reloads and hash-verifies the source identified here instead of
+  /// trusting any picker-carried file path.
+  final GroupMediaForwardRequest? groupMediaForwardRequest;
+
   const ShareTargetPickerWired({
     super.key,
     required this.shareIntent,
@@ -98,6 +106,7 @@ class ShareTargetPickerWired extends StatefulWidget {
     this.appShellController,
     this.onClose,
     this.preSendReady,
+    this.groupMediaForwardRequest,
   });
 
   @override
@@ -106,7 +115,10 @@ class ShareTargetPickerWired extends StatefulWidget {
 
 class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
   late final TextEditingController _captionController = TextEditingController(
-    text: widget.shareIntent.text ?? '',
+    text:
+        widget.groupMediaForwardRequest?.initialCaption ??
+        widget.shareIntent.text ??
+        '',
   );
   late ImageQualityPreference _qualityPreference = widget.qualityPreference;
   late ImageQualityPreference _videoQualityPreference =
@@ -261,6 +273,13 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
     if (group.isArchived || group.isDissolved) {
       return false;
     }
+    // 236: internal group-media forwarding posts only to discussion groups —
+    // announcement targets are excluded even for admins (announcement
+    // authoring stays with its dedicated plans), and QA likewise.
+    if (widget.groupMediaForwardRequest != null &&
+        group.type != GroupType.chat) {
+      return false;
+    }
     if (group.type == GroupType.announcement &&
         group.myRole != GroupRole.admin) {
       return false;
@@ -312,10 +331,18 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
         setState(() => _isSending = false);
         return;
       }
-      final result = await _resolveBatchShareCoordinator().deliver(
-        shareIntent: _buildComposedShareIntent(),
-        targets: targets,
-      );
+      final forwardRequest = widget.groupMediaForwardRequest;
+      final coordinator = _resolveBatchShareCoordinator();
+      final result = forwardRequest != null
+          ? await coordinator.deliverGroupMediaForward(
+              request: forwardRequest,
+              caption: _composedCaption(),
+              targets: targets,
+            )
+          : await coordinator.deliver(
+              shareIntent: _buildComposedShareIntent(),
+              targets: targets,
+            );
 
       if (!mounted) {
         return;
@@ -462,9 +489,13 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
         );
   }
 
-  ShareIntent _buildComposedShareIntent() {
+  String? _composedCaption() {
     final caption = _captionController.text.trim();
-    return widget.shareIntent.copyWith(text: caption.isEmpty ? null : caption);
+    return caption.isEmpty ? null : caption;
+  }
+
+  ShareIntent _buildComposedShareIntent() {
+    return widget.shareIntent.copyWith(text: _composedCaption());
   }
 
   String _buildSummary(ShareBatchDeliveryResult result) {

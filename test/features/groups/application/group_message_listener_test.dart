@@ -491,6 +491,8 @@ class _OrderRecordingReactionRepository extends FakeReactionRepository {
   }
 }
 
+const Object _absentMarker = Object();
+
 void main() {
   late InMemoryGroupRepository groupRepo;
   late InMemoryGroupMessageRepository msgRepo;
@@ -3022,6 +3024,182 @@ void main() {
       expect(delivered.text, 'PGC-009 survives listener restart');
       expect(await msgRepo.getMessage('pgc009-restart-delivered'), isNotNull);
       expect(pendingRepo.messages, isEmpty);
+    },
+  );
+
+  test(
+    'GMF-08 live and membership repair preserve forwarded marker across restart',
+    () async {
+      final pendingRepo = InMemoryGroupPendingMembershipMessageRepository();
+      listener.dispose();
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        pendingMembershipMessageRepo: pendingRepo,
+      );
+      listener.start(sourceController.stream);
+
+      // --- Live decode: an exact wire bool persists typed true; the legacy /
+      // malformed matrix (absent, null, string, int) always decodes false.
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': 'forwarded live',
+        'timestamp': '2026-07-10T12:00:00.000Z',
+        'messageId': 'gmf08-live-fwd',
+        'isForwarded': true,
+      });
+      final legacyMatrix = <String, Object?>{
+        'gmf08-live-absent': _absentMarker,
+        'gmf08-live-null': null,
+        'gmf08-live-string': 'true',
+        'gmf08-live-int': 1,
+      };
+      var tick = 1;
+      for (final entry in legacyMatrix.entries) {
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'text': 'legacy ${entry.key}',
+          'timestamp': '2026-07-10T12:00:0$tick.000Z',
+          'messageId': entry.key,
+          if (!identical(entry.value, _absentMarker))
+            'isForwarded': entry.value,
+        });
+        tick++;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect((await msgRepo.getMessage('gmf08-live-fwd'))!.isForwarded, isTrue);
+      for (final id in legacyMatrix.keys) {
+        final row = await msgRepo.getMessage(id);
+        expect(row, isNotNull, reason: '$id must persist');
+        expect(
+          row!.isForwarded,
+          isFalse,
+          reason: '$id must decode as NOT forwarded',
+        );
+      }
+
+      // --- Durable membership buffer: a forwarded message from a not-yet-
+      // visible member is buffered (not persisted), survives a listener
+      // RESTART through the durable repository, and flushes exactly once with
+      // the typed marker intact once membership arrives.
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-late-fwd',
+        'senderUsername': 'LateForwarder',
+        'keyEpoch': 1,
+        'text': 'forwarded before membership',
+        'timestamp': '2026-07-10T12:01:00.000Z',
+        'messageId': 'gmf08-buffered-fwd',
+        'isForwarded': true,
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(await msgRepo.getMessage('gmf08-buffered-fwd'), isNull);
+      expect(pendingRepo.messages, hasLength(1));
+      expect(
+        pendingRepo.messages.single.payloadJson,
+        contains('"isForwarded":true'),
+        reason: 'the durable buffered payload serializes the typed marker',
+      );
+
+      listener.dispose();
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        pendingMembershipMessageRepo: pendingRepo,
+      );
+      final deliveredFuture = listener.groupMessageStream
+          .where((message) => message.id == 'gmf08-buffered-fwd')
+          .first
+          .timeout(const Duration(seconds: 1));
+      listener.start(sourceController.stream);
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-admin',
+        'senderUsername': 'Admin',
+        'keyEpoch': 0,
+        'messageId': 'gmf08-member-added',
+        'text': jsonEncode({
+          '__sys': 'member_added',
+          'member': {
+            'peerId': 'peer-late-fwd',
+            'username': 'LateForwarder',
+            'role': 'writer',
+            'publicKey': 'pk-late-fwd',
+          },
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'username': 'Admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+              {
+                'peerId': 'peer-sender',
+                'username': 'Sender',
+                'role': 'writer',
+                'publicKey': 'pk-sender',
+              },
+              {
+                'peerId': 'peer-late-fwd',
+                'username': 'LateForwarder',
+                'role': 'writer',
+                'publicKey': 'pk-late-fwd',
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': initialGroupCreatedAt.toIso8601String(),
+          },
+        }),
+        'timestamp': '2026-07-10T12:00:59.000Z',
+      });
+
+      final delivered = await deliveredFuture;
+      expect(delivered.isForwarded, isTrue);
+      await expectPendingMembershipMessageCount(pendingRepo, 0);
+      final flushedRow = await msgRepo.getMessage('gmf08-buffered-fwd');
+      expect(flushedRow!.isForwarded, isTrue);
+      expect(
+        pendingRepo.messages,
+        isEmpty,
+        reason: 'the flushed durable pending record is deleted',
+      );
+
+      // Replaying the SAME wire event after the flush dedups to one row and
+      // the marker survives.
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-late-fwd',
+        'senderUsername': 'LateForwarder',
+        'keyEpoch': 1,
+        'text': 'forwarded before membership',
+        'timestamp': '2026-07-10T12:01:00.000Z',
+        'messageId': 'gmf08-buffered-fwd',
+        'isForwarded': true,
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      final pageAfterReplay = await msgRepo.getMessagesPage(
+        'group-1',
+        limit: 100,
+      );
+      expect(
+        pageAfterReplay.where((row) => row.id == 'gmf08-buffered-fwd'),
+        hasLength(1),
+      );
+      expect(
+        (await msgRepo.getMessage('gmf08-buffered-fwd'))!.isForwarded,
+        isTrue,
+      );
     },
   );
 

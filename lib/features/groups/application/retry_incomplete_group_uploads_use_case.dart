@@ -557,6 +557,7 @@ Future<int> retryIncompleteGroupUploads({
               refreshedMessage.logicalDeliveryId ?? refreshedMessage.id,
           timestamp: refreshedMessage.timestamp,
           quotedMessageId: refreshedMessage.quotedMessageId,
+          isForwarded: refreshedMessage.isForwarded,
           senderDeviceId: currentSenderDeviceId,
           senderTransportPeerId: currentSenderDeviceId,
           mediaAttachments: fullAttachmentList,

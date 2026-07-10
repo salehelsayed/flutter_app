@@ -320,6 +320,7 @@ Future<Map<String, dynamic>> callGroupPublish(
   DateTime? timestamp,
   String? quotedMessageId,
   List<Map<String, dynamic>>? media,
+  bool isForwarded = false,
   Duration timeout = const Duration(seconds: 10),
 }) async {
   emitFlowEvent(
@@ -370,6 +371,9 @@ Future<Map<String, dynamic>> callGroupPublish(
   if (media != null && media.isNotEmpty) {
     payload['media'] = media;
   }
+  if (isForwarded) {
+    payload['isForwarded'] = true;
+  }
 
   final request = {'cmd': 'group:publish', 'payload': payload};
 
@@ -419,6 +423,7 @@ Future<Map<String, dynamic>> callGroupSendReliable(
   DateTime? timestamp,
   String? quotedMessageId,
   List<Map<String, dynamic>>? media,
+  bool isForwarded = false,
   List<String>? recipientPeerIds,
   bool preserveRecipientPeerIds = false,
   Duration timeout = groupSendReliableDefaultTimeout,
@@ -463,6 +468,9 @@ Future<Map<String, dynamic>> callGroupSendReliable(
   }
   if (media != null && media.isNotEmpty) {
     payload['media'] = media;
+  }
+  if (isForwarded) {
+    payload['isForwarded'] = true;
   }
   if (preserveRecipientPeerIds) {
     payload['recipientPeerIds'] = normalizedRecipientPeerIds;

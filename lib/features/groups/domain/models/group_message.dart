@@ -60,6 +60,13 @@ class GroupMessage {
   /// Whether this message was received from another group member.
   final bool isIncoming;
 
+  /// 236: whether this message was created by an explicit internal Forward.
+  ///
+  /// Origin-minimizing: true says only "forwarded" — no source sender, group,
+  /// message, or attachment identity is ever stored or transported with it.
+  /// Legacy rows and absent/malformed wire values decode as false.
+  final bool isForwarded;
+
   /// When the message was read. NULL means unread.
   final DateTime? readAt;
 
@@ -106,6 +113,7 @@ class GroupMessage {
     this.keyGeneration = 0,
     this.status = 'sent',
     this.isIncoming = true,
+    this.isForwarded = false,
     this.readAt,
     required this.createdAt,
     this.media = const [],
@@ -134,6 +142,7 @@ class GroupMessage {
       keyGeneration: map['key_generation'] as int? ?? 0,
       status: map['status'] as String? ?? 'sent',
       isIncoming: (map['is_incoming'] as int? ?? 1) == 1,
+      isForwarded: ((map['is_forwarded'] as num?)?.toInt() ?? 0) == 1,
       readAt: map['read_at'] != null
           ? DateTime.parse(map['read_at'] as String)
           : null,
@@ -166,6 +175,7 @@ class GroupMessage {
       'key_generation': keyGeneration,
       'status': status,
       'is_incoming': isIncoming ? 1 : 0,
+      'is_forwarded': isForwarded ? 1 : 0,
       'read_at': readAt?.toUtc().toIso8601String(),
       'created_at': createdAt.toUtc().toIso8601String(),
       'wire_envelope': wireEnvelope,
@@ -193,6 +203,7 @@ class GroupMessage {
     int? keyGeneration,
     String? status,
     bool? isIncoming,
+    bool? isForwarded,
     Object? readAt = _sentinel,
     DateTime? createdAt,
     List<MediaAttachment>? media,
@@ -224,6 +235,7 @@ class GroupMessage {
       keyGeneration: keyGeneration ?? this.keyGeneration,
       status: status ?? this.status,
       isIncoming: isIncoming ?? this.isIncoming,
+      isForwarded: isForwarded ?? this.isForwarded,
       readAt: readAt == _sentinel ? this.readAt : readAt as DateTime?,
       createdAt: createdAt ?? this.createdAt,
       media: media ?? this.media,
