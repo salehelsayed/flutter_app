@@ -59,6 +59,7 @@ import 'package:flutter_app/features/groups/application/group_received_media_act
 import 'package:flutter_app/features/groups/presentation/widgets/group_media_info_sheet.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
+import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -4857,6 +4858,14 @@ void main() {
     testWidgets('an inserted message survives a concurrent stale page load', (
       tester,
     ) async {
+      const insertedMessageId = 'inserted-during-stale-load';
+      const insertedAttachmentId = 'inserted-during-stale-load-att';
+      final temp = Directory.systemTemp.createTempSync(
+        'group-inserted-stale-load-',
+      );
+      addTearDown(() => temp.deleteSync(recursive: true));
+      final image = File(p.join(temp.path, 'inserted.png'))
+        ..writeAsBytesSync(_tinyPngBytes);
       final group = makeChatGroup();
       await groupRepo.saveGroup(group);
       final staleRepo = StaleReloadGroupMessageRepository();
@@ -4872,18 +4881,41 @@ void main() {
         ),
       );
       await tester.pumpWidget(
-        buildWidget(group: group, messageRepo: staleRepo),
+        buildWidget(
+          group: group,
+          messageRepo: staleRepo,
+          mediaRepo: mediaAttachmentRepo,
+        ),
       );
       await pumpFrames(tester);
 
       staleRepo.holdNextPage();
       await staleRepo.transitionSendingToFailed();
-      await pumpUntil(tester, () => staleRepo.getMessagesPageCalls >= 2);
+      await staleRepo.pageCaptured;
       expect(staleRepo.getMessagesPageCalls, greaterThanOrEqualTo(2));
 
+      await mediaAttachmentRepo.saveAttachment(
+        MediaAttachment(
+          id: insertedAttachmentId,
+          messageId: insertedMessageId,
+          mime: 'image/png',
+          size: image.lengthSync(),
+          mediaType: 'image',
+          width: 1,
+          height: 1,
+          localPath: image.path,
+          downloadStatus: 'done',
+          createdAt: '2026-07-11T10:00:00.000Z',
+          contentHash: _validContentHash,
+          encryptionKeyBase64: 'inserted-stale-load-key',
+          encryptionNonce: 'inserted-stale-load-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        ),
+        owner: MediaOwnerLane.group,
+      );
       await staleRepo.saveMessage(
         makeMessage(
-          id: 'inserted-during-stale-load',
+          id: insertedMessageId,
           text: 'Inserted during stale load',
           groupId: group.id,
           isIncoming: false,
@@ -4901,6 +4933,16 @@ void main() {
       staleRepo.releasePage();
       await pumpFrames(tester, count: 20);
       expect(find.text('Inserted during stale load'), findsOneWidget);
+      final screen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      expect(screen.mediaMap[insertedMessageId], hasLength(1));
+      expect(
+        screen.mediaMap[insertedMessageId]!.single.id,
+        insertedAttachmentId,
+      );
+      expect(find.byType(MediaGrid), findsOneWidget);
+      expect(find.byType(MediaThumbnailImage), findsOneWidget);
     });
 
     testWidgets(

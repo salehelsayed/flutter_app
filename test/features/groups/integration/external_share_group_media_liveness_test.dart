@@ -54,6 +54,28 @@ class _CountingGroupMessages extends InMemoryGroupMessageRepository {
   }
 }
 
+class _HeldParentSaveGroupMessages extends _CountingGroupMessages {
+  _HeldParentSaveGroupMessages(this.heldMessageId);
+
+  final String heldMessageId;
+  final Completer<void> parentSaveStarted = Completer<void>();
+  final Completer<void> releaseParentSave = Completer<void>();
+  bool _held = false;
+
+  @override
+  Future<void> saveMessage(GroupMessage message) async {
+    if (!_held &&
+        message.id == heldMessageId &&
+        !message.isIncoming &&
+        message.status == 'sending') {
+      _held = true;
+      parentSaveStarted.complete();
+      await releaseParentSave.future;
+    }
+    await super.saveMessage(message);
+  }
+}
+
 class _RecordingMedia extends InMemoryMediaAttachmentRepository {
   final List<MediaAttachment> saved = [];
 
@@ -423,11 +445,15 @@ void main() {
         ..writeAsBytesSync(base64Decode(_tinyPngBase64));
       final groups = InMemoryGroupRepository();
       await _seedGroup(groups);
-      final messages = _CountingGroupMessages();
+      const messageId = 'mid-send-first-frame';
+      final messages = _HeldParentSaveGroupMessages(messageId);
       final media = _RecordingMedia();
       final identities = FakeIdentityRepository()..seed(_identity());
       final bridge = _HeldReliableBridge();
       addTearDown(() {
+        if (!messages.releaseParentSave.isCompleted) {
+          messages.releaseParentSave.complete();
+        }
         if (!bridge.releaseReliable.isCompleted) {
           bridge.releaseReliable.complete();
         }
@@ -439,7 +465,6 @@ void main() {
           relayState: 'online',
         ),
       );
-      const messageId = 'mid-send-first-frame';
       final attachment = MediaAttachment(
         id: 'mid-send-first-frame-att',
         messageId: '',
@@ -476,6 +501,24 @@ void main() {
           onError: (Object _, StackTrace _) => deliveryCompleted = true,
         ),
       );
+
+      await messages.parentSaveStarted.future;
+      expect(
+        await messages.getMessage(messageId),
+        isNull,
+        reason: 'the parent save must still be held',
+      );
+      final durableBeforeParent = await media.getAttachmentsForMessage(
+        messageId,
+        owner: MediaOwnerLane.group,
+      );
+      expect(durableBeforeParent, hasLength(1));
+      expect(durableBeforeParent.single.id, attachment.id);
+      expect(durableBeforeParent.single.messageId, messageId);
+      expect(durableBeforeParent.single.downloadStatus, 'done');
+      expect(deliveryCompleted, isFalse);
+
+      messages.releaseParentSave.complete();
       await bridge.reliableStarted.future;
 
       final persistedWhileHeld = await messages.getMessage(messageId);
