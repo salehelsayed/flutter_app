@@ -3,7 +3,7 @@
 Status: ACCEPTED — implementation, required groups gate, and independent QA complete
 Type: New Feature
 Spec: free-text intent — browse and manage received announcement images/videos as a scoped library without weakening announcement authorization
-Classification: accepted
+Classification: implemented / accepted
 Closure tier: host
 
 ## Planning Progress
@@ -86,9 +86,9 @@ Deferred / accepted difference:
 - Selection/cursor/highlight request state is route-local and need not survive process death; durable bookmark/eviction/deletion state reconstructs after restart through existing repositories.
 
 Dependencies:
-- Blocking: `Test-Flight-Improv/237-group-shared-media-library-batch-tdd-plan.md` must be accepted and landed first. It exclusively owns the shared group-library screen/controller, `getMessagesAround` repository capability, typed library result, and conversation merge/highlight receiver.
+- Satisfied: `Test-Flight-Improv/237-group-shared-media-library-batch-tdd-plan.md` is accepted and landed. It owns the shared group-library screen/controller, `getMessagesAround` repository capability, typed library result, and conversation merge/highlight receiver consumed here.
 - Current source provides Plan-227 native egress, Plan-228 DB-v96 library/bookmark persistence, Plan-229 storage/eviction, Plan-230 typed viewer, and Plan-235 DB-v98 group deletion. Plan 239's announcement media policy is now present in source.
-- Plan 241 adds no database migration and no device/relay/Go production boundary. Current identity DB stays v98.
+- Plan 241 adds no database migration and no device/relay/Go production boundary. The accepted stack is on identity DB v99; Plan 235's deletion journal is the v98 artifact.
 
 ## Test Contract
 
@@ -233,16 +233,16 @@ git diff --check
 - [x] New files are registered exactly once in `GROUP_TESTS`; focused, preservation, `groups`, l10n, Go, analyzer-diff and hygiene gates pass.
 - [x] Scope Contract And Guard is respected.
 
-## Handoff
+## Maintenance Handoff
 
-- Current action: wait for/execute Plan 237 first; Plan 241 is no longer parallel-safe with Plan 237 because both otherwise own the same shared query/result/receiver.
-- First causal RED after unblocking: `flutter test test/features/groups/integration/announcement_media_library_repository_test.dart --plain-name 'AML-02 incoming only SQL and cursors exclude outgoing before limit without breaking defaults'`.
+- Current action: maintenance only. Plan 237 is accepted, Plan 241 is accepted, and their shared symbols are stable.
+- Regression command: `flutter test test/features/groups/integration/announcement_media_library_repository_test.dart --plain-name 'AML-02 incoming only SQL and cursors exclude outgoing before limit without breaking defaults'`.
 - Preservation command: `flutter test test/features/groups/application/group_received_media_actions_test.dart --plain-name 'GMA-04 egress reloads exact group owner and delegates only currently eligible media'`.
-- Manual registration: add the eight named Plan-241 test files once to `GROUP_TESTS`; core/l10n tests remain direct preservation commands.
-- Migration: none is intended, but current source is already DB v99 rather than this plan's v98 assumption; refresh inherited migration/version references after Plan 237 closes. `incomingOnly` itself changes query/filter/cursor behavior, not schema.
-- Boundary closure: host-only after Plan 237. Existing Plan-227 native and Plan-235 SQLCipher/device proof are referenced, not rerun.
+- Manual registration: complete; the eight named Plan-241 test files occur once in `GROUP_TESTS`; core/l10n tests remain direct preservation commands.
+- Migration: none. The accepted dependency stack is DB v99; `incomingOnly` changes query/filter/cursor behavior, not schema.
+- Boundary closure: complete and host-only. Existing Plan-227 native and Plan-235 SQLCipher/device proof are referenced, not rerun.
 - Aggregate cadence: no per-plan full `host-all`; run it after `233 -> 237 -> 241` and at final rollout.
-- Unresolved evidence: exact accepted Plan-237 symbol names until its closure lands.
+- Unresolved evidence: none.
 
 ## Execution Progress
 
@@ -253,7 +253,7 @@ git diff --check
 | 2026-07-11 | lean TDD execution | incoming-only repository/cursor/SQL, shared group library/routing/actions, eight Plan-241 tests, gate registration | focused/preservation/Go/analyzer/mutation/Graphify PASS; `groups` FAIL twice | Plan 237 is accepted; implementation is coherent and attributable; required curated lane has unrelated committed baseline failures outside Plan-241 scope | BLOCKED on mandatory gate | repair the four current groups-lane baseline failures in their own scope, rerun `groups`, then resume Plan 241 for finalization |
 | 2026-07-11 | superseding closure | Plan-254 group-send repair plus Plan-241 anchor/tombstone hardening (`f243b2788`, `61cda3415`, `e3e5bfa7d`) | final causal set 14/14; scoped analyzer and diff check clean; `groups` PASS with 1,926 Flutter tests plus Go bridge/node; independent QA ACCEPTED | all previously blocking group-send failures and the final anchor/tombstone counterexamples are closed on the committed tree | ACCEPTED | maintenance only; reopen on a demonstrated regression |
 
-## Execution Result
+## Historical Execution Result (superseded by the closure audit below)
 
 - Final verdict: `blocked`
 - Execution mode: `tdd-exec (helper-assisted)`; one read-only gap audit and one isolated repository/SQL slice. The controller owned UI/application integration, failure triage, review, gates, and verdict.

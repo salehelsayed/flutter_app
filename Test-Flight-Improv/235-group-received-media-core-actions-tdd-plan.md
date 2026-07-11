@@ -3,7 +3,7 @@
 Status: IMPLEMENTED (both slices) — UI slice c88bf7a39; persistence slice complete: DB v98 journal, atomic delete-prepare, cleanup saga, lifecycle wiring, Android+iOS SQLCipher proofs PASSED; production Delete-for-me LIVE
 Type: New Feature
 Spec: free-text intent — add ordinary received-image/video actions to discussion groups without changing announcement or group-delivery semantics
-Classification: prerequisite-blocked
+Classification: implemented / device-proven
 Closure tier: device
 
 ## Planning Progress

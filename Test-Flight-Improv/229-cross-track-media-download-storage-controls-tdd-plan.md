@@ -3,7 +3,7 @@
 Status: implemented (host-green 2026-07-10; see Execution Progress)
 Type: Feature Improvement
 Spec: free-text intent — user-controlled automatic downloads and safe local media storage management for 1:1, discussions, and announcements
-Classification: implementation-ready
+Classification: implemented
 Closure tier: host
 
 ## Planning Progress

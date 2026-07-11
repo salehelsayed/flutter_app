@@ -1,9 +1,9 @@
 # 248 - Signal True Light Theme and Warm Comfort Closure
 
-Status: execution-ready
+Status: implemented — host-complete; physical Pixel acceptance pending
 Type: Modification
 Spec: free-text intent plus artifacts/signal-theme-ui-audit-2026-07-09/README.md
-Classification: implementation-ready
+Classification: implemented / device-acceptance-pending
 Closure tier: device
 
 ## Planning Progress
@@ -388,11 +388,11 @@ trap - EXIT
 - Scope drift: any new preference/storage key, DB version, chooser workflow, layout/density/navigation change, scanner-light change, network/repository/Go edit, or loss of unrelated dirty work blocks completion.
 
 - [ ] All 29 behavior rows have the named automated or manual evidence.
-- [ ] Representative causal mutations are run and re-red at the root binding/restore, palette, background ticker, small-success alpha, overlay literal, and Orbit hint seams.
-- [ ] Focused, family, core/feature host, completeness, and touched-analyzer gates pass with zero new failures/issues.
-- [ ] New tests are AUTO-classified or their narrow required registration is recorded.
+- [x] Representative causal mutations are run and re-red at the root binding/restore, palette, background ticker, small-success alpha, overlay literal, and Orbit hint seams.
+- [x] Focused, family, core/feature host, completeness, and touched-analyzer gates pass with zero new failures/issues.
+- [x] New tests are AUTO-classified or their narrow required registration is recorded.
 - [ ] Pixel 6 scale-1.0 and scale-1.3 artifact checklists pass, secrets are redacted, and font_scale is restored to 1.0.
-- [ ] No migration is introduced and the Scope Contract And Guard is respected.
+- [x] No migration is introduced and the Scope Contract And Guard is respected.
 
 ## Handoff
 
@@ -401,7 +401,7 @@ trap - EXIT
 - Manual registration: TC-248-26 and TC-248-27 in artifacts/signal-theme-ui-acceptance-YYYY-MM-DD/README.md, with every required state PASS at both font scales; only the camera prompt may be N/A with recorded granted=true evidence.
 - Migration: none; no DB version or new SecureKeyStore key.
 - Boundary closure: host unit/widget tests are causal; final closure additionally requires the named single-Pixel visual profile.
-- Unresolved evidence: none at planning time.
+- Unresolved evidence: no design decision remains; TC-248-26/27 physical Pixel evidence and human visual acceptance remain pending.
 
 ## Reviewer Findings
 
@@ -414,4 +414,6 @@ trap - EXIT
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
 | - | not started | - | - | - | awaiting accepted/reviewed plan | contract extraction |
-| 2026-07-10 | ALL host phases DONE | app_theme.dart, app_shell_theme_binding.dart (new), main.dart, background_readable_colors.dart, feed_tokens.dart, daylight_lagoon_background.dart, friend_row/group_row/letter_card, conversation_wired.dart, inner_circle_interactive_surface.dart, connection_status_indicator.dart, both diagnostic cards, en/de/ar ARB + gen-l10n, + all named tests | core-host-all exit 0; feature-host-all 168 pass + 1 sqlite3-github env flake (passes on retry, 112 tests isolated); feed/1to1/groups all "All tests passed"; completeness-check 1076/1076; touched-file `flutter analyze` clean; `git diff --check` clean | All 27 AUTOMATED rows (TC-01..25, 28, 29) GREEN. Each seam's mutation-sensitivity verified (binding-inert→dark RED, palette/ticker RED, 0.7-alpha→2.9:1 RED). No straggler old-literal tests; no external surfaceBorder constructors. | Device TC-26/27 (Pixel 6 24-state visual, scale 1.0/1.3) HANDED OFF — manual aesthetic sign-off + a concurrent session was live-editing android/ios on the shared tree, so a clean device build was deferred. Runbook + checklist at artifacts/signal-theme-ui-acceptance-2026-07-10/README.md. |
+| 2026-07-10 | ALL host phases DONE | app_theme.dart, app_shell_theme_binding.dart (new), main.dart, background_readable_colors.dart, feed_tokens.dart, daylight_lagoon_background.dart, friend_row/group_row/letter_card, conversation_wired.dart, inner_circle_interactive_surface.dart, connection_status_indicator.dart, both diagnostic cards, en/de/ar ARB + gen-l10n, + all named tests | core-host-all exit 0; feature-host-all 168 pass + 1 sqlite3-github env flake (passes on retry, 112 tests isolated); feed/1to1/groups all "All tests passed"; completeness-check 1076/1076; touched-file `flutter analyze` clean; `git diff --check` clean | All 27 AUTOMATED rows (TC-01..25, 28, 29) GREEN. Each seam's mutation-sensitivity verified (binding-inert→dark RED, palette/ticker RED, 0.7-alpha→2.9:1 RED). No straggler old-literal tests; no external surfaceBorder constructors. | Device TC-26/27 (Pixel 6 23-state visual, scale 1.0/1.3) HANDED OFF — manual aesthetic sign-off + a concurrent session was live-editing android/ios on the shared tree, so a clean device build was deferred. Runbook + checklist at artifacts/signal-theme-ui-acceptance-2026-07-10/README.md. |
+| 2026-07-11 | closure status correction | implementation commit `c6d0058a1`; acceptance artifact audit | implementation is committed and host-complete; stale Signal copy assertions were aligned in `f029d131f` | the artifact contains three exploratory captures but all 23 formal checklist rows remain unchecked and its prior provenance claims conflict | keep Plan 248 implemented/device-pending; do not mark accepted until TC-248-26/27 are reproducibly completed at both scales |
+| 2026-07-11 | read-only device acceptance re-audit | physical Pixel 6 `21071FDF600CSC`; installed package/task/APK provenance; 23-row artifact checklist | Pixel is attached at font scale 1.0 and camera permission is granted, but the installed APK differs from the local artifact and the task was entered through `ACTION_SEND_MULTIPLE`; existing images prove 0/23 formal rows, including two mislabeled captures and one unredacted QR | TC-248-26/27 still require a fresh data-preserving production build/install, Settings selection plus cold restore, 46 redacted captures, font-scale restoration, and human visual sign-off at both scales | remain implemented/device-acceptance-pending; do not self-certify qualitative product review |

@@ -3,7 +3,7 @@
 Status: implemented (host-green 2026-07-10)
 Type: Feature Improvement
 Spec: free-text intent — local received image/video parity for announcement recipients (Save, Share, Delete for me, and Info) without granting announcement publish permission
-Classification: implementation-ready
+Classification: implemented
 Closure tier: host
 
 ## Planning Progress

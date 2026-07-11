@@ -3,7 +3,7 @@
 Status: IMPLEMENTED — host-green + device-proven (GMF-06D SQLCipher v99 + GMF-11 real-Go-bridge on emulator-5554, 2026-07-10)
 Type: New Feature
 Spec: free-text intent — forward incoming discussion-group image/video media to contacts or other discussion groups with destination-scoped encryption and no transport-semantic change
-Classification: implementation-ready
+Classification: implemented / device-proven
 Closure tier: device
 
 ## Planning Progress

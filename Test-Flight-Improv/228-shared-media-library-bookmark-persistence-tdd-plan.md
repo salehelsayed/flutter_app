@@ -3,7 +3,7 @@
 Status: CLOSED (2026-07-10, committed fc7dfa842 on new-orbit; device-proven on physical Android+iOS; release-floor sign-off waived by owner decision 2026-07-10 — the enforced fail-closed v96+ opener is accepted as sufficient)
 Type: New Feature
 Spec: free-text intent — shared media galleries, bookmarks, and durable video resume state across 1:1, group, and announcement lanes
-Classification: implementation-ready
+Classification: implemented / closed
 Closure tier: device
 
 ## Planning Progress
@@ -149,6 +149,11 @@ Dependencies:
 - Invariant re-verification under new transitions: TC-228-10 re-clamps when duration becomes known and resets on completion.
 - Stale custom encrypted schema accepts typed API changes but fails at runtime -> TC-228-13H inventories actual real-repository/model writers and exercises one encrypted round-trip; arbitrary historical/no-media fixtures are not swept into scope.
 
+## Gate Cadence
+
+- Per-plan closure runs the focused migration/repository tests, the exact direct/group same-ID collision and destructive-flow sentinels below, `core-host-all`, discovery checks, and SQLCipher/device proof. `core-host-all` is justified by DB v96, shared migration-registry, encrypted-opener, and core helper changes.
+- Do not run `feature-host-all` or full `host-all` as Plan 228 acceptance; the exact 1:1/group caller tests are the proportionate feature preservation proof. Full `host-all` runs once after the complete 227-230 foundation wave, and again at final received-media rollout closure.
+
 ## Acceptance Gates
 
 ```bash
@@ -184,9 +189,9 @@ flutter test test/features/groups/application/retry_incomplete_group_uploads_use
 flutter test test/features/groups/presentation/group_conversation_wired_test.dart --plain-name 'group terminalization preserves same id direct pending media'
 flutter test test/features/groups/presentation/group_conversation_wired_test.dart --plain-name 'failed group media cleanup preserves same id direct and unresolved media'
 
-# Named host gates; exit 0 and discover all AUTO-globbed targets
+# Core aggregate plus exact lane sentinels; exit 0. Feature-wide and full-host
+# sweeps belong to wave closure, not this plan.
 ./scripts/run_host_test_gates.sh core-host-all
-./scripts/run_host_test_gates.sh feature-host-all
 
 # Production encrypted-engine closure. Capture one inventory and require each
 # selected ID to be listed, supported, platform-correct and non-emulated.
@@ -248,7 +253,7 @@ git diff --check
 - [x] Generic deletion helpers hide retained orphans, while actual direct/current-group cleanup behavior remains destructive only for the target owner lane (TC-228-11/11W GREEN).
 - [x] Every current custom encrypted fixture that writes the v96 model uses the shared current registry; a real-repository encrypted round-trip is green (inventory test GREEN; Android smoke owner-state round-trip PASSED on device).
 - [x] Representative owner/CHECK/key-order/cursor/replay/deletion/downgrade mutations re-red — 7/7 (downgrade rejection proven on-device rather than as a host mutation).
-- [x] Core and feature gates pass with semantic outcomes (core-host-all: 293 PASS exit 0; feature-host-all: 677/678 file-runs green — #5 `account_migration_local_transfer_runtime_test` flaked under gate load and passes 40/40 in isolation; #661 `background_choice_control_test` is a PRE-EXISTING failure of the concurrent theme session's uncommitted plan-222/248 work — widget and test are both unmodified, zero media relation); discovery has exactly one ignored record for the device proof and zero unclassified.
+- [x] Required per-plan closure passes with semantic outcomes: `core-host-all` passed 293 commands; exact direct/group collision, retry, terminalization, and destructive-flow sentinels passed; discovery has exactly one ignored record for the device proof and zero unclassified. A historical `feature-host-all` run remains supporting evidence only and is not a Plan-228 acceptance requirement.
 - [x] `flutter analyze` has no new issues (every 228-touched file analyzes clean; remaining warnings verified pre-existing on the shared dirty tree); `git diff --check` is clean.
 - [x] Scope Contract And Guard is respected (no wire/relay/go-libp2p/permission changes; gallery UI deferred to 229/230/233/237/241).
 

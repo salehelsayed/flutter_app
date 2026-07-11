@@ -3,7 +3,7 @@
 Status: accepted (2026-07-11; orchestrated Executor + fix pass 1 + independent QA; host closure complete)
 Type: New Feature
 Spec: free-text intent — announcement recipients forward incoming image/video media to allowed contact/group targets with caption and multi-target controls, without bypassing source or destination publish policy
-Classification: implementation-ready
+Classification: implemented / accepted
 Closure tier: host
 
 ## Planning Progress

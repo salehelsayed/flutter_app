@@ -4,7 +4,7 @@ Status: evidence-gated
 Type: New Feature
 Spec: free-text intent — let an announcement recipient report incoming image/video safely and truthfully without reusing group-message publication
 Classification: evidence-gated
-Closure tier: device
+Closure tier: external-authority/device conditional
 
 ## Planning Progress
 

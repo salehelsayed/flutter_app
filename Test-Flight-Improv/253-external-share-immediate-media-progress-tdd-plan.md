@@ -1,9 +1,9 @@
 # 253 - External Share Immediate Media And Upload Progress
 
-Status: implemented; `ready_for_full_orchestrator` for managed QA and physical replay
+Status: accepted — implementation, physical replay, required feature family, and independent QA complete
 Type: Bug
 Spec: free-text intent plus user screenshot (2026-07-10)
-Classification: implementation-ready after Plan 236 dependency closure
+Classification: implemented / accepted
 Closure tier: device (host causal closure plus one availability-bounded physical-phone replay)
 
 ## Planning Progress
@@ -600,29 +600,29 @@ flutter run --profile -d <PHYSICAL_DEVICE_ID>
   encryption change, progress refactor of in-app/group screens, or weakening of
   Plan 236 source/target gates blocks completion and requires re-plan.
 
-- [ ] Every behavior has a named test or justified proof.
-- [ ] Causal RED and focused GREEN are recorded. After compile REDs are resolved,
+- [x] Every behavior has a named test or justified proof.
+- [x] Causal RED and focused GREEN are recorded. After compile REDs are resolved,
       a behavioral mutation of TC-03's clamp/late-ID rule and TC-04's spinner/
       phase-title rule is applied one at a time, each test re-reds, and both
       mutations are reverted.
-- [ ] Preservation and named gates pass with semantic outcomes.
-- [ ] TC-02 has exactly one executable entry in each 1:1 array; the literal
+- [x] Preservation and named gates pass with semantic outcomes.
+- [x] TC-02 has exactly one executable entry in each 1:1 array; the literal
       per-file `rg -c` assertions pass and the host dry-run lists it.
-- [ ] The committed Plan 236 SHA is recorded before production edits, citations
+- [x] The committed Plan 236 SHA is recorded before production edits, citations
       are re-pinned to it, and TC-09 is GREEN both before and after Plan 253.
-- [ ] `flutter analyze` has no new issues; `git diff --check` is clean.
-- [ ] DP-01 records its discovered target/build/fixture, screen recording, and
+- [x] `flutter analyze` has no new issues; `git diff --check` is clean.
+- [x] DP-01 records its discovered target/build/fixture, screen recording, and
       all progress/SnackBar observations, or the physical leg is explicitly
       `N/A (target unavailable by project policy)` from the resolved live matrix.
-- [ ] Scope Contract And Guard is respected.
+- [x] Scope Contract And Guard is respected.
 
-## Handoff
+## Historical Handoff (superseded by the accepted closure below)
 
 - First causal RED command:
   `flutter test test/features/conversation/application/send_chat_message_use_case_test.dart --plain-name '1:1 media first outgoing change carries renderable attachments in every terminal funnel'`.
 - Preservation command:
   `flutter test test/features/conversation/presentation/screens/conversation_wired_test.dart --plain-name 'shows relay upload progress and blocks leaving mid-upload'`.
-- Manual registration: add
+- Manual registration completed:
   `test/features/share/integration/external_share_media_ux_test.dart` to
   `ONE_TO_ONE_TESTS` in `scripts/run_test_gates.sh` and
   `ONE_TO_ONE_HOST_TESTS` in `scripts/run_host_test_gates.sh`; all other tests
@@ -631,9 +631,9 @@ flutter run --profile -d <PHYSICAL_DEVICE_ID>
 - Boundary closure: TC-01/TC-02 close first-frame ordering at the post-capture
   `ShareIntent` seam; progress closes with host counterexamples plus DP-01's one
   availability-bounded physical share-sheet replay.
-- Unresolved evidence: no behavioral design question remains. Execution is
-  prerequisite-blocked until the user-owned Plan 236 work is committed and its
-  SHA/TC-09 baseline are recorded.
+- Unresolved evidence: none. Plan 236 is committed, both registrations are
+  complete, the required gates and physical replay pass, and the closure audit
+  below is authoritative.
 
 ## Execution Progress
 
@@ -677,50 +677,204 @@ flutter run --profile -d <PHYSICAL_DEVICE_ID>
 
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
-| 2026-07-10 21:20 CEST | registration / gate-plan proof | both gate scripts | both literal `rg -c` assertions exit 0 and the host 1:1 dry-run lists TC-02 exactly at command 66; feature-host plan contains 722 commands | `/tmp/plan-253-executor-registration-assertions.log`, `/tmp/plan-253-executor-registration-dry-run.log`, `/tmp/plan-253-executor-feature-host-plan.log`; an initial shell wrapper failed before assertions because zsh reserves `status`, classified session-caused and corrected with `dry_rc` | inherited PID is at feature item 347/722 and remains non-reusable | continue bounded polling; run fresh TC-09 immediately after exit |
-| 2026-07-10 21:22 CEST | inherited gate settled / fresh proof start | inherited PID `94511`; Plan-236 group-forward sentinel | inherited non-attributable feature gate exited at item 352 with `group_forwarding_transport_boundary_test.dart` failure; artifact remains non-reusable and is classified unrelated to Plan 253 owner files pending the fresh family sweep | Flutter cache is free; no inherited pass/fail is credited | no execution blocker | run exact TC-09 baseline now to `/tmp/plan-253-executor-tc09-baseline.log`, then fresh causal mutations and GREEN sequence |
-| 2026-07-10 21:23 CEST | TC-09 baseline GREEN / causal RED start | Plan-236 group-forward sentinel; `send_chat_message_use_case.dart` mutation boundary | exact TC-09 exits 0 with one semantic pass | `/tmp/plan-253-executor-tc09-baseline.log`; working directory repo root | no blocker | apply bounded live-success first-save mutation, run exact TC-01 and TC-02 expecting non-zero, then restore before any GREEN evidence |
-| 2026-07-10 21:27 CEST | TC-01/TC-02 causal RED restored | `send_chat_message_use_case.dart`; exact TC-01/TC-02 | live-success helper omission re-reds TC-01 with empty first media (`/tmp/plan-253-executor-tc01-mutation-red.log`, exit 1). TC-02 initially stayed GREEN because its fixture selected the inbox-custody funnel; that mutation was classified under-targeted, the inboxed first save was then omitted, and TC-02 re-red with no first-frame thumbnail (`/tmp/plan-253-executor-tc02-mutation-red-corrected.log`, exit 1) | both mutations are restored; census shows all four production first-save funnels use `_saveOutgoingMessageWithMedia`; scoped diff check exits 0 in `/tmp/plan-253-executor-first-save-restoration-diff-check.log` | unrelated Plan-240 groups gate PIDs `27844/27855` now contend for Flutter cache; no Plan-253 mutation remains active | bounded-poll Plan-240 gate; after exit run TC-01/TC-02 GREEN, then TC-03/TC-04 required mutations |
-| 2026-07-10 21:29 CEST | slice-1 GREEN | exact TC-01 and TC-02 after mutation restoration | both commands exit 0 with one semantic pass each; TC-01 exercises all four terminal funnels and TC-02 renders the first-frame thumbnail before attachment-save release | `/tmp/plan-253-executor-tc01-green.log`, `/tmp/plan-253-executor-tc02-green.log`; Plan-240 gate also exited and its result is not credited here | no blocker | run TC-07/TC-08 preservation, then apply one bounded TC-03 strict-ID/clamp mutation and restore |
-| 2026-07-10 21:35 CEST | TC-03 mutations/GREEN plus overlap attribution | coordinator/test plus Plan-240 overlap in coordinator and picker-wired | strict-ID removal and per-upload-clamp widening each re-red TC-03 (`/tmp/plan-253-executor-tc03-strict-id-mutation-red.log`, `/tmp/plan-253-executor-tc03-clamp-mutation-red.log`, exit 1); both restored and scoped diff check exits 0. TC-03 and TC-03B then exit 0 on the merged files | Plan-240 semantic additions are visible in `/tmp/plan-253-executor-overlap-*-compare.diff` and are attributable to the controller-identified Plan-240 command; Plan-253 progress hooks/strict tracker remain intact. Current hashes: coordinator `a7afd06b…`, picker-wired `7a1eec46…`; both mtimes precede TC-03/03B GREEN logs | no patch/merge blocker; preserve attributable Plan-240 additions. A later Plan-240 final groups gate PID `31938` is currently active, so pause new Flutter work | after PID `31938` exits, run TC-04 phase-title mutation, restore, then TC-04/05/06/10/11 GREEN |
-| 2026-07-10 21:36 CEST | tdd-exec commit handoff | Plan 253 owner code/tests/gates, analyzer, graph, physical Pixel 6 | focused files and refreshed `1to1` pass; `feature-host-all` stops at unchanged announcement boundary item 352; profile app launches but shows first-run identity screen | `/tmp/plan-253-1to1-current.log` (1,672 pass), `/tmp/plan-253-feature-host-all.log`, `/tmp/plan-253-analyze.diff`; physical ID `21071FDF600CSC`; graph refreshed incrementally | `ready_for_full_orchestrator`: implementation is commit-ready, but managed QA and DP-01 remain required for acceptance | commit only Plan 253 hunks; preserve concurrent Plan 237/240 and graph work |
+| 2026-07-10 22:12 CEST | exact-commit isolation / clean family start | detached `/tmp/plan-253-executor-c9b1-worktree` at `c9b1ce6cb`; clean base `/tmp/plan-253-executor-b1d0-worktree` at `b1d043eb3` | clean c9b1 focused files pass 137/18/21/16/1 and clean 1:1 passes 1,672; clean analyzer is 1,626 versus base 1,626 with only one line-number shift; exact clean `feature-host-all` is now running | worktree add logs, `/tmp/plan-253-executor-main-vs-c9b1-hashes.log`, five `/tmp/plan-253-executor-clean-c9b1-focused-*.log`, `/tmp/plan-253-executor-clean-c9b1-1to1.log`, both clean analyzer logs and `/tmp/plan-253-executor-clean-analyzer-b1d0-to-c9b1.diff`; family log `/tmp/plan-253-executor-clean-c9b1-feature-host-all.log` | dirty-main failure remains `unrelated-but-required`; clean commit gate is the exact Plan-253 closure proof. No main index/commit mutation by Executor | finish exact clean family gate, then DP-01 build/setup on physical `21071FDF600CSC` plus `emulator-5554` from the c9b1 worktree |
+| 2026-07-10 22:40 CEST | clean feature-family classification | detached c9b1 and b1d0 worktrees; feature items 641, 687, and 701 | item 641 passed after the detached worktree used a symlink to the existing ignored iOS fixture; item 687 `background_choice_control_test.dart` fails identically on b1d0 and c9b1 and its settings/l10n paths are unchanged; inventory 688-705 found only item 701 additionally failing | `/tmp/plan-253-executor-clean-c9b1-feature-item-641-symlink-rerun.log`, `/tmp/plan-253-executor-clean-c9b1-feature-host-all-resume-641-symlink.log`, `/tmp/plan-253-executor-clean-b1d0-background-choice-baseline.log`, `/tmp/plan-253-executor-feature-687-unchanged-path-proof.log`, `/tmp/plan-253-executor-clean-c9b1-feature-host-inventory-688.log` | item 687 is a pre-existing but required family-gate blocker; item 701 requires session attribution | compare exact 6b smoke case at b1d0/c9b1 and correct only Plan-253 test isolation if causal |
+| 2026-07-10 23:18 CEST | smoke isolation correction / GREEN | `test/features/share/integration/share_to_contact_smoke_test.dart` only, in main and c9b1 evidence worktree | exact 6b passes at b1d0 and fails at c9b1 because the new production wake-lock calls an unfaked plugin; added `FakeUploadWakeLockDriver` reset in setUp/tearDown. Exact 6b and full 11-test smoke pass in both trees; clean 1:1 passes 1,672; format and both diff checks pass | `/tmp/plan-253-executor-clean-b1d0-share-smoke-6b.log`, `/tmp/plan-253-executor-clean-c9b1-share-smoke-6b.log`, four `*-smoke-*-fixed*.log`, `/tmp/plan-253-executor-clean-c9b1-1to1-after-smoke-fix.log` | item 701 is resolved by an in-scope test-harness correction; item 687 remains the sole known family blocker | run availability-bounded DP-01 on the discovered Android pair |
+| 2026-07-10 23:34 CEST | DP-01 supporting single-share legs | physical Pixel 6 `21071FDF600CSC`, emulator `emulator-5554`, exact c9b1 production profile APK | automated identities and mutual contacts were provisioned, then exact profile reinstalled. Separate real OS image/video shares each completed; image frames show `Uploading media` then `Sending…`; emulator launched with two unread inbox messages and rendered image/video cards | `/tmp/plan-253-executor-dp01-image-send-recording.mp4`, `/tmp/plan-253-executor-dp01-video-send-recording.mp4`, both contact sheets, `/tmp/plan-253-executor-dp01-emulator-receiver-chat-ui.png` | useful supporting evidence but separate shares do not alone satisfy the required one-batch image+video DP-01 fixture | perform one actual Files/share-sheet multi-select replay |
+| 2026-07-10 23:43 CEST | DP-01 combined physical replay PASS | Files by Google multi-select of `plan253_dp01.jpg` + `plan253_dp01.mp4`; system share sheet; MKnoon profile picker; physical-to-emulator relay | one 3.22 KB image+video selection opened the picker as `+1`; captured frames progress monotonically from `Uploading media` `1.3 KB / 4.5 KB` to localized `Sending…` `4.5 KB / 4.5 KB`, never exceeds 100%, completes/pops to the home route, and shows no SnackBar. Emulator renders the combined image+video message at 23:41 via cellular relay | `/tmp/plan-253-executor-dp01-multi-send-recording.mp4`, `/tmp/plan-253-executor-dp01-multi-send-contact-sheet.jpg`, `/tmp/plan-253-executor-dp01-multi-video-contact-sheet-4-8.jpg`, representative extracted frames 052/056/060, `/tmp/plan-253-executor-dp01-multi-after-ui.xml`, `/tmp/plan-253-executor-dp01-emulator-multi-received-ui.png` | DP-01 satisfied; no device blocker remains. Required `feature-host-all` still cannot pass because of pre-existing item 687 | persist Executor Handoff as not ready for acceptance until item 687 is dispositioned or corrected outside Plan 253 |
+| 2026-07-11 00:17 CEST | independent QA artifact and scope audit | full plan/contract/handoff, both gate scripts, c9b1-vs-b1d0 scoped diff, focused/mutation/registration/analyzer/1to1/smoke/family logs, DP-01 recording contact sheets and receiver frame | direct evidence supports TC-01–TC-11/TC-03B/TC-09, five focused suites, exact registrations, clean 1to1, equal analyzer baseline, smoke isolation fix, and DP-01; clean item 687 fails the same two assertions on b1d0 and c9b1 while relevant settings/l10n paths are unchanged | all `/tmp/plan-253-executor-*` evidence named in the handoff, especially `clean-c9b1-feature-host-all-resume-641-symlink.log`, `clean-b1d0-background-choice-baseline.log`, `clean-c9b1-feature-host-inventory-688.log`, and DP-01 multi-send artifacts | candidate B1: required `feature-host-all` remains red at item 687; no contract allowance makes a pre-existing failure acceptable. No second blocker identified yet | finish dirty/unattributed-change and exact artifact consistency audit, then persist `### Independent QA Review` |
+| 2026-07-11 | superseding closure / required family | blocker fix `f029d131f`; current closure tree through `de0aabfd5` | `./scripts/run_host_test_gates.sh feature-host-all` PASS; all 731 planned commands completed, including item 709 and share items 724–729 | item 709's stale Signal-copy assertions and the reviewed wake-lock smoke isolation are committed; prior causal, 1:1, analyzer, and DP-01 evidence remains valid | B1 cleared; N1 retained as non-blocking historical artifact-name debt | ACCEPTED; maintenance only |
 
-## Execution Result
+## Historical Execution Result (superseded by the closure audit below)
 
-- **Final verdict:** `ready_for_full_orchestrator`
-- **Execution mode:** `tdd-exec (local)`; no helper tasks were delegated.
-- **Assurance mode:** full orchestrator recommended.
-- **Independent QA:** not performed.
-- **Implementation:** first outgoing 1:1 repository publications now carry
-  normalized media; external batch delivery emits strict-ID, clamped cumulative
-  byte/phase progress; the picker uses the shared determinate banner, inline
-  retry-safe outcomes, `PopScope`, and a balanced media wake-lock lifecycle.
-- **Tests added/updated:** TC-01, TC-02, TC-03/03B, TC-04/10, TC-05/06/11,
-  Plan-236 compile adaptations, forward-flow expectations, and exact TC-02
-  registration in both 1:1 arrays.
-- **Causal evidence:** first-publication omissions re-red TC-01/TC-02;
-  strict-ID removal and clamp widening re-red TC-03; the forced circular overlay
-  re-reds TC-04. Every mutation was restored before GREEN evidence.
-- **Focused GREEN:** every named TC-01 through TC-11 command and the full
-  send-use-case, coordinator, picker-screen, picker-wired, external-share, and
-  received-media-forward test files pass. TC-09 passed before and after edits.
-- **Curated GREEN:** `./scripts/run_test_gates.sh 1to1` passes 1,672 tests on
-  the restored current patch (`/tmp/plan-253-1to1-current.log`).
-- **Feature family:** `feature-host-all` passed items 1-351, then stopped at
-  item 352 because `group_forwarding_transport_boundary_test.dart` flags
-  `announcement_media_forward_request.dart`. Neither file differs from Plan 236
-  HEAD, so this is an unrelated baseline failure, not widened into Plan 253
-  (`/tmp/plan-253-feature-host-all.log`).
-- **Analyzer:** 1,626 -> 1,628 issues; both new warnings belong to concurrent
-  `announcement_media_forward_marker_test.dart`. Plan 253 adds zero diagnostics
-  (`/tmp/plan-253-analyze.diff`). `git diff --check` passes.
-- **Graph:** affected context inspected and
-  `./graphify-arch/refresh_arch_graph.sh --incremental` completed; generated
-  graph changes remain unstaged with the concurrent workspace work.
-- **Device:** `flutter run --profile -d 21071FDF600CSC` builds, installs, and
-  launches on the physical Pixel 6. The live app is at first-run identity setup,
-  so no eligible contact exists for DP-01's image+video OS-share replay. This is
-  not an unavailable-target N/A; the managed two-peer fixture/replay remains.
-- **Safety:** safe to commit as an implementation checkpoint, but not safe to
-  call accepted until managed QA, the physical replay, and the required family
-  gate disposition complete under the full orchestrator.
+- **Final verdict:** `blocked`.
+- **Blocker class:** `test_or_gate_failure`.
+- **Invocation topology:** full `implementation-execution-qa-orchestrator`
+  controller with a bounded Executor and a separate independent QA reviewer.
+  One materialization retry was used for each child; local sequential fallback
+  was not used. No fix pass was opened because the sole correction belongs to
+  an unrelated settings/l10n scope outside Plan 253.
+- **Files changed:** Plan-253 production/tests/gate content is isolated in
+  commit `c9b1ce6cb5b319122ff03816fd69963edeb9d89c` against Plan-236 base
+  `b1d043eb34a3844ea16c1fd2cdab439ba11368b5`. The remaining attributable
+  working-tree change is
+  `test/features/share/integration/share_to_contact_smoke_test.dart`, which
+  installs/resets `FakeUploadWakeLockDriver`; this plan contains the persisted
+  controller, Executor, QA, and verdict records. Concurrent dirty files remain
+  outside the execution scope and were not staged, reset, or rewritten.
+- **Tests added/updated:** TC-01 through TC-11 (including TC-03B and TC-09
+  baseline/final), Plan-236 compile/forward-flow adaptations, exact TC-02 gate
+  registration, and the external-share smoke wake-lock fixture.
+- **Evidence ledger — focused and causal:** first-publication omissions re-red
+  TC-01/TC-02; strict-ID removal and clamp widening independently re-red TC-03;
+  title suppression re-red TC-04; every mutation restored GREEN. TC-01–TC-11,
+  TC-03B, TC-09 before/after, registration assertions/dry-run, and the five full
+  focused files pass with 137/18/21/16/1 tests. Primary evidence is under
+  `/tmp/plan-253-executor-tc*-mutation-red*.log`, the corresponding GREEN logs,
+  `/tmp/plan-253-executor-registration-assertions.log`, and
+  `/tmp/plan-253-executor-registration-dry-run.log`.
+- **Evidence ledger — curated/analyzer/hygiene:** from detached clean c9b1,
+  `./scripts/run_test_gates.sh 1to1` passes 1,672 tests after the smoke fix
+  (`/tmp/plan-253-executor-clean-c9b1-1to1-after-smoke-fix.log`). The full smoke
+  file passes 11 tests. Clean b1d0 and c9b1 analyzers both report the same 1,626
+  pre-existing issues, with only a shifted line/timing diff; `git diff --check`
+  passes. These are closure-valid no-regression comparisons, not waived new
+  diagnostics.
+- **Evidence ledger — required family:** in
+  `/tmp/plan-253-executor-c9b1-worktree`,
+  `./scripts/run_host_test_gates.sh feature-host-all` reaches item 687 and fails
+  two assertions in
+  `test/features/settings/presentation/widgets/background_choice_control_test.dart`.
+  The identical exact test fails on clean b1d0, and relevant settings/l10n paths
+  are unchanged by c9b1. Evidence:
+  `/tmp/plan-253-executor-clean-c9b1-feature-host-all-resume-641-symlink.log`
+  and `/tmp/plan-253-executor-clean-b1d0-background-choice-baseline.log`.
+- **Evidence ledger — DP-01:** profile replay on discovered Pixel 6
+  `21071FDF600CSC` and emulator `emulator-5554` passes. A real Files/share-sheet
+  image+video batch visibly progresses from `Uploading media` 1.3/4.5 KB to
+  localized `Sending…` 4.5/4.5 KB, remains monotonic and bounded, closes without
+  a SnackBar, and arrives as one combined relay message. Evidence includes
+  `/tmp/plan-253-executor-dp01-multi-send-recording.mp4`, both contact sheets,
+  final UI dump, and receiver screenshot.
+- **QA findings and disposition:** independent QA confirmed the Plan-253 code,
+  causal proof, registrations, analyzer comparison, curated lane, smoke fix,
+  and device proof. B1 remains blocking because the preflight and governing gate
+  provide no allowance for accepting a required red family gate, even when the
+  failure is inherited. N1 (stale names for three extracted DP frames) is
+  non-blocking because the recording, contact sheets, frames 01–30, UI dump, and
+  receiver screenshot provide the required observation.
+- **Exact blocker:** required `feature-host-all` does not exit 0 at item 687.
+  Correct or formally disposition that test in its owning settings/l10n scope,
+  then rerun the complete
+  `./scripts/run_host_test_gates.sh feature-host-all` command and invoke a fresh
+  independent QA retry. No Plan-253 behavior or device gap remains.
+- **Safety:** the implementation is safe as a tested checkpoint but unsafe to
+  accept or close while a required family gate is red. Graphify was not refreshed
+  again after QA because the orchestrator did not reach acceptance.
+
+### Executor Handoff
+
+- **Executor verdict:** `not_ready_for_independent_QA_acceptance`. Plan 253's
+  causal tests, focused suites, curated `1to1`, analyzer comparison, and DP-01
+  are GREEN, but the required `feature-host-all` family remains blocked at item
+  687 by a pre-existing failure that this plan is not authorized to change.
+- **Commit and isolation:** Plan 236 base is
+  `b1d043eb34a3844ea16c1fd2cdab439ba11368b5`; Plan 253 production/tests/gate
+  commit is `c9b1ce6cb5b319122ff03816fd69963edeb9d89c`. Exact evidence used detached
+  worktrees `/tmp/plan-253-executor-b1d0-worktree` and
+  `/tmp/plan-253-executor-c9b1-worktree`; the latter now contains only the
+  additional uncommitted smoke-test isolation fix described below.
+- **Final Executor-owned working-tree changes:**
+  `test/features/share/integration/share_to_contact_smoke_test.dart` installs
+  and resets `FakeUploadWakeLockDriver` so media smoke cases do not call a real
+  plugin, and this plan records the execution ledger/handoff. The main index is
+  unchanged and empty. Concurrent Plan-240/group work, index/docs, graph files,
+  and all other dirty files remain owner-attributable and untouched.
+- **Causal RED/GREEN ledger:** TC-01 and corrected TC-02 mutations re-red and
+  restore; TC-03 strict-ID and clamp mutations re-red and restore; TC-04 title
+  suppression re-reds and restores. TC-01 through TC-11, TC-03B, TC-09 before
+  and after, the five full focused files (137/18/21/16/1), and registration
+  checks pass. Primary logs are `/tmp/plan-253-executor-tc01-mutation-red.log`,
+  `/tmp/plan-253-executor-tc02-mutation-red-corrected.log`, both TC-03 mutation
+  logs, `/tmp/plan-253-executor-tc04-title-mutation-red.log`, the corresponding
+  `*-green.log` files, `/tmp/plan-253-executor-registration-assertions.log`,
+  and `/tmp/plan-253-executor-registration-dry-run.log`.
+- **Curated gate:** clean c9b1 `./scripts/run_test_gates.sh 1to1` passed 1,672
+  tests before the harness correction and again afterward at
+  `/tmp/plan-253-executor-clean-c9b1-1to1-after-smoke-fix.log`.
+- **Smoke regression correction:** the exact 6b case passes at b1d0 and fails at
+  c9b1 (`expected 1`, `actual 0`) because the new wake-lock reaches the plugin.
+  After the fake-driver reset, exact 6b and the complete 11-test smoke file pass
+  in both main and detached evidence trees. Logs:
+  `/tmp/plan-253-executor-clean-b1d0-share-smoke-6b.log`,
+  `/tmp/plan-253-executor-clean-c9b1-share-smoke-6b.log`, and the four
+  `*-smoke-*-fixed*.log` files.
+- **Analyzer/hygiene:** clean b1d0 and c9b1 analyzers both report 1,626 existing
+  issues; their diff contains only one shifted line and timing. The smoke fix
+  compiles in all tests above. Main and detached `git diff --check` pass.
+  Evidence: `/tmp/plan-253-executor-clean-b1d0-analyze.txt`,
+  `/tmp/plan-253-executor-clean-c9b1-analyze.txt`, and
+  `/tmp/plan-253-executor-clean-analyzer-b1d0-to-c9b1.diff`.
+- **Required family blocker:** clean c9b1 `feature-host-all` passed items 1-686
+  after item 641's ignored iOS fixture was exposed through a symlink, then item
+  687 `background_choice_control_test.dart` failed two copy assertions. The
+  same test fails identically on clean b1d0 and the relevant settings/l10n paths
+  do not differ between b1d0 and c9b1. The original inventory passed every
+  other item in 688-705; its item 701 failure is now covered by the corrected
+  full smoke file and post-fix 1:1 lane. This is
+  `unrelated-but-required`, not waived and not editable under Plan 253.
+- **DP-01 PASS:** live targets were physical Pixel 6 `21071FDF600CSC` (API 36)
+  and Android emulator `emulator-5554` (API 35). The exact Plan-253 production
+  profile APK was built, installed, and used after automated mutual-contact
+  provisioning. Files by Google selected one image+video batch, the system
+  share sheet chose MKnoon, and the profile picker sent to the eligible contact.
+  The fixture files were tiny (3.22 KB selected / 4.5 KB processed total) but
+  remained observable in the screen recording.
+  The recording shows `Uploading media` at `1.3 KB / 4.5 KB`, then localized
+  `Sending…` at `4.5 KB / 4.5 KB`; values are monotonic, never exceed total,
+  completion returns to home, and no SnackBar appears. The emulator renders one
+  combined image+video message via cellular relay. Evidence is the multi-send
+  recording/contact sheets, representative extracted frames, final UI dump,
+  and receiver screenshot listed in the final progress row.
+- **Remaining uncertainty:** no Plan-253 behavior or device observation remains
+  open. Acceptance is blocked solely by the required family gate's inherited
+  item 687 until its owner/controller supplies a valid disposition or fix, then
+  reruns/resumes `feature-host-all` and assigns independent QA.
+- **Graph/index safety:** this Executor did not refresh Graphify, commit, stage,
+  amend, or alter the index. The earlier external `## Execution Result` records a
+  separate tdd-exec graph refresh; this handoff does not claim or repeat it.
+
+### Independent QA Review
+
+- **Verdict:** `blocked` (`test_or_gate_failure`). **B1 is the only blocking
+  finding.** The Plan-253 implementation, focused regressions, registrations,
+  analyzer comparison, curated `1to1`, smoke isolation fix, and DP-01 evidence
+  are otherwise sufficient and coherent.
+- **Scope and behavior audit:** commit `c9b1ce6cb` is attributable against Plan
+  236 base `b1d043eb3`; its caller/callee/test seam consistently carries media
+  on the four first outgoing publications, tracks strict active upload IDs with
+  per-upload clamping and cumulative totals, renders determinate upload/sending
+  state, removes external-picker SnackBars, preserves failed-only retry, and
+  balances route/wake-lock lifecycle. Current main-worktree overlap in the
+  coordinator, wired picker, and `run_test_gates.sh` is concurrent work and was
+  excluded through the detached c9b1 evidence tree; the only additional
+  Plan-253 change is the attributable smoke-test fake wake-lock reset.
+- **Resolved evidence:** TC-01/02/03/04 mutations fail causally and restore;
+  TC-01–TC-11, TC-03B, and TC-09 baseline/final pass. The five clean focused
+  suites pass 137/18/21/16/1 tests; TC-02 occurs exactly once in each 1:1 array
+  and appears in the host dry-run; clean post-smoke-fix `1to1` passes 1,672
+  tests; the full smoke file passes 11 tests; b1d0 and c9b1 analyzer outputs are
+  equal at 1,626 existing issues with only a line-number/timing diff; diff
+  hygiene is clean. Direct inspection of the DP-01 recording/contact sheets,
+  final home UI, and receiver frame confirms the combined `+1` image/video
+  batch, visible `Uploading media` progress followed by `Sending…` at 4.5 KB /
+  4.5 KB, route completion without a SnackBar, and one combined image/video
+  message received via cellular relay.
+- **B1 — blocking / required family gate remains red:** clean
+  `feature-host-all` reaches item 687,
+  `test/features/settings/presentation/widgets/background_choice_control_test.dart`,
+  where two copy assertions fail. The same two assertions fail on clean
+  `b1d043eb3`, and settings/l10n paths are unchanged by `c9b1ce6cb`, so the
+  failure is pre-existing and unrelated; however, the preflight contract and
+  governing gate contain no allowance for accepting a required gate failure.
+  Required disposition: repair/disposition item 687 outside Plan 253, then run
+  the complete required family gate to exit 0. Verification:
+  `./scripts/run_host_test_gates.sh feature-host-all`. Evidence:
+  `/tmp/plan-253-executor-clean-c9b1-feature-host-all-resume-641-symlink.log`
+  and `/tmp/plan-253-executor-clean-b1d0-background-choice-baseline.log`.
+- **N1 — low / stale artifact names:** the handoff names representative DP-01
+  frames `052/056/060`, but those individual files are absent; the recording,
+  contact sheets, frames `01`–`30`, UI dump, and receiver screenshot are present
+  and sufficient, so this does not weaken DP-01. Required disposition: correct
+  the handoff names or retain the referenced frames on the next evidence pass.
+  Verification: `ls /tmp/plan-253-executor-dp01-multi-send-*.png`.
+
+## Closure Audit — 2026-07-11 (supersedes the historical blocked result)
+
+- **Final verdict:** `accepted`.
+- **Blocker disposition:** `f029d131fc72d0850909eee53499bd3b21b5011c` corrected item 709's two stale Signal-copy assertions and committed the already-reviewed `FakeUploadWakeLockDriver` smoke isolation. The commit is test-only and changes no Plan-253 production behavior.
+- **Required family gate:** `./scripts/run_host_test_gates.sh feature-host-all` exited 0 after all 731 planned commands on the closure worktree through `de0aabfd5`. This interactive runner session did not create a standalone log file; the command's final result was `PASS: host tests completed for scope: feature-host-all`.
+- **Independent QA retry:** `accepted`. A bounded closure-delta audit verified the test-only item-709 repair in `f029d131f`, the conditional group/announcement lineage in `21b6b54e2`, the test-only `de0aabfd5` delta, and the complete 731-command family pass. B1 is cleared; N1 remains only non-blocking historical artifact-name debt.
+- **Preserved evidence:** the original causal/mutation suites, exact registrations, 1,672-test `1to1` pass, analyzer parity, and combined image+video DP-01 recording/contact sheets/UI dump/receiver screenshot remain authoritative. No later production commit changed the native intake, first-publication media, progress accounting, picker lifecycle, or device behavior exercised by DP-01.
+- **Graphify:** the original execution already refreshed the Plan-253 production graph. The blocker fix and later Plan-254 acceptance-strengthening commit are test-only, so no additional Plan-253 architecture refresh is required.
+- **Maintenance rule:** keep this plan closed unless immediate first-frame media, bounded upload progress, picker lifecycle protection, or external-share delivery regresses.

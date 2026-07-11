@@ -38,7 +38,7 @@ Conditionally in scope after D-244-01..07:
 - Redact diagnostics and enforce payload byte/type/size/retention rules in one application boundary, not only in UI.
 
 Must preserve:
-- Plan-231 Save/Share/Delete-for-Me/Info/Reply action set remains execution-ready and cannot depend on reporting decisions -> TC-244-01/12.
+- Plan-231 Save/Share/Delete-for-Me/Info/Reply action set remains implemented/host-green and cannot depend on reporting decisions -> TC-244-01/12.
 - Incoming Delete for Me remains local; outgoing Delete for Everyone remains sender-authorized; Block remains its current local relationship operation -> existing `GREEN sentinels` plus TC-244-07.
 - Media source files, rows, encryption keys/nonces, raw local paths, and exported copies remain unchanged unless the user separately confirms an approved Delete-for-Me side effect -> TC-244-03/04/07.
 - Group/discussion/announcement report behavior is not inferred from direct chat -> TC-244-11.
@@ -105,6 +105,12 @@ Dependencies:
 - Destructive-action side effects: TC-244-07 proves confirmation, independent outcomes, whole-message local deletion, and sibling/export preservation.
 - Invariant re-verification under new transitions: eligibility/source existence/consent/auth/idempotency are rechecked at submit/retry, not trusted from menu-open time, in TC-244-03..08.
 
+## Gate Cadence
+
+- After evidence refresh, individual plan closure runs the TC-244 focused policy/controller/UI tests, exact plan-231 and direct-encryption sentinels, the curated `1to1` lane gate, and only the authority/device proof selected by the accepted contract.
+- Do not run `host-all`, `feature-host-all`, or `core-host-all` for Plan 244 closure; reporting authority proof cannot be replaced by a broad local sweep.
+- Run full `host-all` once after the 243-245 extension/reporting wave is complete, and once again at final media-rollout closure.
+
 ## Acceptance Gates
 
 ```bash
@@ -121,11 +127,10 @@ test -f Test-Flight-Improv/231-1to1-received-media-core-actions-tdd-plan.md
 # First causal RED after refresh: N/A while authority/payload/outcome are unspecified
 # Do not use an analytics, Block, Delete, or no-op implementation to force GREEN.
 
-# Preservation baseline after execution-ready plan 231 lands
+# Preservation baseline from implemented plan 231
 flutter test test/features/conversation/presentation/screens/conversation_received_media_actions_test.dart --plain-name 'incoming visual media long press exposes the eligible core action set'
 flutter test test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart
 ./scripts/run_test_gates.sh 1to1
-./scripts/run_host_test_gates.sh 1to1 --list
 
 # Conditional focused and authority gates are added only after refresh
 flutter test test/features/conversation/application/build_received_media_report_test.dart
@@ -146,7 +151,7 @@ git diff --check
 
 - Profile status: authority-blocked. There is no current moderation endpoint/test account/protocol in the repo, so host tests cannot close a user-visible "reported" claim.
 - Required boundary if remote moderation is approved: a dedicated staging/real authority test proves authenticated minimized upload, idempotent replay, rate limiting, typed failure, observable receipt, and approved retention/deletion. The final runner depends on the chosen protocol and must be written into the refreshed plan.
-- Device requirement: not inherently required for a pure Dart authority gateway; add Android/iOS runs only if evidence selection uses native pickers, background transfer, OS credentials, or platform storage. Do not add device ceremony without a native boundary.
+- Device requirement: not inherently required for a pure Dart authority gateway; add runs on applicable targets available at execution time only if evidence selection uses native pickers, background transfer, OS credentials, or platform storage. Unavailable mobile legs are N/A, and no device ceremony is added without a native boundary.
 - Relay requirement: none by default. Reporting must not reuse the messaging relay. If an approved architecture intentionally adds a separate relay/backend component, a separate service/transport plan owns its implementation and real-service proof.
 - Offline branch: if D-244-05 chooses durable background queueing, prove kill/restart/network-loss/recovery on the actual supported runtime and distinguish queued from authority-acknowledged. If it chooses fail-and-retry, TC-244-06 asserts no hidden queue.
 - Registration: use a dedicated `received_media_report_authority_proof_test.dart` exact `1to1` record; do not classify broad messaging/relay suites merely to imply coverage.

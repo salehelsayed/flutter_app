@@ -4,7 +4,7 @@ Status: evidence-gated
 Type: New Feature
 Spec: free-text intent — add truthful, privacy-minimized reporting for incoming discussion-group image/video media after moderation authority and delivery semantics are approved
 Classification: evidence-gated
-Closure tier: device
+Closure tier: external-authority/device conditional
 
 ## Planning Progress
 
@@ -67,7 +67,7 @@ Provisional in scope after every ledger row is accepted:
 - Define deterministic interaction with plan 235 Delete for me and plan 238 consume/expiry so a race cannot capture forbidden bytes, lose an already-authorized report, or resurrect private media.
 
 Must preserve:
-- Plan 235 ordinary Save/Share/Delete-for-me/Info/Reply remains execution-ready and independent; absence/failure of reporting cannot disable it.
+- Plan 235 ordinary Save/Share/Delete-for-me/Info/Reply remains implemented/device-proven and independent; absence/failure of reporting cannot disable it.
 - Group media integrity and path ownership; no report path may weaken viewer/egress/forward gates.
 - Announcement reader/admin behavior and announcement action surface; this plan is discussion-only.
 - Existing group message delivery, group membership/key distribution, relay inbox, retries, and Go node/libp2p unless the accepted destination explicitly requires a separately reviewed transport expansion.
@@ -90,7 +90,7 @@ Deferred / accepted difference:
 - No transport implementation is reserved. A service API, P2P moderator inbox, or relay queue has materially different security/proof needs and must be selected before code.
 
 Dependencies:
-- Plan 230 typed selected-item viewer and implementation-ready plan 235 group media action policy/surfaces.
+- Plan 230 typed selected-item viewer and implemented/device-proven plan 235 group media action policy/surfaces.
 - Plan 238 accepted lifecycle policy if reports may include or outlive private media; otherwise the ledger must explicitly prohibit that behavior.
 - Product/trust/safety/security/legal approval for every Evidence Decision Ledger row.
 - A controlled destination/receipt fixture and any required device/relay topology selected by that approval.
@@ -129,7 +129,7 @@ Dependencies:
 3. Verify plans 230/235 and any required accepted plan-238 lifecycle contract. Snapshot `git status --short`; add TC-245-01 as the first executable RED.
 4. Add pure capability/authorization/payload policies and confirmation UI before gateway/storage implementation. Prove exact field allowlist/redaction and ordinary-action independence.
 5. Implement only the approved dedicated gateway, evidence crypto/access, retention, abuse control, outbox/idempotency, and receipt states. Stop on any need to reuse ordinary group publish or expand unapproved Go/libp2p scope.
-6. Integrate accepted lifecycle/delete ordering, add real authority/device/relay proof and discovery, then run focused/mutation/preservation/family/analyzer/hygiene gates.
+6. Integrate accepted lifecycle/delete ordering, add real authority/device/relay proof and discovery, then run focused/mutation/preservation tests, the curated `groups` lane gate, analyzer, and hygiene.
 
 ## Risks And Blind Spots
 
@@ -144,6 +144,12 @@ Dependencies:
 - Destructive-action side effects: approved report cleanup must not delete source/sibling/exported data; plan-235 Delete for me remains independently scoped -> TC-245-04/10.
 - Invariant re-verification under new transitions: membership, rate, media integrity/lifecycle, consent, and authority availability revalidate at submit/retry rather than action-render time.
 - Announcement regression -> TC-245-12 hard lane sentinel.
+
+## Gate Cadence
+
+- After evidence refresh, individual plan closure runs TC-245 focused tests, exact ordinary-action/announcement sentinels, the curated `groups` lane gate, and the selected real authority plus available-device/relay proof.
+- Do not run `host-all`, `feature-host-all`, or `core-host-all` for Plan 245 closure; broad host coverage cannot substitute for the approved authority boundary.
+- Run full `host-all` once after the 243-245 extension/reporting wave is complete, and once again at final media-rollout closure.
 
 ## Acceptance Gates
 
@@ -177,7 +183,6 @@ flutter test test/features/groups/integration/group_media_report_transport_bound
 flutter test test/features/groups/application/group_received_media_action_policy_test.dart
 flutter test test/features/groups/presentation/group_conversation_wired_test.dart --plain-name 'announcement'
 ./scripts/run_test_gates.sh groups
-./scripts/run_host_test_gates.sh feature-host-all
 
 # Destination/migration/device commands are intentionally absent until TC-245-00 selects them;
 # refresh this section before implementation and require that real boundary for closure.
@@ -207,7 +212,7 @@ git diff --check
 - Green sentinels: plan-235 ordinary action capability, group integrity, local deletion, and announcement read/write behavior remain green.
 - Pre-existing dirty tree / known failure: record from execution-time snapshot; do not absorb unrelated changes.
 - Evidence blocker: any unresolved ledger/destination/proof row keeps the plan evidence-gated; no fake gateway or developer-selected authority can clear it.
-- Environment blocker: unavailable selected authority/device/relay/SQLCipher fixture blocks its corresponding required proof and final closure.
+- Environment blocker: an unavailable selected authority/relay/SQLCipher fixture blocks its corresponding proof; unavailable mobile target legs are N/A by project policy, while failures on selected available targets remain blockers.
 - Scope drift: ordinary group publish, raw evidence, new migration/version, Go/libp2p, announcement reporting, moderation case UI, or receipt wording outside accepted evidence requires replanning.
 
 - [ ] Evidence Decision Ledger has accepted owner/date/user wording/proof profile for every row.
@@ -218,7 +223,7 @@ git diff --check
 - [ ] Queue/retry/idempotency/status behavior is durable and truthful if selected.
 - [ ] Delete/private lifecycle races preserve only authorized state and never resurrect media.
 - [ ] Real authority proof closes encryption, deduplication, receipt, and retention claims.
-- [ ] Ordinary actions, announcements, group/feature gates, analyzer, and hygiene pass.
+- [ ] Ordinary actions, announcements, the curated `groups` gate, analyzer, and hygiene pass.
 - [ ] Scope Contract And Guard is respected.
 
 ## Handoff

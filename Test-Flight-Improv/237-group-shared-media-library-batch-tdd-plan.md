@@ -3,7 +3,7 @@
 Status: IMPLEMENTED — accepted; independent QA and host closure green
 Type: New Feature
 Spec: free-text intent — add a paged discussion-group media library with cross-message viewing, batch actions, bookmarks, and Go to message
-Classification: implemented
+Classification: implemented / accepted
 Closure tier: host
 
 ## Planning Progress

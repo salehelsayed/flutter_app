@@ -1,9 +1,9 @@
 # 252 - Introduction Acceptance Notification Copy And Chat Routing
 
-Status: execution-ready
+Status: implemented — host/relay complete; D1/D2 device acceptance pending
 Type: Feature Improvement
 Spec: free-text intent (2026-07-10)
-Classification: implementation-ready
+Classification: implemented / device-acceptance-pending
 Closure tier: device
 Review verdict: ready (2026-07-10); core bet confirmed; disposition execute
 
@@ -634,9 +634,11 @@ section after the test relay is running the Plan 252 relay build.
   self-controlled D1 physical-Android-introducer and D2
   emulator-Android-introducer notification/tap proof. iOS-as-introducer
   render/tap remains explicit N/A by choice, not implied parity.
-- Unresolved evidence: none blocking. Runtime provenance of the originally
+- Unresolved product evidence: none. Runtime provenance of the originally
   observed `New Message` is unnecessary because TC-01 covers the confirmed
-  missing-copy fallback and TC-02 covers recognized acceptance pushes.
+  missing-copy fallback and TC-02 covers recognized acceptance pushes. Final
+  device closure remains blocked on a staging relay running the Plan-252 build
+  and an uncontended available Android pair, as recorded below.
 - Independent `$tdd-review` is complete; the source-grounded deltas are included
   above and no unresolved user-owned decision remains.
 

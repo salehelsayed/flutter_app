@@ -1,9 +1,9 @@
 # 233 - 1:1 Shared Media Library And Batch Actions
 
-Status: execution-ready
+Status: accepted — implementation and closure evidence complete
 Type: New Feature
 Spec: free-text intent — a paged direct-conversation media library with filters, bookmarks, cross-message viewing, Go to Message, and safe batch actions
-Classification: implementation-ready
+Classification: implemented / accepted
 Closure tier: host
 
 ## Planning Progress
@@ -203,13 +203,13 @@ git diff --check
 - Environment blocker: none for this host composition/result-handling slice; plan 227 independently closes single and bounded-list native egress on physical Android/iOS.
 - Scope drift: any migration, payload, group/announcement permission, download automation, Bridge/P2P/relay, or Go edit blocks completion.
 
-- [ ] Every behavior has a named causal test or explicit sentinel.
-- [ ] Strict direct scope/filter/cursor paging, unresolved/hidden/deleted exclusion, cross-message viewing/actions, scoped-page-only bookmarks, ten-item selection, current-row-qualified egress, confirmed sibling-safe delete outcomes, Go to Message, missing state, virtualization, and localization pass.
-- [ ] New direct tests occur exactly once in both 1:1 arrays and the host planner lists all six.
-- [ ] Representative stale-page, stale-egress-snapshot, out-of-page bookmark, over-cap, confirmation bypass, per-attachment delete, null-parent synthesis, infinite-page, eager-build, and forbidden-import mutations re-red.
-- [ ] Existing direct pagination/delete/viewer sentinels and the curated `1to1` gate pass.
-- [ ] `flutter analyze` has no new issues; `git diff --check` and Go/relay no-diff guard are clean.
-- [ ] Scope Contract And Guard is respected.
+- [x] Every behavior has a named causal test or explicit sentinel.
+- [x] Strict direct scope/filter/cursor paging, unresolved/hidden/deleted exclusion, cross-message viewing/actions, scoped-page-only bookmarks, ten-item selection, current-row-qualified egress, confirmed sibling-safe delete outcomes, Go to Message, missing state, virtualization, and localization pass.
+- [x] New direct tests occur exactly once in both 1:1 arrays and the host planner lists all six.
+- [x] Representative stale-page, stale-egress-snapshot, out-of-page bookmark, over-cap, confirmation bypass, per-attachment delete, null-parent synthesis, infinite-page, eager-build, and forbidden-import mutations re-red.
+- [x] Existing direct pagination/delete/viewer sentinels and the curated `1to1` gate pass.
+- [x] `flutter analyze` has no new issues; `git diff --check` and Go/relay no-diff guard are clean.
+- [x] Scope Contract And Guard is respected.
 
 ## Handoff
 
@@ -224,10 +224,19 @@ git diff --check
 
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
-| - | not started | - | - | - | awaiting accepted plan and dependencies 227–231 | contract extraction |
+| - | historical pre-execution snapshot | - | - | - | superseded by the six completed slices below | retained for chronology |
 | 2026-07-10 | Slice 1 (TC-233-01/02/14/15) | `direct_media_library_controller.dart`, `direct_shared_media_library_screen.dart`, wired menu entry, 3-locale ARB keys, boundary test, new wired pagination sentinel | first causal RED: TC-233-01 compile-fails (library route/screen absent); then focused GREEN | strict `MediaLibraryScope.direct` construction, literal limit 50, filter-bound opaque cursors, stale-fence; pagination sentinel GREEN on unmodified HEAD before wired edits | stale-result + cursor-across-filter mutations re-red (fixture reordered so the cursor is live at the filter switch) | slice 2 |
 | 2026-07-10 | Slice 2 (TC-233-03/04/05/12/17) | viewer `onPageChanged` (additive), viewer host + exact-current-item actions, scoped-page-only bookmarks, truthful unavailable states | focused GREEN; both plan-230 viewer sentinels GREEN | cross-message identity, fenced lazy continuation with dedup, ID-based `setBookmarked` provenance, unresolved/group rows never render | first-item-dispatch + out-of-page-bookmark mutations re-red | slice 3 |
 | 2026-07-10 | Slice 3 (TC-233-06/07/16) | `qualifyCurrentDirectMediaRow` extracted from plan-231 controller (231 suite GREEN unchanged), `DirectMediaLibraryBatchActionsCoordinator`, ten-item ceiling | focused GREEN | one list-capable native call per dispatch, merged preflight+native per-item outcomes, failed-only retry, `kMaxDirectMediaSelection == kMaxMediaEgressItems` | synthesized-parent, over-cap, Files→Photos, clear-all mutations re-red | destructive slice |
 | 2026-07-10 | Slice 4 (TC-233-08, destructive checkpoint) | `deleteDirectMediaSelectionForMe`, confirmation dialog, wired production dispatch | focused GREEN; `delete_message_use_case_test` GREEN | cancel = zero lookups; one `getMessage` per unique parent; one delete per resolved parent; missing parent = typed failure, stays selected; same-ID group/unresolved rows+files and exports survive | confirmation-bypass, per-attachment fan-out, null-parent-synthesis mutations re-red | Go to Message |
 | 2026-07-10 | Slice 5 (TC-233-09/10/11) | wired `_goToLibraryMessage` (serial bounded paging, truthful missing settle, transient highlight), reveal delegate seam, `ConversationScreen.highlightedMessageId` | focused GREEN | loaded target: zero extra pages, exact key, highlight clears; unloaded: serial gated pages, stop-on-match; missing: call count == available pages, truthful snackbar | early-stop + ignore-hasMore mutations re-red | closure gates |
 | 2026-07-10 | Slice 6 (TC-233-13 + closure) | 1,000-entry virtualization + en/de/ar + RTL + semantics; six files registered in both 1:1 arrays; host planner lists all six | `run_test_gates.sh 1to1` GREEN after fix; `flutter analyze` clean for all plan files; `git diff --check` clean; Go/relay untouched | eager-Column and forbidden-import mutations re-red; 231 frozen transport inventory preserved by routing BOTH delete paths through the single `_deleteMessageForMeLocally` call site | none | committed |
+
+## Closure Audit
+
+- Final verdict: `accepted`.
+- Implementation commit: `a28525db7` (`feat(233): ship direct shared media library and batch actions`).
+- The six execution slices above remain the authoritative implementation ledger; no additional production work was needed during closeout.
+- Fresh closeout sentinel: `flutter test test/features/conversation/presentation/screens/conversation_shared_media_library_test.dart` passed 5/5 on the current tree.
+- Required implementation-time evidence remains green: the focused suites, exact dual registration, curated `1to1` gate, scoped analyzer comparison, hygiene checks, and mutation re-reds recorded above.
+- Blocking issues remaining: none. Plans 249–251 continue to own multi-item internal Forward and are not reopened by this closure.

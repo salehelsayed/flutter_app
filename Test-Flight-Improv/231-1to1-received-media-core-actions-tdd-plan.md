@@ -3,7 +3,7 @@
 Status: implemented (host-green)
 Type: Feature Improvement
 Spec: free-text intent — direct-chat incoming image/video viewer and bubble parity for Save, Share, Delete for Me, Info, and Reply
-Classification: implementation-ready
+Classification: implemented
 Closure tier: host
 
 ## Planning Progress

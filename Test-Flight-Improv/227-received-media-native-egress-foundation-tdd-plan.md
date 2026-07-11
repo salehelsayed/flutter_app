@@ -1,9 +1,9 @@
 # 227 - Received Media Native Egress Foundation
 
-Status: execution-ready
+Status: accepted — implementation, native proof, and closure evidence complete
 Type: New Feature
 Spec: free-text intent — save one or more received images/videos to the phone and share them through the OS without changing messaging transport
-Classification: implementation-ready
+Classification: implemented / accepted
 Closure tier: device
 
 ## Planning Progress
@@ -113,6 +113,11 @@ Dependencies:
 - Cross-version risk -> TC-227-09/11 causally split Android API 24-28 from 29+ while the available API 29+ target closes the real scoped OS boundary; unavailable API bands are N/A rather than closure blockers. TC-227-10 plus deployment-target compilation closes the iOS 13 fallback while TC-227-06 closes the available iOS boundary.
 - Partial/destructive output -> TC-227-11 covers pending publication, invocation-scoped rollback, collision preservation, successful siblings, and source hashes.
 - Sibling-surface consistency -> lane plans own action parity/policy; TC-227-08 keeps the foundation surface-neutral and transport/persistence-write-free.
+
+## Gate Cadence
+
+- Per-plan closure runs the focused Dart/native tests, exact preservation sentinels, `core-host-all`, discovery checks, and the availability-bounded device proof below. `core-host-all` is justified because this plan changes app-wide core media egress and platform service contracts.
+- Do not run full `host-all` or `feature-host-all` as Plan 227 acceptance. Full `host-all` runs once after the complete 227-230 foundation wave, and again at final received-media rollout closure; those aggregate runs are wave/release evidence, not per-plan evidence.
 
 ## Acceptance Gates
 
@@ -228,7 +233,7 @@ git diff --check
 - Production entry points: add the Dart egress types/service/gateway/channel and canonical ownership validation under `lib/core/media/`; add isolated Android egress handler/coordinator/provider support with registration-only edits to `MainActivity.kt`, the manifest, restricted FileProvider XML, and required Gradle/native support; add an isolated iOS coordinator with registration-only `AppDelegate.swift` edits and least-privilege `Info.plist` changes. No database, message transport, relay, Go, or lane UI changes are owned here.
 - Test and proof entry points: own the new `received_media_egress_service_test.dart`, `received_media_egress_channel_test.dart`, `received_media_egress_transport_boundary_test.dart`, Kotlin `ReceivedMediaEgressNativeTest`, Swift `ReceivedMediaEgressCoordinatorTests`, the focused manifest assertion in `share_intent_android_test.dart`, deterministic integration fixtures, the native proof stepper, the separate Android URI-reader receiver/installer, asset registration, and the exact discovery classifier.
 - Regression-first contract: record TC-227-01 through TC-227-04 and TC-227-08 RED before Dart production implementation; TC-227-09/11/12 before Android implementation; TC-227-10/11 before iOS implementation. Preserve the first compile RED and representative mutation re-reds for ownership containment, missing Android read grant, early MediaStore publish, iOS move export, and double completion.
-- Direct and aggregate gates: run every literal command in Acceptance Gates that the environment can satisfy, including focused Dart tests, Android Gradle native tests, iOS simulator XCTest, preservation tests, `core-host-all`, exact discovery assertions, physical scoped-Android and iOS deny/allow proof, `flutter analyze`, and `git diff --check`. Record semantic outcomes, not command names alone.
+- Direct and per-plan gates: run every literal command in Acceptance Gates that the environment can satisfy, including focused Dart tests, Android Gradle native tests, iOS simulator XCTest, preservation tests, `core-host-all`, exact discovery assertions, physical scoped-Android and iOS deny/allow proof, `flutter analyze`, and `git diff --check`. The 227-230 wave runner, not this plan executor, owns the post-wave full `host-all`. Record semantic outcomes, not command names alone.
 - Known-failure policy: analyzer debt is acceptable only when a clean baseline comparison proves it is unrelated and no new issue was introduced. A failure on an available selected target requires triage; an unavailable device/version is N/A by project policy and never a blocker. Implementation/test failures are `code_blocker`; stale or underpowered required proof is `evidence_gap`.
 - Scoped worktree ownership: preserve all pre-existing Signal-theme changes and untracked theme/mockup files. This execution may modify only Plan 227's plan/progress surface and the production, native, test, fixture, asset, receiver, installer, discovery, and platform-registration seams enumerated above. Any overlap is inspected and merged without discarding user work.
 - Done criteria: all applicable checkboxes in Execution Interpretation And Done Criteria are evidenced; no source media is mutated; no broad path/permission, transport, persistence writer, or unmanaged staging is introduced; required graphs are refreshed after code edits; an independent QA pass returns no code blocker or evidence gap; and every availability-bounded device row passes before an `accepted` verdict.

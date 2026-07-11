@@ -54,7 +54,7 @@ Provisional in scope after every ledger row is accepted:
 
 Must preserve:
 - Single-item/single-source Forward remains plan 240 and does not wait for this batch feature -> TC-251-01.
-- Plan-241 library Save/Share/Bookmark/Clear/Delete remains execution-ready and contains no hidden batch-forward assumptions -> TC-251-01/10.
+- Accepted Plan 241 library Save/Share/Bookmark/Clear/Delete remains independently complete and contains no hidden batch-forward assumptions -> TC-251-01/10.
 - Direct and group marker privacy/legacy/retry semantics remain plans 232/236 -> TC-251-06/11.
 - Announcement reader write denial and destination send-time authorization remain Flutter/Go sentinels -> TC-251-05/10.
 
@@ -73,9 +73,9 @@ Deferred / accepted difference:
 - If accepted retry durability requires new generic share-operation persistence, allocate it in a separately reviewed migration owner after a fresh ledger check; this evidence-gated plan reserves no version.
 
 Dependencies:
-- `Test-Flight-Improv/241-announcement-shared-media-library-batch-tdd-plan.md` supplies the scoped selection surface but no Forward behavior.
-- `Test-Flight-Improv/240-announcement-received-media-forwarding-tdd-plan.md` supplies single-source eligibility, picker/target policy, caption modes and announcement no-source-publish adapter.
-- `Test-Flight-Improv/232-1to1-received-media-forwarding-tdd-plan.md` and `Test-Flight-Improv/236-group-received-media-forwarding-tdd-plan.md` supply direct/group markers, privacy and retry contracts.
+- Accepted `Test-Flight-Improv/241-announcement-shared-media-library-batch-tdd-plan.md` supplies the scoped selection surface but no Forward behavior.
+- Accepted `Test-Flight-Improv/240-announcement-received-media-forwarding-tdd-plan.md` supplies single-source eligibility, picker/target policy, caption modes and announcement no-source-publish adapter.
+- Accepted `Test-Flight-Improv/232-1to1-received-media-forwarding-tdd-plan.md` and implemented/device-proven `Test-Flight-Improv/236-group-received-media-forwarding-tdd-plan.md` supply direct/group markers, privacy and retry contracts.
 - Product decisions in this plan's Evidence Decision Ledger are blocking dependencies.
 
 ## Test Contract
