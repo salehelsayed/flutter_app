@@ -84,7 +84,10 @@ void main() {
         expect(stored, hasLength(1));
         expect(stored.single.id, message.id);
         expect(stored.single.status, 'failed');
-        expect(p2pService.storeInInboxCallCount, 1);
+        // Unknown presence starts one concurrent durable attempt. When that
+        // attempt fails, the bounded sequential fallback retries once; both
+        // failures must still converge on the same persisted message row.
+        expect(p2pService.storeInInboxCallCount, 2);
 
         p2pService.dispose();
       },
@@ -144,7 +147,9 @@ void main() {
         p2pService.emitState(onlineState);
         await Future.delayed(const Duration(seconds: 6));
 
-        final recoveredRows = await messageRepo.getMessagesForContact('peer-bob');
+        final recoveredRows = await messageRepo.getMessagesForContact(
+          'peer-bob',
+        );
         expect(recoveredRows, hasLength(1));
         expect(recoveredRows.single.id, failedId);
         // 115 relay-inbox custody: bare storeInInbox success is custody, not
@@ -153,8 +158,8 @@ void main() {
         expect(recoveredRows.single.transport, 'inbox');
         expect(
           p2pService.storeInInboxCallCount,
-          2,
-          reason: 'One failed initial inbox handoff plus one successful retry',
+          3,
+          reason: 'Two failed initial inbox attempts plus one successful retry',
         );
 
         retrier.dispose();

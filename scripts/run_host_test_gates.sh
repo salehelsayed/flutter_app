@@ -355,11 +355,11 @@ readonly GO_NODE_ADDR_VISIBILITY_RUN='AnnouncedAddrsSurvive|SignedPeerRecord|Ide
 print_command_for_path() {
   local path="$1"
   if is_go_bridge_connected_peer_test "$path"; then
-    printf '(cd go-mknoon && go test ./bridge -run TestGroupSendReliable_ReportsConnectedTopicPeerCount -count=1)'
+    printf '(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge -run TestGroupSendReliable_ReportsConnectedTopicPeerCount -count=1)'
     return
   fi
   if is_go_node_keyrotation_test "$path"; then
-    printf "(cd go-mknoon && go test ./node -run 'UDME|EmitGroupDecryptionFailed|GroupTopicValidator|HandleGroupSubscription|GroupKey|DecryptGroupEnvelopePayload|KeyRotation' -count=1)"
+    printf "(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run 'UDME|EmitGroupDecryptionFailed|GroupTopicValidator|HandleGroupSubscription|GroupKey|DecryptGroupEnvelopePayload|KeyRotation' -count=1)"
     return
   fi
   if is_go_node_addr_visibility_test "$path"; then
@@ -392,11 +392,11 @@ print_command_for_path() {
 run_path() {
   local path="$1"
   if is_go_bridge_connected_peer_test "$path"; then
-    (cd go-mknoon && go test ./bridge -run TestGroupSendReliable_ReportsConnectedTopicPeerCount -count=1)
+    (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge -run TestGroupSendReliable_ReportsConnectedTopicPeerCount -count=1)
     return
   fi
   if is_go_node_keyrotation_test "$path"; then
-    (cd go-mknoon && go test ./node -run 'UDME|EmitGroupDecryptionFailed|GroupTopicValidator|HandleGroupSubscription|GroupKey|DecryptGroupEnvelopePayload|KeyRotation' -count=1)
+    (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run 'UDME|EmitGroupDecryptionFailed|GroupTopicValidator|HandleGroupSubscription|GroupKey|DecryptGroupEnvelopePayload|KeyRotation' -count=1)
     return
   fi
   if is_go_node_addr_visibility_test "$path"; then
