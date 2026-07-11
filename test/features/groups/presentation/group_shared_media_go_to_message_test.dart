@@ -714,6 +714,31 @@ void main() {
         ('group-a', 'm02', 25, 25),
       ]);
 
+      // AML-06: a bounded repository failure is an unavailable target, not a
+      // route exception and not permission to retain/replay the prior anchor.
+      messageRepository.failNextAround = true;
+      await openLibraryAndSelect(['target-40']);
+      pressAction(const ValueKey('group-shared-media-action-goto'));
+      await _pumpFrames(tester, count: 30);
+      expect(find.byType(GroupInfoScreen), findsNothing);
+      expect(find.byType(GroupSharedMediaLibraryScreen), findsNothing);
+      expect(
+        identical(
+          mountedConversation,
+          tester.element(find.byType(GroupConversationWired)),
+        ),
+        isTrue,
+      );
+      final unavailableScreen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      expect(unavailableScreen.highlightedMessageId, isNull);
+      expect(find.byKey(const ValueKey('grp-highlight-m02')), findsNothing);
+      expect(find.byKey(const ValueKey('grp-highlight-m40')), findsNothing);
+      expect(tester.takeException(), isNull);
+      expectNoDeliveryCalls();
+      expect(messageRepository.aroundCalls.last, ('group-a', 'm40', 25, 25));
+
       await tester.pumpWidget(const SizedBox.shrink());
       listener.dispose();
     },
@@ -1152,6 +1177,7 @@ class _NestedRouteMessageRepository extends InMemoryGroupMessageRepository
     implements GroupMessageAroundRepository {
   final List<GroupMessage> _seeded = [];
   final List<(String, String, int, int)> aroundCalls = [];
+  bool failNextAround = false;
 
   @override
   Future<void> saveMessage(GroupMessage message) async {
@@ -1168,6 +1194,10 @@ class _NestedRouteMessageRepository extends InMemoryGroupMessageRepository
     int after = 25,
   }) async {
     aroundCalls.add((groupId, anchorMessageId, before, after));
+    if (failNextAround) {
+      failNextAround = false;
+      throw StateError('simulated bounded anchor query failure');
+    }
     if (before < 0 || before > 25 || after < 0 || after > 25) {
       throw ArgumentError('before and after must each be 0..25');
     }

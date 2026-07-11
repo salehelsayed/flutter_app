@@ -143,6 +143,39 @@ void main() {
 
   group('GroupReceivedMediaActionsController', () {
     test(
+      'GMA-04 locally tombstoned parent refuses single Save and Share even when its row survives',
+      () async {
+        await messageRepo.saveMessage(message());
+        final relative = writeMediaFile('att-1');
+        await mediaRepo.saveAttachment(
+          attachment(localPath: relative),
+          owner: MediaOwnerLane.group,
+        );
+        messageRepo.seedLocalDeletion(messageId: messageId, groupId: groupId);
+
+        expect(await messageRepo.getMessage(messageId), isNotNull);
+        expect(await messageRepo.getLocalDeletionGroupId(messageId), groupId);
+
+        final saved = await controller.save(
+          groupId: groupId,
+          messageId: messageId,
+          attachmentId: 'att-1',
+        );
+        final shared = await controller.share(
+          groupId: groupId,
+          messageId: messageId,
+          attachmentId: 'att-1',
+        );
+
+        expect(saved.performed, isFalse);
+        expect(saved.refusalReason, 'parent_missing');
+        expect(shared.performed, isFalse);
+        expect(shared.refusalReason, 'parent_missing');
+        expect(egress.calls, isEmpty);
+      },
+    );
+
+    test(
       'GMA-04 egress reloads exact group owner and delegates only currently eligible media',
       () async {
         // --- Eligible current row: exact candidate reaches the service.
@@ -327,7 +360,11 @@ void main() {
           p.join(FakeMediaFileManager.testRootPath, goneRelative),
         ).deleteSync();
         await mediaRepo.saveAttachment(
-          attachment(id: 'att-gone', parent: 'msg-gone', localPath: goneRelative),
+          attachment(
+            id: 'att-gone',
+            parent: 'msg-gone',
+            localPath: goneRelative,
+          ),
           owner: MediaOwnerLane.group,
         );
         await expectRefused(

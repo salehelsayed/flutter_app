@@ -69,6 +69,15 @@ Future<GroupMediaCurrentRowDecision> qualifyCurrentGroupMediaRow({
   if (parent.groupId != groupId) {
     return const GroupMediaCurrentRowDecision.refused('wrong_group');
   }
+  final tombstoneGroupId = await messageRepository.getLocalDeletionGroupId(
+    messageId,
+  );
+  if (tombstoneGroupId == groupId) {
+    // The durable local-deletion tombstone is visibility authority even if a
+    // stale/replayed parent row survives beside it. Treat that parent exactly
+    // like an absent row so neither single nor batch egress can export it.
+    return const GroupMediaCurrentRowDecision.refused('parent_missing');
+  }
   if (!parent.isIncoming) {
     return const GroupMediaCurrentRowDecision.refused('not_incoming');
   }

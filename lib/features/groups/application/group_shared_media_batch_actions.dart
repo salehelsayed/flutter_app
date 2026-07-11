@@ -337,6 +337,12 @@ class GroupSharedMediaBatchActionsCoordinator {
     if (parent.groupId != identity.groupId) {
       return (attachment: null, reason: 'wrong_group');
     }
+    final tombstoneGroupId = await messageRepository.getLocalDeletionGroupId(
+      identity.messageId,
+    );
+    if (tombstoneGroupId == identity.groupId) {
+      return (attachment: null, reason: 'parent_missing');
+    }
     if (!parent.isIncoming) {
       return (attachment: null, reason: 'not_incoming');
     }

@@ -53,6 +53,22 @@ void main() {
         isEmpty,
       );
       expect(repository.completers, isEmpty);
+
+      final failed = loadGroupSharedMediaAnchorWindow(
+        repository: repository,
+        currentGroupId: 'announcement-a',
+        requestedGroupId: 'announcement-a',
+        messageId: 'target',
+      );
+      expect(repository.completers, hasLength(1));
+      repository.completers.single.completeError(
+        StateError('simulated bounded anchor query failure'),
+      );
+      expect(
+        await failed,
+        isEmpty,
+        reason: 'repository failures settle unavailable instead of escaping',
+      );
     },
   );
 }

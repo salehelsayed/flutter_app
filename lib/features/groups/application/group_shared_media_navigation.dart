@@ -33,12 +33,21 @@ Future<List<GroupMessage>> loadGroupSharedMediaAnchorWindow({
   required String messageId,
 }) async {
   if (requestedGroupId != currentGroupId) return const [];
-  final window = await repository.getMessagesAround(
-    currentGroupId,
-    messageId,
-    before: 25,
-    after: 25,
-  );
+  late final List<GroupMessage> window;
+  try {
+    window = await repository.getMessagesAround(
+      currentGroupId,
+      messageId,
+      before: 25,
+      after: 25,
+    );
+  } catch (_) {
+    // Navigation is best-effort and must never turn a repository/query failure
+    // into a synthesized row, a stale highlight, or an uncaught route error.
+    // The mounted conversation treats an empty answer as unavailable and
+    // clears any active shared-media anchor state.
+    return const [];
+  }
   if (window.length > 51 ||
       window.any((message) => message.groupId != currentGroupId) ||
       !window.any((message) => message.id == messageId)) {

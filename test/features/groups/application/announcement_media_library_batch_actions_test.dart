@@ -90,6 +90,46 @@ void main() {
   );
 
   test(
+    'AML-08 tombstoned surviving parent stays ordered and never reaches batch egress',
+    () async {
+      final messages = _RecordingMessages();
+      final media = InMemoryMediaAttachmentRepository();
+      final egress = _RecordingEgress();
+      for (var i = 0; i < 3; i++) {
+        await _seed(messages, media, i);
+      }
+      messages.seedLocalDeletion(messageId: 'm1', groupId: 'announcement-a');
+      expect(await messages.getMessage('m1'), isNotNull);
+
+      final coordinator = GroupSharedMediaBatchActionsCoordinator(
+        messageRepository: messages,
+        mediaAttachmentRepository: media,
+        egressService: egress,
+        mediaFileManager: FakeMediaFileManager(),
+        fileExists: (_) async => true,
+      );
+
+      final result = await coordinator.performBatchEgress(
+        identities: [_identity(0), _identity(1), _identity(2)],
+        destination: MediaEgressDestination.files,
+      );
+
+      expect(result.items.map((item) => item.attachmentId), ['a0', 'a1', 'a2']);
+      expect(result.succeededIds, {'a0', 'a2'});
+      expect(result.failedIds, {'a1'});
+      expect(
+        result.items[1].denial,
+        GroupSharedMediaPreflightDenial.parentMissing,
+      );
+      expect(egress.calls, hasLength(1));
+      expect(egress.calls.single.map((candidate) => candidate.attachmentId), [
+        'a0',
+        'a2',
+      ]);
+    },
+  );
+
+  test(
     'AML-09 bookmark and clear return ordered mixed results and preserve durable siblings',
     () async {
       final messages = InMemoryGroupMessageRepository();
@@ -132,6 +172,49 @@ void main() {
       ]);
       expect(cleared.failedIds, {'a1'});
       expect(cleared.succeededIds, {'a0', 'a2'});
+    },
+  );
+
+  test(
+    'AML-09 tombstoned surviving parent blocks Bookmark and Clear side effects',
+    () async {
+      final messages = InMemoryGroupMessageRepository();
+      final media = InMemoryMediaAttachmentRepository();
+      final state = _RecordingStateRepository();
+      final clearCalls = <String>[];
+      await _seed(messages, media, 1);
+      messages.seedLocalDeletion(messageId: 'm1', groupId: 'announcement-a');
+      expect(await messages.getMessage('m1'), isNotNull);
+
+      final coordinator = GroupSharedMediaBatchActionsCoordinator(
+        messageRepository: messages,
+        mediaAttachmentRepository: media,
+        egressService: ReceivedMediaEgressService(),
+        mediaFileManager: FakeMediaFileManager(),
+        stateRepository: state,
+        clearLocalCopy:
+            ({required scope, required attachmentId, required mime}) async {
+              clearCalls.add(attachmentId);
+              return MediaClearLocalCopyResult.cleared;
+            },
+      );
+
+      final bookmarked = await coordinator.performBatchBookmark(
+        identities: [_identity(1)],
+        bookmarked: true,
+      );
+      final cleared = await coordinator.performBatchClear(
+        identities: [_identity(1)],
+      );
+
+      expect(bookmarked.succeededIds, isEmpty);
+      expect(bookmarked.failedIds, {'a1'});
+      expect(bookmarked.items.single.reason, 'parent_missing');
+      expect(state.bookmarkWrites, isEmpty);
+      expect(cleared.succeededIds, isEmpty);
+      expect(cleared.failedIds, {'a1'});
+      expect(cleared.items.single.reason, 'parent_missing');
+      expect(clearCalls, isEmpty);
     },
   );
 }
