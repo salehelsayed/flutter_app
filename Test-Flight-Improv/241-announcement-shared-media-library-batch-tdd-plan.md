@@ -1,9 +1,9 @@
 # 241 - Announcement Shared-Media Library And Batch Actions
 
-Status: IMPLEMENTED — focused/preservation proof green; required groups gate blocked by pre-existing failures
+Status: ACCEPTED — implementation, required groups gate, and independent QA complete
 Type: New Feature
 Spec: free-text intent — browse and manage received announcement images/videos as a scoped library without weakening announcement authorization
-Classification: blocked
+Classification: accepted
 Closure tier: host
 
 ## Planning Progress
@@ -223,15 +223,15 @@ git diff --check
 - Environment blocker: N/A after Plan 237 lands. Native Save/Share and SQLCipher v98 boundaries are inherited; no simulator/device/relay proof is repeated.
 - Scope drift: parallel Plan-237 implementation, a new query/result/receiver, schema/version change, UI direction filtering, >10 selection, viewer Clear, raw group delete, attachment-only delete, or transport change blocks completion.
 
-- [ ] Plan 237 is accepted/landed first and its exact shared symbols replace any provisional names in this plan.
-- [ ] TC-241-01 through TC-241-11 have causal or preservation evidence and representative mutation re-reds.
-- [ ] Incoming-only is SQL-before-limit, cursor-bound and backward compatible; outgoing admins, wrong groups, tombstones, direct and unresolved rows are absent.
-- [ ] The real Library -> Group Info -> Conversation path handles old/repeat/invalid targets, races, resume and group changes without duplicate/wrong highlights.
-- [ ] Every multi-select action accepts at most 10 and cap+1 causes zero side effects; Clear is grid-only and Forward absent.
-- [ ] Save/Share makes one native call after complete current-row qualification; Bookmark/Clear results are ordered/mixed/retryable.
-- [ ] Delete uses `DeleteGroupMediaForMeUseCase`/DB v98 with cancellation, whole-message sibling behavior, parent dedupe/cap, partial isolation, overlap safety and other-parent preservation.
-- [ ] New files are registered exactly once in `GROUP_TESTS`; focused, preservation, `groups`, l10n, Go, analyzer-diff and hygiene gates pass.
-- [ ] Scope Contract And Guard is respected.
+- [x] Plan 237 is accepted/landed first and its exact shared symbols replace any provisional names in this plan.
+- [x] TC-241-01 through TC-241-11 have causal or preservation evidence and representative mutation re-reds.
+- [x] Incoming-only is SQL-before-limit, cursor-bound and backward compatible; outgoing admins, wrong groups, tombstones, direct and unresolved rows are absent.
+- [x] The real Library -> Group Info -> Conversation path handles old/repeat/invalid targets, races, resume and group changes without duplicate/wrong highlights.
+- [x] Every multi-select action accepts at most 10 and cap+1 causes zero side effects; Clear is grid-only and Forward absent.
+- [x] Save/Share makes one native call after complete current-row qualification; Bookmark/Clear results are ordered/mixed/retryable.
+- [x] Delete uses `DeleteGroupMediaForMeUseCase` on the current DB-v99 schema with cancellation, whole-message sibling behavior, parent dedupe/cap, partial isolation, overlap safety and other-parent preservation.
+- [x] New files are registered exactly once in `GROUP_TESTS`; focused, preservation, `groups`, l10n, Go, analyzer-diff and hygiene gates pass.
+- [x] Scope Contract And Guard is respected.
 
 ## Handoff
 
@@ -251,6 +251,7 @@ git diff --check
 | 2026-07-10 | tdd-exec prerequisite preflight | Plan 237 status/result, shared query/result sources, GML-10 path, DB version | exact Plan-241 prerequisite block: 2 pass, 3 fail | dirty source contains provisional query/result types; Plan 237 still says implementation not started; GML-10 is absent; DB is v99 rather than the plan's v98 assertion | BLOCKED; no Plan-241 RED or production edit permitted | execute and accept Plan 237, then refresh Plan 241 against its landed symbols and DB-v99 contract |
 | 2026-07-10 | tdd-exec resume audit | Plan 237 durable result, shared query/result sources, current GML-10 test, DB version | acceptance check FAIL; source symbol checks PASS; contracted GML-10 name FAIL with an unaccepted current equivalent present; DB remains v99 | Plan 237 is implemented and host-green but persists `ready_for_full_orchestrator`; its own nested-route criterion remains unchecked pending independent counterexample review | BLOCKED; the prerequisite has advanced but is not accepted | finish Plan-237 orchestrated acceptance, then refresh Plan 241 against the accepted route proof and DB-v99 contract |
 | 2026-07-11 | lean TDD execution | incoming-only repository/cursor/SQL, shared group library/routing/actions, eight Plan-241 tests, gate registration | focused/preservation/Go/analyzer/mutation/Graphify PASS; `groups` FAIL twice | Plan 237 is accepted; implementation is coherent and attributable; required curated lane has unrelated committed baseline failures outside Plan-241 scope | BLOCKED on mandatory gate | repair the four current groups-lane baseline failures in their own scope, rerun `groups`, then resume Plan 241 for finalization |
+| 2026-07-11 | superseding closure | Plan-254 group-send repair plus Plan-241 anchor/tombstone hardening (`f243b2788`, `61cda3415`, `e3e5bfa7d`) | final causal set 14/14; scoped analyzer and diff check clean; `groups` PASS with 1,926 Flutter tests plus Go bridge/node; independent QA ACCEPTED | all previously blocking group-send failures and the final anchor/tombstone counterexamples are closed on the committed tree | ACCEPTED | maintenance only; reopen on a demonstrated regression |
 
 ## Execution Result
 
@@ -272,3 +273,13 @@ git diff --check
 - Remaining failures: outgoing inserted-event observation; two send-media persistence expectations; failed-media retry. Exact focused reruns remain red in `/tmp/plan241-groups-rerun-triage.log`.
 - Failure classification: unrelated-but-required/pre-existing. None of the failing production/test files was changed by Plan 241; the send-media expectations conflict with the current committed send path. The plan does not allow a nonzero groups gate, and repairing messaging delivery would violate its transport scope guard.
 - Blocking issue: repair those four groups-lane baseline failures in their owning plan, rerun the full `groups` gate, then resume this plan for final review/finalization. The implementation is not safe to call accepted until that mandatory gate exits 0.
+
+## Closure Audit — 2026-07-11 (supersedes the historical blocked result)
+
+- **Final verdict:** `accepted`.
+- **Owning commits:** shared library/announcement implementation `21b6b54e2`; egress and anchor hardening `61cda3415`; final fail-closed anchor/tombstone repair `e3e5bfa7d`. Plan-254 commit `f243b2788` repaired the unrelated group-send failures that had blocked this plan's required lane.
+- **Final causal proof:** the last-fix combined set passed 14/14, including repository-query failure clearing on the production Library -> Info -> same mounted Conversation route and surviving-row local-deletion tombstones across single/batch Save, Share, Bookmark, and Clear. Scoped analyzer and `git diff --check` were clean.
+- **Required curated gate:** `./scripts/run_test_gates.sh groups` passed on the final source tree with 1,926 Flutter tests and both Go bridge/node packages green.
+- **Independent QA:** accepted with no remaining functional blocker. The reviewer verified fail-closed anchor navigation, no stale highlight or delivery bypass, and tombstone authority before every native or local-write side effect.
+- **Schema correction:** Plan 241 adds no migration; the accepted dependency stack runs on DB v99. Historical v98 references above describe the original planning snapshot only.
+- **Maintenance rule:** keep this plan closed unless a real regression reintroduces announcement outgoing rows, wrong-group/tombstoned media, cap bypass, destructive side effects, or stale/wrong Go-to-message highlights.
