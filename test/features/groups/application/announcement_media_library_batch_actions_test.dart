@@ -52,6 +52,44 @@ void main() {
   );
 
   test(
+    'AML-08 lifecycle-restricted current row stays ordered and never reaches batch egress',
+    () async {
+      final messages = _RecordingMessages();
+      final media = InMemoryMediaAttachmentRepository();
+      final egress = _RecordingEgress();
+      for (var i = 0; i < 3; i++) {
+        await _seed(messages, media, i);
+      }
+      final coordinator = GroupSharedMediaBatchActionsCoordinator(
+        messageRepository: messages,
+        mediaAttachmentRepository: media,
+        egressService: egress,
+        mediaFileManager: FakeMediaFileManager(),
+        isEgressRestricted: (attachment) => attachment.id == 'a1',
+        fileExists: (_) async => true,
+      );
+
+      final result = await coordinator.performBatchEgress(
+        identities: [_identity(0), _identity(1), _identity(2)],
+        destination: MediaEgressDestination.files,
+      );
+
+      expect(result.items.map((item) => item.attachmentId), ['a0', 'a1', 'a2']);
+      expect(result.succeededIds, {'a0', 'a2'});
+      expect(result.failedIds, {'a1'});
+      expect(
+        result.items[1].denial,
+        GroupSharedMediaPreflightDenial.lifecycleRestricted,
+      );
+      expect(egress.calls, hasLength(1));
+      expect(egress.calls.single.map((candidate) => candidate.attachmentId), [
+        'a0',
+        'a2',
+      ]);
+    },
+  );
+
+  test(
     'AML-09 bookmark and clear return ordered mixed results and preserve durable siblings',
     () async {
       final messages = InMemoryGroupMessageRepository();

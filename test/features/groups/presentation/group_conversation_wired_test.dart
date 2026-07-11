@@ -8507,6 +8507,80 @@ void main() {
     );
 
     testWidgets(
+      'in-flight old-group listener hydration cannot mutate a reused conversation widget',
+      (tester) async {
+        final groupA = makeChatGroup();
+        final groupB = makeChatGroup().copyWith(
+          id: 'group-2',
+          name: 'Second Group',
+          topicName: 'topic-2',
+        );
+        await groupRepo.saveGroup(groupA);
+        await groupRepo.saveGroup(groupB);
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-group-b-stable',
+            text: 'Group B stable',
+            groupId: groupB.id,
+          ),
+        );
+        final gatedMedia = GateFirstSingleMediaReadRepository();
+
+        await tester.pumpWidget(
+          buildWidget(group: groupA, mediaRepo: gatedMedia),
+        );
+        await pumpFrames(tester, count: 20);
+
+        const oldAttachment = MediaAttachment(
+          id: 'old-group-held-media',
+          messageId: 'old-group-held-message',
+          mime: 'image/png',
+          size: 1,
+          mediaType: 'image',
+          localPath: 'media/group-1/held.png',
+          downloadStatus: kMediaDownloadStatusDone,
+          contentHash: _validContentHash,
+          encryptionKeyBase64: 'key-fixture',
+          encryptionNonce: 'nonce-fixture',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          createdAt: '2026-07-11T10:00:00.000Z',
+        );
+        await gatedMedia.saveAttachment(
+          oldAttachment,
+          owner: MediaOwnerLane.group,
+        );
+        final oldMessage = makeMessage(
+          id: 'old-group-held-message',
+          text: 'Old group held update',
+          groupId: groupA.id,
+          media: const [oldAttachment],
+        );
+        await msgRepo.saveMessage(oldMessage);
+        gatedMedia.armed = true;
+        messageStreamController.add(oldMessage);
+        await pumpUntil(tester, () => gatedMedia.firstReadCaptured.isCompleted);
+        expect(gatedMedia.firstReadCaptured.isCompleted, isTrue);
+
+        await tester.pumpWidget(
+          buildWidget(group: groupB, mediaRepo: gatedMedia),
+        );
+        await pumpFrames(tester, count: 10);
+        gatedMedia.releaseFirstRead.complete();
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.messages.map((message) => message.id), [
+          'msg-group-b-stable',
+        ]);
+        expect(screen.mediaMap.containsKey('old-group-held-message'), isFalse);
+        expect(find.text('Old group held update'), findsNothing);
+        expect(find.text('Group B stable'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
       'read marking requires foreground lifecycle and matching active group key',
       (tester) async {
         final group = makeChatGroup();

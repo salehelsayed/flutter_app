@@ -1,16 +1,21 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/received_media_egress.dart';
+import 'package:flutter_app/core/media/received_media_egress_gateway.dart';
+import 'package:flutter_app/core/media/received_media_egress_service.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_library.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/direct_received_media_action_sheet.dart';
 import 'package:flutter_app/features/groups/application/group_media_delete_for_me_coordinator.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_received_media_actions.dart';
 import 'package:flutter_app/features/groups/application/group_shared_media_navigation.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -160,6 +165,266 @@ void main() {
         await dbLoadGroupMessagesAround(fixture.db, 'group-a', 'sql-foreign'),
         isEmpty,
       );
+    },
+  );
+
+  testWidgets(
+    'AML-08 production library rechecks lifecycle restriction before batch Save and Share',
+    (tester) async {
+      tester.view.physicalSize = const Size(600, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      const pathProviderChannel = MethodChannel(
+        'plugins.flutter.io/path_provider',
+      );
+      final documentsRoot = Directory.systemTemp.createTempSync(
+        'aml08-production-wiring-',
+      );
+      addTearDown(() => documentsRoot.deleteSync(recursive: true));
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            pathProviderChannel,
+            (_) async => documentsRoot.path,
+          );
+      const nativeEgressChannel = MethodChannel(receivedMediaEgressChannelName);
+      var nativeEgressCalls = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(nativeEgressChannel, (call) async {
+            nativeEgressCalls++;
+            final request = Map<Object?, Object?>.from(call.arguments as Map);
+            final destination = request['destination'];
+            final items = (request['items'] as List).cast<Map>();
+            return <String, Object?>{
+              'requestId': request['requestId'],
+              'outcome': destination == 'share' ? 'presented' : 'saved',
+              'items': destination == 'share'
+                  ? const <Object?>[]
+                  : [
+                      for (final item in items)
+                        <String, Object?>{
+                          'attachmentId': item['attachmentId'],
+                          'outcome': 'saved',
+                        },
+                    ],
+            };
+          });
+      addTearDown(() {
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(pathProviderChannel, null);
+        messenger.setMockMethodCallHandler(nativeEgressChannel, null);
+      });
+      final tinyPng = base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      );
+
+      Future<void> exercise({required bool save}) async {
+        final suffix = save ? 'save' : 'share';
+        var lifecycleRestricted = false;
+        final group = GroupModel(
+          id: 'announcement-$suffix',
+          name: 'Lifecycle proof $suffix',
+          type: GroupType.announcement,
+          topicName: 'lifecycle-proof-$suffix',
+          createdAt: DateTime.utc(2026, 7, 11),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.admin,
+        );
+        final groups = InMemoryGroupRepository();
+        await groups.saveGroup(group);
+        final messages = InMemoryGroupMessageRepository();
+        final entries = [
+          groupMediaEntry(
+            'control-$suffix',
+            messageId: 'control-message-$suffix',
+            mime: 'image/png',
+            downloadStatus: 'done',
+            localPath: 'media/${group.id}/control-$suffix.png',
+          ),
+          groupMediaEntry(
+            'guarded-$suffix',
+            messageId: 'guarded-message-$suffix',
+            mime: 'image/png',
+            downloadStatus: 'done',
+            localPath: 'media/${group.id}/guarded-$suffix.png',
+          ),
+        ];
+        final media = _NestedRouteMediaRepository(
+          StrictGroupMediaLibraryRepository(
+            expectedGroupId: group.id,
+            entries: entries,
+          ),
+        );
+        for (var index = 0; index < entries.length; index++) {
+          final entry = entries[index];
+          await messages.saveMessage(
+            _message(
+              entry.attachment.messageId,
+              groupId: group.id,
+              minute: index + 1,
+            ),
+          );
+          await media.saveAttachment(
+            entry.attachment,
+            owner: MediaOwnerLane.group,
+          );
+          File('${documentsRoot.path}/${entry.attachment.localPath}')
+            ..parent.createSync(recursive: true)
+            ..writeAsBytesSync(tinyPng, flush: true);
+        }
+        final guardedAttachmentId = entries.last.attachment.id;
+        final egress = _RecordingReceivedMediaEgressService();
+        final mediaActions = GroupReceivedMediaActionsController(
+          messageRepository: messages,
+          mediaAttachmentRepository: media,
+          egressService: egress,
+          isEgressRestricted: (attachment) =>
+              lifecycleRestricted && attachment.id == guardedAttachmentId,
+          requestIdFactory: () => 'aml08-$suffix',
+        );
+        final controlDecision = await tester.runAsync(
+          () => qualifyCurrentGroupMediaRow(
+            groupId: group.id,
+            messageId: entries.first.attachment.messageId,
+            attachmentId: entries.first.attachment.id,
+            messageRepository: messages,
+            mediaAttachmentRepository: media,
+            mediaFileManager: mediaActions.mediaFileManager,
+            isEgressRestricted: mediaActions.isEgressRestricted,
+          ),
+        );
+        expect(controlDecision, isNotNull);
+        expect(
+          controlDecision!.isQualified,
+          isTrue,
+          reason: 'eligible control fixture: ${controlDecision.refusalReason}',
+        );
+        final listener = GroupMessageListener(
+          groupRepo: groups,
+          msgRepo: messages,
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: GroupConversationWired(
+              group: group,
+              groupRepo: groups,
+              msgRepo: messages,
+              groupMessageListener: listener,
+              bridge: FakeBridge(),
+              identityRepo: _IdentityRepository(
+                IdentityModel(
+                  peerId: 'peer-admin',
+                  publicKey: 'pk-admin',
+                  privateKey: 'sk-admin',
+                  mnemonic12:
+                      'one two three four five six seven eight nine ten eleven twelve',
+                  username: 'Admin',
+                  createdAt: '2026-07-11T00:00:00.000Z',
+                  updatedAt: '2026-07-11T00:00:00.000Z',
+                ),
+              ),
+              contactRepo: InMemoryContactRepository(),
+              p2pService: FakeP2PService(
+                initialState: const NodeState(
+                  isStarted: true,
+                  peerId: 'peer-admin',
+                  relayState: 'online',
+                ),
+              ),
+              mediaAttachmentRepo: media,
+              mediaActionsController: mediaActions,
+            ),
+          ),
+        );
+        await _pumpFrames(tester, count: 30);
+        await tester.tap(find.byIcon(Icons.info_outline));
+        await _pumpFrames(tester, count: 20);
+        final libraryEntry = find.byKey(
+          const ValueKey('group-shared-media-entry'),
+        );
+        await tester.ensureVisible(libraryEntry);
+        await tester.tap(libraryEntry);
+        await _pumpFrames(tester, count: 20);
+
+        Future<void> select(String attachmentId) async {
+          await tester.longPress(
+            find.byKey(ValueKey('group-shared-media-tile-$attachmentId')),
+          );
+          await tester.pump();
+          expect(
+            find.byKey(const ValueKey('group-shared-media-action-save')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('group-shared-media-action-share')),
+            findsOneWidget,
+          );
+        }
+
+        Future<void> performSelectedAction() async {
+          if (save) {
+            tester
+                .widget<TextButton>(
+                  find.byKey(const ValueKey('group-shared-media-action-save')),
+                )
+                .onPressed!();
+            await tester.pump();
+            final filesAction = tester.widget(
+              find.byKey(DirectMediaSaveDestinationSheet.filesActionKey),
+            );
+            (filesAction as dynamic).onTap();
+          } else {
+            tester
+                .widget<TextButton>(
+                  find.byKey(const ValueKey('group-shared-media-action-share')),
+                )
+                .onPressed!();
+          }
+          for (var index = 0; index < 10; index++) {
+            await tester.runAsync(
+              () => Future<void>.delayed(const Duration(milliseconds: 20)),
+            );
+            await tester.pump(const Duration(milliseconds: 20));
+          }
+        }
+
+        // First prove this production route is actually using the injected
+        // controller's egress seam. The pre-fix fresh service fails here.
+        await select(entries.first.attachment.id);
+        await performSelectedAction();
+        expect(egress.calls, hasLength(1));
+        expect(
+          egress.calls.single.selection.single.attachmentId,
+          entries.first.attachment.id,
+        );
+        expect(nativeEgressCalls, 0);
+
+        // The second row is selected while eligible, then becomes restricted
+        // without rebuilding the toolbar. Dispatch must recheck and stop at
+        // both the injected egress seam and the native channel.
+        await select(guardedAttachmentId);
+        final egressCallsBeforeRestriction = egress.calls.length;
+        final nativeCallsBeforeRestriction = nativeEgressCalls;
+        lifecycleRestricted = true;
+        await performSelectedAction();
+        expect(egress.calls, hasLength(egressCallsBeforeRestriction));
+        expect(nativeEgressCalls, nativeCallsBeforeRestriction);
+        expect(
+          find.byKey(const ValueKey('group-shared-media-selection-title')),
+          findsOneWidget,
+          reason: 'a denied row must remain selected for retry or deselection',
+        );
+        await tester.pumpWidget(const SizedBox.shrink());
+        listener.dispose();
+      }
+
+      await exercise(save: false);
+      await exercise(save: true);
     },
   );
 
@@ -453,6 +718,434 @@ void main() {
       listener.dispose();
     },
   );
+
+  testWidgets(
+    'AML-05R announcement anchor survives a late resume page in the same State',
+    (tester) async {
+      tester.view.physicalSize = const Size(600, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      const pathProviderChannel = MethodChannel(
+        'plugins.flutter.io/path_provider',
+      );
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            pathProviderChannel,
+            (_) async => Directory.systemTemp.path,
+          );
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(pathProviderChannel, null),
+      );
+      addTearDown(
+        () => tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        ),
+      );
+
+      final group = GroupModel(
+        id: 'announcement-a',
+        name: 'Route race announcement',
+        type: GroupType.announcement,
+        topicName: 'route-race-announcement',
+        createdAt: DateTime.utc(2026, 7, 10),
+        createdBy: 'peer-admin',
+        myRole: GroupRole.admin,
+      );
+      final groupRepository = InMemoryGroupRepository();
+      await groupRepository.saveGroup(group);
+      final messageRepository = _DeferredRouteRaceMessageRepository();
+      for (var index = 0; index < 80; index++) {
+        await messageRepository.saveMessage(
+          _message(
+            'a${index.toString().padLeft(2, '0')}',
+            groupId: group.id,
+            minute: index,
+          ),
+        );
+      }
+      final targetEntry = groupMediaEntry(
+        'announcement-target-05',
+        messageId: 'a05',
+        downloadStatus: 'done',
+        localPath: 'noncanonical/announcement-target-05.jpg',
+      );
+      final mediaRepository = _NestedRouteMediaRepository(
+        StrictGroupMediaLibraryRepository(
+          expectedGroupId: group.id,
+          entries: [targetEntry],
+        ),
+      );
+      await mediaRepository.saveAttachment(
+        targetEntry.attachment,
+        owner: MediaOwnerLane.group,
+      );
+      final listener = _ControllableGroupMessageListener(
+        groupRepo: groupRepository,
+        msgRepo: messageRepository,
+      );
+      final bridge = FakeBridge();
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(
+          isStarted: true,
+          peerId: 'peer-admin',
+          relayState: 'online',
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: GroupConversationWired(
+            group: group,
+            groupRepo: groupRepository,
+            msgRepo: messageRepository,
+            groupMessageListener: listener,
+            bridge: bridge,
+            identityRepo: _IdentityRepository(
+              IdentityModel(
+                peerId: 'peer-admin',
+                publicKey: 'pk-admin',
+                privateKey: 'sk-admin',
+                mnemonic12:
+                    'one two three four five six seven eight nine ten eleven twelve',
+                username: 'Admin',
+                createdAt: '2026-07-10T00:00:00.000Z',
+                updatedAt: '2026-07-10T00:00:00.000Z',
+              ),
+            ),
+            contactRepo: InMemoryContactRepository(),
+            p2pService: p2pService,
+            mediaAttachmentRepo: mediaRepository,
+          ),
+        ),
+      );
+      await _pumpFrames(tester, count: 30);
+
+      final mountedState = tester.state(find.byType(GroupConversationWired));
+      final initialBridgeSendCalls = bridge.sendCallCount;
+      final initialP2pSendCalls = p2pService.sendMessageCallCount;
+      final initialP2pReplyCalls = p2pService.sendMessageWithReplyCallCount;
+      final initialInboxCalls = p2pService.storeInInboxCallCount;
+
+      messageRepository.deferNextAnchorWindow();
+      await tester.tap(find.byIcon(Icons.info_outline));
+      await _pumpFrames(tester, count: 20);
+      await tester.tap(find.byKey(const ValueKey('group-shared-media-entry')));
+      await _pumpFrames(tester, count: 20);
+      await tester.longPress(
+        find.byKey(
+          const ValueKey('group-shared-media-tile-announcement-target-05'),
+        ),
+      );
+      await tester.pump();
+      tester
+          .widget<TextButton>(
+            find.byKey(const ValueKey('group-shared-media-action-goto')),
+          )
+          .onPressed!();
+      await _pumpFrames(tester, count: 20);
+      expect(messageRepository.anchorWindowStarted, isTrue);
+
+      messageRepository.deferNextLatestPage();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await _pumpFrames(tester, count: 5);
+      expect(messageRepository.latestPageStarted, isTrue);
+
+      messageRepository.releaseAnchorWindow();
+      await _pumpFrames(tester, count: 30);
+
+      var screen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      expect(screen.highlightedMessageId, 'a05');
+      expect(screen.messages.any((message) => message.id == 'a05'), isTrue);
+      expect(find.byKey(const ValueKey('grp-highlight-a05')), findsOneWidget);
+      expect(
+        identical(
+          mountedState,
+          tester.state(find.byType(GroupConversationWired)),
+        ),
+        isTrue,
+      );
+
+      // A live message + media mutation after the bounded anchor resolves is
+      // newer authority than both captured snapshots.
+      final updatedTarget = (await messageRepository.getMessage(
+        'a05',
+      ))!.copyWith(text: 'a05 live update', status: 'delivered');
+      await messageRepository.saveMessage(updatedTarget);
+      await mediaRepository.saveAttachment(
+        targetEntry.attachment.copyWith(
+          downloadStatus: 'integrity_failed',
+          clearLocalPath: true,
+        ),
+        owner: MediaOwnerLane.group,
+      );
+      listener.emit(updatedTarget);
+      await _pumpFrames(tester, count: 20);
+      screen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      expect(
+        screen.messages.firstWhere((message) => message.id == 'a05').text,
+        'a05 live update',
+      );
+      expect(screen.mediaMap['a05']!.single.downloadStatus, 'integrity_failed');
+
+      messageRepository.releaseLatestPage();
+      await _pumpFrames(tester, count: 30);
+
+      screen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      expect(screen.highlightedMessageId, 'a05');
+      expect(
+        screen.messages.any((message) => message.id == 'a05'),
+        isTrue,
+        reason: 'the bounded anchor window must survive the late latest page',
+      );
+      expect(
+        screen.messages.firstWhere((message) => message.id == 'a05').text,
+        'a05 live update',
+        reason: 'the late page must not roll back a newer live row',
+      );
+      expect(
+        screen.mediaMap['a05']!.single.downloadStatus,
+        'integrity_failed',
+        reason: 'the late page must not roll back newer local media state',
+      );
+      expect(find.byKey(const ValueKey('grp-highlight-a05')), findsOneWidget);
+      expect(
+        identical(
+          mountedState,
+          tester.state(find.byType(GroupConversationWired)),
+        ),
+        isTrue,
+      );
+      expect(bridge.sendCallCount, initialBridgeSendCalls);
+      expect(p2pService.sendMessageCallCount, initialP2pSendCalls);
+      expect(p2pService.sendMessageWithReplyCallCount, initialP2pReplyCalls);
+      expect(p2pService.storeInInboxCallCount, initialInboxCalls);
+      expect(
+        messageRepository.aroundCallCount,
+        1,
+        reason: 'the late page reuses the one bounded anchor answer',
+      );
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      listener.dispose();
+    },
+  );
+
+  testWidgets(
+    'AML-05D local deletion wins pending anchor and late resume snapshots',
+    (tester) async {
+      tester.view.physicalSize = const Size(600, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      const pathProviderChannel = MethodChannel(
+        'plugins.flutter.io/path_provider',
+      );
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            pathProviderChannel,
+            (_) async => Directory.systemTemp.path,
+          );
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(pathProviderChannel, null),
+      );
+      addTearDown(
+        () => tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        ),
+      );
+
+      final group = GroupModel(
+        id: 'announcement-delete-race',
+        name: 'Delete race announcement',
+        type: GroupType.announcement,
+        topicName: 'delete-race-announcement',
+        createdAt: DateTime.utc(2026, 7, 10),
+        createdBy: 'peer-admin',
+        myRole: GroupRole.admin,
+      );
+      final groups = InMemoryGroupRepository();
+      await groups.saveGroup(group);
+      final messages = _DeferredRouteRaceMessageRepository();
+      for (var index = 0; index < 80; index++) {
+        await messages.saveMessage(
+          _message(
+            'd${index.toString().padLeft(2, '0')}',
+            groupId: group.id,
+            minute: index,
+          ),
+        );
+      }
+      final targetEntry = groupMediaEntry(
+        'announcement-target-60',
+        messageId: 'd60',
+        downloadStatus: 'done',
+        localPath: 'noncanonical/announcement-target-60.jpg',
+      );
+      final media = _NestedRouteMediaRepository(
+        StrictGroupMediaLibraryRepository(
+          expectedGroupId: group.id,
+          entries: [targetEntry],
+        ),
+      );
+      await media.saveAttachment(
+        targetEntry.attachment,
+        owner: MediaOwnerLane.group,
+      );
+      final listener = _ControllableGroupMessageListener(
+        groupRepo: groups,
+        msgRepo: messages,
+      );
+      final bridge = FakeBridge();
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(
+          isStarted: true,
+          peerId: 'peer-admin',
+          relayState: 'online',
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: GroupConversationWired(
+            group: group,
+            groupRepo: groups,
+            msgRepo: messages,
+            groupMessageListener: listener,
+            bridge: bridge,
+            identityRepo: _IdentityRepository(
+              IdentityModel(
+                peerId: 'peer-admin',
+                publicKey: 'pk-admin',
+                privateKey: 'sk-admin',
+                mnemonic12:
+                    'one two three four five six seven eight nine ten eleven twelve',
+                username: 'Admin',
+                createdAt: '2026-07-10T00:00:00.000Z',
+                updatedAt: '2026-07-10T00:00:00.000Z',
+              ),
+            ),
+            contactRepo: InMemoryContactRepository(),
+            p2pService: p2pService,
+            mediaAttachmentRepo: media,
+          ),
+        ),
+      );
+      await _pumpFrames(tester, count: 30);
+      expect(
+        tester
+            .widget<GroupConversationScreen>(
+              find.byType(GroupConversationScreen),
+            )
+            .messages
+            .any((message) => message.id == 'd60'),
+        isTrue,
+      );
+      final initialBridgeSendCalls = bridge.sendCallCount;
+      final initialP2pSendCalls = p2pService.sendMessageCallCount;
+
+      messages.deferNextAnchorWindow();
+      await tester.tap(find.byIcon(Icons.info_outline));
+      await _pumpFrames(tester, count: 20);
+      await tester.tap(find.byKey(const ValueKey('group-shared-media-entry')));
+      await _pumpFrames(tester, count: 20);
+      final deletionCallback = tester
+          .widget<GroupSharedMediaLibraryScreen>(
+            find.byType(GroupSharedMediaLibraryScreen),
+          )
+          .onMessagesDeleted!;
+      await tester.longPress(
+        find.byKey(
+          const ValueKey('group-shared-media-tile-announcement-target-60'),
+        ),
+      );
+      await tester.pump();
+      tester
+          .widget<TextButton>(
+            find.byKey(const ValueKey('group-shared-media-action-goto')),
+          )
+          .onPressed!();
+      await _pumpFrames(tester, count: 20);
+      expect(messages.anchorWindowStarted, isTrue);
+
+      messages.deferNextLatestPage();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await _pumpFrames(tester, count: 5);
+      expect(messages.latestPageStarted, isTrue);
+
+      // This is the production library callback into _removeLocalMessage. It
+      // fires while both stale snapshots still contain d60.
+      deletionCallback({'d60'});
+      await _pumpFrames(tester, count: 5);
+      expect(
+        tester
+            .widget<GroupConversationScreen>(
+              find.byType(GroupConversationScreen),
+            )
+            .messages
+            .any((message) => message.id == 'd60'),
+        isFalse,
+      );
+
+      // A listener may still emit the decoded model when its durable insert
+      // was skipped by the local-deletion tombstone. That replay must not
+      // transiently resurrect the row while the conversation remains mounted.
+      listener.emit(_message('d60', groupId: group.id, minute: 60));
+      await _pumpFrames(tester, count: 10);
+      expect(
+        tester
+            .widget<GroupConversationScreen>(
+              find.byType(GroupConversationScreen),
+            )
+            .messages
+            .any((message) => message.id == 'd60'),
+        isFalse,
+      );
+
+      messages.releaseAnchorWindow();
+      await _pumpFrames(tester, count: 20);
+      expect(
+        tester
+            .widget<GroupConversationScreen>(
+              find.byType(GroupConversationScreen),
+            )
+            .messages
+            .any((message) => message.id == 'd60'),
+        isFalse,
+      );
+
+      messages.releaseLatestPage();
+      await _pumpFrames(tester, count: 30);
+      final screen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      expect(screen.messages.any((message) => message.id == 'd60'), isFalse);
+      expect(messages.aroundCallCount, 1);
+      expect(bridge.sendCallCount, initialBridgeSendCalls);
+      expect(p2pService.sendMessageCallCount, initialP2pSendCalls);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      listener.dispose();
+    },
+  );
 }
 
 class _NestedRouteMessageRepository extends InMemoryGroupMessageRepository
@@ -560,6 +1253,38 @@ class _RecordingDeleteCoordinator implements GroupMediaDeleteForMeCoordinator {
   }
 }
 
+class _RecordingReceivedMediaEgressService extends ReceivedMediaEgressService {
+  final List<
+    ({
+      MediaEgressDestination destination,
+      List<ReceivedMediaEgressCandidate> selection,
+    })
+  >
+  calls = [];
+
+  @override
+  Future<MediaEgressResult> perform({
+    required String requestId,
+    required MediaEgressDestination destination,
+    required List<ReceivedMediaEgressCandidate> selection,
+  }) async {
+    calls.add((destination: destination, selection: List.of(selection)));
+    return MediaEgressResult(
+      requestId: requestId,
+      outcome: destination == MediaEgressDestination.share
+          ? MediaEgressOutcome.presented
+          : MediaEgressOutcome.saved,
+      items: [
+        for (final candidate in selection)
+          MediaEgressItemResult(
+            attachmentId: candidate.attachmentId,
+            outcome: MediaEgressItemOutcome.saved,
+          ),
+      ],
+    );
+  }
+}
+
 class _IdentityRepository implements IdentityRepository {
   _IdentityRepository(this.identity);
 
@@ -611,6 +1336,114 @@ class _DeferredAroundRepository extends InMemoryGroupMessageRepository
     final completer = Completer<List<GroupMessage>>();
     completers.add(completer);
     return completer.future;
+  }
+}
+
+class _ControllableGroupMessageListener extends GroupMessageListener {
+  _ControllableGroupMessageListener({
+    required super.groupRepo,
+    required super.msgRepo,
+  });
+
+  final StreamController<GroupMessage> _controller =
+      StreamController<GroupMessage>.broadcast();
+
+  @override
+  Stream<GroupMessage> get groupMessageStream => _controller.stream;
+
+  void emit(GroupMessage message) => _controller.add(message);
+
+  @override
+  void dispose() {
+    unawaited(_controller.close());
+    super.dispose();
+  }
+}
+
+class _DeferredRouteRaceMessageRepository extends InMemoryGroupMessageRepository
+    implements GroupMessageAroundRepository {
+  final List<GroupMessage> _seeded = [];
+  bool _deferNextAnchorWindow = false;
+  bool _deferNextLatestPage = false;
+  Completer<void>? _anchorWindowGate;
+  Completer<void>? _anchorWindowStarted;
+  Completer<void>? _latestPageGate;
+  Completer<void>? _latestPageStarted;
+  int aroundCallCount = 0;
+
+  bool get anchorWindowStarted => _anchorWindowStarted?.isCompleted ?? false;
+  bool get latestPageStarted => _latestPageStarted?.isCompleted ?? false;
+
+  @override
+  Future<void> saveMessage(GroupMessage message) async {
+    _seeded.removeWhere((candidate) => candidate.id == message.id);
+    _seeded.add(message);
+    await super.saveMessage(message);
+  }
+
+  void deferNextAnchorWindow() {
+    _deferNextAnchorWindow = true;
+    _anchorWindowGate = Completer<void>();
+    _anchorWindowStarted = Completer<void>();
+  }
+
+  void releaseAnchorWindow() {
+    final gate = _anchorWindowGate;
+    if (gate != null && !gate.isCompleted) gate.complete();
+  }
+
+  void deferNextLatestPage() {
+    _deferNextLatestPage = true;
+    _latestPageGate = Completer<void>();
+    _latestPageStarted = Completer<void>();
+  }
+
+  void releaseLatestPage() {
+    final gate = _latestPageGate;
+    if (gate != null && !gate.isCompleted) gate.complete();
+  }
+
+  @override
+  Future<List<GroupMessage>> getMessagesPage(
+    String groupId, {
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    final page = await super.getMessagesPage(
+      groupId,
+      limit: limit,
+      offset: offset,
+    );
+    if (!_deferNextLatestPage) return page;
+    _deferNextLatestPage = false;
+    _latestPageStarted!.complete();
+    await _latestPageGate!.future;
+    return page;
+  }
+
+  @override
+  Future<List<GroupMessage>> getMessagesAround(
+    String groupId,
+    String anchorMessageId, {
+    int before = 25,
+    int after = 25,
+  }) async {
+    aroundCallCount++;
+    final ordered =
+        _seeded.where((message) => message.groupId == groupId).toList()
+          ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    final anchorIndex = ordered.indexWhere(
+      (message) => message.id == anchorMessageId,
+    );
+    if (anchorIndex < 0) return const [];
+    final start = (anchorIndex - before).clamp(0, ordered.length);
+    final end = (anchorIndex + after + 1).clamp(0, ordered.length);
+    final window = ordered.sublist(start, end);
+    if (!_deferNextAnchorWindow) return window;
+    _deferNextAnchorWindow = false;
+    _anchorWindowStarted!.complete();
+    await _anchorWindowGate!.future;
+    return window;
   }
 }
 

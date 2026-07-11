@@ -321,7 +321,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   bool _groupWantsMarkRead = false;
   int _messageLoadGeneration = 0;
   int _messageLoadsInFlight = 0;
+  final Set<int> _activeMessageLoadGenerations = <int>{};
   final Set<String> _insertedIdsDuringMessageLoad = <String>{};
+  int _messageMutationGeneration = 0;
+  final Map<String, int> _messageMutationGenerations = <String, int>{};
+  final Set<String> _locallyRemovedMessageIds = <String>{};
 
   Map<String, GroupMember> _membersByPeerId = const {};
   String? _ownPeerId;
@@ -342,6 +346,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   String? _highlightedMessageId;
   final GroupSharedMediaAnchorRequestCoordinator _sharedMediaAnchorRequests =
       GroupSharedMediaAnchorRequestCoordinator();
+  String? _activeSharedMediaAnchorGroupId;
+  String? _activeSharedMediaAnchorTargetId;
+  Set<String> _activeSharedMediaAnchorInjectedIds = const <String>{};
+  String? _sharedMediaAnchorReplayGroupId;
+  String? _sharedMediaAnchorReplayTargetId;
+  List<GroupMessage> _sharedMediaAnchorReplayWindow = const <GroupMessage>[];
+  Map<String, List<MediaAttachment>> _sharedMediaAnchorReplayMedia =
+      const <String, List<MediaAttachment>>{};
+  Set<int> _sharedMediaAnchorReplayLoadGenerations = const <int>{};
   bool _initialLoadDone = false;
   bool _isSending = false;
   Set<String> _retryingFailedMessageIds = const {};
@@ -840,6 +853,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _historyGapRepair = null;
     _securityStatus = null;
     _messageLoadErrorText = null;
+    _activeSharedMediaAnchorGroupId = null;
+    _activeSharedMediaAnchorTargetId = null;
+    _activeSharedMediaAnchorInjectedIds = const <String>{};
+    _invalidateSharedMediaAnchorReplay();
+    _messageMutationGeneration = 0;
+    _messageMutationGenerations.clear();
+    _locallyRemovedMessageIds.clear();
+    _highlightedMessageId = widget.initialHighlightedMessageId;
+    _highlightScrollResolved = false;
     // 144: a terminal send-failure latch is per-group; scrub it so a different
     // group does not inherit a stale read-only composer/banner/reason. Also
     // re-enter the startup window (clear _securityStatusLoaded) so the reopen
@@ -1413,33 +1435,138 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     }
   }
 
+  void _recordMessageMutation(String messageId) {
+    _messageMutationGeneration++;
+    _messageMutationGenerations[messageId] = _messageMutationGeneration;
+  }
+
+  bool _messageMutatedAfter(String messageId, int generation) =>
+      (_messageMutationGenerations[messageId] ?? 0) > generation;
+
   Future<void> _loadMessages() async {
     final loadGeneration = ++_messageLoadGeneration;
+    final loadGroupId = widget.group.id;
+    final mutationGenerationAtStart = _messageMutationGeneration;
     _messageLoadsInFlight++;
+    _activeMessageLoadGenerations.add(loadGeneration);
     var appliedMessages = false;
     try {
-      final messages = await widget.msgRepo.getMessagesPage(widget.group.id);
+      final messages = await widget.msgRepo.getMessagesPage(loadGroupId);
       final historyGapRepair = await widget.historyGapRepairRepo
-          ?.getLatestRepairForGroup(widget.group.id);
-      if (!mounted) return;
+          ?.getLatestRepairForGroup(loadGroupId);
+      if (!mounted ||
+          widget.group.id != loadGroupId ||
+          _group.id != loadGroupId) {
+        return;
+      }
 
-      final mediaMap = await _loadResolvedMediaMap(messages);
-      if (!mounted) return;
+      final pageMessages = messages
+          .where((message) => message.groupId == loadGroupId)
+          .toList(growable: false);
+      final mediaMap = await _loadResolvedMediaMap(pageMessages);
+      if (!mounted ||
+          widget.group.id != loadGroupId ||
+          _group.id != loadGroupId) {
+        return;
+      }
+
+      final replayAnchor =
+          _sharedMediaAnchorReplayLoadGenerations.contains(loadGeneration) &&
+          _sharedMediaAnchorReplayGroupId == loadGroupId &&
+          _sharedMediaAnchorReplayTargetId == _activeSharedMediaAnchorTargetId;
+      final appliedMessageById = <String, GroupMessage>{
+        for (final message in pageMessages)
+          if (!_locallyRemovedMessageIds.contains(message.id))
+            message.id: message,
+      };
+      final appliedMediaMap = Map<String, List<MediaAttachment>>.from(mediaMap);
+      var replayInjectedIds = const <String>{};
+      if (replayAnchor) {
+        final latestIds = appliedMessageById.keys.toSet();
+        for (final message in _sharedMediaAnchorReplayWindow) {
+          if (message.groupId == loadGroupId &&
+              !_locallyRemovedMessageIds.contains(message.id)) {
+            // The bounded around-anchor query is authoritative for its rows.
+            // It completed after this latest-page load had already started, so
+            // its snapshot wins any overlap while the late commit is fenced.
+            appliedMessageById[message.id] = message;
+          }
+        }
+        for (final entry in _sharedMediaAnchorReplayMedia.entries) {
+          if (appliedMessageById.containsKey(entry.key) &&
+              !_locallyRemovedMessageIds.contains(entry.key)) {
+            appliedMediaMap[entry.key] = entry.value;
+          }
+        }
+        replayInjectedIds = _sharedMediaAnchorReplayWindow
+            .where((message) => message.groupId == loadGroupId)
+            .map((message) => message.id)
+            .where((messageId) => !latestIds.contains(messageId))
+            .toSet();
+      }
+
+      // A live/local mutation that landed after this page load started is
+      // newer authority than both its page snapshot and a captured anchor
+      // window. Overlay mounted rows and media last so a late commit cannot
+      // roll back delivery state or a recovered/quarantined local copy.
+      final currentRowsById = <String, GroupMessage>{
+        for (final message in _messages)
+          if (message.groupId == loadGroupId &&
+              !_locallyRemovedMessageIds.contains(message.id) &&
+              _messageMutatedAfter(message.id, mutationGenerationAtStart))
+            message.id: message,
+      };
+      appliedMessageById.addAll(currentRowsById);
+      for (final messageId in currentRowsById.keys) {
+        final currentMedia = _mediaMap[messageId];
+        if (currentMedia == null) {
+          appliedMediaMap.remove(messageId);
+        } else {
+          appliedMediaMap[messageId] = currentMedia;
+        }
+      }
+      for (final messageId in _locallyRemovedMessageIds) {
+        appliedMessageById.remove(messageId);
+        appliedMediaMap.remove(messageId);
+        replayInjectedIds = <String>{...replayInjectedIds}..remove(messageId);
+      }
+      final committedMessages = orderGroupMessagesForTimeline(
+        appliedMessageById.values,
+      );
 
       setState(() {
         // Apply the same quote-threaded ordering that _upsertMessage uses, so
         // the initial render order matches every subsequent in-place update and
         // no row reshuffles on the first send/receive. (The repository already
         // orders today; this keeps the two paths in lockstep defensively.)
-        _messages = orderGroupMessagesForTimeline(messages);
-        _mediaMap = mediaMap;
+        _messages = committedMessages;
+        _mediaMap = appliedMediaMap;
+        if (replayAnchor) {
+          _activeSharedMediaAnchorInjectedIds = replayInjectedIds;
+        } else if (_activeSharedMediaAnchorGroupId == loadGroupId) {
+          // A load that started after the anchor resolved is a fresh page, not
+          // part of the bounded replay fence. It may retire anchor-only rows.
+          _activeSharedMediaAnchorInjectedIds = const <String>{};
+          final activeTargetId = _activeSharedMediaAnchorTargetId;
+          if (activeTargetId != null &&
+              !appliedMessageById.containsKey(activeTargetId)) {
+            if (_highlightedMessageId == activeTargetId) {
+              _highlightedMessageId = null;
+              _highlightScrollResolved = false;
+            }
+            _activeSharedMediaAnchorGroupId = null;
+            _activeSharedMediaAnchorTargetId = null;
+            _invalidateSharedMediaAnchorReplay();
+          }
+        }
         _initialLoadDone = true;
         _messageLoadErrorText = null;
         _historyGapRepair = historyGapRepair;
       });
       appliedMessages = true;
+      _consumeSharedMediaAnchorReplay(loadGeneration);
       await _replayInsertedMessagesAfterLoad(
-        loadedMessages: messages,
+        loadedMessages: pageMessages,
         loadGeneration: loadGeneration,
       );
       // 144 finding: a persisted terminal send_failed bubble must reconstruct
@@ -1452,8 +1579,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         _scrollToHighlightedMessage();
       });
 
-      unawaited(_loadReactions(messages));
-      unawaited(_downloadPendingMedia(mediaMap));
+      unawaited(_loadReactions(committedMessages));
+      unawaited(_downloadPendingMedia(appliedMediaMap));
       await _markVisibleReadIfAllowed();
     } catch (e) {
       if (mounted) {
@@ -1470,6 +1597,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         details: {'error': e.toString()},
       );
     } finally {
+      _activeMessageLoadGenerations.remove(loadGeneration);
+      _consumeSharedMediaAnchorReplay(loadGeneration);
       _messageLoadsInFlight--;
       if (_messageLoadsInFlight == 0) {
         _insertedIdsDuringMessageLoad.clear();
@@ -3462,8 +3591,21 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     GroupMessage message, {
     bool markAsRead = true,
   }) async {
+    final updateGroupId = message.groupId;
+    if (widget.group.id != updateGroupId ||
+        _group.id != updateGroupId ||
+        _locallyRemovedMessageIds.contains(message.id)) {
+      return;
+    }
     final latestMessage =
         await widget.msgRepo.getMessage(message.id) ?? message;
+    if (!mounted ||
+        widget.group.id != updateGroupId ||
+        _group.id != updateGroupId ||
+        latestMessage.groupId != updateGroupId ||
+        _locallyRemovedMessageIds.contains(message.id)) {
+      return;
+    }
 
     // 157 follow-up (TC-159-11, mirror of 156 QW-9): skip the per-message
     // attachment DB read ONLY for a PURE text/status update to an already-shown
@@ -3481,7 +3623,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     final media = shouldResolveMedia
         ? await _loadResolvedAttachmentsForMessage(latestMessage.id)
         : shownMedia;
-    if (!mounted) return;
+    if (!mounted ||
+        widget.group.id != updateGroupId ||
+        _group.id != updateGroupId ||
+        _locallyRemovedMessageIds.contains(message.id)) {
+      return;
+    }
 
     // 159: queue for the per-frame flush instead of a direct per-event setState.
     _enqueueGroupMessageUpdate(
@@ -3500,6 +3647,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     required List<MediaAttachment> media,
     required bool markAsRead,
   }) {
+    if (message.groupId != widget.group.id ||
+        message.groupId != _group.id ||
+        _locallyRemovedMessageIds.contains(message.id)) {
+      return;
+    }
     _upsertIntoGroupMessagesUnsorted(message);
     _updateMediaForMessage(message.id, media);
     _groupNeedsFlush = true;
@@ -3762,6 +3914,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   void _upsertMessage(GroupMessage message) {
+    _recordMessageMutation(message.id);
     GroupConversationWired.debugReorderInvocationCount++;
     final updated = List<GroupMessage>.from(_messages);
     final index = updated.indexWhere((existing) => existing.id == message.id);
@@ -3780,6 +3933,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     String messageId,
     List<MediaAttachment> attachments,
   ) {
+    _recordMessageMutation(messageId);
     final next = Map<String, List<MediaAttachment>>.from(_mediaMap);
     if (attachments.isEmpty) {
       next.remove(messageId);
@@ -3792,6 +3946,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   void _updateLocalMessageStatus(String messageId, String status) {
     final idx = _messages.indexWhere((m) => m.id == messageId);
     if (idx < 0) return;
+    _recordMessageMutation(messageId);
     final updated = List<GroupMessage>.from(_messages);
     updated[idx] = updated[idx].copyWith(status: status);
     if (mounted) {
@@ -3802,19 +3957,54 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   void _removeLocalMessage(String messageId) {
+    _recordMessageMutation(messageId);
+    _locallyRemovedMessageIds.add(messageId);
+    final removesActiveAnchorTarget =
+        _activeSharedMediaAnchorTargetId == messageId;
+    final invalidatesAnchorReplay =
+        removesActiveAnchorTarget ||
+        _activeSharedMediaAnchorInjectedIds.contains(messageId) ||
+        _sharedMediaAnchorReplayWindow.any(
+          (message) => message.id == messageId,
+        );
+    final messageIdsToRemove = <String>{messageId};
+    if (removesActiveAnchorTarget) {
+      messageIdsToRemove.addAll(_activeSharedMediaAnchorInjectedIds);
+    }
     final nextMessages = _messages
-        .where((message) => message.id != messageId)
+        .where((message) => !messageIdsToRemove.contains(message.id))
         .toList();
     final nextMedia = Map<String, List<MediaAttachment>>.from(_mediaMap);
-    nextMedia.remove(messageId);
-    if (mounted) {
-      setState(() {
-        _messages = nextMessages;
-        _mediaMap = nextMedia;
-      });
-    } else {
+    for (final removedId in messageIdsToRemove) {
+      nextMedia.remove(removedId);
+    }
+    void applyRemoval() {
       _messages = nextMessages;
       _mediaMap = nextMedia;
+      if (removesActiveAnchorTarget) {
+        if (_highlightedMessageId == messageId) {
+          _highlightedMessageId = null;
+          _highlightScrollResolved = false;
+        }
+        _activeSharedMediaAnchorGroupId = null;
+        _activeSharedMediaAnchorTargetId = null;
+        _activeSharedMediaAnchorInjectedIds = const <String>{};
+      } else if (_activeSharedMediaAnchorInjectedIds.contains(messageId)) {
+        _activeSharedMediaAnchorInjectedIds = <String>{
+          ..._activeSharedMediaAnchorInjectedIds,
+        }..remove(messageId);
+      }
+      if (invalidatesAnchorReplay) {
+        // A local delete/tombstone is newer authority than a captured anchor
+        // snapshot. Never let a late page replay resurrect that row.
+        _invalidateSharedMediaAnchorReplay();
+      }
+    }
+
+    if (mounted) {
+      setState(applyRemoval);
+    } else {
+      applyRemoval();
     }
   }
 
@@ -5203,11 +5393,16 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                 (await getApplicationDocumentsDirectory()).path,
           )
         : null;
+    final mediaActionsController = _mediaActionsController;
     final batchActions = GroupSharedMediaBatchActionsCoordinator(
       messageRepository: widget.msgRepo,
       mediaAttachmentRepository: mediaRepo,
-      egressService: ReceivedMediaEgressService(),
-      mediaFileManager: widget.mediaFileManager,
+      egressService:
+          mediaActionsController?.egressService ?? ReceivedMediaEgressService(),
+      mediaFileManager:
+          widget.mediaFileManager ?? mediaActionsController?.mediaFileManager,
+      isEgressRestricted: mediaActionsController?.isEgressRestricted,
+      requestIdFactory: mediaActionsController?.requestIdFactory,
       stateRepository: stateRepo,
       clearLocalCopy: storage == null
           ? null
@@ -5307,27 +5502,174 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     );
   }
 
+  void _invalidateSharedMediaAnchorReplay() {
+    _sharedMediaAnchorReplayGroupId = null;
+    _sharedMediaAnchorReplayTargetId = null;
+    _sharedMediaAnchorReplayWindow = const <GroupMessage>[];
+    _sharedMediaAnchorReplayMedia = const <String, List<MediaAttachment>>{};
+    _sharedMediaAnchorReplayLoadGenerations = const <int>{};
+  }
+
+  void _consumeSharedMediaAnchorReplay(int loadGeneration) {
+    if (!_sharedMediaAnchorReplayLoadGenerations.contains(loadGeneration)) {
+      return;
+    }
+    final remaining = <int>{..._sharedMediaAnchorReplayLoadGenerations}
+      ..remove(loadGeneration);
+    if (remaining.isEmpty) {
+      _invalidateSharedMediaAnchorReplay();
+      return;
+    }
+    _sharedMediaAnchorReplayLoadGenerations = remaining;
+  }
+
+  void _clearActiveSharedMediaAnchor({required bool clearHighlight}) {
+    final priorTargetId = _activeSharedMediaAnchorTargetId;
+    final injectedIds = _activeSharedMediaAnchorInjectedIds;
+    if (injectedIds.isNotEmpty) {
+      _messages = _messages
+          .where((message) => !injectedIds.contains(message.id))
+          .toList(growable: false);
+      final nextMedia = Map<String, List<MediaAttachment>>.from(_mediaMap);
+      for (final messageId in injectedIds) {
+        nextMedia.remove(messageId);
+      }
+      _mediaMap = nextMedia;
+    }
+    if (clearHighlight && _highlightedMessageId == priorTargetId) {
+      _highlightedMessageId = null;
+      _highlightScrollResolved = false;
+    }
+    _activeSharedMediaAnchorGroupId = null;
+    _activeSharedMediaAnchorTargetId = null;
+    _activeSharedMediaAnchorInjectedIds = const <String>{};
+    _invalidateSharedMediaAnchorReplay();
+  }
+
   Future<void> _goToSharedMediaMessage(
     GroupSharedMediaGoToMessage result,
   ) async {
+    final requestGroupId = _group.id;
+    final mutationGenerationAtStart = _messageMutationGeneration;
     final window = await _sharedMediaAnchorRequests.load(
       repository: widget.msgRepo,
-      currentGroupId: _group.id,
+      currentGroupId: requestGroupId,
       requestedGroupId: result.groupId,
       messageId: result.messageId,
     );
-    if (!mounted || window == null || window.isEmpty) return;
-    final hydrated = await _loadResolvedMediaMap(window);
-    if (!mounted) return;
-    final byId = {for (final message in _messages) message.id: message};
-    for (final message in window) {
-      if (message.groupId == _group.id) byId[message.id] = message;
+    if (window == null ||
+        !mounted ||
+        widget.group.id != requestGroupId ||
+        _group.id != requestGroupId) {
+      return;
     }
+    final loadsInFlightWhenAnchorResolved = <int>{
+      ..._activeMessageLoadGenerations,
+    };
+    var currentWindow = window
+        .where(
+          (message) =>
+              message.groupId == requestGroupId &&
+              !_locallyRemovedMessageIds.contains(message.id),
+        )
+        .toList(growable: false);
+    if (!currentWindow.any((message) => message.id == result.messageId)) {
+      setState(() => _clearActiveSharedMediaAnchor(clearHighlight: true));
+      return;
+    }
+    final hydrated = await _loadResolvedMediaMap(currentWindow);
+    if (!mounted ||
+        widget.group.id != requestGroupId ||
+        _group.id != requestGroupId) {
+      return;
+    }
+    currentWindow = currentWindow
+        .where((message) => !_locallyRemovedMessageIds.contains(message.id))
+        .toList(growable: false);
+    if (!currentWindow.any((message) => message.id == result.messageId)) {
+      setState(() => _clearActiveSharedMediaAnchor(clearHighlight: true));
+      return;
+    }
+
+    final stillInFlightReplayGenerations = loadsInFlightWhenAnchorResolved
+        .where(_activeMessageLoadGenerations.contains)
+        .toSet();
+    final priorInjectedIds = _activeSharedMediaAnchorGroupId == requestGroupId
+        ? _activeSharedMediaAnchorInjectedIds
+        : const <String>{};
+    final byId = <String, GroupMessage>{
+      for (final message in _messages)
+        if (message.groupId == requestGroupId &&
+            !priorInjectedIds.contains(message.id) &&
+            !_locallyRemovedMessageIds.contains(message.id))
+          message.id: message,
+    };
+    final baseIds = byId.keys.toSet();
+    for (final message in currentWindow) {
+      byId[message.id] = message;
+    }
+    final currentMutatedRows = <String, GroupMessage>{
+      for (final message in _messages)
+        if (message.groupId == requestGroupId &&
+            !_locallyRemovedMessageIds.contains(message.id) &&
+            _messageMutatedAfter(message.id, mutationGenerationAtStart))
+          message.id: message,
+    };
+    byId.addAll(currentMutatedRows);
+    for (final messageId in _locallyRemovedMessageIds) {
+      byId.remove(messageId);
+    }
+    final nextMedia = Map<String, List<MediaAttachment>>.from(_mediaMap);
+    for (final messageId in priorInjectedIds) {
+      nextMedia.remove(messageId);
+    }
+    final windowIds = currentWindow.map((message) => message.id).toSet();
+    for (final entry in hydrated.entries) {
+      if (windowIds.contains(entry.key) &&
+          !_locallyRemovedMessageIds.contains(entry.key)) {
+        nextMedia[entry.key] = entry.value;
+      }
+    }
+    for (final messageId in currentMutatedRows.keys) {
+      final currentMedia = _mediaMap[messageId];
+      if (currentMedia == null) {
+        nextMedia.remove(messageId);
+      } else {
+        nextMedia[messageId] = currentMedia;
+      }
+    }
+    for (final messageId in _locallyRemovedMessageIds) {
+      nextMedia.remove(messageId);
+    }
+    final replayWindow = windowIds
+        .map((messageId) => byId[messageId])
+        .whereType<GroupMessage>()
+        .toList(growable: false);
     setState(() {
       _messages = orderGroupMessagesForTimeline(byId.values);
-      _mediaMap = {..._mediaMap, ...hydrated};
+      _mediaMap = nextMedia;
+      _activeSharedMediaAnchorGroupId = requestGroupId;
+      _activeSharedMediaAnchorTargetId = result.messageId;
+      _activeSharedMediaAnchorInjectedIds = windowIds
+          .where((messageId) => !baseIds.contains(messageId))
+          .toSet();
       _highlightedMessageId = result.messageId;
       _highlightScrollResolved = false;
+      if (stillInFlightReplayGenerations.isEmpty) {
+        _invalidateSharedMediaAnchorReplay();
+      } else {
+        _sharedMediaAnchorReplayGroupId = requestGroupId;
+        _sharedMediaAnchorReplayTargetId = result.messageId;
+        _sharedMediaAnchorReplayWindow = List<GroupMessage>.unmodifiable(
+          replayWindow,
+        );
+        _sharedMediaAnchorReplayMedia = {
+          for (final entry in nextMedia.entries)
+            if (windowIds.contains(entry.key)) entry.key: entry.value,
+        };
+        _sharedMediaAnchorReplayLoadGenerations =
+            stillInFlightReplayGenerations;
+      }
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _scrollToHighlightedMessage();
