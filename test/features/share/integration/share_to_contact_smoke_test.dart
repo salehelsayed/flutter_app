@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
@@ -34,6 +35,7 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
+import '../../../shared/fakes/fake_upload_wake_lock_driver.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
@@ -79,6 +81,7 @@ void main() {
   );
 
   setUp(() {
+    UploadWakeLockController.debugReset(driver: FakeUploadWakeLockDriver());
     bridge = FakeBridge();
     bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
     bridge.responses['payload.verify'] = {'ok': true, 'valid': true};
@@ -159,6 +162,7 @@ void main() {
   });
 
   tearDown(() {
+    UploadWakeLockController.debugReset();
     postsPrivacySettingsRepository.dispose();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(

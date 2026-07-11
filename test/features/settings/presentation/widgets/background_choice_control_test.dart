@@ -53,7 +53,7 @@ void main() {
     expect(find.text('The original ambient glow.'), findsOneWidget);
     expect(find.text('Signal'), findsOneWidget);
     expect(
-      find.text('A cool porcelain sky with one electric-violet star.'),
+      find.text('A warm mineral sky with soft violet and sage light.'),
       findsOneWidget,
     );
     expect(
@@ -97,7 +97,7 @@ void main() {
       expect(find.text('The original ambient glow.'), findsOneWidget);
       expect(find.text('Signal'), findsOneWidget);
       expect(
-        find.text('A cool porcelain sky with one electric-violet star.'),
+        find.text('A warm mineral sky with soft violet and sage light.'),
         findsOneWidget,
       );
       expect(find.text('Mirrored cosmic'), findsNothing);
