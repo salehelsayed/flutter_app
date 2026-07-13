@@ -3113,4 +3113,11 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get contact_profile_message_button => 'Nachricht';
+
+
+  @override
+  String get private_media_notification_body => 'Private Medien';
+
+  @override
+  String get group_private_media_notification_body => 'Neue private Medien';
 }

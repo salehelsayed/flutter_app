@@ -9,6 +9,12 @@ class GroupReactionReplayOutboxRepositoryImpl
   dbUpsertGroupReactionReplayOutboxEntry;
   final Future<Map<String, Object?>?> Function(String reactionId)
   dbLoadGroupReactionReplayOutboxEntry;
+  final Future<Map<String, Object?>?> Function({
+    required String groupId,
+    required String messageId,
+    required String senderPeerId,
+  })
+  dbLoadLatestGroupReactionReplayOutboxEntryForTarget;
   final Future<List<Map<String, Object?>>> Function({int limit})
   dbLoadRetryableGroupReactionReplayOutboxEntries;
   final Future<void> Function(
@@ -24,6 +30,7 @@ class GroupReactionReplayOutboxRepositoryImpl
   GroupReactionReplayOutboxRepositoryImpl({
     required this.dbUpsertGroupReactionReplayOutboxEntry,
     required this.dbLoadGroupReactionReplayOutboxEntry,
+    required this.dbLoadLatestGroupReactionReplayOutboxEntryForTarget,
     required this.dbLoadRetryableGroupReactionReplayOutboxEntries,
     required this.dbUpdateGroupReactionReplayOutboxEntryStatus,
     required this.dbDeleteGroupReactionReplayOutboxEntry,
@@ -57,6 +64,20 @@ class GroupReactionReplayOutboxRepositoryImpl
     final row = await dbLoadGroupReactionReplayOutboxEntry(reactionId);
     if (row == null) return null;
     return GroupReactionReplayOutboxEntry.fromMap(row);
+  }
+
+  @override
+  Future<GroupReactionReplayOutboxEntry?> getLatestEntryForTarget({
+    required String groupId,
+    required String messageId,
+    required String senderPeerId,
+  }) async {
+    final row = await dbLoadLatestGroupReactionReplayOutboxEntryForTarget(
+      groupId: groupId,
+      messageId: messageId,
+      senderPeerId: senderPeerId,
+    );
+    return row == null ? null : GroupReactionReplayOutboxEntry.fromMap(row);
   }
 
   @override

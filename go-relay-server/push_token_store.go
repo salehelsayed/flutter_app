@@ -19,14 +19,21 @@ func newMemoryPushTokenStore() *memoryPushTokenStore {
 	}
 }
 
-func (s *memoryPushTokenStore) RegisterToken(peerId string, token string, platform string) {
+func (s *memoryPushTokenStore) RegisterToken(
+	peerId string,
+	token string,
+	platform string,
+	capabilities ...string,
+) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.tokens[peerId] = tokenEntry{
-		Token:     token,
-		Platform:  platform,
-		UpdatedAt: time.Now(),
+		Token:        token,
+		Platform:     platform,
+		Capabilities: normalizeCapabilities(capabilities),
+		UpdatedAt:    time.Now(),
 	}
+	return nil
 }
 
 func (s *memoryPushTokenStore) UnregisterToken(peerId string) {

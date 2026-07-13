@@ -1,5 +1,6 @@
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
+import 'package:flutter_app/features/conversation/domain/models/reaction_payload.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/push/application/push_envelope_staging.dart';
 
@@ -11,6 +12,11 @@ typedef StagedPushReplayChatMessage =
     Future<RecoveredInboxReplayOutcome> Function(
       ChatMessage message, {
       required bool suppressNotification,
+      String? stagedEntryId,
+    });
+typedef StagedPushReplayReaction =
+    Future<RecoveredInboxReplayOutcome> Function(
+      ChatMessage message, {
       String? stagedEntryId,
     });
 
@@ -46,6 +52,7 @@ class IngestStagedPushEnvelopesUseCase {
   final PushEnvelopeStagingStore store;
   final LocalPeerIdProvider localPeerIdProvider;
   final StagedPushReplayChatMessage replayChatMessage;
+  StagedPushReplayReaction? replayReactionMessage;
   final SenderBlockedCheck isSenderBlocked;
   final PushIngestMigrationGate accountMigrationNetworkGate;
   final PushIngestStarted? onIngestStarted;
@@ -56,6 +63,7 @@ class IngestStagedPushEnvelopesUseCase {
     required this.store,
     required this.localPeerIdProvider,
     required this.replayChatMessage,
+    this.replayReactionMessage,
     SenderBlockedCheck? isSenderBlocked,
     PushIngestMigrationGate? accountMigrationNetworkGate,
     this.onIngestStarted,
@@ -105,7 +113,7 @@ class IngestStagedPushEnvelopesUseCase {
     var clearedMalformed = 0;
 
     for (final entry in entries) {
-      if (entry.kind != 'chat' ||
+      if (!_isSupportedEntry(entry) ||
           entry.kem.isEmpty ||
           entry.ciphertext.isEmpty ||
           entry.nonce.isEmpty ||
@@ -123,11 +131,21 @@ class IngestStagedPushEnvelopesUseCase {
 
       attempted++;
       final message = _messageFromEntry(entry, localPeerId: localPeerId);
-      final outcome = await replayChatMessage(
-        message,
-        suppressNotification: true,
-        stagedEntryId: entry.id,
-      );
+      final RecoveredInboxReplayOutcome outcome;
+      if (entry.kind == 'reaction') {
+        final replayReaction = replayReactionMessage;
+        if (replayReaction == null) {
+          retained++;
+          continue;
+        }
+        outcome = await replayReaction(message, stagedEntryId: entry.id);
+      } else {
+        outcome = await replayChatMessage(
+          message,
+          suppressNotification: true,
+          stagedEntryId: entry.id,
+        );
+      }
       switch (outcome.disposition) {
         case RecoveredInboxChatDisposition.committed:
           await store.clear(entry.id);
@@ -169,14 +187,24 @@ class IngestStagedPushEnvelopesUseCase {
       entry.receivedAtMs,
       isUtc: true,
     ).toIso8601String();
-    final content = MessagePayload.buildEncryptedEnvelope(
-      id: entry.messageId ?? entry.nonce,
-      senderPeerId: entry.senderPeerId,
-      senderUsername: '',
-      kem: entry.kem,
-      ciphertext: entry.ciphertext,
-      nonce: entry.nonce,
-    );
+    final content = entry.kind == 'reaction'
+        ? ReactionPayload.buildEncryptedEnvelope(
+            senderPeerId: entry.senderPeerId,
+            eventId: entry.eventId,
+            action: entry.action,
+            targetMessageId: entry.targetMessageId,
+            kem: entry.kem,
+            ciphertext: entry.ciphertext,
+            nonce: entry.nonce,
+          )
+        : MessagePayload.buildEncryptedEnvelope(
+            id: entry.messageId ?? entry.nonce,
+            senderPeerId: entry.senderPeerId,
+            senderUsername: '',
+            kem: entry.kem,
+            ciphertext: entry.ciphertext,
+            nonce: entry.nonce,
+          );
     return ChatMessage(
       from: entry.senderPeerId,
       to: localPeerId,
@@ -185,6 +213,14 @@ class IngestStagedPushEnvelopesUseCase {
       isIncoming: true,
       transport: 'push',
     );
+  }
+
+  bool _isSupportedEntry(StagedPushEnvelope entry) {
+    if (entry.kind == 'chat') return true;
+    return entry.kind == 'reaction' &&
+        entry.eventId != null &&
+        entry.action == ReactionPayload.addAction &&
+        entry.targetMessageId != null;
   }
 
   static Future<bool> _allowSender(String _) async => false;

@@ -36,6 +36,8 @@ RecoveredInboxReplayOutcome mapReactionReplayResultToDisposition(
         reasonDetail: null,
       );
     case HandleReactionResult.senderMismatch:
+    case HandleReactionResult.metadataMismatch:
+    case HandleReactionResult.blockedSender:
     case HandleReactionResult.notReaction:
       return (
         disposition: RecoveredInboxChatDisposition.rejected,

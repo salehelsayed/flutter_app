@@ -16,6 +16,7 @@ class InMemoryGroupMessageRepository
         GroupThreadSummaryRepository,
         GroupThreadPreviewRepository,
         GroupMembershipRepairDeletionRepository,
+        GroupConversationReadEventSource,
         GroupOutgoingLocalMessageChangeSource {
   final Map<String, GroupMessage> _messages = {};
   final Map<String, String> _inboxCursors = {};
@@ -29,6 +30,8 @@ class InMemoryGroupMessageRepository
   final StreamController<GroupOutgoingLocalMessageChange>
   _outgoingLocalMessageChangesController =
       StreamController<GroupOutgoingLocalMessageChange>.broadcast();
+  final StreamController<String> _groupConversationReadController =
+      StreamController<String>.broadcast();
   final Set<String> failSaveMessageIds = {};
   bool failInboxPageTransaction = false;
 
@@ -46,6 +49,10 @@ class InMemoryGroupMessageRepository
   @override
   Stream<GroupOutgoingLocalMessageChange> get outgoingLocalMessageChanges =>
       _outgoingLocalMessageChangesController.stream;
+
+  @override
+  Stream<String> get groupConversationReadStream =>
+      _groupConversationReadController.stream;
 
   void _emitOutgoingStatusChangeIfNeeded({
     required GroupMessage? previous,
@@ -221,11 +228,16 @@ class InMemoryGroupMessageRepository
   @override
   Future<void> markAsRead(String groupId) async {
     final now = DateTime.now().toUtc();
+    var markedCount = 0;
     for (final entry in _messages.entries.toList()) {
       final m = entry.value;
       if (m.groupId == groupId && m.isIncoming && m.readAt == null) {
         _messages[entry.key] = m.copyWith(readAt: now);
+        markedCount++;
       }
+    }
+    if (markedCount > 0) {
+      _groupConversationReadController.add(groupId);
     }
   }
 
@@ -461,7 +473,9 @@ class InMemoryGroupMessageRepository
     Iterable<String> groupIds,
   ) async {
     getGroupThreadPreviewsCallCount++;
-    return {for (final groupId in groupIds.toSet()) groupId: _previewFor(groupId)};
+    return {
+      for (final groupId in groupIds.toSet()) groupId: _previewFor(groupId),
+    };
   }
 
   @override

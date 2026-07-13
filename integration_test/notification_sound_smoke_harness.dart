@@ -1,14 +1,15 @@
 // Notification Sound Smoke — Role-Dispatched Harness (Alice sender / Bob receiver)
 //
 // A single harness that dispatches on the SMOKE_ROLE dart-define:
-//   - role == 'alice' -> sender path (drives the four scenarios by sending one
-//     message each to Bob, coordinated via signal files under
+//   - role == 'alice' -> sender path (drives text, suppression, and media
+//     scenarios by sending messages to Bob, coordinated via signal files under
 //     /tmp/nsmoke_<runId>_*).
 //   - role == 'bob'   -> receiver path (verifies the REAL
 //     FlutterNotificationService fires with sound config intact, writing
 //     per-scenario verdict files the orchestrator reads).
 //
-// Scenarios: S1 1:1, S2 group chat, S3 group announcement, S4 suppression.
+// Scenarios: S1-S3 text, S4 suppression, S5-S13 image/video/voice across
+// direct, group discussion, and group announcement lanes.
 //
 // Launch via orchestrator:
 //   dart run integration_test/scripts/run_notification_sound_smoke.dart -d alice,bob
@@ -19,6 +20,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
+import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/flutter_notification_service.dart';
@@ -26,11 +29,14 @@ import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
 
 import '_support/node_readiness.dart';
 import '_support/signal_files.dart';
@@ -58,6 +64,202 @@ const _dbName = String.fromEnvironment(
 const _nonInteractive = bool.fromEnvironment(
   'NOTIFICATION_SOUND_NON_INTERACTIVE',
 );
+
+enum _MediaNotificationLane { direct, group, announcement }
+
+class _MediaNotificationScenario {
+  const _MediaNotificationScenario({
+    required this.id,
+    required this.lane,
+    required this.mediaType,
+    required this.mime,
+    required this.hashSeed,
+  });
+
+  final String id;
+  final _MediaNotificationLane lane;
+  final String mediaType;
+  final String mime;
+  final String hashSeed;
+
+  String get signal => id.toLowerCase();
+}
+
+const _mediaNotificationScenarios = <_MediaNotificationScenario>[
+  _MediaNotificationScenario(
+    id: 'S5',
+    lane: _MediaNotificationLane.direct,
+    mediaType: 'image',
+    mime: 'image/jpeg',
+    hashSeed: '1',
+  ),
+  _MediaNotificationScenario(
+    id: 'S6',
+    lane: _MediaNotificationLane.direct,
+    mediaType: 'video',
+    mime: 'video/mp4',
+    hashSeed: '2',
+  ),
+  _MediaNotificationScenario(
+    id: 'S7',
+    lane: _MediaNotificationLane.direct,
+    mediaType: 'audio',
+    mime: 'audio/mp4',
+    hashSeed: '3',
+  ),
+  _MediaNotificationScenario(
+    id: 'S8',
+    lane: _MediaNotificationLane.group,
+    mediaType: 'image',
+    mime: 'image/jpeg',
+    hashSeed: '4',
+  ),
+  _MediaNotificationScenario(
+    id: 'S9',
+    lane: _MediaNotificationLane.group,
+    mediaType: 'video',
+    mime: 'video/mp4',
+    hashSeed: '5',
+  ),
+  _MediaNotificationScenario(
+    id: 'S10',
+    lane: _MediaNotificationLane.group,
+    mediaType: 'audio',
+    mime: 'audio/mp4',
+    hashSeed: '6',
+  ),
+  _MediaNotificationScenario(
+    id: 'S11',
+    lane: _MediaNotificationLane.announcement,
+    mediaType: 'image',
+    mime: 'image/jpeg',
+    hashSeed: '7',
+  ),
+  _MediaNotificationScenario(
+    id: 'S12',
+    lane: _MediaNotificationLane.announcement,
+    mediaType: 'video',
+    mime: 'video/mp4',
+    hashSeed: '8',
+  ),
+  _MediaNotificationScenario(
+    id: 'S13',
+    lane: _MediaNotificationLane.announcement,
+    mediaType: 'audio',
+    mime: 'audio/mp4',
+    hashSeed: '9',
+  ),
+];
+
+/// Mirrors the production guarded group-attachment persistence seam.
+///
+/// [setupGroupMultiDeviceStack] intentionally provides only the repository
+/// surface needed by its original group-text scenarios. Media notification
+/// scenarios exercise the incoming group-media path, which must use the same
+/// parent/tombstone guard wired by `main.dart`.
+MediaAttachmentRepositoryImpl _createNotificationGroupMediaRepository(
+  GroupMultiDeviceTestStack stack,
+) {
+  final db = stack.db;
+  final repository = MediaAttachmentRepositoryImpl(
+    dbSaveMediaAttachmentPreservingLocalState: (row) =>
+        dbSaveMediaAttachmentPreservingLocalState(db, row),
+    dbLoadMediaForMessage: (messageId, ownerLane) =>
+        dbLoadMediaForMessage(db, messageId, ownerLane: ownerLane),
+    dbLoadMediaById: (id) => dbLoadMediaById(db, id),
+    dbLoadMediaForMessages: (messageIds, ownerLane) =>
+        dbLoadMediaForMessages(db, messageIds, ownerLane: ownerLane),
+    dbUpdateMediaLocalPath: (id, localPath, downloadStatus) =>
+        dbUpdateMediaLocalPath(db, id, localPath, downloadStatus),
+    dbUpdateMediaDownloadStatus: (id, downloadStatus) =>
+        dbUpdateMediaDownloadStatus(db, id, downloadStatus),
+    dbDeleteMediaForMessage: (messageId, ownerLane) =>
+        dbDeleteMediaForMessage(db, messageId, ownerLane: ownerLane),
+    dbDeleteMediaForContact: (contactPeerId) =>
+        dbDeleteMediaForContact(db, contactPeerId),
+    dbMarkUploadPendingAttachmentsFailedForMessage: (messageId, ownerLane) =>
+        dbMarkUploadPendingAttachmentsFailedForMessage(
+          db,
+          messageId,
+          ownerLane: ownerLane,
+        ),
+    dbLoadPendingMediaDownloads: () => dbLoadPendingMediaDownloads(db),
+    dbLoadUploadPendingAttachments:
+        ({int limit = 50, required String ownerLane}) =>
+            dbLoadUploadPendingAttachments(
+              db,
+              limit: limit,
+              ownerLane: ownerLane,
+            ),
+    dbSetMediaBookmarked: (id, bookmarked) =>
+        dbSetMediaBookmarked(db, id, bookmarked: bookmarked),
+    dbUpdateMediaPlaybackPosition: (id, positionMs) =>
+        dbUpdateMediaPlaybackPosition(db, id, positionMs),
+    dbLoadMediaLibraryPage:
+        ({
+          required String scopeKind,
+          required String scopeId,
+          required List<String> mediaTypes,
+          required bool bookmarkedOnly,
+          required bool incomingOnly,
+          required int limit,
+          String? afterTimestamp,
+          String? afterMessageId,
+          String? afterAttachmentId,
+        }) => dbLoadMediaLibraryPage(
+          db,
+          scopeKind: scopeKind,
+          scopeId: scopeId,
+          mediaTypes: mediaTypes,
+          bookmarkedOnly: bookmarkedOnly,
+          incomingOnly: incomingOnly,
+          limit: limit,
+          afterTimestamp: afterTimestamp,
+          afterMessageId: afterMessageId,
+          afterAttachmentId: afterAttachmentId,
+        ),
+    dbSaveGroupMediaAttachmentGuarded: (row, {required String groupId}) =>
+        dbSaveGroupMediaAttachmentGuarded(db, row, groupId: groupId),
+  );
+  if (repository.dbSaveGroupMediaAttachmentGuarded == null) {
+    throw StateError(
+      'Notification media harness requires guarded group-attachment writes',
+    );
+  }
+  print('[NOTIF-HARNESS] Guarded group-media persistence is wired');
+  return repository;
+}
+
+MediaAttachment _mediaAttachmentForScenario(
+  _MediaNotificationScenario scenario, {
+  required String messageId,
+}) {
+  return MediaAttachment(
+    id: 'notification-$_runId-${scenario.signal}',
+    messageId: messageId,
+    mime: scenario.mime,
+    size: 4096,
+    mediaType: scenario.mediaType,
+    width: scenario.mediaType == 'image' || scenario.mediaType == 'video'
+        ? 640
+        : null,
+    height: scenario.mediaType == 'image' || scenario.mediaType == 'video'
+        ? 480
+        : null,
+    durationMs: scenario.mediaType == 'video' || scenario.mediaType == 'audio'
+        ? 3200
+        : null,
+    downloadStatus: 'done',
+    createdAt: DateTime.now().toUtc().toIso8601String(),
+    waveform: scenario.mediaType == 'audio'
+        ? const <double>[0.1, 0.4, 0.2]
+        : null,
+    contentHash: List<String>.filled(64, scenario.hashSeed).join(),
+    encryptionKeyBase64: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+    encryptionNonce: 'AAAAAAAAAAAAAAAA',
+    encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+  );
+}
 
 // Canonical signal-file coordinator. Produces byte-identical paths to the old
 // inline `_sig(name)` => `'$_sharedDir/nsmoke_${_runId}_$name'`.
@@ -102,11 +304,12 @@ class _RecordingNotificationService implements NotificationService {
     String? payload,
     bool silent = false,
   }) async {
+    final resolvedPayload = payload ?? contactPeerId;
     await _inner.showMessageNotification(
       contactPeerId: contactPeerId,
       senderUsername: senderUsername,
       messageText: messageText,
-      payload: payload,
+      payload: resolvedPayload,
       silent: silent,
     );
     shown.add(
@@ -114,7 +317,7 @@ class _RecordingNotificationService implements NotificationService {
         contactPeerId: contactPeerId,
         senderUsername: senderUsername,
         messageText: messageText,
-        payload: payload,
+        payload: resolvedPayload,
         silent: silent,
         at: DateTime.now(),
       ),
@@ -188,7 +391,7 @@ void main() {
 // ---------------------------------------------------------------------------
 
 void _runAlice() {
-  testWidgets('Alice(Notif) — S1..S4', (tester) async {
+  testWidgets('Alice(Notif) — S1..S13', (tester) async {
     print('\n${'═' * 60}');
     print('  ALICE (NOTIFICATION SOUND) — SMOKE E2E');
     print('${'═' * 60}\n');
@@ -491,6 +694,89 @@ void _runAlice() {
       timeout: const Duration(seconds: 300),
     );
 
+    // S5-S13: attachment-only image/video/voice notifications across direct,
+    // discussion, and announcement lanes. These are real encrypted message
+    // sends over the existing P2P/relay stack; only synthetic media descriptors
+    // are needed because this campaign proves notification projection rather
+    // than blob download/rendering.
+    for (final scenario in _mediaNotificationScenarios) {
+      final signal = scenario.signal;
+      await _signals.waitForSignal(
+        '${signal}_go',
+        timeout: const Duration(seconds: 300),
+      );
+      final messageId = 'notification-$_runId-$signal-message';
+      final attachment = _mediaAttachmentForScenario(
+        scenario,
+        messageId: messageId,
+      );
+      late final String outcome;
+      switch (scenario.lane) {
+        case _MediaNotificationLane.direct:
+          final result = await sendChatMessage(
+            p2pService: stack.p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: bobPeerId,
+            text: '',
+            senderPeerId: stack.identity.peerId,
+            senderUsername: stack.identity.username,
+            messageId: messageId,
+            bridge: stack.bridge,
+            recipientMlKemPublicKey: bobMlKemPk,
+            mediaAttachments: <MediaAttachment>[attachment],
+            mediaAttachmentRepo: stack.mediaAttachmentRepo,
+          );
+          outcome = result.$1.name;
+        case _MediaNotificationLane.group:
+          final result = await sendGroupMessage(
+            bridge: stack.bridge,
+            groupRepo: stack.groupRepo,
+            msgRepo: stack.groupMsgRepo,
+            groupId: chatGroup.id,
+            text: '',
+            senderPeerId: stack.identity.peerId,
+            senderPublicKey: stack.identity.publicKey,
+            senderPrivateKey: stack.identity.privateKey,
+            senderUsername: stack.identity.username,
+            messageId: messageId,
+            mediaAttachments: <MediaAttachment>[attachment],
+            mediaAttachmentRepo: stack.mediaAttachmentRepo,
+            inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
+          );
+          outcome = result.$1.name;
+        case _MediaNotificationLane.announcement:
+          final result = await sendGroupMessage(
+            bridge: stack.bridge,
+            groupRepo: stack.groupRepo,
+            msgRepo: stack.groupMsgRepo,
+            groupId: annGroup.id,
+            text: '',
+            senderPeerId: stack.identity.peerId,
+            senderPublicKey: stack.identity.publicKey,
+            senderPrivateKey: stack.identity.privateKey,
+            senderUsername: stack.identity.username,
+            messageId: messageId,
+            mediaAttachments: <MediaAttachment>[attachment],
+            mediaAttachmentRepo: stack.mediaAttachmentRepo,
+            inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
+          );
+          outcome = result.$1.name;
+      }
+      _signals.writeJson('${signal}_alice_sent', <String, Object?>{
+        'outcome': outcome,
+        'lane': scenario.lane.name,
+        'mediaType': scenario.mediaType,
+      });
+      print(
+        '[ALICE-N] ${scenario.id} ${scenario.lane.name}/'
+        '${scenario.mediaType} sent: $outcome',
+      );
+      await _signals.waitForSignal(
+        '${signal}_verdict_ack',
+        timeout: const Duration(seconds: 300),
+      );
+    }
+
     // ── Done ──
     await _signals.waitForSignal(
       'all_done',
@@ -499,7 +785,7 @@ void _runAlice() {
     print('\n[ALICE-N] Complete');
     await stack.teardown();
     _signals.writeSignal('alice_done', content: 'ok');
-  }, timeout: const Timeout(Duration(minutes: 20)));
+  }, timeout: const Timeout(Duration(minutes: 35)));
 }
 
 // ---------------------------------------------------------------------------
@@ -507,7 +793,7 @@ void _runAlice() {
 // ---------------------------------------------------------------------------
 
 void _runBob() {
-  testWidgets('Bob(Notif) — S1..S4', (tester) async {
+  testWidgets('Bob(Notif) — S1..S13', (tester) async {
     print('\n${'═' * 60}');
     print('  BOB (NOTIFICATION SOUND) — SMOKE E2E');
     print('${'═' * 60}\n');
@@ -549,6 +835,9 @@ void _runBob() {
     // Replace the stack's FakeNotificationService-wired group listener with
     // one that targets the REAL FlutterNotificationService.
     stack.groupListener.dispose();
+    final groupMediaAttachmentRepo = _createNotificationGroupMediaRepository(
+      stack,
+    );
 
     final recording = _RecordingNotificationService(
       FlutterNotificationService(requestApplePermissions: !_nonInteractive),
@@ -559,6 +848,7 @@ void _runBob() {
         'Bob(notif): FlutterNotificationService.initialize() timed out',
       ),
     );
+    await recording.clearDeliveredNotifications();
     final NotificationService notificationService = recording;
 
     final chatConversationTracker = ActiveConversationTracker();
@@ -570,6 +860,7 @@ void _runBob() {
       msgRepo: stack.groupMsgRepo,
       bridge: stack.bridge,
       getSelfPeerId: () async => stack.identity.peerId,
+      mediaAttachmentRepo: groupMediaAttachmentRepo,
       notificationService: notificationService,
       groupConversationTracker: groupConversationTracker,
       getAppLifecycleState: () => currentLifecycle,
@@ -654,6 +945,7 @@ void _runBob() {
       contactRepo: stack.contactRepo,
       bridge: stack.bridge,
       getOwnMlKemSecretKey: () async => stack.identity.mlKemSecretKey,
+      mediaAttachmentRepo: stack.mediaAttachmentRepo,
       notificationService: notificationService,
       conversationTracker: chatConversationTracker,
       getAppLifecycleState: () => currentLifecycle,
@@ -707,21 +999,51 @@ void _runBob() {
       required int baselineCount,
       required bool expectSuppressed,
       String? expectedContactPeerId,
+      String? expectedSenderUsername,
+      String? expectedMessageText,
+      String? expectedPayload,
+      String? expectedPayloadPrefix,
     }) {
       final calls = recording.shown.sublist(baselineCount);
-      final hasExpected = expectedContactPeerId != null
-          ? calls.any((s) => s.contactPeerId == expectedContactPeerId)
-          : calls.isNotEmpty;
-      final programmaticPass = expectSuppressed ? calls.isEmpty : hasExpected;
+      final call = calls.length == 1 ? calls.single : null;
+      final contactMatches =
+          expectedContactPeerId == null ||
+          call?.contactPeerId == expectedContactPeerId;
+      final senderMatches =
+          expectedSenderUsername == null ||
+          call?.senderUsername == expectedSenderUsername;
+      final bodyMatches =
+          expectedMessageText == null ||
+          call?.messageText == expectedMessageText;
+      final payloadMatches =
+          (expectedPayload == null || call?.payload == expectedPayload) &&
+          (expectedPayloadPrefix == null ||
+              (call?.payload?.startsWith(expectedPayloadPrefix) ?? false));
+      final programmaticPass = expectSuppressed
+          ? calls.isEmpty
+          : call != null &&
+                contactMatches &&
+                senderMatches &&
+                bodyMatches &&
+                payloadMatches;
       return {
         'scenarioId': scenarioId,
         'state': state,
         'expectSuppressed': expectSuppressed,
         'expectedContactPeerId': expectedContactPeerId,
+        'expectedSenderUsername': expectedSenderUsername,
+        'expectedMessageText': expectedMessageText,
+        'expectedPayload': expectedPayload,
+        'expectedPayloadPrefix': expectedPayloadPrefix,
         'notificationShown': calls.isNotEmpty,
         'notificationSuppressed': expectSuppressed && calls.isEmpty,
         'programmaticPass': programmaticPass,
         'shownCount': calls.length,
+        'duplicateCount': calls.length > 1 ? calls.length - 1 : 0,
+        'contactMatches': contactMatches,
+        'senderMatches': senderMatches,
+        'bodyMatches': bodyMatches,
+        'payloadMatches': payloadMatches,
         'shownCalls': calls.map((s) => s.toJson()).toList(),
       };
     }
@@ -745,6 +1067,9 @@ void _runBob() {
       baselineCount: s1Baseline,
       expectSuppressed: false,
       expectedContactPeerId: alicePeerId,
+      expectedSenderUsername: 'AliceNotif',
+      expectedMessageText: 'S1: notification sound 1:1',
+      expectedPayload: alicePeerId,
     );
     _signals.writeJson('s1_bob_verdict', s1Verdict);
     print(
@@ -752,6 +1077,11 @@ void _runBob() {
       'shown=${s1Verdict['notificationShown']} '
       'count=${s1Verdict['shownCount']}',
     );
+    await _signals.waitForSignal(
+      's1_verdict_ack',
+      timeout: const Duration(seconds: 300),
+    );
+    await notificationService.clearDeliveredNotifications();
 
     // ════════════════════════════════════════════════════════════════
     //  S2: Group discussion (GroupType.chat) → should NOTIFY
@@ -786,12 +1116,20 @@ void _runBob() {
       baselineCount: s2Baseline,
       expectSuppressed: false,
       expectedContactPeerId: 'group:$chatGroupId',
+      expectedSenderUsername: 'Notif Sound Discussion',
+      expectedMessageText: 'AliceNotif: S2: notification sound discussion',
+      expectedPayloadPrefix: 'group:$chatGroupId|message:',
     );
     _signals.writeJson('s2_bob_verdict', s2Verdict);
     print(
       '[BOB-N] S2 verdict: pass=${s2Verdict['programmaticPass']} '
       'count=${s2Verdict['shownCount']}',
     );
+    await _signals.waitForSignal(
+      's2_verdict_ack',
+      timeout: const Duration(seconds: 300),
+    );
+    await notificationService.clearDeliveredNotifications();
 
     // ════════════════════════════════════════════════════════════════
     //  S3: Group announcement (GroupType.announcement) → should NOTIFY
@@ -827,12 +1165,20 @@ void _runBob() {
       baselineCount: s3Baseline,
       expectSuppressed: false,
       expectedContactPeerId: 'group:$annGroupId',
+      expectedSenderUsername: 'Notif Sound Announcement',
+      expectedMessageText: 'AliceNotif: S3: notification sound announcement',
+      expectedPayloadPrefix: 'group:$annGroupId|message:',
     );
     _signals.writeJson('s3_bob_verdict', s3Verdict);
     print(
       '[BOB-N] S3 verdict: pass=${s3Verdict['programmaticPass']} '
       'count=${s3Verdict['shownCount']}',
     );
+    await _signals.waitForSignal(
+      's3_verdict_ack',
+      timeout: const Duration(seconds: 300),
+    );
+    await notificationService.clearDeliveredNotifications();
 
     // ════════════════════════════════════════════════════════════════
     //  S4: Suppression control — Bob simulates viewing Alice's 1:1
@@ -864,7 +1210,83 @@ void _runBob() {
       'count=${s4Verdict['shownCount']}',
     );
 
+    await _signals.waitForSignal(
+      's4_verdict_ack',
+      timeout: const Duration(seconds: 300),
+    );
+    await notificationService.clearDeliveredNotifications();
+
     chatConversationTracker.clear();
+
+    for (final scenario in _mediaNotificationScenarios) {
+      final signal = scenario.signal;
+      final expectedAttachment = _mediaAttachmentForScenario(
+        scenario,
+        messageId: 'notification-$_runId-$signal-message',
+      );
+      final expectedLabel = notificationBodyForMessage('', <MediaAttachment>[
+        expectedAttachment,
+      ]);
+      late final String expectedContactPeerId;
+      late final String expectedSenderUsername;
+      late final String expectedMessageText;
+      String? expectedPayload;
+      String? expectedPayloadPrefix;
+      switch (scenario.lane) {
+        case _MediaNotificationLane.direct:
+          expectedContactPeerId = alicePeerId;
+          expectedSenderUsername = 'AliceNotif';
+          expectedMessageText = expectedLabel;
+          expectedPayload = alicePeerId;
+        case _MediaNotificationLane.group:
+          expectedContactPeerId = 'group:$chatGroupId';
+          expectedSenderUsername = 'Notif Sound Discussion';
+          expectedMessageText = 'AliceNotif: $expectedLabel';
+          expectedPayloadPrefix = 'group:$chatGroupId|message:';
+        case _MediaNotificationLane.announcement:
+          expectedContactPeerId = 'group:$annGroupId';
+          expectedSenderUsername = 'Notif Sound Announcement';
+          expectedMessageText = 'AliceNotif: $expectedLabel';
+          expectedPayloadPrefix = 'group:$annGroupId|message:';
+      }
+
+      final baseline = recording.shown.length;
+      await _signals.waitForSignal(
+        '${signal}_alice_sent',
+        timeout: const Duration(seconds: 300),
+      );
+      await waitForShown(
+        baselineCount: baseline,
+        timeout: const Duration(seconds: 60),
+      );
+      final verdict =
+          buildVerdict(
+              scenarioId: scenario.id,
+              state: 'foreground_off_conversation_media',
+              baselineCount: baseline,
+              expectSuppressed: false,
+              expectedContactPeerId: expectedContactPeerId,
+              expectedSenderUsername: expectedSenderUsername,
+              expectedMessageText: expectedMessageText,
+              expectedPayload: expectedPayload,
+              expectedPayloadPrefix: expectedPayloadPrefix,
+            )
+            ..['lane'] = scenario.lane.name
+            ..['mediaType'] = scenario.mediaType
+            ..['mime'] = scenario.mime
+            ..['expectedMediaLabel'] = expectedLabel;
+      _signals.writeJson('${signal}_bob_verdict', verdict);
+      print(
+        '[BOB-N] ${scenario.id} ${scenario.lane.name}/'
+        '${scenario.mediaType} verdict: pass=${verdict['programmaticPass']} '
+        'count=${verdict['shownCount']}',
+      );
+      await _signals.waitForSignal(
+        '${signal}_verdict_ack',
+        timeout: const Duration(seconds: 300),
+      );
+      await notificationService.clearDeliveredNotifications();
+    }
 
     // ── Done ──
     await _signals.waitForSignal(
@@ -878,5 +1300,5 @@ void _runBob() {
     notificationService.dispose();
     await stack.teardown();
     _signals.writeSignal('bob_done', content: 'ok');
-  }, timeout: const Timeout(Duration(minutes: 20)));
+  }, timeout: const Timeout(Duration(minutes: 35)));
 }

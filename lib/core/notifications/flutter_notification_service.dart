@@ -1,20 +1,38 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
 import 'package:flutter_app/core/notifications/local_notification_support.dart';
+import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+
+typedef ConversationNotificationIdRegistryResolver =
+    Future<DurableConversationNotificationIdRegistry> Function();
+typedef ConversationNotificationIdResolver =
+    Future<int> Function(String conversationKey);
 
 /// Production implementation of [NotificationService] using
 /// `flutter_local_notifications`.
 class FlutterNotificationService implements NotificationService {
   final bool _requestApplePermissions;
+  final ConversationNotificationIdRegistryResolver
+  _notificationIdRegistryResolver;
+  final ConversationNotificationIdResolver? _notificationIdResolver;
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
+  DurableConversationNotificationIdRegistry? _notificationIdRegistry;
   String? _initialPayload;
   int? _initialNotificationId;
   bool _initialPayloadConsumed = false;
 
-  FlutterNotificationService({bool requestApplePermissions = true})
-    : _requestApplePermissions = requestApplePermissions;
+  FlutterNotificationService({
+    bool requestApplePermissions = true,
+    ConversationNotificationIdRegistryResolver? notificationIdRegistryResolver,
+    ConversationNotificationIdResolver? notificationIdResolver,
+  }) : _requestApplePermissions = requestApplePermissions,
+       _notificationIdResolver = notificationIdResolver,
+       _notificationIdRegistryResolver =
+           notificationIdRegistryResolver ??
+           DurableConversationNotificationIdRegistry.openMobileDefault;
 
   @override
   void Function(String payload)? onNotificationTap;
@@ -125,16 +143,17 @@ class FlutterNotificationService implements NotificationService {
     // keyed off the conversation (NOT the per-message payload) so a burst
     // coalesces into a single card; the silent variant reuses the SAME id to
     // update in place without sounding (118 Phase 3/4).
-    final notificationId = contactPeerId.hashCode;
+    final notificationId = await _resolveNotificationId(contactPeerId);
     final resolvedPayload = payload ?? contactPeerId;
 
     await _plugin.show(
       notificationId,
       senderUsername,
       messageText,
-      silent
-          ? mknoonMessagesSilentNotificationDetails
-          : mknoonMessagesNotificationDetails,
+      mknoonConversationNotificationDetails(
+        conversationKey: contactPeerId,
+        silent: silent,
+      ),
       payload: resolvedPayload,
     );
 
@@ -158,8 +177,9 @@ class FlutterNotificationService implements NotificationService {
     required String body,
     String? payload,
   }) async {
-    // Use payload hashCode for notification ID so same-type notifications update
-    final notificationId = (payload ?? title).hashCode;
+    final notificationId = await _resolveNotificationId(
+      _genericNotificationConversationKey(payload: payload, title: title),
+    );
 
     await _plugin.show(
       notificationId,
@@ -193,5 +213,54 @@ class FlutterNotificationService implements NotificationService {
   @override
   void dispose() {
     // Nothing to dispose — plugin is a singleton.
+  }
+
+  Future<int> _resolveNotificationId(String conversationKey) async {
+    try {
+      final injectedResolver = _notificationIdResolver;
+      if (injectedResolver != null) {
+        return await injectedResolver(conversationKey);
+      }
+      var registry = _notificationIdRegistry;
+      if (registry == null) {
+        registry = await _notificationIdRegistryResolver();
+        _notificationIdRegistry = registry;
+      }
+      return await registry.resolve(
+        conversationKey,
+        activeNotificationIds: () async =>
+            (await _plugin.getActiveNotifications()).map(
+              (notification) => notification.id,
+            ),
+      );
+    } catch (error) {
+      final allocationError = error is NotificationIdAllocationException
+          ? error
+          : NotificationIdAllocationException(
+              operation: 'registry_open',
+              errorType: error.runtimeType.toString(),
+            );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'NOTIFICATION_ID_ALLOCATION_UNAVAILABLE',
+        details: {
+          'operation': allocationError.operation,
+          'errorType': allocationError.errorType,
+        },
+      );
+      throw allocationError;
+    }
+  }
+
+  String _genericNotificationConversationKey({
+    required String? payload,
+    required String title,
+  }) {
+    final target = NotificationRouteTarget.fromPayload(payload);
+    return switch (target?.kind) {
+      NotificationRouteTargetKind.conversation => target!.peerId!,
+      NotificationRouteTargetKind.group => 'group:${target!.groupId!}',
+      _ => payload?.trim().isNotEmpty == true ? payload!.trim() : title,
+    };
   }
 }

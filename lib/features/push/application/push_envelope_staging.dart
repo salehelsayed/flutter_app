@@ -16,6 +16,9 @@ class StagedPushEnvelope {
   final String nonce;
   final String senderPeerId;
   final String? messageId;
+  final String? eventId;
+  final String? action;
+  final String? targetMessageId;
   final int receivedAtMs;
 
   const StagedPushEnvelope({
@@ -25,6 +28,9 @@ class StagedPushEnvelope {
     required this.nonce,
     required this.senderPeerId,
     required this.messageId,
+    this.eventId,
+    this.action,
+    this.targetMessageId,
     required this.receivedAtMs,
   });
 
@@ -38,6 +44,9 @@ class StagedPushEnvelope {
       'nonce': nonce,
       'senderPeerId': senderPeerId,
       'messageId': messageId,
+      if (eventId != null) 'eventId': eventId,
+      if (action != null) 'action': action,
+      if (targetMessageId != null) 'targetMessageId': targetMessageId,
       'receivedAtMs': receivedAtMs,
     };
   }
@@ -66,9 +75,17 @@ class StagedPushEnvelope {
       messageId: messageId is String && messageId.trim().isNotEmpty
           ? messageId
           : null,
+      eventId: _optionalString(json['eventId']),
+      action: _optionalString(json['action']),
+      targetMessageId: _optionalString(json['targetMessageId']),
       receivedAtMs: receivedAtMs.toInt(),
     );
   }
+}
+
+String? _optionalString(Object? value) {
+  if (value is! String || value.trim().isEmpty) return null;
+  return value;
 }
 
 abstract class PushEnvelopeStagingStore {

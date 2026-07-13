@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
@@ -63,6 +64,7 @@ Future<RemoveGroupReactionResult> removeGroupReaction({
   required String senderPeerId,
   required String senderPublicKey,
   required String senderPrivateKey,
+  String Function()? transitionIdFactory,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -108,7 +110,27 @@ Future<RemoveGroupReactionResult> removeGroupReaction({
     messageId: messageId,
     senderPeerId: senderPeerId,
   );
+  final latestTransition = await reactionReplayOutboxRepo
+      .getLatestEntryForTarget(
+        groupId: groupId,
+        messageId: messageId,
+        senderPeerId: senderPeerId,
+      );
+  final currentReaction = await reactionRepo
+      .getReactionForSenderIncludingRemoved(
+        messageId: messageId,
+        senderPeerId: senderPeerId,
+      );
+  final exactRetry =
+      latestTransition != null &&
+      latestTransition.action == GroupReactionPayload.actionRemove &&
+      currentReaction?.isRemoved == true;
   final timestamp = DateTime.now().toUtc().toIso8601String();
+  final transitionId = exactRetry
+      ? latestTransition.reactionId
+      : _requiredTransitionId(
+          (transitionIdFactory ?? _defaultGroupReactionTransitionId)(),
+        );
 
   final payload = GroupReactionPayload(
     id: reactionId,
@@ -117,20 +139,34 @@ Future<RemoveGroupReactionResult> removeGroupReaction({
     action: 'remove',
     senderPeerId: senderPeerId,
     timestamp: timestamp,
+    eventId: transitionId,
   );
 
   // 4. Stage durable custody + relay store BEFORE publishing, so a live publish
   //    failure still leaves a retryable replay-outbox row (INV-R1/INV-R2).
-  await _stageRemoveReactionInboxStore(
-    bridge: bridge,
-    groupRepo: groupRepo,
-    reactionReplayOutboxRepo: reactionReplayOutboxRepo,
-    groupId: groupId,
-    payload: payload,
-    senderPublicKey: senderDevice?.deviceSigningPublicKey ?? senderPublicKey,
-    senderPrivateKey: senderPrivateKey,
-    senderDevice: senderDevice,
-  );
+  if (exactRetry) {
+    unawaited(
+      _attemptRemoveReactionInboxStore(
+        bridge: bridge,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        reactionId: transitionId,
+        inboxRetryPayload: latestTransition.inboxRetryPayload,
+        staged: true,
+      ),
+    );
+  } else {
+    await _stageRemoveReactionInboxStore(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+      groupId: groupId,
+      payload: payload,
+      senderPublicKey: senderDevice?.deviceSigningPublicKey ?? senderPublicKey,
+      senderPrivateKey: senderPrivateKey,
+      senderDevice: senderDevice,
+      transitionId: transitionId,
+    );
+  }
 
   // 5. Delete locally (optimistic) regardless of the publish outcome. Tombstone
   //    with the remove's authored timestamp so a stale incoming add can't
@@ -194,6 +230,17 @@ Future<RemoveGroupReactionResult> removeGroupReaction({
       : RemoveGroupReactionResult.queuedForRetry;
 }
 
+String _defaultGroupReactionTransitionId() =>
+    'group-reaction-event-${const Uuid().v4()}';
+
+String _requiredTransitionId(String value) {
+  final normalized = value.trim();
+  if (normalized.isEmpty) {
+    throw ArgumentError.value(value, 'transitionId', 'must not be empty');
+  }
+  return normalized;
+}
+
 Future<void> _stageRemoveReactionInboxStore({
   required Bridge bridge,
   required GroupRepository groupRepo,
@@ -203,9 +250,17 @@ Future<void> _stageRemoveReactionInboxStore({
   required String senderPublicKey,
   required String senderPrivateKey,
   required GroupMemberDeviceIdentity? senderDevice,
+  required String transitionId,
 }) async {
   late final String inboxRetryPayload;
   try {
+    final senderTransportPeerId =
+        senderDevice?.transportPeerId ?? payload.senderPeerId;
+    final replayRecipients = await _resolveReplayRecipients(
+      groupRepo: groupRepo,
+      groupId: groupId,
+      senderTransportPeerId: senderTransportPeerId,
+    );
     inboxRetryPayload = await buildGroupOfflineReplayInboxRetryPayload(
       bridge: bridge,
       groupRepo: groupRepo,
@@ -219,6 +274,15 @@ Future<void> _stageRemoveReactionInboxStore({
       senderDeviceId: senderDevice?.deviceId,
       senderTransportPeerId: senderDevice?.transportPeerId,
       senderKeyPackageId: senderDevice?.keyPackageId,
+      recipientPeerIds: replayRecipients,
+      reactionNotificationExtension: GroupReactionNotificationExtensionInput(
+        transitionId: transitionId,
+        action: payload.action,
+        targetMessageId: payload.messageId,
+        reactorPeerId: payload.senderPeerId,
+        reactorTransportPeerId: senderTransportPeerId,
+        notificationRecipientTransportPeerIds: const <String>[],
+      ),
     );
   } catch (e) {
     emitFlowEvent(
@@ -230,7 +294,7 @@ Future<void> _stageRemoveReactionInboxStore({
   }
   final nowIso = DateTime.now().toUtc().toIso8601String();
   final entry = GroupReactionReplayOutboxEntry(
-    reactionId: payload.id,
+    reactionId: transitionId,
     groupId: groupId,
     messageId: payload.messageId,
     senderPeerId: payload.senderPeerId,
@@ -258,11 +322,30 @@ Future<void> _stageRemoveReactionInboxStore({
     _attemptRemoveReactionInboxStore(
       bridge: bridge,
       reactionReplayOutboxRepo: reactionReplayOutboxRepo,
-      reactionId: payload.id,
+      reactionId: transitionId,
       inboxRetryPayload: inboxRetryPayload,
       staged: staged,
     ),
   );
+}
+
+Future<List<String>> _resolveReplayRecipients({
+  required GroupRepository groupRepo,
+  required String groupId,
+  required String senderTransportPeerId,
+}) async {
+  final recipients = <String>{};
+  for (final member in await groupRepo.getMembers(groupId)) {
+    for (final device in member.activeDevicesWithLegacyFallback()) {
+      final transportPeerId = device.transportPeerId.trim();
+      if (transportPeerId.isEmpty ||
+          transportPeerId == senderTransportPeerId.trim()) {
+        continue;
+      }
+      recipients.add(transportPeerId);
+    }
+  }
+  return recipients.toList()..sort();
 }
 
 Future<void> _attemptRemoveReactionInboxStore({

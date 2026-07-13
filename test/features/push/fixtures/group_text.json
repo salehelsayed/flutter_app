@@ -5,6 +5,7 @@
   "routeData": {
     "type": "group_message",
     "groupId": "group-team",
+    "sender_transport_peer_id": "transport-alice",
     "message_id": "fixture-group-1",
     "kind": "group_offline_replay",
     "envelope_version": "1",

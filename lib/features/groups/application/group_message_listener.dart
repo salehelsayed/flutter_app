@@ -9,6 +9,8 @@ import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dar
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
+import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
@@ -26,6 +28,7 @@ import 'package:flutter_app/features/groups/application/group_membership_event_w
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
+import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
 import 'package:flutter_app/features/groups/application/group_role_update_authorization.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_reaction_use_case.dart';
@@ -38,6 +41,8 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_multi_device_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_membership_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_reaction.dart';
+import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
+import 'package:flutter_app/features/groups/domain/models/group_reaction_payload.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_membership_message_repository.dart';
@@ -46,6 +51,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_pending_ke
 import 'package:flutter_app/features/groups/application/manage_pending_sibling_device.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
+import 'package:flutter_app/features/push/application/private_media_notification_body.dart';
 
 typedef RecoverGroupDispatcherOverflow =
     Future<void> Function(Map<String, dynamic> diagnostic);
@@ -58,7 +64,8 @@ typedef RecoverGroupDispatcherOverflow =
 /// rotation (a single deterministic rotator — see [GroupMessageListener]
 /// member_removed handling). Defaults to a no-op when not injected (tests / the
 /// non-creator path).
-typedef RotateGroupKeyAfterRemoteRemoval = Future<bool> Function(String groupId);
+typedef RotateGroupKeyAfterRemoteRemoval =
+    Future<bool> Function(String groupId);
 
 const _maxPendingMembershipDependentMessagesPerGroup = 50;
 
@@ -120,6 +127,8 @@ class GroupMessageListener {
   // 118 Phase 4: shared per-conversation tone debounce (the same tracker the
   // direct listener uses; group + direct keys are disjoint).
   final NotificationToneTracker? _notificationToneTracker;
+  final Future<DurableNotificationToneLease> Function()
+  _durableNotificationCoordinatorResolver;
   final AppLifecycleState Function()? _getAppLifecycleState;
   final RecentRemoteNotificationGate _remoteNotificationGate;
   final ReactionRepository? _reactionRepo;
@@ -135,6 +144,7 @@ class GroupMessageListener {
   final RotateGroupKeyAfterRemoteRemoval? _rotateGroupKeyAfterRemoteRemoval;
   final AccountMigrationNetworkGate _accountMigrationNetworkGate;
   final HoldPendingSiblingDeviceFn? _holdPendingSiblingDevice;
+  final GroupPrivateMediaAvailability _privateMediaAvailability;
 
   StreamSubscription<void>? _subscription;
   StreamSubscription<void>? _reactionSubscription;
@@ -151,6 +161,7 @@ class GroupMessageListener {
   final Set<Future<void>> _inFlightHandlers = {};
   Future<void>? _dispatcherOverflowRecovery;
   Future<void>? _stopFuture;
+  Future<DurableNotificationToneLease?>? _durableNotificationCoordinatorFuture;
   String? _cachedSelfPeerId;
   var _hasResolvedSelfPeerId = false;
   Future<String?>? _selfPeerIdLoadFuture;
@@ -167,6 +178,8 @@ class GroupMessageListener {
     NotificationService? notificationService,
     ActiveConversationTracker? groupConversationTracker,
     NotificationToneTracker? notificationToneTracker,
+    Future<DurableNotificationToneLease> Function()?
+    durableNotificationCoordinatorResolver,
     AppLifecycleState Function()? getAppLifecycleState,
     RecentRemoteNotificationGate? remoteNotificationGate,
     ReactionRepository? reactionRepo,
@@ -183,6 +196,8 @@ class GroupMessageListener {
     AccountMigrationNetworkGate accountMigrationNetworkGate =
         allowAccountMigrationNetworkSideEffects,
     HoldPendingSiblingDeviceFn? holdPendingSiblingDevice,
+    GroupPrivateMediaAvailability privateMediaAvailability =
+        productionGroupPrivateMediaAvailability,
   }) : _groupRepo = groupRepo,
        _msgRepo = msgRepo,
        _bridge = bridge,
@@ -192,6 +207,9 @@ class GroupMessageListener {
        _notificationService = notificationService,
        _groupConversationTracker = groupConversationTracker,
        _notificationToneTracker = notificationToneTracker,
+       _durableNotificationCoordinatorResolver =
+           durableNotificationCoordinatorResolver ??
+           DurableNotificationToneLease.openMobileDefault,
        _getAppLifecycleState = getAppLifecycleState,
        _remoteNotificationGate =
            remoteNotificationGate ?? recentRemoteNotificationGate,
@@ -208,7 +226,30 @@ class GroupMessageListener {
        _recoverFromDispatcherOverflow = recoverFromDispatcherOverflow,
        _rotateGroupKeyAfterRemoteRemoval = rotateGroupKeyAfterRemoteRemoval,
        _accountMigrationNetworkGate = accountMigrationNetworkGate,
-       _holdPendingSiblingDevice = holdPendingSiblingDevice;
+       _holdPendingSiblingDevice = holdPendingSiblingDevice,
+       _privateMediaAvailability = privateMediaAvailability;
+
+  Future<DurableNotificationToneLease?>
+  _resolveDurableNotificationCoordinator() {
+    return _durableNotificationCoordinatorFuture ??=
+        _openDurableNotificationCoordinator();
+  }
+
+  Future<DurableNotificationToneLease?>
+  _openDurableNotificationCoordinator() async {
+    try {
+      return await _durableNotificationCoordinatorResolver();
+    } catch (error) {
+      // Claim storage is additive. If the mobile app-group/support directory is
+      // unavailable, keep the legacy remote gate and in-memory tone behavior.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_NOTIFICATION_CLAIM_STORAGE_UNAVAILABLE',
+        details: {'error': error.toString()},
+      );
+      return null;
+    }
+  }
 
   /// Stream of new incoming group messages for the UI to listen to.
   Stream<GroupMessage> get groupMessageStream => _messageController.stream;
@@ -417,7 +458,23 @@ class GroupMessageListener {
           reactionJson: pending.reactionJson,
         );
         if (result == HandleGroupReactionResult.success && change != null) {
-          _emitReactionChange(change);
+          final targetMessage = await _loadReactionDerivativeTarget(
+            groupId: pending.groupId,
+            change: change,
+          );
+          if (targetMessage != null) {
+            _emitReactionChange(change);
+            final wireReaction = GroupReactionPayload.fromDecryptedJson(
+              pending.reactionJson,
+            );
+            await _maybeNotifyGroupReaction(
+              groupId: pending.groupId,
+              reactorPeerId: pending.senderPeerId,
+              change: change,
+              targetMessage: targetMessage,
+              eventId: wireReaction?.eventId,
+            );
+          }
         }
         emitFlowEvent(
           layer: 'FL',
@@ -454,7 +511,7 @@ class GroupMessageListener {
       final flushedKeys = <String>{};
       for (final row in pending) {
         if (_isStopping || _isDisposed) return;
-        final key = '${row.groupId} ${row.messageId}';
+        final key = '${row.groupId}\u0000${row.messageId}';
         if (!flushedKeys.add(key)) continue;
         final message = await _msgRepo.getMessage(row.messageId);
         if (message == null || message.groupId != row.groupId) continue;
@@ -986,7 +1043,11 @@ class GroupMessageListener {
       // path persists its own user-readable placeholder elsewhere; this
       // listener should never silently persist a row with no body.
       final mediaListForEmptyCheck = (data['media'] as List?) ?? const [];
-      if (text.isEmpty && mediaListForEmptyCheck.isEmpty) {
+      final hasExplicitPrivateMediaPolicy = GroupPrivateMediaPolicy.wireKeys
+          .any(data.containsKey);
+      if (text.isEmpty &&
+          mediaListForEmptyCheck.isEmpty &&
+          !hasExplicitPrivateMediaPolicy) {
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_MESSAGE_LISTENER_EMPTY_DROP',
@@ -1040,6 +1101,7 @@ class GroupMessageListener {
         logicalDeliveryId: wireLogicalDeliveryId,
         quotedMessageId: wireQuotedMessageId,
         isForwarded: wireIsForwarded,
+        privateMediaPolicyFields: Map<String, Object?>.from(data),
         media: media,
         mediaAttachmentRepo: _mediaAttachmentRepo,
         appendGroupEventLogEntry: _appendGroupEventLogEntry,
@@ -1072,7 +1134,24 @@ class GroupMessageListener {
           );
         }
         await _requestReceivedMessageKeyRepairIfLocalEpochIsBehind(result);
-        final persistedAttachments = _mediaAttachmentRepo == null
+        if (!_privateMediaAvailability.allowsMediaDerivatives(
+          result.privateMediaPolicy,
+        )) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_PRIVATE_MEDIA_DERIVATIVES_SUPPRESSED',
+            details: {
+              'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+              'messageId': result.id.length > 8
+                  ? result.id.substring(0, 8)
+                  : result.id,
+            },
+          );
+          return;
+        }
+        final isPrivateNotification = result.privateMediaPolicy.isPrivate;
+        final persistedAttachments =
+            isPrivateNotification || _mediaAttachmentRepo == null
             ? <MediaAttachment>[]
             : await _mediaAttachmentRepo.getAttachmentsForMessage(
                 result.id,
@@ -1107,30 +1186,37 @@ class GroupMessageListener {
                 groupId,
                 messageId: result.id,
               ).toPayload(),
-              senderUsername: groupName,
+              senderUsername: isPrivateNotification ? 'Mknoon' : groupName,
               // 04-P0 / QW-1: the OS banner body must use the sanitized,
               // member-bound fields the timeline persists (result.*), not the
               // raw wire `senderUsername`/`text` locals — otherwise bidi /
               // zero-width / overlong content the timeline strips still renders
               // in the most-trusted surface.
-              messageText:
-                  '${result.senderUsername ?? ''}: ${notificationBodyForMessage(result.text, persistedAttachments)}',
+              messageText: isPrivateNotification
+                  ? localizedGroupPrivateMediaNotificationBody()
+                  : '${result.senderUsername ?? ''}: '
+                        '${notificationBodyForMessage(result.text, persistedAttachments)}',
               messageId: result.id,
               toneTracker: _notificationToneTracker,
+              durableNotificationCoordinatorResolver:
+                  _resolveDurableNotificationCoordinator,
+              notificationEventType: 'group_message',
               consumeRecentRemoteNotificationAnnouncement:
                   ({required payload, String? messageId}) =>
                       _remoteNotificationGate.consumeIfRecentAnnouncement(
                         payload: payload,
                         messageId: messageId,
                       ),
-              // 118: the group path keeps only the shared tone debounce (above)
-              // — it does NOT write a live-wins dedup marker. That handshake is
-              // a direct-path requirement (to make un-silencing live 1:1 safe);
-              // group FCM dedup already runs through the background handler's
-              // markVisibleRemoteAnnouncement. Keeping the group path mark-free
-              // also avoids the group double-alert being a 118 scope change
-              // (plan Risk: "group path untouched except for the shared
-              // debounce").
+              // Keep group/announcement dedupe symmetric with direct chats. A
+              // remote-first delivery is consumed above; a live-first delivery
+              // writes the exact anchored message marker so a later recovery
+              // path cannot emit the same banner again.
+              markRecentRemoteNotificationAnnouncement:
+                  ({required payload, String? messageId}) =>
+                      _remoteNotificationGate.markAnnouncement(
+                        payload: payload,
+                        messageId: messageId,
+                      ),
               backgroundDuplicateGuardDelay: Duration.zero,
             );
           }
@@ -1447,6 +1533,7 @@ class GroupMessageListener {
         if (message.quotedMessageId != null)
           'quotedMessageId': message.quotedMessageId,
         if (message.isForwarded) 'isForwarded': true,
+        ...?message.mediaPolicy.toWireExtras(),
         if (message.media.isNotEmpty)
           'media': message.media
               .map((attachment) => attachment.toJson())
@@ -1899,7 +1986,9 @@ class GroupMessageListener {
       // deterministic equal-instant tie-break; the synthesized fallback below
       // is device-local / JSON-key-order-dependent and must never be persisted
       // or compared as a tie-breaker.
-      final auditSourceEventId = signedGroupTransitionAuditSourceEventId(parsed);
+      final auditSourceEventId = signedGroupTransitionAuditSourceEventId(
+        parsed,
+      );
       final transitionSourceEventId =
           auditSourceEventId ??
           (sourceEventId != null && sourceEventId.isNotEmpty
@@ -1994,8 +2083,8 @@ class GroupMessageListener {
         // — meaningless for a terminal event — is relaxed. (The snapshot-backed
         // relaxation machinery cannot help here: a dissolve carries no
         // groupConfig, so it short-circuits to false.)
-        final relaxTerminalDissolvePreTransitionHash = sysType ==
-            'group_dissolved';
+        final relaxTerminalDissolvePreTransitionHash =
+            sysType == 'group_dissolved';
         final preTransitionStateHash =
             relaxSnapshotBackedPreTransitionHash ||
                 relaxTerminalDissolvePreTransitionHash
@@ -3392,11 +3481,12 @@ class GroupMessageListener {
     // per existing replay semantics); only a SECOND join under a DIFFERENT id is
     // dropped here.
     if (await msgRepo.getMessage(timelineMessage.id) == null) {
-      final existingJoinAt = await msgRepo.getLatestSystemEventTimestampForTarget(
-        groupId,
-        eventType: 'member_joined',
-        targetId: joinedPeerId,
-      );
+      final existingJoinAt = await msgRepo
+          .getLatestSystemEventTimestampForTarget(
+            groupId,
+            eventType: 'member_joined',
+            targetId: joinedPeerId,
+          );
       if (existingJoinAt != null) {
         await _inviteDeliveryAttemptRepo?.markJoined(
           groupId: groupId,
@@ -4507,6 +4597,7 @@ class GroupMessageListener {
       final senderDeviceId = data['senderDeviceId'] as String?;
       final transportPeerId = data['transportPeerId'] as String?;
       final reactionJson = data['reaction'] as String? ?? '';
+      final wireReaction = GroupReactionPayload.fromDecryptedJson(reactionJson);
 
       if (groupId.isEmpty || senderId.isEmpty || reactionJson.isEmpty) {
         emitFlowEvent(
@@ -4535,15 +4626,23 @@ class GroupMessageListener {
       );
 
       if (result == HandleGroupReactionResult.success && change != null) {
-        _emitReactionChange(change);
-        // 127-Bug-D: notify on a fresh group-reaction ADD (this LIVE path only;
-        // recovery/drain/buffer-flush call the use case directly, so a resume
-        // drain never spams).
-        await _maybeNotifyGroupReaction(
+        final targetMessage = await _loadReactionDerivativeTarget(
           groupId: groupId,
-          reactorPeerId: senderId,
           change: change,
         );
+        if (targetMessage != null) {
+          _emitReactionChange(change);
+          // Notify on a fresh group-reaction ADD. A reaction buffered before
+          // its target joins this same validated/claimed path when the target
+          // later materializes; ordinary replay duplicates remain silent.
+          await _maybeNotifyGroupReaction(
+            groupId: groupId,
+            reactorPeerId: senderId,
+            change: change,
+            targetMessage: targetMessage,
+            eventId: wireReaction?.eventId,
+          );
+        }
       }
     } catch (e) {
       emitFlowEvent(
@@ -4552,6 +4651,28 @@ class GroupMessageListener {
         details: {'error': e.toString()},
       );
     }
+  }
+
+  Future<GroupMessage?> _loadReactionDerivativeTarget({
+    required String groupId,
+    required ReactionChange change,
+  }) async {
+    final targetMessage = await _msgRepo.getMessage(change.messageId);
+    if (targetMessage == null || targetMessage.groupId != groupId) return null;
+    if (targetMessage.privateMediaPolicy.isOrdinary) {
+      return targetMessage;
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_PRIVATE_MEDIA_REACTION_DERIVATIVES_SUPPRESSED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'messageId': change.messageId.length > 8
+            ? change.messageId.substring(0, 8)
+            : change.messageId,
+      },
+    );
+    return null;
   }
 
   /// 127-Bug-D: shows a local notification when a contact reacts to a message
@@ -4565,6 +4686,8 @@ class GroupMessageListener {
     required String groupId,
     required String reactorPeerId,
     required ReactionChange change,
+    required GroupMessage targetMessage,
+    String? eventId,
   }) async {
     if (change.type != ReactionChangeType.upserted) return;
     final reaction = change.reaction;
@@ -4577,9 +4700,23 @@ class GroupMessageListener {
       return;
     }
 
-    // Skip our own reaction (a group reaction can echo back through the mesh).
+    // Notification eligibility is recipient-owned. Missing local identity must
+    // fail closed, and a group reaction echo from any device of this account
+    // must stay silent.
     final selfPeerId = await _resolveSelfPeerId();
-    if (selfPeerId != null && reactorPeerId == selfPeerId) return;
+    if (selfPeerId == null || selfPeerId.isEmpty) return;
+    if (reactorPeerId == selfPeerId) return;
+
+    // Reaction state still converges for every eligible member; only the
+    // locally-authored target is allowed to produce attention. Check the
+    // persisted target after applying the reaction so a bystander, a stale or
+    // deleted target, or a cross-group id can never become a notification.
+    if (targetMessage.id != reaction.messageId ||
+        targetMessage.groupId != groupId ||
+        targetMessage.senderPeerId != selfPeerId ||
+        targetMessage.isIncoming) {
+      return;
+    }
 
     final group = await _groupRepo.getGroup(groupId);
     // Device-local mute suppresses local notifications (mirrors the message
@@ -4599,28 +4736,39 @@ class GroupMessageListener {
     } catch (_) {}
 
     final body = reactorName.isNotEmpty
-        ? '$reactorName reacted ${reaction.emoji}'
-        : 'Reacted ${reaction.emoji}';
+        ? '$reactorName reacted ${reaction.emoji} to your message'
+        : 'Someone reacted ${reaction.emoji} to your message';
+    final notificationEventId = eventId?.trim().isNotEmpty == true
+        ? eventId!.trim()
+        : reaction.id;
 
-    maybeShowNotification(
-      notificationService: notificationService,
-      conversationTracker: tracker,
-      getAppLifecycleState: lifecycle,
-      contactPeerId: 'group:$groupId',
-      routePayload: NotificationRouteTarget.group(
-        groupId,
-        messageId: reaction.messageId,
-      ).toPayload(),
-      senderUsername: group.name,
-      messageText: body,
-      messageId: reaction.id,
-      toneTracker: _notificationToneTracker,
-      consumeRecentRemoteNotificationAnnouncement:
-          ({required payload, String? messageId}) =>
-              _remoteNotificationGate.consumeIfRecentAnnouncement(
-                payload: payload,
-                messageId: messageId,
-              ),
+    unawaited(
+      maybeShowNotification(
+        notificationService: notificationService,
+        conversationTracker: tracker,
+        getAppLifecycleState: lifecycle,
+        contactPeerId: 'group:$groupId',
+        routePayload: NotificationRouteTarget.group(
+          groupId,
+          messageId: reaction.messageId,
+        ).toPayload(),
+        senderUsername: group.name,
+        messageText: body,
+        messageId: notificationEventId,
+        notificationEventIdentity: boundedReactionEventIdentity(
+          notificationEventId,
+        ),
+        notificationEventType: 'message_reaction',
+        toneTracker: _notificationToneTracker,
+        durableNotificationCoordinatorResolver:
+            _resolveDurableNotificationCoordinator,
+        consumeRecentRemoteNotificationAnnouncement:
+            ({required payload, String? messageId}) =>
+                _remoteNotificationGate.consumeIfRecentAnnouncement(
+                  payload: payload,
+                  messageId: messageId,
+                ),
+      ),
     );
   }
 
@@ -4889,7 +5037,10 @@ class GroupMessageListener {
     // on every device, so concurrent same-instant cross-sender events converge.
     // Degrades to strict-stale when either id is absent (mixed-version safe).
     if (eventAt.isAtSameMomentAs(watermark) && eventId != null) {
-      final storedEventId = await _storedMembershipEventIdAt(groupId, watermark);
+      final storedEventId = await _storedMembershipEventIdAt(
+        groupId,
+        watermark,
+      );
       if (storedEventId != null && eventId.compareTo(storedEventId) > 0) {
         return false;
       }

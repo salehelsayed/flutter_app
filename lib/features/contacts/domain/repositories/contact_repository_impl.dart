@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
 
 import '../models/contact_model.dart';
 import 'contact_repository.dart';
@@ -18,7 +19,10 @@ class ContactRepositoryImpl implements ContactRepository {
   final Future<void> Function(String peerId) dbBlockContact;
   final Future<void> Function(String peerId) dbUnblockContact;
   final Future<void> Function(String peerId) dbDismissIntroBanner;
-  final Future<void> Function(String peerId, String timestamp) dbSetIntrosSentAt;
+  final Future<void> Function(String peerId, String timestamp)
+  dbSetIntrosSentAt;
+  final DirectReactionNotificationProjection? directReactionProjection;
+  final void Function()? onPushEligibilityChanged;
 
   ContactRepositoryImpl({
     required this.dbLoadAllContacts,
@@ -35,6 +39,8 @@ class ContactRepositoryImpl implements ContactRepository {
     required this.dbUnblockContact,
     required this.dbDismissIntroBanner,
     required this.dbSetIntrosSentAt,
+    this.directReactionProjection,
+    this.onPushEligibilityChanged,
   });
 
   @override
@@ -47,6 +53,8 @@ class ContactRepositoryImpl implements ContactRepository {
 
     try {
       await dbUpsertContact(contact.toMap());
+      await directReactionProjection?.upsertContact(contact);
+      _notifyPushEligibilityChanged();
 
       emitFlowEvent(
         layer: 'FL',
@@ -79,6 +87,8 @@ class ContactRepositoryImpl implements ContactRepository {
   @override
   Future<void> deleteContact(String peerId) async {
     await dbDeleteContact(peerId);
+    await directReactionProjection?.removeContact(peerId);
+    _notifyPushEligibilityChanged();
   }
 
   @override
@@ -101,6 +111,8 @@ class ContactRepositoryImpl implements ContactRepository {
 
     try {
       await dbArchiveContact(peerId);
+      await _mirrorContactForPush(peerId);
+      _notifyPushEligibilityChanged();
 
       emitFlowEvent(
         layer: 'FL',
@@ -127,6 +139,8 @@ class ContactRepositoryImpl implements ContactRepository {
 
     try {
       await dbUnarchiveContact(peerId);
+      await _mirrorContactForPush(peerId);
+      _notifyPushEligibilityChanged();
 
       emitFlowEvent(
         layer: 'FL',
@@ -165,6 +179,8 @@ class ContactRepositoryImpl implements ContactRepository {
 
     try {
       await dbBlockContact(peerId);
+      await _mirrorContactForPush(peerId, forcedBlocked: true);
+      _notifyPushEligibilityChanged();
 
       emitFlowEvent(
         layer: 'FL',
@@ -191,6 +207,8 @@ class ContactRepositoryImpl implements ContactRepository {
 
     try {
       await dbUnblockContact(peerId);
+      await _mirrorContactForPush(peerId, forcedBlocked: false);
+      _notifyPushEligibilityChanged();
 
       emitFlowEvent(
         layer: 'FL',
@@ -204,6 +222,60 @@ class ContactRepositoryImpl implements ContactRepository {
         details: {'error': e.toString()},
       );
       rethrow;
+    }
+  }
+
+  /// Launch-time self-healing backfill for contacts created before the iOS NSE
+  /// direct-reaction projection existed.
+  Future<void> mirrorAllDirectReactionContacts() async {
+    final projection = directReactionProjection;
+    if (projection == null) return;
+    try {
+      final rows = await dbLoadAllContacts();
+      await projection.replaceContacts(rows.map(ContactModel.fromMap));
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACTS_REPO_REACTION_PROJECTION_BACKFILL_ERROR',
+        details: {'error': error.toString()},
+      );
+    }
+  }
+
+  Future<void> _mirrorContactForPush(
+    String peerId, {
+    bool? forcedBlocked,
+  }) async {
+    final projection = directReactionProjection;
+    if (projection == null) return;
+    try {
+      final row = await dbLoadContact(peerId);
+      if (row == null) {
+        await projection.removeContact(peerId);
+        return;
+      }
+      final contact = ContactModel.fromMap(row);
+      await projection.upsertContact(
+        contact.copyWith(isBlocked: forcedBlocked ?? contact.isBlocked),
+      );
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACTS_REPO_REACTION_PROJECTION_ERROR',
+        details: {'error': error.toString()},
+      );
+    }
+  }
+
+  void _notifyPushEligibilityChanged() {
+    try {
+      onPushEligibilityChanged?.call();
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACTS_REPO_PUSH_ELIGIBILITY_CALLBACK_ERROR',
+        details: {'error': error.toString()},
+      );
     }
   }
 

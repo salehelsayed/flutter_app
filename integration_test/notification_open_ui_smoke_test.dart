@@ -558,6 +558,23 @@ class _HarnessReactionRepository implements ReactionRepository {
   }
 
   @override
+  Future<ReactionAddApplyResult> applyIncomingAdd(
+    MessageReaction reaction,
+  ) async {
+    final current = await getReactionForSenderIncludingRemoved(
+      messageId: reaction.messageId,
+      senderPeerId: reaction.senderPeerId,
+    );
+    if (current?.id == reaction.id) {
+      return ReactionAddApplyResult.exactReplay;
+    }
+    await saveReaction(reaction);
+    return current == null
+        ? ReactionAddApplyResult.inserted
+        : ReactionAddApplyResult.updated;
+  }
+
+  @override
   Future<List<MessageReaction>> getReactionsForMessage(String messageId) async {
     return List<MessageReaction>.from(
       _reactionsByMessageId[messageId] ?? const <MessageReaction>[],
@@ -583,8 +600,8 @@ class _HarnessReactionRepository implements ReactionRepository {
     required String messageId,
     required String senderPeerId,
   }) async {
-    for (final reaction in _reactionsByMessageId[messageId] ??
-        const <MessageReaction>[]) {
+    for (final reaction
+        in _reactionsByMessageId[messageId] ?? const <MessageReaction>[]) {
       if (reaction.senderPeerId == senderPeerId) {
         return reaction;
       }

@@ -734,6 +734,17 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
         dbUpsertGroupReactionReplayOutboxEntry(db, row),
     dbLoadGroupReactionReplayOutboxEntry: (reactionId) =>
         dbLoadGroupReactionReplayOutboxEntry(db, reactionId),
+    dbLoadLatestGroupReactionReplayOutboxEntryForTarget:
+        ({
+          required String groupId,
+          required String messageId,
+          required String senderPeerId,
+        }) => dbLoadLatestGroupReactionReplayOutboxEntryForTarget(
+          db,
+          groupId: groupId,
+          messageId: messageId,
+          senderPeerId: senderPeerId,
+        ),
     dbLoadRetryableGroupReactionReplayOutboxEntries: ({int limit = 20}) =>
         dbLoadRetryableGroupReactionReplayOutboxEntries(db, limit: limit),
     dbUpdateGroupReactionReplayOutboxEntryStatus:

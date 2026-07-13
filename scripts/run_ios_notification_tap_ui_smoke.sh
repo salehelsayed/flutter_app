@@ -10,26 +10,42 @@ BUNDLE_ID="${IOS_BUNDLE_ID:-com.mknoon.app}"
 READY_MARKER="MKNOON_APNS_TAP_READY"
 RESULT_ROOT="$ROOT_DIR/build/ios-notification-tap-ui-smoke/$(date -u +%Y%m%dT%H%M%SZ)"
 TAP_CONFIG_FILE="$ROOT_DIR/build/ios-notification-tap-ui-smoke/current_tap_config.json"
+MATRIX_FIXTURE="$ROOT_DIR/test/features/push/fixtures/ios_notification_message_matrix.json"
 
 device_csv=""
 skip_build=0
 scenario_retries="${IOS_NOTIFICATION_TAP_SMOKE_RETRIES:-1}"
+scenario_filter=""
+selection_only=0
 started_pid=""
+
+WARM_CASES=(
+  direct_text direct_image
+  group_text group_image
+  announcement_text announcement_image
+)
+COLD_CASES=(
+  direct_video direct_voice
+  group_video group_voice
+  announcement_video announcement_voice
+)
 
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/run_ios_notification_tap_ui_smoke.sh [--devices <udid1>,<udid2>] [--bundle-id <bundle>] [--skip-build] [--retries <count>]
+  scripts/run_ios_notification_tap_ui_smoke.sh [--devices <udid1>,<udid2>] [--bundle-id <bundle>] [--skip-build] [--retries <count>] [--scenario <warm|cold>:<case-id>] [--selection-only]
 
 Runs the simulator-bound iOS APNs notification tap smoke:
-  - iPhone 17 Pro warm one_to_one_text
-  - iPhone 17 Pro warm group_text
-  - iPhone 17 warm one_to_one_text
-  - iPhone 17 warm group_text
-  - primary simulator cold one_to_one_text
+  - warm text/image coverage for 1:1, group, and announcement contexts
+  - cold video/voice coverage for 1:1, group, and announcement contexts
+  - exact Springboard title/body checks plus warm/cold native-to-Dart routing
 
 Without --devices, the script requires two booted iPhone simulators and prefers
 booted devices named iPhone 17 Pro and iPhone 17.
+
+With --scenario, the script requires exactly one simulator and runs only that
+supported matrix scenario. --selection-only validates and prints the selected
+scenario without building, installing, or starting a simulator test.
 EOF
 }
 
@@ -50,6 +66,14 @@ while (($# > 0)); do
     --retries)
       scenario_retries="${2:?missing --retries value}"
       shift 2
+      ;;
+    --scenario)
+      scenario_filter="${2:?missing --scenario value}"
+      shift 2
+      ;;
+    --selection-only)
+      selection_only=1
+      shift
       ;;
     -h|--help)
       usage
@@ -164,8 +188,12 @@ split_devices() {
 
   local -a ids=()
   IFS=',' read -r -a ids <<<"$device_csv"
-  if ((${#ids[@]} != 2)); then
-    printf 'Expected exactly two comma-separated simulator UDIDs in --devices.\n' >&2
+  local expected_count=2
+  if [[ -n "$scenario_filter" ]]; then
+    expected_count=1
+  fi
+  if ((${#ids[@]} != expected_count)); then
+    printf 'Expected exactly %d simulator UDID(s) in --devices.\n' "$expected_count" >&2
     exit 2
   fi
 
@@ -285,17 +313,129 @@ assert_log_not_contains() {
 
 write_tap_config() {
   local expected_title="$1"
-  local ready_file="$2"
+  local expected_body="$2"
+  local route_category="$3"
+  local ready_file="$4"
 
   mkdir -p "$(dirname "$TAP_CONFIG_FILE")"
-  TAP_EXPECTED_TITLE="$expected_title" TAP_READY_FILE="$ready_file" node <<'NODE' >"$TAP_CONFIG_FILE"
+  TAP_EXPECTED_TITLE="$expected_title" \
+  TAP_EXPECTED_BODY="$expected_body" \
+  TAP_ROUTE_CATEGORY="$route_category" \
+  TAP_READY_FILE="$ready_file" \
+  node <<'NODE' >"$TAP_CONFIG_FILE"
 const config = {
   expectedTitle: process.env.TAP_EXPECTED_TITLE || 'New Message',
+  expectedBody: process.env.TAP_EXPECTED_BODY || '',
+  routeCategory: process.env.TAP_ROUTE_CATEGORY || '',
   readyFile: process.env.TAP_READY_FILE || '',
   preBackgroundWaitSeconds: process.env.TAP_PRE_BACKGROUND_WAIT_SECONDS || '8',
 };
 process.stdout.write(`${JSON.stringify(config, null, 2)}\n`);
 NODE
+}
+
+matrix_case_fields() {
+  local case_id="$1"
+  node - "$MATRIX_FIXTURE" "$case_id" <<'NODE'
+const fs = require('fs');
+const fixture = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const caseId = process.argv[3];
+const selected = (fixture.cases || []).find((item) => item.id === caseId);
+if (!selected) {
+  process.stderr.write(`Unknown iOS notification matrix case: ${caseId}\n`);
+  process.exit(1);
+}
+const expected = selected.expected || {};
+const routeData = selected.routeData || {};
+const canonicalUuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+if (selected.context === 'direct') {
+  if (typeof routeData.sender_id !== 'string' || !routeData.sender_id.length ||
+      Object.prototype.hasOwnProperty.call(routeData, 'sender_transport_peer_id')) {
+    process.stderr.write(`Invalid direct relay route contract for iOS matrix case: ${caseId}\n`);
+    process.exit(1);
+  }
+} else if (selected.context === 'group' || selected.context === 'announcement') {
+  if (!canonicalUuidV4.test(String(routeData.groupId || '')) ||
+      routeData.sender_transport_peer_id !== '12D3KooWFixtureAliceTransport' ||
+      Object.prototype.hasOwnProperty.call(routeData, 'sender_id') ||
+      expected.threadIdentifier !== routeData.groupId) {
+    process.stderr.write(`Invalid group relay route contract for iOS matrix case: ${caseId}\n`);
+    process.exit(1);
+  }
+}
+const fields = [
+  expected.title,
+  expected.body,
+  selected.context,
+  selected.modality,
+  selected.routeCategory,
+];
+if (fields.some((value) => typeof value !== 'string' || !value.length || value.includes('\t'))) {
+  process.stderr.write(`Incomplete iOS notification matrix case: ${caseId}\n`);
+  process.exit(1);
+}
+process.stdout.write(`${fields.join('\t')}\n`);
+NODE
+}
+
+is_supported_scenario() {
+  local mode="$1"
+  local case_id="$2"
+  local candidate
+  local -a candidates=()
+  if [[ "$mode" == "warm" ]]; then
+    candidates=("${WARM_CASES[@]}")
+  elif [[ "$mode" == "cold" ]]; then
+    candidates=("${COLD_CASES[@]}")
+  else
+    return 1
+  fi
+
+  for candidate in "${candidates[@]}"; do
+    if [[ "$candidate" == "$case_id" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+validate_scenario_filter() {
+  if [[ -z "$scenario_filter" ]]; then
+    return 0
+  fi
+  if [[ "$scenario_filter" != *:* ]]; then
+    printf 'Invalid --scenario "%s"; expected <warm|cold>:<case-id>.\n' "$scenario_filter" >&2
+    return 2
+  fi
+
+  local mode="${scenario_filter%%:*}"
+  local case_id="${scenario_filter#*:}"
+  if [[ -z "$mode" || -z "$case_id" || "$case_id" == *:* ]]; then
+    printf 'Invalid --scenario "%s"; expected one non-empty mode and case ID.\n' "$scenario_filter" >&2
+    return 2
+  fi
+  if ! matrix_case_fields "$case_id" >/dev/null; then
+    return 2
+  fi
+  if ! is_supported_scenario "$mode" "$case_id"; then
+    printf 'Unsupported iOS notification scenario pairing: %s:%s\n' "$mode" "$case_id" >&2
+    return 2
+  fi
+}
+
+print_selected_scenarios() {
+  if [[ -n "$scenario_filter" ]]; then
+    printf '%s\n' "$scenario_filter"
+    return
+  fi
+
+  local case_id
+  for case_id in "${WARM_CASES[@]}"; do
+    printf 'warm:%s\n' "$case_id"
+  done
+  for case_id in "${COLD_CASES[@]}"; do
+    printf 'cold:%s\n' "$case_id"
+  done
 }
 
 install_app_on_device() {
@@ -328,13 +468,17 @@ run_xcode_ui_test() {
   local result_bundle="$4"
   local ready_file="$5"
   local expected_title="$6"
+  local expected_body="$7"
+  local route_category="$8"
 
-  write_tap_config "$expected_title" "$ready_file"
+  write_tap_config "$expected_title" "$expected_body" "$route_category" "$ready_file"
 
   (
     cd "$ROOT_DIR/ios"
     MKNOON_APNS_TAP_APP_BUNDLE_ID="$BUNDLE_ID" \
     MKNOON_APNS_TAP_EXPECTED_TITLE="$expected_title" \
+    MKNOON_APNS_TAP_EXPECTED_BODY="$expected_body" \
+    MKNOON_APNS_TAP_ROUTE_CATEGORY="$route_category" \
     MKNOON_APNS_TAP_READY_FILE="$ready_file" \
     MKNOON_APNS_TAP_PRE_BACKGROUND_WAIT_SECONDS=8 \
     xcodebuild test \
@@ -342,16 +486,19 @@ run_xcode_ui_test() {
       -scheme "$SCHEME" \
       -destination "platform=iOS Simulator,id=$device" \
       "$xctest_selector" \
-      -resultBundlePath "$result_bundle"
+      -resultBundlePath "$result_bundle" \
+      FLUTTER_TARGET=lib/main.dart \
+      ONLY_ACTIVE_ARCH=YES
   ) >>"$log_file" 2>&1 &
   started_pid="$!"
 }
 
 push_fixture() {
   local device="$1"
-  local fixture="$2"
+  local case_id="$2"
   local log_file="$3"
   local expected_title="$4"
+  local expected_body="$5"
 
   # Keep real simctl push in the acceptance path through the shared fixture
   # shaper. This smoke validates user-visible APNs tap routing; Simulator
@@ -359,11 +506,13 @@ push_fixture() {
   # mutable-content coverage while omitting only the silent/background delivery
   # flag here.
   IOS_APNS_ALERT_TITLE="$expected_title" \
+  IOS_APNS_ALERT_BODY="$expected_body" \
   IOS_APNS_CONTENT_AVAILABLE=0 \
   "$ROOT_DIR/scripts/push_fixture_to_simulator.sh" \
     --device "$device" \
     --bundle-id "$BUNDLE_ID" \
-    "$fixture" \
+    --case "$case_id" \
+    "$MATRIX_FIXTURE" \
     >>"$log_file" 2>&1
 }
 
@@ -397,9 +546,23 @@ launch_warm_app_for_host_push() {
 assert_scenario_markers() {
   local mode="$1"
   local log_file="$2"
+  local context="$3"
+  local modality="$4"
+  local route_category="$5"
   local status=0
 
   assert_log_contains "$log_file" "ios_native_un_didReceive" || status=1
+  assert_log_contains "$log_file" "ios_native_un_content" || status=1
+  assert_log_contains "$log_file" "threadIdentifier=<redacted>" || status=1
+  assert_log_contains "$log_file" "threadIdentifierState=present" || status=1
+  assert_log_contains "$log_file" "threadMatchesRoute=true" || status=1
+  assert_log_contains "$log_file" "categoryIdentifier=<empty>" || status=1
+  assert_log_contains "$log_file" "categoryIdentifierState=empty" || status=1
+  assert_log_contains "$log_file" "MKNOON_IOS_NOTIFICATION_PRESENTED" || status=1
+  assert_log_contains "$log_file" "routeCategory=$route_category" || status=1
+  assert_log_contains "$log_file" "mknoon_fixture_context" || status=1
+  assert_log_contains "$log_file" "mknoon_fixture_modality" || status=1
+  assert_log_contains "$log_file" "mknoon_fixture_route_category" || status=1
 
   if [[ "$mode" == "cold" ]]; then
     assert_log_contains "$log_file" "ios_notification_open_stored_pending" || status=1
@@ -412,6 +575,12 @@ assert_scenario_markers() {
   assert_log_not_contains "$log_file" "IOS_APNS_NOTIFICATION_OPEN_ERROR" || status=1
   assert_log_not_contains "$log_file" "NOTIFICATION_TAP_NAV_ERROR" || status=1
   assert_log_not_contains "$log_file" "INITIAL_LOCAL_NOTIFICATION_ROUTE_ERROR" || status=1
+  assert_log_not_contains "$log_file" "threadMatchesRoute=false" || status=1
+  assert_log_not_contains "$log_file" "threadMatchesRoute=unavailable" || status=1
+  assert_log_not_contains "$log_file" "categoryIdentifierState=present" || status=1
+
+  printf 'Verified context=%s modality=%s routeCategory=%s mode=%s\n' \
+    "$context" "$modality" "$route_category" "$mode" >>"$log_file"
 
   return "$status"
 }
@@ -419,14 +588,20 @@ assert_scenario_markers() {
 run_scenario_once() {
   local device="$1"
   local device_name="$2"
-  local fixture="$3"
+  local case_id="$3"
   local mode="$4"
   local label="$5"
   local safe_label
   safe_label="$(safe_name "$label")"
   local log_file="$RESULT_ROOT/$safe_label.combined.log"
   local ready_file="$RESULT_ROOT/$safe_label.ready"
-  local expected_title="New Message ${SECONDS}_${RANDOM}"
+  local expected_title
+  local expected_body
+  local context
+  local modality
+  local route_category
+  IFS=$'\t' read -r expected_title expected_body context modality route_category \
+    < <(matrix_case_fields "$case_id")
   local prepare_selector="-only-testing:RunnerUITests/NotificationTapUITests/testPrepareWarmNotificationTap"
   local tap_selector="-only-testing:RunnerUITests/NotificationTapUITests/testTapExistingNotification"
 
@@ -443,7 +618,15 @@ run_scenario_once() {
   else
     local prepare_pid
     local prepare_result_bundle="$RESULT_ROOT/$safe_label.prepare.xcresult"
-    run_xcode_ui_test "$device" "$prepare_selector" "$log_file" "$prepare_result_bundle" "$ready_file" "$expected_title"
+    run_xcode_ui_test \
+      "$device" \
+      "$prepare_selector" \
+      "$log_file" \
+      "$prepare_result_bundle" \
+      "$ready_file" \
+      "$expected_title" \
+      "$expected_body" \
+      "$route_category"
     prepare_pid="$started_pid"
 
     if ! wait_for_ready_signal "$ready_file" "$log_file" "$prepare_pid" 120; then
@@ -471,11 +654,24 @@ run_scenario_once() {
     fi
   fi
 
-  push_fixture "$device" "$fixture" "$log_file" "$expected_title"
+  push_fixture \
+    "$device" \
+    "$case_id" \
+    "$log_file" \
+    "$expected_title" \
+    "$expected_body"
 
   local tap_pid
   local tap_result_bundle="$RESULT_ROOT/$safe_label.tap.xcresult"
-  run_xcode_ui_test "$device" "$tap_selector" "$log_file" "$tap_result_bundle" "$ready_file" "$expected_title"
+  run_xcode_ui_test \
+    "$device" \
+    "$tap_selector" \
+    "$log_file" \
+    "$tap_result_bundle" \
+    "$ready_file" \
+    "$expected_title" \
+    "$expected_body" \
+    "$route_category"
   tap_pid="$started_pid"
 
   local tap_status=0
@@ -489,7 +685,12 @@ run_scenario_once() {
     return "$tap_status"
   fi
 
-  if ! assert_scenario_markers "$mode" "$log_file"; then
+  if ! assert_scenario_markers \
+    "$mode" \
+    "$log_file" \
+    "$context" \
+    "$modality" \
+    "$route_category"; then
     return 1
   fi
   printf 'PASS %s; log=%s\n' "$label" "$log_file"
@@ -498,7 +699,7 @@ run_scenario_once() {
 run_scenario() {
   local device="$1"
   local device_name="$2"
-  local fixture="$3"
+  local case_id="$3"
   local mode="$4"
   local label="$5"
   local max_attempts=$((scenario_retries + 1))
@@ -511,7 +712,7 @@ run_scenario() {
       attempt_label="$label retry_$attempt"
     fi
 
-    if run_scenario_once "$device" "$device_name" "$fixture" "$mode" "$attempt_label"; then
+    if run_scenario_once "$device" "$device_name" "$case_id" "$mode" "$attempt_label"; then
       return 0
     else
       status=$?
@@ -539,6 +740,16 @@ main() {
 
   mkdir -p "$RESULT_ROOT"
 
+  if [[ ! -f "$MATRIX_FIXTURE" ]]; then
+    printf 'Missing iOS notification matrix fixture: %s\n' "$MATRIX_FIXTURE" >&2
+    exit 1
+  fi
+  validate_scenario_filter
+  if [[ "$selection_only" -eq 1 ]]; then
+    print_selected_scenarios
+    exit 0
+  fi
+
   if [[ "$skip_build" -eq 0 ]]; then
     flutter build ios --simulator --debug
   else
@@ -549,26 +760,55 @@ main() {
     printf 'Missing built app at %s; run flutter build ios --simulator --debug first.\n' "$APP_PATH" >&2
     exit 1
   fi
-
   local -a device_ids=()
   local -a device_names=()
   while IFS=$'\t' read -r id name; do
     device_ids+=("$id")
     device_names+=("$name")
   done < <(split_devices)
-  if ((${#device_ids[@]} != 2)); then
-    printf 'Expected exactly two booted iOS simulator devices.\n' >&2
+  local expected_device_count=2
+  if [[ -n "$scenario_filter" ]]; then
+    expected_device_count=1
+  fi
+  if ((${#device_ids[@]} != expected_device_count)); then
+    printf 'Expected exactly %d booted iOS simulator device(s).\n' "$expected_device_count" >&2
     exit 1
   fi
 
   install_app_on_device "${device_ids[0]}" "${device_names[0]}"
+  if [[ -n "$scenario_filter" ]]; then
+    local selected_mode="${scenario_filter%%:*}"
+    local selected_case_id="${scenario_filter#*:}"
+    run_scenario \
+      "${device_ids[0]}" \
+      "${device_names[0]}" \
+      "$selected_case_id" \
+      "$selected_mode" \
+      "${device_names[0]} $selected_mode $selected_case_id"
+    printf '\niOS notification tap UI smoke PASS. Logs: %s\n' "$RESULT_ROOT"
+    return
+  fi
+
   install_app_on_device "${device_ids[1]}" "${device_names[1]}"
 
-  run_scenario "${device_ids[0]}" "${device_names[0]}" "one_to_one_text" "warm" "${device_names[0]} warm one_to_one_text"
-  run_scenario "${device_ids[0]}" "${device_names[0]}" "group_text" "warm" "${device_names[0]} warm group_text"
-  run_scenario "${device_ids[1]}" "${device_names[1]}" "one_to_one_text" "warm" "${device_names[1]} warm one_to_one_text"
-  run_scenario "${device_ids[1]}" "${device_names[1]}" "group_text" "warm" "${device_names[1]} warm group_text"
-  run_scenario "${device_ids[0]}" "${device_names[0]}" "one_to_one_text" "cold" "${device_names[0]} cold one_to_one_text"
+  local case_id
+  for case_id in "${WARM_CASES[@]}"; do
+    run_scenario \
+      "${device_ids[0]}" \
+      "${device_names[0]}" \
+      "$case_id" \
+      "warm" \
+      "${device_names[0]} warm $case_id"
+  done
+
+  for case_id in "${COLD_CASES[@]}"; do
+    run_scenario \
+      "${device_ids[1]}" \
+      "${device_names[1]}" \
+      "$case_id" \
+      "cold" \
+      "${device_names[1]} cold $case_id"
+  done
 
   printf '\niOS notification tap UI smoke PASS. Logs: %s\n' "$RESULT_ROOT"
 }

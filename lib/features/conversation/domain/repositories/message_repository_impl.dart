@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import '../models/conversation_message.dart';
@@ -82,6 +83,9 @@ class MessageRepositoryImpl
   dbLoadInboxCustodyOutgoingMessages;
   final Future<void> Function(String id, {int? relayExpiresAtMs})?
   dbMarkInboxCustodyChecked;
+  final DirectReactionNotificationProjection? directReactionProjection;
+  final Future<List<Map<String, Object?>>> Function()?
+  dbLoadLocallyAuthoredMessagesForProjection;
   final StreamController<ConversationMessage> _messageChangeController =
       StreamController<ConversationMessage>.broadcast();
   // 194: conversation-level read-marking signal (peerId), emitted only when a
@@ -116,6 +120,8 @@ class MessageRepositoryImpl
     required this.dbConditionalTransitionStatus,
     this.dbLoadInboxCustodyOutgoingMessages,
     this.dbMarkInboxCustodyChecked,
+    this.directReactionProjection,
+    this.dbLoadLocallyAuthoredMessagesForProjection,
   });
 
   @override
@@ -134,6 +140,12 @@ class MessageRepositoryImpl
 
     try {
       await dbInsertMessage(message.toMap());
+      final committedRow = await dbLoadMessage(message.id);
+      if (committedRow == null) {
+        throw StateError('message save committed without a readable row');
+      }
+      final saved = _rememberMessage(ConversationMessage.fromMap(committedRow));
+      await directReactionProjection?.upsertAuthoredTarget(saved);
 
       emitFlowEvent(
         layer: 'FL',
@@ -142,7 +154,6 @@ class MessageRepositoryImpl
           'id': message.id.length > 8 ? message.id.substring(0, 8) : message.id,
         },
       );
-      final saved = _rememberMessage(message);
       _messageChangeController.add(saved);
     } catch (e) {
       emitFlowEvent(
@@ -317,6 +328,11 @@ class MessageRepositoryImpl
 
     try {
       final count = await dbDeleteMessagesForContact(contactPeerId);
+      if (count > 0) {
+        await directReactionProjection?.removeAuthoredTargetsForContact(
+          contactPeerId,
+        );
+      }
 
       emitFlowEvent(
         layer: 'FL',
@@ -347,6 +363,7 @@ class MessageRepositoryImpl
       final count = await dbDeleteMessage(id);
       if (count > 0) {
         _messageSnapshots.remove(id);
+        await directReactionProjection?.removeAuthoredTarget(id);
       }
 
       emitFlowEvent(
@@ -363,6 +380,25 @@ class MessageRepositoryImpl
         details: {'error': e.toString()},
       );
       rethrow;
+    }
+  }
+
+  /// Launch-time self-healing backfill for locally-authored reaction targets.
+  Future<void> mirrorAllDirectReactionAuthoredTargets() async {
+    final projection = directReactionProjection;
+    final loadRows = dbLoadLocallyAuthoredMessagesForProjection;
+    if (projection == null || loadRows == null) return;
+    try {
+      final rows = await loadRows();
+      await projection.replaceAuthoredTargets(
+        rows.map(ConversationMessage.fromMap),
+      );
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'MESSAGE_REPO_REACTION_PROJECTION_BACKFILL_ERROR',
+        details: {'error': error.toString()},
+      );
     }
   }
 
@@ -517,6 +553,7 @@ class MessageRepositoryImpl
     }
     return summaries;
   }
+
 
   ConversationMessage _rememberMessage(ConversationMessage message) {
     _messageSnapshots[message.id] = message;

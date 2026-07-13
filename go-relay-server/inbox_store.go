@@ -38,7 +38,9 @@ type InboxBackend interface {
 // PushTokenBackend abstracts push token storage so tokens survive server restarts.
 type PushTokenBackend interface {
 	// RegisterToken stores or updates a push token for a peer.
-	RegisterToken(peerId string, token string, platform string)
+	// Success means the backend has confirmed the write; implementations must
+	// return storage failures instead of logging and acknowledging them.
+	RegisterToken(peerId string, token string, platform string, capabilities ...string) error
 
 	// UnregisterToken removes the push token for a peer.
 	UnregisterToken(peerId string)

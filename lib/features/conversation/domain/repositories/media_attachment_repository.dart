@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 
 import '../models/media_attachment.dart';
 import '../models/media_library.dart';
@@ -217,6 +218,254 @@ abstract class MediaDownloadStateRepository {
   });
 }
 
+/// Session 03 capability: the direct-private final download commit checks the
+/// current parent and attachment claim in one database transaction while the
+/// process-wide attachment lock is held.
+abstract class DirectPrivateMediaDownloadStateRepository {
+  Future<bool> beginDirectPrivateMediaDownload(
+    String id, {
+    required String messageId,
+    required int nowMs,
+  });
+
+  /// Same transition as [beginDirectPrivateMediaDownload], but the caller
+  /// already owns [DirectPrivateMediaCleanupRuntime]'s attachment lock.
+  Future<bool> beginDirectPrivateMediaDownloadWithinLock(
+    String id, {
+    required String messageId,
+    required int nowMs,
+  });
+
+  /// Rechecks the exact active parent and exact persisted done/path row in one
+  /// transaction while the implementation holds the shared attachment lock.
+  Future<bool> qualifyDirectPrivateMediaLocalReady(
+    String id, {
+    required String messageId,
+    required String expectedLocalPath,
+    required int nowMs,
+  });
+
+  Future<bool> qualifyDirectPrivateMediaLocalReadyWithinLock(
+    String id, {
+    required String messageId,
+    required String expectedLocalPath,
+    required int nowMs,
+  });
+
+  Future<bool> qualifyDirectPrivateMediaDownloadClaimWithinLock(
+    String id, {
+    required String messageId,
+    required int nowMs,
+  });
+
+  /// UPDATE-only parent-qualified failure transition. It never inserts a
+  /// missing attachment or rewrites secure-key material after cleanup wins.
+  Future<bool> recordDirectPrivateMediaDownloadFailure(
+    String id, {
+    required String messageId,
+    required int nowMs,
+    required bool incrementRetryCount,
+    required String failureStatus,
+    required String expectedDownloadStatus,
+    String? expectedLocalPath,
+    bool clearLocalPath,
+  });
+
+  Future<bool> recordDirectPrivateMediaDownloadFailureWithinLock(
+    String id, {
+    required String messageId,
+    required int nowMs,
+    required bool incrementRetryCount,
+    required String failureStatus,
+    required String expectedDownloadStatus,
+    String? expectedLocalPath,
+    bool clearLocalPath,
+  });
+
+  Future<bool> commitDirectPrivateMediaDownloadLocalPath(
+    String id, {
+    required String messageId,
+    required String localPath,
+    required int nowMs,
+  });
+
+  Future<bool> commitDirectPrivateMediaDownloadLocalPathWithinLock(
+    String id, {
+    required String messageId,
+    required String localPath,
+    required int nowMs,
+  });
+}
+
+/// Atomic parent-qualified save for incoming direct private attachment
+/// metadata. A lost parent race returns false with no durable row/key effect.
+abstract class DirectPrivateMediaAttachmentSaveRepository {
+  Future<bool> saveDirectPrivateAttachmentGuarded(
+    MediaAttachment attachment, {
+    required String messageId,
+    required int nowMs,
+  });
+}
+
+class DirectPrivateMediaCleanupAttachment {
+  const DirectPrivateMediaCleanupAttachment({
+    required this.id,
+    required this.messageId,
+    required this.mime,
+  });
+
+  final String id;
+  final String messageId;
+  final String mime;
+}
+
+/// Raw, key-free direct attachment metadata used to decide whether a View Once
+/// local copy is openable. The application adapter validates status, canonical
+/// containment, symlinks, and file existence before exposing a path to the
+/// shared engine; secure key material is never hydrated on recovery scans.
+class DirectPrivateMediaLifecycleAttachmentMetadata {
+  const DirectPrivateMediaLifecycleAttachmentMetadata({
+    required this.id,
+    required this.messageId,
+    required this.mime,
+    required this.size,
+    required this.downloadStatus,
+    required this.localPath,
+  });
+
+  final String id;
+  final String messageId;
+  final String mime;
+  final int size;
+  final String downloadStatus;
+  final String? localPath;
+}
+
+/// Raw, key-free exact-direct cleanup seam. The lifecycle engine owns the
+/// process lock; these methods must not recursively acquire it.
+abstract class DirectPrivateMediaCleanupRepository {
+  Future<List<DirectPrivateMediaLifecycleAttachmentMetadata>>
+  loadDirectPrivateMediaLifecycleAttachmentMetadata(String messageId);
+
+  Future<List<DirectPrivateMediaCleanupAttachment>>
+  loadDirectPrivateMediaCleanupAttachments(String messageId);
+
+  /// Deletes only the secure-storage key derived from [attachmentId]. The
+  /// caller already owns [DirectPrivateMediaCleanupRuntime]'s lifecycle lock;
+  /// generic secret-store read/write access is deliberately not exposed.
+  Future<bool> deleteDirectPrivateMediaEncryptionKeyWithinLock({
+    required String messageId,
+    required String attachmentId,
+  });
+
+  Future<int> deleteDirectPrivateMediaAttachmentWithinLock({
+    required String messageId,
+    required String attachmentId,
+  });
+}
+
+/// Narrow runtime dependencies needed to compose the application-level direct
+/// lifecycle adapter without depending on a concrete repository class.
+abstract class DirectPrivateMediaCleanupRuntime {
+  MediaAttachmentLifecycleLock get directPrivateMediaLifecycleLock;
+}
+
+/// Group-private equivalent of the direct guarded download protocol. The
+/// implementation uses group-parent policy/expiry authority while preserving
+/// the same attachment-lock ordering required by the shared downloader.
+abstract class GroupPrivateMediaDownloadStateRepository {
+  Future<bool> beginGroupPrivateMediaDownloadWithinLock(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required int nowMs,
+  });
+
+  Future<bool> qualifyGroupPrivateMediaLocalReadyWithinLock(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required String expectedLocalPath,
+    required int nowMs,
+  });
+
+  Future<bool> qualifyGroupPrivateMediaDownloadClaimWithinLock(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required int nowMs,
+  });
+
+  Future<bool> recordGroupPrivateMediaDownloadFailureWithinLock(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required int nowMs,
+    required bool incrementRetryCount,
+    required String failureStatus,
+    required String expectedDownloadStatus,
+    String? expectedLocalPath,
+    required bool clearLocalPath,
+  });
+
+  Future<bool> recordGroupPrivateMediaDownloadFailure(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required int nowMs,
+    required bool incrementRetryCount,
+    required String failureStatus,
+    required String expectedDownloadStatus,
+    String? expectedLocalPath,
+    required bool clearLocalPath,
+  });
+
+  Future<bool> commitGroupPrivateMediaDownloadLocalPathWithinLock(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required String localPath,
+    required int nowMs,
+  });
+}
+
+class GroupPrivateMediaLifecycleAttachmentMetadata {
+  const GroupPrivateMediaLifecycleAttachmentMetadata({
+    required this.id,
+    required this.messageId,
+    required this.mime,
+    required this.size,
+    required this.downloadStatus,
+    required this.localPath,
+  });
+
+  final String id;
+  final String messageId;
+  final String mime;
+  final int size;
+  final String downloadStatus;
+  final String? localPath;
+}
+
+abstract class GroupPrivateMediaCleanupRepository {
+  Future<List<GroupPrivateMediaLifecycleAttachmentMetadata>>
+  loadGroupPrivateMediaLifecycleAttachmentMetadata(String messageId);
+
+  Future<bool> deleteGroupPrivateMediaEncryptionKeyWithinLock({
+    required String messageId,
+    required String attachmentId,
+  });
+
+  Future<int> deleteGroupPrivateMediaAttachmentWithinLock({
+    required String messageId,
+    required String attachmentId,
+  });
+}
+
+abstract class GroupPrivateMediaCleanupRuntime {
+  MediaAttachmentLifecycleLock get groupPrivateMediaLifecycleLock;
+}
+
 /// Optional capability (228): explicit local viewer-state writers. These are
 /// the ONLY paths that may flip bookmark/playback state — ordinary replays
 /// preserve it (see [MediaAttachmentRepository.saveAttachment]).
@@ -230,4 +479,27 @@ abstract class MediaLibraryStateRepository {
   /// position is stored and re-clamped when a later replay supplies the
   /// duration.
   Future<void> updatePlaybackPosition(String id, int positionMs);
+}
+
+/// Narrow direct-only bookmark capability. Unlike the generic library state
+/// seam, this write is keyed by exact parent/attachment identity and guarded
+/// atomically by the current parent remaining live and ordinary.
+abstract class DirectMediaLibraryStateRepository {
+  Future<bool> setDirectBookmarkedIfOrdinary({
+    required String messageId,
+    required String attachmentId,
+    required bool bookmarked,
+  });
+}
+
+/// Narrow group-only bookmark capability. The write is keyed by exact
+/// group/message/attachment identity and atomically guarded by the current
+/// parent remaining visible and canonically ordinary.
+abstract class GroupMediaLibraryStateRepository {
+  Future<bool> setGroupBookmarkedIfOrdinary({
+    required String groupId,
+    required String messageId,
+    required String attachmentId,
+    required bool bookmarked,
+  });
 }

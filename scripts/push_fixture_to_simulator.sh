@@ -8,11 +8,12 @@ device="${SIMULATOR_DEVICE:-booted}"
 bundle_id="${IOS_BUNDLE_ID:-com.mknoon.app}"
 dry_run=0
 fixture=""
+case_id=""
 
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/push_fixture_to_simulator.sh [--dry-run] [--device <simulator>] [--bundle-id <bundle>] <fixture>
+  scripts/push_fixture_to_simulator.sh [--dry-run] [--device <simulator>] [--bundle-id <bundle>] [--case <id>] <fixture>
 
 Fixture can be an absolute/relative JSON path or a fixture id from:
   test/features/push/fixtures/
@@ -25,6 +26,10 @@ Environment:
   IOS_APNS_ALERT_BODY        Alert body, defaults to "You have a new message"
   IOS_APNS_MUTABLE_CONTENT    Set to 0/false/no to omit mutable-content
   IOS_APNS_CONTENT_AVAILABLE  Set to 0/false/no to omit content-available
+
+Matrix fixtures:
+  --case <id> selects one entry from a top-level "cases" array. Its expected
+  title/body are used unless IOS_APNS_ALERT_TITLE/BODY explicitly override them.
 EOF
 }
 
@@ -40,6 +45,10 @@ while (($# > 0)); do
       ;;
     --bundle-id)
       bundle_id="${2:?missing --bundle-id value}"
+      shift 2
+      ;;
+    --case)
+      case_id="${2:?missing --case value}"
       shift 2
       ;;
     -h|--help)
@@ -90,15 +99,30 @@ fixture_path="$(resolve_fixture "$fixture")" || {
   exit 1
 }
 
-payload_file="$(mktemp "${TMPDIR:-/tmp}/mknoon-apns-payload.XXXXXX.json")"
+payload_file="$(mktemp "${TMPDIR:-/tmp}/mknoon-apns-payload.XXXXXX")"
 trap 'rm -f "$payload_file"' EXIT
 
-node - "$fixture_path" >"$payload_file" <<'NODE'
+FIXTURE_CASE_ID="$case_id" node - "$fixture_path" >"$payload_file" <<'NODE'
 const fs = require('fs');
 
 const fixturePath = process.argv[2];
 const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
-const routeData = fixture.routeData || fixture.data || fixture;
+const caseId = String(process.env.FIXTURE_CASE_ID || '').trim();
+let selected = fixture;
+if (Array.isArray(fixture.cases)) {
+  if (!caseId) {
+    throw new Error('Matrix fixture requires --case <id>');
+  }
+  selected = fixture.cases.find((item) => item && item.id === caseId);
+  if (!selected) {
+    throw new Error(`Unknown matrix fixture case: ${caseId}`);
+  }
+} else if (caseId) {
+  throw new Error('--case can only be used with a matrix fixture');
+}
+
+const routeData = selected.routeData || selected.data || selected;
+const expected = selected.expected || fixture.expected || {};
 
 function enabled(name) {
   const value = String(process.env[name] || '1').trim().toLowerCase();
@@ -107,8 +131,8 @@ function enabled(name) {
 
 const aps = {
   alert: {
-    title: process.env.IOS_APNS_ALERT_TITLE || 'New Message',
-    body: process.env.IOS_APNS_ALERT_BODY || 'You have a new message',
+    title: process.env.IOS_APNS_ALERT_TITLE || expected.title || 'New Message',
+    body: process.env.IOS_APNS_ALERT_BODY || expected.body || 'You have a new message',
   },
 };
 
@@ -123,6 +147,12 @@ const payload = {
   aps,
   ...routeData,
 };
+
+if (selected.context) payload.mknoon_fixture_context = String(selected.context);
+if (selected.modality) payload.mknoon_fixture_modality = String(selected.modality);
+if (selected.routeCategory) {
+  payload.mknoon_fixture_route_category = String(selected.routeCategory);
+}
 
 if (routeData.groupId) {
   payload.aps['thread-id'] = String(routeData.groupId);

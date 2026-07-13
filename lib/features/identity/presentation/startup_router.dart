@@ -8,6 +8,7 @@ import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/app_root_notification_open.dart';
 import 'package:flutter_app/core/notifications/notification_route_dispatch.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
@@ -215,8 +216,12 @@ class StartupRouter extends StatefulWidget {
   final bool Function()? shouldHandleInitialPushOpen;
   final Future<void> Function()? clearDeliveredNotifications;
   final Future<void> Function()? ingestStagedPushEnvelopes;
-  final Future<void> Function(NotificationRouteTarget routeTarget)?
-  onNotificationRouteTarget;
+  final NotificationOpenRouteContext Function(
+    NotificationRouteTarget routeTarget,
+  )?
+  createNotificationRouteContext;
+  final Future<void> Function(NotificationOpenRouteContext context)?
+  onNotificationRouteContext;
   final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
   final AccountMigrationSizeGate? accountMigrationSizeGate;
   final AccountMigrationReceiverStartFn? accountMigrationStartReceiver;
@@ -285,7 +290,8 @@ class StartupRouter extends StatefulWidget {
     this.shouldHandleInitialPushOpen,
     this.clearDeliveredNotifications,
     this.ingestStagedPushEnvelopes,
-    this.onNotificationRouteTarget,
+    this.createNotificationRouteContext,
+    this.onNotificationRouteContext,
     this.accountMigrationRunTransfer,
     this.accountMigrationSizeGate,
     this.accountMigrationStartReceiver,
@@ -826,19 +832,36 @@ class _StartupRouterState extends State<StartupRouter> {
           final routeTarget = NotificationRouteTarget.fromRemoteMessageData(
             message.data,
           );
+          NotificationOpenRouteContext? preparedContext;
           await _withContactRequestPresentationSuppressed(
             routeTarget: routeTarget,
             action: () => routeRemoteNotificationOpen(
               data: message.data,
               onBeforeRouteTarget: (resolvedRouteTarget) async {
+                final createContext = widget.createNotificationRouteContext;
+                if (createContext == null) {
+                  throw StateError(
+                    'Initial notification route context factory is missing.',
+                  );
+                }
+                // The shared app-root coordinator assigns the ordinal here,
+                // before either clear or preparation can yield.
+                preparedContext = createContext(resolvedRouteTarget);
                 await widget.clearDeliveredNotifications?.call();
                 await _prepareNotificationRouteTarget(resolvedRouteTarget);
               },
               onRouteTarget: (resolvedRouteTarget) async {
-                if (widget.onNotificationRouteTarget == null) {
+                final context = preparedContext;
+                if (context == null ||
+                    !identical(context.routeTarget, resolvedRouteTarget)) {
+                  throw StateError(
+                    'Initial notification route context was not prepared.',
+                  );
+                }
+                if (widget.onNotificationRouteContext == null) {
                   return;
                 }
-                await widget.onNotificationRouteTarget!(resolvedRouteTarget);
+                await widget.onNotificationRouteContext!(context);
               },
               onMissingRouteTarget: widget.p2pService.drainOfflineInbox,
             ),
@@ -1174,7 +1197,8 @@ class _StartupRouterState extends State<StartupRouter> {
       shouldHandleInitialPushOpen: widget.shouldHandleInitialPushOpen,
       clearDeliveredNotifications: widget.clearDeliveredNotifications,
       ingestStagedPushEnvelopes: widget.ingestStagedPushEnvelopes,
-      onNotificationRouteTarget: widget.onNotificationRouteTarget,
+      createNotificationRouteContext: widget.createNotificationRouteContext,
+      onNotificationRouteContext: widget.onNotificationRouteContext,
       accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
       accountMigrationSizeGate: widget.accountMigrationSizeGate,
       accountMigrationStartReceiver: widget.accountMigrationStartReceiver,

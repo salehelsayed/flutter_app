@@ -144,7 +144,7 @@ void main() {
     );
 
     test(
-      'preparation errors are surfaced as explicit failure results',
+      'group drain failure is logged but never blocks the notification route',
       () async {
         final result = await prepareNotificationOpen(
           routeTarget: const NotificationRouteTarget.group('group-123'),
@@ -154,8 +154,11 @@ void main() {
           },
         );
 
-        expect(result.ok, isFalse);
-        expect(result.error, contains('group catch-up failed'));
+        expect(result.ok, isTrue);
+        expect(result.error, isNull);
+        final events = captured.map((event) => event['event']).toList();
+        expect(events, contains('NOTIFICATION_OPEN_GROUP_DRAIN_ERROR'));
+        expect(events, isNot(contains('NOTIFICATION_OPEN_PREPARATION_ERROR')));
       },
     );
 

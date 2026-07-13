@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/notifications/group_reaction_notification_projection.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import '../models/group_message.dart';
@@ -30,6 +31,8 @@ class GroupMessageRepositoryImpl
         GroupThreadSummaryRepository,
         GroupThreadPreviewRepository,
         GroupMembershipRepairDeletionRepository,
+        GroupMessageLocalDeletionAuthority,
+        GroupConversationReadEventSource,
         GroupOutgoingLocalMessageChangeSource {
   final Future<void> Function(Map<String, Object?> row) dbInsertGroupMessage;
   final Future<List<Map<String, Object?>>> Function(
@@ -116,9 +119,17 @@ class GroupMessageRepositoryImpl
   })?
   dbLoadGroupMessageReceiptsFn;
   final RunGroupInboxPageTransaction? dbRunGroupInboxPageTransactionFn;
+  final GroupReactionNotificationProjection? groupReactionProjection;
+  final Future<List<Map<String, Object?>>> Function(
+    String accountPeerId, {
+    int limit,
+  })?
+  dbLoadAuthoredGroupMessagesForProjectionFn;
   final StreamController<GroupOutgoingLocalMessageChange>
   _outgoingLocalMessageChangesController =
       StreamController<GroupOutgoingLocalMessageChange>.broadcast();
+  final StreamController<String> _groupConversationReadController =
+      StreamController<String>.broadcast();
 
   GroupMessageRepositoryImpl({
     required this.dbInsertGroupMessage,
@@ -153,11 +164,18 @@ class GroupMessageRepositoryImpl
     this.dbLoadGroupInboxCursorFn,
     this.dbLoadGroupMessageReceiptsFn,
     this.dbRunGroupInboxPageTransactionFn,
+    this.groupReactionProjection,
+    this.dbLoadAuthoredGroupMessagesForProjectionFn,
   });
 
   @override
   Stream<GroupOutgoingLocalMessageChange> get outgoingLocalMessageChanges =>
       _outgoingLocalMessageChangesController.stream;
+
+  @override
+  Stream<String> get groupConversationReadStream =>
+      _groupConversationReadController.stream;
+
 
   void _emitOutgoingStatusChangeIfNeeded({
     required GroupMessage? previous,
@@ -239,6 +257,12 @@ class GroupMessageRepositoryImpl
       receipts: receipts,
       markReadMessageIds: markReadMessageIds,
     );
+    // The transaction-scoped repository intentionally has no external
+    // projection: Keychain must never observe rows before SQL commit. Refresh
+    // the bounded authoritative target set only after the transaction helper
+    // returns successfully. Transaction repos have neither dependency and this
+    // method remains a no-op there.
+    await mirrorAllGroupReactionAuthoredTargets();
   }
 
   @override
@@ -329,6 +353,17 @@ class GroupMessageRepositoryImpl
           ? null
           : GroupMessage.fromMap(previousRow);
       await dbInsertGroupMessage(message.toMap());
+      final projection = groupReactionProjection;
+      if (projection != null) {
+        final committedRow = await dbLoadGroupMessage(message.id);
+        if (committedRow == null) {
+          await projection.removeAuthoredTarget(message.id);
+        } else {
+          await projection.upsertAuthoredTarget(
+            GroupMessage.fromMap(committedRow),
+          );
+        }
+      }
       _emitOutgoingStatusChangeIfNeeded(previous: previous, saved: message);
 
       emitFlowEvent(
@@ -516,12 +551,16 @@ class GroupMessageRepositoryImpl
   @override
   Future<void> markAsRead(String groupId) async {
     assert(isGroupMultiDeviceDeviceLocal(GroupMultiDeviceFacet.unreadCounters));
-    await dbMarkGroupMessagesAsRead(groupId);
+    final markedCount = await dbMarkGroupMessagesAsRead(groupId);
+    if (markedCount > 0) {
+      _groupConversationReadController.add(groupId);
+    }
   }
 
   @override
   Future<void> deleteMessage(String id) async {
     await dbDeleteGroupMessage(id);
+    await groupReactionProjection?.removeAuthoredTarget(id);
   }
 
   @override
@@ -533,6 +572,18 @@ class GroupMessageRepositoryImpl
   }
 
   @override
+  Future<GroupMessageLocalDeletionState> getGroupMessageLocalDeletionState(
+    String messageId,
+  ) async {
+    final load = dbLoadGroupMessageLocalDeletionFn;
+    if (load == null) return GroupMessageLocalDeletionState.unknown;
+    final row = await load(messageId);
+    return row == null
+        ? GroupMessageLocalDeletionState.knownClear
+        : GroupMessageLocalDeletionState.deleted;
+  }
+
+  @override
   Future<void> deleteMessageForMembershipRepair(String id) async {
     final previous = await dbLoadGroupMessage(id);
     final repairDelete = dbDeleteGroupMessageForMembershipRepairFn;
@@ -541,12 +592,37 @@ class GroupMessageRepositoryImpl
     } else {
       await dbDeleteGroupMessage(id);
     }
+    await groupReactionProjection?.removeAuthoredTarget(id);
     _emitOutgoingRowsChangedIfNeeded(previous == null ? 0 : 1);
   }
 
   @override
   Future<int> deleteMessagesForGroup(String groupId) async {
-    return dbDeleteGroupMessagesForGroup(groupId);
+    final count = await dbDeleteGroupMessagesForGroup(groupId);
+    await groupReactionProjection?.removeAuthoredTargetsForGroup(groupId);
+    return count;
+  }
+
+  /// Launch-time self-healing backfill for locally-authored group targets.
+  Future<void> mirrorAllGroupReactionAuthoredTargets() async {
+    final projection = groupReactionProjection;
+    final loadRows = dbLoadAuthoredGroupMessagesForProjectionFn;
+    if (projection == null || loadRows == null) return;
+    try {
+      final accountPeerId = await projection.readLocalAccountPeerId();
+      if (accountPeerId == null) return;
+      final rows = await loadRows(
+        accountPeerId,
+        limit: projection.maxAuthoredTargets,
+      );
+      await projection.replaceAuthoredTargets(rows.map(GroupMessage.fromMap));
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_MSG_REPO_REACTION_PROJECTION_BACKFILL_ERROR',
+        details: {'error': error.toString()},
+      );
+    }
   }
 
   @override
@@ -598,6 +674,16 @@ class GroupMessageRepositoryImpl
                 'key_generation': row['latest_key_generation'],
                 'status': row['latest_status'],
                 'is_incoming': row['latest_is_incoming'],
+                'media_policy_version': row['latest_media_policy_version'],
+                'media_lifecycle': row['latest_media_lifecycle'],
+                'media_duration_seconds': row['latest_media_duration_seconds'],
+                'media_protected': row['latest_media_protected'],
+                'media_received_at': row['latest_media_received_at'],
+                'media_expires_at': row['latest_media_expires_at'],
+                'media_last_checked_at': row['latest_media_last_checked_at'],
+                'media_consumed_at': row['latest_media_consumed_at'],
+                'media_expired_at': row['latest_media_expired_at'],
+                'media_cleanup_pending': row['latest_media_cleanup_pending'],
                 'read_at': row['latest_read_at'],
                 'created_at': row['latest_created_at'],
               }),
@@ -653,6 +739,17 @@ class GroupMessageRepositoryImpl
                   'key_generation': row['latest_key_generation'],
                   'status': row['latest_status'],
                   'is_incoming': row['latest_is_incoming'],
+                  'media_policy_version': row['latest_media_policy_version'],
+                  'media_lifecycle': row['latest_media_lifecycle'],
+                  'media_duration_seconds':
+                      row['latest_media_duration_seconds'],
+                  'media_protected': row['latest_media_protected'],
+                  'media_received_at': row['latest_media_received_at'],
+                  'media_expires_at': row['latest_media_expires_at'],
+                  'media_last_checked_at': row['latest_media_last_checked_at'],
+                  'media_consumed_at': row['latest_media_consumed_at'],
+                  'media_expired_at': row['latest_media_expired_at'],
+                  'media_cleanup_pending': row['latest_media_cleanup_pending'],
                   'read_at': row['latest_read_at'],
                   'created_at': row['latest_created_at'],
                 }),

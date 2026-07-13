@@ -3036,4 +3036,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get contact_profile_message_button => 'Message';
+
+
+  @override
+  String get private_media_notification_body => 'Private media';
+
+  @override
+  String get group_private_media_notification_body => 'New private media';
 }

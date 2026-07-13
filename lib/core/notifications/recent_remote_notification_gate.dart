@@ -48,6 +48,7 @@ class RecentRemoteNotificationGate {
   final DateTime Function() _now;
   final Future<Directory> Function() _supportDirectoryProvider;
   final void Function(Object error, StackTrace stack) _onLoadError;
+  final bool _fallbackToSystemTempOnDirectoryError;
 
   // 04-P0 / SI-5: iOS-only provider for the SHARED app-group container the NSE
   // writes sidecar markers into. Null off-iOS / in tests that don't inject it,
@@ -73,6 +74,7 @@ class RecentRemoteNotificationGate {
     Future<Directory> Function()? supportDirectoryProvider,
     void Function(Object error, StackTrace stack)? onLoadError,
     Future<Directory> Function()? appGroupSidecarDirProvider,
+    bool fallbackToSystemTempOnDirectoryError = true,
   }) : _explicitFilePath = filePath,
        ttl = ttl ?? recentRemoteNotificationTtl,
        messageTtl = messageTtl ?? recentRemoteNotificationMessageTtl,
@@ -80,6 +82,8 @@ class RecentRemoteNotificationGate {
        _supportDirectoryProvider =
            supportDirectoryProvider ?? getApplicationSupportDirectory,
        _onLoadError = onLoadError ?? _defaultRecentRemoteGateLoadError,
+       _fallbackToSystemTempOnDirectoryError =
+           fallbackToSystemTempOnDirectoryError,
        _appGroupSidecarDirProvider = appGroupSidecarDirProvider;
 
   /// Synchronous view of the configured path. When an explicit [filePath] was
@@ -94,8 +98,21 @@ class RecentRemoteNotificationGate {
   @visibleForTesting
   Future<String> resolveFilePath() => _resolveFilePath();
 
-  Future<String> _resolveFilePath() {
-    return _resolvedPathFuture ??= _doResolveFilePath();
+  Future<String> _resolveFilePath() async {
+    final cached = _resolvedPathFuture;
+    if (cached != null) {
+      return cached;
+    }
+    final resolving = _doResolveFilePath();
+    _resolvedPathFuture = resolving;
+    try {
+      return await resolving;
+    } catch (_) {
+      // App Group availability can race first-launch persistence. Do not pin a
+      // failed resolution; the next mark/consume must retry the shared path.
+      _resolvedPathFuture = null;
+      rethrow;
+    }
   }
 
   Future<String> _doResolveFilePath() async {
@@ -114,6 +131,9 @@ class RecentRemoteNotificationGate {
         event: 'RECENT_REMOTE_NOTIFICATION_GATE_DIR_FALLBACK',
         details: {'error': error.runtimeType.toString()},
       );
+      if (!_fallbackToSystemTempOnDirectoryError) {
+        rethrow;
+      }
       return '${Directory.systemTemp.path}/$_recentRemoteNotificationFileName';
     }
   }

@@ -5,21 +5,23 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
 
-MediaAttachment _attachment(String mediaType, {String? mime}) => MediaAttachment(
-  id: 'attach-1',
-  messageId: 'msg-1',
-  mime: mime ??
-      switch (mediaType) {
-    'image' => 'image/jpeg',
-    'video' => 'video/mp4',
-    'audio' => 'audio/aac',
-    _ => 'application/octet-stream',
-  },
-  size: 1024,
-  mediaType: mediaType,
-  downloadStatus: 'done',
-  createdAt: '2026-01-01T00:00:00.000Z',
-);
+MediaAttachment _attachment(String mediaType, {String? mime}) =>
+    MediaAttachment(
+      id: 'attach-1',
+      messageId: 'msg-1',
+      mime:
+          mime ??
+          switch (mediaType) {
+            'image' => 'image/jpeg',
+            'video' => 'video/mp4',
+            'audio' => 'audio/aac',
+            _ => 'application/octet-stream',
+          },
+      size: 1024,
+      mediaType: mediaType,
+      downloadStatus: 'done',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    );
 
 void main() {
   group('notificationBodyForMessage', () {
@@ -69,7 +71,9 @@ void main() {
 
     test('returns GIF for GIF-only message', () {
       expect(
-        notificationBodyForMessage('', [_attachment('image', mime: 'image/gif')]),
+        notificationBodyForMessage('', [
+          _attachment('image', mime: 'image/gif'),
+        ]),
         'GIF',
       );
     });
@@ -147,6 +151,46 @@ void main() {
 
     test('returns Message when text is empty and media list is empty', () {
       expect(notificationBodyForMessage('', []), 'Message');
+    });
+
+    test('localizes media-only and empty previews in German and Arabic', () {
+      const german = Locale('de');
+      const arabic = Locale('ar');
+
+      expect(
+        notificationBodyForMessage('', [_attachment('image')], locale: german),
+        'Foto',
+      );
+      expect(
+        notificationBodyForMessage('', [_attachment('video')], locale: german),
+        'Video',
+      );
+      expect(
+        notificationBodyForMessage('', [_attachment('audio')], locale: german),
+        'Sprachnachricht',
+      );
+      expect(notificationBodyForMessage('', [], locale: german), 'Nachricht');
+
+      expect(
+        notificationBodyForMessage('', [_attachment('image')], locale: arabic),
+        'صورة',
+      );
+      expect(
+        notificationBodyForMessage('', [_attachment('video')], locale: arabic),
+        'فيديو',
+      );
+      expect(
+        notificationBodyForMessage('', [_attachment('audio')], locale: arabic),
+        'رسالة صوتية',
+      );
+      expect(notificationBodyForMessage('', [], locale: arabic), 'رسالة');
+      expect(
+        notificationBodyForMessage('', [
+          _attachment('image'),
+          _attachment('video'),
+        ], locale: arabic),
+        'وسائط',
+      );
     });
 
     // --- group message body composition ---

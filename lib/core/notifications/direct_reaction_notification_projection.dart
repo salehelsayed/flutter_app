@@ -1,0 +1,415 @@
+import 'dart:convert';
+
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+
+/// Shared-Keychain records consumed by the iOS notification service extension.
+///
+/// The projection deliberately contains only recipient-owned display/eligibility
+/// state. Reaction emoji and sender-authored display names never enter it.
+const String sharedDirectReactionContactsKey = 'direct_reaction_contacts_v1';
+const String sharedDirectReactionAuthoredTargetsKey =
+    'direct_reaction_authored_targets_v1';
+
+class DirectReactionNotificationProjection {
+  final SecureKeyStore _store;
+  final int maxAuthoredTargets;
+  Future<void> _tail = Future<void>.value();
+  String? _expectedAccountPeerId;
+
+  DirectReactionNotificationProjection({
+    required SecureKeyStore store,
+    this.maxAuthoredTargets = 256,
+  }) : assert(maxAuthoredTargets > 0),
+       _store = store;
+
+  /// Establishes the account generation that owns both direct documents.
+  ///
+  /// A different account replaces contacts and authored targets with empty,
+  /// account-bound documents before any later backfill can repopulate them.
+  /// Partial shared-key writes remain fail-closed because Swift requires both
+  /// direct documents and the group identity document to name the same account.
+  Future<void> replaceLocalIdentity({required String? accountPeerId}) {
+    final normalizedAccount = _nonEmpty(accountPeerId);
+    _expectedAccountPeerId = normalizedAccount;
+    return _enqueue(() async {
+      if (normalizedAccount == null) {
+        await _deleteAllDocuments();
+        return;
+      }
+
+      final contacts = await _readContactsDocument();
+      final targets = await _readTargetsDocument();
+      final preservesCurrentGeneration =
+          contacts.accountPeerId == normalizedAccount &&
+          targets.accountPeerId == normalizedAccount;
+      if (!preservesCurrentGeneration) {
+        // Delete both old-owner documents before publishing either new-owner
+        // document. A later write failure therefore leaves Swift with missing
+        // or mismatched state, never a readable old eligible generation.
+        await _deleteAllDocuments();
+      }
+      await _writeContacts(
+        normalizedAccount,
+        preservesCurrentGeneration
+            ? contacts.contacts
+            : <String, Map<String, Object?>>{},
+      );
+      await _writeTargets(
+        normalizedAccount,
+        preservesCurrentGeneration
+            ? targets.targets
+            : <_ProjectedAuthoredTarget>[],
+      );
+    }, propagateError: true);
+  }
+
+  Future<void> clearForLogout() {
+    _expectedAccountPeerId = null;
+    return _enqueue(_deleteAllDocuments, propagateError: true);
+  }
+
+  Future<void> upsertContact(ContactModel contact) => _enqueue(() async {
+    final document = await _readContactsDocument();
+    if (!_owns(document.accountPeerId)) return;
+    document.contacts[contact.peerId] = <String, Object?>{
+      'username': contact.username.trim(),
+      'blocked': contact.isBlocked,
+      'archived': contact.isArchived,
+    };
+    await _writeContacts(document.accountPeerId!, document.contacts);
+  });
+
+  Future<void> setContactBlocked({
+    required String peerId,
+    required String username,
+    required bool blocked,
+    bool archived = false,
+  }) => _enqueue(() async {
+    final document = await _readContactsDocument();
+    if (!_owns(document.accountPeerId)) return;
+    document.contacts[peerId] = <String, Object?>{
+      'username': username.trim(),
+      'blocked': blocked,
+      'archived': archived,
+    };
+    await _writeContacts(document.accountPeerId!, document.contacts);
+  });
+
+  Future<void> removeContact(String peerId) => _enqueue(() async {
+    final document = await _readContactsDocument();
+    if (!_owns(document.accountPeerId)) return;
+    document.contacts.remove(peerId);
+    await _writeContacts(document.accountPeerId!, document.contacts);
+  });
+
+  Future<void> replaceContacts(Iterable<ContactModel> contacts) =>
+      _enqueue(() async {
+        final current = await _readContactsDocument();
+        if (!_owns(current.accountPeerId)) return;
+        final projection = <String, Map<String, Object?>>{};
+        for (final contact in contacts) {
+          projection[contact.peerId] = <String, Object?>{
+            'username': contact.username.trim(),
+            'blocked': contact.isBlocked,
+            'archived': contact.isArchived,
+          };
+        }
+        await _writeContacts(current.accountPeerId!, projection);
+      });
+
+  Future<void> upsertAuthoredTarget(ConversationMessage message) {
+    if (message.isIncoming ||
+        message.deletedAt != null ||
+        message.hiddenAt != null) {
+      return removeAuthoredTarget(message.id);
+    }
+    return _enqueue(() async {
+      final document = await _readTargetsDocument();
+      if (!_owns(document.accountPeerId)) return;
+      document.targets.removeWhere((target) => target.id == message.id);
+      document.targets.add(
+        _ProjectedAuthoredTarget(
+          id: message.id,
+          peerId: message.contactPeerId,
+          timestamp: message.timestamp,
+        ),
+      );
+      await _writeTargets(
+        document.accountPeerId!,
+        _boundedTargets(document.targets),
+      );
+    });
+  }
+
+  Future<void> removeAuthoredTarget(String messageId) => _enqueue(() async {
+    final document = await _readTargetsDocument();
+    if (!_owns(document.accountPeerId)) return;
+    document.targets.removeWhere((target) => target.id == messageId);
+    await _writeTargets(document.accountPeerId!, document.targets);
+  });
+
+  Future<void> removeAuthoredTargetsForContact(String peerId) =>
+      _enqueue(() async {
+        final document = await _readTargetsDocument();
+        if (!_owns(document.accountPeerId)) return;
+        document.targets.removeWhere((target) => target.peerId == peerId);
+        await _writeTargets(document.accountPeerId!, document.targets);
+      });
+
+  Future<void> replaceAuthoredTargets(Iterable<ConversationMessage> messages) =>
+      _enqueue(() async {
+        final current = await _readTargetsDocument();
+        if (!_owns(current.accountPeerId)) return;
+        final targets = messages
+            .where(
+              (message) =>
+                  !message.isIncoming &&
+                  message.deletedAt == null &&
+                  message.hiddenAt == null,
+            )
+            .map(
+              (message) => _ProjectedAuthoredTarget(
+                id: message.id,
+                peerId: message.contactPeerId,
+                timestamp: message.timestamp,
+              ),
+            )
+            .toList(growable: true);
+        await _writeTargets(current.accountPeerId!, _boundedTargets(targets));
+      });
+
+  /// Test/diagnostic read. Production eligibility is consumed by the NSE.
+  Future<Map<String, Map<String, Object?>>> readContacts() async =>
+      (await _readContactsDocument()).contacts;
+
+  /// Test/diagnostic read. Production eligibility is consumed by the NSE.
+  Future<List<Map<String, String>>> readAuthoredTargets() async =>
+      (await _readTargetsDocument()).targets
+          .map((target) => target.toJson())
+          .toList(growable: false);
+
+  /// Test/diagnostic ownership read spanning both direct documents.
+  Future<String?> readLocalAccountPeerId() async {
+    final contacts = await _readContactsDocument();
+    final targets = await _readTargetsDocument();
+    return contacts.accountPeerId == targets.accountPeerId
+        ? contacts.accountPeerId
+        : null;
+  }
+
+  Future<void> _enqueue(
+    Future<void> Function() action, {
+    bool propagateError = false,
+  }) {
+    final next = _tail.then((_) async {
+      try {
+        await action();
+      } catch (error) {
+        Object? invalidationError;
+        try {
+          await _deleteAllDocuments();
+        } catch (failure) {
+          invalidationError = failure;
+        }
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'DIRECT_REACTION_PUSH_PROJECTION_ERROR',
+          details: {
+            'error': error.toString(),
+            if (invalidationError != null)
+              'invalidationError': invalidationError.toString(),
+          },
+        );
+        if (propagateError) rethrow;
+      }
+    });
+    _tail = next.catchError((Object _) {});
+    return next;
+  }
+
+  Future<_DirectContactsDocument> _readContactsDocument() async {
+    final raw = await _store.read(sharedDirectReactionContactsKey);
+    if (raw == null || raw.isEmpty) return _DirectContactsDocument.empty();
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic> ||
+          decoded['version'] != 1 ||
+          _nonEmpty(decoded['localAccountPeerId']) == null) {
+        return _DirectContactsDocument.empty();
+      }
+      final accountPeerId = _nonEmpty(decoded['localAccountPeerId'])!;
+      final values = decoded['contacts'];
+      if (values is! Map<String, dynamic>) {
+        return _DirectContactsDocument.empty();
+      }
+      final result = <String, Map<String, Object?>>{};
+      for (final entry in values.entries) {
+        final value = entry.value;
+        if (value is! Map) continue;
+        final username = value['username']?.toString().trim() ?? '';
+        if (entry.key.trim().isEmpty || username.isEmpty) continue;
+        result[entry.key] = <String, Object?>{
+          'username': username,
+          'blocked': value['blocked'] == true,
+          'archived': value['archived'] == true,
+        };
+      }
+      return _DirectContactsDocument(
+        accountPeerId: accountPeerId,
+        contacts: result,
+      );
+    } catch (_) {
+      return _DirectContactsDocument.empty();
+    }
+  }
+
+  Future<void> _writeContacts(
+    String accountPeerId,
+    Map<String, Map<String, Object?>> contacts,
+  ) => _store.write(
+    sharedDirectReactionContactsKey,
+    jsonEncode(<String, Object?>{
+      'version': 1,
+      'localAccountPeerId': accountPeerId,
+      'contacts': contacts,
+    }),
+  );
+
+  Future<_DirectTargetsDocument> _readTargetsDocument() async {
+    final raw = await _store.read(sharedDirectReactionAuthoredTargetsKey);
+    if (raw == null || raw.isEmpty) return _DirectTargetsDocument.empty();
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic> ||
+          decoded['version'] != 1 ||
+          _nonEmpty(decoded['localAccountPeerId']) == null) {
+        return _DirectTargetsDocument.empty();
+      }
+      final accountPeerId = _nonEmpty(decoded['localAccountPeerId'])!;
+      final values = decoded['targets'];
+      if (values is! List) return _DirectTargetsDocument.empty();
+      final targets = values
+          .whereType<Map>()
+          .map(_ProjectedAuthoredTarget.fromJson)
+          .whereType<_ProjectedAuthoredTarget>()
+          .toList(growable: true);
+      return _DirectTargetsDocument(
+        accountPeerId: accountPeerId,
+        targets: targets,
+      );
+    } catch (_) {
+      return _DirectTargetsDocument.empty();
+    }
+  }
+
+  Future<void> _writeTargets(
+    String accountPeerId,
+    List<_ProjectedAuthoredTarget> targets,
+  ) => _store.write(
+    sharedDirectReactionAuthoredTargetsKey,
+    jsonEncode(<String, Object?>{
+      'version': 1,
+      'localAccountPeerId': accountPeerId,
+      'targets': targets.map((target) => target.toJson()).toList(),
+    }),
+  );
+
+  Future<void> _deleteAllDocuments() async {
+    Object? firstError;
+    try {
+      await _store.delete(sharedDirectReactionContactsKey);
+    } catch (error) {
+      firstError = error;
+    }
+    try {
+      await _store.delete(sharedDirectReactionAuthoredTargetsKey);
+    } catch (error) {
+      firstError ??= error;
+    }
+    if (firstError != null) throw firstError;
+  }
+
+  bool _owns(String? accountPeerId) =>
+      _expectedAccountPeerId != null && accountPeerId == _expectedAccountPeerId;
+
+  List<_ProjectedAuthoredTarget> _boundedTargets(
+    List<_ProjectedAuthoredTarget> targets,
+  ) {
+    final byId = <String, _ProjectedAuthoredTarget>{
+      for (final target in targets) target.id: target,
+    };
+    final sorted = byId.values.toList(growable: false)
+      ..sort((left, right) {
+        final timestampOrder = right.timestamp.compareTo(left.timestamp);
+        if (timestampOrder != 0) return timestampOrder;
+        return left.id.compareTo(right.id);
+      });
+    return sorted.take(maxAuthoredTargets).toList(growable: false);
+  }
+}
+
+class _DirectContactsDocument {
+  final String? accountPeerId;
+  final Map<String, Map<String, Object?>> contacts;
+
+  _DirectContactsDocument({
+    required this.accountPeerId,
+    required this.contacts,
+  });
+
+  factory _DirectContactsDocument.empty() => _DirectContactsDocument(
+    accountPeerId: null,
+    contacts: <String, Map<String, Object?>>{},
+  );
+}
+
+class _DirectTargetsDocument {
+  final String? accountPeerId;
+  final List<_ProjectedAuthoredTarget> targets;
+
+  _DirectTargetsDocument({required this.accountPeerId, required this.targets});
+
+  factory _DirectTargetsDocument.empty() => _DirectTargetsDocument(
+    accountPeerId: null,
+    targets: <_ProjectedAuthoredTarget>[],
+  );
+}
+
+String? _nonEmpty(Object? value) {
+  if (value is! String) return null;
+  final normalized = value.trim();
+  return normalized.isEmpty ? null : normalized;
+}
+
+class _ProjectedAuthoredTarget {
+  final String id;
+  final String peerId;
+  final String timestamp;
+
+  const _ProjectedAuthoredTarget({
+    required this.id,
+    required this.peerId,
+    required this.timestamp,
+  });
+
+  static _ProjectedAuthoredTarget? fromJson(Map<Object?, Object?> value) {
+    final id = value['id']?.toString().trim() ?? '';
+    final peerId = value['peerId']?.toString().trim() ?? '';
+    final timestamp = value['timestamp']?.toString().trim() ?? '';
+    if (id.isEmpty || peerId.isEmpty || timestamp.isEmpty) return null;
+    return _ProjectedAuthoredTarget(
+      id: id,
+      peerId: peerId,
+      timestamp: timestamp,
+    );
+  }
+
+  Map<String, String> toJson() => <String, String>{
+    'id': id,
+    'peerId': peerId,
+    'timestamp': timestamp,
+  };
+}

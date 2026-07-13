@@ -1,3 +1,5 @@
+import 'package:flutter_app/core/media/private_media_policy.dart';
+
 import 'media_attachment.dart';
 
 /// Model representing a single message in a conversation.
@@ -76,6 +78,18 @@ class ConversationMessage {
   /// Legacy database rows default to false.
   final bool isForwarded;
 
+  /// Versioned policy carried only in encrypted direct-message payloads.
+  final PrivateMediaPolicy privateMediaPolicy;
+
+  /// Durable device-local lifecycle state for the direct parent row.
+  final PrivateMediaLifecycleState privateMediaState;
+
+  final int? privateMediaReceivedAtMs;
+  final int? privateMediaExpiresAtMs;
+  final int? privateMediaRevealedAtMs;
+  final int? privateMediaTerminalAtMs;
+  final int? privateMediaClockHighWaterMs;
+
   /// Transient media attachments — populated via copyWith() after batch-loading
   /// from media_attachments table. NOT serialized to DB.
   final List<MediaAttachment> media;
@@ -101,11 +115,27 @@ class ConversationMessage {
     this.custodyCheckedAt,
     this.dedupKey,
     this.isForwarded = false,
+    this.privateMediaPolicy = const PrivateMediaPolicy.ordinary(),
+    this.privateMediaState = PrivateMediaLifecycleState.none,
+    this.privateMediaReceivedAtMs,
+    this.privateMediaExpiresAtMs,
+    this.privateMediaRevealedAtMs,
+    this.privateMediaTerminalAtMs,
+    this.privateMediaClockHighWaterMs,
     this.media = const [],
   });
 
   /// Creates a ConversationMessage from a database row map.
   factory ConversationMessage.fromMap(Map<String, dynamic> map) {
+    final privateMediaPolicy = PrivateMediaPolicy.fromDatabase(
+      version: map['private_media_policy_version'],
+      mode: map['private_media_mode'],
+      durationSeconds: map['private_media_duration_seconds'],
+    );
+    final rawPrivateState = map['private_media_state'];
+    final parsedPrivateState = rawPrivateState == null
+        ? privateMediaPolicy.initialState
+        : PrivateMediaLifecycleState.fromWireValue(rawPrivateState);
     return ConversationMessage(
       id: map['id'] as String,
       contactPeerId: map['contact_peer_id'] as String,
@@ -127,6 +157,20 @@ class ConversationMessage {
       custodyCheckedAt: map['custody_checked_at'] as String?,
       dedupKey: map['dedup_key'] as String?,
       isForwarded: ((map['is_forwarded'] as num?)?.toInt() ?? 0) == 1,
+      privateMediaPolicy: privateMediaPolicy,
+      privateMediaState: privateMediaPolicy.isUnsupported
+          ? PrivateMediaLifecycleState.unsupported
+          : parsedPrivateState,
+      privateMediaReceivedAtMs: (map['private_media_received_at_ms'] as num?)
+          ?.toInt(),
+      privateMediaExpiresAtMs: (map['private_media_expires_at_ms'] as num?)
+          ?.toInt(),
+      privateMediaRevealedAtMs: (map['private_media_revealed_at_ms'] as num?)
+          ?.toInt(),
+      privateMediaTerminalAtMs: (map['private_media_terminal_at_ms'] as num?)
+          ?.toInt(),
+      privateMediaClockHighWaterMs:
+          (map['private_media_clock_high_water_ms'] as num?)?.toInt(),
     );
   }
 
@@ -153,6 +197,15 @@ class ConversationMessage {
       'custody_checked_at': custodyCheckedAt,
       'dedup_key': dedupKey,
       'is_forwarded': isForwarded ? 1 : 0,
+      'private_media_policy_version': privateMediaPolicy.version,
+      'private_media_mode': privateMediaPolicy.mode.wireValue,
+      'private_media_duration_seconds': privateMediaPolicy.durationSeconds,
+      'private_media_state': privateMediaState.wireValue,
+      'private_media_received_at_ms': privateMediaReceivedAtMs,
+      'private_media_expires_at_ms': privateMediaExpiresAtMs,
+      'private_media_revealed_at_ms': privateMediaRevealedAtMs,
+      'private_media_terminal_at_ms': privateMediaTerminalAtMs,
+      'private_media_clock_high_water_ms': privateMediaClockHighWaterMs,
     };
   }
 
@@ -181,6 +234,13 @@ class ConversationMessage {
     Object? custodyCheckedAt = _sentinel,
     Object? dedupKey = _sentinel,
     bool? isForwarded,
+    PrivateMediaPolicy? privateMediaPolicy,
+    PrivateMediaLifecycleState? privateMediaState,
+    Object? privateMediaReceivedAtMs = _sentinel,
+    Object? privateMediaExpiresAtMs = _sentinel,
+    Object? privateMediaRevealedAtMs = _sentinel,
+    Object? privateMediaTerminalAtMs = _sentinel,
+    Object? privateMediaClockHighWaterMs = _sentinel,
     List<MediaAttachment>? media,
   }) {
     return ConversationMessage(
@@ -214,9 +274,32 @@ class ConversationMessage {
           : custodyCheckedAt as String?,
       dedupKey: dedupKey == _sentinel ? this.dedupKey : dedupKey as String?,
       isForwarded: isForwarded ?? this.isForwarded,
+      privateMediaPolicy: privateMediaPolicy ?? this.privateMediaPolicy,
+      privateMediaState: privateMediaState ?? this.privateMediaState,
+      privateMediaReceivedAtMs: privateMediaReceivedAtMs == _sentinel
+          ? this.privateMediaReceivedAtMs
+          : privateMediaReceivedAtMs as int?,
+      privateMediaExpiresAtMs: privateMediaExpiresAtMs == _sentinel
+          ? this.privateMediaExpiresAtMs
+          : privateMediaExpiresAtMs as int?,
+      privateMediaRevealedAtMs: privateMediaRevealedAtMs == _sentinel
+          ? this.privateMediaRevealedAtMs
+          : privateMediaRevealedAtMs as int?,
+      privateMediaTerminalAtMs: privateMediaTerminalAtMs == _sentinel
+          ? this.privateMediaTerminalAtMs
+          : privateMediaTerminalAtMs as int?,
+      privateMediaClockHighWaterMs: privateMediaClockHighWaterMs == _sentinel
+          ? this.privateMediaClockHighWaterMs
+          : privateMediaClockHighWaterMs as int?,
       media: media ?? this.media,
     );
   }
+
+  int get privateMediaPolicyVersion => privateMediaPolicy.version;
+
+  PrivateMediaMode get privateMediaMode => privateMediaPolicy.mode;
+
+  int? get privateMediaDurationSeconds => privateMediaPolicy.durationSeconds;
 
   bool get isDeleted => deletedAt != null;
 

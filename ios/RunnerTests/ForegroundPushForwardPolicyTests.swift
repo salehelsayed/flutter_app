@@ -84,6 +84,75 @@ final class ForegroundPushForwardPolicyTests: XCTestCase {
   }
 }
 
+final class NotificationResponseDiagnosticTests: XCTestCase {
+  func testDirectThreadMatchesRouteWithoutLoggingIdentifier() {
+    let content = UNMutableNotificationContent()
+    content.threadIdentifier = "peer-alice"
+
+    let diagnostic = NotificationResponseDiagnostic.evaluate(
+      content: content,
+      userInfo: ["sender_id": "peer-alice"]
+    )
+
+    XCTAssertEqual(diagnostic.threadIdentifier, "<redacted>")
+    XCTAssertEqual(diagnostic.threadIdentifierState, "present")
+    XCTAssertEqual(diagnostic.threadMatchesRoute, "true")
+    XCTAssertEqual(diagnostic.categoryIdentifier, "<empty>")
+    XCTAssertEqual(diagnostic.categoryIdentifierState, "empty")
+    XCTAssertFalse(diagnostic.logSummary.contains("peer-alice"))
+  }
+
+  func testGroupThreadUsesRecipientOwnedGroupRouteKey() {
+    let content = UNMutableNotificationContent()
+    content.threadIdentifier = "77777777-7777-4777-8777-777777777777"
+
+    let diagnostic = NotificationResponseDiagnostic.evaluate(
+      content: content,
+      userInfo: [
+        "groupId": "77777777-7777-4777-8777-777777777777",
+        "sender_id": "must-not-win",
+      ]
+    )
+
+    XCTAssertEqual(diagnostic.threadMatchesRoute, "true")
+    XCTAssertFalse(diagnostic.logSummary.contains("77777777-7777-4777-8777-777777777777"))
+    XCTAssertFalse(diagnostic.logSummary.contains("must-not-win"))
+  }
+
+  func testMismatchAndUnexpectedCategoryFailClosedAndStayRedacted() {
+    let content = UNMutableNotificationContent()
+    content.threadIdentifier = "unexpected-thread"
+    content.categoryIdentifier = "UNREGISTERED_MESSAGE_CATEGORY"
+
+    let diagnostic = NotificationResponseDiagnostic.evaluate(
+      content: content,
+      userInfo: ["sender_id": "peer-alice"]
+    )
+
+    XCTAssertEqual(diagnostic.threadIdentifier, "<redacted>")
+    XCTAssertEqual(diagnostic.threadMatchesRoute, "false")
+    XCTAssertEqual(diagnostic.categoryIdentifier, "<redacted>")
+    XCTAssertEqual(diagnostic.categoryIdentifierState, "present")
+    XCTAssertFalse(diagnostic.logSummary.contains("unexpected-thread"))
+    XCTAssertFalse(diagnostic.logSummary.contains("UNREGISTERED_MESSAGE_CATEGORY"))
+    XCTAssertFalse(diagnostic.logSummary.contains("peer-alice"))
+  }
+
+  func testMissingRecipientRouteKeyIsUnavailable() {
+    let content = UNMutableNotificationContent()
+    content.threadIdentifier = "orphan-thread"
+
+    let diagnostic = NotificationResponseDiagnostic.evaluate(
+      content: content,
+      userInfo: [:]
+    )
+
+    XCTAssertEqual(diagnostic.threadIdentifierState, "present")
+    XCTAssertEqual(diagnostic.threadMatchesRoute, "unavailable")
+    XCTAssertFalse(diagnostic.logSummary.contains("orphan-thread"))
+  }
+}
+
 /// Stands in for the FCM plugin's willPresent delegate — records the forward and
 /// completes exactly once with the persisted foreground options (0 — no banner).
 private final class SpyWillPresentDelegate {

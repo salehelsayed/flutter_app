@@ -2,7 +2,11 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'secure_key_store.dart';
 
-const mknoonSharedAppleAccessGroup = 'group.com.mknoon.app.share';
+/// The resolved `keychain-access-groups` entitlement shared by Runner and the
+/// notification service extension. `flutter_secure_storage` forwards this
+/// value directly to `kSecAttrAccessGroup`, so the AppIdentifierPrefix must be
+/// present; the raw App Group identifier is not a valid Keychain access group.
+const mknoonSharedAppleAccessGroup = '397R9Q4WMX.group.com.mknoon.app.share';
 
 /// Production [SecureKeyStore] backed by flutter_secure_storage.
 ///

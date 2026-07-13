@@ -1,16 +1,16 @@
 import 'dart:developer' as developer;
 
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
+
 import 'flow_event_emitter.dart';
 
-String summarizePushToken(String? token, {int prefixLength = 10}) {
+String summarizePushToken(String? token) {
   if (token == null || token.isEmpty) {
     return '<none>';
   }
-
-  final prefix = token.length <= prefixLength
-      ? token
-      : token.substring(0, prefixLength);
-  return '$prefix...(${token.length})';
+  final digest = sha256.convert(utf8.encode(token)).toString();
+  return 'sha256:$digest(length=${token.length})';
 }
 
 void logPushDiagnostic(

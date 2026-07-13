@@ -1,12 +1,23 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
+import 'package:flutter_app/core/notifications/remote_notification_identity.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/push/application/handle_foreground_remote_message_use_case.dart';
+import 'package:flutter_app/features/push/application/notification_preview_copy.dart';
 import 'package:flutter_app/features/push/application/resolve_group_notification_route_target_use_case.dart';
+import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
 
 const backgroundPushDefaultTitle = 'New Message';
 const backgroundPushDefaultBody = 'You have a new message';
+const backgroundPushReactionFallbackTitle = 'Reaction';
+const backgroundPushReactionFallbackBody = 'Someone reacted to your message';
+const backgroundPushGroupReactionFallbackTitle = 'New reaction';
+const backgroundPushGroupReactionFallbackBody =
+    'Someone reacted to your message';
 
 // 252: a data-only Intros-routed push with no provider copy must never
 // masquerade as a chat message. These route-aware defaults are the safe
@@ -18,6 +29,8 @@ const backgroundPushIntrosFallbackBody =
 
 typedef GroupMessageNotificationDisplayEligibilityResolver =
     Future<GroupMessageNotificationDisplayEligibility> Function(String groupId);
+typedef ForegroundGroupReactionNotificationResolver =
+    Future<BackgroundPushNotificationFallback?> Function(RemoteMessage message);
 
 class BackgroundPushNotificationFallback {
   final String title;
@@ -157,9 +170,58 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
   required RemoteMessage message,
   GroupMessageNotificationDisplayEligibilityResolver?
   groupMessageDisplayEligibilityResolver,
+  ForegroundGroupReactionNotificationResolver?
+  groupReactionNotificationResolver,
+  ResolveDurableNotificationCoordinator?
+  durableReactionNotificationCoordinatorResolver,
+  ActiveConversationTracker? groupConversationTracker,
+  AppLifecycleState Function()? getAppLifecycleState,
+  ResolveDurableNotificationCoordinator?
+  durableGroupMessageNotificationCoordinatorResolver,
 }) async {
   if (result != ForegroundRemoteMessageResult.notificationNeeded) {
     return false;
+  }
+
+  if (_routesToGroupReaction(message)) {
+    final resolver = groupReactionNotificationResolver;
+    final groupId = NotificationRouteTarget.groupIdFromRemoteMessageData(
+      message.data,
+    );
+    final eventId =
+        _trimToNull(message.data['event_id']?.toString()) ??
+        _trimToNull(message.data['reaction_id']?.toString());
+    if (resolver == null || groupId == null || eventId == null) {
+      return false;
+    }
+    final resolved = await resolver(message);
+    if (resolved == null || resolved.payload == null) {
+      return false;
+    }
+    final conversationKey = 'group:$groupId';
+    final tracker = groupConversationTracker;
+    final lifecycle = getAppLifecycleState;
+    final coordinatorResolver = durableReactionNotificationCoordinatorResolver;
+    if (tracker == null || lifecycle == null || coordinatorResolver == null) {
+      throw StateError(
+        'group reaction foreground presentation authority unavailable',
+      );
+    }
+    await maybeShowNotification(
+      notificationService: notificationService,
+      conversationTracker: tracker,
+      getAppLifecycleState: lifecycle,
+      contactPeerId: conversationKey,
+      routePayload: resolved.payload,
+      senderUsername: resolved.title,
+      messageText: resolved.body,
+      messageId: eventId,
+      notificationEventIdentity: boundedReactionEventIdentity(eventId),
+      notificationEventType: 'message_reaction',
+      durableNotificationCoordinatorResolver: coordinatorResolver,
+      backgroundDuplicateGuardDelay: Duration.zero,
+    );
+    return true;
   }
 
   final displayEligibility =
@@ -179,6 +241,77 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
       },
     );
     return false;
+  }
+
+  final routeTarget = NotificationRouteTarget.fromRemoteMessageData(
+    message.data,
+  );
+  if (routeTarget?.kind == NotificationRouteTargetKind.group) {
+    final groupId = _trimToNull(routeTarget?.groupId);
+    if (groupId == null) return false;
+    final tracker = groupConversationTracker;
+    final lifecycle = getAppLifecycleState;
+    final coordinatorResolver =
+        durableGroupMessageNotificationCoordinatorResolver;
+    if (tracker == null || lifecycle == null || coordinatorResolver == null) {
+      throw StateError(
+        'ordinary group foreground fallback presentation authority unavailable',
+      );
+    }
+
+    final conversationKey = 'group:$groupId';
+    final canonicalMessageId =
+        remoteNotificationMessageIdFromData(message.data) ??
+        _trimToNull(routeTarget?.messageId);
+    final genericBody = localizedNotificationMessage();
+    if (canonicalMessageId == null) {
+      final barePayload = NotificationRouteTarget.group(groupId).toPayload();
+      final isViewing =
+          tracker.isViewing(conversationKey) || tracker.isViewing(barePayload);
+      if (lifecycle() == AppLifecycleState.resumed && isViewing) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PUSH_FOREGROUND_FALLBACK_NOTIFICATION_SUPPRESSED',
+          details: {
+            'reason': 'viewing_conversation_without_canonical_message_id',
+            'payload': barePayload,
+          },
+        );
+        return false;
+      }
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PUSH_FOREGROUND_GROUP_FALLBACK_UNANCHORED',
+        details: {'reason': 'missing_canonical_message_id'},
+      );
+      await notificationService.showMessageNotification(
+        contactPeerId: conversationKey,
+        senderUsername: 'Mknoon',
+        messageText: genericBody,
+        payload: barePayload,
+        silent: true,
+      );
+      return true;
+    }
+
+    final canonicalPayload = NotificationRouteTarget.group(
+      groupId,
+      messageId: canonicalMessageId,
+    ).toPayload();
+    await maybeShowNotification(
+      notificationService: notificationService,
+      conversationTracker: tracker,
+      getAppLifecycleState: lifecycle,
+      contactPeerId: conversationKey,
+      routePayload: canonicalPayload,
+      senderUsername: 'Mknoon',
+      messageText: genericBody,
+      messageId: canonicalMessageId,
+      durableNotificationCoordinatorResolver: coordinatorResolver,
+      notificationEventType: 'group_message',
+      backgroundDuplicateGuardDelay: Duration.zero,
+    );
+    return true;
   }
 
   final fallback = buildBackgroundPushFallbackNotification(message);
@@ -201,6 +334,8 @@ String? backgroundPushFallbackDedupeKey(RemoteMessage message) {
   }
 
   final uniqueId =
+      _trimToNull(message.data['event_id']?.toString()) ??
+      _trimToNull(message.data['reaction_id']?.toString()) ??
       _trimToNull(message.data['message_id']?.toString()) ??
       _trimToNull(message.data['messageId']?.toString()) ??
       _trimToNull(message.data['id']?.toString()) ??
@@ -252,7 +387,7 @@ String? _payloadFromMessage(RemoteMessage message) {
 
 String _resolvedTitle(RemoteMessage message) {
   if (_usesProtectedMessagePreview(message)) {
-    return backgroundPushDefaultTitle;
+    return _defaultTitleFor(message);
   }
   return _trimToNull(message.data['title']?.toString()) ??
       _defaultTitleFor(message);
@@ -260,19 +395,31 @@ String _resolvedTitle(RemoteMessage message) {
 
 String _resolvedBody(RemoteMessage message) {
   if (_usesProtectedMessagePreview(message)) {
-    return backgroundPushDefaultBody;
+    return _defaultBodyFor(message);
   }
   return _trimToNull(message.data['body']?.toString()) ??
       _defaultBodyFor(message);
 }
 
 String _defaultTitleFor(RemoteMessage message) {
+  if (_routesToGroupReaction(message)) {
+    return backgroundPushGroupReactionFallbackTitle;
+  }
+  if (_routesToDirectReaction(message)) {
+    return backgroundPushReactionFallbackTitle;
+  }
   return _routesToIntros(message)
       ? backgroundPushIntrosFallbackTitle
       : backgroundPushDefaultTitle;
 }
 
 String _defaultBodyFor(RemoteMessage message) {
+  if (_routesToGroupReaction(message)) {
+    return backgroundPushGroupReactionFallbackBody;
+  }
+  if (_routesToDirectReaction(message)) {
+    return backgroundPushReactionFallbackBody;
+  }
   return _routesToIntros(message)
       ? backgroundPushIntrosFallbackBody
       : backgroundPushDefaultBody;
@@ -283,9 +430,19 @@ bool _routesToIntros(RemoteMessage message) {
       NotificationRouteTargetKind.intros;
 }
 
+bool _routesToDirectReaction(RemoteMessage message) {
+  return _trimToNull(message.data['type']?.toString()) == 'message_reaction';
+}
+
+bool _routesToGroupReaction(RemoteMessage message) {
+  return _trimToNull(message.data['type']?.toString()) == 'group_reaction';
+}
+
 bool _usesProtectedMessagePreview(RemoteMessage message) {
   final type = _trimToNull(message.data['type']?.toString());
   return type == 'new_message' ||
+      type == 'message_reaction' ||
+      type == 'group_reaction' ||
       NotificationRouteTarget.isGroupMessageLikeRemoteData(message.data);
 }
 

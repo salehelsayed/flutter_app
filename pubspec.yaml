@@ -51,6 +51,7 @@ dependencies:
   # to center-square avatars after compress (flutter_image_compress cannot crop).
   image: ^4.8.0
   crypto: ^3.0.6
+  ffi: ^2.1.5
   clock: ^1.1.1
   url_launcher: ^6.2.5
   video_compress: ^3.1.4
@@ -67,6 +68,11 @@ dependencies:
   # foreground connectivity restore drains the offline inbox immediately (see
   # lib/core/services/connectivity_signal.dart).
   connectivity_plus: ^6.1.0
+  # 256: generated plugin registration makes the pure ML-KEM preview channel
+  # available to Firebase Messaging's headless Flutter engine as well as the
+  # Activity engine. The plugin never installs the Go event callback.
+  background_push_crypto:
+    path: packages/background_push_crypto
 
 dependency_overrides:
   # record 5.2.1 caps record_linux at <1.0.0, but record_platform_interface

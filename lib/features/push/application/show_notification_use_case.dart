@@ -1,9 +1,13 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/push/application/notification_preview_copy.dart';
+import 'package:flutter_app/features/push/application/private_media_notification_body.dart';
 
 typedef ConsumeRecentRemoteNotificationAnnouncement =
     Future<bool> Function({required String payload, String? messageId});
@@ -13,6 +17,8 @@ typedef ConsumeRecentRemoteNotificationAnnouncement =
 /// consumes-and-suppresses instead of double-alerting (live-wins handshake).
 typedef MarkRecentRemoteNotificationAnnouncement =
     Future<void> Function({required String payload, String? messageId});
+typedef ResolveDurableNotificationCoordinator =
+    Future<DurableNotificationToneLease?> Function();
 
 /// Returns the notification body text for a message.
 ///
@@ -21,21 +27,32 @@ typedef MarkRecentRemoteNotificationAnnouncement =
 /// [MediaAttachment.mediaType]: image -> "Photo", video -> "Video",
 /// audio -> "Voice message", file -> "File", mixed/unknown -> "Media".
 /// Falls back to "Message" when text is empty and there are no attachments.
-String notificationBodyForMessage(String text, List<MediaAttachment> media) {
+String notificationBodyForMessage(
+  String text,
+  List<MediaAttachment> media, {
+  PrivateMediaPolicy privateMediaPolicy = const PrivateMediaPolicy.ordinary(),
+  Locale? locale,
+}) {
+  if (privateMediaPolicy.requiresRedaction) {
+    return localizedPrivateMediaNotificationBody(locale: locale);
+  }
   final trimmed = text.trim();
   if (trimmed.isNotEmpty) return trimmed;
-  if (media.isEmpty) return 'Message';
+  if (media.isEmpty) return localizedNotificationMessage(locale: locale);
 
   final firstType = media.first.mediaType;
   final allSameType = media.every((a) => a.mediaType == firstType);
-  if (!allSameType) return 'Media';
+  if (!allSameType) return localizedNotificationMedia(locale: locale);
 
   return switch (firstType) {
-    'image' => media.every((a) => a.isAnimated) ? 'GIF' : 'Photo',
-    'video' => 'Video',
-    'audio' => 'Voice message',
-    'file' => 'File',
-    _ => 'Media',
+    'image' =>
+      media.every((a) => a.isAnimated)
+          ? localizedNotificationGif(locale: locale)
+          : localizedNotificationPhoto(1, locale: locale),
+    'video' => localizedNotificationVideo(1, locale: locale),
+    'audio' => localizedNotificationVoiceMessage(locale: locale),
+    'file' => localizedNotificationFile(1, locale: locale),
+    _ => localizedNotificationMedia(locale: locale),
   };
 }
 
@@ -57,11 +74,14 @@ Future<void> maybeShowNotification({
   bool suppressNotification = false,
   String suppressionReason = 'recovery_replay',
   String? messageId,
+  String? notificationEventIdentity,
   ConsumeRecentRemoteNotificationAnnouncement?
   consumeRecentRemoteNotificationAnnouncement,
   MarkRecentRemoteNotificationAnnouncement?
   markRecentRemoteNotificationAnnouncement,
   NotificationToneTracker? toneTracker,
+  ResolveDurableNotificationCoordinator? durableNotificationCoordinatorResolver,
+  String notificationEventType = 'new_message',
   Duration backgroundDuplicateGuardDelay = const Duration(seconds: 2),
 }) async {
   // 118 Phase 4: the per-conversation tone window and the viewing-suppression
@@ -128,21 +148,187 @@ Future<void> maybeShowNotification({
     }
   }
 
-  // 118 Phase 4: consult the tone tracker ONLY after every suppression gate has
-  // passed — a muted/deduped/viewed message never touches shouldPlayTone (so it
-  // never consumes the conversation's tone window). The first message after a
-  // quiet window sounds; the rest update silently. Keyed on the normalized
-  // conversation, never on the per-message routePayload.
-  final silent =
-      toneTracker != null && !toneTracker.shouldPlayTone(conversationKey);
+  DurableNotificationToneLease? durableNotificationCoordinator;
+  try {
+    durableNotificationCoordinator =
+        await durableNotificationCoordinatorResolver?.call();
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'NOTIFICATION_CLAIM_STORAGE_UNAVAILABLE',
+      details: {'type': notificationEventType, 'error': error.toString()},
+    );
+  }
+  DurableNotificationEventClaim? messageClaim;
+  var claimStorageFailedOpen = false;
+  final eventIdentity = notificationEventIdentity ?? messageId;
+  if (durableNotificationCoordinator != null && eventIdentity != null) {
+    try {
+      messageClaim = await durableNotificationCoordinator.claimMessageEvent(
+        type: notificationEventType,
+        eventIdentity: eventIdentity,
+      );
+    } catch (error) {
+      // Storage/locking failure is the sole fail-open case. There is no durable
+      // ownership result to honor, so retain the in-memory tone fallback.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'NOTIFICATION_CLAIM_STORAGE_UNAVAILABLE',
+        details: {'type': notificationEventType, 'error': error.toString()},
+      );
+      durableNotificationCoordinator = null;
+      claimStorageFailedOpen = true;
+    }
+    if (messageClaim == null && !claimStorageFailedOpen) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'NOTIFICATION_SUPPRESSED',
+        details: {
+          'reason': 'message_event_already_claimed',
+          'type': notificationEventType,
+          'contactPeerId': contactPeerId.length > 10
+              ? contactPeerId.substring(0, 10)
+              : contactPeerId,
+        },
+      );
+      return;
+    }
+  }
 
-  await notificationService.showMessageNotification(
-    contactPeerId: contactPeerId,
-    senderUsername: senderUsername,
-    messageText: messageText,
-    payload: routePayload,
-    silent: silent,
-  );
+  DurableNotificationToneReservation? toneReservation;
+
+  Future<void> releaseToneReservationAfterDisplayFailure() async {
+    final reservation = toneReservation;
+    if (reservation == null) return;
+    try {
+      final released = await reservation.release();
+      if (released) return;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'NOTIFICATION_TONE_RESERVATION_RELEASE_FAILED',
+        details: {'type': notificationEventType},
+      );
+    } catch (releaseError) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'NOTIFICATION_TONE_RESERVATION_RELEASE_FAILED',
+        details: {
+          'type': notificationEventType,
+          'error': releaseError.toString(),
+        },
+      );
+    }
+  }
+
+  Future<void> releaseMessageClaimAfterDisplayFailure() async {
+    final claim = messageClaim;
+    if (claim == null) return;
+    try {
+      final released = await claim.release();
+      if (released) return;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'NOTIFICATION_CLAIM_RELEASE_FAILED',
+        details: {'type': notificationEventType},
+      );
+    } catch (releaseError) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'NOTIFICATION_CLAIM_RELEASE_FAILED',
+        details: {
+          'type': notificationEventType,
+          'error': releaseError.toString(),
+        },
+      );
+    }
+  }
+
+  // 118 Phase 4: consult the tone tracker ONLY after every suppression gate has
+  // passed. The durable path reserves a token-owned audible right here, but
+  // starts its window only after the OS show succeeds below.
+  try {
+    bool inMemorySilentDecision() =>
+        toneTracker != null && !toneTracker.shouldPlayTone(conversationKey);
+
+    late final bool silent;
+    if (durableNotificationCoordinator != null) {
+      try {
+        toneReservation = await durableNotificationCoordinator.reserveTone(
+          conversationKey,
+        );
+        silent = toneReservation == null;
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'NOTIFICATION_TONE_STORAGE_UNAVAILABLE',
+          details: {'type': notificationEventType, 'error': error.toString()},
+        );
+        silent = inMemorySilentDecision();
+      }
+    } else {
+      silent = inMemorySilentDecision();
+    }
+
+    await notificationService.showMessageNotification(
+      contactPeerId: contactPeerId,
+      senderUsername: senderUsername,
+      messageText: messageText,
+      payload: routePayload,
+      silent: silent,
+    );
+  } catch (error, stackTrace) {
+    // No OS card was published. Release both provisional owners independently;
+    // one storage failure must never prevent the other cleanup attempt.
+    await releaseToneReservationAfterDisplayFailure();
+    await releaseMessageClaimAfterDisplayFailure();
+    Error.throwWithStackTrace(error, stackTrace);
+  }
+
+  var toneCommitted = true;
+  if (toneReservation != null) {
+    try {
+      toneCommitted = await toneReservation.commit();
+    } catch (_) {
+      toneCommitted = false;
+    }
+  }
+  if (!toneCommitted) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'NOTIFICATION_TONE_RESERVATION_COMMIT_FAILED',
+      details: {
+        'type': notificationEventType,
+        'contactPeerId': contactPeerId.length > 10
+            ? contactPeerId.substring(0, 10)
+            : contactPeerId,
+      },
+    );
+  }
+
+  var claimCommitted = true;
+  if (messageClaim != null) {
+    try {
+      claimCommitted = await messageClaim.commit();
+    } catch (_) {
+      claimCommitted = false;
+    }
+  }
+  if (!claimCommitted) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'NOTIFICATION_CLAIM_COMMIT_FAILED',
+      details: {
+        'type': notificationEventType,
+        'contactPeerId': contactPeerId.length > 10
+            ? contactPeerId.substring(0, 10)
+            : contactPeerId,
+      },
+    );
+  }
+
+  // Once showMessageNotification returns, the OS-visible side effect has
+  // happened. Commit failures and all later bookkeeping failures deliberately
+  // retain both owners fail-closed; releasing here could alert twice.
 
   // 118 Phase 2 (live-wins handshake): record a dedup marker for this exact
   // message so a LATE FCM background isolate firing for the same messageId

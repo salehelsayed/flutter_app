@@ -1,5 +1,7 @@
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 
+import 'group_private_media_policy.dart';
+
 /// Model representing a single message in a group conversation.
 ///
 /// Maps to the `group_messages` database table.
@@ -67,6 +69,21 @@ class GroupMessage {
   /// Legacy rows and absent/malformed wire values decode as false.
   final bool isForwarded;
 
+  /// Versioned group private-media policy persisted on this exact parent row.
+  final GroupPrivateMediaPolicy privateMediaPolicy;
+
+  /// Durable local receipt/custody anchor in UTC Unix epoch milliseconds.
+  ///
+  /// Incoming rows anchor at receiver commit; outgoing rows anchor at first
+  /// custody success. The historical database column name is shared by both.
+  final int? mediaReceivedAt;
+
+  final int? mediaExpiresAt;
+  final int? mediaLastCheckedAt;
+  final int? mediaConsumedAt;
+  final int? mediaExpiredAt;
+  final bool mediaCleanupPending;
+
   /// When the message was read. NULL means unread.
   final DateTime? readAt;
 
@@ -114,6 +131,13 @@ class GroupMessage {
     this.status = 'sent',
     this.isIncoming = true,
     this.isForwarded = false,
+    this.privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary(),
+    this.mediaReceivedAt,
+    this.mediaExpiresAt,
+    this.mediaLastCheckedAt,
+    this.mediaConsumedAt,
+    this.mediaExpiredAt,
+    this.mediaCleanupPending = false,
     this.readAt,
     required this.createdAt,
     this.media = const [],
@@ -126,6 +150,56 @@ class GroupMessage {
 
   /// Creates a GroupMessage from a database row map.
   factory GroupMessage.fromMap(Map<String, dynamic> map) {
+    var privateMediaPolicy = GroupPrivateMediaPolicy.fromDatabase(
+      version: map['media_policy_version'],
+      lifecycle: map['media_lifecycle'],
+      durationSeconds: map['media_duration_seconds'],
+      protected: map['media_protected'],
+    );
+    var mediaReceivedAt = _nonnegativeInt(map['media_received_at']);
+    var mediaExpiresAt = _nonnegativeInt(map['media_expires_at']);
+    var mediaLastCheckedAt = _nonnegativeInt(map['media_last_checked_at']);
+    var mediaConsumedAt = _nonnegativeInt(map['media_consumed_at']);
+    var mediaExpiredAt = _nonnegativeInt(map['media_expired_at']);
+    final rawTimestamps = <Object?>[
+      map['media_received_at'],
+      map['media_expires_at'],
+      map['media_last_checked_at'],
+      map['media_consumed_at'],
+      map['media_expired_at'],
+    ];
+    final hasMalformedTimestamp = rawTimestamps.any(
+      (value) => value != null && _nonnegativeInt(value) == null,
+    );
+    final rawCleanupPending = map['media_cleanup_pending'];
+    var mediaCleanupPending = rawCleanupPending == 1;
+    final hasMalformedCleanup =
+        rawCleanupPending != null &&
+        rawCleanupPending != 0 &&
+        rawCleanupPending != 1;
+    if (hasMalformedTimestamp ||
+        hasMalformedCleanup ||
+        !_isConsistentPrivateMediaState(
+          policy: privateMediaPolicy,
+          receivedAt: mediaReceivedAt,
+          expiresAt: mediaExpiresAt,
+          lastCheckedAt: mediaLastCheckedAt,
+          consumedAt: mediaConsumedAt,
+          expiredAt: mediaExpiredAt,
+          cleanupPending: mediaCleanupPending,
+        )) {
+      privateMediaPolicy = GroupPrivateMediaPolicy.unsupported(
+        sourceVersion: privateMediaPolicy.version < 0
+            ? 0
+            : privateMediaPolicy.version,
+      );
+      mediaReceivedAt = null;
+      mediaExpiresAt = null;
+      mediaLastCheckedAt = null;
+      mediaConsumedAt = null;
+      mediaExpiredAt = null;
+      mediaCleanupPending = false;
+    }
     return GroupMessage(
       id: map['id'] as String,
       groupId: map['group_id'] as String,
@@ -143,6 +217,13 @@ class GroupMessage {
       status: map['status'] as String? ?? 'sent',
       isIncoming: (map['is_incoming'] as int? ?? 1) == 1,
       isForwarded: ((map['is_forwarded'] as num?)?.toInt() ?? 0) == 1,
+      privateMediaPolicy: privateMediaPolicy,
+      mediaReceivedAt: mediaReceivedAt,
+      mediaExpiresAt: mediaExpiresAt,
+      mediaLastCheckedAt: mediaLastCheckedAt,
+      mediaConsumedAt: mediaConsumedAt,
+      mediaExpiredAt: mediaExpiredAt,
+      mediaCleanupPending: mediaCleanupPending,
       readAt: map['read_at'] != null
           ? DateTime.parse(map['read_at'] as String)
           : null,
@@ -176,6 +257,13 @@ class GroupMessage {
       'status': status,
       'is_incoming': isIncoming ? 1 : 0,
       'is_forwarded': isForwarded ? 1 : 0,
+      ...privateMediaPolicy.toDatabaseMap(),
+      'media_received_at': mediaReceivedAt,
+      'media_expires_at': mediaExpiresAt,
+      'media_last_checked_at': mediaLastCheckedAt,
+      'media_consumed_at': mediaConsumedAt,
+      'media_expired_at': mediaExpiredAt,
+      'media_cleanup_pending': mediaCleanupPending ? 1 : 0,
       'read_at': readAt?.toUtc().toIso8601String(),
       'created_at': createdAt.toUtc().toIso8601String(),
       'wire_envelope': wireEnvelope,
@@ -204,6 +292,13 @@ class GroupMessage {
     String? status,
     bool? isIncoming,
     bool? isForwarded,
+    GroupPrivateMediaPolicy? privateMediaPolicy,
+    Object? mediaReceivedAt = _sentinel,
+    Object? mediaExpiresAt = _sentinel,
+    Object? mediaLastCheckedAt = _sentinel,
+    Object? mediaConsumedAt = _sentinel,
+    Object? mediaExpiredAt = _sentinel,
+    bool? mediaCleanupPending,
     Object? readAt = _sentinel,
     DateTime? createdAt,
     List<MediaAttachment>? media,
@@ -236,6 +331,23 @@ class GroupMessage {
       status: status ?? this.status,
       isIncoming: isIncoming ?? this.isIncoming,
       isForwarded: isForwarded ?? this.isForwarded,
+      privateMediaPolicy: privateMediaPolicy ?? this.privateMediaPolicy,
+      mediaReceivedAt: mediaReceivedAt == _sentinel
+          ? this.mediaReceivedAt
+          : mediaReceivedAt as int?,
+      mediaExpiresAt: mediaExpiresAt == _sentinel
+          ? this.mediaExpiresAt
+          : mediaExpiresAt as int?,
+      mediaLastCheckedAt: mediaLastCheckedAt == _sentinel
+          ? this.mediaLastCheckedAt
+          : mediaLastCheckedAt as int?,
+      mediaConsumedAt: mediaConsumedAt == _sentinel
+          ? this.mediaConsumedAt
+          : mediaConsumedAt as int?,
+      mediaExpiredAt: mediaExpiredAt == _sentinel
+          ? this.mediaExpiredAt
+          : mediaExpiredAt as int?,
+      mediaCleanupPending: mediaCleanupPending ?? this.mediaCleanupPending,
       readAt: readAt == _sentinel ? this.readAt : readAt as DateTime?,
       createdAt: createdAt ?? this.createdAt,
       media: media ?? this.media,
@@ -266,6 +378,53 @@ class GroupMessage {
   String toString() {
     return 'GroupMessage(id: $id, groupId: $groupId, isIncoming: $isIncoming)';
   }
+
+  int get mediaPolicyVersion => privateMediaPolicy.version;
+
+  GroupPrivateMediaPolicy get mediaPolicy => privateMediaPolicy;
+
+  GroupMediaLifecycle get mediaLifecycle => privateMediaPolicy.lifecycle;
+
+  int? get mediaDurationSeconds => privateMediaPolicy.durationSeconds;
+
+  bool get mediaProtected => privateMediaPolicy.protected;
 }
 
 const _sentinel = Object();
+
+int? _nonnegativeInt(Object? value) =>
+    value is int && value >= 0 ? value : null;
+
+bool _isConsistentPrivateMediaState({
+  required GroupPrivateMediaPolicy policy,
+  required int? receivedAt,
+  required int? expiresAt,
+  required int? lastCheckedAt,
+  required int? consumedAt,
+  required int? expiredAt,
+  required bool cleanupPending,
+}) {
+  final hasLocalClaim =
+      receivedAt != null ||
+      expiresAt != null ||
+      lastCheckedAt != null ||
+      consumedAt != null ||
+      expiredAt != null ||
+      cleanupPending;
+  if (policy.isOrdinary) return !hasLocalClaim;
+  if (policy.isUnsupported) {
+    return expiresAt == null && consumedAt == null && expiredAt == null;
+  }
+  if (!policy.isPrivate) return false;
+  if (cleanupPending && consumedAt == null && expiredAt == null) return false;
+  switch (policy.lifecycle) {
+    case GroupMediaLifecycle.standard:
+      return expiresAt == null && consumedAt == null && expiredAt == null;
+    case GroupMediaLifecycle.viewOnce:
+      return expiresAt == null && expiredAt == null;
+    case GroupMediaLifecycle.disappearing:
+      return consumedAt == null;
+    case GroupMediaLifecycle.unsupported:
+      return false;
+  }
+}

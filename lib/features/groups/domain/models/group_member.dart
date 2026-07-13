@@ -403,7 +403,10 @@ class GroupMember {
 
   List<GroupMemberDeviceIdentity> activeDevicesWithLegacyFallback() {
     final active = activeDevices;
-    if (active.isNotEmpty) {
+    // Once an explicit device roster exists it is authoritative, including
+    // the all-revoked state. Falling back in that case would resurrect the
+    // account-level legacy transport after device revocation.
+    if (devices.isNotEmpty) {
       return active;
     }
     final legacy = legacyDeviceIdentity;
@@ -426,7 +429,7 @@ class GroupMember {
         return device;
       }
     }
-    if (allowLegacyFallback) {
+    if (allowLegacyFallback && devices.isEmpty) {
       final legacy = legacyDeviceIdentity;
       if (legacy != null && legacy.deviceId == normalized) {
         return legacy;
@@ -450,7 +453,7 @@ class GroupMember {
         return device;
       }
     }
-    if (allowLegacyFallback) {
+    if (allowLegacyFallback && devices.isEmpty) {
       final legacy = legacyDeviceIdentity;
       if (legacy != null && legacy.transportPeerId == normalized) {
         return legacy;
@@ -472,7 +475,7 @@ class GroupMember {
         return device;
       }
     }
-    if (allowLegacyFallback) {
+    if (allowLegacyFallback && devices.isEmpty) {
       final legacy = legacyDeviceIdentity;
       if (legacy?.deviceSigningPublicKey == normalized) {
         return legacy;

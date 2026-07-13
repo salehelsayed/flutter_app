@@ -28,8 +28,12 @@ class NotificationRouteTarget {
     this.commentId,
   });
 
-  const NotificationRouteTarget.conversation(String peerId)
-    : this._(kind: NotificationRouteTargetKind.conversation, peerId: peerId);
+  const NotificationRouteTarget.conversation(String peerId, {String? messageId})
+    : this._(
+        kind: NotificationRouteTargetKind.conversation,
+        peerId: peerId,
+        messageId: messageId,
+      );
 
   const NotificationRouteTarget.contactRequest(String peerId)
     : this._(kind: NotificationRouteTargetKind.contactRequest, peerId: peerId);
@@ -163,6 +167,51 @@ class NotificationRouteTarget {
         return peerId == null
             ? null
             : NotificationRouteTarget.conversation(peerId);
+      case 'message_reaction':
+        final action = _trimToNull(data['action']?.toString());
+        final eventId =
+            _trimToNull(data['event_id']?.toString()) ??
+            _trimToNull(data['reaction_id']?.toString());
+        final targetMessageId =
+            _trimToNull(data['target_message_id']?.toString()) ??
+            _trimToNull(data['targetMessageId']?.toString());
+        final peerId =
+            _trimToNull(data['sender_id']?.toString()) ??
+            _trimToNull(data['from']?.toString());
+        if (action != 'add' ||
+            eventId == null ||
+            targetMessageId == null ||
+            peerId == null) {
+          return null;
+        }
+        return NotificationRouteTarget.conversation(
+          peerId,
+          messageId: targetMessageId,
+        );
+      case 'group_reaction':
+        final action = _trimToNull(data['action']?.toString());
+        final eventId =
+            _trimToNull(data['event_id']?.toString()) ??
+            _trimToNull(data['reaction_id']?.toString());
+        final targetMessageId =
+            _trimToNull(data['target_message_id']?.toString()) ??
+            _trimToNull(data['targetMessageId']?.toString());
+        final groupId = groupIdFromRemoteMessageData(data);
+        final reactorPeerId =
+            _trimToNull(data['reactor_peer_id']?.toString()) ??
+            _trimToNull(data['sender_id']?.toString()) ??
+            _trimToNull(data['from']?.toString());
+        if (action != 'add' ||
+            eventId == null ||
+            targetMessageId == null ||
+            groupId == null ||
+            reactorPeerId == null) {
+          return null;
+        }
+        return NotificationRouteTarget.group(
+          groupId,
+          messageId: targetMessageId,
+        );
       case 'contact_request':
         final peerId =
             _trimToNull(data['sender_id']?.toString()) ??
@@ -233,7 +282,9 @@ class NotificationRouteTarget {
     final payloadType = _trimToNull(data['payloadType']?.toString());
     final kind = _trimToNull(data['kind']?.toString());
     return type == 'group_message' ||
+        type == 'group_reaction' ||
         payloadType == 'group_message' ||
+        payloadType == 'group_reaction' ||
         kind == 'group_message' ||
         kind == 'group_offline_replay';
   }

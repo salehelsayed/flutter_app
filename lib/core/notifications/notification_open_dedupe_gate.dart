@@ -1,6 +1,7 @@
 import 'dart:collection';
 
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
+import 'package:flutter_app/core/notifications/remote_notification_identity.dart';
 
 class NotificationOpenDedupeGate {
   final int maxEntries;
@@ -58,8 +59,7 @@ class NotificationOpenDedupeGate {
   static String? dedupeKeyFor(Map<String, dynamic> data) {
     final routeTarget = NotificationRouteTarget.fromRemoteMessageData(data);
     final routeMessageId =
-        NotificationRouteTarget.messageIdFromRemoteMessageData(data) ??
-        routeTarget?.messageId;
+        remoteNotificationMessageIdFromData(data) ?? routeTarget?.messageId;
     if (routeTarget != null && routeMessageId != null) {
       return 'route:${_routeIdentity(routeTarget)}:message:$routeMessageId';
     }

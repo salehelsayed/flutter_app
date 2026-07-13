@@ -234,6 +234,11 @@ class FakeReactionRepository implements ReactionRepository {
   Future<void> saveReaction(MessageReaction reaction) async {}
 
   @override
+  Future<ReactionAddApplyResult> applyIncomingAdd(
+    MessageReaction reaction,
+  ) async => ReactionAddApplyResult.inserted;
+
+  @override
   Future<List<MessageReaction>> getReactionsForMessage(
     String messageId,
   ) async => const [];

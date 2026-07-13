@@ -99,7 +99,19 @@ func main() {
 	store.StartCleanup(ctx)
 	push := stores.Push
 	inbox := stores.Inbox
+	inbox.SetDirectReactionPushEnabled(loadDirectReactionPushEnabledFromEnv())
+	log.Printf(
+		"[INBOX] direct reaction push enabled=%v (default off; %s)",
+		inbox.directReactionPushEnabled,
+		directReactionPushEnabledEnv,
+	)
 	groupInbox := stores.GroupInbox
+	groupInbox.SetGroupReactionPushEnabled(loadGroupReactionPushEnabledFromEnv())
+	log.Printf(
+		"[GROUP_INBOX] group reaction push enabled=%v (default off; %s)",
+		groupInbox.groupReactionPushEnabled,
+		groupReactionPushEnabledEnv,
+	)
 	media := NewMediaStore(storageCfg.MediaDir)
 	media.StartCleanup(ctx)
 	profile := NewProfileStore(storageCfg.ProfileDir)

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/config/startup_config.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/notifications/app_root_notification_open.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_presentation_gate.dart';
@@ -47,6 +48,7 @@ void main() {
   late PendingPostTargetStore pendingPostTargetStore;
   late InMemoryPostsPrivacySettingsRepository postsPrivacySettingsRepository;
   late ContactRequestPresentationGate contactRequestPresentationGate;
+  late NotificationOpenRouteCoordinator notificationRouteCoordinator;
   late List<NotificationRouteTarget> routedTargets;
   late Future<RemoteMessage?> Function() getInitialRemoteMessage;
   late int clearDeliveredNotificationsCount;
@@ -104,6 +106,7 @@ void main() {
     pendingPostTargetStore = PendingPostTargetStore();
     postsPrivacySettingsRepository = InMemoryPostsPrivacySettingsRepository();
     contactRequestPresentationGate = ContactRequestPresentationGate();
+    notificationRouteCoordinator = NotificationOpenRouteCoordinator();
     routedTargets = <NotificationRouteTarget>[];
     getInitialRemoteMessage = () async => null;
     clearDeliveredNotificationsCount = 0;
@@ -166,8 +169,13 @@ void main() {
         clearDeliveredNotifications: () async {
           clearDeliveredNotificationsCount += 1;
         },
-        onNotificationRouteTarget: (routeTarget) async {
-          routedTargets.add(routeTarget);
+        createNotificationRouteContext: (routeTarget) =>
+            notificationRouteCoordinator.createContext(
+              routeTarget: routeTarget,
+              tappedAt: DateTime.now(),
+            ),
+        onNotificationRouteContext: (context) async {
+          routedTargets.add(context.routeTarget);
         },
         onStartupHomeReady: () => startupHomeReadyCount += 1,
       ),

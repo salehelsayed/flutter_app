@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
@@ -57,6 +58,7 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
   required String senderPeerId,
   required String senderPublicKey,
   required String senderPrivateKey,
+  String Function()? transitionIdFactory,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -144,7 +146,31 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
     senderPeerId: senderPeerId,
     emoji: emoji,
   );
+  final latestTransition = await reactionReplayOutboxRepo
+      .getLatestEntryForTarget(
+        groupId: groupId,
+        messageId: messageId,
+        senderPeerId: senderPeerId,
+      );
+  final currentReaction = await reactionRepo
+      .getReactionForSenderIncludingRemoved(
+        messageId: messageId,
+        senderPeerId: senderPeerId,
+      );
+  final exactRetry =
+      latestTransition != null &&
+      latestTransition.action == GroupReactionPayload.actionAdd &&
+      latestTransition.emoji == emoji &&
+      currentReaction != null &&
+      !currentReaction.isRemoved &&
+      currentReaction.id == reactionId &&
+      currentReaction.emoji == emoji;
   final timestamp = DateTime.now().toUtc().toIso8601String();
+  final transitionId = exactRetry
+      ? latestTransition.reactionId
+      : _requiredTransitionId(
+          (transitionIdFactory ?? _defaultGroupReactionTransitionId)(),
+        );
 
   final payload = GroupReactionPayload(
     id: reactionId,
@@ -153,22 +179,37 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
     action: GroupReactionPayload.actionAdd,
     senderPeerId: senderPeerId,
     timestamp: timestamp,
+    eventId: transitionId,
   );
 
   // 5. Stage durable custody + relay store BEFORE publishing, so a live publish
   //    failure still leaves a retryable replay-outbox row (INV-R1/INV-R2). The
   //    reaction id is deterministic, so any later retry re-publish stays
   //    idempotent at the receiver (INV-R3).
-  await _stageReactionInboxStore(
-    bridge: bridge,
-    groupRepo: groupRepo,
-    reactionReplayOutboxRepo: reactionReplayOutboxRepo,
-    groupId: groupId,
-    payload: payload,
-    senderPublicKey: senderDevice.deviceSigningPublicKey,
-    senderPrivateKey: senderPrivateKey,
-    senderDevice: senderDevice,
-  );
+  if (exactRetry) {
+    unawaited(
+      _attemptReactionInboxStore(
+        bridge: bridge,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        reactionId: transitionId,
+        inboxRetryPayload: latestTransition.inboxRetryPayload,
+        staged: true,
+      ),
+    );
+  } else {
+    await _stageReactionInboxStore(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+      groupId: groupId,
+      payload: payload,
+      senderPublicKey: senderDevice.deviceSigningPublicKey,
+      senderPrivateKey: senderPrivateKey,
+      senderDevice: senderDevice,
+      targetAuthorPeerId: message.senderPeerId,
+      transitionId: transitionId,
+    );
+  }
 
   // 6. Persist locally (optimistic) regardless of the publish outcome.
   final reaction = payload.toMessageReaction();
@@ -249,6 +290,17 @@ String _deterministicAddReactionId({
   return 'group-reaction-add-${digest.substring(0, 32)}';
 }
 
+String _defaultGroupReactionTransitionId() =>
+    'group-reaction-event-${const Uuid().v4()}';
+
+String _requiredTransitionId(String value) {
+  final normalized = value.trim();
+  if (normalized.isEmpty) {
+    throw ArgumentError.value(value, 'transitionId', 'must not be empty');
+  }
+  return normalized;
+}
+
 /// Wraps inbox store in try/catch so failures don't propagate.
 Future<void> _stageReactionInboxStore({
   required Bridge bridge,
@@ -259,9 +311,18 @@ Future<void> _stageReactionInboxStore({
   required String senderPublicKey,
   required String senderPrivateKey,
   required GroupMemberDeviceIdentity senderDevice,
+  required String targetAuthorPeerId,
+  required String transitionId,
 }) async {
   late final String inboxRetryPayload;
   try {
+    final recipients = await _resolveReactionRecipients(
+      groupRepo: groupRepo,
+      groupId: groupId,
+      senderTransportPeerId: senderDevice.transportPeerId,
+      reactorPeerId: payload.senderPeerId,
+      targetAuthorPeerId: targetAuthorPeerId,
+    );
     inboxRetryPayload = await buildGroupOfflineReplayInboxRetryPayload(
       bridge: bridge,
       groupRepo: groupRepo,
@@ -275,6 +336,16 @@ Future<void> _stageReactionInboxStore({
       senderDeviceId: senderDevice.deviceId,
       senderTransportPeerId: senderDevice.transportPeerId,
       senderKeyPackageId: senderDevice.keyPackageId,
+      recipientPeerIds: recipients.replayRecipientTransportPeerIds,
+      reactionNotificationExtension: GroupReactionNotificationExtensionInput(
+        transitionId: transitionId,
+        action: payload.action,
+        targetMessageId: payload.messageId,
+        reactorPeerId: payload.senderPeerId,
+        reactorTransportPeerId: senderDevice.transportPeerId,
+        notificationRecipientTransportPeerIds:
+            recipients.notificationRecipientTransportPeerIds,
+      ),
     );
   } catch (e) {
     emitFlowEvent(
@@ -286,7 +357,7 @@ Future<void> _stageReactionInboxStore({
   }
   final nowIso = DateTime.now().toUtc().toIso8601String();
   final entry = GroupReactionReplayOutboxEntry(
-    reactionId: payload.id,
+    reactionId: transitionId,
     groupId: groupId,
     messageId: payload.messageId,
     senderPeerId: payload.senderPeerId,
@@ -314,10 +385,73 @@ Future<void> _stageReactionInboxStore({
     _attemptReactionInboxStore(
       bridge: bridge,
       reactionReplayOutboxRepo: reactionReplayOutboxRepo,
-      reactionId: payload.id,
+      reactionId: transitionId,
       inboxRetryPayload: inboxRetryPayload,
       staged: staged,
     ),
+  );
+}
+
+({
+  List<String> replayRecipientTransportPeerIds,
+  List<String> notificationRecipientTransportPeerIds,
+})
+_reactionRecipientsFromMembers({
+  required List<GroupMember> members,
+  required String senderTransportPeerId,
+  required String reactorPeerId,
+  required String targetAuthorPeerId,
+}) {
+  final replayRecipients = <String>{};
+  for (final member in members) {
+    for (final device in member.activeDevicesWithLegacyFallback()) {
+      final transportPeerId = device.transportPeerId.trim();
+      if (transportPeerId.isEmpty ||
+          transportPeerId == senderTransportPeerId.trim()) {
+        continue;
+      }
+      replayRecipients.add(transportPeerId);
+    }
+  }
+  final sortedReplay = replayRecipients.toList()..sort();
+
+  final notificationRecipients = <String>{};
+  if (reactorPeerId != targetAuthorPeerId) {
+    for (final member in members) {
+      if (member.peerId != targetAuthorPeerId) continue;
+      for (final device in member.activeDevicesWithLegacyFallback()) {
+        final transportPeerId = device.transportPeerId.trim();
+        if (replayRecipients.contains(transportPeerId)) {
+          notificationRecipients.add(transportPeerId);
+        }
+      }
+    }
+  }
+  final sortedNotification = notificationRecipients.toList()..sort();
+  return (
+    replayRecipientTransportPeerIds: sortedReplay,
+    notificationRecipientTransportPeerIds: sortedNotification,
+  );
+}
+
+Future<
+  ({
+    List<String> replayRecipientTransportPeerIds,
+    List<String> notificationRecipientTransportPeerIds,
+  })
+>
+_resolveReactionRecipients({
+  required GroupRepository groupRepo,
+  required String groupId,
+  required String senderTransportPeerId,
+  required String reactorPeerId,
+  required String targetAuthorPeerId,
+}) async {
+  return _reactionRecipientsFromMembers(
+    members: await groupRepo.getMembers(groupId),
+    senderTransportPeerId: senderTransportPeerId,
+    reactorPeerId: reactorPeerId,
+    targetAuthorPeerId: targetAuthorPeerId,
   );
 }
 

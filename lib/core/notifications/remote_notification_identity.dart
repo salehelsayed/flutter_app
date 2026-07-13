@@ -2,6 +2,11 @@ import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 
 String? remoteNotificationMessageIdFromData(Map<String, dynamic> data) {
+  final type = _trimToNull(data['type']?.toString());
+  if (type == 'message_reaction' || type == 'group_reaction') {
+    return _trimToNull(data['event_id']?.toString()) ??
+        _trimToNull(data['reaction_id']?.toString());
+  }
   return _trimToNull(data['message_id']?.toString()) ??
       _trimToNull(data['messageId']?.toString()) ??
       _trimToNull(data['id']?.toString()) ??

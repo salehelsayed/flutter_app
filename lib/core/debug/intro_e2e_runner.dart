@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/debug/e2e_test_mode.dart';
@@ -31,10 +33,301 @@ const _kConfigFile = 'intro_e2e_config.json';
 const _kExportFile = 'intro_e2e_identity.json';
 const _kResultFile = 'intro_e2e_result.json';
 
+const bool directTextRelayTokenProofMode = bool.fromEnvironment(
+  'MKNOON_DIRECT_TEXT_RELAY_TOKEN_PROOF',
+);
+const String directTextRelayTokenProofCommandSchema =
+    'mknoon.direct-text-relay-token-command.v1';
+const String directTextRelayTokenProofCommandSchemaV2 =
+    'mknoon.direct-text-relay-token-command.v2';
+const String directTextRelayTokenProofReceiptSchema =
+    'mknoon.direct-text-relay-token-receipt.v1';
+const String directTextRelayTokenProofReceiptSchemaV2 =
+    'mknoon.direct-text-relay-token-receipt.v2';
+const String directTextRelayTokenProofCurrentTokenAuthorizationKind =
+    'sdk_current_validate_only';
+const int directTextRelayTokenProofMaxCommandBytes = 16 * 1024;
+
+class DirectTextRelayTokenProofCommand {
+  const DirectTextRelayTokenProofCommand({
+    this.proofSchema = directTextRelayTokenProofCommandSchema,
+    required this.commandId,
+    required this.issuedAt,
+    required this.maxAge,
+    required this.tokenSha256,
+    required this.authorizationGenerationId,
+    required this.authorizationArtifactSha256,
+    this.authorizationKind,
+    required this.gateAArtifactSha256,
+    required this.accountIdentitySha256,
+    required this.transportIdentitySha256,
+    required this.commandSha256,
+  });
+
+  final String proofSchema;
+  final String commandId;
+  final DateTime issuedAt;
+  final Duration maxAge;
+  final String tokenSha256;
+  final String authorizationGenerationId;
+  final String authorizationArtifactSha256;
+  final String? authorizationKind;
+  final String gateAArtifactSha256;
+  final String accountIdentitySha256;
+  final String transportIdentitySha256;
+  final String commandSha256;
+}
+
+DirectTextRelayTokenProofCommand parseDirectTextRelayTokenProofCommand(
+  List<int> rawBytes, {
+  required DateTime now,
+}) {
+  if (rawBytes.isEmpty ||
+      rawBytes.length > directTextRelayTokenProofMaxCommandBytes) {
+    throw const FormatException(
+      'direct-text token proof command size rejected',
+    );
+  }
+  Object? decoded;
+  try {
+    decoded = jsonDecode(utf8.decode(rawBytes, allowMalformed: false));
+  } on Object {
+    throw const FormatException(
+      'direct-text token proof command JSON rejected',
+    );
+  }
+  if (decoded is! Map) {
+    throw const FormatException(
+      'direct-text token proof command is not an object',
+    );
+  }
+  final command = decoded.cast<String, Object?>();
+  const legacyKeys = <String>{
+    'schema',
+    'commandId',
+    'issuedAt',
+    'maxAgeSeconds',
+    'tokenSha256',
+    'tokenGenerationId',
+    'refreshArtifactSha256',
+    'gateAArtifactSha256',
+    'accountIdentitySha256',
+    'transportIdentitySha256',
+  };
+  final isCurrentTokenV2 =
+      command['schema'] == directTextRelayTokenProofCommandSchemaV2;
+  final expectedKeys = isCurrentTokenV2
+      ? const <String>{
+          'schema',
+          'commandId',
+          'issuedAt',
+          'maxAgeSeconds',
+          'tokenSha256',
+          'authorizationKind',
+          'authorizationArtifactSha256',
+          'gateACommandGenerationId',
+          'gateAArtifactSha256',
+          'accountIdentitySha256',
+          'transportIdentitySha256',
+        }
+      : legacyKeys;
+  final commandId = command['commandId'];
+  final issuedAtRaw = command['issuedAt'];
+  final issuedAt = issuedAtRaw is String
+      ? DateTime.tryParse(issuedAtRaw)
+      : null;
+  final maxAgeSeconds = command['maxAgeSeconds'];
+  final tokenSha256 = command['tokenSha256'];
+  final authorizationGenerationId = isCurrentTokenV2
+      ? command['gateACommandGenerationId']
+      : command['tokenGenerationId'];
+  final authorizationArtifactSha256 = isCurrentTokenV2
+      ? command['authorizationArtifactSha256']
+      : command['refreshArtifactSha256'];
+  final gateAArtifactSha256 = command['gateAArtifactSha256'];
+  final accountIdentitySha256 = command['accountIdentitySha256'];
+  final transportIdentitySha256 = command['transportIdentitySha256'];
+  final hashPattern = RegExp(r'^[0-9a-f]{64}$');
+  if (command.keys.toSet().length != expectedKeys.length ||
+      !command.keys.toSet().containsAll(expectedKeys) ||
+      (!isCurrentTokenV2 &&
+          command['schema'] != directTextRelayTokenProofCommandSchema) ||
+      commandId is! String ||
+      !RegExp(
+        r'^direct-text-relay-[0-9]{12,20}-[0-9]{1,10}$',
+      ).hasMatch(commandId) ||
+      issuedAt == null ||
+      !issuedAt.isUtc ||
+      maxAgeSeconds is! int ||
+      maxAgeSeconds < 30 ||
+      maxAgeSeconds > 300 ||
+      tokenSha256 is! String ||
+      !hashPattern.hasMatch(tokenSha256) ||
+      authorizationGenerationId is! String ||
+      !(isCurrentTokenV2
+          ? RegExp(
+              r'^tc256-gate-a-command-[0-9]{12,20}-[0-9]{1,10}$',
+            ).hasMatch(authorizationGenerationId)
+          : RegExp(
+              r'^tc256-token-refresh-[0-9]{12,20}-[0-9]{1,10}$',
+            ).hasMatch(authorizationGenerationId)) ||
+      authorizationArtifactSha256 is! String ||
+      !hashPattern.hasMatch(authorizationArtifactSha256) ||
+      (isCurrentTokenV2 &&
+          command['authorizationKind'] !=
+              directTextRelayTokenProofCurrentTokenAuthorizationKind) ||
+      gateAArtifactSha256 is! String ||
+      !hashPattern.hasMatch(gateAArtifactSha256) ||
+      accountIdentitySha256 is! String ||
+      !hashPattern.hasMatch(accountIdentitySha256) ||
+      transportIdentitySha256 is! String ||
+      !hashPattern.hasMatch(transportIdentitySha256)) {
+    throw const FormatException(
+      'direct-text token proof command fields rejected',
+    );
+  }
+  final age = now.toUtc().difference(issuedAt);
+  if (age.isNegative || age > Duration(seconds: maxAgeSeconds)) {
+    throw const FormatException('direct-text token proof command expired');
+  }
+  return DirectTextRelayTokenProofCommand(
+    proofSchema: command['schema']! as String,
+    commandId: commandId,
+    issuedAt: issuedAt,
+    maxAge: Duration(seconds: maxAgeSeconds),
+    tokenSha256: tokenSha256,
+    authorizationGenerationId: authorizationGenerationId,
+    authorizationArtifactSha256: authorizationArtifactSha256,
+    authorizationKind: command['authorizationKind'] as String?,
+    gateAArtifactSha256: gateAArtifactSha256,
+    accountIdentitySha256: accountIdentitySha256,
+    transportIdentitySha256: transportIdentitySha256,
+    commandSha256: sha256.convert(rawBytes).toString(),
+  );
+}
+
+Future<Map<String, Object?>> evaluateDirectTextRelayTokenProof({
+  required DirectTextRelayTokenProofCommand command,
+  required Future<String?> Function() getToken,
+  required DateTime now,
+}) async {
+  final age = now.toUtc().difference(command.issuedAt);
+  if (age.isNegative || age > command.maxAge) {
+    throw StateError('direct-text token proof command expired');
+  }
+  final token = (await getToken())?.trim() ?? '';
+  if (token.isEmpty ||
+      sha256.convert(utf8.encode(token)).toString() != command.tokenSha256) {
+    throw StateError('direct-text token proof mismatch');
+  }
+  return Map<String, Object?>.unmodifiable(<String, Object?>{
+    'schema': command.proofSchema == directTextRelayTokenProofCommandSchemaV2
+        ? directTextRelayTokenProofReceiptSchemaV2
+        : directTextRelayTokenProofReceiptSchema,
+    'status': 'completed',
+    'completedAt': now.toUtc().toIso8601String(),
+    'commandId': command.commandId,
+    'commandSha256': command.commandSha256,
+    'tokenSha256': command.tokenSha256,
+    if (command.proofSchema == directTextRelayTokenProofCommandSchemaV2) ...{
+      'authorizationKind': command.authorizationKind,
+      'authorizationArtifactSha256': command.authorizationArtifactSha256,
+      'gateACommandGenerationId': command.authorizationGenerationId,
+    } else ...{
+      'tokenGenerationId': command.authorizationGenerationId,
+      'refreshArtifactSha256': command.authorizationArtifactSha256,
+    },
+    'gateAArtifactSha256': command.gateAArtifactSha256,
+    'accountIdentitySha256': command.accountIdentitySha256,
+    'transportIdentitySha256': command.transportIdentitySha256,
+    'tokenSha256Matched': true,
+    'commandDeleted': true,
+    'containsSecrets': false,
+  });
+}
+
 typedef OpenConversationForIntroE2EFn = Future<bool> Function(String peerId);
+typedef ResolveWakeTokenForIntroE2EFn = Future<String?> Function(String peerId);
 
 Timer? _introE2EPoller;
 bool _introE2ERunInFlight = false;
+
+Future<bool> runDirectTextRelayTokenProofIfPresent({
+  Future<String?> Function()? getToken,
+  DateTime Function()? now,
+  Future<Directory> Function()? getDocumentsDirectory,
+  bool? proofModeOverride,
+}) async {
+  if (!kDebugMode || !(proofModeOverride ?? directTextRelayTokenProofMode)) {
+    return false;
+  }
+  final directory =
+      await (getDocumentsDirectory ?? getApplicationDocumentsDirectory)();
+  final commandFile = File('${directory.path}/$_kConfigFile');
+  if (!await commandFile.exists()) return false;
+  final resultFile = File('${directory.path}/$_kResultFile');
+  final resultTemp = File('${resultFile.path}.tmp');
+  if (await resultFile.exists() || await resultTemp.exists()) {
+    throw StateError('stale direct-text token proof receipt exists');
+  }
+  final stat = await commandFile.stat();
+  if (stat.type != FileSystemEntityType.file ||
+      stat.size <= 0 ||
+      stat.size > directTextRelayTokenProofMaxCommandBytes) {
+    throw StateError('direct-text token proof command size rejected');
+  }
+  final rawBytes = await commandFile.readAsBytes();
+  final clock = now ?? DateTime.now;
+  final command = parseDirectTextRelayTokenProofCommand(
+    rawBytes,
+    now: clock().toUtc(),
+  );
+
+  Map<String, Object?> receipt;
+  try {
+    receipt = await evaluateDirectTextRelayTokenProof(
+      command: command,
+      getToken: getToken ?? FirebaseMessaging.instance.getToken,
+      now: clock().toUtc(),
+    );
+  } on Object {
+    receipt = <String, Object?>{
+      'schema': command.proofSchema == directTextRelayTokenProofCommandSchemaV2
+          ? directTextRelayTokenProofReceiptSchemaV2
+          : directTextRelayTokenProofReceiptSchema,
+      'status': 'failed',
+      'completedAt': clock().toUtc().toIso8601String(),
+      'commandId': command.commandId,
+      'commandSha256': command.commandSha256,
+      'tokenSha256': command.tokenSha256,
+      if (command.proofSchema == directTextRelayTokenProofCommandSchemaV2) ...{
+        'authorizationKind': command.authorizationKind,
+        'authorizationArtifactSha256': command.authorizationArtifactSha256,
+        'gateACommandGenerationId': command.authorizationGenerationId,
+      } else ...{
+        'tokenGenerationId': command.authorizationGenerationId,
+        'refreshArtifactSha256': command.authorizationArtifactSha256,
+      },
+      'gateAArtifactSha256': command.gateAArtifactSha256,
+      'accountIdentitySha256': command.accountIdentitySha256,
+      'transportIdentitySha256': command.transportIdentitySha256,
+      'reason': 'token_hash_mismatch_or_unavailable',
+      'commandDeleted': true,
+      'containsSecrets': false,
+    };
+  }
+
+  await commandFile.delete();
+  if (await commandFile.exists()) {
+    throw StateError('direct-text token proof command survived');
+  }
+  await resultTemp.writeAsString(jsonEncode(receipt), flush: true);
+  await resultTemp.rename(resultFile.path);
+  if (!await resultFile.exists() || await resultTemp.exists()) {
+    throw StateError('direct-text token proof receipt failed');
+  }
+  return true;
+}
 
 Future<void> exportIdentityForIntroE2E({
   required String signedQrPayloadJson,
@@ -84,6 +377,7 @@ Future<void> runIntroE2EActions({
   required ContactRequestRepository contactRequestRepo,
   required IntroductionRepository introRepo,
   required MessageRepository messageRepo,
+  ResolveWakeTokenForIntroE2EFn? resolveWakeToken,
   OpenConversationForIntroE2EFn? openConversationByPeerId,
 }) async {
   if (!kDebugMode || !kE2ETestMode) return;
@@ -108,6 +402,7 @@ Future<void> runIntroE2EActions({
         identityRepo: identityRepo,
         bridge: bridge,
         contactRepo: contactRepo,
+        resolveWakeToken: resolveWakeToken,
       );
     }
 
@@ -246,17 +541,24 @@ void startIntroE2EPoller({
   required ContactRequestRepository contactRequestRepo,
   required IntroductionRepository introRepo,
   required MessageRepository messageRepo,
+  ResolveWakeTokenForIntroE2EFn? resolveWakeToken,
   OpenConversationForIntroE2EFn? openConversationByPeerId,
   Duration initialDelay = const Duration(seconds: 2),
   Duration pollInterval = const Duration(seconds: 3),
 }) {
-  if (!kDebugMode || !kE2ETestMode) return;
+  if (!kDebugMode || (!kE2ETestMode && !directTextRelayTokenProofMode)) {
+    return;
+  }
   if (_introE2EPoller != null) return;
 
   Future<void> tick() async {
     if (_introE2ERunInFlight) return;
     _introE2ERunInFlight = true;
     try {
+      if (directTextRelayTokenProofMode) {
+        await runDirectTextRelayTokenProofIfPresent();
+        return;
+      }
       final config = await _loadConfig();
       if (config == null) return;
 
@@ -268,6 +570,7 @@ void startIntroE2EPoller({
         contactRequestRepo: contactRequestRepo,
         introRepo: introRepo,
         messageRepo: messageRepo,
+        resolveWakeToken: resolveWakeToken,
         openConversationByPeerId: openConversationByPeerId,
       );
     } finally {
@@ -382,6 +685,7 @@ Future<void> _sendContactRequestsForAddedContacts({
   required IdentityRepository identityRepo,
   required Bridge bridge,
   required ContactRepository contactRepo,
+  ResolveWakeTokenForIntroE2EFn? resolveWakeToken,
 }) async {
   final contacts = config['add_contacts'];
   if (contacts is! List<dynamic>) return;
@@ -399,6 +703,7 @@ Future<void> _sendContactRequestsForAddedContacts({
         bridge: bridge,
         targetPeerId: peerId,
         recipientPublicKey: publicKey,
+        resolveWakeToken: resolveWakeToken,
       );
       if (result == SendContactRequestResult.success) {
         break;

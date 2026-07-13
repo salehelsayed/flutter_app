@@ -58,7 +58,26 @@ Future<Map<String, Object?>?> dbLoadGroupReactionReplayOutboxEntry(
   return rows.first;
 }
 
-Future<List<Map<String, Object?>>> dbLoadRetryableGroupReactionReplayOutboxEntries(
+Future<Map<String, Object?>?>
+dbLoadLatestGroupReactionReplayOutboxEntryForTarget(
+  Database db, {
+  required String groupId,
+  required String messageId,
+  required String senderPeerId,
+}) async {
+  final rows = await db.query(
+    'group_reaction_replay_outbox',
+    where: 'group_id = ? AND message_id = ? AND sender_peer_id = ?',
+    whereArgs: [groupId, messageId, senderPeerId],
+    orderBy: 'created_at DESC, rowid DESC',
+    limit: 1,
+  );
+  if (rows.isEmpty) return null;
+  return rows.first;
+}
+
+Future<List<Map<String, Object?>>>
+dbLoadRetryableGroupReactionReplayOutboxEntries(
   Database db, {
   int limit = 20,
 }) async {

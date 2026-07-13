@@ -59,7 +59,9 @@ Future<ForegroundRemoteMessageResult> handleForegroundRemoteMessage({
         return ForegroundRemoteMessageResult.drained;
       case NotificationRouteTargetKind.group:
         await drainGroupOfflineInboxForGroup(routeTarget.groupId!);
-        return ForegroundRemoteMessageResult.drained;
+        return data['type']?.toString().trim() == 'group_reaction'
+            ? ForegroundRemoteMessageResult.notificationNeeded
+            : ForegroundRemoteMessageResult.drained;
       case NotificationRouteTargetKind.post:
       case NotificationRouteTargetKind.postComment:
         _emitUnroutable(data);

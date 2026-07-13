@@ -8,6 +8,16 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 const String _persistedAppGroupPathFileName = 'mknoon_app_group_path';
 
+Future<void> _persistResolvedAppGroupPath(
+  String path, {
+  Future<Directory> Function()? supportDirectory,
+}) async {
+  final dir = await (supportDirectory ?? getApplicationSupportDirectory)();
+  final file = File('${dir.path}/$_persistedAppGroupPathFileName');
+  await file.parent.create(recursive: true);
+  await file.writeAsString(path, flush: true);
+}
+
 /// 04-P0 / SI-5 (iOS). FOREGROUND: resolve the shared app-group container path
 /// via the platform channel and PERSIST it to app-support, so the FCM
 /// background isolate — whose separate FlutterEngine may not carry this
@@ -22,16 +32,47 @@ Future<void> persistAppGroupContainerPathForGate({
     if (path == null || path.trim().isEmpty) {
       return;
     }
-    final dir = await (supportDirectory ?? getApplicationSupportDirectory)();
-    final file = File('${dir.path}/$_persistedAppGroupPathFileName');
-    await file.parent.create(recursive: true);
-    await file.writeAsString(path.trim(), flush: true);
+    await _persistResolvedAppGroupPath(
+      path.trim(),
+      supportDirectory: supportDirectory,
+    );
   } catch (error) {
     emitFlowEvent(
       layer: 'FL',
       event: 'RECENT_REMOTE_GATE_APP_GROUP_PERSIST_ERROR',
       details: {'error': error.runtimeType.toString()},
     );
+  }
+}
+
+/// Resolves the single App Group container used by both Dart notification
+/// producers and the out-of-process iOS NSE. Background Flutter engines first
+/// use the foreground-persisted path; the main engine can recover it directly
+/// through the native channel and persists that result for later isolates.
+Future<Directory?> resolveSharedNotificationAppGroupDirectory({
+  AppGroupPathChannel? channel,
+  Future<Directory> Function()? supportDirectory,
+}) async {
+  final persisted = await readPersistedAppGroupContainerPath(
+    supportDirectory: supportDirectory,
+  );
+  if (persisted != null) {
+    return Directory(persisted);
+  }
+
+  try {
+    final resolved = await (channel ?? AppGroupPathChannel()).containerPath();
+    final normalized = resolved?.trim();
+    if (normalized == null || normalized.isEmpty) {
+      return null;
+    }
+    await _persistResolvedAppGroupPath(
+      normalized,
+      supportDirectory: supportDirectory,
+    );
+    return Directory(normalized);
+  } catch (_) {
+    return null;
   }
 }
 
@@ -61,17 +102,23 @@ Future<String?> readPersistedAppGroupContainerPath({
 /// isn't persisted yet, the provider yields nothing and the gate keeps its
 /// app-support-only behavior (fail-open).
 void configureRecentRemoteNotificationGateForIos({
+  AppGroupPathChannel? channel,
   Future<Directory> Function()? supportDirectory,
 }) {
+  Future<Directory> sharedDirectoryProvider() async {
+    final directory = await resolveSharedNotificationAppGroupDirectory(
+      channel: channel,
+      supportDirectory: supportDirectory,
+    );
+    if (directory == null) {
+      throw StateError('app-group container path not available');
+    }
+    return directory;
+  }
+
   recentRemoteNotificationGate = RecentRemoteNotificationGate(
-    appGroupSidecarDirProvider: () async {
-      final path = await readPersistedAppGroupContainerPath(
-        supportDirectory: supportDirectory,
-      );
-      if (path == null) {
-        throw StateError('app-group container path not persisted yet');
-      }
-      return Directory(path);
-    },
+    supportDirectoryProvider: sharedDirectoryProvider,
+    appGroupSidecarDirProvider: sharedDirectoryProvider,
+    fallbackToSystemTempOnDirectoryError: false,
   );
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -543,7 +544,9 @@ func TestRedisPushTokenBackend_SurvivesAcrossClients(t *testing.T) {
 	backendA := newRedisPushTokenBackend(newTestRedisClient(t, server), "phase2:")
 	backendB := newRedisPushTokenBackend(newTestRedisClient(t, server), "phase2:")
 
-	backendA.RegisterToken("peer-1", "token-abc", "ios")
+	if err := backendA.RegisterToken("peer-1", "token-abc", "ios"); err != nil {
+		t.Fatalf("RegisterToken() error: %v", err)
+	}
 
 	entry := backendB.LookupToken("peer-1")
 	if entry == nil {
@@ -561,6 +564,49 @@ func TestRedisPushTokenBackend_SurvivesAcrossClients(t *testing.T) {
 	backendB.UnregisterToken("missing-peer")
 	if backendA.LookupToken("peer-1") != nil {
 		t.Fatal("expected token to be removed across clients")
+	}
+}
+
+func TestRedisPushTokenBackend_PreservesReactionCapabilityAcrossClients(t *testing.T) {
+	server := miniredis.RunT(t)
+	backendA := newRedisPushTokenBackend(newTestRedisClient(t, server), "reaction-cap:")
+	backendB := newRedisPushTokenBackend(newTestRedisClient(t, server), "reaction-cap:")
+
+	if err := backendA.RegisterToken(
+		"peer-capable",
+		"token-abc",
+		"ios",
+		directReactionCapability,
+	); err != nil {
+		t.Fatalf("capable RegisterToken() error: %v", err)
+	}
+	entry := backendB.LookupToken("peer-capable")
+	if entry == nil || !entry.hasCapability(directReactionCapability) {
+		t.Fatalf("shared token entry = %#v, want %s capability", entry, directReactionCapability)
+	}
+
+	// A legacy refresh intentionally removes capability until the upgraded
+	// client advertises it again, so rollout cannot silently infer support.
+	if err := backendB.RegisterToken("peer-capable", "token-new", "ios"); err != nil {
+		t.Fatalf("legacy RegisterToken() error: %v", err)
+	}
+	if refreshed := backendA.LookupToken("peer-capable"); refreshed == nil || refreshed.hasCapability(directReactionCapability) {
+		t.Fatalf("legacy refresh = %#v, want present token without reaction capability", refreshed)
+	}
+}
+
+func TestRedisPushTokenBackend_RegisterTokenReturnsSetFailure(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := newTestRedisClient(t, server)
+	backend := newRedisPushTokenBackend(client, "register-failure:")
+
+	if err := client.Close(); err != nil {
+		t.Fatalf("close Redis client: %v", err)
+	}
+	if err := backend.RegisterToken("peer-1", "token-abc", "android"); err == nil {
+		t.Fatal("RegisterToken() error = nil, want closed-client SET failure")
+	} else if !strings.Contains(err.Error(), "store push token") {
+		t.Fatalf("RegisterToken() error = %q, want SET-stage context", err)
 	}
 }
 

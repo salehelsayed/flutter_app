@@ -1,16 +1,25 @@
-import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   // In-memory store for testing
   late Map<String, Map<String, Object?>> store;
   late int dbLoadMessageCallCount;
   late MessageRepositoryImpl repo;
+  late DirectReactionNotificationProjection directReactionProjection;
 
-  setUp(() {
+  setUp(() async {
     store = {};
     dbLoadMessageCallCount = 0;
+    directReactionProjection = DirectReactionNotificationProjection(
+      store: _MemorySecureKeyStore(),
+    );
+    await directReactionProjection.replaceLocalIdentity(
+      accountPeerId: 'peer-local',
+    );
 
     repo = MessageRepositoryImpl(
       dbInsertMessage: (row) async {
@@ -123,7 +132,7 @@ void main() {
       dbDeleteMessage: (id) async {
         return store.remove(id) == null ? 0 : 1;
       },
-      dbExistsMessageByContent: (_, __, ___, ____) async => false,
+      dbExistsMessageByContent: (_, _, _, _) async => false,
       dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) async {
         var rows = store.values
             .where(
@@ -241,6 +250,10 @@ void main() {
             row['status'] = toStatus;
             return 1;
           },
+      directReactionProjection: directReactionProjection,
+      dbLoadLocallyAuthoredMessagesForProjection: () async => store.values
+          .where((row) => row['is_incoming'] == 0)
+          .toList(growable: false),
     );
   });
 
@@ -607,6 +620,32 @@ void main() {
       expect(await repo.messageExists('msg-1'), true);
     });
 
+    test(
+      'outgoing create/delete and backfill maintain authored-target projection',
+      () async {
+        await repo.saveMessage(makeMessage(id: 'outgoing'));
+        await repo.saveMessage(makeMessage(id: 'incoming', isIncoming: true));
+        expect(
+          (await directReactionProjection.readAuthoredTargets()).map(
+            (row) => row['id'],
+          ),
+          <String?>['outgoing'],
+        );
+
+        await directReactionProjection.removeAuthoredTarget('outgoing');
+        await repo.mirrorAllDirectReactionAuthoredTargets();
+        expect(
+          (await directReactionProjection.readAuthoredTargets()).map(
+            (row) => row['id'],
+          ),
+          <String?>['outgoing'],
+        );
+
+        await repo.deleteMessage('outgoing');
+        expect(await directReactionProjection.readAuthoredTargets(), isEmpty);
+      },
+    );
+
     test('messageExists returns false for non-existing message', () async {
       expect(await repo.messageExists('nonexistent'), false);
     });
@@ -648,4 +687,20 @@ void main() {
       expect(page[1].id, 'msg-2');
     });
   });
+}
+
+class _MemorySecureKeyStore implements SecureKeyStore {
+  final Map<String, String> _values = <String, String>{};
+
+  @override
+  Future<bool> containsKey(String key) async => _values.containsKey(key);
+
+  @override
+  Future<void> delete(String key) async => _values.remove(key);
+
+  @override
+  Future<String?> read(String key) async => _values[key];
+
+  @override
+  Future<void> write(String key, String value) async => _values[key] = value;
 }

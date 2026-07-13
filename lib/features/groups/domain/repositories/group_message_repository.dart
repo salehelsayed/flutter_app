@@ -219,6 +219,21 @@ abstract class GroupMessageRepository {
   }
 }
 
+
+/// Authoritative local-deletion qualification for privacy-sensitive readers.
+///
+/// [unknown] is distinct from a proven clear source. Callers must fail closed
+/// when the capability is absent or cannot establish the current state.
+enum GroupMessageLocalDeletionState { knownClear, deleted, unknown }
+
+/// Optional read-only capability that distinguishes a proven clear parent
+/// from a deleted parent and unavailable deletion authority.
+abstract class GroupMessageLocalDeletionAuthority {
+  Future<GroupMessageLocalDeletionState> getGroupMessageLocalDeletionState(
+    String messageId,
+  );
+}
+
 /// Optional indexed implementation of the Plan-237 anchor-window query.
 abstract class GroupMessageAroundRepository {
   Future<List<GroupMessage>> getMessagesAround(
@@ -255,6 +270,15 @@ extension GroupMessageAroundReader on GroupMessageRepository {
     if (anchor == null || anchor.groupId != groupId) return const [];
     return [anchor];
   }
+}
+
+/// Optional source for conversation-level group read commits.
+///
+/// Implementations emit the exact group id only when [GroupMessageRepository]
+/// changes at least one incoming unread row. Consumers can therefore refresh
+/// derived unread UI without treating a no-op re-mark as new activity.
+abstract class GroupConversationReadEventSource {
+  Stream<String> get groupConversationReadStream;
 }
 
 /// Local in-process notification for outgoing group row changes written by a

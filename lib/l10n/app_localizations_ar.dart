@@ -3097,4 +3097,11 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get contact_profile_message_button => 'مراسلة';
+
+
+  @override
+  String get private_media_notification_body => 'وسائط خاصة';
+
+  @override
+  String get group_private_media_notification_body => 'وسائط خاصة جديدة';
 }

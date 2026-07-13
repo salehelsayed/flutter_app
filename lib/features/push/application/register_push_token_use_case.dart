@@ -1,10 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io' show Platform;
+
+import 'package:crypto/crypto.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/push_diagnostics_logger.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
+import 'package:flutter_app/features/push/application/push_relay_registration_proof.dart';
 import 'package:flutter_app/features/push/domain/push_token_store.dart';
 
 enum RegisterPushTokenResult {
@@ -49,6 +53,7 @@ Future<RegisterPushTokenResult> registerPushToken({
   Future<void> Function(Duration duration)? delayFn,
   AccountMigrationNetworkGate accountMigrationNetworkGate =
       allowAccountMigrationNetworkSideEffects,
+  PushRelayRegistrationProof? relayRegistrationProof,
 }) async {
   final platform =
       (getPlatformFn ?? () => Platform.isIOS ? 'ios' : 'android')();
@@ -155,6 +160,61 @@ Future<RegisterPushTokenResult> registerPushToken({
 
   final registeredPlatform = effectiveGetPlatform();
 
+  if (relayRegistrationProof != null) {
+    final proofDetails = relayRegistrationProof.safeDetails(
+      platform: registeredPlatform,
+    );
+    if (pushTokenStore == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PUSH_REGISTER_RELAY_PROOF_PERSISTENCE_UNAVAILABLE',
+        details: proofDetails,
+      );
+      return RegisterPushTokenResult.failed;
+    }
+    if (!relayRegistrationProof.bindTransportIdentity(
+      p2pService.currentState.peerId,
+    )) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PUSH_REGISTER_RELAY_PROOF_IDENTITY_UNAVAILABLE',
+        details: proofDetails,
+      );
+      return RegisterPushTokenResult.failed;
+    }
+    final boundProofDetails = relayRegistrationProof.safeDetails(
+      platform: registeredPlatform,
+    );
+    if (!relayRegistrationProof.matchesToken(token)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PUSH_REGISTER_RELAY_PROOF_TOKEN_MISMATCH',
+        details: <String, dynamic>{
+          ...boundProofDetails,
+          'actualTokenSha256': sha256
+              .convert(utf8.encode(token.trim()))
+              .toString(),
+        },
+      );
+      return RegisterPushTokenResult.failed;
+    }
+    if (!relayRegistrationProof.claimRelayAttempt()) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PUSH_REGISTER_RELAY_PROOF_DUPLICATE_SUPPRESSED',
+        details: relayRegistrationProof.safeDetails(
+          platform: registeredPlatform,
+        ),
+      );
+      return RegisterPushTokenResult.failed;
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_REGISTER_RELAY_PROOF_TOKEN_MATCHED',
+      details: boundProofDetails,
+    );
+  }
+
   logPushDiagnostic(
     'fcm_token_ready',
     details: {
@@ -186,6 +246,17 @@ Future<RegisterPushTokenResult> registerPushToken({
     return RegisterPushTokenResult.failed;
   }
 
+  if (relayRegistrationProof != null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_REGISTER_RELAY_PROOF_RELAY_FRAME_ACCEPTED',
+      details: <String, dynamic>{
+        ...relayRegistrationProof.safeDetails(platform: registeredPlatform),
+        'relayFrameAccepted': true,
+      },
+    );
+  }
+
   if (pushTokenStore != null) {
     try {
       await pushTokenStore.writeToken(token, registeredPlatform);
@@ -207,6 +278,31 @@ Future<RegisterPushTokenResult> registerPushToken({
         layer: 'FL',
         event: 'PUSH_REGISTER_TOKEN_PERSIST_FAILED',
         details: {'platform': registeredPlatform, 'error': e.toString()},
+      );
+      return RegisterPushTokenResult.failed;
+    }
+  }
+
+  if (relayRegistrationProof != null) {
+    try {
+      await relayRegistrationProof.complete(platform: registeredPlatform);
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PUSH_REGISTER_RELAY_PROOF_COMPLETE',
+        details: <String, dynamic>{
+          ...relayRegistrationProof.safeDetails(platform: registeredPlatform),
+          'relayFrameAccepted': true,
+          'tokenPersisted': true,
+          'commandDeleted': true,
+        },
+      );
+    } catch (_) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PUSH_REGISTER_RELAY_PROOF_COMMAND_CLEANUP_FAILED',
+        details: relayRegistrationProof.safeDetails(
+          platform: registeredPlatform,
+        ),
       );
       return RegisterPushTokenResult.failed;
     }

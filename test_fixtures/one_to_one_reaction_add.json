@@ -1,0 +1,40 @@
+{
+  "fixtureVersion": 1,
+  "kind": "one_to_one_reaction_add",
+  "eventId": "reaction-privacy-1",
+  "routeData": {
+    "type": "message_reaction",
+    "sender_id": "peer-alice",
+    "event_id": "reaction-privacy-1",
+    "target_message_id": "target-privacy-1",
+    "action": "add",
+    "capability_version": "direct_reaction_v1",
+    "envelope_version": "2",
+    "kem": "fixture-kem-reaction-1",
+    "ciphertext": "fixture-ciphertext-reaction-1",
+    "nonce": "fixture-nonce-reaction-1"
+  },
+  "encryptedEnvelope": {
+    "type": "message_reaction",
+    "version": "2",
+    "senderPeerId": "peer-alice",
+    "eventId": "reaction-privacy-1",
+    "action": "add",
+    "targetMessageId": "target-privacy-1",
+    "encrypted": {
+      "kem": "fixture-kem-reaction-1",
+      "ciphertext": "fixture-ciphertext-reaction-1",
+      "nonce": "fixture-nonce-reaction-1"
+    }
+  },
+  "plaintext": {
+    "id": "reaction-privacy-1",
+    "messageId": "target-privacy-1",
+    "emoji": "👍",
+    "action": "add",
+    "senderPeerId": "peer-alice",
+    "actorUsername": "Alice",
+    "targetText": "Original target text",
+    "timestamp": "2026-07-12T08:00:00.000Z"
+  }
+}

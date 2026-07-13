@@ -784,10 +784,17 @@ Future<Map<String, dynamic>> callP2PInboxStore(
 ///   - [platform]: The platform ('ios' or 'android')
 ///
 /// Returns: `{ "ok": true, "registered": true }`
+const directReactionPushCapability = 'direct_reaction_v1';
+const groupReactionPushCapability = 'group_reaction_v1';
+
 Future<Map<String, dynamic>> callP2PInboxRegisterToken(
   Bridge bridge, {
   required String token,
   required String platform,
+  List<String> capabilities = const [
+    directReactionPushCapability,
+    groupReactionPushCapability,
+  ],
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -797,7 +804,11 @@ Future<Map<String, dynamic>> callP2PInboxRegisterToken(
 
   final request = {
     'cmd': 'inbox:register_token',
-    'payload': {'token': token, 'platform': platform},
+    'payload': {
+      'token': token,
+      'platform': platform,
+      if (capabilities.isNotEmpty) 'capabilities': capabilities,
+    },
   };
 
   final responseJson = await bridge.send(jsonEncode(request));

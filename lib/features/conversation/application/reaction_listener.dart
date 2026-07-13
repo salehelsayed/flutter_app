@@ -45,6 +45,22 @@ class ReactionListener {
   Stream<ReactionChange> get incomingReactionChangeStream =>
       _reactionChangeController.stream;
 
+  /// Broadcasts a reaction change that was already persisted by the shared
+  /// replay pipeline (relay, staged push, or stage-error fallback).
+  ///
+  /// Those paths intentionally bypass [_onMessage] so persistence and
+  /// notification policy run exactly once. They still need to reach mounted
+  /// conversations through the same UI stream as a legacy raw-listener event.
+  void publishPersistedChange(ReactionChange change) {
+    if (_reactionChangeController.isClosed) return;
+    if (change.type == ReactionChangeType.upserted &&
+        change.reaction != null &&
+        !_reactionController.isClosed) {
+      _reactionController.add(change.reaction!);
+    }
+    _reactionChangeController.add(change);
+  }
+
   /// Starts listening for incoming reactions.
   void start() {
     if (_subscription != null) return;
@@ -128,9 +144,8 @@ class ReactionListener {
               'emoji': reaction.emoji,
             },
           );
-          _reactionController.add(reaction);
         }
-        _reactionChangeController.add(change);
+        publishPersistedChange(change);
       }
     } catch (e) {
       emitFlowEvent(

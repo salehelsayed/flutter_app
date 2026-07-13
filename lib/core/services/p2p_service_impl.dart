@@ -1229,6 +1229,34 @@ class P2PServiceImpl
     );
   }
 
+  Future<RecoveredInboxReplayOutcome?> _replayUnstagedReaction(
+    ChatMessage message, {
+    required String reason,
+  }) async {
+    final replay = _replayRecoveredInboxReaction;
+    if (replay == null) return null;
+    try {
+      final outcome = await replay(_messageWithoutConfirmNonce(message));
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_REACTION_UNSTAGED_REPLAY',
+        details: {
+          'reason': reason,
+          'disposition': outcome.disposition.name,
+          'reasonCode': outcome.reasonCode,
+        },
+      );
+      return outcome;
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_REACTION_UNSTAGED_REPLAY_ERROR',
+        details: {'reason': reason, 'error': e.toString()},
+      );
+      return null;
+    }
+  }
+
   Future<void> _processDurablyStagedDirectChat(
     ChatMessage message, {
     required InboxStagingEntry entry,
@@ -1276,6 +1304,43 @@ class P2PServiceImpl
           'error': e.toString(),
         },
       );
+      if (entry.messageType == 'message_reaction') {
+        // A staging IO failure must not demote reactions to the raw listener,
+        // whose alternate wiring may lack author/dedupe/notification policy.
+        // Reuse the same production replay callback exactly once. A terminal
+        // outcome is confirmed; a retryable/throwing outcome remains unacked
+        // so the sender can retry without a second local dispatch here.
+        try {
+          final outcome = await replayLiveDirectChatMessage(
+            _messageWithoutConfirmNonce(message),
+          );
+          final isTerminal =
+              outcome.disposition == RecoveredInboxChatDisposition.committed ||
+              outcome.disposition == RecoveredInboxChatDisposition.rejected;
+          if (isTerminal) {
+            await callP2PConfirmDirectMessage(
+              _bridge,
+              nonce: message.confirmNonce!,
+              ok: true,
+            );
+          }
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'P2P_SERVICE_DIRECT_STAGE_ERROR_REACTION_REPLAY',
+            details: {
+              'disposition': outcome.disposition.name,
+              'reasonCode': outcome.reasonCode,
+            },
+          );
+        } catch (replayError) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'P2P_SERVICE_DIRECT_STAGE_ERROR_REACTION_RETRY',
+            details: {'error': replayError.toString()},
+          );
+        }
+        return;
+      }
       _emitIncomingMessage(message);
       return;
     }
@@ -4140,7 +4205,27 @@ class P2PServiceImpl
         lanReplay = null;
         break;
     }
-    if (lanReplay == null || safeNonce == null || safeNonce.isEmpty) {
+    if (lanReplay == null) {
+      _emitIncomingMessage(message);
+      return const LanInboundDecision.accepted();
+    }
+    if (safeNonce == null || safeNonce.isEmpty) {
+      if (envelopeType == 'message_reaction') {
+        final outcome = await _replayUnstagedReaction(
+          message,
+          reason: 'lan_missing_nonce',
+        );
+        if (outcome?.disposition == RecoveredInboxChatDisposition.committed) {
+          return const LanInboundDecision.committed();
+        }
+        if (outcome != null &&
+            outcome.disposition != RecoveredInboxChatDisposition.retryable) {
+          return const LanInboundDecision.accepted();
+        }
+        return LanInboundDecision.rejected(
+          outcome?.reasonCode ?? 'reaction_replay_error',
+        );
+      }
       _emitIncomingMessage(message);
       return const LanInboundDecision.accepted();
     }
@@ -4151,6 +4236,17 @@ class P2PServiceImpl
       messageType: envelopeType,
     );
     if (entry == null) {
+      if (envelopeType == 'message_reaction') {
+        final outcome = await _replayUnstagedReaction(
+          message,
+          reason: 'lan_stage_entry_unavailable',
+        );
+        return outcome?.disposition == RecoveredInboxChatDisposition.committed
+            ? const LanInboundDecision.committed()
+            : LanInboundDecision.rejected(
+                outcome?.reasonCode ?? 'reaction_replay_error',
+              );
+      }
       _emitIncomingMessage(message);
       return const LanInboundDecision.accepted();
     }
@@ -4168,6 +4264,22 @@ class P2PServiceImpl
           'error': e.toString(),
         },
       );
+      if (envelopeType == 'message_reaction') {
+        final outcome = await _replayUnstagedReaction(
+          message,
+          reason: 'lan_stage_error',
+        );
+        if (outcome?.disposition == RecoveredInboxChatDisposition.committed) {
+          return const LanInboundDecision.committed();
+        }
+        if (outcome != null &&
+            outcome.disposition != RecoveredInboxChatDisposition.retryable) {
+          return const LanInboundDecision.accepted();
+        }
+        return LanInboundDecision.rejected(
+          outcome?.reasonCode ?? 'reaction_replay_error',
+        );
+      }
       _emitIncomingMessage(message);
       return LanInboundDecision.rejected('staging_error');
     }
@@ -4238,6 +4350,17 @@ class P2PServiceImpl
         unawaited(_processDurablyStagedDirectChat(message, entry: entry));
         return true;
       }
+    }
+
+    if (message.isIncoming &&
+        envelopeType == 'message_reaction' &&
+        _replayRecoveredInboxReaction != null) {
+      // A legacy/non-confirming direct copy cannot be staged by nonce, but it
+      // must still traverse the same author/dedupe/notification replay policy.
+      // Sending it to the raw ReactionListener would silently bypass those
+      // dependencies in production.
+      await _replayUnstagedReaction(message, reason: 'direct_missing_nonce');
+      return true;
     }
 
     _emitIncomingMessage(message);

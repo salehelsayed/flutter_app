@@ -12,7 +12,9 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/groups/application/group_sender_display_name.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_key_repair.dart';
+import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
@@ -42,11 +44,13 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   // 236: exact-bool wire marker — absent/null/non-bool values decode false at
   // every caller, so legacy senders can never mark a row forwarded.
   bool isForwarded = false,
+  Map<String, Object?> privateMediaPolicyFields = const <String, Object?>{},
   List<Map<String, dynamic>>? media,
   MediaAttachmentRepository? mediaAttachmentRepo,
   AppendGroupEventLogEntry? appendGroupEventLogEntry,
   bool enforceSelfJoinedAtLowerBound = false,
   String deliverySource = 'direct',
+  DateTime Function()? nowUtc,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -75,8 +79,20 @@ Future<GroupMessage?> handleIncomingGroupMessage({
       normalizedSelfPeerId != null && normalizedSelfPeerId.isNotEmpty
       ? normalizedSelfPeerId
       : null;
+  final hasExplicitPrivateMediaPolicy = GroupPrivateMediaPolicy.wireKeys.any(
+    privateMediaPolicyFields.containsKey,
+  );
   final mediaValidation = _validateIncomingMediaDescriptors(media);
-  if (!mediaValidation.isValid) {
+  final decodedPrivateMediaPolicy = GroupPrivateMediaPolicy.fromWireExtras(
+    privateMediaPolicyFields,
+    eligibility: _incomingGroupPrivateMediaEligibility(
+      text: sanitizedText,
+      quotedMessageId: quotedMessageId,
+      isForwarded: isForwarded,
+      media: media,
+    ),
+  );
+  if (!mediaValidation.isValid && !hasExplicitPrivateMediaPolicy) {
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_HANDLE_INCOMING_MSG_REJECTED_INVALID_MEDIA',
@@ -89,6 +105,24 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     );
     return null;
   }
+  if (!mediaValidation.isValid) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_HANDLE_INCOMING_MSG_PRIVATE_MEDIA_DESCRIPTOR_UNSUPPORTED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+        'messageId': messageId,
+        'reason': mediaValidation.reason,
+      },
+    );
+  }
+  final privateMediaPolicy = mediaValidation.isValid
+      ? decodedPrivateMediaPolicy
+      : GroupPrivateMediaPolicy.unsupported(
+          sourceVersion: decodedPrivateMediaPolicy.version,
+        );
+  final admittedMedia = mediaValidation.isValid ? media : null;
 
   // Prefer messageId-based dedupe before any group/member lookups when event-log
   // tamper gating is not installed. If DB-002 logging is installed, the log
@@ -100,6 +134,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
           existing: existingById,
           groupId: groupId,
           senderId: senderId,
+          privateMediaPolicy: privateMediaPolicy,
         )) {
       _emitDuplicateMessageIdConflictRejected(
         messageId: stableMessageId,
@@ -118,9 +153,10 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         senderId: senderId,
         resolvedTransportPeerId: resolvedTransportPeerId,
         sanitizedText: sanitizedText,
+        privateMediaPolicy: privateMediaPolicy,
         selfPeerId: selfPeerId,
         quotedMessageId: quotedMessageId,
-        media: media,
+        media: admittedMedia,
         mediaAttachmentRepo: mediaAttachmentRepo,
       );
       if (reconciledSelfEcho != null) {
@@ -131,7 +167,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         groupId: groupId,
         messageId: stableMessageId,
         quotedMessageId: quotedMessageId,
-        media: media,
+        media: admittedMedia,
         mediaAttachmentRepo: mediaAttachmentRepo,
       );
       emitFlowEvent(
@@ -166,7 +202,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   }
 
   // Parse timestamp before applying membership-boundary checks.
-  final now = DateTime.now().toUtc();
+  final now = (nowUtc?.call() ?? DateTime.now()).toUtc();
 
   final normalizedTimestamp = _normalizeIncomingMessageTimestamp(
     timestamp: timestamp,
@@ -415,6 +451,27 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     }
   }
 
+  // Live GossipSub independently enforces announcement writers in Go, but an
+  // authenticated offline replay reaches this shared persistence boundary
+  // without traversing the topic validator. Re-check the current roster here
+  // so a reader, writer, removed member, or demoted former admin cannot persist
+  // an ordinary or lifecycle-tagged announcement through that alternate path.
+  // System traffic keeps its existing dedicated authorization/replay contract.
+  if (!isSystemMessage &&
+      group.type == GroupType.announcement &&
+      (member == null || member.role != MemberRole.admin)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_HANDLE_INCOMING_MSG_ANNOUNCEMENT_NON_ADMIN_REJECTED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+        'deliverySource': deliverySource,
+      },
+    );
+    return null;
+  }
+
   if (localRecipientPeerId != null) {
     final selfJoinedAt = localRecipientMember?.joinedAt.toUtc();
     if (!isSystemMessage &&
@@ -472,7 +529,8 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         'timestamp': normalizedTimestamp.toIso8601String(),
         'keyEpoch': keyEpoch,
         'quotedMessageId': quotedMessageId,
-        'media': media ?? const <Map<String, dynamic>>[],
+        'media': admittedMedia ?? const <Map<String, dynamic>>[],
+        ..._presentGroupPrivateMediaPolicyFields(privateMediaPolicyFields),
       },
     );
   }
@@ -484,6 +542,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
           existing: existingById,
           groupId: groupId,
           senderId: senderId,
+          privateMediaPolicy: privateMediaPolicy,
         )) {
       _emitDuplicateMessageIdConflictRejected(
         messageId: stableMessageId,
@@ -502,9 +561,10 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         senderId: senderId,
         resolvedTransportPeerId: resolvedTransportPeerId,
         sanitizedText: sanitizedText,
+        privateMediaPolicy: privateMediaPolicy,
         selfPeerId: selfPeerId,
         quotedMessageId: quotedMessageId,
-        media: media,
+        media: admittedMedia,
         mediaAttachmentRepo: mediaAttachmentRepo,
       );
       if (reconciledSelfEcho != null) {
@@ -515,7 +575,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         groupId: groupId,
         messageId: stableMessageId,
         quotedMessageId: quotedMessageId,
-        media: media,
+        media: admittedMedia,
         mediaAttachmentRepo: mediaAttachmentRepo,
       );
       emitFlowEvent(
@@ -553,7 +613,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         groupId: groupId,
         messageId: existingByLogicalDelivery.id,
         quotedMessageId: quotedMessageId,
-        media: media,
+        media: admittedMedia,
         mediaAttachmentRepo: mediaAttachmentRepo,
       );
       final canonicalMessage =
@@ -587,8 +647,8 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   );
   if (stableMessageId != null &&
       !isSelfDelivery &&
-      media != null &&
-      media.isNotEmpty &&
+      admittedMedia != null &&
+      admittedMedia.isNotEmpty &&
       mediaAttachmentRepo != null) {
     final canonicalMessageId = await _findCanonicalIncomingMediaRetryMessageId(
       msgRepo: msgRepo,
@@ -600,7 +660,8 @@ Future<GroupMessage?> handleIncomingGroupMessage({
       normalizedTimestamp: normalizedTimestamp,
       quotedMessageId: quotedMessageId,
       duplicateMessageId: stableMessageId,
-      media: media,
+      media: admittedMedia,
+      privateMediaPolicy: privateMediaPolicy,
     );
     if (canonicalMessageId != null) {
       await _enrichExistingDuplicateMessage(
@@ -608,7 +669,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         groupId: groupId,
         messageId: canonicalMessageId,
         quotedMessageId: quotedMessageId,
-        media: media,
+        media: admittedMedia,
         mediaAttachmentRepo: mediaAttachmentRepo,
       );
       final canonicalMessage = await msgRepo.getMessage(canonicalMessageId);
@@ -676,6 +737,16 @@ Future<GroupMessage?> handleIncomingGroupMessage({
 
   // 4. Use wire messageId if provided, otherwise generate one
   final resolvedMessageId = stableMessageId ?? const Uuid().v4();
+  final mediaReceivedAt = privateMediaPolicy.requiresRedaction
+      ? now.millisecondsSinceEpoch
+      : null;
+  final mediaExpiresAt =
+      privateMediaPolicy.isPrivate &&
+          privateMediaPolicy.lifecycle == GroupMediaLifecycle.disappearing
+      ? now
+            .add(Duration(seconds: privateMediaPolicy.durationSeconds!))
+            .millisecondsSinceEpoch
+      : null;
 
   // 5. Create GroupMessage (isIncoming: true)
   final message = GroupMessage(
@@ -693,11 +764,15 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     isIncoming: !isSelfDelivery,
     isForwarded: isForwarded,
     createdAt: now,
+    privateMediaPolicy: privateMediaPolicy,
+    mediaReceivedAt: mediaReceivedAt,
+    mediaExpiresAt: mediaExpiresAt,
+    mediaLastCheckedAt: mediaExpiresAt == null ? null : mediaReceivedAt,
+    mediaCleanupPending: privateMediaPolicy.isUnsupported,
   );
 
   // 6. Save to repo
   await msgRepo.saveMessage(message);
-
   // 7. Save media attachments (pending for relay download). 235: the final
   // attachment write re-verifies the exact (group_id, message_id) parent and
   // the deletion journal INSIDE its own transaction — a parent silently
@@ -705,7 +780,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   await _saveIncomingMediaAttachments(
     groupId: groupId,
     messageId: resolvedMessageId,
-    media: media,
+    media: admittedMedia,
     mediaAttachmentRepo: mediaAttachmentRepo,
   );
 
@@ -820,8 +895,11 @@ bool _isConflictingDuplicateMessageId({
   required GroupMessage existing,
   required String groupId,
   required String senderId,
+  required GroupPrivateMediaPolicy privateMediaPolicy,
 }) {
-  return existing.groupId != groupId || existing.senderPeerId != senderId;
+  return existing.groupId != groupId ||
+      existing.senderPeerId != senderId ||
+      existing.privateMediaPolicy != privateMediaPolicy;
 }
 
 Future<String?> _findCanonicalIncomingMediaRetryMessageId({
@@ -835,6 +913,7 @@ Future<String?> _findCanonicalIncomingMediaRetryMessageId({
   required String? quotedMessageId,
   required String duplicateMessageId,
   required List<Map<String, dynamic>> media,
+  required GroupPrivateMediaPolicy privateMediaPolicy,
 }) async {
   final incomingMediaIdentity = _strictMediaIdentityFromWireDescriptors(media);
   if (incomingMediaIdentity == null) {
@@ -856,6 +935,7 @@ Future<String?> _findCanonicalIncomingMediaRetryMessageId({
       normalizedTimestamp: normalizedTimestamp,
       quotedMessageId: quotedMessageId,
       duplicateMessageId: duplicateMessageId,
+      privateMediaPolicy: privateMediaPolicy,
     )) {
       candidateIds.add(candidate.id);
     }
@@ -889,6 +969,7 @@ bool _isSameLogicalIncomingMediaRetryEnvelope({
   required DateTime normalizedTimestamp,
   required String? quotedMessageId,
   required String duplicateMessageId,
+  required GroupPrivateMediaPolicy privateMediaPolicy,
 }) {
   final existingTransportPeerId =
       existing.transportPeerId?.trim().isNotEmpty == true
@@ -900,6 +981,7 @@ bool _isSameLogicalIncomingMediaRetryEnvelope({
       existingTransportPeerId == resolvedTransportPeerId &&
       existing.isIncoming &&
       existing.status == 'delivered' &&
+      existing.privateMediaPolicy == privateMediaPolicy &&
       existing.text == sanitizedText &&
       existing.timestamp.toUtc().isAtSameMomentAs(
         normalizedTimestamp.toUtc(),
@@ -1120,6 +1202,7 @@ Future<GroupMessage?> _reconcileOutgoingSelfEchoDuplicate({
   required String senderId,
   required String resolvedTransportPeerId,
   required String sanitizedText,
+  required GroupPrivateMediaPolicy privateMediaPolicy,
   required String? selfPeerId,
   String? quotedMessageId,
   List<Map<String, dynamic>>? media,
@@ -1136,6 +1219,7 @@ Future<GroupMessage?> _reconcileOutgoingSelfEchoDuplicate({
   if (existing.id != messageId ||
       existing.groupId != groupId ||
       existing.senderPeerId != senderId ||
+      existing.privateMediaPolicy != privateMediaPolicy ||
       (existing.transportPeerId?.isNotEmpty == true &&
           existing.transportPeerId != resolvedTransportPeerId) ||
       existing.isIncoming) {
@@ -1290,6 +1374,63 @@ Future<void> _saveIncomingMediaAttachments({
       );
     }
   }
+}
+
+GroupPrivateMediaEligibility _incomingGroupPrivateMediaEligibility({
+  required String text,
+  required String? quotedMessageId,
+  required bool isForwarded,
+  required List<Map<String, dynamic>>? media,
+}) {
+  final attachments = media ?? const <Map<String, dynamic>>[];
+  return GroupPrivateMediaEligibility(
+    attachmentCount: attachments.length,
+    attachmentKind: attachments.length == 1
+        ? _incomingGroupPrivateMediaAttachmentKind(attachments.single)
+        : GroupPrivateMediaAttachmentKind.unknown,
+    hasTextOrCaption: text.trim().isNotEmpty,
+    hasQuote: quotedMessageId?.trim().isNotEmpty == true,
+    isForward: isForwarded,
+  );
+}
+
+GroupPrivateMediaAttachmentKind _incomingGroupPrivateMediaAttachmentKind(
+  Map<String, dynamic> attachment,
+) {
+  final mediaType = attachment['mediaType'] is String
+      ? (attachment['mediaType'] as String).trim().toLowerCase()
+      : '';
+  final mime = attachment['mime'] is String
+      ? (attachment['mime'] as String).trim().toLowerCase()
+      : '';
+  if (mediaType == 'gif' || mime == 'image/gif') {
+    return GroupPrivateMediaAttachmentKind.gif;
+  }
+  if (mediaType == 'image' || mime.startsWith('image/')) {
+    return GroupPrivateMediaAttachmentKind.image;
+  }
+  if (mediaType == 'video' || mime.startsWith('video/')) {
+    return GroupPrivateMediaAttachmentKind.video;
+  }
+  if (mediaType == 'audio' || mime.startsWith('audio/')) {
+    return GroupPrivateMediaAttachmentKind.audio;
+  }
+  if (mediaType == 'file' || mime.isNotEmpty) {
+    return GroupPrivateMediaAttachmentKind.file;
+  }
+  return GroupPrivateMediaAttachmentKind.unknown;
+}
+
+Map<String, Object?> _presentGroupPrivateMediaPolicyFields(
+  Map<String, Object?> fields,
+) {
+  final present = <String, Object?>{};
+  for (final key in GroupPrivateMediaPolicy.wireKeys) {
+    if (fields.containsKey(key)) {
+      present[key] = fields[key];
+    }
+  }
+  return present;
 }
 
 GroupMediaValidationResult _validateIncomingMediaDescriptors(

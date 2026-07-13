@@ -7,6 +7,7 @@ import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
@@ -87,6 +88,8 @@ class ChatMessageListener {
   // 118 Phase 4: shared per-conversation tone debounce (direct + group keys are
   // disjoint, so one tracker serves both listeners).
   final NotificationToneTracker? notificationToneTracker;
+  final Future<DurableNotificationToneLease> Function()
+  _durableNotificationCoordinatorResolver;
   final AppLifecycleState Function()? getAppLifecycleState;
   final DownloadProfilePictureFn? downloadProfilePictureFn;
   final RecentRemoteNotificationGate? remoteNotificationGate;
@@ -110,6 +113,7 @@ class ChatMessageListener {
   sendDeliveryReceipt;
 
   StreamSubscription<ChatMessage>? _subscription;
+  Future<DurableNotificationToneLease?>? _durableNotificationCoordinatorFuture;
   final _messageController = StreamController<ConversationMessage>.broadcast();
   final _contactUpdatedController = StreamController<ContactModel>.broadcast();
 
@@ -125,6 +129,8 @@ class ChatMessageListener {
     this.notificationService,
     this.conversationTracker,
     this.notificationToneTracker,
+    Future<DurableNotificationToneLease> Function()?
+    durableNotificationCoordinatorResolver,
     this.getAppLifecycleState,
     this.downloadProfilePictureFn,
     this.remoteNotificationGate,
@@ -132,7 +138,32 @@ class ChatMessageListener {
     this.accountMigrationNetworkGate = allowAccountMigrationNetworkSideEffects,
     this.sendDeliveryReceipt,
     this.autoDownloadDecider,
-  });
+  }) : _durableNotificationCoordinatorResolver =
+           durableNotificationCoordinatorResolver ??
+           DurableNotificationToneLease.openMobileDefault;
+
+  Future<DurableNotificationToneLease?>
+  _resolveDurableNotificationCoordinator() {
+    return _durableNotificationCoordinatorFuture ??=
+        _openDurableNotificationCoordinator();
+  }
+
+  Future<DurableNotificationToneLease?>
+  _openDurableNotificationCoordinator() async {
+    try {
+      return await _durableNotificationCoordinatorResolver();
+    } catch (error) {
+      // Claim storage is a duplicate-suppression optimization. If the mobile
+      // support/app-group directory is unavailable, preserve legacy delivery
+      // and tone behavior instead of dropping the notification.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_NOTIFICATION_CLAIM_STORAGE_UNAVAILABLE',
+        details: {'error': error.toString()},
+      );
+      return null;
+    }
+  }
 
   /// Stream of new incoming chat messages for the UI to listen to.
   Stream<ConversationMessage> get incomingMessageStream =>
@@ -188,6 +219,7 @@ class ChatMessageListener {
   }
 
   Future<void> _autoDownloadMedia(ConversationMessage message) async {
+    if (!message.privateMediaPolicy.allowsAutomaticDownload) return;
     try {
       final attachments = await mediaAttachmentRepo!.getAttachmentsForMessage(
         message.id,
@@ -437,7 +469,8 @@ class ChatMessageListener {
       // keystore reads on the drain hot path. Null on every live path keeps the
       // legacy decrypt behaviour.
       final hasPredecryptedText = message.predecryptedText != null;
-      final ownSecretKey = (!hasPredecryptedText && getOwnMlKemSecretKey != null)
+      final ownSecretKey =
+          (!hasPredecryptedText && getOwnMlKemSecretKey != null)
           ? await getOwnMlKemSecretKey!()
           : null;
       final ownSecretKeyRing =
@@ -622,45 +655,60 @@ class ChatMessageListener {
               senderContact?.username ??
               (updatedContact?.username) ??
               'Unknown';
-          maybeShowNotification(
-            notificationService: notificationService!,
-            conversationTracker: conversationTracker!,
-            getAppLifecycleState: getAppLifecycleState!,
-            contactPeerId: conversationMessage.contactPeerId,
-            senderUsername: username,
-            messageText: notificationBodyForMessage(
-              conversationMessage.text,
-              conversationMessage.media,
-            ),
-            suppressNotification: suppressNotification,
-            messageId: conversationMessage.id,
-            toneTracker: notificationToneTracker,
-            consumeRecentRemoteNotificationAnnouncement:
-                ({required payload, String? messageId}) =>
-                    (remoteNotificationGate ?? recentRemoteNotificationGate)
-                        .consumeIfRecentAnnouncement(
-                          payload: payload,
-                          messageId: messageId,
-                        ),
-            // 118 Phase 2: live-wins handshake — a live direct notification
-            // writes a dedup marker so a late FCM isolate for the same message
-            // suppresses instead of double-alerting.
-            markRecentRemoteNotificationAnnouncement:
-                ({required payload, String? messageId}) =>
-                    (remoteNotificationGate ?? recentRemoteNotificationGate)
-                        .markAnnouncement(
-                          payload: payload,
-                          messageId: messageId,
-                        ),
-            backgroundDuplicateGuardDelay:
-                backgroundNotificationDuplicateGuardDelay,
-          );
+          try {
+            await maybeShowNotification(
+              notificationService: notificationService!,
+              conversationTracker: conversationTracker!,
+              getAppLifecycleState: getAppLifecycleState!,
+              contactPeerId: conversationMessage.contactPeerId,
+              senderUsername: username,
+              messageText: notificationBodyForMessage(
+                conversationMessage.text,
+                conversationMessage.media,
+                privateMediaPolicy: conversationMessage.privateMediaPolicy,
+              ),
+              suppressNotification: suppressNotification,
+              messageId: conversationMessage.id,
+              toneTracker: notificationToneTracker,
+              durableNotificationCoordinatorResolver:
+                  _resolveDurableNotificationCoordinator,
+              notificationEventType: 'new_message',
+              consumeRecentRemoteNotificationAnnouncement:
+                  ({required payload, String? messageId}) =>
+                      (remoteNotificationGate ?? recentRemoteNotificationGate)
+                          .consumeIfRecentAnnouncement(
+                            payload: payload,
+                            messageId: messageId,
+                          ),
+              // 118 Phase 2: live-wins handshake — a live direct notification
+              // writes a dedup marker so a late FCM isolate for the same message
+              // suppresses instead of double-alerting.
+              markRecentRemoteNotificationAnnouncement:
+                  ({required payload, String? messageId}) =>
+                      (remoteNotificationGate ?? recentRemoteNotificationGate)
+                          .markAnnouncement(
+                            payload: payload,
+                            messageId: messageId,
+                          ),
+              backgroundDuplicateGuardDelay:
+                  backgroundNotificationDuplicateGuardDelay,
+            );
+          } catch (error) {
+            // Message persistence already succeeded. A local-notification
+            // failure must release its claim but never downgrade stored state.
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'CHAT_LISTENER_NOTIFICATION_ERROR',
+              details: {'error': error.toString()},
+            );
+          }
         }
 
         // Fire-and-forget: auto-download media attachments
         if (bridge != null &&
             mediaAttachmentRepo != null &&
-            mediaFileManager != null) {
+            mediaFileManager != null &&
+            conversationMessage.privateMediaPolicy.allowsAutomaticDownload) {
           _autoDownloadMedia(conversationMessage);
         }
 

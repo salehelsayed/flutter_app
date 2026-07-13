@@ -742,6 +742,19 @@ run_group_forwarding_go_bridge_gate() {
   (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run '^TestGK030PublishGroupMessagePreservesExtraFieldsInReceivedEvent$' -count=1)
 }
 
+# Notification relay closure: curated 1:1 and group gates run only the focused
+# provider-routing sentinels. The wave/all gate runs the complete relay module
+# once, matching the repository's full-Go cadence.
+run_relay_notification_go_gate() {
+  echo "=== Relay Notification Go Gate ==="
+  (cd go-relay-server && GOTOOLCHAIN=go1.25.0 go test ./... -run '^TestRelayNotificationClosure_' -count=1)
+}
+
+run_relay_all_go_gate() {
+  echo "=== Relay Full Go Gate ==="
+  (cd go-relay-server && GOTOOLCHAIN=go1.25.0 go test ./... -count=1)
+}
+
 classify_path() {
   local path="$1"
 
@@ -958,6 +971,7 @@ main() {
     1to1)
       if ((${#gate_args[@]} == 0)); then
         run_gate_command "1:1 Reliability Gate" "${ONE_TO_ONE_TESTS[@]}"
+        run_relay_notification_go_gate
       else
         ./scripts/run_host_test_gates.sh 1to1 "${gate_args[@]}"
       fi
@@ -971,6 +985,7 @@ main() {
     groups)
       run_gate_command "Group Messaging Gate" "${GROUP_TESTS[@]}"
       run_group_forwarding_go_bridge_gate
+      run_relay_notification_go_gate
       ;;
     posts)
       run_gate_command "Posts / Privacy Gate" "${POSTS_TESTS[@]}"
@@ -1004,6 +1019,7 @@ main() {
       run_gate_command "Intro / Reintroduction Gate" "${INTRO_TESTS[@]}"
       run_gate_command "Group Messaging Gate" "${GROUP_TESTS[@]}"
       run_group_forwarding_go_bridge_gate
+      run_relay_all_go_gate
       run_gate_command "Posts / Privacy Gate" "${POSTS_TESTS[@]}"
       run_transport_gate
       run_gate_command "Runtime Telemetry Gate" "${RUNTIME_TELEMETRY_TESTS[@]}"

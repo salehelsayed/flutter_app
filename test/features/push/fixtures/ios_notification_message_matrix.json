@@ -1,0 +1,395 @@
+{
+  "fixtureVersion": 1,
+  "kind": "ios_notification_message_matrix",
+  "cases": [
+    {
+      "id": "direct_text",
+      "context": "direct",
+      "modality": "text",
+      "routeCategory": "direct_message",
+      "routeData": {
+        "type": "new_message",
+        "sender_id": "peer-alice",
+        "message_id": "ios-direct-text",
+        "envelope_version": "2",
+        "kem": "fixture-kem-direct-text",
+        "ciphertext": "fixture-ciphertext-direct-text",
+        "nonce": "fixture-nonce-direct-text"
+      },
+      "plaintext": {
+        "id": "ios-direct-text",
+        "text": "Hello secret",
+        "senderPeerId": "peer-alice",
+        "senderUsername": "Alice",
+        "timestamp": "2026-07-12T12:00:00.000Z"
+      },
+      "expected": {
+        "title": "Alice",
+        "body": "Hello secret",
+        "threadIdentifier": "peer-alice"
+      }
+    },
+    {
+      "id": "direct_image",
+      "context": "direct",
+      "modality": "image",
+      "routeCategory": "direct_message",
+      "routeData": {
+        "type": "new_message",
+        "sender_id": "peer-alice",
+        "message_id": "ios-direct-image",
+        "envelope_version": "2",
+        "kem": "fixture-kem-direct-image",
+        "ciphertext": "fixture-ciphertext-direct-image",
+        "nonce": "fixture-nonce-direct-image"
+      },
+      "plaintext": {
+        "id": "ios-direct-image",
+        "text": "",
+        "senderPeerId": "peer-alice",
+        "senderUsername": "Alice",
+        "timestamp": "2026-07-12T12:01:00.000Z",
+        "media": [{"mediaType": "image"}]
+      },
+      "expected": {
+        "title": "Alice",
+        "body": "Photo",
+        "threadIdentifier": "peer-alice"
+      }
+    },
+    {
+      "id": "direct_video",
+      "context": "direct",
+      "modality": "video",
+      "routeCategory": "direct_message",
+      "routeData": {
+        "type": "new_message",
+        "sender_id": "peer-alice",
+        "message_id": "ios-direct-video",
+        "envelope_version": "2",
+        "kem": "fixture-kem-direct-video",
+        "ciphertext": "fixture-ciphertext-direct-video",
+        "nonce": "fixture-nonce-direct-video"
+      },
+      "plaintext": {
+        "id": "ios-direct-video",
+        "text": "",
+        "senderPeerId": "peer-alice",
+        "senderUsername": "Alice",
+        "timestamp": "2026-07-12T12:02:00.000Z",
+        "media": [{"mediaType": "video"}]
+      },
+      "expected": {
+        "title": "Alice",
+        "body": "Video",
+        "threadIdentifier": "peer-alice"
+      }
+    },
+    {
+      "id": "direct_voice",
+      "context": "direct",
+      "modality": "voice",
+      "routeCategory": "direct_message",
+      "routeData": {
+        "type": "new_message",
+        "sender_id": "peer-alice",
+        "message_id": "ios-direct-voice",
+        "envelope_version": "2",
+        "kem": "fixture-kem-direct-voice",
+        "ciphertext": "fixture-ciphertext-direct-voice",
+        "nonce": "fixture-nonce-direct-voice"
+      },
+      "plaintext": {
+        "id": "ios-direct-voice",
+        "text": "",
+        "senderPeerId": "peer-alice",
+        "senderUsername": "Alice",
+        "timestamp": "2026-07-12T12:03:00.000Z",
+        "media": [{"mediaType": "audio"}]
+      },
+      "expected": {
+        "title": "Alice",
+        "body": "Voice message",
+        "threadIdentifier": "peer-alice"
+      }
+    },
+    {
+      "id": "group_text",
+      "context": "group",
+      "modality": "text",
+      "routeCategory": "group_message",
+      "routeData": {
+        "type": "group_message",
+        "groupId": "77777777-7777-4777-8777-777777777777",
+        "sender_transport_peer_id": "12D3KooWFixtureAliceTransport",
+        "message_id": "ios-group-text",
+        "kind": "group_offline_replay",
+        "envelope_version": "1",
+        "payloadType": "group_message",
+        "keyEpoch": "7",
+        "ciphertext": "fixture-ciphertext-group-text",
+        "nonce": "fixture-nonce-group-text"
+      },
+      "plaintext": {
+        "groupId": "77777777-7777-4777-8777-777777777777",
+        "groupName": "Team Chat",
+        "groupType": "chat",
+        "senderId": "peer-alice",
+        "senderUsername": "Alice",
+        "keyEpoch": 7,
+        "text": "Hello secret",
+        "timestamp": "2026-07-12T12:10:00.000Z",
+        "messageId": "ios-group-text"
+      },
+      "expected": {
+        "title": "Team Chat",
+        "body": "Alice: Hello secret",
+        "threadIdentifier": "77777777-7777-4777-8777-777777777777"
+      }
+    },
+    {
+      "id": "group_image",
+      "context": "group",
+      "modality": "image",
+      "routeCategory": "group_message",
+      "routeData": {
+        "type": "group_message",
+        "groupId": "77777777-7777-4777-8777-777777777777",
+        "sender_transport_peer_id": "12D3KooWFixtureAliceTransport",
+        "message_id": "ios-group-image",
+        "kind": "group_offline_replay",
+        "envelope_version": "1",
+        "payloadType": "group_message",
+        "keyEpoch": "7",
+        "ciphertext": "fixture-ciphertext-group-image",
+        "nonce": "fixture-nonce-group-image"
+      },
+      "plaintext": {
+        "groupId": "77777777-7777-4777-8777-777777777777",
+        "groupName": "Team Chat",
+        "groupType": "chat",
+        "senderId": "peer-alice",
+        "senderUsername": "Alice",
+        "keyEpoch": 7,
+        "text": "",
+        "timestamp": "2026-07-12T12:11:00.000Z",
+        "messageId": "ios-group-image",
+        "media": [{"mediaType": "image"}]
+      },
+      "expected": {
+        "title": "Team Chat",
+        "body": "Alice: Photo",
+        "threadIdentifier": "77777777-7777-4777-8777-777777777777"
+      }
+    },
+    {
+      "id": "group_video",
+      "context": "group",
+      "modality": "video",
+      "routeCategory": "group_message",
+      "routeData": {
+        "type": "group_message",
+        "groupId": "77777777-7777-4777-8777-777777777777",
+        "sender_transport_peer_id": "12D3KooWFixtureAliceTransport",
+        "message_id": "ios-group-video",
+        "kind": "group_offline_replay",
+        "envelope_version": "1",
+        "payloadType": "group_message",
+        "keyEpoch": "7",
+        "ciphertext": "fixture-ciphertext-group-video",
+        "nonce": "fixture-nonce-group-video"
+      },
+      "plaintext": {
+        "groupId": "77777777-7777-4777-8777-777777777777",
+        "groupName": "Team Chat",
+        "groupType": "chat",
+        "senderId": "peer-alice",
+        "senderUsername": "Alice",
+        "keyEpoch": 7,
+        "text": "",
+        "timestamp": "2026-07-12T12:12:00.000Z",
+        "messageId": "ios-group-video",
+        "media": [{"mediaType": "video"}]
+      },
+      "expected": {
+        "title": "Team Chat",
+        "body": "Alice: Video",
+        "threadIdentifier": "77777777-7777-4777-8777-777777777777"
+      }
+    },
+    {
+      "id": "group_voice",
+      "context": "group",
+      "modality": "voice",
+      "routeCategory": "group_message",
+      "routeData": {
+        "type": "group_message",
+        "groupId": "77777777-7777-4777-8777-777777777777",
+        "sender_transport_peer_id": "12D3KooWFixtureAliceTransport",
+        "message_id": "ios-group-voice",
+        "kind": "group_offline_replay",
+        "envelope_version": "1",
+        "payloadType": "group_message",
+        "keyEpoch": "7",
+        "ciphertext": "fixture-ciphertext-group-voice",
+        "nonce": "fixture-nonce-group-voice"
+      },
+      "plaintext": {
+        "groupId": "77777777-7777-4777-8777-777777777777",
+        "groupName": "Team Chat",
+        "groupType": "chat",
+        "senderId": "peer-alice",
+        "senderUsername": "Alice",
+        "keyEpoch": 7,
+        "text": "",
+        "timestamp": "2026-07-12T12:13:00.000Z",
+        "messageId": "ios-group-voice",
+        "media": [{"mediaType": "audio"}]
+      },
+      "expected": {
+        "title": "Team Chat",
+        "body": "Alice: Voice message",
+        "threadIdentifier": "77777777-7777-4777-8777-777777777777"
+      }
+    },
+    {
+      "id": "announcement_text",
+      "context": "announcement",
+      "modality": "text",
+      "routeCategory": "announcement_message",
+      "routeData": {
+        "type": "group_message",
+        "groupId": "88888888-8888-4888-8888-888888888888",
+        "sender_transport_peer_id": "12D3KooWFixtureAliceTransport",
+        "message_id": "ios-announcement-text",
+        "kind": "group_offline_replay",
+        "envelope_version": "1",
+        "payloadType": "group_message",
+        "keyEpoch": "9",
+        "ciphertext": "fixture-ciphertext-announcement-text",
+        "nonce": "fixture-nonce-announcement-text"
+      },
+      "plaintext": {
+        "groupId": "88888888-8888-4888-8888-888888888888",
+        "groupName": "Announcements",
+        "groupType": "announcement",
+        "senderId": "peer-alice",
+        "senderUsername": "Alice",
+        "keyEpoch": 9,
+        "text": "Announcement update",
+        "timestamp": "2026-07-12T12:20:00.000Z",
+        "messageId": "ios-announcement-text"
+      },
+      "expected": {
+        "title": "Announcements",
+        "body": "Alice: Announcement update",
+        "threadIdentifier": "88888888-8888-4888-8888-888888888888"
+      }
+    },
+    {
+      "id": "announcement_image",
+      "context": "announcement",
+      "modality": "image",
+      "routeCategory": "announcement_message",
+      "routeData": {
+        "type": "group_message",
+        "groupId": "88888888-8888-4888-8888-888888888888",
+        "sender_transport_peer_id": "12D3KooWFixtureAliceTransport",
+        "message_id": "ios-announcement-image",
+        "kind": "group_offline_replay",
+        "envelope_version": "1",
+        "payloadType": "group_message",
+        "keyEpoch": "9",
+        "ciphertext": "fixture-ciphertext-announcement-image",
+        "nonce": "fixture-nonce-announcement-image"
+      },
+      "plaintext": {
+        "groupId": "88888888-8888-4888-8888-888888888888",
+        "groupName": "Announcements",
+        "groupType": "announcement",
+        "senderId": "peer-alice",
+        "senderUsername": "Alice",
+        "keyEpoch": 9,
+        "text": "",
+        "timestamp": "2026-07-12T12:21:00.000Z",
+        "messageId": "ios-announcement-image",
+        "media": [{"mediaType": "image"}]
+      },
+      "expected": {
+        "title": "Announcements",
+        "body": "Alice: Photo",
+        "threadIdentifier": "88888888-8888-4888-8888-888888888888"
+      }
+    },
+    {
+      "id": "announcement_video",
+      "context": "announcement",
+      "modality": "video",
+      "routeCategory": "announcement_message",
+      "routeData": {
+        "type": "group_message",
+        "groupId": "88888888-8888-4888-8888-888888888888",
+        "sender_transport_peer_id": "12D3KooWFixtureAliceTransport",
+        "message_id": "ios-announcement-video",
+        "kind": "group_offline_replay",
+        "envelope_version": "1",
+        "payloadType": "group_message",
+        "keyEpoch": "9",
+        "ciphertext": "fixture-ciphertext-announcement-video",
+        "nonce": "fixture-nonce-announcement-video"
+      },
+      "plaintext": {
+        "groupId": "88888888-8888-4888-8888-888888888888",
+        "groupName": "Announcements",
+        "groupType": "announcement",
+        "senderId": "peer-alice",
+        "senderUsername": "Alice",
+        "keyEpoch": 9,
+        "text": "",
+        "timestamp": "2026-07-12T12:22:00.000Z",
+        "messageId": "ios-announcement-video",
+        "media": [{"mediaType": "video"}]
+      },
+      "expected": {
+        "title": "Announcements",
+        "body": "Alice: Video",
+        "threadIdentifier": "88888888-8888-4888-8888-888888888888"
+      }
+    },
+    {
+      "id": "announcement_voice",
+      "context": "announcement",
+      "modality": "voice",
+      "routeCategory": "announcement_message",
+      "routeData": {
+        "type": "group_message",
+        "groupId": "88888888-8888-4888-8888-888888888888",
+        "sender_transport_peer_id": "12D3KooWFixtureAliceTransport",
+        "message_id": "ios-announcement-voice",
+        "kind": "group_offline_replay",
+        "envelope_version": "1",
+        "payloadType": "group_message",
+        "keyEpoch": "9",
+        "ciphertext": "fixture-ciphertext-announcement-voice",
+        "nonce": "fixture-nonce-announcement-voice"
+      },
+      "plaintext": {
+        "groupId": "88888888-8888-4888-8888-888888888888",
+        "groupName": "Announcements",
+        "groupType": "announcement",
+        "senderId": "peer-alice",
+        "senderUsername": "Alice",
+        "keyEpoch": 9,
+        "text": "",
+        "timestamp": "2026-07-12T12:23:00.000Z",
+        "messageId": "ios-announcement-voice",
+        "media": [{"mediaType": "audio"}]
+      },
+      "expected": {
+        "title": "Announcements",
+        "body": "Alice: Voice message",
+        "threadIdentifier": "88888888-8888-4888-8888-888888888888"
+      }
+    }
+  ]
+}

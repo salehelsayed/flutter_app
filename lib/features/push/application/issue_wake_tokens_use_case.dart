@@ -70,10 +70,9 @@ class IssueWakeTokensUseCase {
     if (changed) {
       await wakeTokenStore.writeTokens(tokens);
     }
-    if (tokens.isEmpty) {
-      return true; // nothing to register
-    }
-
+    // An empty set is still registered: it revokes the relay's prior member
+    // set after the last contact is blocked/deleted. Skipping this call would
+    // leave a stale recipient-issued reaction authorization live at the relay.
     final ok = await registerWakeTokens(tokens.values.toList(growable: false));
     if (!ok) {
       // NET-REL-07: old relay / failure. The minted tokens are persisted client-

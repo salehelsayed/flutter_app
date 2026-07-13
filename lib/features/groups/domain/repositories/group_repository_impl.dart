@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/notifications/group_reaction_notification_projection.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -23,6 +24,7 @@ String sharedGroupMutedKeyName(String groupId) => 'group_muted:$groupId';
 class GroupRepositoryImpl
     implements
         GroupRepository,
+        GroupForwardAuthorizationSnapshotRepository,
         RemovedGroupMemberSnapshotRepository,
         GroupMemberDeviceSnapshotRepository,
         PendingSiblingDeviceRepository,
@@ -36,6 +38,15 @@ class GroupRepositoryImpl
   final Future<List<Map<String, Object?>>> Function() dbLoadActiveGroups;
   final Future<void> Function(String id) dbArchiveGroup;
   final Future<void> Function(String id) dbUnarchiveGroup;
+  final Future<
+    ({
+      Map<String, Object?>? groupRow,
+      List<Map<String, Object?>> memberRows,
+      int? latestKeyGeneration,
+    })
+  >
+  Function(String groupId)?
+  dbLoadGroupForwardAuthorizationSnapshot;
 
   // --- Member DB helpers ---
   final Future<void> Function(Map<String, Object?> row) dbInsertGroupMember;
@@ -93,6 +104,7 @@ class GroupRepositoryImpl
   final Future<void> Function(String groupId)? dbDeletePendingGroupKeyRotations;
   final SecureKeyStore? groupKeyStore;
   final SecureKeyStore? pushSharedKeyStore;
+  final GroupReactionNotificationProjection? groupReactionProjection;
 
   // Finding 05 Phase 3: bounded per-group rejoin retry state.
   final Future<List<Map<String, Object?>>> Function()?
@@ -113,6 +125,7 @@ class GroupRepositoryImpl
     required this.dbLoadActiveGroups,
     required this.dbArchiveGroup,
     required this.dbUnarchiveGroup,
+    this.dbLoadGroupForwardAuthorizationSnapshot,
     required this.dbInsertGroupMember,
     required this.dbLoadAllGroupMembers,
     required this.dbLoadGroupMember,
@@ -143,6 +156,7 @@ class GroupRepositoryImpl
     this.dbDeletePendingGroupKeyRotations,
     this.groupKeyStore,
     this.pushSharedKeyStore,
+    this.groupReactionProjection,
   });
 
   // --- Groups ---
@@ -159,6 +173,7 @@ class GroupRepositoryImpl
 
     try {
       await dbInsertGroup(group.toMap());
+      await groupReactionProjection?.upsertGroup(group);
 
       emitFlowEvent(
         layer: 'FL',
@@ -193,6 +208,7 @@ class GroupRepositoryImpl
   @override
   Future<void> updateGroup(GroupModel group) async {
     await dbUpdateGroup(group.toMap());
+    await groupReactionProjection?.upsertGroup(group);
     // 04-P0 SI-1 NSE: keep the shared-Keychain mute projection in sync so the
     // iOS NSE honors mute (idempotent; no-op when pushSharedKeyStore is unset).
     await _mirrorGroupMutedForPush(group.id, group.isMuted);
@@ -201,6 +217,7 @@ class GroupRepositoryImpl
   @override
   Future<void> deleteGroup(String id) async {
     await dbDeleteGroup(id);
+    await groupReactionProjection?.removeGroup(id);
   }
 
   @override
@@ -212,11 +229,28 @@ class GroupRepositoryImpl
   @override
   Future<void> archiveGroup(String id) async {
     await dbArchiveGroup(id);
+    await _mirrorGroupContextForPush(id);
   }
 
   @override
   Future<void> unarchiveGroup(String id) async {
     await dbUnarchiveGroup(id);
+    await _mirrorGroupContextForPush(id);
+  }
+
+  @override
+  Future<GroupForwardAuthorizationSnapshot?>
+  loadGroupForwardAuthorizationSnapshot(String groupId) async {
+    final load = dbLoadGroupForwardAuthorizationSnapshot;
+    if (load == null) return null;
+    final rows = await load(groupId);
+    return GroupForwardAuthorizationSnapshot(
+      group: rows.groupRow == null ? null : GroupModel.fromMap(rows.groupRow!),
+      members: List<GroupMember>.unmodifiable(
+        rows.memberRows.map(GroupMember.fromMap),
+      ),
+      latestKeyGeneration: rows.latestKeyGeneration,
+    );
   }
 
   // --- Members ---
@@ -235,6 +269,7 @@ class GroupRepositoryImpl
       throw StateError(duplicateRejectReason);
     }
     await dbInsertGroupMember(member.toMap());
+    await groupReactionProjection?.upsertMember(member);
   }
 
   @override
@@ -261,6 +296,15 @@ class GroupRepositoryImpl
       throw ArgumentError.value(peerId, 'peerId', peerIdRejectReason);
     }
     await dbUpdateGroupMemberRole(groupId, peerId, role.toValue());
+    final row = await dbLoadGroupMember(groupId, peerId);
+    if (row == null) {
+      await groupReactionProjection?.removeMember(
+        groupId: groupId,
+        peerId: peerId,
+      );
+    } else {
+      await groupReactionProjection?.upsertMember(GroupMember.fromMap(row));
+    }
   }
 
   @override
@@ -270,6 +314,10 @@ class GroupRepositoryImpl
       throw ArgumentError.value(peerId, 'peerId', peerIdRejectReason);
     }
     await dbDeleteGroupMember(groupId, peerId);
+    await groupReactionProjection?.removeMember(
+      groupId: groupId,
+      peerId: peerId,
+    );
   }
 
   @override
@@ -381,6 +429,7 @@ class GroupRepositoryImpl
   @override
   Future<void> removeAllMembers(String groupId) async {
     await dbDeleteAllGroupMembers(groupId);
+    await groupReactionProjection?.removeAllMembers(groupId);
   }
 
   // --- Keys ---
@@ -388,6 +437,7 @@ class GroupRepositoryImpl
   @override
   Future<void> saveKey(GroupKeyInfo key) async {
     await dbInsertGroupKey(await _toStorageRow(key));
+    await groupReactionProjection?.upsertKeyEpoch(key);
     final hydratedKey = await _hydrateGroupKey(key);
     if (hydratedKey != null) {
       await _mirrorGroupKeyForPush(hydratedKey);
@@ -467,6 +517,7 @@ class GroupRepositoryImpl
         ? const <Map<String, Object?>>[]
         : await dbLoadAllGroupKeys!(groupId);
     await dbDeleteAllGroupKeys(groupId);
+    await groupReactionProjection?.clearKeyEpoch(groupId);
     await clearPendingKeyRotations(groupId);
     for (final row in existingKeys) {
       final key = GroupKeyInfo.fromMap(row);
@@ -573,6 +624,53 @@ class GroupRepositoryImpl
       final isMuted = (group['is_muted'] as int? ?? 0) == 1;
       await _mirrorGroupMutedForPush(groupId, isMuted);
     }
+  }
+
+  /// Launch-time authoritative restore of recipient-owned iOS reaction state.
+  /// Query failures stay best-effort just like the existing group key/mute
+  /// mirrors; the extension fails closed until a later mutation or restart
+  /// repairs the projection.
+  Future<void> mirrorAllGroupReactionNotificationContexts() async {
+    final projection = groupReactionProjection;
+    if (projection == null) return;
+    try {
+      final rows = await dbLoadAllGroups();
+      final groups = rows.map(GroupModel.fromMap).toList(growable: false);
+      final membersByGroup = <String, List<GroupMember>>{};
+      final latestKeysByGroup = <String, GroupKeyInfo?>{};
+      for (final group in groups) {
+        final memberRows = await dbLoadAllGroupMembers(group.id);
+        membersByGroup[group.id] = memberRows
+            .map(GroupMember.fromMap)
+            .toList(growable: false);
+        final keyRow = await dbLoadLatestGroupKey(group.id);
+        latestKeysByGroup[group.id] = keyRow == null
+            ? null
+            : GroupKeyInfo.fromMap(keyRow);
+      }
+      await projection.replaceContexts(
+        groups: groups,
+        membersByGroup: membersByGroup,
+        latestKeysByGroup: latestKeysByGroup,
+      );
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REPO_REACTION_PROJECTION_BACKFILL_ERROR',
+        details: {'error': error.toString()},
+      );
+    }
+  }
+
+  Future<void> _mirrorGroupContextForPush(String groupId) async {
+    final projection = groupReactionProjection;
+    if (projection == null) return;
+    final row = await dbLoadGroup(groupId);
+    if (row == null) {
+      await projection.removeGroup(groupId);
+      return;
+    }
+    await projection.upsertGroup(GroupModel.fromMap(row));
   }
 
   Future<void> _pruneObsoleteKeys(String groupId) async {

@@ -16,6 +16,13 @@ import (
 	mocknet "github.com/libp2p/go-libp2p/p2p/net/mock"
 )
 
+const (
+	testCanonicalGroupPushID      = "11111111-1111-4111-8111-111111111111"
+	testCanonicalGroupDuplicateID = "22222222-2222-4222-8222-222222222222"
+	testCanonicalGroupAuthID      = "33333333-3333-4333-8333-333333333333"
+	testCanonicalGroupCursorID    = "44444444-4444-4444-8444-444444444444"
+)
+
 type recordingPushSender struct {
 	mu         sync.Mutex
 	sendCalls  int
@@ -1235,6 +1242,7 @@ func TestBuildGroupPushMessage_CarriesEncryptedDataWithoutPlaintextPreview(t *te
 	msg := buildGroupPushMessage(
 		"fcm-token",
 		"group-1",
+		"peer-sender-transport",
 		"group-msg-1",
 		`{"kind":"group_offline_replay","version":1,"payloadType":"group_message","keyEpoch":7,"messageId":"group-msg-1","ciphertext":"gc","nonce":"gn"}`,
 	)
@@ -1315,6 +1323,7 @@ func TestBuildGroupPushMessage_CarriesNativeV3EnvelopeEncryptedPreview(t *testin
 	msg := buildGroupPushMessage(
 		"fcm-token",
 		"group-native",
+		"peer-native-transport",
 		"",
 		`{"version":"3","type":"group_message","groupId":"group-native","messageId":"native-msg-1","senderId":"peer-alice","senderPublicKey":"pub","signature":"sig","keyEpoch":7,"encrypted":{"ciphertext":"native-ct","nonce":"native-nonce"}}`,
 	)
@@ -1368,6 +1377,7 @@ func TestGIRD006BuildGroupImagePushMessageUsesCanonicalDataOnlyIdentity(t *testi
 	msg := buildGroupPushMessage(
 		"fcm-token",
 		"group-gird006",
+		"peer-gird006-transport",
 		"msg-gird006-image",
 		`{"kind":"group_offline_replay","version":1,"payloadType":"group_message","keyEpoch":7,"messageId":"msg-gird006-image","ciphertext":"gc","nonce":"gn"}`,
 	)
@@ -1411,9 +1421,9 @@ func TestGIRD006BuildGroupImagePushMessageUsesCanonicalDataOnlyIdentity(t *testi
 }
 
 // TC-01: a 1:1 media-scale ciphertext envelope (encrypted media descriptor)
-// exceeds FCM's 4 KB data budget. The relay must rebuild it as a visible,
-// under-budget fallback (ciphertext/kem dropped, Notification present,
-// preview_unavailable="1") so the offline recipient still gets alerted.
+// exceeds FCM's 4 KB data budget. The relay must rebuild it as an under-budget
+// routing fallback: Android remains data-only so local display policy stays
+// authoritative, while APNS remains mutable so its NSE can enforce policy.
 func TestBuildChatPushMessage_OversizedCiphertextFallsBackUnder4K(t *testing.T) {
 	bigCiphertext := strings.Repeat("c", 5000) // encrypted media descriptor scale
 	bigKem := strings.Repeat("k", 1500)        // base64 ML-KEM scale
@@ -1437,11 +1447,14 @@ func TestBuildChatPushMessage_OversizedCiphertextFallsBackUnder4K(t *testing.T) 
 	if msg.Data["nonce"] != "" {
 		t.Fatalf("oversized push must drop nonce, got %q", msg.Data["nonce"])
 	}
-	if msg.Notification == nil {
-		t.Fatal("oversized push must carry a visible top-level FCM Notification")
+	if msg.Notification != nil {
+		t.Fatal("oversized push must omit top-level FCM Notification")
 	}
-	if msg.Android == nil || msg.Android.Notification == nil {
-		t.Fatal("oversized push must carry a visible Android Notification")
+	if msg.Android == nil || msg.Android.Priority != "high" {
+		t.Fatal("oversized push must carry a high-priority Android routing wake")
+	}
+	if msg.Android.Notification != nil {
+		t.Fatal("oversized push must stay data-only on Android")
 	}
 	if msg.APNS == nil || msg.APNS.Payload == nil || msg.APNS.Payload.Aps == nil ||
 		msg.APNS.Payload.Aps.Alert == nil {
@@ -1459,8 +1472,17 @@ func TestBuildChatPushMessage_OversizedCiphertextFallsBackUnder4K(t *testing.T) 
 	if msg.Data["message_id"] != "m-media" {
 		t.Fatalf("message_id = %q, want m-media", msg.Data["message_id"])
 	}
-	if msg.APNS.Payload.Aps.MutableContent {
-		t.Fatal("oversized fallback has no ciphertext to decrypt; MutableContent must stay off")
+	if len(msg.Data) != 4 {
+		t.Fatalf("oversized Android routing data = %#v, want exactly four routing keys", msg.Data)
+	}
+	if _, ok := msg.Data["title"]; ok {
+		t.Fatalf("oversized Android routing data must omit title: %#v", msg.Data)
+	}
+	if _, ok := msg.Data["body"]; ok {
+		t.Fatalf("oversized Android routing data must omit body: %#v", msg.Data)
+	}
+	if !msg.APNS.Payload.Aps.MutableContent {
+		t.Fatal("oversized fallback must remain NSE-reachable for native policy")
 	}
 	assertAPNSCustomString(t, msg, "type", "new_message")
 	assertAPNSCustomString(t, msg, "sender_id", "peer-from")
@@ -1468,9 +1490,9 @@ func TestBuildChatPushMessage_OversizedCiphertextFallsBackUnder4K(t *testing.T) 
 	assertAPNSCustomString(t, msg, "preview_unavailable", "1")
 }
 
-// TC-02: group parity — an oversized group ciphertext also falls back to a
-// visible under-budget notification (ciphertext dropped, Notification set,
-// preview_unavailable="1", groupId/message_id routing kept).
+// TC-02: group parity — an oversized group ciphertext also falls back to an
+// under-budget Android routing wake plus a visible APNS alert. The ciphertext is
+// dropped while preview_unavailable/groupId/message_id routing is retained.
 func TestBuildGroupPushMessage_OversizedCiphertextFallsBackUnder4K(t *testing.T) {
 	bigCiphertext := strings.Repeat("g", 5000)
 	envelope := fmt.Sprintf(
@@ -1478,7 +1500,13 @@ func TestBuildGroupPushMessage_OversizedCiphertextFallsBackUnder4K(t *testing.T)
 		bigCiphertext,
 	)
 
-	msg := buildGroupPushMessage("fcm-token", "group-1", "g-media", envelope)
+	msg := buildGroupPushMessage(
+		"fcm-token",
+		"group-1",
+		"peer-group-transport",
+		"g-media",
+		envelope,
+	)
 
 	if got := pushDataSize(msg.Data); got > maxPushDataBytes {
 		t.Fatalf("pushDataSize = %d, want <= %d", got, maxPushDataBytes)
@@ -1489,11 +1517,14 @@ func TestBuildGroupPushMessage_OversizedCiphertextFallsBackUnder4K(t *testing.T)
 	if msg.Data["nonce"] != "" {
 		t.Fatalf("oversized group push must drop nonce, got %q", msg.Data["nonce"])
 	}
-	if msg.Notification == nil {
-		t.Fatal("oversized group push must carry a visible top-level FCM Notification")
+	if msg.Notification != nil {
+		t.Fatal("oversized group push must omit top-level FCM Notification")
 	}
-	if msg.Android == nil || msg.Android.Notification == nil {
-		t.Fatal("oversized group push must carry a visible Android Notification")
+	if msg.Android == nil || msg.Android.Priority != "high" {
+		t.Fatal("oversized group push must carry a high-priority Android routing wake")
+	}
+	if msg.Android.Notification != nil {
+		t.Fatal("oversized group push must stay data-only on Android")
 	}
 	if msg.APNS == nil || msg.APNS.Payload == nil || msg.APNS.Payload.Aps == nil ||
 		msg.APNS.Payload.Aps.Alert == nil {
@@ -1511,11 +1542,24 @@ func TestBuildGroupPushMessage_OversizedCiphertextFallsBackUnder4K(t *testing.T)
 	if msg.Data["message_id"] != "g-media" {
 		t.Fatalf("message_id = %q, want g-media", msg.Data["message_id"])
 	}
-	if msg.APNS.Payload.Aps.MutableContent {
-		t.Fatal("oversized group fallback has no ciphertext to decrypt; MutableContent must stay off")
+	if msg.Data["sender_transport_peer_id"] != "peer-group-transport" {
+		t.Fatalf("sender_transport_peer_id = %q, want authenticated transport", msg.Data["sender_transport_peer_id"])
+	}
+	if len(msg.Data) != 5 {
+		t.Fatalf("oversized group Android routing data = %#v, want exactly five routing keys", msg.Data)
+	}
+	if _, ok := msg.Data["title"]; ok {
+		t.Fatalf("oversized group Android routing data must omit title: %#v", msg.Data)
+	}
+	if _, ok := msg.Data["body"]; ok {
+		t.Fatalf("oversized group Android routing data must omit body: %#v", msg.Data)
+	}
+	if !msg.APNS.Payload.Aps.MutableContent {
+		t.Fatal("oversized group fallback must remain NSE-reachable for native policy")
 	}
 	assertAPNSCustomString(t, msg, "type", "group_message")
 	assertAPNSCustomString(t, msg, "groupId", "group-1")
+	assertAPNSCustomString(t, msg, "sender_transport_peer_id", "peer-group-transport")
 	assertAPNSCustomString(t, msg, "message_id", "g-media")
 	assertAPNSCustomString(t, msg, "preview_unavailable", "1")
 }
@@ -1582,7 +1626,7 @@ func TestPushDataSize_BoundaryAtBudget(t *testing.T) {
 // TC-06 (defensive clamp): message_id is copied from the REMOTE-supplied envelope,
 // so a pathologically large id could keep even the routing-only fallback over the
 // 4 KB budget and re-trigger the FCM rejection. The fallback must drop message_id to
-// stay under budget while keeping the visible alert + routing (INV-1 unconditional).
+// stay under budget while keeping the routing wake (and the APNS visible alert).
 func TestBuildChatPushMessage_OversizedFallbackDropsPathologicalMessageIDUnderBudget(t *testing.T) {
 	hugeID := strings.Repeat("m", maxPushDataBytes+500) // attacker-/bug-supplied id larger than the whole budget
 	bigCiphertext := strings.Repeat("c", 5000)
@@ -1602,8 +1646,18 @@ func TestBuildChatPushMessage_OversizedFallbackDropsPathologicalMessageIDUnderBu
 	if msg.Data["message_id"] != "" {
 		t.Fatalf("pathological message_id must be dropped from the fallback, got len %d", len(msg.Data["message_id"]))
 	}
-	if msg.Notification == nil {
-		t.Fatal("fallback must still be a visible notification after dropping message_id")
+	if msg.Notification != nil {
+		t.Fatal("fallback must omit top-level FCM Notification after dropping message_id")
+	}
+	if msg.Android == nil || msg.Android.Priority != "high" {
+		t.Fatal("fallback must retain a high-priority Android routing wake")
+	}
+	if msg.Android.Notification != nil {
+		t.Fatal("fallback must stay data-only on Android after dropping message_id")
+	}
+	if msg.APNS == nil || msg.APNS.Payload == nil || msg.APNS.Payload.Aps == nil ||
+		msg.APNS.Payload.Aps.Alert == nil {
+		t.Fatal("fallback must retain a visible APNS alert after dropping message_id")
 	}
 	if msg.Data["preview_unavailable"] != "1" {
 		t.Fatalf("preview_unavailable = %q, want 1", msg.Data["preview_unavailable"])
@@ -1614,6 +1668,12 @@ func TestBuildChatPushMessage_OversizedFallbackDropsPathologicalMessageIDUnderBu
 	if msg.Data["sender_id"] != "peer-from" {
 		t.Fatalf("sender_id = %q, want peer-from (routing must survive the clamp)", msg.Data["sender_id"])
 	}
+	if len(msg.Data) != 3 {
+		t.Fatalf("clamped Android routing data = %#v, want exactly three routing keys", msg.Data)
+	}
+	assertAPNSCustomString(t, msg, "type", "new_message")
+	assertAPNSCustomString(t, msg, "sender_id", "peer-from")
+	assertAPNSCustomString(t, msg, "preview_unavailable", "1")
 }
 
 func assertNoDirectPushSchemaVersionKeys(t *testing.T, data map[string]string) {
@@ -1728,6 +1788,7 @@ func TestPushService_SendGroupNotification_RetriesTransientFailure(t *testing.T)
 		context.Background(),
 		"peer-recipient",
 		"group-1",
+		"peer-sender-transport",
 		"group-msg-1",
 		`{"kind":"group_offline_replay","version":1,"payloadType":"group_message","keyEpoch":7,"messageId":"group-msg-1","ciphertext":"gc","nonce":"gn"}`,
 	)
@@ -1770,7 +1831,7 @@ func TestHandleInboxStream_GroupStoreFansOutPushToRecipientsWithTokens(t *testin
 	tokenStore.RegisterToken(recipientTwo, "recipient-two-token", "ios")
 
 	recorder.onSend = func(ctx context.Context, msg *messaging.Message) (string, error) {
-		stored := groupInbox.Retrieve("group-push", 0)
+		stored := groupInbox.Retrieve(testCanonicalGroupPushID, 0)
 		if len(stored) == 0 {
 			t.Fatal("group push fanout ran before durable store")
 		}
@@ -1788,7 +1849,7 @@ func TestHandleInboxStream_GroupStoreFansOutPushToRecipientsWithTokens(t *testin
 
 		req := map[string]interface{}{
 			"action":           "group_store",
-			"groupId":          "group-push",
+			"groupId":          testCanonicalGroupPushID,
 			"from":             senderPeer,
 			"message":          `{"kind":"group_offline_replay","version":1,"payloadType":"group_message","keyEpoch":7,"messageId":"group-msg-1","ciphertext":"gc","nonce":"gn"}`,
 			"recipientPeerIds": []string{senderPeer, recipientWithToken, recipientTwo},
@@ -1835,8 +1896,8 @@ func TestHandleInboxStream_GroupStoreFansOutPushToRecipientsWithTokens(t *testin
 		if msg.Data["type"] != "group_message" {
 			t.Fatalf("push type = %q, want group_message", msg.Data["type"])
 		}
-		if msg.Data["groupId"] != "group-push" {
-			t.Fatalf("groupId = %q, want group-push", msg.Data["groupId"])
+		if msg.Data["groupId"] != testCanonicalGroupPushID {
+			t.Fatalf("groupId = %q, want %s", msg.Data["groupId"], testCanonicalGroupPushID)
 		}
 		if _, ok := msg.Data["title"]; ok {
 			t.Fatalf("title should be omitted, got %q", msg.Data["title"])
@@ -1897,7 +1958,7 @@ func TestGIRD004GroupStoreDuplicateDoesNotAppendOrRefanoutPush(t *testing.T) {
 
 		sendInboxReq(t, stream, inboxRequest{
 			Action:  "group_store",
-			GroupId: "group-gird004-stream-duplicate",
+			GroupId: testCanonicalGroupDuplicateID,
 			From:    senderPeer,
 			Message: `{"kind":"group_offline_replay","version":1,"payloadType":"group_message","keyEpoch":7,"messageId":"gird004-stream-duplicate","ciphertext":"gc","nonce":"gn"}`,
 			RecipientPeerIds: []string{
@@ -1918,7 +1979,7 @@ func TestGIRD004GroupStoreDuplicateDoesNotAppendOrRefanoutPush(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for first push send")
 	}
-	if stored := groupInbox.Retrieve("group-gird004-stream-duplicate", 0); len(stored) != 1 {
+	if stored := groupInbox.Retrieve(testCanonicalGroupDuplicateID, 0); len(stored) != 1 {
 		t.Fatalf("stored after first group_store = %d, want 1", len(stored))
 	}
 
@@ -1926,7 +1987,7 @@ func TestGIRD004GroupStoreDuplicateDoesNotAppendOrRefanoutPush(t *testing.T) {
 	if resp.Status != "OK" {
 		t.Fatalf("duplicate group_store status = %q error=%q, want OK", resp.Status, resp.Error)
 	}
-	if stored := groupInbox.Retrieve("group-gird004-stream-duplicate", 0); len(stored) != 1 {
+	if stored := groupInbox.Retrieve(testCanonicalGroupDuplicateID, 0); len(stored) != 1 {
 		t.Fatalf("stored after duplicate group_store = %d, want 1", len(stored))
 	}
 	select {
@@ -1956,7 +2017,7 @@ func TestHandleInboxStream_GroupStoreRejectsSpoofedFromPeer(t *testing.T) {
 
 	sendInboxReq(t, stream, inboxRequest{
 		Action:           "group_store",
-		GroupId:          "group-auth",
+		GroupId:          testCanonicalGroupAuthID,
 		From:             senderPeer,
 		Message:          `{"kind":"group_offline_replay","messageId":"spoofed"}`,
 		RecipientPeerIds: []string{recipientPeer},
@@ -1966,7 +2027,7 @@ func TestHandleInboxStream_GroupStoreRejectsSpoofedFromPeer(t *testing.T) {
 		t.Fatalf("spoofed group_store response = %#v, want not authorized error", resp)
 	}
 
-	if stored := groupInbox.Retrieve("group-auth", 0); len(stored) != 0 {
+	if stored := groupInbox.Retrieve(testCanonicalGroupAuthID, 0); len(stored) != 0 {
 		t.Fatalf("spoofed group_store persisted %d message(s)", len(stored))
 	}
 }
@@ -2019,7 +2080,7 @@ func TestHandleInboxStream_GroupStoreRejectsMissingRecipientPeerIds(t *testing.T
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			groupId := "group-missing-recipients-" + tc.name
+			groupId := testCanonicalGroupAuthID
 			stream, err := env.sender.NewStream(context.Background(), env.server.ID(), InboxProtocol)
 			if err != nil {
 				t.Fatalf("open group_store stream: %v", err)
@@ -2060,7 +2121,7 @@ func TestHandleInboxStream_GroupRetrieveFiltersByRecipientAuthorization(t *testi
 
 		sendInboxReq(t, stream, inboxRequest{
 			Action:           "group_store",
-			GroupId:          "group-auth",
+			GroupId:          testCanonicalGroupAuthID,
 			From:             senderPeer,
 			Message:          fmt.Sprintf(`{"kind":"group_offline_replay","messageId":%q}`, id),
 			RecipientPeerIds: recipients,
@@ -2081,7 +2142,7 @@ func TestHandleInboxStream_GroupRetrieveFiltersByRecipientAuthorization(t *testi
 
 		sendInboxReq(t, stream, inboxRequest{
 			Action:  "group_retrieve",
-			GroupId: "group-auth",
+			GroupId: testCanonicalGroupAuthID,
 		})
 		return recvInboxResp(t, stream)
 	}
@@ -2127,7 +2188,7 @@ func TestHandleInboxStream_GroupRetrieveCursorSkipsUnauthorizedMessages(t *testi
 
 		sendInboxReq(t, stream, inboxRequest{
 			Action:           "group_store",
-			GroupId:          "group-cursor-auth",
+			GroupId:          testCanonicalGroupCursorID,
 			From:             senderPeer,
 			Message:          fmt.Sprintf(`{"kind":"group_offline_replay","messageId":%q}`, id),
 			RecipientPeerIds: recipients,
@@ -2148,7 +2209,7 @@ func TestHandleInboxStream_GroupRetrieveCursorSkipsUnauthorizedMessages(t *testi
 
 		sendInboxReq(t, stream, inboxRequest{
 			Action:  "group_retrieve_cursor",
-			GroupId: "group-cursor-auth",
+			GroupId: testCanonicalGroupCursorID,
 			Cursor:  cursor,
 			Limit:   limit,
 		})

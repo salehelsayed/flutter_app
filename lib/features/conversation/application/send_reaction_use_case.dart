@@ -88,6 +88,9 @@ Future<(SendReactionResult, MessageReaction?)> sendReaction({
     }
     jsonString = ReactionPayload.buildEncryptedEnvelope(
       senderPeerId: senderPeerId,
+      eventId: reactionId,
+      action: ReactionPayload.addAction,
+      targetMessageId: messageId,
       kem: encryptResult['kem'] as String,
       ciphertext: encryptResult['ciphertext'] as String,
       nonce: encryptResult['nonce'] as String,
@@ -118,8 +121,9 @@ Future<(SendReactionResult, MessageReaction?)> sendReaction({
       layer: 'FL',
       event: 'REACTION_SEND_CONCURRENT_INBOX_BEGIN',
       details: {
-        'messageId':
-            messageId.length > 8 ? messageId.substring(0, 8) : messageId,
+        'messageId': messageId.length > 8
+            ? messageId.substring(0, 8)
+            : messageId,
       },
     );
     concurrentInbox = p2pService

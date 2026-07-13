@@ -5095,6 +5095,13 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Message'**
   String get contact_profile_message_button;
+
+  /// Generic body for a one-to-one private-media notification.
+  String get private_media_notification_body;
+
+  /// Generic body for a group private-media notification.
+  String get group_private_media_notification_body;
+
 }
 
 class _AppLocalizationsDelegate

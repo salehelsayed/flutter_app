@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:flutter_app/core/media/private_media_policy.dart';
+
 import 'conversation_message.dart';
 
 /// Wire-format model for chat messages sent over P2P.
@@ -34,6 +36,10 @@ class MessagePayload {
   /// Direct-only forwarding marker. Rides v1 payload / encrypted v2 inner JSON.
   final bool isForwarded;
 
+  /// Versioned private-media policy. This field is serialized only by
+  /// [toInnerJson] and parsed only by [fromDecryptedJson].
+  final PrivateMediaPolicy privateMediaPolicy;
+
   const MessagePayload({
     required this.id,
     required this.text,
@@ -46,6 +52,7 @@ class MessagePayload {
     this.media,
     this.dedupKey,
     this.isForwarded = false,
+    this.privateMediaPolicy = const PrivateMediaPolicy.ordinary(),
   });
 
   bool get isEdit => action == actionEdit;
@@ -203,6 +210,15 @@ class MessagePayload {
       final media = rawMedia
           ?.map((e) => Map<String, dynamic>.from(e as Map))
           .toList();
+      final privateMediaPolicy = PrivateMediaPolicy.fromJson(
+        payload['privateMedia'],
+        eligibility: _privateMediaEligibility(
+          text: text,
+          action: action,
+          isForwarded: isForwarded,
+          media: media,
+        ),
+      );
 
       return MessagePayload(
         id: id,
@@ -216,6 +232,7 @@ class MessagePayload {
         media: media,
         dedupKey: dedupKey,
         isForwarded: isForwarded,
+        privateMediaPolicy: privateMediaPolicy,
       );
     } catch (_) {
       return null;
@@ -226,7 +243,8 @@ class MessagePayload {
   ///
   /// Used as plaintext input for encryption in v2 flow.
   String toInnerJson() {
-    return jsonEncode({
+    final privateMedia = privateMediaPolicy.toJson();
+    final inner = <String, Object?>{
       'id': id,
       'text': text,
       'senderPeerId': senderPeerId,
@@ -238,7 +256,9 @@ class MessagePayload {
       if (media != null && media!.isNotEmpty) 'media': media,
       if (dedupKey != null) 'dedupKey': dedupKey,
       if (isForwarded) 'isForwarded': true,
-    });
+    };
+    if (privateMedia != null) inner['privateMedia'] = privateMedia;
+    return jsonEncode(inner);
   }
 
   /// Converts this wire-format payload to a local ConversationMessage.
@@ -270,6 +290,40 @@ class MessagePayload {
       wireEnvelope: wireEnvelope,
       dedupKey: dedupKey,
       isForwarded: isForwarded,
+      privateMediaPolicy: privateMediaPolicy,
+      privateMediaState: privateMediaPolicy.initialState,
+    );
+  }
+
+  static PrivateMediaEligibility _privateMediaEligibility({
+    required String text,
+    required String action,
+    required bool isForwarded,
+    required List<Map<String, dynamic>>? media,
+  }) {
+    var kind = PrivateMediaAttachmentKind.unknown;
+    if (media != null && media.length == 1) {
+      final item = media.single;
+      final mime = (item['mime'] as String? ?? '').toLowerCase();
+      final mediaType = (item['mediaType'] as String? ?? '').toLowerCase();
+      if (mime == 'image/gif' || mediaType == 'gif') {
+        kind = PrivateMediaAttachmentKind.gif;
+      } else if (mime.startsWith('image/') || mediaType == 'image') {
+        kind = PrivateMediaAttachmentKind.image;
+      } else if (mime.startsWith('video/') || mediaType == 'video') {
+        kind = PrivateMediaAttachmentKind.video;
+      } else if (mime.startsWith('audio/') || mediaType == 'audio') {
+        kind = PrivateMediaAttachmentKind.audio;
+      } else if (mime.isNotEmpty || mediaType == 'file') {
+        kind = PrivateMediaAttachmentKind.file;
+      }
+    }
+    return PrivateMediaEligibility(
+      attachmentCount: media?.length ?? 0,
+      attachmentKind: kind,
+      hasTextOrCaption: text.trim().isNotEmpty,
+      isEdit: action == actionEdit,
+      isForward: isForwarded,
     );
   }
 }

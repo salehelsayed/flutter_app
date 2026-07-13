@@ -1552,5 +1552,7 @@
   "contact_profile_copied": "In die Zwischenablage kopiert",
   "contact_profile_connected_since_label": "Verbunden seit",
   "contact_profile_introduced_by_label": "Vorgestellt von",
-  "contact_profile_message_button": "Nachricht"
+  "contact_profile_message_button": "Nachricht",
+  "private_media_notification_body": "Private Medien",
+  "group_private_media_notification_body": "Neue private Medien"
 }

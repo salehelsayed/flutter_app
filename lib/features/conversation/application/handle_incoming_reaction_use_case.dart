@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_payload.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
@@ -33,6 +35,12 @@ enum HandleReactionResult {
 
   /// Stream sender and decrypted payload sender do not agree.
   senderMismatch,
+
+  /// Optional clear notification metadata disagrees with decrypted content.
+  metadataMismatch,
+
+  /// The sender is a known but blocked contact.
+  blockedSender,
 }
 
 /// Parses an incoming P2P ChatMessage for message_reaction type,
@@ -57,6 +65,7 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
   consumeRecentRemoteNotificationAnnouncement,
   MarkRecentRemoteNotificationAnnouncement?
   markRecentRemoteNotificationAnnouncement,
+  ResolveDurableNotificationCoordinator? durableNotificationCoordinatorResolver,
   bool suppressReactionNotification = false,
 }) async {
   emitFlowEvent(
@@ -72,6 +81,9 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
   // 1. Try v2 encrypted envelope (v1 reactions are rejected — encryption required)
   final v2Envelope = ReactionPayload.parseEncryptedEnvelope(message.content);
   final envelopeSenderPeerId = v2Envelope?['senderPeerId'] as String?;
+  final envelopeEventId = v2Envelope?['eventId'] as String?;
+  final envelopeAction = v2Envelope?['action'] as String?;
+  final envelopeTargetMessageId = v2Envelope?['targetMessageId'] as String?;
   if (v2Envelope == null) {
     // Could be v1 or not a reaction at all
     final v1Payload = ReactionPayload.fromJson(message.content);
@@ -163,6 +175,20 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
     return (HandleReactionResult.senderMismatch, null);
   }
 
+  final metadataMismatch =
+      (envelopeEventId != null && envelopeEventId != payload.id) ||
+      (envelopeAction != null && envelopeAction != payload.action) ||
+      (envelopeTargetMessageId != null &&
+          envelopeTargetMessageId != payload.messageId);
+  if (metadataMismatch) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'REACTION_RECEIVE_METADATA_MISMATCH',
+      details: {},
+    );
+    return (HandleReactionResult.metadataMismatch, null);
+  }
+
   // 3. Validate sender is a known contact
   final contact = await contactRepo.getContact(payload.senderPeerId);
   if (contact == null) {
@@ -176,6 +202,14 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
       },
     );
     return (HandleReactionResult.unknownSender, null);
+  }
+  if (contact.isBlocked) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'REACTION_RECEIVE_BLOCKED_SENDER',
+      details: {},
+    );
+    return (HandleReactionResult.blockedSender, null);
   }
 
   // 4. Validate the target message still exists and is not deleted.
@@ -194,40 +228,50 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
     return (HandleReactionResult.targetUnavailable, null);
   }
 
-  final currentReaction =
-      await reactionRepo.getReactionForSenderIncludingRemoved(
-    messageId: payload.messageId,
-    senderPeerId: payload.senderPeerId,
-  );
-  if (_isStaleComparedToCurrent(
-    incomingTimestamp: payload.timestamp,
-    // Comparand is the latest event's timestamp: a tombstone's removed_at when
-    // present (always >= the add timestamp), else the add timestamp (INV-T2).
-    currentTimestamp: currentReaction == null
-        ? null
-        : (currentReaction.removedAt ?? currentReaction.timestamp),
-  )) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'REACTION_RECEIVE_STALE_IGNORED',
-      details: {
-        'messageId': payload.messageId.length > 8
-            ? payload.messageId.substring(0, 8)
-            : payload.messageId,
-        'incomingAction': payload.action,
-        'incomingEmoji': payload.emoji,
-      },
-    );
-    return (HandleReactionResult.success, null);
-  }
-
   // 5. Process action
-  if (payload.action == 'remove') {
-    await reactionRepo.removeReaction(
-      payload.messageId,
-      payload.senderPeerId,
-      removedAtTimestamp: payload.timestamp,
-    );
+  if (payload.action == ReactionPayload.removeAction) {
+    final atomicRepository =
+        reactionRepo is AtomicIncomingReactionMutationRepository
+        ? reactionRepo as AtomicIncomingReactionMutationRepository
+        : null;
+    if (atomicRepository != null) {
+      final applyResult = await atomicRepository.applyIncomingRemove(
+        payload.toMessageReaction(),
+      );
+      if (applyResult == ReactionRemoveApplyResult.stale ||
+          applyResult == ReactionRemoveApplyResult.exactReplay) {
+        if (applyResult == ReactionRemoveApplyResult.stale) {
+          _emitStaleReaction(payload);
+        } else {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'REACTION_RECEIVE_EXACT_REPLAY_IGNORED',
+            details: {},
+          );
+        }
+        return (HandleReactionResult.success, null);
+      }
+    } else {
+      final currentReaction = await reactionRepo
+          .getReactionForSenderIncludingRemoved(
+            messageId: payload.messageId,
+            senderPeerId: payload.senderPeerId,
+          );
+      if (_isStaleComparedToCurrent(
+        incomingTimestamp: payload.timestamp,
+        currentTimestamp: currentReaction == null
+            ? null
+            : (currentReaction.removedAt ?? currentReaction.timestamp),
+      )) {
+        _emitStaleReaction(payload);
+        return (HandleReactionResult.success, null);
+      }
+      await reactionRepo.removeReaction(
+        payload.messageId,
+        payload.senderPeerId,
+        removedAtTimestamp: payload.timestamp,
+      );
+    }
     emitFlowEvent(
       layer: 'FL',
       event: 'REACTION_RECEIVE_REMOVED',
@@ -249,7 +293,20 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
 
   // action == 'add'
   final reaction = payload.toMessageReaction();
-  await reactionRepo.saveReaction(reaction);
+  final applyResult = await reactionRepo.applyIncomingAdd(reaction);
+  if (applyResult == ReactionAddApplyResult.exactReplay ||
+      applyResult == ReactionAddApplyResult.stale) {
+    if (applyResult == ReactionAddApplyResult.stale) {
+      _emitStaleReaction(payload);
+    } else {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'REACTION_RECEIVE_EXACT_REPLAY_IGNORED',
+        details: {},
+      );
+    }
+    return (HandleReactionResult.success, null);
+  }
 
   emitFlowEvent(
     layer: 'FL',
@@ -269,7 +326,11 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
   // forget: the OS call must never delay or fail the reaction commit/ack.
   if (notificationService != null &&
       conversationTracker != null &&
-      getAppLifecycleState != null) {
+      getAppLifecycleState != null &&
+      _targetWasAuthoredByLocalRecipient(
+        targetMessage: targetMessage,
+        incomingEnvelope: message,
+      )) {
     unawaited(
       maybeShowNotification(
         notificationService: notificationService,
@@ -279,6 +340,8 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
         senderUsername: contact.username,
         messageText: 'Reacted ${payload.emoji} to your message',
         messageId: reaction.id,
+        notificationEventIdentity: boundedReactionEventIdentity(reaction.id),
+        notificationEventType: 'message_reaction',
         suppressNotification: suppressReactionNotification,
         suppressionReason: 'reaction_recovery_replay',
         toneTracker: notificationToneTracker,
@@ -286,11 +349,39 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
             consumeRecentRemoteNotificationAnnouncement,
         markRecentRemoteNotificationAnnouncement:
             markRecentRemoteNotificationAnnouncement,
+        durableNotificationCoordinatorResolver:
+            durableNotificationCoordinatorResolver,
       ),
     );
   }
 
   return (HandleReactionResult.success, ReactionChange.upsert(reaction));
+}
+
+bool _targetWasAuthoredByLocalRecipient({
+  required ConversationMessage targetMessage,
+  required ChatMessage incomingEnvelope,
+}) {
+  // The incoming stream's `to` is the local transport identity. Requiring the
+  // stored outgoing target to name the same author makes missing identity data
+  // fail closed while keeping persistence independent from notification.
+  return targetMessage.isIncoming == false &&
+      incomingEnvelope.to.isNotEmpty &&
+      targetMessage.senderPeerId == incomingEnvelope.to;
+}
+
+void _emitStaleReaction(ReactionPayload payload) {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'REACTION_RECEIVE_STALE_IGNORED',
+    details: {
+      'messageId': payload.messageId.length > 8
+          ? payload.messageId.substring(0, 8)
+          : payload.messageId,
+      'incomingAction': payload.action,
+      'incomingEmoji': payload.emoji,
+    },
+  );
 }
 
 bool _isStaleComparedToCurrent({

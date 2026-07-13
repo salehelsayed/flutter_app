@@ -12,6 +12,7 @@ class PushRegistrationCoordinator {
   final Stream<String> tokenRefreshStream;
   final Duration retryDelay;
   final bool Function() isEnabled;
+  final Map<String, dynamic> Function()? registrationSuccessDetails;
 
   StreamSubscription<String>? _tokenRefreshSubscription;
   Timer? _retryTimer;
@@ -26,6 +27,7 @@ class PushRegistrationCoordinator {
     required this.tokenRefreshStream,
     this.retryDelay = const Duration(seconds: 15),
     bool Function()? isEnabled,
+    this.registrationSuccessDetails,
   }) : isEnabled = isEnabled ?? (() => true);
 
   Future<void> ensureStarted() async {
@@ -142,7 +144,10 @@ class PushRegistrationCoordinator {
           emitFlowEvent(
             layer: 'FL',
             event: 'PUSH_REGISTER_COORDINATOR_SUCCESS',
-            details: {'trigger': trigger},
+            details: <String, dynamic>{
+              'trigger': trigger,
+              ...?registrationSuccessDetails?.call(),
+            },
           );
           return;
         case RegisterPushTokenResult.noToken:

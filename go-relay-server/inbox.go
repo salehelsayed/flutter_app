@@ -59,6 +59,11 @@ const (
 	// we drop the encrypted fields and emit a visible generic fallback instead.
 	// 4000 leaves headroom under FCM's 4096 for SDK/wire overhead.
 	maxPushDataBytes = 4000
+	// Measure the complete platform payloads, not only the raw data values.
+	// Keeping a 296-byte margin below the provider's 4096-byte ceiling absorbs
+	// encoding differences between the Admin SDK request and the final platform
+	// payload without sacrificing ordinary encrypted previews.
+	maxProviderPayloadBytes = 3800
 )
 
 func defaultPushRetryDelays() []time.Duration {
@@ -78,9 +83,10 @@ type PushService struct {
 }
 
 type tokenEntry struct {
-	Token     string
-	Platform  string
-	UpdatedAt time.Time
+	Token        string
+	Platform     string
+	Capabilities []string `json:"Capabilities,omitempty"`
+	UpdatedAt    time.Time
 }
 
 func NewPushService(ctx context.Context, serviceAccountPath string) *PushService {
@@ -130,9 +136,17 @@ func (ps *PushService) Status() string {
 	return "disabled (no service account)"
 }
 
-func (ps *PushService) RegisterToken(peerId, token, platform string) {
-	ps.tokenBackend.RegisterToken(peerId, token, platform)
+func (ps *PushService) RegisterToken(
+	peerId,
+	token,
+	platform string,
+	capabilities ...string,
+) error {
+	if err := ps.tokenBackend.RegisterToken(peerId, token, platform, capabilities...); err != nil {
+		return fmt.Errorf("persist push token: %w", err)
+	}
 	log.Printf("[PUSH] Token registered for %s (%s)", peerId[:min(20, len(peerId))], platform)
+	return nil
 }
 
 func (ps *PushService) UnregisterToken(peerId string) {
@@ -153,10 +167,59 @@ func (ps *PushService) SendNotification(ctx context.Context, toPeerId, fromPeerI
 	ps.sendWithRetry(ctx, toPeerId, msg, "chat", "")
 }
 
+func (ps *PushService) recipientSupportsCapability(peerID, capability string) bool {
+	if ps == nil || ps.tokenBackend == nil {
+		return false
+	}
+	entry := ps.tokenBackend.LookupToken(peerID)
+	return entry != nil && entry.hasCapability(capability)
+}
+
+func (ps *PushService) SendReactionNotification(
+	ctx context.Context,
+	toPeerID string,
+	authenticatedFromPeerID string,
+	message string,
+) {
+	entry := ps.tokenBackend.LookupToken(toPeerID)
+	if entry == nil || !entry.hasCapability(directReactionCapability) {
+		pushSentCounter.WithLabelValues("reaction_incapable").Inc()
+		return
+	}
+	msg := buildReactionPushMessage(entry.Token, authenticatedFromPeerID, message)
+	if msg == nil {
+		pushSentCounter.WithLabelValues("reaction_invalid").Inc()
+		return
+	}
+	ps.sendWithRetry(ctx, toPeerID, msg, "reaction", "")
+}
+
+func (ps *PushService) SendGroupReactionNotification(
+	ctx context.Context,
+	toPeerID string,
+	groupID string,
+	message string,
+	metadata groupReactionPushMetadata,
+) {
+	entry := ps.tokenBackend.LookupToken(toPeerID)
+	if entry == nil || !entry.hasCapability(groupReactionCapability) {
+		pushSentCounter.WithLabelValues("group_reaction_incapable").Inc()
+		return
+	}
+	msg := buildGroupReactionPushMessage(entry.Token, groupID, message, metadata)
+	if msg == nil {
+		pushSentCounter.WithLabelValues("group_reaction_invalid").Inc()
+		return
+	}
+	msg = projectGroupReactionPushMessageForPlatform(msg, entry.Platform)
+	ps.sendWithRetry(ctx, toPeerID, msg, "group_reaction", groupID)
+}
+
 func (ps *PushService) SendGroupNotification(
 	ctx context.Context,
 	toPeerId string,
 	groupId string,
+	senderTransportPeerID string,
 	messageID string,
 	message string,
 ) {
@@ -169,7 +232,13 @@ func (ps *PushService) SendGroupNotification(
 		return
 	}
 
-	msg := buildGroupPushMessage(entry.Token, groupId, messageID, message)
+	msg := buildGroupPushMessage(
+		entry.Token,
+		groupId,
+		senderTransportPeerID,
+		messageID,
+		message,
+	)
 	ps.sendWithRetry(ctx, toPeerId, msg, "group", groupId)
 }
 
@@ -192,6 +261,13 @@ func (ps *PushService) sendWithRetry(
 	pushKind string,
 	groupId string,
 ) {
+	if msg == nil {
+		pushSentCounter.WithLabelValues("invalid_payload").Inc()
+		log.Printf("[PUSH] Refusing %s push to %s: required routing cannot fit provider budget",
+			pushKind,
+			toPeerId[:min(20, len(toPeerId))])
+		return
+	}
 	totalAttempts := len(ps.retryDelays) + 1
 
 	for attempt := 1; attempt <= totalAttempts; attempt++ {
@@ -220,6 +296,42 @@ func (ps *PushService) sendWithRetry(
 				toPeerId[:min(20, len(toPeerId))],
 				pushKind,
 				err)
+			return
+		}
+
+		if isPayloadTooLargeError(err) {
+			// A provider size rejection is permanent for this exact object. Rebuild
+			// once from authenticated routing fields only, then make exactly one
+			// final send attempt; never burn the transient retry budget resending the
+			// same invalid payload.
+			strict := buildStrictMinimalFallbackPushMessage(msg)
+			if strict == nil {
+				pushSentCounter.WithLabelValues("payload_too_large").Inc()
+				log.Printf("[PUSH] Refusing oversized %s push to %s: no smaller valid routing payload",
+					pushKind,
+					toPeerId[:min(20, len(toPeerId))])
+				return
+			}
+
+			fallbackErr := ps.send(ctx, strict)
+			if fallbackErr == nil {
+				pushSentCounter.WithLabelValues("success").Inc()
+				pushSentCounter.WithLabelValues("payload_too_large_fallback").Inc()
+				log.Printf("[PUSH] Strict routing fallback sent to %s after provider rejected %s payload size",
+					toPeerId[:min(20, len(toPeerId))],
+					pushKind)
+				return
+			}
+			if isInvalidTokenError(fallbackErr) {
+				ps.tokenBackend.UnregisterToken(toPeerId)
+				pushSentCounter.WithLabelValues("invalid_token").Inc()
+			} else {
+				pushSentCounter.WithLabelValues("failed").Inc()
+			}
+			log.Printf("[PUSH] Strict routing fallback to %s failed after provider rejected %s payload size: %v",
+				toPeerId[:min(20, len(toPeerId))],
+				pushKind,
+				fallbackErr)
 			return
 		}
 
@@ -300,10 +412,11 @@ func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
 			data["message_id"] = metadata.MessageID
 		}
 		addChatEncryptedPushData(data, message)
-		if pushDataSize(data) > maxPushDataBytes {
+		message := buildCiphertextOnlyPushMessage(token, data, fromPeerId)
+		if pushDataSize(data) > maxPushDataBytes || !messageFitsProviderBudgets(message) {
 			// Oversized media envelope: FCM would reject the silent ciphertext-only
-			// push (>4 KB). Drop the encrypted payload, keep only routing, and emit a
-			// visible generic fallback so the offline recipient is still alerted.
+			// push (>4 KB). Drop the encrypted payload and keep only routing. Android
+			// renders locally after policy checks; APNS retains a generic alert.
 			fallback := map[string]string{
 				"type":                "new_message",
 				"sender_id":           fromPeerId,
@@ -314,7 +427,7 @@ func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
 			}
 			return buildOversizedFallbackPushMessage(token, fallback, fromPeerId)
 		}
-		return buildCiphertextOnlyPushMessage(token, data, fromPeerId)
+		return message
 	}
 
 	resolvedTitle := metadata.SenderUsername
@@ -407,22 +520,32 @@ func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
 	}
 }
 
-func buildGroupPushMessage(token, groupId, messageID, message string) *messaging.Message {
+func buildGroupPushMessage(
+	token,
+	groupId,
+	senderTransportPeerID,
+	messageID,
+	message string,
+) *messaging.Message {
 	data := map[string]string{
-		"type":    "group_message",
-		"groupId": groupId,
+		"type":                     "group_message",
+		"groupId":                  groupId,
+		"sender_transport_peer_id": senderTransportPeerID,
 	}
 	if messageID != "" {
 		data["message_id"] = messageID
 	}
 	addGroupEncryptedPushData(data, message)
-	if pushDataSize(data) > maxPushDataBytes {
+	pushMessage := buildCiphertextOnlyPushMessage(token, data, groupId)
+	if pushDataSize(data) > maxPushDataBytes || !messageFitsProviderBudgets(pushMessage) {
 		// Oversized group media envelope: same as the 1:1 path — drop the encrypted
-		// payload, keep only routing, emit a visible generic fallback under budget.
+		// payload and keep only routing. Android renders locally after policy checks;
+		// APNS retains a generic alert.
 		fallback := map[string]string{
-			"type":                "group_message",
-			"groupId":             groupId,
-			"preview_unavailable": "1",
+			"type":                     "group_message",
+			"groupId":                  groupId,
+			"sender_transport_peer_id": senderTransportPeerID,
+			"preview_unavailable":      "1",
 		}
 		if data["message_id"] != "" {
 			fallback["message_id"] = data["message_id"]
@@ -430,7 +553,7 @@ func buildGroupPushMessage(token, groupId, messageID, message string) *messaging
 		return buildOversizedFallbackPushMessage(token, fallback, groupId)
 	}
 
-	return buildCiphertextOnlyPushMessage(token, data, groupId)
+	return pushMessage
 }
 
 func buildCiphertextOnlyPushMessage(token string, data map[string]string, threadID string) *messaging.Message {
@@ -477,28 +600,96 @@ func pushDataSize(data map[string]string) int {
 	return total
 }
 
-// buildOversizedFallbackPushMessage builds a VISIBLE, under-budget notification
-// for a push whose encrypted payload would exceed maxPushDataBytes (e.g. a media
-// envelope). The caller has already trimmed `data` down to minimal routing keys
-// (+ preview_unavailable="1"); here we attach generic, content-free copy to the
-// FCM/Android/APNS notification blocks so the offline recipient is alerted and
-// the client fetches the real message from the inbox on open. Unlike the silent
-// ciphertext-only push, there is nothing to decrypt, so MutableContent stays off
-// and the generic alert is shown directly.
-func buildOversizedFallbackPushMessage(token string, data map[string]string, threadID string) *messaging.Message {
-	// Defensive clamp: the routing-only fallback must itself stay under budget.
-	// message_id is copied from the remote-supplied envelope (id/messageId), so a
-	// pathologically large id could keep the fallback oversized and re-trigger the
-	// FCM rejection. Drop it if needed — routing by sender_id/groupId (server-bounded
-	// peer/group identifiers) still alerts the recipient, so INV-1 holds unconditionally.
-	if pushDataSize(data) > maxPushDataBytes {
-		delete(data, "message_id")
+type providerPayloadSize struct {
+	FCM  int
+	APNS int
+}
+
+// providerEquivalentPayloadSize measures the two complete platform payloads
+// FCM materializes for this cross-platform message. The Android/FCM leg
+// includes data, notification, and Android configuration; the APNS leg uses
+// APNSPayload.MarshalJSON, which merges `aps` and every custom routing key.
+// Token and APNS headers route the request but are not part of either delivered
+// provider payload.
+func providerEquivalentPayloadSize(msg *messaging.Message) (providerPayloadSize, error) {
+	if msg == nil {
+		return providerPayloadSize{}, fmt.Errorf("nil push message")
+	}
+	androidPayload := struct {
+		Data         map[string]string        `json:"data,omitempty"`
+		Notification *messaging.Notification  `json:"notification,omitempty"`
+		Android      *messaging.AndroidConfig `json:"android,omitempty"`
+	}{
+		Data:         msg.Data,
+		Notification: msg.Notification,
+		Android:      msg.Android,
+	}
+	fcmBytes, err := json.Marshal(androidPayload)
+	if err != nil {
+		return providerPayloadSize{}, err
 	}
 
-	pushSentCounter.WithLabelValues("oversized_fallback").Inc()
+	apnsSize := 0
+	if msg.APNS != nil && msg.APNS.Payload != nil {
+		apnsBytes, marshalErr := json.Marshal(msg.APNS.Payload)
+		if marshalErr != nil {
+			return providerPayloadSize{}, marshalErr
+		}
+		apnsSize = len(apnsBytes)
+	}
+	return providerPayloadSize{FCM: len(fcmBytes), APNS: apnsSize}, nil
+}
+
+func messageFitsProviderBudgets(msg *messaging.Message) bool {
+	sizes, err := providerEquivalentPayloadSize(msg)
+	return err == nil &&
+		sizes.FCM <= maxProviderPayloadBytes &&
+		sizes.APNS <= maxProviderPayloadBytes
+}
+
+// buildOversizedFallbackPushMessage builds an under-budget fallback for a push
+// whose encrypted payload would exceed maxPushDataBytes (e.g. a media envelope).
+// The caller has already trimmed `data` down to minimal routing keys
+// (+ preview_unavailable="1"). Android must remain routing-only so the background
+// handler owns display eligibility, dedupe, mute, and local notification copy;
+// including either FCM's top-level Notification or Android.Notification would let
+// the provider auto-display a second, policy-bypassing notification. APNS retains
+// a generic visible alert because its notification service extension needs an
+// alert-class delivery. MutableContent remains on even though the oversized
+// ciphertext was removed: the NSE still owns recipient policy, dedupe, tone,
+// and trusted routing-copy selection for this routing-only fallback.
+func buildOversizedFallbackPushMessage(token string, data map[string]string, threadID string) *messaging.Message {
+	routing := cloneStringMap(data)
+	if !hasRequiredFallbackRouting(routing) {
+		return nil
+	}
+
+	// message_id and APNS thread-id are useful but optional. Remove them one at a
+	// time and remeasure the complete platform payloads after each reduction.
+	// Required routing is never dropped; if it cannot fit, refuse the send.
+	for {
+		msg := newOversizedFallbackPushMessage(token, routing, threadID)
+		if messageFitsProviderBudgets(msg) {
+			pushSentCounter.WithLabelValues("oversized_fallback").Inc()
+			return msg
+		}
+		if _, ok := routing["message_id"]; ok {
+			delete(routing, "message_id")
+			continue
+		}
+		if threadID != "" {
+			threadID = ""
+			continue
+		}
+		return nil
+	}
+}
+
+func newOversizedFallbackPushMessage(token string, data map[string]string, threadID string) *messaging.Message {
 
 	aps := &messaging.Aps{
 		ContentAvailable: true,
+		MutableContent:   true,
 		Sound:            pushNotificationSound,
 		Alert: &messaging.ApsAlert{
 			Title: pushNotificationTitle,
@@ -511,18 +702,9 @@ func buildOversizedFallbackPushMessage(token string, data map[string]string, thr
 
 	return &messaging.Message{
 		Token: token,
-		Notification: &messaging.Notification{
-			Title: pushNotificationTitle,
-			Body:  pushNotificationBody,
-		},
-		Data: data,
+		Data:  data,
 		Android: &messaging.AndroidConfig{
 			Priority: "high",
-			Notification: &messaging.AndroidNotification{
-				Title:     pushNotificationTitle,
-				Body:      pushNotificationBody,
-				ChannelID: pushNotificationChannelID,
-			},
 		},
 		APNS: &messaging.APNSConfig{
 			Headers: map[string]string{
@@ -535,6 +717,75 @@ func buildOversizedFallbackPushMessage(token string, data map[string]string, thr
 			},
 		},
 	}
+}
+
+func cloneStringMap(source map[string]string) map[string]string {
+	cloned := make(map[string]string, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func hasRequiredFallbackRouting(data map[string]string) bool {
+	if data["preview_unavailable"] != "1" {
+		return false
+	}
+	switch data["type"] {
+	case "new_message":
+		return strings.TrimSpace(data["sender_id"]) != ""
+	case "group_message":
+		return strings.TrimSpace(data["groupId"]) != "" &&
+			strings.TrimSpace(data["sender_transport_peer_id"]) != ""
+	default:
+		return false
+	}
+}
+
+func buildStrictMinimalFallbackPushMessage(msg *messaging.Message) *messaging.Message {
+	if msg == nil {
+		return nil
+	}
+	data := map[string]string{
+		"type":                msg.Data["type"],
+		"preview_unavailable": "1",
+	}
+	switch data["type"] {
+	case "new_message":
+		data["sender_id"] = msg.Data["sender_id"]
+	case "group_message":
+		data["groupId"] = msg.Data["groupId"]
+		data["sender_transport_peer_id"] = msg.Data["sender_transport_peer_id"]
+	default:
+		return nil
+	}
+	if !hasRequiredFallbackRouting(data) {
+		return nil
+	}
+	if msg.Data["preview_unavailable"] == "1" &&
+		len(msg.Data) == len(data) &&
+		msg.APNS != nil && msg.APNS.Payload != nil && msg.APNS.Payload.Aps != nil &&
+		msg.APNS.Payload.Aps.ThreadID == "" {
+		return nil
+	}
+	return buildOversizedFallbackPushMessage(msg.Token, data, "")
+}
+
+func isPayloadTooLargeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "message is too large") ||
+		strings.Contains(message, "message too large") ||
+		strings.Contains(message, "message too big") ||
+		strings.Contains(message, "messagetoobig") ||
+		strings.Contains(message, "payload too large") ||
+		strings.Contains(message, "payloadtoolarge") ||
+		strings.Contains(message, "payload-size-limit-exceeded") ||
+		strings.Contains(message, "maximum is 4k") ||
+		strings.Contains(message, "maximum is 4096") ||
+		strings.Contains(message, "request entity too large")
 }
 
 func apnsCustomDataFromPushData(data map[string]string) map[string]interface{} {
@@ -639,6 +890,11 @@ type chatPushMetadata struct {
 	// absent, malformed, or (for v1) conflicts with the cleartext payload
 	// action — those fail closed to generic introduction copy.
 	IntroAction string
+	// Plan 256 additive direct-reaction notification metadata. These remain
+	// empty for legacy v2 envelopes, which are still stored/replayed silently.
+	ReactionEventID         string
+	ReactionAction          string
+	ReactionTargetMessageID string
 }
 
 // introductionEnvelopeIdentity is the validated identity carried by a
@@ -696,6 +952,16 @@ func extractChatPushMetadata(message string) chatPushMetadata {
 	}
 
 	switch trimmedString(envelope["type"]) {
+	case "message_reaction":
+		reaction, _, eligible := extractDirectReactionPushMetadata(message)
+		return chatPushMetadata{
+			ShouldNotify:            eligible,
+			RouteType:               "message_reaction",
+			MessageID:               reaction.EventID,
+			ReactionEventID:         reaction.EventID,
+			ReactionAction:          reaction.Action,
+			ReactionTargetMessageID: reaction.TargetMessageID,
+		}
 	case "introduction":
 		metadata := chatPushMetadata{
 			ShouldNotify: true,
@@ -834,6 +1100,22 @@ func extractMessageId(message string) string {
 		return id
 	}
 
+	// Plan 256: direct-reaction v2 uses its immutable event identity as the
+	// relay dedupe key. targetMessageId is deliberately not an event identity:
+	// distinct reactions to the same authored message must remain distinct.
+	if envelope["type"] == "message_reaction" {
+		if eventID := exactString(envelope["eventId"]); eventID != "" {
+			return eventID
+		}
+	}
+
+	// Plan 257: a cryptographically valid group-reaction notification extension
+	// supplies the immutable transition identity used by both memory and Redis
+	// custody. Legacy or invalid extensions retain the base v1 messageId fallback.
+	if reaction, recognized, valid := extractGroupReactionPushMetadata(message, "", "", nil); recognized && valid {
+		return reaction.TransitionID
+	}
+
 	if id, ok := envelope["messageId"].(string); ok && id != "" {
 		return id
 	}
@@ -892,6 +1174,13 @@ type InboxStore struct {
 	// FDC-09 §12 access-token wake gate (always non-nil; fail-open until a
 	// recipient registers a set).
 	wakeTokens *memoryWakeTokenStore
+	// Plan 256: typed direct-reaction wake is separately default-off. Ordinary
+	// inbox custody and ordinary push eligibility are unchanged by this flag.
+	directReactionPushEnabled bool
+}
+
+func (is *InboxStore) SetDirectReactionPushEnabled(enabled bool) {
+	is.directReactionPushEnabled = enabled
 }
 
 // NewInboxStore creates an InboxStore with an in-memory backend.
@@ -988,6 +1277,33 @@ func (is *InboxStore) Store(toPeerId string, entry inboxMessage) (InboxStoreResu
 	// FAIL-OPEN when the recipient has registered no wake-token set, so existing
 	// push delivery for already-paired contacts is unchanged. The message is
 	// already STORED above either way — only the wake is gated (delivery preserved).
+	if reaction, recognizedReaction, eligibleReaction := extractDirectReactionPushMetadata(entry.Message); recognizedReaction {
+		if !eligibleReaction || reaction.EnvelopeSender != entry.From || !is.directReactionPushEnabled {
+			return InboxStoreResultStored, nil
+		}
+		// Unlike the global ordinary-message wake gate, direct reactions NEVER
+		// fail open. The recipient must have explicitly registered a set and the
+		// presented opaque token must be a member of it.
+		authorized := is.wakeTokens != nil &&
+			is.wakeTokens.HasRegisteredSet(toPeerId) &&
+			is.wakeTokens.IsAuthorized(toPeerId, entry.WakeToken)
+		if !authorized {
+			pushSentCounter.WithLabelValues("reaction_unauthorized").Inc()
+			return InboxStoreResultStored, nil
+		}
+		if is.push == nil || !is.push.recipientSupportsCapability(toPeerId, directReactionCapability) {
+			pushSentCounter.WithLabelValues("reaction_incapable").Inc()
+			return InboxStoreResultStored, nil
+		}
+		go is.push.SendReactionNotification(
+			context.Background(),
+			toPeerId,
+			entry.From,
+			entry.Message,
+		)
+		return InboxStoreResultStored, nil
+	}
+
 	if metadata := extractChatPushMetadata(entry.Message); metadata.ShouldNotify {
 		if is.wakeTokens == nil || !wakeTokenGateEnforced ||
 			is.wakeTokens.IsAuthorized(toPeerId, entry.WakeToken) {
@@ -1090,8 +1406,9 @@ type groupInboxHistoryGap struct {
 
 // GroupInboxStore wraps a GroupInboxBackend.
 type GroupInboxStore struct {
-	backend GroupInboxBackend
-	push    *PushService
+	backend                  GroupInboxBackend
+	push                     *PushService
+	groupReactionPushEnabled bool
 }
 
 // NewGroupInboxStore creates a store with an in-memory backend.
@@ -1110,6 +1427,10 @@ func NewGroupInboxStoreWithBackend(backend GroupInboxBackend) *GroupInboxStore {
 
 func (s *GroupInboxStore) SetPush(push *PushService) {
 	s.push = push
+}
+
+func (s *GroupInboxStore) SetGroupReactionPushEnabled(enabled bool) {
+	s.groupReactionPushEnabled = enabled
 }
 
 func (s *GroupInboxStore) Store(groupId, from, message string) error {
@@ -1159,11 +1480,34 @@ func (s *GroupInboxStore) StoreWithPushRecipients(
 	recipientPeerIds []string,
 ) error {
 	normalizedRecipients := normalizePeerIds(recipientPeerIds)
+	reaction, recognizedReaction, validReaction := extractGroupReactionPushMetadata(
+		message,
+		groupId,
+		from,
+		normalizedRecipients,
+	)
+	if recognizedReaction && validReaction {
+		// Persist the exact canonical replay set that was signed. Notification
+		// recipients remain a distinct verified subset and never narrow custody.
+		normalizedRecipients = append(
+			[]string(nil),
+			reaction.ReplayRecipientTransportPeerIDs...,
+		)
+	}
 	result, err := s.store(groupId, from, message, normalizedRecipients)
 	if err != nil {
 		return err
 	}
 	if result == GroupInboxStoreResultDuplicate {
+		return nil
+	}
+	if recognizedReaction {
+		// Legacy, malformed, REMOVE, incapable, and flag-off reactions are silent
+		// custody. Crucially, none can fall through to group_message fanout.
+		if !validReaction || reaction.Action != "add" || !s.groupReactionPushEnabled {
+			return nil
+		}
+		s.fanOutGroupReactionPush(groupId, from, message, reaction)
 		return nil
 	}
 
@@ -1173,6 +1517,30 @@ func (s *GroupInboxStore) StoreWithPushRecipients(
 
 	s.fanOutPush(groupId, from, normalizedRecipients, message)
 	return nil
+}
+
+func (s *GroupInboxStore) fanOutGroupReactionPush(
+	groupID string,
+	from string,
+	message string,
+	metadata groupReactionPushMetadata,
+) {
+	if s.push == nil || len(metadata.NotificationRecipientTransportPeerIDs) == 0 {
+		return
+	}
+	for _, peerID := range metadata.NotificationRecipientTransportPeerIDs {
+		if peerID == "" || peerID == from ||
+			!s.push.recipientSupportsCapability(peerID, groupReactionCapability) {
+			continue
+		}
+		go s.push.SendGroupReactionNotification(
+			context.Background(),
+			peerID,
+			groupID,
+			message,
+			metadata,
+		)
+	}
 }
 
 func (s *GroupInboxStore) shouldFanoutPush(groupId, message string) bool {
@@ -1224,6 +1592,7 @@ func (s *GroupInboxStore) fanOutPush(
 			context.Background(),
 			peerID,
 			groupId,
+			from,
 			messageID,
 			message,
 		)
@@ -1455,6 +1824,19 @@ func normalizePeerIds(peerIds []string) []string {
 	return result
 }
 
+// isCanonicalGroupID accepts the exact UUIDv4 representation emitted by the
+// production group creator: lowercase, hyphenated, and fixed at 36 bytes.
+// Relay ingress rejects every other form before durable storage or push
+// construction, bounding the required group routing field by contract.
+func isCanonicalGroupID(groupID string) bool {
+	if len(groupID) != 36 || strings.TrimSpace(groupID) != groupID {
+		return false
+	}
+	parsed, err := uuid.Parse(groupID)
+	return err == nil && parsed != uuid.Nil &&
+		parsed.Version() == uuid.Version(4) && parsed.String() == groupID
+}
+
 func mergePeerIds(existing []string, incoming []string) []string {
 	merged := normalizePeerIds(existing)
 	if len(incoming) == 0 {
@@ -1563,6 +1945,9 @@ type inboxRequest struct {
 	EntryIds []string               `json:"entryIds,omitempty"`
 	Token    string                 `json:"token,omitempty"`
 	Platform string                 `json:"platform,omitempty"`
+	// Plan 256: recipient-advertised push capabilities are stored with the
+	// authenticated peer's platform token. Legacy registrations omit this field.
+	Capabilities []string `json:"capabilities,omitempty"`
 	// FDC-09 §12 access-token wake gate (additive). WakeToken is the opaque token a
 	// SENDER presents on `store` to authorize waking the recipient; WakeTokens is
 	// the SET a RECIPIENT registers via `register_wake_tokens`. omitempty keeps
@@ -1683,12 +2068,11 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 		if req.To == "" || req.Message == "" {
 			resp = inboxResponse{Status: "ERROR", Error: "Missing required fields: to, message"}
 		} else {
-			from := req.From
-			if from == "" {
-				from = remotePeer
-			}
 			entry := inboxMessage{
-				From:      from,
+				// Direct inbox attribution is always the authenticated libp2p peer.
+				// A caller-supplied `from` is legacy input only and cannot forge push
+				// routing or durable sender custody.
+				From:      remotePeer,
 				Message:   req.Message,
 				Timestamp: time.Now().UnixMilli(),
 				Metadata:  req.Metadata,
@@ -1769,8 +2153,19 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 		if req.Token == "" || req.Platform == "" {
 			resp = inboxResponse{Status: "ERROR", Error: "Missing required fields: token, platform"}
 		} else {
-			inbox.push.RegisterToken(remotePeer, req.Token, req.Platform)
-			resp = inboxResponse{Status: "OK"}
+			err := inbox.push.RegisterToken(
+				remotePeer,
+				req.Token,
+				req.Platform,
+				req.Capabilities...,
+			)
+			if err != nil {
+				log.Printf("[PUSH] Token registration persistence failed for %s: %v",
+					remotePeer[:min(20, len(remotePeer))], err)
+				resp = inboxResponse{Status: "ERROR", Error: "Push token persistence failed"}
+			} else {
+				resp = inboxResponse{Status: "OK"}
+			}
 		}
 
 	case "unregister_token":
@@ -1789,6 +2184,8 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 	case "group_store":
 		if req.GroupId == "" || req.Message == "" {
 			resp = inboxResponse{Status: "ERROR", Error: "Missing required fields: groupId, message"}
+		} else if !isCanonicalGroupID(req.GroupId) {
+			resp = inboxResponse{Status: "ERROR", Error: "invalid groupId"}
 		} else if len(normalizePeerIds(req.RecipientPeerIds)) == 0 {
 			resp = inboxResponse{Status: "ERROR", Error: "Missing required field: recipientPeerIds"}
 		} else {

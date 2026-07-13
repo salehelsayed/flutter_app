@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -7,6 +10,7 @@ import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_app/features/push/application/register_push_token_use_case.dart';
+import 'package:flutter_app/features/push/application/push_relay_registration_proof.dart';
 
 import '../../../shared/fakes/fake_push_token_store.dart';
 
@@ -17,10 +21,14 @@ class _FakeP2PService implements P2PService {
   bool registerResult = true;
   String? lastToken;
   String? lastPlatform;
+  int registerCalls = 0;
+  Future<void> Function()? onRegister;
   NodeState state = const NodeState(isStarted: true, peerId: 'local-peer');
 
   @override
   Future<bool> registerPushToken(String token, String platform) async {
+    registerCalls++;
+    await onRegister?.call();
     lastToken = token;
     lastPlatform = platform;
     return registerResult;
@@ -208,6 +216,194 @@ void main() {
     });
 
     test(
+      'relay proof binds token and identity, persists, and completes once',
+      () async {
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+        Map<String, Object?>? receipt;
+        final now = DateTime.utc(2026, 7, 13, 3);
+        final proof = _relayProof(
+          now: now,
+          completeCommand: (value) async => receipt = value,
+        );
+        expect(proof.bindAccountIdentity('account-peer'), isTrue);
+
+        final result = await registerPushToken(
+          p2pService: p2pService,
+          pushTokenStore: pushTokenStore,
+          isIOSFn: () => false,
+          getTokenFn: () async => 'proof-token',
+          getPlatformFn: () => 'android',
+          relayRegistrationProof: proof,
+        );
+
+        expect(result, RegisterPushTokenResult.success);
+        expect(p2pService.registerCalls, 1);
+        expect(receipt?['relayFrameAccepted'], isTrue);
+        expect(receipt?['tokenPersisted'], isTrue);
+        expect(await pushTokenStore.readToken(), isNotNull);
+        expect(
+          events.map((event) => event['event']),
+          containsAllInOrder(<String>[
+            'PUSH_REGISTER_RELAY_PROOF_TOKEN_MATCHED',
+            'PUSH_REGISTER_TOKEN_SUCCESS',
+            'PUSH_REGISTER_RELAY_PROOF_RELAY_FRAME_ACCEPTED',
+            'PUSH_REGISTER_TOKEN_PERSISTED',
+            'PUSH_REGISTER_RELAY_PROOF_COMPLETE',
+          ]),
+        );
+
+        final duplicate = await registerPushToken(
+          p2pService: p2pService,
+          pushTokenStore: pushTokenStore,
+          isIOSFn: () => false,
+          getTokenFn: () async => 'proof-token',
+          getPlatformFn: () => 'android',
+          relayRegistrationProof: proof,
+        );
+        expect(duplicate, RegisterPushTokenResult.failed);
+        expect(p2pService.registerCalls, 1);
+      },
+    );
+
+    test('relay proof mismatch fails before relay and persistence', () async {
+      final now = DateTime.utc(2026, 7, 13, 3);
+      final proof = _relayProof(now: now);
+      expect(proof.bindAccountIdentity('account-peer'), isTrue);
+
+      final result = await registerPushToken(
+        p2pService: p2pService,
+        pushTokenStore: pushTokenStore,
+        isIOSFn: () => false,
+        getTokenFn: () async => 'wrong-token',
+        getPlatformFn: () => 'android',
+        relayRegistrationProof: proof,
+      );
+
+      expect(result, RegisterPushTokenResult.failed);
+      expect(p2pService.registerCalls, 0);
+      expect(pushTokenStore.writeCallCount, 0);
+    });
+
+    test(
+      'v2 current-token mismatch fails before relay, local persistence, and receipt',
+      () async {
+        final now = DateTime.utc(2026, 7, 13, 3);
+        var receiptCalls = 0;
+        final proof = _relayProof(
+          now: now,
+          currentTokenV2: true,
+          completeCommand: (_) async => receiptCalls++,
+        );
+        expect(proof.bindAccountIdentity('account-peer'), isTrue);
+
+        final result = await registerPushToken(
+          p2pService: p2pService,
+          pushTokenStore: pushTokenStore,
+          isIOSFn: () => false,
+          getTokenFn: () async => 'wrong-token',
+          getPlatformFn: () => 'android',
+          relayRegistrationProof: proof,
+        );
+
+        expect(result, RegisterPushTokenResult.failed);
+        expect(p2pService.registerCalls, 0);
+        expect(pushTokenStore.writeCallCount, 0);
+        expect(receiptCalls, 0);
+      },
+    );
+
+    test(
+      'v2 current token binds live identities, relay ack, and local persistence',
+      () async {
+        final now = DateTime.utc(2026, 7, 13, 3);
+        Map<String, Object?>? receipt;
+        final proof = _relayProof(
+          now: now,
+          currentTokenV2: true,
+          completeCommand: (value) async => receipt = value,
+        );
+        expect(proof.bindAccountIdentity('account-peer'), isTrue);
+
+        final result = await registerPushToken(
+          p2pService: p2pService,
+          pushTokenStore: pushTokenStore,
+          isIOSFn: () => false,
+          getTokenFn: () async => 'proof-token',
+          getPlatformFn: () => 'android',
+          relayRegistrationProof: proof,
+        );
+
+        expect(result, RegisterPushTokenResult.success);
+        expect(p2pService.registerCalls, 1);
+        expect(pushTokenStore.writeCallCount, 1);
+        expect(receipt?['schema'], pushRelayRegistrationProofReceiptSchemaV2);
+        expect(receipt?['authorizationArtifactSha256'], 'b' * 64);
+        expect(receipt?['accountIdentitySha256'], isNotNull);
+        expect(receipt?['transportIdentitySha256'], isNotNull);
+        expect(receipt?['relayFrameAccepted'], isTrue);
+        expect(receipt?['tokenPersisted'], isTrue);
+      },
+    );
+
+    test('relay persistence error produces no proof receipt', () async {
+      final now = DateTime.utc(2026, 7, 13, 3);
+      var receiptCalls = 0;
+      final proof = _relayProof(
+        now: now,
+        completeCommand: (_) async => receiptCalls++,
+      );
+      expect(proof.bindAccountIdentity('account-peer'), isTrue);
+      p2pService.registerResult = false;
+
+      final result = await registerPushToken(
+        p2pService: p2pService,
+        pushTokenStore: pushTokenStore,
+        isIOSFn: () => false,
+        getTokenFn: () async => 'proof-token',
+        getPlatformFn: () => 'android',
+        relayRegistrationProof: proof,
+      );
+
+      expect(result, RegisterPushTokenResult.failed);
+      expect(p2pService.registerCalls, 1);
+      expect(pushTokenStore.writeCallCount, 0);
+      expect(receiptCalls, 0);
+    });
+
+    test(
+      'relay proof expiry after relay ack cannot publish completion',
+      () async {
+        var now = DateTime.utc(2026, 7, 13, 3);
+        var receiptCalls = 0;
+        final proof = _relayProof(
+          now: now,
+          maxAgeSeconds: 30,
+          clock: () => now,
+          completeCommand: (_) async => receiptCalls++,
+        );
+        expect(proof.bindAccountIdentity('account-peer'), isTrue);
+        p2pService.onRegister = () async {
+          now = now.add(const Duration(seconds: 31));
+        };
+
+        final result = await registerPushToken(
+          p2pService: p2pService,
+          pushTokenStore: pushTokenStore,
+          isIOSFn: () => false,
+          getTokenFn: () async => 'proof-token',
+          getPlatformFn: () => 'android',
+          relayRegistrationProof: proof,
+        );
+
+        expect(result, RegisterPushTokenResult.failed);
+        expect(p2pService.registerCalls, 1);
+        expect(receiptCalls, 0);
+      },
+    );
+
+    test(
       'returns failed when token persistence throws after registration',
       () async {
         pushTokenStore.throwOnWrite = true;
@@ -366,4 +562,40 @@ void main() {
     // devices — the 'returns noToken when getToken times out on iOS' test
     // above verifies the timeout-returns-null contract.
   });
+}
+
+PushRelayRegistrationProof _relayProof({
+  required DateTime now,
+  int maxAgeSeconds = 300,
+  bool currentTokenV2 = false,
+  DateTime Function()? clock,
+  Future<void> Function(Map<String, Object?> receipt)? completeCommand,
+}) {
+  final tokenHash = sha256.convert(utf8.encode('proof-token')).toString();
+  return parsePushRelayRegistrationProofCommand(
+    utf8.encode(
+      jsonEncode(<String, Object?>{
+        'schema': currentTokenV2
+            ? pushRelayRegistrationProofCommandSchemaV2
+            : pushRelayRegistrationProofCommandSchema,
+        'commandId': 'tc256-relay-registration-1783911600000000-17',
+        'issuedAt': now.toIso8601String(),
+        'maxAgeSeconds': maxAgeSeconds,
+        'tokenSha256': tokenHash,
+        if (currentTokenV2) ...<String, Object?>{
+          'authorizationKind':
+              pushRelayRegistrationProofCurrentTokenAuthorizationKind,
+          'authorizationArtifactSha256': 'b' * 64,
+          'gateACommandGenerationId':
+              'tc256-gate-a-command-1783911600000000-18',
+        } else ...<String, Object?>{
+          'tokenGenerationId': 'tc256-token-refresh-1783910955896883-866020056',
+          'refreshArtifactSha256': 'a' * 64,
+        },
+      }),
+    ),
+    now: now,
+    clock: clock ?? () => now,
+    completeCommand: completeCommand,
+  );
 }

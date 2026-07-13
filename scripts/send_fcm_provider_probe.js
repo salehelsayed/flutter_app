@@ -95,7 +95,22 @@ function signJwt(serviceAccount) {
   return `${unsigned}.${base64url(signature)}`;
 }
 
-function buildData({probeId, kind}) {
+function buildData({probeId, kind, suppliedData}) {
+  if (suppliedData) {
+    const expectedType = kind === 'reaction'
+      ? 'message_reaction'
+      : kind === 'chat'
+        ? 'new_message'
+        : 'group_message';
+    if (suppliedData.type !== expectedType) usage();
+    if (Object.values(suppliedData).some((value) =>
+      value === null || !['string', 'number', 'boolean'].includes(typeof value)
+    )) usage();
+    return Object.fromEntries(
+      Object.entries(suppliedData).map(([key, value]) => [key, String(value)]),
+    );
+  }
+  if (kind === 'reaction' || kind === 'announcement') usage();
   const now = Date.now().toString();
   if (kind === 'chat') {
     return {
@@ -117,8 +132,41 @@ function buildData({probeId, kind}) {
   };
 }
 
-function buildMessage({token, probeId, mode, kind}) {
-  const data = buildData({probeId, kind});
+function validatePrivateTransportContract(privateRequest, kind) {
+  if (!privateRequest) return;
+  const contract = privateRequest.transportContract;
+  if (!contract || typeof contract !== 'object' || Array.isArray(contract)) usage();
+  if (typeof contract.caseId !== 'string' || !contract.caseId.trim()) usage();
+  if (!['display', 'suppress'].includes(contract.expectedOutcome)) usage();
+  if (kind !== 'group' && kind !== 'announcement') return;
+
+  const data = privateRequest.data;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) usage();
+  if (Object.prototype.hasOwnProperty.call(data, 'sender_id')) usage();
+  const hasTransport = Object.prototype.hasOwnProperty.call(
+    data,
+    'sender_transport_peer_id',
+  );
+  const transport = data.sender_transport_peer_id;
+  if (contract.expectedOutcome === 'display') {
+    if (!hasTransport || typeof transport !== 'string' || !transport.trim()) usage();
+    return;
+  }
+
+  const reason = contract.rejectionReason;
+  if (![
+    'missing_transport',
+    'unknown_transport',
+    'non_admin_announcement',
+  ].includes(reason)) usage();
+  if (reason === 'missing_transport' && hasTransport) usage();
+  if (reason !== 'missing_transport' &&
+      (!hasTransport || typeof transport !== 'string' || !transport.trim())) usage();
+  if (reason === 'non_admin_announcement' && kind !== 'announcement') usage();
+}
+
+function buildMessage({token, probeId, mode, kind, suppliedData}) {
+  const data = buildData({probeId, kind, suppliedData});
   const visible = mode === 'visible';
   const aps = visible
     ? {
@@ -159,15 +207,34 @@ function buildMessage({token, probeId, mode, kind}) {
   };
 }
 
+function validateServiceAccountMode(serviceAccountPath, {validateOnly = false} = {}) {
+  const mode = fs.statSync(serviceAccountPath).mode & 0o777;
+  if (mode !== 0o600) {
+    throw new ProviderPhaseFailure(
+      'request_prepare',
+      providerDiagnostic({stage: 'request_prepare', validateOnly}),
+    );
+  }
+}
+
 async function main() {
-  const token = arg('token');
+  const requestFile = arg('request-file');
+  const privateRequest = requestFile
+    ? JSON.parse(fs.readFileSync(requestFile, 'utf8'))
+    : null;
+  const token = arg('token', privateRequest && privateRequest.token);
+  if (typeof token !== 'string' || !token.trim()) usage();
   const serviceAccountPath =
     arg('service-account', process.env.FIREBASE_SERVICE_ACCOUNT) || usage();
   const mode = arg('mode', 'visible');
   const kind = arg('kind', 'group');
   const probeId = arg('probe-id', new Date().toISOString().replace(/[^0-9TZ]/g, ''));
   if (!['visible', 'data-only'].includes(mode)) usage();
-  if (!['group', 'chat'].includes(kind)) usage();
+  if (!['group', 'chat', 'reaction', 'announcement'].includes(kind)) usage();
+  if (privateRequest && mode !== 'data-only') usage();
+  if ((kind === 'reaction' || kind === 'announcement') && mode !== 'data-only') usage();
+  validatePrivateTransportContract(privateRequest, kind);
+  validateServiceAccountMode(serviceAccountPath, {validateOnly});
 
   const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
   const project = arg('project', serviceAccount.project_id);

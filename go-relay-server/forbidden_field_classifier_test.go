@@ -39,6 +39,7 @@ func TestForbiddenFieldClassifier_MessagePushesDoNotExposePreviewCanaries(t *tes
 			msg: scanPushMessage(buildGroupPushMessage(
 				"fcm-token",
 				"group-team",
+				"peer-alice-transport",
 				"fixture-group-1",
 				`{"kind":"group_offline_replay","version":1,"payloadType":"group_message","keyEpoch":7,"messageId":"fixture-group-1","ciphertext":"fixture-ciphertext","nonce":"fixture-nonce"}`,
 			)),

@@ -1667,5 +1667,7 @@
   "contact_profile_copied": "Copied to clipboard",
   "contact_profile_connected_since_label": "Connected since",
   "contact_profile_introduced_by_label": "Introduced by",
-  "contact_profile_message_button": "Message"
+  "contact_profile_message_button": "Message",
+  "private_media_notification_body": "Private media",
+  "group_private_media_notification_body": "New private media"
 }

@@ -9,7 +9,8 @@ import 'package:flutter_app/features/conversation/domain/models/message_reaction
 ///
 /// Inner payload:
 /// ```json
-/// { "id", "messageId", "emoji", "action", "senderPeerId", "timestamp" }
+/// { "id", "messageId", "emoji", "action", "senderPeerId", "timestamp",
+///   "eventId"? }
 /// ```
 /// Action is either `"add"` or `"remove"`.
 class GroupReactionPayload {
@@ -23,6 +24,10 @@ class GroupReactionPayload {
   final String senderPeerId;
   final String timestamp;
 
+  /// Unique identity for this ADD/REMOVE transition. [id] remains the
+  /// deterministic reaction-state/tombstone identity for old readers.
+  final String? eventId;
+
   const GroupReactionPayload({
     required this.id,
     required this.messageId,
@@ -30,6 +35,7 @@ class GroupReactionPayload {
     required this.action,
     required this.senderPeerId,
     required this.timestamp,
+    this.eventId,
   });
 
   /// Serializes the inner payload to a JSON string.
@@ -43,6 +49,8 @@ class GroupReactionPayload {
       'action': action,
       'senderPeerId': senderPeerId,
       'timestamp': timestamp,
+      if (eventId != null && eventId!.trim().isNotEmpty)
+        'eventId': eventId!.trim(),
     });
   }
 
@@ -62,6 +70,7 @@ class GroupReactionPayload {
       final action = _requiredString(payload['action']);
       final senderPeerId = _requiredString(payload['senderPeerId']);
       final timestamp = _requiredString(payload['timestamp']);
+      final eventId = _optionalString(payload['eventId']);
 
       if (id == null ||
           messageId == null ||
@@ -85,6 +94,7 @@ class GroupReactionPayload {
         action: action,
         senderPeerId: senderPeerId,
         timestamp: timestamp,
+        eventId: eventId,
       );
     } catch (_) {
       return null;
@@ -110,4 +120,9 @@ String? _requiredString(Object? value) {
   }
   final trimmed = value.trim();
   return trimmed.isEmpty ? null : trimmed;
+}
+
+String? _optionalString(Object? value) {
+  if (value == null) return null;
+  return _requiredString(value);
 }

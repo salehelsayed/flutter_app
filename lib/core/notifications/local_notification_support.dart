@@ -65,6 +65,36 @@ const mknoonMessagesSilentNotificationDetails = NotificationDetails(
   ),
 );
 
+/// Message-category details with a stable conversation thread. This is built
+/// dynamically because the iOS thread identifier is recipient/conversation
+/// specific; Android continues using the existing channel ids.
+NotificationDetails mknoonConversationNotificationDetails({
+  required String conversationKey,
+  bool silent = false,
+}) {
+  return NotificationDetails(
+    android: AndroidNotificationDetails(
+      silent ? mknoonMessagesSilentChannelId : mknoonMessagesChannelId,
+      silent ? mknoonMessagesSilentChannelName : mknoonMessagesChannelName,
+      channelDescription: silent
+          ? mknoonMessagesSilentChannelDescription
+          : mknoonMessagesChannelDescription,
+      importance: silent ? Importance.low : Importance.high,
+      priority: silent ? Priority.low : Priority.high,
+      playSound: !silent,
+      enableVibration: !silent,
+      onlyAlertOnce: silent,
+      category: AndroidNotificationCategory.message,
+    ),
+    iOS: DarwinNotificationDetails(
+      presentSound: !silent,
+      presentAlert: true,
+      presentBadge: true,
+      threadIdentifier: conversationKey,
+    ),
+  );
+}
+
 Future<void> ensureMknoonNotificationChannel(
   FlutterLocalNotificationsPlugin plugin,
 ) async {

@@ -1,7 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
+import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -10,6 +14,7 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_mes
 import 'package:flutter_app/features/conversation/domain/models/reaction_payload.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
@@ -20,6 +25,24 @@ import '../../../shared/fakes/fake_notification_service.dart';
 
 const _senderPeerId = '12D3KooWSender';
 const _ownMlKemSecretKey = 'own-secret-key';
+
+class _BarrierReactionRepository extends FakeReactionRepository {
+  final Completer<void> bothCallsArrived = Completer<void>();
+  final Completer<void> release = Completer<void>();
+  int applyCallCount = 0;
+
+  @override
+  Future<ReactionAddApplyResult> applyIncomingAdd(
+    MessageReaction reaction,
+  ) async {
+    applyCallCount++;
+    if (applyCallCount == 2 && !bothCallsArrived.isCompleted) {
+      bothCallsArrived.complete();
+    }
+    await release.future;
+    return super.applyIncomingAdd(reaction);
+  }
+}
 
 ChatMessage _makeReactionMessage(String content) {
   return ChatMessage(
@@ -43,6 +66,22 @@ Future<List<Map<String, dynamic>>> _captureFlowEvents(
     debugSetFlowEventSink(null);
   }
   return events;
+}
+
+Future<void> _expectCommittedNotificationClaim(File claim) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 2));
+  while (DateTime.now().isBefore(deadline)) {
+    if (await claim.exists()) {
+      try {
+        final decoded = jsonDecode(await claim.readAsString());
+        if (decoded is Map && decoded['state'] == 'committed') return;
+      } on FormatException {
+        // The exclusive create may be visible before its JSON write settles.
+      }
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+  fail('notification claim did not commit: ${claim.path}');
 }
 
 void main() {
@@ -83,11 +122,11 @@ void main() {
         const ConversationMessage(
           id: 'msg-1',
           contactPeerId: _senderPeerId,
-          senderPeerId: _senderPeerId,
+          senderPeerId: 'my-peer',
           text: 'hello',
           timestamp: '2026-02-27T10:00:00.000Z',
           status: 'delivered',
-          isIncoming: true,
+          isIncoming: false,
           createdAt: '2026-02-27T10:00:00.000Z',
         ),
       ]);
@@ -256,6 +295,34 @@ void main() {
       },
     );
 
+    test(
+      'rejects outer notification metadata that mismatches plaintext',
+      () async {
+        final v2 = ReactionPayload.buildEncryptedEnvelope(
+          senderPeerId: _senderPeerId,
+          eventId: 'different-event',
+          action: 'add',
+          targetMessageId: 'msg-1',
+          kem: 'k',
+          ciphertext: 'c',
+          nonce: 'n',
+        );
+
+        final (result, change) = await handleIncomingReaction(
+          message: _makeReactionMessage(v2),
+          messageRepo: messageRepo,
+          reactionRepo: reactionRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownMlKemSecretKey: _ownMlKemSecretKey,
+        );
+
+        expect(result, HandleReactionResult.metadataMismatch);
+        expect(change, isNull);
+        expect(reactionRepo.saveReactionCallCount, 0);
+      },
+    );
+
     group('127-Bug-C reaction notifications', () {
       String envelope() => ReactionPayload.buildEncryptedEnvelope(
         senderPeerId: _senderPeerId,
@@ -286,6 +353,122 @@ void main() {
         expect(notifications.shown.single.messageText, contains('👍'));
         expect(notifications.shown.single.contactPeerId, _senderPeerId);
       });
+
+      test(
+        'only target author is notified while both target directions persist',
+        () async {
+          Future<({ReactionChange? change, int notifications, int stored})>
+          deliver({required bool targetIsIncoming}) async {
+            final localMessages = FakeMessageRepository()
+              ..seed([
+                ConversationMessage(
+                  id: 'msg-1',
+                  contactPeerId: _senderPeerId,
+                  senderPeerId: targetIsIncoming ? _senderPeerId : 'my-peer',
+                  text: 'target',
+                  timestamp: '2026-02-27T09:59:00.000Z',
+                  status: 'delivered',
+                  isIncoming: targetIsIncoming,
+                  createdAt: '2026-02-27T09:59:00.000Z',
+                ),
+              ]);
+            final localReactions = FakeReactionRepository();
+            final notifications = FakeNotificationService();
+            final (_, change) = await handleIncomingReaction(
+              message: _makeReactionMessage(envelope()),
+              messageRepo: localMessages,
+              reactionRepo: localReactions,
+              contactRepo: contactRepo,
+              bridge: bridge,
+              ownMlKemSecretKey: _ownMlKemSecretKey,
+              notificationService: notifications,
+              conversationTracker: ActiveConversationTracker(),
+              getAppLifecycleState: () => AppLifecycleState.resumed,
+            );
+            await Future<void>.delayed(Duration.zero);
+            return (
+              change: change,
+              notifications: notifications.shown.length,
+              stored: localReactions.reactions.length,
+            );
+          }
+
+          final authored = await deliver(targetIsIncoming: false);
+          final received = await deliver(targetIsIncoming: true);
+
+          expect(authored.change?.type, ReactionChangeType.upserted);
+          expect(received.change?.type, ReactionChangeType.upserted);
+          expect(authored.stored, 1);
+          expect(received.stored, 1);
+          expect(authored.notifications, 1);
+          expect(received.notifications, 0);
+        },
+      );
+
+      test(
+        'missing local identity persists but fails notification closed',
+        () async {
+          final notifications = FakeNotificationService();
+          final original = _makeReactionMessage(envelope());
+          final (result, change) = await handleIncomingReaction(
+            message: ChatMessage(
+              from: original.from,
+              to: '',
+              content: original.content,
+              timestamp: original.timestamp,
+              isIncoming: true,
+            ),
+            messageRepo: messageRepo,
+            reactionRepo: reactionRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            ownMlKemSecretKey: _ownMlKemSecretKey,
+            notificationService: notifications,
+            conversationTracker: ActiveConversationTracker(),
+            getAppLifecycleState: () => AppLifecycleState.resumed,
+          );
+          await Future<void>.delayed(Duration.zero);
+
+          expect(result, HandleReactionResult.success);
+          expect(change?.type, ReactionChangeType.upserted);
+          expect(reactionRepo.reactions, hasLength(1));
+          expect(notifications.shown, isEmpty);
+        },
+      );
+
+      test(
+        'concurrent exact ADD has one change and one notification',
+        () async {
+          final barrierRepo = _BarrierReactionRepository();
+          final notifications = FakeNotificationService();
+
+          Future<(HandleReactionResult, ReactionChange?)> deliver() {
+            return handleIncomingReaction(
+              message: _makeReactionMessage(envelope()),
+              messageRepo: messageRepo,
+              reactionRepo: barrierRepo,
+              contactRepo: contactRepo,
+              bridge: bridge,
+              ownMlKemSecretKey: _ownMlKemSecretKey,
+              notificationService: notifications,
+              conversationTracker: ActiveConversationTracker(),
+              getAppLifecycleState: () => AppLifecycleState.resumed,
+            );
+          }
+
+          final first = deliver();
+          final second = deliver();
+          await barrierRepo.bothCallsArrived.future;
+          barrierRepo.release.complete();
+          final results = await Future.wait([first, second]);
+          await Future<void>.delayed(Duration.zero);
+
+          expect(results.where((result) => result.$2 != null), hasLength(1));
+          expect(barrierRepo.reactions, hasLength(1));
+          expect(barrierRepo.saveReactionCallCount, 1);
+          expect(notifications.shown, hasLength(1));
+        },
+      );
 
       test('incoming REMOVE reaction does NOT notify', () async {
         bridge.responses['message.decrypt'] = {
@@ -382,6 +565,13 @@ void main() {
           final notifications = FakeNotificationService();
           final tracker = ActiveConversationTracker();
           final toneTracker = NotificationToneTracker();
+          final directory = await Directory.systemTemp.createTemp(
+            'direct-reaction-tone-burst-',
+          );
+          addTearDown(() => directory.delete(recursive: true));
+          final coordinator = DurableNotificationToneLease(
+            directory: directory,
+          );
 
           Future<void> deliver(String id, String timestamp) async {
             bridge.responses['message.decrypt'] = {
@@ -406,18 +596,52 @@ void main() {
               conversationTracker: tracker,
               getAppLifecycleState: () => AppLifecycleState.resumed,
               notificationToneTracker: toneTracker,
+              durableNotificationCoordinatorResolver: () async => coordinator,
             );
             await Future<void>.delayed(Duration.zero);
           }
 
           await deliver('rxn-a', '2026-02-27T10:00:00.000Z');
           await deliver('rxn-b', '2026-02-27T10:00:01.000Z');
+          final deadline = DateTime.now().add(const Duration(seconds: 2));
+          while (notifications.shown.length < 2 &&
+              DateTime.now().isBefore(deadline)) {
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
 
           // Both notify, but the per-conversation tone debounce silences the
           // second so a burst of reactions never spams a sound.
           expect(notifications.shown, hasLength(2));
           expect(notifications.shown[0].silent, isFalse);
           expect(notifications.shown[1].silent, isTrue);
+          for (final id in const <String>['rxn-a', 'rxn-b']) {
+            final claimFile = File(
+              '${directory.path}/'
+              '${DurableNotificationToneLease.eventClaimsDirectoryName}/'
+              '${DurableNotificationToneLease.messageEventClaimFileName(type: 'message_reaction', eventIdentity: boundedReactionEventIdentity(id))}',
+            );
+            await _expectCommittedNotificationClaim(claimFile);
+          }
+          final toneEntries = await Directory(
+            '${directory.path}/'
+            '${DurableNotificationToneLease.toneLeasesDirectoryName}',
+          ).list().where((entity) => entity is File).cast<File>().toList();
+          final committedToneLeases = toneEntries
+              .where((file) => file.path.endsWith('.lease'))
+              .toList();
+          expect(committedToneLeases, hasLength(1));
+          expect(
+            num.tryParse(await committedToneLeases.single.readAsString()),
+            isNotNull,
+          );
+          expect(
+            toneEntries.where(
+              (file) => file.path.endsWith(
+                DurableNotificationToneLease.tonePendingReservationFileSuffix,
+              ),
+            ),
+            isEmpty,
+          );
         },
       );
     });
@@ -499,7 +723,9 @@ void main() {
 
       expect(first.$1, HandleReactionResult.success);
       expect(second.$1, HandleReactionResult.success);
-      expect(reactionRepo.saveReactionCallCount, 2);
+      expect(first.$2, isNotNull);
+      expect(second.$2, isNull);
+      expect(reactionRepo.saveReactionCallCount, 1);
 
       final stored = await reactionRepo.getReactionsForMessage('msg-1');
       expect(stored, hasLength(1));

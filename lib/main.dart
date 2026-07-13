@@ -103,7 +103,9 @@ import 'package:flutter_app/features/account_migration/application/migration_sto
 import 'package:flutter_app/features/account_migration/application/migration_transfer_checkpoint_store.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository_impl.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository_impl.dart';
+import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/delivery_receipt_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_delivery_receipt_use_case.dart'
@@ -200,12 +202,16 @@ import 'package:flutter_app/core/lifecycle/handle_app_paused.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
+import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
+import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
+import 'package:flutter_app/core/notifications/group_reaction_notification_projection.dart';
 import 'package:flutter_app/core/notifications/app_root_notification_open.dart';
 import 'package:flutter_app/core/notifications/flutter_notification_service.dart';
 import 'package:flutter_app/core/notifications/ios_apns_notification_open_bridge.dart';
 import 'package:flutter_app/core/notifications/notification_open_dedupe_gate.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
+import 'package:flutter_app/core/notifications/initial_local_notification_route_diagnostics.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/notifications/remote_notification_identity.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
@@ -237,6 +243,7 @@ import 'package:flutter_app/features/feed/application/app_shell_controller.dart'
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
+import 'package:flutter_app/features/push/application/push_decrypt_preview.dart';
 import 'package:flutter_app/core/notifications/recent_remote_gate_ios_wiring.dart';
 import 'package:flutter_app/features/push/application/firebase_readiness.dart';
 import 'package:flutter_app/features/push/application/group_missing_notification_feedback.dart';
@@ -244,6 +251,7 @@ import 'package:flutter_app/features/push/application/push_listener_armer.dart';
 import 'package:flutter_app/features/push/application/handle_foreground_remote_message_use_case.dart';
 import 'package:flutter_app/features/push/application/ingest_staged_push_envelopes_use_case.dart';
 import 'package:flutter_app/features/push/application/push_registration_coordinator.dart';
+import 'package:flutter_app/features/push/application/push_relay_registration_proof.dart';
 import 'package:flutter_app/features/push/application/prepare_notification_route_target_use_case.dart';
 import 'package:flutter_app/features/push/application/push_envelope_staging.dart';
 import 'package:flutter_app/features/push/application/resolve_group_notification_route_target_use_case.dart';
@@ -391,6 +399,13 @@ void main() async {
   final SecureKeyStore? sharedPushKeyStore = !kIsWeb && Platform.isIOS
       ? FlutterSecureKeyStore(appleAccessGroup: mknoonSharedAppleAccessGroup)
       : null;
+  final directReactionNotificationProjection = sharedPushKeyStore == null
+      ? null
+      : DirectReactionNotificationProjection(store: sharedPushKeyStore);
+  final groupReactionNotificationProjection = sharedPushKeyStore == null
+      ? null
+      : GroupReactionNotificationProjection(store: sharedPushKeyStore);
+  void Function()? notifyContactPushEligibilityChanged;
   // 229: install the process-wide auto-download policy so EVERY automatic
   // media transfer entry point (direct listener, direct visible-media
   // recovery, shared group loader) consults the user's persisted matrix +
@@ -400,6 +415,16 @@ void main() async {
         secureKeyStore: secureKeyStore,
       );
   final pushTokenStore = PushTokenStoreImpl(secureKeyStore: secureKeyStore);
+  final pushRelayRegistrationProof = await loadPushRelayRegistrationProof();
+  if (pushRelayRegistrationProof case final proof?) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_REGISTER_RELAY_PROOF_ARMED',
+      details: proof.safeDetails(
+        platform: Platform.isAndroid ? 'android' : 'ios',
+      ),
+    );
+  }
   // FDC-09 §12 / CV-14: ONE shared sender-side received-wake-token store — the
   // receive leg (ContactRequestListener → handleIncomingMessage) writes it and
   // the send funnel (P2PServiceImpl.storeInInboxDetailed) reads it, so its
@@ -453,7 +478,13 @@ void main() async {
     dbUpsertIdentityRow: (row) => dbUpsertIdentityRow(db, row),
     secureKeyStore: secureKeyStore,
     pushSharedKeyStore: sharedPushKeyStore,
+    directReactionProjection: directReactionNotificationProjection,
+    groupReactionProjection: groupReactionNotificationProjection,
   );
+  // Establish (or clear) projection ownership off the pre-runApp critical path.
+  // Both group backfills and deferred Firebase/push eligibility await this
+  // retained future below.
+  final groupReactionProjectionIdentityReady = repository.loadIdentity();
   Future<bool> allowsAccountRuntimeNetworkSideEffects(String operation) async {
     final identity = await repository.loadIdentity();
     final allowed = await accountMigrationRuntimeNetworkGate
@@ -509,6 +540,8 @@ void main() async {
     dbDismissIntroBanner: (peerId) => dbDismissIntroBanner(db, peerId),
     dbSetIntrosSentAt: (peerId, timestamp) =>
         dbSetIntrosSentAt(db, peerId, timestamp),
+    directReactionProjection: directReactionNotificationProjection,
+    onPushEligibilityChanged: () => notifyContactPushEligibilityChanged?.call(),
   );
 
   // Create contact request repository
@@ -601,6 +634,12 @@ void main() async {
               toStatus: toStatus,
             ),
   );
+
+  await groupReactionProjectionIdentityReady;
+  await Future.wait([
+    contactRepository.mirrorAllDirectReactionContacts(),
+    messageRepository.mirrorAllDirectReactionAuthoredTargets(),
+  ]);
 
   final inboxStagingRepository = InboxStagingRepositoryImpl(
     dbInsertInboxStagingEntry: (row) => dbInsertInboxStagingEntry(db, row),
@@ -940,6 +979,42 @@ void main() async {
   // Create reaction repository
   final reactionRepository = ReactionRepositoryImpl(
     dbInsertReaction: (row) => dbInsertReaction(db, row),
+    dbApplyIncomingAdd: (row) async {
+      final result = await dbApplyIncomingReactionMutation(
+        db,
+        row,
+        mutation: DbIncomingReactionMutation.add,
+      );
+      return switch (result) {
+        DbIncomingReactionApplyResult.inserted =>
+          ReactionAddApplyResult.inserted,
+        DbIncomingReactionApplyResult.updated => ReactionAddApplyResult.updated,
+        DbIncomingReactionApplyResult.exactReplay =>
+          ReactionAddApplyResult.exactReplay,
+        DbIncomingReactionApplyResult.stale => ReactionAddApplyResult.stale,
+        DbIncomingReactionApplyResult.removed => throw StateError(
+          'ADD transaction returned REMOVE result',
+        ),
+      };
+    },
+    dbApplyIncomingRemove: (row) async {
+      final result = await dbApplyIncomingReactionMutation(
+        db,
+        row,
+        mutation: DbIncomingReactionMutation.remove,
+      );
+      return switch (result) {
+        DbIncomingReactionApplyResult.removed =>
+          ReactionRemoveApplyResult.applied,
+        DbIncomingReactionApplyResult.exactReplay =>
+          ReactionRemoveApplyResult.exactReplay,
+        DbIncomingReactionApplyResult.stale => ReactionRemoveApplyResult.stale,
+        DbIncomingReactionApplyResult.inserted ||
+        DbIncomingReactionApplyResult.updated => throw StateError(
+          'REMOVE transaction returned ADD result',
+        ),
+      };
+    },
     dbLoadReactionsForMessage: (messageId) =>
         dbLoadReactionsForMessage(db, messageId),
     dbLoadReactionsForMessages: (messageIds) =>
@@ -957,6 +1032,14 @@ void main() async {
         dbDeleteReactionsForMessage(db, messageId),
     dbDeleteReactionsForContact: (contactPeerId) =>
         dbDeleteReactionsForContact(db, contactPeerId),
+    groupReactionProjection: groupReactionNotificationProjection,
+    dbLoadGroupReactionComparandsForProjection:
+        (accountPeerId, {limit = 1024}) =>
+            dbLoadGroupReactionComparandsForProjection(
+              db,
+              accountPeerId,
+              limit: limit,
+            ),
   );
 
   final groupReactionReplayOutboxRepository =
@@ -965,6 +1048,14 @@ void main() async {
             dbUpsertGroupReactionReplayOutboxEntry(db, row),
         dbLoadGroupReactionReplayOutboxEntry: (reactionId) =>
             dbLoadGroupReactionReplayOutboxEntry(db, reactionId),
+        dbLoadLatestGroupReactionReplayOutboxEntryForTarget:
+            ({required groupId, required messageId, required senderPeerId}) =>
+                dbLoadLatestGroupReactionReplayOutboxEntryForTarget(
+                  db,
+                  groupId: groupId,
+                  messageId: messageId,
+                  senderPeerId: senderPeerId,
+                ),
         dbLoadRetryableGroupReactionReplayOutboxEntries: ({limit = 20}) =>
             dbLoadRetryableGroupReactionReplayOutboxEntries(db, limit: limit),
         dbUpdateGroupReactionReplayOutboxEntryStatus:
@@ -1048,6 +1139,7 @@ void main() async {
         dbDeletePendingGroupKeyRotations(db, groupId),
     groupKeyStore: secureKeyStore,
     pushSharedKeyStore: sharedPushKeyStore,
+    groupReactionProjection: groupReactionNotificationProjection,
   );
   // 164 (cold-start-3): the shared-Keychain mirror backfill (every group key ×
   // generation + every mute projection, re-written on every launch) is unbounded
@@ -1059,8 +1151,10 @@ void main() async {
   // muted before that feature shipped; iOS NSE preview decrypt depends on the key
   // mirror eventually being complete.)
   keychainMirrorBackfill = () async {
+    await groupReactionProjectionIdentityReady;
     await groupRepository.mirrorAllKeysToSecureStore();
     await groupRepository.mirrorAllMutedGroups();
+    await groupRepository.mirrorAllGroupReactionNotificationContexts();
   }();
 
   final pendingGroupInviteRepository = PendingGroupInviteRepositoryImpl(
@@ -1138,6 +1232,7 @@ void main() async {
   GroupMessageRepositoryImpl createGroupMessageRepository(
     dynamic executor, {
     bool enableInboxPageTransactions = false,
+    bool enableReactionProjection = false,
   }) {
     return GroupMessageRepositoryImpl(
       dbInsertGroupMessage: (row) => dbInsertGroupMessage(executor, row),
@@ -1265,6 +1360,17 @@ void main() async {
               );
             }
           : null,
+      groupReactionProjection: enableReactionProjection
+          ? groupReactionNotificationProjection
+          : null,
+      dbLoadAuthoredGroupMessagesForProjectionFn: enableReactionProjection
+          ? (accountPeerId, {limit = 256}) =>
+                dbLoadAuthoredGroupMessagesForProjection(
+                  executor,
+                  accountPeerId,
+                  limit: limit,
+                )
+          : null,
     );
   }
 
@@ -1272,7 +1378,16 @@ void main() async {
   final groupMessageRepository = createGroupMessageRepository(
     db,
     enableInboxPageTransactions: true,
+    enableReactionProjection: true,
   );
+  final groupReactionAuthoredTargetBackfill = () async {
+    await groupReactionProjectionIdentityReady;
+    await groupMessageRepository.mirrorAllGroupReactionAuthoredTargets();
+  }();
+  final groupReactionComparandBackfill = () async {
+    await groupReactionAuthoredTargetBackfill;
+    await reactionRepository.mirrorAllGroupReactionNotificationComparands();
+  }();
 
   final groupPendingKeyRepairRepository = GroupPendingKeyRepairRepositoryImpl(
     dbUpsertGroupPendingKeyRepair: (row) =>
@@ -1728,7 +1843,11 @@ void main() async {
     oldPhoneCutoverCoordinator: accountMigrationCutoverCoordinator,
     oldPhoneLeaseCleanup: buildBridgeMigrationCutoverLeaseCleanup(
       bridge: bridge,
-      clearLocalStalePushToken: pushTokenStore.clearToken,
+      clearLocalStalePushToken: () async {
+        await pushTokenStore.clearToken();
+        await directReactionNotificationProjection?.clearForLogout();
+        await groupReactionNotificationProjection?.clearForLogout();
+      },
       stopLocalRuntime: () async {
         await p2pService.stopNode().timeout(const Duration(seconds: 2));
       },
@@ -1861,8 +1980,10 @@ void main() async {
     ActiveConversationTracker tracker,
     AppLifecycleState Function() lifecycle,
     NotificationToneTracker toneTracker,
+    DurableNotificationToneLease durableCoordinator,
   })?
   reactionNotifyDeps;
+  void Function(ReactionChange change)? publishPersistedReactionChange;
 
   // F7: reactions/deletions get the same stage-before-ack/commit durability as
   // chat. These replay closures call the use cases DIRECTLY (the listeners are
@@ -1874,7 +1995,7 @@ void main() async {
   }) async {
     final identity = await repository.loadIdentity();
     final notify = reactionNotifyDeps;
-    final (result, _) = await handleIncomingReaction(
+    final (result, change) = await handleIncomingReaction(
       message: message,
       messageRepo: messageRepository,
       reactionRepo: reactionRepository,
@@ -1888,11 +2009,33 @@ void main() async {
       conversationTracker: notify?.tracker,
       getAppLifecycleState: notify?.lifecycle,
       notificationToneTracker: notify?.toneTracker,
+      durableNotificationCoordinatorResolver: notify == null
+          ? null
+          : () async => notify.durableCoordinator,
+      consumeRecentRemoteNotificationAnnouncement:
+          ({required payload, String? messageId}) =>
+              recentRemoteNotificationGate.consumeIfRecentAnnouncement(
+                payload: payload,
+                messageId: messageId,
+              ),
+      markRecentRemoteNotificationAnnouncement:
+          ({required payload, String? messageId}) =>
+              recentRemoteNotificationGate.markAnnouncement(
+                payload: payload,
+                messageId: messageId,
+              ),
     );
+    if (result == HandleReactionResult.success && change != null) {
+      publishPersistedReactionChange?.call(change);
+    }
     // 172 TC-11: the recoverable-vs-terminal split lives in the extracted,
     // test-locked sibling mapper (recovered_inbox_sibling_dispositions.dart).
     return mapReactionReplayResultToDisposition(result);
   }
+
+  ingestStagedPushEnvelopesUseCase.replayReactionMessage =
+      (message, {String? stagedEntryId}) =>
+          replayInboxReaction(message, stagedEntryId: stagedEntryId);
 
   Future<RecoveredInboxReplayOutcome> replayInboxMessageDeletion(
     ChatMessage message, {
@@ -1952,6 +2095,7 @@ void main() async {
       );
     },
   );
+  notifyContactPushEligibilityChanged = wakeTokenReissueCoalescer.trigger;
 
   // Create P2P service (uses the same bridge + local P2P)
   p2pService = P2PServiceImpl(
@@ -2153,12 +2297,47 @@ void main() async {
       !isDesktop && !kE2ETestMode
       ? PushRegistrationCoordinator(
           requestPermission: requestPushPermission,
-          registerPushToken: () => push_registration.registerPushToken(
-            p2pService: p2pService,
-            pushTokenStore: pushTokenStore,
-            accountMigrationNetworkGate: accountMigrationRuntimeNetworkGate
-                .allowsAccountNetworkSideEffects,
-          ),
+          registerPushToken: () async {
+            // The headless Android FCM engine has no live P2P state. Persist the
+            // exact transport whose token is being registered so a later wake
+            // can prove this installation is both active in the local roster
+            // and present in the signed reaction-recipient nomination.
+            final identity = await repository.loadIdentity();
+            if (pushRelayRegistrationProof case final proof?) {
+              if (!proof.bindAccountIdentity(identity?.peerId)) {
+                emitFlowEvent(
+                  layer: 'FL',
+                  event: 'PUSH_REGISTER_RELAY_PROOF_IDENTITY_UNAVAILABLE',
+                  details: proof.safeDetails(platform: 'android'),
+                );
+                return push_registration.RegisterPushTokenResult.failed;
+              }
+            }
+            final transportPeerId = p2pService.currentState.peerId;
+            await groupReactionNotificationProjection?.replaceLocalIdentity(
+              accountPeerId: identity?.peerId,
+              deviceId: transportPeerId,
+              transportPeerId: transportPeerId,
+            );
+            await directReactionNotificationProjection?.replaceLocalIdentity(
+              accountPeerId: identity?.peerId,
+            );
+            await Future.wait([
+              contactRepository.mirrorAllDirectReactionContacts(),
+              messageRepository.mirrorAllDirectReactionAuthoredTargets(),
+            ]);
+            await persistBackgroundPushRegistrationTransportPeerId(
+              secureKeyStore: secureKeyStore,
+              transportPeerId: transportPeerId,
+            );
+            return push_registration.registerPushToken(
+              p2pService: p2pService,
+              pushTokenStore: pushTokenStore,
+              accountMigrationNetworkGate: accountMigrationRuntimeNetworkGate
+                  .allowsAccountNetworkSideEffects,
+              relayRegistrationProof: pushRelayRegistrationProof,
+            );
+          },
           // 164 (cold-start-1 regression #2): Firebase is now initialized lazily
           // inside the deferred startLiveServices, so Firebase.apps is empty here
           // on a normal launch — the old `Firebase.apps.isNotEmpty` gate would
@@ -2172,6 +2351,11 @@ void main() async {
               controller.addStream(FirebaseMessaging.instance.onTokenRefresh),
             ),
           ),
+          registrationSuccessDetails: pushRelayRegistrationProof == null
+              ? null
+              : () => pushRelayRegistrationProof.safeDetails(
+                  platform: Platform.isAndroid ? 'android' : 'ios',
+                ),
         )
       : null;
   // conversationTracker is constructed EARLIER (ahead of P2PServiceImpl) for the
@@ -2180,6 +2364,8 @@ void main() async {
   // 118 Phase 4: one shared per-conversation tone debounce for BOTH listeners
   // (direct + group keys are disjoint under normalizeActiveKey).
   final notificationToneTracker = NotificationToneTracker();
+  final durableReactionNotificationCoordinator =
+      await DurableNotificationToneLease.openDefault();
   final appShellController = AppShellController();
   final pendingPostTargetStore = PendingPostTargetStore();
 
@@ -2215,6 +2401,7 @@ void main() async {
     lifecycle: () =>
         WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
     toneTracker: notificationToneTracker,
+    durableCoordinator: durableReactionNotificationCoordinator,
   );
 
   // 115 P2: consume incoming receipts — the only place 'inboxed' rows flip
@@ -2337,6 +2524,7 @@ void main() async {
       return identity?.mlKemSecretKey;
     },
   );
+  publishPersistedReactionChange = reactionListener.publishPersistedChange;
 
   final messageDeletionListener = MessageDeletionListener(
     deletionStream: messageRouter.messageDeletionStream,
@@ -2413,6 +2601,8 @@ void main() async {
     notificationService: notificationService,
     groupConversationTracker: groupConversationTracker,
     notificationToneTracker: notificationToneTracker,
+    durableNotificationCoordinatorResolver: () async =>
+        durableReactionNotificationCoordinator,
     getAppLifecycleState: () =>
         WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
     reactionRepo: reactionRepository,
@@ -2932,6 +3122,11 @@ void main() async {
     if (liveServicesStarted) {
       return;
     }
+    final groupContextBackfill = keychainMirrorBackfill;
+    if (groupContextBackfill != null) {
+      await groupContextBackfill;
+    }
+    await groupReactionComparandBackfill;
     if (!await allowsAccountRuntimeNetworkSideEffects('live_services_start')) {
       return;
     }
@@ -3183,6 +3378,7 @@ void main() async {
     contactRequestRepo: contactRequestRepository,
     introRepo: introductionRepository,
     messageRepo: messageRepository,
+    resolveWakeToken: wakeTokenResolver,
     openConversationByPeerId: (peerId) async {
       for (var attempt = 0; attempt < 30; attempt++) {
         final navigator = MyApp.navigatorKey.currentState;
@@ -3454,8 +3650,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   // initState _setupPushListeners() call and the post-runtime-ready re-arm cannot
   // double-register onMessage / onMessageOpenedApp.
   bool _pushListenersArmed = false;
-  DateTime? _notificationTappedAt;
-  NotificationRouteTarget? _deferredNotificationRouteTarget;
+  final NotificationOpenRouteCoordinator _notificationRouteCoordinator =
+      NotificationOpenRouteCoordinator();
+  DateTime? get _notificationTappedAt =>
+      _notificationRouteCoordinator.activeTappedAt;
   // 133: a notification route must be pushed ON TOP of the startup home, not
   // before it — otherwise the StartupRouter's `pushReplacement(home)` clobbers
   // the just-pushed conversation and the user lands on Feed (Android cold-tap).
@@ -3464,7 +3662,14 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   // that signal never arrives (degrades to the legacy push-anyway behavior).
   bool _startupHomeReady = false;
   Timer? _homeReadyFallbackTimer;
+  final NotificationOpenDeferredRetryScheduler
+  _deferredNotificationRouteRetryScheduler =
+      NotificationOpenDeferredRetryScheduler();
   static const Duration _homeReadyFallbackDelay = Duration(seconds: 8);
+  static const Duration _deferredNotificationRouteRetryDelay = Duration(
+    milliseconds: 250,
+  );
+  static const int _maxDeferredNotificationRouteAttempts = 2;
   late final PostNotificationOpenCoordinator _postNotificationOpenCoordinator;
   late final ContactRequestNotificationMaterializer
   _contactRequestNotificationMaterializer;
@@ -3813,9 +4018,17 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     }
 
     var routeSucceeded = false;
+    NotificationOpenRouteContext? preparedContext;
+    NotificationOpenRouteCompletion? routeCompletion;
     try {
-      _notificationTappedAt = DateTime.now();
       final routeTarget = NotificationRouteTarget.fromRemoteMessageData(data);
+      // Mint the ordering ordinal immediately after synchronous validation.
+      // Recent-announcement persistence, delivered-notification clearing, and
+      // route preparation can all yield; none of them may let an older remote
+      // tap borrow a newer ordinal when local and remote opens overlap.
+      preparedContext = routeTarget == null
+          ? null
+          : _createNotificationOpenRouteContext(routeTarget);
       final markedRecentAnnouncement =
           await markRemoteNotificationOpenAsRecentAnnouncement(
             data: data,
@@ -3835,16 +4048,43 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           },
         );
       }
-      routeSucceeded = await _withContactRequestPresentationSuppressed(
-        routeTarget: routeTarget,
-        action: () => routeAppRootRemoteNotificationOpenWithResult(
-          data: data,
-          onBeforeOpen: widget.notificationService.clearDeliveredNotifications,
-          onBeforeRouteTarget: _prepareNotificationRouteTarget,
-          onRouteTarget: _handleNotificationRouteTarget,
-          onMissingGroupRouteId: _emitMissingGroupRouteId,
-          onMissingRouteTarget: widget.p2pService.drainOfflineInbox,
-        ),
+      final routeTargetResolved =
+          await _withContactRequestPresentationSuppressed(
+            routeTarget: routeTarget,
+            action: () => routeAppRootRemoteNotificationOpenWithResult(
+              data: data,
+              prevalidatedRouteTarget: preparedContext?.routeTarget,
+              onBeforeRouteTarget: (target) async {
+                final context = preparedContext;
+                if (context == null ||
+                    !identical(context.routeTarget, target)) {
+                  throw StateError(
+                    'Remote notification route context was not validated.',
+                  );
+                }
+                await widget.notificationService.clearDeliveredNotifications();
+                await _prepareNotificationRouteTarget(context.routeTarget);
+              },
+              onRouteTarget: (target) async {
+                routeCompletion = await _dispatchPreparedNotificationRoute(
+                  preparedContext,
+                  target,
+                );
+                _throwIfNotificationRouteFailed(routeCompletion!);
+              },
+              onMissingGroupRouteId: _emitMissingGroupRouteId,
+              onMissingRouteTarget: widget.p2pService.drainOfflineInbox,
+            ),
+          );
+      routeSucceeded = didNotificationOpenRouteSucceed(
+        routeTargetResolved: routeTargetResolved,
+        completion: routeCompletion,
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'REMOTE_NOTIFICATION_ROUTE_ERROR',
+        details: {'error': e.toString()},
       );
     } finally {
       _remoteNotificationOpenDedupeGate.finish(data, success: routeSucceeded);
@@ -3885,12 +4125,37 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _handleInitialLocalNotificationLaunch() async {
+    NotificationOpenRouteContext? preparedContext;
+    String? consumedPayload;
     try {
       await routeAppRootInitialLocalNotificationOpen(
-        consumeInitialPayload: widget.notificationService.consumeInitialPayload,
-        onBeforeOpen: widget.notificationService.clearDeliveredNotifications,
-        onBeforeRouteTarget: _prepareNotificationRouteTarget,
-        onRouteTarget: _handleNotificationRouteTarget,
+        consumeInitialPayload: () async {
+          consumedPayload = await widget.notificationService
+              .consumeInitialPayload();
+          return consumedPayload;
+        },
+        // A terminated local-notification open does not pass through the warm
+        // callback. Create its immutable context only after payload parsing;
+        // ordinary and malformed cold starts therefore create no route state.
+        onBeforeRouteTarget: (target) async {
+          emitFlowEvent(
+            layer: 'FL',
+            event: initialLocalNotificationRouteParsedEvent,
+            details: initialLocalNotificationRouteParsedDetails(
+              rawPayload: consumedPayload,
+              target: target,
+            ),
+          );
+          preparedContext = _createNotificationOpenRouteContext(target);
+          await _prepareNotificationRouteTarget(target);
+        },
+        onRouteTarget: (target) async {
+          final completion = await _dispatchPreparedNotificationRoute(
+            preparedContext,
+            target,
+          );
+          _throwIfNotificationRouteFailed(completion);
+        },
       );
     } catch (e) {
       emitFlowEvent(
@@ -3902,16 +4167,23 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _onNotificationTap(String payload) async {
-    _notificationTappedAt = DateTime.now();
+    NotificationOpenRouteContext? preparedContext;
     try {
       await routeAppRootLocalNotificationTap(
         payload: payload,
-        onBeforeOpen: widget.notificationService.clearDeliveredNotifications,
-        onBeforeRouteTarget: _prepareNotificationRouteTarget,
-        onRouteTarget: _handleNotificationRouteTarget,
+        onBeforeRouteTarget: (target) async {
+          preparedContext = _createNotificationOpenRouteContext(target);
+          await _prepareNotificationRouteTarget(target);
+        },
+        onRouteTarget: (target) async {
+          final completion = await _dispatchPreparedNotificationRoute(
+            preparedContext,
+            target,
+          );
+          _throwIfNotificationRouteFailed(completion);
+        },
       );
     } catch (e) {
-      _notificationTappedAt = null;
       emitFlowEvent(
         layer: 'FL',
         event: 'NOTIFICATION_TAP_NAV_ERROR',
@@ -3920,9 +4192,104 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _handleNotificationRouteTarget(
+  NotificationOpenRouteContext _createNotificationOpenRouteContext(
+    NotificationRouteTarget routeTarget,
+  ) {
+    return _notificationRouteCoordinator.createContext(
+      routeTarget: routeTarget,
+      tappedAt: DateTime.now(),
+    );
+  }
+
+  Future<NotificationOpenRouteCompletion> _dispatchPreparedNotificationRoute(
+    NotificationOpenRouteContext? preparedContext,
     NotificationRouteTarget routeTarget,
   ) async {
+    if (preparedContext == null ||
+        !identical(preparedContext.routeTarget, routeTarget)) {
+      throw StateError('Notification route context was not prepared.');
+    }
+    final dispatch = await _dispatchNotificationRouteContext(preparedContext);
+    return dispatch.completion;
+  }
+
+  Future<NotificationOpenRouteDispatch> _dispatchNotificationRouteContext(
+    NotificationOpenRouteContext context,
+  ) {
+    return _notificationRouteCoordinator.dispatch(
+      context: context,
+      onRouteContext: _handleNotificationRouteTarget,
+    );
+  }
+
+  Future<void> _beginStartupNotificationRouteContext(
+    NotificationOpenRouteContext context,
+  ) async {
+    final dispatch = await _dispatchNotificationRouteContext(context);
+    // StartupRouter must be allowed to establish the home before a deferred
+    // open can complete. Observe the owned completion without awaiting it on
+    // the startup critical path; the observer never throws.
+    unawaited(
+      _observeNotificationRouteCompletion(
+        dispatch.completion,
+        source: 'initial_remote',
+      ),
+    );
+  }
+
+  Future<void> _observeNotificationRouteCompletion(
+    Future<NotificationOpenRouteCompletion> completionFuture, {
+    required String source,
+  }) async {
+    final completion = await completionFuture;
+    if (completion.status != NotificationOpenRouteCompletionStatus.failed) {
+      return;
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'NOTIFICATION_DEFERRED_ROUTE_COMPLETION_ERROR',
+      details: {'source': source, 'error': completion.error.toString()},
+    );
+  }
+
+  void _dispatchNotificationRouteUnawaited(
+    NotificationOpenRouteContext context, {
+    required String source,
+  }) {
+    unawaited(() async {
+      try {
+        final dispatch = await _dispatchNotificationRouteContext(context);
+        await _observeNotificationRouteCompletion(
+          dispatch.completion,
+          source: source,
+        );
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'NOTIFICATION_ROUTE_ASYNC_ERROR',
+          details: {'source': source, 'error': e.toString()},
+        );
+      }
+    }());
+  }
+
+  void _throwIfNotificationRouteFailed(
+    NotificationOpenRouteCompletion completion,
+  ) {
+    if (completion.status != NotificationOpenRouteCompletionStatus.failed) {
+      return;
+    }
+    Error.throwWithStackTrace(
+      completion.error!,
+      completion.stackTrace ?? StackTrace.current,
+    );
+  }
+
+  Future<NotificationOpenRouteDisposition> _handleNotificationRouteTarget(
+    NotificationOpenRouteContext context,
+  ) async {
+    final routeTarget = context.routeTarget;
+    assert(_notificationTappedAt == context.tappedAt);
     final navigator = MyApp.navigatorKey.currentState;
     // 133: defer until BOTH the navigator exists AND the startup home has been
     // established. Routing before the home is replaced lets StartupRouter's
@@ -3931,45 +4298,43 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // home-not-ready case waits for `_onStartupHomeReady` (or the fallback
     // timer), so we don't busy-loop for the ~1-2s until the home lands.
     if (navigator == null || !_startupHomeReady) {
-      _deferredNotificationRouteTarget = routeTarget;
+      final accepted = _notificationRouteCoordinator.defer(context);
       if (navigator == null) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           unawaited(_flushDeferredNotificationRouteTarget());
         });
       }
       _armHomeReadyFallback();
-      return;
+      return accepted
+          ? NotificationOpenRouteDisposition.deferred
+          : NotificationOpenRouteDisposition.superseded;
     }
 
     if (routeTarget.kind == NotificationRouteTargetKind.post ||
         routeTarget.kind == NotificationRouteTargetKind.postComment) {
-      _notificationTappedAt = null;
       await _postNotificationOpenCoordinator.handleRouteTarget(
         routeTarget: routeTarget,
         drainOfflineInbox: widget.p2pService.drainOfflineInbox,
       );
-      return;
+      return NotificationOpenRouteDisposition.routed;
     }
 
     switch (routeTarget.kind) {
       case NotificationRouteTargetKind.contactRequest:
-        _notificationTappedAt = null;
         await _contactRequestNotificationMaterializer.handleRoute(
           navigator: navigator,
           peerId: routeTarget.peerId!,
         );
-        return;
+        return NotificationOpenRouteDisposition.routed;
       case NotificationRouteTargetKind.intros:
         // 252: snapshot the tap timestamp (matching the conversation/group
         // branches) so an introducer-acceptance redirect can hand the
         // original tap context to the conversation screen; the shared
         // coordinator falls back to the Orbit/Intros route for everything
         // else.
-        final introTappedAt = _notificationTappedAt;
-        _notificationTappedAt = null;
         await openIntroAcceptNotificationRoute(
           routeTarget: routeTarget,
-          notificationTappedAt: introTappedAt,
+          notificationTappedAt: context.tappedAt,
           resolveTarget: (target) => resolveIntroductionNotificationTarget(
             routeTarget: target,
             introRepo: widget.introductionRepository,
@@ -3990,7 +4355,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           ),
           openIntros: () => _openIntroOrbitRoute(navigator: navigator),
         );
-        return;
+        return NotificationOpenRouteDisposition.routed;
       case NotificationRouteTargetKind.group:
         final identity = await widget.repository.loadIdentity();
         final resolution = await resolveGroupNotificationRouteTarget(
@@ -4000,8 +4365,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           drainOfflineInbox: widget.p2pService.drainOfflineInbox,
           localPeerId: identity?.peerId,
         );
+        if (!_notificationRouteCoordinator.isLatest(context)) {
+          return NotificationOpenRouteDisposition.superseded;
+        }
         if (resolution.group == null) {
-          _notificationTappedAt = null;
           emitFlowEvent(
             layer: 'FL',
             event: resolution.hasPendingInvite
@@ -4015,32 +4382,41 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           );
           if (resolution.hasPendingInvite) {
             await _openIntroOrbitRoute(navigator: navigator);
-          } else if (navigator.mounted) {
-            // 04-P0 / QW-2: the group can't be resolved and there is no pending
-            // invite — don't dead-tap silently. Show feedback (with a single
-            // user-driven Retry that re-runs this handler) and route home. The
-            // targeted drain already ran once inside
-            // resolveGroupNotificationRouteTarget; Retry is not an auto-loop.
-            final l10n = AppLocalizations.of(navigator.context);
-            showGroupMissingNotificationFeedback(
-              messenger: MyApp.scaffoldMessengerKey.currentState,
-              navigator: navigator,
-              message:
-                  l10n?.group_notification_catching_up ??
-                  'This group is still catching up — try again in a moment.',
-              retryLabel: l10n?.btn_retry,
-              onRetry: () =>
-                  unawaited(_handleNotificationRouteTarget(routeTarget)),
+            return NotificationOpenRouteDisposition.routed;
+          }
+          if (!navigator.mounted) {
+            // Neither the requested group nor the visible feedback/home
+            // fallback was reached. Keep remote dedupe retryable instead of
+            // falsely committing this dead tap as routed.
+            throw StateError(
+              'Group notification fallback navigator is not available.',
             );
           }
-          return;
+          // 04-P0 / QW-2: the group can't be resolved and there is no pending
+          // invite — don't dead-tap silently. Show feedback (with a single
+          // user-driven Retry that re-runs this handler) and route home. The
+          // targeted drain already ran once inside
+          // resolveGroupNotificationRouteTarget; Retry is not an auto-loop.
+          final l10n = AppLocalizations.of(navigator.context);
+          showGroupMissingNotificationFeedback(
+            messenger: MyApp.scaffoldMessengerKey.currentState,
+            navigator: navigator,
+            message:
+                l10n?.group_notification_catching_up ??
+                'This group is still catching up — try again in a moment.',
+            retryLabel: l10n?.btn_retry,
+            onRetry: () => _dispatchNotificationRouteUnawaited(
+              context,
+              source: 'group_missing_retry',
+            ),
+          );
+          return NotificationOpenRouteDisposition.routed;
         }
         final group = resolution.group!;
         if (isNotificationRouteTargetAlreadyActive(
           routeTarget: routeTarget,
           groupConversationTracker: widget.groupConversationTracker,
         )) {
-          _notificationTappedAt = null;
           emitFlowEvent(
             layer: 'FL',
             event: 'GROUP_NOTIFICATION_ROUTE_ALREADY_ACTIVE',
@@ -4051,10 +4427,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               'hasMessageId': routeTarget.messageId?.isNotEmpty == true,
             },
           );
-          return;
+          return NotificationOpenRouteDisposition.routed;
         }
-        final tappedAt = _notificationTappedAt;
-        _notificationTappedAt = null;
         navigator.push(
           MaterialPageRoute(
             builder: (_) => GroupConversationWired(
@@ -4080,7 +4454,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               groupReactionReplayOutboxRepository:
                   widget.groupReactionReplayOutboxRepository,
               historyGapRepairRepo: widget.groupHistoryGapRepairRepository,
-              notificationTappedAt: tappedAt,
+              notificationTappedAt: context.tappedAt,
               backgroundPreference:
                   widget.appShellController.backgroundPreference,
               forwardMessageRepository: widget.messageRepository,
@@ -4088,7 +4462,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             ),
           ),
         );
-        return;
+        return NotificationOpenRouteDisposition.routed;
       case NotificationRouteTargetKind.conversation:
         // 139: mirror the group already-active guard. When the user taps a
         // fresh notification for a peer whose 1:1 conversation is already the
@@ -4102,7 +4476,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           groupConversationTracker: widget.groupConversationTracker,
           conversationTracker: widget.conversationTracker,
         )) {
-          _notificationTappedAt = null;
           emitFlowEvent(
             layer: 'FL',
             event: 'CONVERSATION_NOTIFICATION_ROUTE_ALREADY_ACTIVE',
@@ -4112,26 +4485,32 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                   : routeTarget.peerId!,
             },
           );
-          return;
+          return NotificationOpenRouteDisposition.routed;
         }
         final contact = await widget.contactRepository.getContact(
           routeTarget.peerId!,
         );
-        if (contact == null) {
-          _notificationTappedAt = null;
-          return;
+        if (!_notificationRouteCoordinator.isLatest(context)) {
+          return NotificationOpenRouteDisposition.superseded;
         }
-        final tappedAt = _notificationTappedAt;
-        _notificationTappedAt = null;
+        if (contact == null) {
+          // The inbox/contact materialization can lag the notification. A
+          // silent no-op is not a successful route: surface failure to the
+          // deferred retry/remote dedupe owner so another tap can succeed once
+          // the contact is available.
+          throw StateError(
+            'Notification conversation contact is not available yet.',
+          );
+        }
         await _openConversationForContact(
           navigator: navigator,
           contact: contact,
-          notificationTappedAt: tappedAt,
+          notificationTappedAt: context.tappedAt,
         );
-        return;
+        return NotificationOpenRouteDisposition.routed;
       case NotificationRouteTargetKind.post:
       case NotificationRouteTargetKind.postComment:
-        return;
+        return NotificationOpenRouteDisposition.routed;
     }
   }
 
@@ -4238,26 +4617,99 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _flushDeferredNotificationRouteTarget() async {
-    final routeTarget = _deferredNotificationRouteTarget;
-    if (routeTarget == null) {
-      return;
+    try {
+      if (_notificationRouteCoordinator.deferred == null) {
+        return;
+      }
+      final navigator = MyApp.navigatorKey.currentState;
+      if (navigator == null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          unawaited(_flushDeferredNotificationRouteTarget());
+        });
+        return;
+      }
+      // 133: hold the route until the startup home is up;
+      // `_onStartupHomeReady` (or the fallback timer) re-invokes this flush
+      // once it is, so the conversation lands ON TOP of the home rather than
+      // being replaced by it. The coordinator keeps ownership during the
+      // attempt and CAS-clears only after actual route success.
+      if (!_startupHomeReady) {
+        _armHomeReadyFallback();
+        return;
+      }
+      final result = await _notificationRouteCoordinator.runDeferredAttempt(
+        maxAttempts: _maxDeferredNotificationRouteAttempts,
+        onRouteContext: _handleNotificationRouteTarget,
+      );
+      switch (result.status) {
+        case NotificationOpenDeferredAttemptStatus.retry:
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'NOTIFICATION_DEFERRED_ROUTE_ATTEMPT_ERROR',
+            details: {
+              'attempt': result.attempt,
+              'maxAttempts': _maxDeferredNotificationRouteAttempts,
+              'willRetry': true,
+              'routeKind': result.context?.routeTarget.kind.name ?? '',
+              'error': result.error.toString(),
+            },
+          );
+          final retryContext = result.context!;
+          _deferredNotificationRouteRetryScheduler.schedule(
+            ownerOrdinal: retryContext.ordinal,
+            delay: _deferredNotificationRouteRetryDelay,
+            onRetry: () {
+              if (!mounted ||
+                  _notificationRouteCoordinator.deferred?.ordinal !=
+                      retryContext.ordinal) {
+                return;
+              }
+              unawaited(_flushDeferredNotificationRouteTarget());
+            },
+          );
+          return;
+        case NotificationOpenDeferredAttemptStatus.failed:
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'NOTIFICATION_DEFERRED_ROUTE_ATTEMPT_ERROR',
+            details: {
+              'attempt': result.attempt,
+              'maxAttempts': _maxDeferredNotificationRouteAttempts,
+              'willRetry': false,
+              'routeKind': result.context?.routeTarget.kind.name ?? '',
+              'error': result.error.toString(),
+            },
+          );
+          final failedContext = result.context;
+          if (failedContext != null) {
+            _deferredNotificationRouteRetryScheduler.cancelIfOwnedBy(
+              failedContext.ordinal,
+            );
+          }
+          return;
+        case NotificationOpenDeferredAttemptStatus.none:
+          return;
+        case NotificationOpenDeferredAttemptStatus.routed:
+        case NotificationOpenDeferredAttemptStatus.retained:
+        case NotificationOpenDeferredAttemptStatus.superseded:
+          final completedContext = result.context;
+          if (completedContext != null) {
+            _deferredNotificationRouteRetryScheduler.cancelIfOwnedBy(
+              completedContext.ordinal,
+            );
+          }
+          return;
+      }
+    } catch (e) {
+      // Every caller intentionally starts this flush unawaited. Keep this
+      // boundary total so an unexpected implementation error is observable but
+      // can never become an uncaught zone error.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'NOTIFICATION_DEFERRED_ROUTE_FLUSH_ERROR',
+        details: {'error': e.toString()},
+      );
     }
-    final navigator = MyApp.navigatorKey.currentState;
-    if (navigator == null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        unawaited(_flushDeferredNotificationRouteTarget());
-      });
-      return;
-    }
-    // 133: hold the route until the startup home is up; `_onStartupHomeReady`
-    // (or the fallback timer) re-invokes this flush once it is, so the
-    // conversation lands ON TOP of the home rather than being replaced by it.
-    if (!_startupHomeReady) {
-      _armHomeReadyFallback();
-      return;
-    }
-    _deferredNotificationRouteTarget = null;
-    await _handleNotificationRouteTarget(routeTarget);
   }
 
   /// 133: StartupRouter has established the home surface — release any deferred
@@ -4360,6 +4812,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.bridge.dispose();
     widget.audioRecorderService.dispose();
     _homeReadyFallbackTimer?.cancel();
+    _deferredNotificationRouteRetryScheduler.cancelAll();
+    _notificationRouteCoordinator.cancelDeferred();
     _iosApnsNotificationOpenBridge.dispose();
     widget.notificationService.dispose();
 
@@ -4672,6 +5126,20 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       },
     );
 
+    DurableNotificationToneLease? groupReactionCoordinator;
+    DurableNotificationToneLease? groupMessageCoordinator;
+    Future<DurableNotificationToneLease>
+    resolveGroupReactionCoordinator() async {
+      return groupReactionCoordinator ??=
+          await DurableNotificationToneLease.openDefault();
+    }
+
+    Future<DurableNotificationToneLease>
+    resolveGroupMessageCoordinator() async {
+      return groupMessageCoordinator ??=
+          await DurableNotificationToneLease.openMobileDefault();
+    }
+
     try {
       if (result == ForegroundRemoteMessageResult.notificationNeeded &&
           !await _allowsAccountRuntimeNetworkSideEffects(
@@ -4692,6 +5160,15 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             localPeerId: identity?.peerId,
           );
         },
+        groupReactionNotificationResolver:
+            _resolveForegroundGroupReactionNotification,
+        durableReactionNotificationCoordinatorResolver:
+            resolveGroupReactionCoordinator,
+        groupConversationTracker: widget.groupConversationTracker,
+        getAppLifecycleState: () =>
+            WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
+        durableGroupMessageNotificationCoordinatorResolver:
+            resolveGroupMessageCoordinator,
       );
     } catch (e) {
       emitFlowEvent(
@@ -4700,6 +5177,145 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         details: {'error': e.toString()},
       );
     }
+  }
+
+  Future<BackgroundPushNotificationFallback?>
+  _resolveForegroundGroupReactionNotification(RemoteMessage message) async {
+    final data = message.data;
+    final action = data['action']?.toString().trim();
+    final groupId = NotificationRouteTarget.groupIdFromRemoteMessageData(data);
+    final actorPeerId =
+        data['reactor_peer_id']?.toString().trim().isNotEmpty == true
+        ? data['reactor_peer_id']!.toString().trim()
+        : data['sender_id']?.toString().trim().isNotEmpty == true
+        ? data['sender_id']!.toString().trim()
+        : data['from']?.toString().trim();
+    final targetMessageId =
+        data['target_message_id']?.toString().trim().isNotEmpty == true
+        ? data['target_message_id']!.toString().trim()
+        : data['targetMessageId']?.toString().trim();
+    final eventId = data['event_id']?.toString().trim().isNotEmpty == true
+        ? data['event_id']!.toString().trim()
+        : data['reaction_id']?.toString().trim();
+    final keyEpoch = int.tryParse(data['keyEpoch']?.toString() ?? '');
+    if (action != 'add' ||
+        groupId == null ||
+        actorPeerId == null ||
+        actorPeerId.isEmpty ||
+        targetMessageId == null ||
+        targetMessageId.isEmpty ||
+        eventId == null ||
+        eventId.isEmpty ||
+        keyEpoch == null) {
+      return null;
+    }
+
+    final identity = await widget.repository.loadIdentity();
+    final localPeerId = identity?.peerId.trim();
+    final localTransportPeerId = widget.p2pService.currentState.peerId?.trim();
+    if (localPeerId == null ||
+        localPeerId.isEmpty ||
+        localTransportPeerId == null ||
+        localTransportPeerId.isEmpty ||
+        localPeerId == actorPeerId) {
+      return null;
+    }
+    final verifiedNomination = await verifyGroupReactionNotificationNomination(
+      data: data,
+      localTransportPeerId: localTransportPeerId,
+      verifySignature:
+          ({required publicKey, required signedPayload, required signature}) =>
+              callVerifyPayload(
+                bridge: widget.bridge,
+                publicKey: publicKey,
+                data: signedPayload,
+                signature: signature,
+              ),
+    );
+    if (verifiedNomination == null) return null;
+    final group = await widget.groupRepository.getGroup(groupId);
+    final target = await widget.groupMessageRepository.getMessage(
+      targetMessageId,
+    );
+    final localMember = await widget.groupRepository.getMember(
+      groupId,
+      localPeerId,
+    );
+    final actor = await widget.groupRepository.getMember(groupId, actorPeerId);
+    final key = await widget.groupRepository.getKeyByGeneration(
+      groupId,
+      keyEpoch,
+    );
+    final latestKey = await widget.groupRepository.getLatestKey(groupId);
+    final currentReaction = await widget.reactionRepository
+        .getReactionForSenderIncludingRemoved(
+          messageId: targetMessageId,
+          senderPeerId: actorPeerId,
+        );
+    final actorName = actor?.username?.trim();
+    final localDevice = localMember?.findDeviceByTransportPeerId(
+      localTransportPeerId,
+      allowLegacyFallback: true,
+    );
+    final actorDevice = actor?.findDeviceByTransportPeerId(
+      verifiedNomination.reactorTransportPeerId,
+      allowLegacyFallback: true,
+    );
+    final routePayload = NotificationRouteTarget.group(
+      groupId,
+      messageId: targetMessageId,
+    ).toPayload();
+    if (group == null ||
+        group.isMuted ||
+        group.isDissolved ||
+        localMember == null ||
+        localDevice == null ||
+        actor == null ||
+        actorDevice == null ||
+        actorDevice.deviceSigningPublicKey !=
+            verifiedNomination.senderPublicKey ||
+        actorName == null ||
+        actorName.isEmpty ||
+        target == null ||
+        target.groupId != groupId ||
+        target.senderPeerId != localPeerId ||
+        target.isIncoming ||
+        key == null ||
+        latestKey == null ||
+        !isCurrentGroupReactionKeyEpoch(
+          requestedEpoch: keyEpoch,
+          selectedEpoch: key.keyGeneration,
+          latestEpoch: latestKey.keyGeneration,
+        ) ||
+        widget.groupConversationTracker.isViewing('group:$groupId') ||
+        widget.groupConversationTracker.isViewing(routePayload)) {
+      return null;
+    }
+
+    return resolveBackgroundPushNotification(
+      message,
+      groupReactionContext: GroupReactionNotificationContext(
+        groupId: groupId,
+        groupName: group.name,
+        actorPeerId: actorPeerId,
+        actorUsername: actorName,
+        targetMessageId: targetMessageId,
+        currentReactionTimestamp: currentReaction?.timestamp,
+        currentReactionRemovedAt: currentReaction?.removedAt,
+      ),
+      decryptGroup:
+          ({
+            required groupId,
+            required keyEpoch,
+            required ciphertext,
+            required nonce,
+          }) => callGroupDecrypt(
+            widget.bridge,
+            key.encryptedKey,
+            ciphertext,
+            nonce,
+          ),
+    );
   }
 
   Future<bool> _allowsAccountRuntimeNetworkSideEffects(String operation) async {
@@ -4736,6 +5352,18 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   Future<void> _handleAccountMigrationReceiverActivated() async {
     widget.repository.invalidateCache();
+    // The imported identity owns a different projection generation. Establish
+    // it first (which clears prior-account rows), then rebuild recipient-owned
+    // group/target state before migrated runtime push eligibility resumes.
+    await widget.repository.loadIdentity();
+    await Future.wait([
+      widget.contactRepository.mirrorAllDirectReactionContacts(),
+      widget.messageRepository.mirrorAllDirectReactionAuthoredTargets(),
+    ]);
+    await widget.groupRepository.mirrorAllGroupReactionNotificationContexts();
+    await widget.groupMessageRepository.mirrorAllGroupReactionAuthoredTargets();
+    await widget.reactionRepository
+        .mirrorAllGroupReactionNotificationComparands();
   }
 
   @override
@@ -4823,7 +5451,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           ingestStagedPushEnvelopes: () => _ingestStagedPushEnvelopes(
             source: 'startup_router_notification_tap',
           ),
-          onNotificationRouteTarget: _handleNotificationRouteTarget,
+          createNotificationRouteContext: _createNotificationOpenRouteContext,
+          onNotificationRouteContext: _beginStartupNotificationRouteContext,
           onStartupHomeReady: _onStartupHomeReady,
         ),
         debugShowCheckedModeBanner: false,

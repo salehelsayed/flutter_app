@@ -89,7 +89,19 @@ Future<PrepareNotificationOpenResult> prepareNotificationOpen({
             'missing groupId for group notification route',
           );
         }
-        await drainGroupOfflineInboxForGroup(groupId);
+        try {
+          await drainGroupOfflineInboxForGroup(groupId);
+        } catch (e) {
+          // A cold notification tap can arrive before the Go node is ready.
+          // The target group/message is already recipient-owned local state;
+          // catch-up is helpful but must never make the deep link disappear.
+          // GroupConversationWired retries recovery after the route opens.
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'NOTIFICATION_OPEN_GROUP_DRAIN_ERROR',
+            details: {'error': e.toString()},
+          );
+        }
         break;
       case NotificationRouteTargetKind.post:
       case NotificationRouteTargetKind.postComment:

@@ -102,6 +102,32 @@ abstract class GroupRepository {
   Future<void> removeAllKeys(String groupId);
 }
 
+/// One coherent authorization view used immediately before a forwarded media
+/// upload starts. The group row, complete ordered roster, and latest key
+/// generation must all come from the same storage snapshot; composing this
+/// value from separate repository reads would reintroduce a membership/key
+/// time-of-check race.
+class GroupForwardAuthorizationSnapshot {
+  const GroupForwardAuthorizationSnapshot({
+    required this.group,
+    required this.members,
+    required this.latestKeyGeneration,
+  });
+
+  final GroupModel? group;
+  final List<GroupMember> members;
+  final int? latestKeyGeneration;
+}
+
+/// Optional fail-closed capability for repositories that can load a coherent
+/// [GroupForwardAuthorizationSnapshot]. Forward delivery must not fall back to
+/// sequential [GroupRepository] reads when this capability is absent or
+/// returns null.
+abstract class GroupForwardAuthorizationSnapshotRepository {
+  Future<GroupForwardAuthorizationSnapshot?>
+  loadGroupForwardAuthorizationSnapshot(String groupId);
+}
+
 /// Optional repository capability for retaining removed-member verification
 /// material so historical replay can still validate old signed envelopes.
 abstract class RemovedGroupMemberSnapshotRepository {

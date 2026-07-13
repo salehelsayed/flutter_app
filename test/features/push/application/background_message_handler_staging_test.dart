@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/notifications/recent_background_notification_gate.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
+import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
+import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
 import 'package:flutter_app/features/push/application/push_envelope_staging.dart';
@@ -54,6 +56,34 @@ void main() {
     );
     debugSetRecentRemoteNotificationGate(remoteGate);
     addTearDown(remoteGate.clear);
+    final reactionCoordinatorDirectory = Directory.systemTemp.createTempSync(
+      'background-stage-reaction-coordinator-',
+    );
+    final reactionCoordinator = DurableNotificationToneLease(
+      directory: reactionCoordinatorDirectory,
+    );
+    debugSetBackgroundReactionNotificationCoordinatorResolver(
+      () async => reactionCoordinator,
+    );
+    addTearDown(() {
+      if (reactionCoordinatorDirectory.existsSync()) {
+        reactionCoordinatorDirectory.deleteSync(recursive: true);
+      }
+    });
+    final notificationIdDirectory = Directory.systemTemp.createTempSync(
+      'background-stage-notification-id-registry-',
+    );
+    final notificationIdRegistry = DurableConversationNotificationIdRegistry(
+      directory: notificationIdDirectory,
+    );
+    debugSetBackgroundConversationNotificationIdRegistryResolver(
+      () async => notificationIdRegistry,
+    );
+    addTearDown(() {
+      if (notificationIdDirectory.existsSync()) {
+        notificationIdDirectory.deleteSync(recursive: true);
+      }
+    });
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
           log.add(call);
@@ -70,6 +100,9 @@ void main() {
     debugResetBackgroundPushNotificationDisplayEligibilityResolver();
     debugResetBackgroundPushEnvelopeStager();
     debugResetBackgroundAccountMigrationNetworkGate();
+    debugResetBackgroundReactionNotificationCoordinatorResolver();
+    debugResetBackgroundConversationNotificationIdRegistryResolver();
+    debugResetBackgroundNotificationsInitialization();
     debugResetRecentBackgroundNotificationGate();
     debugResetRecentRemoteNotificationGate();
   });
@@ -103,6 +136,35 @@ void main() {
       expect(log.map((call) => call.method), contains('show'));
     },
   );
+
+  test('Android stages reaction kind with typed outer metadata', () async {
+    const message = RemoteMessage(
+      messageId: 'fcm-reaction-1',
+      data: {
+        'type': 'message_reaction',
+        'sender_id': 'peer-alice',
+        'event_id': 'reaction-event-1',
+        'target_message_id': 'target-message-1',
+        'action': 'add',
+        'kem': 'reaction-kem',
+        'ciphertext': 'reaction-ciphertext',
+        'nonce': 'reaction-nonce',
+      },
+    );
+
+    await firebaseMessagingBackgroundHandler(message);
+
+    expect(staged, hasLength(1));
+    expect(staged.single.kind, 'reaction');
+    expect(staged.single.senderPeerId, 'peer-alice');
+    expect(staged.single.eventId, 'reaction-event-1');
+    expect(staged.single.messageId, 'reaction-event-1');
+    expect(staged.single.action, 'add');
+    expect(staged.single.targetMessageId, 'target-message-1');
+    expect(staged.single.kem, 'reaction-kem');
+    expect(staged.single.ciphertext, 'reaction-ciphertext');
+    expect(staged.single.nonce, 'reaction-nonce');
+  });
 
   test(
     'no-ciphertext push stages nothing; group-kind push stages nothing; staging throw never suppresses notification',

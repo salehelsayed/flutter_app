@@ -98,7 +98,12 @@ void main() {
           'The native tap log must have a stable marker for hardware and '
           'simulator trace collection. $diagnosticReason',
     );
+    expect(source.contains('ios_native_un_content'), isTrue);
     expect(source.contains('response.actionIdentifier'), isTrue);
+    expect(source.contains('threadIdentifierState'), isTrue);
+    expect(source.contains('threadMatchesRoute'), isTrue);
+    expect(source.contains('categoryIdentifierState'), isTrue);
+    expect(source.contains('NotificationResponseDiagnostic.evaluate'), isTrue);
     expect(source.contains('delegateClass'), isTrue);
     expect(source.contains('notification_center_delegate_installed'), isTrue);
     expect(source.contains('previousDelegateClass'), isTrue);
@@ -291,9 +296,23 @@ void main() {
       'scripts/push_fixture_to_simulator.sh',
     ).readAsStringSync();
     expect(pushHelper.contains('xcrun simctl push'), isTrue);
+    expect(pushHelper.contains("payload.aps['thread-id']"), isTrue);
+    expect(
+      pushHelper.contains("payload.aps['category']"),
+      isFalse,
+      reason:
+          'Message routing categories are app metadata, not registered '
+          'UNNotificationCategory identifiers.',
+    );
 
     for (final marker in const [
       'ios_native_un_didReceive',
+      'ios_native_un_content',
+      'threadIdentifier=<redacted>',
+      'threadIdentifierState=present',
+      'threadMatchesRoute=true',
+      'categoryIdentifier=<empty>',
+      'categoryIdentifierState=empty',
       'ios_notification_open_forwarded_warm',
       'ios_notification_open_stored_pending',
       'IOS_APNS_NOTIFICATION_OPENED',

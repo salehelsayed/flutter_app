@@ -1,10 +1,16 @@
-.PHONY: build run clean tidy lint
+.PHONY: build run test test-notifications clean tidy lint
 
 build:
 	go build -o relay-server .
 
 run: build
 	./relay-server
+
+test:
+	go test ./... -count=1
+
+test-notifications:
+	go test ./... -run '^TestRelayNotificationClosure_' -count=1
 
 tidy:
 	go mod tidy

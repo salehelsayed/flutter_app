@@ -310,6 +310,36 @@ Future<List<Map<String, Object?>>> dbLoadAllGroupMessages(
   }
 }
 
+/// Bounded authoritative rows for the iOS group-reaction authored-target
+/// projection. Account identity, not device-local `is_incoming`, owns the
+/// target so sibling-device copies remain eligible.
+Future<List<Map<String, Object?>>> dbLoadAuthoredGroupMessagesForProjection(
+  DatabaseExecutor db,
+  String accountPeerId, {
+  int limit = 256,
+}) async {
+  final normalizedAccountPeerId = accountPeerId.trim();
+  if (normalizedAccountPeerId.isEmpty) return const [];
+  if (limit <= 0) throw ArgumentError.value(limit, 'limit', 'must be positive');
+  return db.rawQuery(
+    '''
+      SELECT gm.*
+      FROM group_messages gm
+      WHERE gm.sender_peer_id = ?
+        AND gm.id NOT LIKE ?
+        AND NOT EXISTS (
+          SELECT 1
+          FROM group_message_local_deletions deleted
+          WHERE deleted.message_id = gm.id
+            AND deleted.group_id = gm.group_id
+        )
+      ORDER BY gm.timestamp DESC, gm.id ASC
+      LIMIT ?
+    ''',
+    [normalizedAccountPeerId, _groupRemovalCutoffMessageIdLike, limit],
+  );
+}
+
 /// Loads the timestamp of the latest synthetic `member_removed` message for a
 /// removed sender in a group.
 Future<String?> dbLoadLatestGroupRemovalTimestampForSender(
@@ -406,6 +436,16 @@ Future<List<Map<String, Object?>>> dbLoadGroupThreadSummaries(
       latest.key_generation AS latest_key_generation,
       latest.status AS latest_status,
       latest.is_incoming AS latest_is_incoming,
+      latest.media_policy_version AS latest_media_policy_version,
+      latest.media_lifecycle AS latest_media_lifecycle,
+      latest.media_duration_seconds AS latest_media_duration_seconds,
+      latest.media_protected AS latest_media_protected,
+      latest.media_received_at AS latest_media_received_at,
+      latest.media_expires_at AS latest_media_expires_at,
+      latest.media_last_checked_at AS latest_media_last_checked_at,
+      latest.media_consumed_at AS latest_media_consumed_at,
+      latest.media_expired_at AS latest_media_expired_at,
+      latest.media_cleanup_pending AS latest_media_cleanup_pending,
       latest.read_at AS latest_read_at,
       latest.created_at AS latest_created_at
     FROM (
@@ -472,6 +512,16 @@ Future<List<Map<String, Object?>>> dbLoadGroupThreadPreviews(
       latest.key_generation AS latest_key_generation,
       latest.status AS latest_status,
       latest.is_incoming AS latest_is_incoming,
+      latest.media_policy_version AS latest_media_policy_version,
+      latest.media_lifecycle AS latest_media_lifecycle,
+      latest.media_duration_seconds AS latest_media_duration_seconds,
+      latest.media_protected AS latest_media_protected,
+      latest.media_received_at AS latest_media_received_at,
+      latest.media_expires_at AS latest_media_expires_at,
+      latest.media_last_checked_at AS latest_media_last_checked_at,
+      latest.media_consumed_at AS latest_media_consumed_at,
+      latest.media_expired_at AS latest_media_expired_at,
+      latest.media_cleanup_pending AS latest_media_cleanup_pending,
       latest.read_at AS latest_read_at,
       latest.created_at AS latest_created_at
     FROM (

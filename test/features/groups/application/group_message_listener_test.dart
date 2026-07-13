@@ -14,6 +14,8 @@ import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
+import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
@@ -31,6 +33,7 @@ import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_key_repair.dart';
+import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
@@ -47,8 +50,6 @@ import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 
 const _validContentHash =
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-const _bytes123ContentHash =
-    '039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81';
 
 List<Map<String, dynamic>> _gird003ListenerMedia({
   required String id,
@@ -663,6 +664,18 @@ void main() {
     expect(service.shown, hasLength(count));
   }
 
+  Future<void> expectCommittedNotificationClaim(File claim) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    while (DateTime.now().isBefore(deadline)) {
+      if (await claim.exists() &&
+          (await claim.readAsString()).contains('"state":"committed"')) {
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    fail('notification claim did not commit: ${claim.path}');
+  }
+
   Future<void> expectPendingMembershipMessageCount(
     InMemoryGroupPendingMembershipMessageRepository repository,
     int count,
@@ -675,17 +688,25 @@ void main() {
     expect(repository.messages, hasLength(count));
   }
 
-  Future<void> saveGroupReactionTargetMessage(String messageId) async {
+  Future<void> saveGroupReactionTargetMessage(
+    String messageId, {
+    String senderPeerId = 'peer-self',
+    bool isIncoming = false,
+    GroupPrivateMediaPolicy privateMediaPolicy =
+        const GroupPrivateMediaPolicy.ordinary(),
+  }) async {
     final timestamp = DateTime.utc(2026, 1, 1);
     await msgRepo.saveMessage(
       GroupMessage(
         id: messageId,
         groupId: 'group-1',
-        senderPeerId: 'peer-sender',
-        senderUsername: 'Sender',
+        senderPeerId: senderPeerId,
+        senderUsername: senderPeerId == 'peer-self' ? 'Me' : 'Sender',
         text: 'Reaction target',
         timestamp: timestamp,
+        isIncoming: isIncoming,
         createdAt: timestamp,
+        privateMediaPolicy: privateMediaPolicy,
       ),
     );
   }
@@ -11407,6 +11428,72 @@ void main() {
     );
 
     test(
+      'GPL-04C listener persists corrupt private parent unsupported without derivatives',
+      () async {
+        await saveSelfMember();
+        final mediaRepo = InMemoryMediaAttachmentRepository();
+        final notifService = FakeNotificationService();
+        final tracker = ActiveConversationTracker();
+        final mediaListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: FakeMediaFileManager(),
+          notificationService: notifService,
+          groupConversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+        );
+        final mediaSource = StreamController<Map<String, dynamic>>.broadcast();
+
+        mediaListener.start(mediaSource.stream);
+        addTearDown(mediaListener.dispose);
+        addTearDown(mediaSource.close);
+
+        mediaSource.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'messageId': 'msg-corrupt-private-listener',
+          'text': '',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+          'mediaPolicyVersion': 1,
+          'mediaLifecycle': 'viewOnce',
+          'mediaDurationSeconds': null,
+          'mediaProtected': true,
+          'media': [
+            {
+              'id': 'blob-corrupt-private-listener',
+              'mime': 42,
+              'size': 12345,
+              'mediaType': 'image',
+              'downloadStatus': 'pending',
+              'contentHash': _validContentHash,
+              'encryptionKeyBase64': 'key-fixture',
+              'encryptionNonce': 'nonce-fixture',
+              'encryptionScheme': 'blob_aes_256_gcm_v1',
+              'createdAt': DateTime.now().toUtc().toIso8601String(),
+            },
+          ],
+        });
+
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        final parent = await msgRepo.getMessage('msg-corrupt-private-listener');
+        expect(parent, isNotNull, reason: debugLogs.join('\n'));
+        expect(
+          parent!.privateMediaPolicy,
+          const GroupPrivateMediaPolicy.unsupported(sourceVersion: 1),
+        );
+        expect(mediaRepo.count, 0);
+        expect(notifService.shown, isEmpty);
+        expect(bridge.commandLog, isNot(contains('media:download')));
+      },
+    );
+
+    test(
       'rejects oversized media before notification preview or auto-download',
       () async {
         final mediaRepo = InMemoryMediaAttachmentRepository();
@@ -11593,7 +11680,8 @@ void main() {
           // 112: the in-flight dedup key is policy-aware — only same-policy
           // callers share a future. The listener below downloads with the
           // group policy, so this pre-flight call must too.
-          enforceGroupMediaPolicy: true, owner: MediaOwnerLane.group,
+          enforceGroupMediaPolicy: true,
+          owner: MediaOwnerLane.group,
         );
         await Future<void>.delayed(Duration.zero);
 
@@ -11643,7 +11731,8 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 50));
 
         final savedAttachments = await mediaRepo.getAttachmentsForMessage(
-          'msg-group-1', owner: MediaOwnerLane.group,
+          'msg-group-1',
+          owner: MediaOwnerLane.group,
         );
         expect(savedAttachments.single.downloadStatus, 'done');
         expect(savedAttachments.single.localPath, startsWith('media/'));
@@ -11667,6 +11756,10 @@ void main() {
       await saveSelfMember();
       final notifService = FakeNotificationService();
       final tracker = ActiveConversationTracker();
+      final claimDirectory = await Directory.systemTemp.createTemp(
+        'group-listener-durable-claim-',
+      );
+      addTearDown(() => claimDirectory.delete(recursive: true));
 
       final notifListener = GroupMessageListener(
         groupRepo: groupRepo,
@@ -11675,6 +11768,8 @@ void main() {
         getSelfPeerId: () async => 'peer-self',
         notificationService: notifService,
         groupConversationTracker: tracker,
+        durableNotificationCoordinatorResolver: () async =>
+            DurableNotificationToneLease(directory: claimDirectory),
         getAppLifecycleState: () => AppLifecycleState.paused,
       );
       notifListener.start(sourceController.stream);
@@ -11694,6 +11789,11 @@ void main() {
       expect(notifService.shown.first.contactPeerId, 'group:group-1');
       expect(notifService.shown.first.senderUsername, 'Test Group');
       expect(notifService.shown.first.messageText, 'Sender: Hello group!');
+      final claim = File(
+        '${claimDirectory.path}/NotificationServiceDedupe/'
+        'group_message-${notifService.shown.first.payload.split('|message:').last}',
+      );
+      await expectCommittedNotificationClaim(claim);
 
       notifListener.dispose();
     });
@@ -11877,12 +11977,11 @@ void main() {
       },
     );
 
-    // 120 G4 — pins the intentional 118 asymmetry: the group call site
-    // (group_message_listener.dart:928-957) deliberately does NOT pass a
-    // markRecentRemoteNotificationAnnouncement closure. Adding one (to
-    // "symmetrize" with the direct path) must fail this guard.
+    // Group and announcement messages use the same bidirectional remote/local
+    // dedupe contract as direct chats: remote-first is consumed at the live
+    // boundary, while live-first writes an exact anchored marker.
     test(
-      'group path is intentionally mark-free: gate.markAnnouncement is never called',
+      'group live-first path marks the exact message for symmetric dedupe',
       () async {
         await saveSelfMember();
         final notifService = FakeNotificationService();
@@ -11913,9 +12012,207 @@ void main() {
         });
 
         await expectNotificationCount(notifService, 1);
-        expect(spyGate.markCalls, isEmpty);
+        expect(spyGate.markCalls, hasLength(1));
+        expect(
+          spyGate.markCalls.single.payload,
+          'group:group-1|message:group-mark-free-1',
+        );
+        expect(spyGate.markCalls.single.messageId, 'group-mark-free-1');
+        expect(
+          await spyGate.consumeIfRecentAnnouncement(
+            payload: 'group:group-1|message:group-mark-free-1',
+            messageId: 'group-mark-free-1',
+          ),
+          isTrue,
+        );
 
         notifListener.dispose();
+      },
+    );
+
+    test(
+      'announcement text image video and voice notifications keep group title and anchored taps',
+      () async {
+        await saveSelfMember();
+        await groupRepo.updateGroup(
+          testGroup.copyWith(
+            name: 'Team Announcements',
+            type: GroupType.announcement,
+          ),
+        );
+        final notifService = FakeNotificationService();
+        final mediaRepo = InMemoryMediaAttachmentRepository();
+        final claimDirectory = await Directory.systemTemp.createTemp(
+          'announcement-listener-durable-claim-',
+        );
+        addTearDown(() => claimDirectory.delete(recursive: true));
+        final notifListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+          notificationService: notifService,
+          groupConversationTracker: ActiveConversationTracker(),
+          durableNotificationCoordinatorResolver: () async =>
+              DurableNotificationToneLease(directory: claimDirectory),
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          mediaAttachmentRepo: mediaRepo,
+        );
+        notifListener.start(sourceController.stream);
+        addTearDown(notifListener.dispose);
+
+        Map<String, dynamic> media({
+          required String id,
+          required String mediaType,
+          required String mime,
+        }) => {
+          'id': id,
+          'mime': mime,
+          'size': 1024,
+          'mediaType': mediaType,
+          'downloadStatus': 'pending',
+          'contentHash': _validContentHash,
+          'encryptionKeyBase64': 'announcement-key-$id',
+          'encryptionNonce': 'announcement-nonce-$id',
+          'encryptionScheme': 'blob_aes_256_gcm_v1',
+          'createdAt': DateTime.utc(2026, 7, 12, 12).toIso8601String(),
+        };
+
+        final cases =
+            <
+              ({
+                String id,
+                String text,
+                Map<String, dynamic>? media,
+                String body,
+              })
+            >[
+              (
+                id: 'announcement-text',
+                text: 'Service window at 18:00',
+                media: null,
+                body: 'Admin: Service window at 18:00',
+              ),
+              (
+                id: 'announcement-image',
+                text: '',
+                media: media(
+                  id: 'announcement-image-media',
+                  mediaType: 'image',
+                  mime: 'image/jpeg',
+                ),
+                body: 'Admin: Photo',
+              ),
+              (
+                id: 'announcement-video',
+                text: '',
+                media: media(
+                  id: 'announcement-video-media',
+                  mediaType: 'video',
+                  mime: 'video/mp4',
+                ),
+                body: 'Admin: Video',
+              ),
+              (
+                id: 'announcement-voice',
+                text: '',
+                media: media(
+                  id: 'announcement-voice-media',
+                  mediaType: 'audio',
+                  mime: 'audio/aac',
+                ),
+                body: 'Admin: Voice message',
+              ),
+            ];
+
+        for (var index = 0; index < cases.length; index++) {
+          final testCase = cases[index];
+          sourceController.add({
+            'groupId': 'group-1',
+            'senderId': 'peer-admin',
+            'senderUsername': 'Admin',
+            'keyEpoch': 0,
+            'messageId': testCase.id,
+            'text': testCase.text,
+            if (testCase.media != null) 'media': [testCase.media],
+            'timestamp': DateTime.utc(
+              2026,
+              7,
+              12,
+              12,
+              0,
+              index,
+            ).toIso8601String(),
+          });
+
+          await expectNotificationCount(notifService, index + 1);
+          final shown = notifService.shown.last;
+          expect(shown.senderUsername, 'Team Announcements');
+          expect(shown.messageText, testCase.body);
+          expect(shown.payload, 'group:group-1|message:${testCase.id}');
+          await expectCommittedNotificationClaim(
+            File(
+              '${claimDirectory.path}/NotificationServiceDedupe/'
+              'group_message-${testCase.id}',
+            ),
+          );
+        }
+      },
+    );
+
+    test(
+      'muted and actively viewed announcements stay notification-silent',
+      () async {
+        await saveSelfMember();
+        await groupRepo.updateGroup(
+          testGroup.copyWith(
+            name: 'Team Announcements',
+            type: GroupType.announcement,
+            isMuted: true,
+          ),
+        );
+        final notifService = FakeNotificationService();
+        final tracker = ActiveConversationTracker()..setActive('group:group-1');
+        final notifListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+          notificationService: notifService,
+          groupConversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+        );
+        notifListener.start(sourceController.stream);
+        addTearDown(notifListener.dispose);
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'messageId': 'announcement-muted',
+          'text': 'Muted announcement',
+          'timestamp': DateTime.utc(2026, 7, 12, 13).toIso8601String(),
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(notifService.shown, isEmpty);
+        expect(await msgRepo.getMessage('announcement-muted'), isNotNull);
+
+        await groupRepo.updateGroup(
+          (await groupRepo.getGroup('group-1'))!.copyWith(isMuted: false),
+        );
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'messageId': 'announcement-active',
+          'text': 'Active-thread announcement',
+          'timestamp': DateTime.utc(2026, 7, 12, 13, 1).toIso8601String(),
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(notifService.shown, isEmpty);
+        expect(await msgRepo.getMessage('announcement-active'), isNotNull);
       },
     );
 
@@ -12298,10 +12595,12 @@ void main() {
         expect(await msgRepo.getMessage(remintedMessageId), isNull);
 
         final originalAttachments = await mediaRepo.getAttachmentsForMessage(
-          originalMessageId, owner: MediaOwnerLane.group,
+          originalMessageId,
+          owner: MediaOwnerLane.group,
         );
         final duplicateAttachments = await mediaRepo.getAttachmentsForMessage(
-          remintedMessageId, owner: MediaOwnerLane.group,
+          remintedMessageId,
+          owner: MediaOwnerLane.group,
         );
         expect(originalAttachments, hasLength(1));
         expect(originalAttachments.single.id, 'blob-gird003-listener-shared');
@@ -12419,7 +12718,10 @@ void main() {
         expect(saved.keyGeneration, 7);
         expect(saved.status, 'delivered');
 
-        final attachments = await mediaRepo.getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group);
+        final attachments = await mediaRepo.getAttachmentsForMessage(
+          messageId,
+          owner: MediaOwnerLane.group,
+        );
         expect(attachments, hasLength(1));
         expect(attachments.single.id, 'lp013-media-1');
         expect(attachments.single.mime, 'image/png');
@@ -12945,6 +13247,7 @@ void main() {
           msgRepo: msgRepo,
           bridge: bridge,
           reactionRepo: reactionRepo,
+          getSelfPeerId: () async => 'peer-self',
           notificationService: notifService,
           groupConversationTracker: ActiveConversationTracker(),
           // resumed + not-viewing: no background-guard delay and no viewing
@@ -12978,6 +13281,71 @@ void main() {
       },
     );
 
+    test(
+      'GPL-04D production-off live reactions retain state without private derivatives',
+      () async {
+        await saveSelfMember();
+        await saveGroupReactionTargetMessage(
+          'private-reaction-target',
+          privateMediaPolicy: const GroupPrivateMediaPolicy.viewOnce(),
+        );
+        await saveGroupReactionTargetMessage(
+          'unsupported-reaction-target',
+          privateMediaPolicy: const GroupPrivateMediaPolicy.unsupported(
+            sourceVersion: 9,
+          ),
+        );
+        final notifications = FakeNotificationService();
+        final rxnListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          reactionRepo: reactionRepo,
+          getSelfPeerId: () async => 'peer-self',
+          notificationService: notifications,
+          groupConversationTracker: ActiveConversationTracker(),
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+        );
+        rxnListener.start(
+          sourceController.stream,
+          incomingGroupReactions: reactionSource.stream,
+        );
+        addTearDown(rxnListener.dispose);
+
+        final changes = <ReactionChange>[];
+        final sub = rxnListener.groupReactionChangeStream.listen(changes.add);
+        addTearDown(sub.cancel);
+
+        for (final target in const [
+          ('private-reaction-target', 'rxn-private-live', 'event-private-live'),
+          (
+            'unsupported-reaction-target',
+            'rxn-unsupported-live',
+            'event-unsupported-live',
+          ),
+        ]) {
+          reactionSource.add({
+            'groupId': 'group-1',
+            'senderId': 'peer-sender',
+            'reaction': jsonEncode({
+              'id': target.$2,
+              'eventId': target.$3,
+              'messageId': target.$1,
+              'emoji': '\u{1F44D}',
+              'action': 'add',
+              'senderPeerId': 'peer-sender',
+              'timestamp': '2026-01-01T00:00:00.000Z',
+            }),
+          });
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        expect(reactionRepo.saveReactionCallCount, 2);
+        expect(changes, isEmpty);
+        expect(notifications.shown, isEmpty);
+      },
+    );
+
     test('127-Bug-D: incoming REMOVE group reaction does NOT notify', () async {
       await saveGroupReactionTargetMessage('msg-1');
       await reactionRepo.saveReaction(
@@ -12996,6 +13364,7 @@ void main() {
         msgRepo: msgRepo,
         bridge: bridge,
         reactionRepo: reactionRepo,
+        getSelfPeerId: () async => 'peer-self',
         notificationService: notifService,
         groupConversationTracker: ActiveConversationTracker(),
         // resumed + not-viewing: no background-guard delay and no viewing
@@ -13035,6 +13404,7 @@ void main() {
         msgRepo: msgRepo,
         bridge: bridge,
         reactionRepo: reactionRepo,
+        getSelfPeerId: () async => 'peer-self',
         notificationService: notifService,
         groupConversationTracker: ActiveConversationTracker(),
         // resumed + not-viewing: no background-guard delay and no viewing
@@ -13115,6 +13485,7 @@ void main() {
           msgRepo: msgRepo,
           bridge: bridge,
           reactionRepo: reactionRepo,
+          getSelfPeerId: () async => 'peer-self',
           notificationService: notifService,
           groupConversationTracker: tracker,
           getAppLifecycleState: () => AppLifecycleState.resumed,
@@ -13141,6 +13512,240 @@ void main() {
         expect(notifService.shown, isEmpty);
 
         rxnListener.dispose();
+      },
+    );
+
+    test(
+      'group reaction notifies target author but not reactor or bystander',
+      () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-author',
+            username: 'Author',
+            role: MemberRole.writer,
+            joinedAt: initialMemberJoinedAt,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-bystander',
+            username: 'Bystander',
+            role: MemberRole.reader,
+            joinedAt: initialMemberJoinedAt,
+          ),
+        );
+
+        Future<
+          ({
+            GroupMessageListener listener,
+            FakeNotificationService notifications,
+            FakeReactionRepository reactions,
+          })
+        >
+        buildPeer(String selfPeerId) async {
+          final messages = InMemoryGroupMessageRepository();
+          final timestamp = DateTime.utc(2026, 1, 1);
+          await messages.saveMessage(
+            GroupMessage(
+              id: 'msg-author-only',
+              groupId: 'group-1',
+              senderPeerId: 'peer-author',
+              senderUsername: 'Author',
+              text: 'Reaction target',
+              timestamp: timestamp,
+              isIncoming: selfPeerId != 'peer-author',
+              createdAt: timestamp,
+            ),
+          );
+          final reactions = FakeReactionRepository();
+          final notifications = FakeNotificationService();
+          final peerListener = GroupMessageListener(
+            groupRepo: groupRepo,
+            msgRepo: messages,
+            bridge: bridge,
+            reactionRepo: reactions,
+            getSelfPeerId: () async => selfPeerId,
+            notificationService: notifications,
+            groupConversationTracker: ActiveConversationTracker(),
+            getAppLifecycleState: () => AppLifecycleState.resumed,
+          );
+          peerListener.start(
+            sourceController.stream,
+            incomingGroupReactions: reactionSource.stream,
+          );
+          return (
+            listener: peerListener,
+            notifications: notifications,
+            reactions: reactions,
+          );
+        }
+
+        final author = await buildPeer('peer-author');
+        final reactor = await buildPeer('peer-sender');
+        final bystander = await buildPeer('peer-bystander');
+        addTearDown(author.listener.dispose);
+        addTearDown(reactor.listener.dispose);
+        addTearDown(bystander.listener.dispose);
+
+        reactionSource.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'reaction': jsonEncode({
+            'id': 'rxn-author-only',
+            'messageId': 'msg-author-only',
+            'emoji': '\u{1F44D}',
+            'action': 'add',
+            'senderPeerId': 'peer-sender',
+            'timestamp': '2026-01-01T00:00:00.000Z',
+          }),
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        expect(author.notifications.shown, hasLength(1));
+        expect(
+          author.notifications.shown.single.messageText,
+          'Sender reacted \u{1F44D} to your message',
+        );
+        expect(reactor.notifications.shown, isEmpty);
+        expect(bystander.notifications.shown, isEmpty);
+        expect(author.reactions.saveReactionCallCount, 1);
+        expect(reactor.reactions.saveReactionCallCount, 1);
+        expect(bystander.reactions.saveReactionCallCount, 1);
+      },
+    );
+
+    test(
+      'missing local identity fails closed for reaction notification',
+      () async {
+        await saveGroupReactionTargetMessage('msg-missing-identity');
+        final notifications = FakeNotificationService();
+        final rxnListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          reactionRepo: reactionRepo,
+          notificationService: notifications,
+          groupConversationTracker: ActiveConversationTracker(),
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+        );
+        rxnListener.start(
+          sourceController.stream,
+          incomingGroupReactions: reactionSource.stream,
+        );
+        addTearDown(rxnListener.dispose);
+
+        reactionSource.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'reaction': jsonEncode({
+            'id': 'rxn-missing-identity',
+            'messageId': 'msg-missing-identity',
+            'emoji': '\u{1F44D}',
+            'action': 'add',
+            'senderPeerId': 'peer-sender',
+            'timestamp': '2026-01-01T00:00:00.000Z',
+          }),
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        expect(reactionRepo.saveReactionCallCount, 1);
+        expect(notifications.shown, isEmpty);
+      },
+    );
+
+    test(
+      'announcement reaction notifies only announcement author with group context',
+      () async {
+        await groupRepo.updateGroup(
+          testGroup.copyWith(
+            name: 'Team Announcements',
+            type: GroupType.announcement,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-reader',
+            username: 'Reader',
+            role: MemberRole.reader,
+            joinedAt: initialMemberJoinedAt,
+          ),
+        );
+        await saveGroupReactionTargetMessage('msg-announcement');
+        final notifications = FakeNotificationService();
+        final rxnListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          reactionRepo: reactionRepo,
+          getSelfPeerId: () async => 'peer-self',
+          notificationService: notifications,
+          groupConversationTracker: ActiveConversationTracker(),
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+        );
+        rxnListener.start(
+          sourceController.stream,
+          incomingGroupReactions: reactionSource.stream,
+        );
+        addTearDown(rxnListener.dispose);
+
+        final readerMessages = InMemoryGroupMessageRepository();
+        final targetTimestamp = DateTime.utc(2026, 1, 1);
+        await readerMessages.saveMessage(
+          GroupMessage(
+            id: 'msg-announcement',
+            groupId: 'group-1',
+            senderPeerId: 'peer-self',
+            senderUsername: 'Author',
+            text: 'Announcement target',
+            timestamp: targetTimestamp,
+            isIncoming: true,
+            createdAt: targetTimestamp,
+          ),
+        );
+        final readerReactions = FakeReactionRepository();
+        final readerNotifications = FakeNotificationService();
+        final readerListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: readerMessages,
+          bridge: bridge,
+          reactionRepo: readerReactions,
+          getSelfPeerId: () async => 'peer-reader',
+          notificationService: readerNotifications,
+          groupConversationTracker: ActiveConversationTracker(),
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+        );
+        readerListener.start(
+          sourceController.stream,
+          incomingGroupReactions: reactionSource.stream,
+        );
+        addTearDown(readerListener.dispose);
+
+        reactionSource.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'reaction': jsonEncode({
+            'id': 'rxn-announcement',
+            'messageId': 'msg-announcement',
+            'emoji': '\u{1F389}',
+            'action': 'add',
+            'senderPeerId': 'peer-sender',
+            'timestamp': '2026-01-01T00:00:00.000Z',
+          }),
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        expect(notifications.shown, hasLength(1));
+        expect(notifications.shown.single.senderUsername, 'Team Announcements');
+        expect(
+          notifications.shown.single.messageText,
+          'Sender reacted \u{1F389} to your message',
+        );
+        expect(readerNotifications.shown, isEmpty);
+        expect(reactionRepo.saveReactionCallCount, 1);
+        expect(readerReactions.saveReactionCallCount, 1);
       },
     );
 
@@ -13275,6 +13880,228 @@ void main() {
         });
         await Future<void>.delayed(const Duration(milliseconds: 60));
         expect(changes, hasLength(1));
+      },
+    );
+
+    test(
+      'reaction before locally authored target stays unclaimed then notifies once after target sync',
+      () async {
+        await saveSelfMember();
+        final pendingReactionRepo = InMemoryGroupPendingReactionRepository();
+        final notifications = FakeNotificationService();
+        final claimDirectory = await Directory.systemTemp.createTemp(
+          'group-reaction-buffered-claim-',
+        );
+        addTearDown(() => claimDirectory.delete(recursive: true));
+        final coordinator = DurableNotificationToneLease(
+          directory: claimDirectory,
+        );
+        final claimFile = File(
+          '${claimDirectory.path}/'
+          '${DurableNotificationToneLease.eventClaimsDirectoryName}/'
+          '${DurableNotificationToneLease.messageEventClaimFileName(type: 'message_reaction', eventIdentity: boundedReactionEventIdentity('transition-buffered-author'))}',
+        );
+        final rxnListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          reactionRepo: reactionRepo,
+          pendingReactionRepo: pendingReactionRepo,
+          getSelfPeerId: () async => 'peer-self',
+          notificationService: notifications,
+          groupConversationTracker: ActiveConversationTracker(),
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          durableNotificationCoordinatorResolver: () async => coordinator,
+        );
+        rxnListener.start(
+          sourceController.stream,
+          incomingGroupReactions: reactionSource.stream,
+        );
+        addTearDown(rxnListener.dispose);
+
+        reactionSource.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'reaction': jsonEncode({
+            'id': 'rxn-buffered-author',
+            'eventId': 'transition-buffered-author',
+            'messageId': 'late-authored-target',
+            'emoji': '\u{1F44D}',
+            'action': 'add',
+            'senderPeerId': 'peer-sender',
+            'timestamp': '2026-06-05T12:04:00.000Z',
+          }),
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+
+        expect(pendingReactionRepo.reactions, hasLength(1));
+        expect(claimFile.existsSync(), isFalse);
+        expect(notifications.shown, isEmpty);
+
+        // A sibling-device replay materializes the local account's target.
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-self',
+          'senderUsername': 'Self',
+          'keyEpoch': 0,
+          'text': 'Synced outgoing target',
+          'timestamp': DateTime.utc(2026, 6, 5, 12, 3).toIso8601String(),
+          'messageId': 'late-authored-target',
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        expect(pendingReactionRepo.reactions, isEmpty);
+        expect(claimFile.existsSync(), isTrue);
+        expect(notifications.shown, hasLength(1));
+        expect(
+          notifications.shown.single.payload,
+          'group:group-1|message:late-authored-target',
+        );
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-self',
+          'senderUsername': 'Self',
+          'keyEpoch': 0,
+          'text': 'Synced outgoing target',
+          'timestamp': DateTime.utc(2026, 6, 5, 12, 3).toIso8601String(),
+          'messageId': 'late-authored-target',
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+
+        expect(claimFile.existsSync(), isTrue);
+        expect(notifications.shown, hasLength(1));
+      },
+    );
+
+    test(
+      'GPL-04D production-off pending reactions flush without private derivatives',
+      () async {
+        await saveSelfMember();
+        final pendingReactionRepo = InMemoryGroupPendingReactionRepository();
+        final notifications = FakeNotificationService();
+        final rxnListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          reactionRepo: reactionRepo,
+          pendingReactionRepo: pendingReactionRepo,
+          getSelfPeerId: () async => 'peer-self',
+          notificationService: notifications,
+          groupConversationTracker: ActiveConversationTracker(),
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+        );
+        rxnListener.start(
+          sourceController.stream,
+          incomingGroupReactions: reactionSource.stream,
+        );
+        addTearDown(rxnListener.dispose);
+
+        final changes = <ReactionChange>[];
+        final sub = rxnListener.groupReactionChangeStream.listen(changes.add);
+        addTearDown(sub.cancel);
+
+        for (final target in const [
+          (
+            'pending-private-reaction-target',
+            'rxn-private-pending',
+            'event-private-pending',
+          ),
+          (
+            'pending-unsupported-reaction-target',
+            'rxn-unsupported-pending',
+            'event-unsupported-pending',
+          ),
+        ]) {
+          reactionSource.add({
+            'groupId': 'group-1',
+            'senderId': 'peer-sender',
+            'reaction': jsonEncode({
+              'id': target.$2,
+              'eventId': target.$3,
+              'messageId': target.$1,
+              'emoji': '\u{1F44D}',
+              'action': 'add',
+              'senderPeerId': 'peer-sender',
+              'timestamp': '2026-01-01T00:00:00.000Z',
+            }),
+          });
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        expect(pendingReactionRepo.reactions, hasLength(2));
+        expect(changes, isEmpty);
+        expect(notifications.shown, isEmpty);
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-self',
+          'senderUsername': 'Self',
+          'keyEpoch': 0,
+          'messageId': 'pending-private-reaction-target',
+          'text': '',
+          'timestamp': DateTime.utc(2026, 6, 5, 12, 3).toIso8601String(),
+          'mediaPolicyVersion': 1,
+          'mediaLifecycle': 'viewOnce',
+          'mediaDurationSeconds': null,
+          'mediaProtected': true,
+          'media': [
+            {
+              'id': 'pending-private-reaction-blob',
+              'mime': 'image/png',
+              'size': 4096,
+              'mediaType': 'image',
+              'downloadStatus': 'pending',
+              'contentHash': _validContentHash,
+              'encryptionKeyBase64': 'key-fixture',
+              'encryptionNonce': 'nonce-fixture',
+              'encryptionScheme': 'blob_aes_256_gcm_v1',
+              'createdAt': '2026-06-05T12:03:00.000Z',
+            },
+          ],
+        });
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-self',
+          'senderUsername': 'Self',
+          'keyEpoch': 0,
+          'messageId': 'pending-unsupported-reaction-target',
+          'text': '',
+          'timestamp': DateTime.utc(2026, 6, 5, 12, 4).toIso8601String(),
+          'mediaPolicyVersion': 9,
+          'mediaLifecycle': 'viewOnce',
+          'mediaDurationSeconds': null,
+          'mediaProtected': true,
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+
+        expect(pendingReactionRepo.reactions, isEmpty);
+        expect(
+          await reactionRepo.getReactionsForMessage(
+            'pending-private-reaction-target',
+          ),
+          hasLength(1),
+        );
+        expect(
+          await reactionRepo.getReactionsForMessage(
+            'pending-unsupported-reaction-target',
+          ),
+          hasLength(1),
+        );
+        expect(
+          (await msgRepo.getMessage(
+            'pending-private-reaction-target',
+          ))!.privateMediaPolicy,
+          const GroupPrivateMediaPolicy.viewOnce(),
+        );
+        expect(
+          (await msgRepo.getMessage(
+            'pending-unsupported-reaction-target',
+          ))!.privateMediaPolicy,
+          const GroupPrivateMediaPolicy.unsupported(sourceVersion: 9),
+        );
+        expect(changes, isEmpty);
+        expect(notifications.shown, isEmpty);
       },
     );
 

@@ -11,6 +11,9 @@ import 'message_reaction.dart';
 /// Inner payload: `{ "id", "messageId", "emoji", "action", "senderPeerId", "timestamp" }`
 /// Action is either `"add"` or `"remove"`.
 class ReactionPayload {
+  static const String addAction = 'add';
+  static const String removeAction = 'remove';
+
   final String id;
   final String messageId;
   final String emoji;
@@ -52,6 +55,7 @@ class ReactionPayload {
           timestamp == null) {
         return null;
       }
+      if (!isSupportedAction(action)) return null;
 
       return ReactionPayload(
         id: id,
@@ -87,19 +91,39 @@ class ReactionPayload {
   /// Builds a v2 encrypted envelope JSON string.
   static String buildEncryptedEnvelope({
     required String senderPeerId,
+    String? eventId,
+    String? action,
+    String? targetMessageId,
     required String kem,
     required String ciphertext,
     required String nonce,
   }) {
+    final notificationMetadata = <String?>[eventId, action, targetMessageId];
+    final hasAnyNotificationMetadata = notificationMetadata.any(
+      (value) => value != null,
+    );
+    final hasCompleteNotificationMetadata = notificationMetadata.every(
+      (value) => value != null && value.trim().isNotEmpty,
+    );
+    if (hasAnyNotificationMetadata && !hasCompleteNotificationMetadata) {
+      throw ArgumentError(
+        'Reaction notification metadata must be omitted or complete',
+      );
+    }
+    if (action != null && !isSupportedAction(action)) {
+      throw ArgumentError.value(action, 'action', 'must be add or remove');
+    }
+
     final envelope = {
       'type': 'message_reaction',
       'version': '2',
       'senderPeerId': senderPeerId,
-      'encrypted': {
-        'kem': kem,
-        'ciphertext': ciphertext,
-        'nonce': nonce,
+      if (hasCompleteNotificationMetadata) ...{
+        'eventId': eventId,
+        'action': action,
+        'targetMessageId': targetMessageId,
       },
+      'encrypted': {'kem': kem, 'ciphertext': ciphertext, 'nonce': nonce},
     };
     return jsonEncode(envelope);
   }
@@ -119,6 +143,22 @@ class ReactionPayload {
           encrypted['ciphertext'] == null ||
           encrypted['nonce'] == null) {
         return null;
+      }
+
+      final eventId = json['eventId'];
+      final action = json['action'];
+      final targetMessageId = json['targetMessageId'];
+      final metadata = <Object?>[eventId, action, targetMessageId];
+      final hasAnyMetadata = metadata.any((value) => value != null);
+      if (hasAnyMetadata) {
+        if (eventId is! String ||
+            eventId.trim().isEmpty ||
+            action is! String ||
+            !isSupportedAction(action) ||
+            targetMessageId is! String ||
+            targetMessageId.trim().isEmpty) {
+          return null;
+        }
       }
       return json;
     } catch (_) {
@@ -145,6 +185,7 @@ class ReactionPayload {
           timestamp == null) {
         return null;
       }
+      if (!isSupportedAction(action)) return null;
 
       return ReactionPayload(
         id: id,
@@ -184,4 +225,7 @@ class ReactionPayload {
       createdAt: DateTime.now().toUtc().toIso8601String(),
     );
   }
+
+  static bool isSupportedAction(String action) =>
+      action == addAction || action == removeAction;
 }

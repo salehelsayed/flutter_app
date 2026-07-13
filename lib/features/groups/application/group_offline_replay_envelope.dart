@@ -13,6 +13,30 @@ const groupOfflineReplayPayloadTypeMessage = 'group_message';
 const groupOfflineReplayPayloadTypeReaction = 'group_reaction';
 const groupOfflineReplaySignatureVersion = 1;
 const groupOfflineReplaySignatureAlgorithm = 'ed25519';
+const groupReactionNotificationExtensionKind = 'group_reaction_notification';
+const groupReactionNotificationExtensionVersion = 1;
+
+/// Sender-authored, content-free notification hints that are signed separately
+/// from the byte-compatible v1 replay payload. Display authority remains local
+/// to the recipient; this extension only allows the relay to select a typed
+/// wake and a transition identity.
+class GroupReactionNotificationExtensionInput {
+  const GroupReactionNotificationExtensionInput({
+    required this.transitionId,
+    required this.action,
+    required this.targetMessageId,
+    required this.reactorPeerId,
+    required this.reactorTransportPeerId,
+    required this.notificationRecipientTransportPeerIds,
+  });
+
+  final String transitionId;
+  final String action;
+  final String targetMessageId;
+  final String reactorPeerId;
+  final String reactorTransportPeerId;
+  final List<String> notificationRecipientTransportPeerIds;
+}
 
 class GroupOfflineReplaySignatureException implements Exception {
   GroupOfflineReplaySignatureException(this.reason);
@@ -31,6 +55,7 @@ class _ReplaySignatureVerification {
     required this.senderDeviceId,
     required this.senderTransportPeerId,
     required this.plaintextHash,
+    this.reactionNotificationExtension,
   });
 
   final String payloadType;
@@ -39,6 +64,24 @@ class _ReplaySignatureVerification {
   final String? senderDeviceId;
   final String? senderTransportPeerId;
   final String plaintextHash;
+  final _VerifiedGroupReactionNotificationExtension?
+  reactionNotificationExtension;
+}
+
+class _VerifiedGroupReactionNotificationExtension {
+  const _VerifiedGroupReactionNotificationExtension({
+    required this.transitionId,
+    required this.action,
+    required this.targetMessageId,
+    required this.reactorPeerId,
+    required this.reactorTransportPeerId,
+  });
+
+  final String transitionId;
+  final String action;
+  final String targetMessageId;
+  final String reactorPeerId;
+  final String reactorTransportPeerId;
 }
 
 Future<String> buildGroupOfflineReplayEnvelope({
@@ -56,6 +99,7 @@ Future<String> buildGroupOfflineReplayEnvelope({
   String? senderTransportPeerId,
   String? senderKeyPackageId,
   List<String>? recipientPeerIds,
+  GroupReactionNotificationExtensionInput? reactionNotificationExtension,
 }) async {
   final resolvedKey = keyInfo ?? await _loadReplayKey(groupRepo, groupId);
   final encryptResult = await callGroupEncrypt(
@@ -124,7 +168,7 @@ Future<String> buildGroupOfflineReplayEnvelope({
     throw StateError('Failed to sign group offline replay envelope');
   }
 
-  return jsonEncode({
+  final baseEnvelope = <String, Object?>{
     'kind': groupOfflineReplayEnvelopeKind,
     'version': 1,
     'groupId': groupId,
@@ -144,7 +188,28 @@ Future<String> buildGroupOfflineReplayEnvelope({
     'signatureAlgorithm': groupOfflineReplaySignatureAlgorithm,
     'signedPayload': signedPayload,
     'signature': signature,
-  });
+  };
+
+  final notificationInput = reactionNotificationExtension;
+  if (notificationInput == null) {
+    return jsonEncode(baseEnvelope);
+  }
+  if (payloadType != groupOfflineReplayPayloadTypeReaction) {
+    throw ArgumentError(
+      'Reaction notification extensions require payloadType=group_reaction',
+    );
+  }
+  final extension = await _buildGroupReactionNotificationExtension(
+    bridge: bridge,
+    baseEnvelope: baseEnvelope,
+    input: notificationInput,
+    senderPeerId: resolvedSenderPeerId,
+    senderTransportPeerId: normalizedTransportPeerId,
+    senderPrivateKey: senderPrivateKey,
+    replayRecipientPeerIds: normalizedRecipientPeerIds,
+    replayRecipientSetHash: recipientSetHash,
+  );
+  return jsonEncode({...baseEnvelope, 'notificationExtension': extension});
 }
 
 Future<void> storeGroupOfflineReplayEnvelope({
@@ -163,6 +228,7 @@ Future<void> storeGroupOfflineReplayEnvelope({
   String? senderKeyPackageId,
   List<String>? recipientPeerIds,
   bool preserveRecipientPeerIds = false,
+  GroupReactionNotificationExtensionInput? reactionNotificationExtension,
 }) async {
   final replayEnvelope = await buildGroupOfflineReplayEnvelope(
     bridge: bridge,
@@ -179,6 +245,7 @@ Future<void> storeGroupOfflineReplayEnvelope({
     senderTransportPeerId: senderTransportPeerId,
     senderKeyPackageId: senderKeyPackageId,
     recipientPeerIds: recipientPeerIds,
+    reactionNotificationExtension: reactionNotificationExtension,
   );
 
   await callGroupInboxStore(
@@ -190,6 +257,89 @@ Future<void> storeGroupOfflineReplayEnvelope({
   );
 }
 
+Future<Map<String, Object?>> _buildGroupReactionNotificationExtension({
+  required Bridge bridge,
+  required Map<String, Object?> baseEnvelope,
+  required GroupReactionNotificationExtensionInput input,
+  required String senderPeerId,
+  required String senderTransportPeerId,
+  required String senderPrivateKey,
+  required List<String> replayRecipientPeerIds,
+  required String replayRecipientSetHash,
+}) async {
+  final transitionId = _requiredTrimmed(input.transitionId, 'transitionId');
+  final action = _requiredTrimmed(input.action, 'action');
+  if (action != 'add' && action != 'remove') {
+    throw ArgumentError.value(action, 'action', 'must be add or remove');
+  }
+  final targetMessageId = _requiredTrimmed(
+    input.targetMessageId,
+    'targetMessageId',
+  );
+  final reactorPeerId = _requiredTrimmed(input.reactorPeerId, 'reactorPeerId');
+  final reactorTransportPeerId = _requiredTrimmed(
+    input.reactorTransportPeerId,
+    'reactorTransportPeerId',
+  );
+  if (reactorPeerId != senderPeerId ||
+      reactorTransportPeerId != senderTransportPeerId) {
+    throw ArgumentError(
+      'Reaction notification actor must match the base replay sender',
+    );
+  }
+  final notificationRecipients = _normalizedRecipientPeerIds(
+    input.notificationRecipientTransportPeerIds,
+  );
+  final replayRecipients = replayRecipientPeerIds.toSet();
+  if (notificationRecipients.any(
+    (recipient) => !replayRecipients.contains(recipient),
+  )) {
+    throw ArgumentError(
+      'Reaction notification recipients must be a replay-recipient subset',
+    );
+  }
+
+  final baseEnvelopeHash = _hashString(
+    canonicalizeGroupEventLogPayload(baseEnvelope),
+  );
+  final signedPayload = canonicalizeGroupEventLogPayload({
+    'kind': groupReactionNotificationExtensionKind,
+    'version': groupReactionNotificationExtensionVersion,
+    'transitionId': transitionId,
+    'action': action,
+    'targetMessageId': targetMessageId,
+    'reactorPeerId': reactorPeerId,
+    'reactorTransportPeerId': reactorTransportPeerId,
+    'replayRecipientSetHash': replayRecipientSetHash,
+    'notificationRecipientTransportPeerIds': notificationRecipients,
+    'baseEnvelopeHash': baseEnvelopeHash,
+  });
+  final signResult = await callSignPayload(
+    bridge: bridge,
+    dataToSign: signedPayload,
+    privateKey: senderPrivateKey,
+  );
+  final signature = signResult['signature'];
+  if (signResult['ok'] != true || signature is! String || signature.isEmpty) {
+    throw StateError('Failed to sign group reaction notification extension');
+  }
+
+  return <String, Object?>{
+    'version': groupReactionNotificationExtensionVersion,
+    'transitionId': transitionId,
+    'action': action,
+    'targetMessageId': targetMessageId,
+    'reactorPeerId': reactorPeerId,
+    'reactorTransportPeerId': reactorTransportPeerId,
+    'replayRecipientSetHash': replayRecipientSetHash,
+    'notificationRecipientTransportPeerIds': notificationRecipients,
+    'baseEnvelopeHash': baseEnvelopeHash,
+    'signatureAlgorithm': groupOfflineReplaySignatureAlgorithm,
+    'signedPayload': signedPayload,
+    'signature': signature,
+  };
+}
+
 String encodeGroupOfflineReplayInboxRetryPayload({
   required String groupId,
   required String message,
@@ -198,8 +348,7 @@ String encodeGroupOfflineReplayInboxRetryPayload({
   return jsonEncode({
     'groupId': groupId,
     'message': message,
-    if (recipientPeerIds != null && recipientPeerIds.isNotEmpty)
-      'recipientPeerIds': recipientPeerIds,
+    'recipientPeerIds': ?recipientPeerIds,
   });
 }
 
@@ -218,6 +367,7 @@ Future<String> buildGroupOfflineReplayInboxRetryPayload({
   String? senderTransportPeerId,
   String? senderKeyPackageId,
   List<String>? recipientPeerIds,
+  GroupReactionNotificationExtensionInput? reactionNotificationExtension,
 }) async {
   final replayEnvelope = await buildGroupOfflineReplayEnvelope(
     bridge: bridge,
@@ -234,6 +384,7 @@ Future<String> buildGroupOfflineReplayInboxRetryPayload({
     senderTransportPeerId: senderTransportPeerId,
     senderKeyPackageId: senderKeyPackageId,
     recipientPeerIds: recipientPeerIds,
+    reactionNotificationExtension: reactionNotificationExtension,
   );
 
   return encodeGroupOfflineReplayInboxRetryPayload(
@@ -250,6 +401,7 @@ Future<void> storeGroupOfflineReplayFromRetryPayload({
   final payload = jsonDecode(inboxRetryPayload) as Map<String, dynamic>;
   final groupId = payload['groupId'] as String;
   final message = payload['message'] as String;
+  final preservesRecipientPeerIds = payload.containsKey('recipientPeerIds');
   final recipientPeerIds = (payload['recipientPeerIds'] as List<dynamic>?)
       ?.cast<String>();
   await callGroupInboxStore(
@@ -257,8 +409,7 @@ Future<void> storeGroupOfflineReplayFromRetryPayload({
     groupId,
     message,
     recipientPeerIds: recipientPeerIds,
-    preserveRecipientPeerIds:
-        recipientPeerIds != null && recipientPeerIds.isNotEmpty,
+    preserveRecipientPeerIds: preservesRecipientPeerIds,
   );
 }
 
@@ -481,6 +632,18 @@ Future<_ReplaySignatureVerification> _verifyReplaySignature({
     throw GroupOfflineReplaySignatureException('signature_invalid');
   }
 
+  final reactionNotificationExtension =
+      await _verifyGroupReactionNotificationExtension(
+        bridge: bridge,
+        envelope: envelope,
+        payloadType: payloadType,
+        senderPeerId: senderPeerId,
+        senderTransportPeerId: senderTransportPeerId,
+        senderPublicKey: senderPublicKey,
+        replayRecipientPeerIds: recipientPeerIds ?? const <String>[],
+        replayRecipientSetHash: recipientSetHash,
+      );
+
   return _ReplaySignatureVerification(
     payloadType: payloadType,
     messageId: messageId,
@@ -488,6 +651,152 @@ Future<_ReplaySignatureVerification> _verifyReplaySignature({
     senderDeviceId: senderDeviceId,
     senderTransportPeerId: senderTransportPeerId,
     plaintextHash: plaintextHash,
+    reactionNotificationExtension: reactionNotificationExtension,
+  );
+}
+
+Future<_VerifiedGroupReactionNotificationExtension?>
+_verifyGroupReactionNotificationExtension({
+  required Bridge bridge,
+  required Map<String, dynamic> envelope,
+  required String payloadType,
+  required String senderPeerId,
+  required String? senderTransportPeerId,
+  required String senderPublicKey,
+  required List<String> replayRecipientPeerIds,
+  required String replayRecipientSetHash,
+}) async {
+  final rawExtension = envelope['notificationExtension'];
+  if (rawExtension == null) return null;
+  if (payloadType != groupOfflineReplayPayloadTypeReaction ||
+      rawExtension is! Map) {
+    throw GroupOfflineReplaySignatureException(
+      'notification_extension_malformed',
+    );
+  }
+  final extension = rawExtension.map<String, Object?>(
+    (key, value) => MapEntry(key.toString(), value),
+  );
+  if (extension['version'] != groupReactionNotificationExtensionVersion ||
+      extension['signatureAlgorithm'] != groupOfflineReplaySignatureAlgorithm) {
+    throw GroupOfflineReplaySignatureException(
+      'notification_extension_version_invalid',
+    );
+  }
+  final transitionId = _readRequiredString(
+    extension,
+    'transitionId',
+    reason: 'notification_transition_missing',
+  );
+  final action = _readRequiredString(
+    extension,
+    'action',
+    reason: 'notification_action_missing',
+  );
+  if (action != 'add' && action != 'remove') {
+    throw GroupOfflineReplaySignatureException('notification_action_invalid');
+  }
+  final targetMessageId = _readRequiredString(
+    extension,
+    'targetMessageId',
+    reason: 'notification_target_missing',
+  );
+  final reactorPeerId = _readRequiredString(
+    extension,
+    'reactorPeerId',
+    reason: 'notification_reactor_missing',
+  );
+  final reactorTransportPeerId = _readRequiredString(
+    extension,
+    'reactorTransportPeerId',
+    reason: 'notification_reactor_transport_missing',
+  );
+  final extensionReplaySetHash = _readRequiredString(
+    extension,
+    'replayRecipientSetHash',
+    reason: 'notification_replay_hash_missing',
+  );
+  final baseEnvelopeHash = _readRequiredString(
+    extension,
+    'baseEnvelopeHash',
+    reason: 'notification_base_hash_missing',
+  );
+  final notificationRecipients = _readExactRecipientPeerIds(
+    extension['notificationRecipientTransportPeerIds'],
+    reason: 'notification_recipient_list_malformed',
+  );
+  final signedPayload = _readRequiredString(
+    extension,
+    'signedPayload',
+    reason: 'notification_signed_payload_missing',
+  );
+  final signature = _readRequiredString(
+    extension,
+    'signature',
+    reason: 'notification_signature_missing',
+  );
+
+  final expectedTransport = _trimToNull(senderTransportPeerId);
+  if (reactorPeerId != senderPeerId ||
+      expectedTransport == null ||
+      reactorTransportPeerId != expectedTransport ||
+      extensionReplaySetHash != replayRecipientSetHash) {
+    throw GroupOfflineReplaySignatureException(
+      'notification_sender_or_replay_mismatch',
+    );
+  }
+  final replaySet = replayRecipientPeerIds.toSet();
+  if (notificationRecipients.any(
+    (recipient) => !replaySet.contains(recipient),
+  )) {
+    throw GroupOfflineReplaySignatureException(
+      'notification_recipient_not_replay_subset',
+    );
+  }
+  final baseEnvelope = Map<String, Object?>.from(envelope)
+    ..remove('notificationExtension');
+  final expectedBaseHash = _hashString(
+    canonicalizeGroupEventLogPayload(baseEnvelope),
+  );
+  if (baseEnvelopeHash != expectedBaseHash) {
+    throw GroupOfflineReplaySignatureException(
+      'notification_base_hash_mismatch',
+    );
+  }
+  final expectedSignedPayload = canonicalizeGroupEventLogPayload({
+    'kind': groupReactionNotificationExtensionKind,
+    'version': groupReactionNotificationExtensionVersion,
+    'transitionId': transitionId,
+    'action': action,
+    'targetMessageId': targetMessageId,
+    'reactorPeerId': reactorPeerId,
+    'reactorTransportPeerId': reactorTransportPeerId,
+    'replayRecipientSetHash': extensionReplaySetHash,
+    'notificationRecipientTransportPeerIds': notificationRecipients,
+    'baseEnvelopeHash': baseEnvelopeHash,
+  });
+  if (signedPayload != expectedSignedPayload) {
+    throw GroupOfflineReplaySignatureException(
+      'notification_signed_payload_mismatch',
+    );
+  }
+  final valid = await callVerifyPayload(
+    bridge: bridge,
+    publicKey: senderPublicKey,
+    data: signedPayload,
+    signature: signature,
+  );
+  if (!valid) {
+    throw GroupOfflineReplaySignatureException(
+      'notification_signature_invalid',
+    );
+  }
+  return _VerifiedGroupReactionNotificationExtension(
+    transitionId: transitionId,
+    action: action,
+    targetMessageId: targetMessageId,
+    reactorPeerId: reactorPeerId,
+    reactorTransportPeerId: reactorTransportPeerId,
   );
 }
 
@@ -544,6 +853,22 @@ void _verifyPlaintextBinding(
       payloadMessageId != null &&
       payloadMessageId != verification.messageId) {
     throw GroupOfflineReplaySignatureException('payload_message_mismatch');
+  }
+
+  final notificationExtension = verification.reactionNotificationExtension;
+  if (notificationExtension != null) {
+    final eventId = _trimToNull(payload['eventId'] as String?);
+    final action = _trimToNull(payload['action'] as String?);
+    final targetMessageId = _trimToNull(payload['messageId'] as String?);
+    final reactorPeerId = _trimToNull(payload['senderPeerId'] as String?);
+    if (eventId != notificationExtension.transitionId ||
+        action != notificationExtension.action ||
+        targetMessageId != notificationExtension.targetMessageId ||
+        reactorPeerId != notificationExtension.reactorPeerId) {
+      throw GroupOfflineReplaySignatureException(
+        'notification_plaintext_parity_mismatch',
+      );
+    }
   }
 }
 
@@ -769,6 +1094,32 @@ List<String>? _readOptionalRecipientPeerIds(Object? value) {
     recipientPeerIds.add(entry.trim());
   }
   return _normalizedRecipientPeerIds(recipientPeerIds);
+}
+
+List<String> _readExactRecipientPeerIds(
+  Object? value, {
+  required String reason,
+}) {
+  if (value is! List) {
+    throw GroupOfflineReplaySignatureException(reason);
+  }
+  final raw = <String>[];
+  for (final entry in value) {
+    if (entry is! String || entry.trim().isEmpty || entry != entry.trim()) {
+      throw GroupOfflineReplaySignatureException(reason);
+    }
+    raw.add(entry);
+  }
+  final normalized = _normalizedRecipientPeerIds(raw);
+  if (raw.length != normalized.length) {
+    throw GroupOfflineReplaySignatureException(reason);
+  }
+  for (var index = 0; index < raw.length; index++) {
+    if (raw[index] != normalized[index]) {
+      throw GroupOfflineReplaySignatureException(reason);
+    }
+  }
+  return normalized;
 }
 
 Map<String, Object?>? _decodeStringMap(String value) {

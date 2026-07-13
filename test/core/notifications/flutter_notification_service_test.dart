@@ -1,8 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_app/core/notifications/flutter_notification_service.dart';
+import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
+import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
 import 'package:flutter_app/core/notifications/local_notification_support.dart';
 
 void main() {
@@ -10,11 +14,28 @@ void main() {
 
   const channel = MethodChannel('dexterous.com/flutter/local_notifications');
   final List<MethodCall> log = <MethodCall>[];
+  late Directory notificationIdDirectory;
+
+  FlutterNotificationService buildService({
+    DurableConversationNotificationIdRegistry? registry,
+  }) {
+    final resolvedRegistry =
+        registry ??
+        DurableConversationNotificationIdRegistry(
+          directory: notificationIdDirectory,
+        );
+    return FlutterNotificationService(
+      notificationIdRegistryResolver: () async => resolvedRegistry,
+    );
+  }
 
   setUp(() {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     AndroidFlutterLocalNotificationsPlugin.registerWith();
     log.clear();
+    notificationIdDirectory = Directory.systemTemp.createTempSync(
+      'flutter-notification-service-id-registry-',
+    );
 
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (MethodCall call) async {
@@ -44,10 +65,13 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
     debugDefaultTargetPlatformOverride = null;
+    if (notificationIdDirectory.existsSync()) {
+      notificationIdDirectory.deleteSync(recursive: true);
+    }
   });
 
   test('initialize wires the plugin, channel, and launch payload', () async {
-    final service = FlutterNotificationService();
+    final service = buildService();
 
     await service.initialize();
 
@@ -71,7 +95,7 @@ void main() {
   test(
     'consumeInitialPayload dismisses the launch notification once',
     () async {
-      final service = FlutterNotificationService();
+      final service = buildService();
 
       await service.initialize();
 
@@ -81,13 +105,14 @@ void main() {
       final cancelCall = log.lastWhere((call) => call.method == 'cancel');
       final cancelArgs = cancelCall.arguments as Map;
       expect(cancelArgs['id'], 7);
+      expect(log.where((call) => call.method == 'cancelAll'), isEmpty);
     },
   );
 
   test(
     'onNotificationTap forwards non-empty payloads and dismisses by id',
     () async {
-      final service = FlutterNotificationService();
+      final service = buildService();
       final tapped = <String>[];
       service.onNotificationTap = tapped.add;
 
@@ -98,13 +123,14 @@ void main() {
       final cancelCall = log.lastWhere((call) => call.method == 'cancel');
       final cancelArgs = cancelCall.arguments as Map;
       expect(cancelArgs['id'], 99);
+      expect(log.where((call) => call.method == 'cancelAll'), isEmpty);
     },
   );
 
   test(
     'onNotificationTap ignores null and empty payloads but still dismisses',
     () async {
-      final service = FlutterNotificationService();
+      final service = buildService();
       final tapped = <String>[];
       service.onNotificationTap = tapped.add;
 
@@ -123,7 +149,7 @@ void main() {
   );
 
   test('showNotification forwards title, body, payload, and details', () async {
-    final service = FlutterNotificationService();
+    final service = buildService();
 
     await service.initialize();
     await service.showNotification(
@@ -153,7 +179,7 @@ void main() {
   test(
     'showMessageNotification forwards conversation payload and details',
     () async {
-      final service = FlutterNotificationService();
+      final service = buildService();
 
       await service.initialize();
       await service.showMessageNotification(
@@ -180,7 +206,7 @@ void main() {
   test(
     'showMessageNotification forwards explicit group anchor payload overrides',
     () async {
-      final service = FlutterNotificationService();
+      final service = buildService();
 
       await service.initialize();
       await service.showMessageNotification(
@@ -197,86 +223,178 @@ void main() {
       expect(args['title'], 'Team Chat');
       expect(args['body'], 'Alice: Ping');
       expect(args['payload'], 'group:group-789|message:msg-789');
-      expect(args['id'], 'group:group-789'.hashCode);
-    },
-  );
-
-  test(
-    'showMessageNotification silent:true uses the silent channel and the '
-    'per-conversation notification id',
-    () async {
-      final service = FlutterNotificationService();
-
-      await service.initialize();
-      await service.showMessageNotification(
-        contactPeerId: 'peer-silent',
-        senderUsername: 'Alice',
-        messageText: 'follow-up',
-        silent: true,
+      expect(
+        args['id'],
+        deterministicConversationNotificationId('group:group-789'),
       );
-
-      final showCall = log.last;
-      expect(showCall.method, 'show');
-
-      final args = showCall.arguments as Map;
-      // Reuses the per-conversation id so the OS updates in place.
-      expect(args['id'], 'peer-silent'.hashCode);
-
       final platformSpecifics = args['platformSpecifics'] as Map;
-      expect(platformSpecifics['channelId'], mknoonMessagesSilentChannelId);
+      expect(
+        platformSpecifics['category'],
+        AndroidNotificationCategory.message.name,
+      );
     },
   );
 
+  test('showMessageNotification silent:true uses the silent channel and the '
+      'per-conversation notification id', () async {
+    final service = buildService();
+
+    await service.initialize();
+    await service.showMessageNotification(
+      contactPeerId: 'peer-silent',
+      senderUsername: 'Alice',
+      messageText: 'follow-up',
+      silent: true,
+    );
+
+    final showCall = log.last;
+    expect(showCall.method, 'show');
+
+    final args = showCall.arguments as Map;
+    // Reuses the per-conversation id so the OS updates in place.
+    expect(args['id'], deterministicConversationNotificationId('peer-silent'));
+
+    final platformSpecifics = args['platformSpecifics'] as Map;
+    expect(platformSpecifics['channelId'], mknoonMessagesSilentChannelId);
+  });
+
+  test('notification id is per-conversation and stable across a burst for both '
+      'direct and group (silent updates reuse the same id)', () async {
+    final service = buildService();
+    await service.initialize();
+
+    // Direct burst: different per-message payload, SAME notification id.
+    await service.showMessageNotification(
+      contactPeerId: 'peer-1',
+      senderUsername: 'Alice',
+      messageText: 'first',
+      payload: 'peer-1',
+    );
+    final firstDirectId = (log.last.arguments as Map)['id'];
+    await service.showMessageNotification(
+      contactPeerId: 'peer-1',
+      senderUsername: 'Alice',
+      messageText: 'second',
+      payload: 'peer-1',
+      silent: true,
+    );
+    final secondDirectId = (log.last.arguments as Map)['id'];
+    expect(firstDirectId, deterministicConversationNotificationId('peer-1'));
+    expect(secondDirectId, firstDirectId);
+
+    // Group burst: DIFFERENT routePayload (different embedded messageId),
+    // SAME notification id — proves the per-message id does not leak in.
+    await service.showMessageNotification(
+      contactPeerId: 'group:g1',
+      senderUsername: 'Team',
+      messageText: 'g-first',
+      payload: 'group:g1|message:a',
+    );
+    final firstGroupId = (log.last.arguments as Map)['id'];
+    await service.showMessageNotification(
+      contactPeerId: 'group:g1',
+      senderUsername: 'Team',
+      messageText: 'g-second',
+      payload: 'group:g1|message:b',
+      silent: true,
+    );
+    final secondGroupId = (log.last.arguments as Map)['id'];
+    expect(firstGroupId, deterministicConversationNotificationId('group:g1'));
+    expect(secondGroupId, firstGroupId);
+    expect((log.last.arguments as Map)['payload'], 'group:g1|message:b');
+  });
+
   test(
-    'notification id is per-conversation and stable across a burst for both '
-    'direct and group (silent updates reuse the same id)',
+    'forced collisions keep direct, group, and announcement payloads on distinct ids',
     () async {
-      final service = FlutterNotificationService();
+      final fallbackIds = <String, int>{
+        'peer-collision': 701,
+        'group:discussion-collision': 702,
+        'group:announcement-collision': 703,
+      };
+      final registry = DurableConversationNotificationIdRegistry(
+        directory: notificationIdDirectory,
+        candidateGenerator: (key, probe) =>
+            probe == 0 ? 700 : fallbackIds[key]! + probe - 1,
+      );
+      final service = buildService(registry: registry);
       await service.initialize();
 
-      // Direct burst: different per-message payload, SAME notification id.
       await service.showMessageNotification(
-        contactPeerId: 'peer-1',
-        senderUsername: 'Alice',
-        messageText: 'first',
-        payload: 'peer-1',
+        contactPeerId: 'peer-collision',
+        senderUsername: 'Direct',
+        messageText: 'direct',
       );
-      final firstDirectId = (log.last.arguments as Map)['id'];
       await service.showMessageNotification(
-        contactPeerId: 'peer-1',
-        senderUsername: 'Alice',
-        messageText: 'second',
-        payload: 'peer-1',
-        silent: true,
+        contactPeerId: 'group:discussion-collision',
+        senderUsername: 'Group',
+        messageText: 'group',
+        payload: 'group:discussion-collision|message:g-1',
       );
-      final secondDirectId = (log.last.arguments as Map)['id'];
-      expect(firstDirectId, 'peer-1'.hashCode);
-      expect(secondDirectId, firstDirectId);
+      await service.showMessageNotification(
+        contactPeerId: 'group:announcement-collision',
+        senderUsername: 'Announcement',
+        messageText: 'announcement',
+        payload: 'group:announcement-collision|message:a-1',
+      );
 
-      // Group burst: DIFFERENT routePayload (different embedded messageId),
-      // SAME notification id — proves the per-message id does not leak in.
-      await service.showMessageNotification(
-        contactPeerId: 'group:g1',
-        senderUsername: 'Team',
-        messageText: 'g-first',
-        payload: 'group:g1|message:a',
+      final ids = log
+          .where((call) => call.method == 'show')
+          .map((call) => (call.arguments as Map)['id'] as int)
+          .toList();
+      expect(ids.toSet(), hasLength(3));
+      expect(ids.first, 700);
+    },
+  );
+
+  test('generic anchored group payloads coalesce on the group card', () async {
+    final service = buildService();
+    await service.initialize();
+
+    await service.showNotification(
+      title: 'Announcements',
+      body: 'first',
+      payload: 'group:announcement-1|message:first',
+    );
+    final first = log.last.arguments as Map;
+    await service.showNotification(
+      title: 'Announcements',
+      body: 'second',
+      payload: 'group:announcement-1|message:second',
+    );
+    final second = log.last.arguments as Map;
+
+    expect(first['id'], second['id']);
+    expect(second['payload'], 'group:announcement-1|message:second');
+  });
+
+  test(
+    'allocation storage failure never reaches the plugin show call',
+    () async {
+      final blocked = File('${notificationIdDirectory.path}/blocked')
+        ..writeAsStringSync('not a directory');
+      final service = buildService(
+        registry: DurableConversationNotificationIdRegistry(
+          directory: Directory(blocked.path),
+        ),
       );
-      final firstGroupId = (log.last.arguments as Map)['id'];
-      await service.showMessageNotification(
-        contactPeerId: 'group:g1',
-        senderUsername: 'Team',
-        messageText: 'g-second',
-        payload: 'group:g1|message:b',
-        silent: true,
+      await service.initialize();
+
+      await expectLater(
+        service.showMessageNotification(
+          contactPeerId: 'peer-private',
+          senderUsername: 'Alice',
+          messageText: 'message',
+        ),
+        throwsA(isA<NotificationIdAllocationException>()),
       );
-      final secondGroupId = (log.last.arguments as Map)['id'];
-      expect(firstGroupId, 'group:g1'.hashCode);
-      expect(secondGroupId, firstGroupId);
+
+      expect(log.where((call) => call.method == 'show'), isEmpty);
     },
   );
 
   test('clearDeliveredNotifications forwards cancelAll', () async {
-    final service = FlutterNotificationService();
+    final service = buildService();
 
     await service.initialize();
     await service.clearDeliveredNotifications();

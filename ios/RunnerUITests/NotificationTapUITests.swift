@@ -25,6 +25,38 @@ final class NotificationTapUITests: XCTestCase {
     try tapExistingNotification(waitForHostPush: false)
   }
 
+  /// Plan 256 TC-14: cold-tap an already staged reaction notification and
+  /// require a real conversation semantic from the app. The host staging
+  /// controller owns APNs/NSE delivery and writes the existing tap config;
+  /// this selector never accepts a manual tap or a route-only boolean.
+  func testReactionNotificationTap() throws {
+    let bundleId = ProcessInfo.processInfo.environment["MKNOON_APNS_TAP_APP_BUNDLE_ID"] ?? "com.mknoon.app"
+    guard let expectedConversationLabel = configuredValue(
+      environmentName: "MKNOON_REACTION_EXPECTED_CONVERSATION_LABEL",
+      configKey: "expectedConversationLabel"
+    ), !expectedConversationLabel.isEmpty else {
+      XCTFail("Plan 256 reaction tap requires expectedConversationLabel in the staged tap config")
+      return
+    }
+
+    let app = XCUIApplication(bundleIdentifier: bundleId)
+    app.terminate()
+    try tapExistingNotification(
+      waitForHostPush: false,
+      requireTitleMatchedNotification: true
+    )
+
+    let conversationMarker = "mknoon.conversation.\(expectedConversationLabel)"
+    let rendered = app.descendants(matching: .any)
+      .matching(identifier: conversationMarker)
+      .firstMatch
+    XCTAssertTrue(
+      rendered.waitForExistence(timeout: 20),
+      "Reaction notification tap did not render marker \(conversationMarker)"
+    )
+    NSLog("MKNOON_256_REACTION_TAP conversation_rendered=true cold_launch=true")
+  }
+
   private func performNotificationTap(mode: String) throws {
     switch mode {
     case "cold":
@@ -81,12 +113,23 @@ final class NotificationTapUITests: XCTestCase {
     emitReadyMarker(mode: "cold", title: title)
   }
 
-  private func tapExistingNotification(waitForHostPush: Bool) throws {
+  private func tapExistingNotification(
+    waitForHostPush: Bool,
+    requireTitleMatchedNotification: Bool = false
+  ) throws {
     let bundleId = ProcessInfo.processInfo.environment["MKNOON_APNS_TAP_APP_BUNDLE_ID"] ?? "com.mknoon.app"
     let title = configuredValue(
       environmentName: "MKNOON_APNS_TAP_EXPECTED_TITLE",
       configKey: "expectedTitle"
     ) ?? "New Message"
+    let expectedBody = configuredValue(
+      environmentName: "MKNOON_APNS_TAP_EXPECTED_BODY",
+      configKey: "expectedBody"
+    )
+    let routeCategory = configuredValue(
+      environmentName: "MKNOON_APNS_TAP_ROUTE_CATEGORY",
+      configKey: "routeCategory"
+    ) ?? "unspecified"
     let postTapWait = TimeInterval(ProcessInfo.processInfo.environment["MKNOON_APNS_TAP_POST_TAP_WAIT_SECONDS"] ?? "5") ?? 5
     let app = XCUIApplication(bundleIdentifier: bundleId)
     let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
@@ -102,13 +145,44 @@ final class NotificationTapUITests: XCTestCase {
     if waitForHostPush {
       waitForHostPushInjection()
     }
+    if let expectedBody {
+      XCTAssertTrue(
+        notificationTextExists(
+          expectedBody,
+          springboard: springboard,
+          timeout: 8
+        ) || {
+          openNotificationCenter(from: springboard)
+          return notificationTextExists(
+            expectedBody,
+            springboard: springboard,
+            timeout: 12
+          )
+        }(),
+        "Could not find expected Springboard notification body \(expectedBody)"
+      )
+      NSLog(
+        "MKNOON_IOS_NOTIFICATION_PRESENTED title=%@ body=%@ routeCategory=%@",
+        title,
+        expectedBody,
+        routeCategory
+      )
+    }
     XCTAssertTrue(
-      tapNotification(title: title, springboard: springboard),
+      tapNotification(
+        title: title,
+        springboard: springboard,
+        allowGenericChromeFallback: !requireTitleMatchedNotification
+      ),
       "Could not find a Springboard notification titled \(title)"
     )
     if !app.wait(for: .runningForeground, timeout: 8) {
       XCTAssertTrue(
-        tapNotification(title: title, springboard: springboard),
+        tapNotification(
+          title: title,
+          springboard: springboard,
+          allowGenericChromeFallback: !requireTitleMatchedNotification
+        ),
         "Could not re-tap a Springboard notification titled \(title)"
       )
     }
@@ -219,12 +293,17 @@ final class NotificationTapUITests: XCTestCase {
     return config
   }
 
-  private func tapNotification(title: String, springboard: XCUIApplication) -> Bool {
+  private func tapNotification(
+    title: String,
+    springboard: XCUIApplication,
+    allowGenericChromeFallback: Bool = true
+  ) -> Bool {
     if tapVisibleNotification(title: title, springboard: springboard, timeout: 8) {
       return true
     }
 
-    if tapVisibleNotificationChrome(springboard: springboard, timeout: 5) {
+    if allowGenericChromeFallback &&
+       tapVisibleNotificationChrome(springboard: springboard, timeout: 5) {
       return true
     }
 
@@ -233,7 +312,8 @@ final class NotificationTapUITests: XCTestCase {
       return true
     }
 
-    return tapVisibleNotificationChrome(springboard: springboard, timeout: 10)
+    return allowGenericChromeFallback &&
+      tapVisibleNotificationChrome(springboard: springboard, timeout: 10)
   }
 
   private func tapVisibleNotification(
@@ -250,17 +330,37 @@ final class NotificationTapUITests: XCTestCase {
     let deadline = Date().addingTimeInterval(timeout)
 
     while Date() < deadline {
-      if tapFirstMatch(springboard.staticTexts.matching(predicate), limit: 20) {
+      if tapFirstMatch(
+        springboard.staticTexts.matching(predicate),
+        limit: 20,
+        springboard: springboard
+      ) {
         return true
       }
       let matches = springboard.descendants(matching: .any).matching(predicate)
-      if tapFirstMatch(matches, limit: 20) {
+      if tapFirstMatch(matches, limit: 20, springboard: springboard) {
         return true
       }
       RunLoop.current.run(until: Date().addingTimeInterval(0.5))
     }
 
     return false
+  }
+
+  private func notificationTextExists(
+    _ text: String,
+    springboard: XCUIApplication,
+    timeout: TimeInterval
+  ) -> Bool {
+    let predicate = NSPredicate(
+      format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@",
+      text,
+      text
+    )
+    let match = springboard.descendants(matching: .any)
+      .matching(predicate)
+      .firstMatch
+    return match.waitForExistence(timeout: timeout)
   }
 
   private func tapVisibleNotificationChrome(
@@ -277,7 +377,7 @@ final class NotificationTapUITests: XCTestCase {
 
     while Date() < deadline {
       let matches = springboard.descendants(matching: .any).matching(predicate)
-      if tapFirstMatch(matches, limit: 10) {
+      if tapFirstMatch(matches, limit: 10, springboard: springboard) {
         return true
       }
       RunLoop.current.run(until: Date().addingTimeInterval(0.5))
@@ -286,7 +386,11 @@ final class NotificationTapUITests: XCTestCase {
     return false
   }
 
-  private func tapFirstMatch(_ matches: XCUIElementQuery, limit: Int) -> Bool {
+  private func tapFirstMatch(
+    _ matches: XCUIElementQuery,
+    limit: Int,
+    springboard: XCUIApplication
+  ) -> Bool {
     let count = min(matches.count, limit)
     if count == 0 {
       return false
@@ -294,14 +398,50 @@ final class NotificationTapUITests: XCTestCase {
 
     for index in 0..<count {
       let element = matches.element(boundBy: index)
-      if element.exists && !element.frame.isEmpty {
-        let start = element.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5))
-        let end = element.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5))
-        start.press(forDuration: 0.05, thenDragTo: end)
+      if element.exists && element.isHittable && !element.frame.isEmpty {
+        element.tap()
+        // iOS 26 lock-screen notifications use a two-step activation: tapping
+        // the title/card reveals a separate SpringBoard "Open" action. A
+        // second title tap only reselects the card and never launches the app.
+        // Prefer the action's accessibility identifier, then use an exact
+        // button-role label/value fallback for localized SpringBoard variants.
+        tapNotificationOpenActionIfPresent(in: springboard)
         return true
       }
     }
 
+    return false
+  }
+
+  @discardableResult
+  private func tapNotificationOpenActionIfPresent(
+    in springboard: XCUIApplication,
+    timeout: TimeInterval = 2
+  ) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    let exactIdentifier = springboard.buttons
+      .matching(identifier: "Open")
+      .firstMatch
+    let labelPredicate = NSPredicate(
+      format: "label ==[c] %@ OR value ==[c] %@",
+      "Open",
+      "Open"
+    )
+
+    while Date() < deadline {
+      if exactIdentifier.exists && exactIdentifier.isHittable {
+        exactIdentifier.tap()
+        NSLog("MKNOON_IOS_NOTIFICATION_OPEN_ACTION_TAPPED source=identifier")
+        return true
+      }
+      let roleMatched = springboard.buttons.matching(labelPredicate).firstMatch
+      if roleMatched.exists && roleMatched.isHittable {
+        roleMatched.tap()
+        NSLog("MKNOON_IOS_NOTIFICATION_OPEN_ACTION_TAPPED source=button_role")
+        return true
+      }
+      RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+    }
     return false
   }
 

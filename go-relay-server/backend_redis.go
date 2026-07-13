@@ -956,22 +956,28 @@ func (b *redisPushTokenBackend) allPattern() string {
 	return b.prefix + "push:*"
 }
 
-func (b *redisPushTokenBackend) RegisterToken(peerId string, token string, platform string) {
+func (b *redisPushTokenBackend) RegisterToken(
+	peerId string,
+	token string,
+	platform string,
+	capabilities ...string,
+) error {
 	entry := tokenEntry{
-		Token:     token,
-		Platform:  platform,
-		UpdatedAt: time.Now(),
+		Token:        token,
+		Platform:     platform,
+		Capabilities: normalizeCapabilities(capabilities),
+		UpdatedAt:    time.Now(),
 	}
 
 	payload, err := json.Marshal(entry)
 	if err != nil {
-		log.Printf("[REDIS][PUSH] encode failed: %v", err)
-		return
+		return fmt.Errorf("encode push token: %w", err)
 	}
 
 	if err := b.client.Set(context.Background(), b.key(peerId), payload, 0).Err(); err != nil {
-		log.Printf("[REDIS][PUSH] register failed: %v", err)
+		return fmt.Errorf("store push token: %w", err)
 	}
+	return nil
 }
 
 func (b *redisPushTokenBackend) UnregisterToken(peerId string) {

@@ -3,8 +3,10 @@ import 'dart:io';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/app_owned_media_delete_telemetry.dart';
+import 'package:flutter_app/core/media/direct_private_media_path_guard.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/core/utils/chat_console_logger.dart';
@@ -18,6 +20,7 @@ import 'package:flutter_app/features/conversation/domain/models/message_payload.
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:path/path.dart' as p;
 
 /// Result of handling an incoming chat message.
 enum HandleChatMessageResult {
@@ -245,9 +248,12 @@ handleIncomingChatMessage({
   }
 
   // Sanitize incoming text and username to strip bidi control characters
+  final incomingPrivateMediaPolicy = payload.privateMediaPolicy;
   payload = MessagePayload(
     id: payload.id,
-    text: sanitizeMessageText(payload.text),
+    text: incomingPrivateMediaPolicy.requiresRedaction
+        ? ''
+        : sanitizeMessageText(payload.text),
     senderPeerId: payload.senderPeerId,
     senderUsername: sanitizeUsername(payload.senderUsername),
     timestamp: payload.timestamp,
@@ -257,9 +263,8 @@ handleIncomingChatMessage({
     media: payload.media,
     dedupKey: payload.dedupKey, // F8 tier-2: must survive the sanitize rebuild
     isForwarded: payload.isForwarded,
+    privateMediaPolicy: incomingPrivateMediaPolicy,
   );
-
-  final textPreview = buildTextPreview(payload.text);
 
   // 2a. Require the stream sender and decrypted payload sender to agree.
   final senderMismatch =
@@ -332,6 +337,7 @@ handleIncomingChatMessage({
     }
     await _repairDuplicateReplayMedia(
       payload: payload,
+      existingParent: existingMessage,
       mediaAttachmentRepo: mediaAttachmentRepo,
       mediaFileManager: mediaFileManager,
     );
@@ -496,15 +502,15 @@ handleIncomingChatMessage({
   final resultAfterSave = shouldPreserveDeletedPlaceholder
       ? HandleChatMessageResult.duplicate
       : HandleChatMessageResult.chatMessage;
-  final conversationMessage = shouldMaterializeDeferredEdit
+  final candidateMessage = shouldMaterializeDeferredEdit
       ? _materializeIncomingOriginalFromHiddenEdit(
-          hiddenEditMessage: existingMessage!,
+          hiddenEditMessage: existingMessage,
           payload: payload,
           transport: transport,
         )
       : shouldPreserveDeletedPlaceholder
       ? _mergeIncomingOriginalIntoDeletedPlaceholder(
-          deletedMessage: existingMessage!,
+          deletedMessage: existingMessage,
           payload: payload,
           transport: transport,
         )
@@ -520,6 +526,12 @@ handleIncomingChatMessage({
           transport: transport ?? existingMessage.transport,
           dedupKey: payload.dedupKey,
           isForwarded: payload.isForwarded,
+          privateMediaPolicy: payload.privateMediaPolicy.requiresRedaction
+              ? payload.privateMediaPolicy
+              : existingMessage.privateMediaPolicy,
+          privateMediaState: payload.privateMediaPolicy.requiresRedaction
+              ? payload.privateMediaPolicy.initialState
+              : existingMessage.privateMediaState,
         )
       : payload.toConversationMessage(
           contactPeerId: payload.senderPeerId,
@@ -528,6 +540,10 @@ handleIncomingChatMessage({
           editedAt: payload.editedAt,
           transport: transport,
         );
+  final conversationMessage = _seedIncomingPrivateMediaLifecycle(
+    candidateMessage,
+    existingMessage: existingMessage,
+  );
   await messageRepo.saveMessage(conversationMessage);
   // 115 P2: the message is durably persisted — confirm custody to the
   // sender (relay-drain arrivals only, per the origin contract).
@@ -556,11 +572,12 @@ handleIncomingChatMessage({
       final attachment = MediaAttachment.fromJson(
         mediaJson,
       ).copyWith(messageId: payload.id);
-      await mediaAttachmentRepo.saveAttachment(
-        attachment,
-        owner: MediaOwnerLane.direct,
+      final saved = await _saveIncomingDirectAttachment(
+        repository: mediaAttachmentRepo,
+        attachment: attachment,
+        parent: conversationMessage,
       );
-      parsedAttachments.add(attachment);
+      if (saved) parsedAttachments.add(attachment);
     }
   }
 
@@ -756,9 +773,17 @@ Future<String?> predecryptStagedInboxChatEntry({
 
 Future<void> _repairDuplicateReplayMedia({
   required MessagePayload payload,
+  required ConversationMessage existingParent,
   MediaAttachmentRepository? mediaAttachmentRepo,
   MediaFileManager? mediaFileManager,
 }) async {
+  if (existingParent.privateMediaPolicy.requiresRedaction &&
+      (existingParent.privateMediaPolicy.isUnsupported ||
+          existingParent.privateMediaState.isTerminal ||
+          existingParent.hiddenAt != null ||
+          existingParent.deletedAt != null)) {
+    return;
+  }
   final incomingMedia = payload.media;
   if (mediaAttachmentRepo == null ||
       incomingMedia == null ||
@@ -795,11 +820,12 @@ Future<void> _repairDuplicateReplayMedia({
           existing: existing,
         );
       }
-      await mediaAttachmentRepo.saveAttachment(
-        incoming,
-        owner: MediaOwnerLane.direct,
+      final saved = await _saveIncomingDirectAttachment(
+        repository: mediaAttachmentRepo,
+        attachment: incoming,
+        parent: existingParent,
       );
-      repairedCount++;
+      if (saved) repairedCount++;
     }
   }
 
@@ -812,6 +838,73 @@ Future<void> _repairDuplicateReplayMedia({
   }
 }
 
+Future<bool> _saveIncomingDirectAttachment({
+  required MediaAttachmentRepository repository,
+  required MediaAttachment attachment,
+  required ConversationMessage parent,
+}) async {
+  if (!parent.privateMediaPolicy.requiresRedaction) {
+    await repository.saveAttachment(attachment, owner: MediaOwnerLane.direct);
+    return true;
+  }
+  if (repository is! DirectPrivateMediaAttachmentSaveRepository) {
+    return false;
+  }
+  return (repository as DirectPrivateMediaAttachmentSaveRepository)
+      .saveDirectPrivateAttachmentGuarded(
+        attachment,
+        messageId: parent.id,
+        nowMs: DateTime.now().toUtc().millisecondsSinceEpoch,
+      );
+}
+
+ConversationMessage _seedIncomingPrivateMediaLifecycle(
+  ConversationMessage message, {
+  ConversationMessage? existingMessage,
+}) {
+  final existing = existingMessage;
+  // Every existing redacted checkpoint is monotonic, not only terminal ones.
+  // Same-ID edits/replays must never reset opening/viewing to `available`,
+  // switch policy, clear reveal/terminal timestamps, or reintroduce text.
+  if (existing != null && existing.privateMediaPolicy.requiresRedaction) {
+    return message.copyWith(
+      text: '',
+      hiddenAt: existing.hiddenAt,
+      deletedAt: existing.deletedAt,
+      deletedByPeerId: existing.deletedByPeerId,
+      privateMediaPolicy: existing.privateMediaPolicy,
+      privateMediaState: existing.privateMediaState,
+      privateMediaReceivedAtMs: existing.privateMediaReceivedAtMs,
+      privateMediaExpiresAtMs: existing.privateMediaExpiresAtMs,
+      privateMediaRevealedAtMs: existing.privateMediaRevealedAtMs,
+      privateMediaTerminalAtMs: existing.privateMediaTerminalAtMs,
+      privateMediaClockHighWaterMs: existing.privateMediaClockHighWaterMs,
+    );
+  }
+
+  final policy = message.privateMediaPolicy;
+  if (!policy.requiresRedaction) return message;
+
+  final nowMs = DateTime.now().millisecondsSinceEpoch;
+  final receivedAtMs = existing?.privateMediaReceivedAtMs ?? nowMs;
+  final existingHighWater = existing?.privateMediaClockHighWaterMs ?? 0;
+  final highWaterMs = existingHighWater > nowMs ? existingHighWater : nowMs;
+  final expiresAtMs =
+      policy.mode == PrivateMediaMode.disappearing &&
+          policy.durationSeconds != null
+      ? receivedAtMs + policy.durationSeconds! * 1000
+      : null;
+  return message.copyWith(
+    text: '',
+    privateMediaState: policy.initialState,
+    privateMediaReceivedAtMs: receivedAtMs,
+    privateMediaExpiresAtMs: expiresAtMs,
+    privateMediaRevealedAtMs: null,
+    privateMediaTerminalAtMs: null,
+    privateMediaClockHighWaterMs: highWaterMs,
+  );
+}
+
 /// Deletes staged download artifacts (`.enc`/`.part`) that were produced
 /// under a superseded key/nonce. Paths derive from the EXISTING row's mime —
 /// that is the metadata the artifact was staged under.
@@ -820,6 +913,13 @@ Future<void> _invalidateStaleStagedArtifacts({
   required String contactPeerId,
   required MediaAttachment existing,
 }) async {
+  if (!DirectPrivateMediaPathGuard.identifiersAreSafe(
+    contactPeerId: contactPeerId,
+    messageId: existing.messageId,
+    attachmentId: existing.id,
+  )) {
+    return;
+  }
   late final String absolutePath;
   try {
     absolutePath = await mediaFileManager.localPathForAttachment(
@@ -830,9 +930,19 @@ Future<void> _invalidateStaleStagedArtifacts({
   } catch (_) {
     return;
   }
-  for (final suffix in const ['.enc', '.part']) {
+  final root = p.dirname(p.dirname(absolutePath));
+  final targets = [File('$absolutePath.enc'), File('$absolutePath.part')];
+  for (final target in targets) {
+    if (!await DirectPrivateMediaPathGuard.authorizeTarget(
+      targetPath: target.path,
+      authorityRoot: root,
+    )) {
+      return;
+    }
+  }
+  for (final target in targets) {
     await deleteAppOwnedMediaFileIfExists(
-      file: File('$absolutePath$suffix'),
+      file: target,
       caller: 'handleIncomingChatMessage.invalidateStaleStagedArtifacts',
       reason: 'duplicate_replay_key_rotation',
       details: {
@@ -863,6 +973,7 @@ bool _isHiddenIncomingEditPlaceholder(ConversationMessage message) {
   return message.isIncoming &&
       message.isHidden &&
       !message.isDeleted &&
+      !message.privateMediaPolicy.requiresRedaction &&
       message.editedAt != null;
 }
 

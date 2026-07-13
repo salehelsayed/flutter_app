@@ -1,5 +1,11 @@
+import 'dart:io';
+
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
+import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
 import 'package:flutter_app/features/push/application/handle_foreground_remote_message_use_case.dart';
@@ -9,6 +15,26 @@ import '../../../shared/fakes/fake_notification_service.dart';
 
 void main() {
   group('background push fallback notifications', () {
+    late Directory groupMessageCoordinatorDirectory;
+    late DurableNotificationToneLease groupMessageCoordinator;
+    late ActiveConversationTracker groupConversationTracker;
+
+    setUp(() {
+      groupMessageCoordinatorDirectory = Directory.systemTemp.createTempSync(
+        'foreground-group-fallback-coordinator-',
+      );
+      groupMessageCoordinator = DurableNotificationToneLease(
+        directory: groupMessageCoordinatorDirectory,
+        pendingClaimWait: Duration.zero,
+      );
+      groupConversationTracker = ActiveConversationTracker();
+      addTearDown(() {
+        if (groupMessageCoordinatorDirectory.existsSync()) {
+          groupMessageCoordinatorDirectory.deleteSync(recursive: true);
+        }
+      });
+    });
+
     tearDown(() {
       debugDefaultTargetPlatformOverride = null;
     });
@@ -42,6 +68,32 @@ void main() {
       expect(fallback.body, backgroundPushDefaultBody);
       expect(fallback.payload, '12D3KooWPeer');
     });
+
+    test(
+      'message_reaction uses semantic fallback and event dedupe identity',
+      () {
+        const message = RemoteMessage(
+          data: {
+            'type': 'message_reaction',
+            'sender_id': 'peer-reactor',
+            'event_id': 'reaction-event-1',
+            'target_message_id': 'target-message-1',
+            'action': 'add',
+            'title': 'Sender controlled title',
+            'body': 'Sender controlled body 👍',
+          },
+        );
+
+        final fallback = buildBackgroundPushFallbackNotification(message);
+        expect(fallback.title, backgroundPushReactionFallbackTitle);
+        expect(fallback.body, backgroundPushReactionFallbackBody);
+        expect(fallback.payload, 'peer-reactor');
+        expect(
+          backgroundPushFallbackDedupeKey(message),
+          contains('id=reaction-event-1'),
+        );
+      },
+    );
 
     test('ignores retired pushTitle/pushBody preview fields', () {
       const message = RemoteMessage(
@@ -206,21 +258,217 @@ void main() {
           message: message,
           groupMessageDisplayEligibilityResolver: (_) async =>
               const GroupMessageNotificationDisplayEligibility.allowCurrentMember(),
+          groupConversationTracker: groupConversationTracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          durableGroupMessageNotificationCoordinatorResolver: () async =>
+              groupMessageCoordinator,
         );
 
         expect(shown, isTrue);
-        expect(notificationService.shownGeneric, hasLength(1));
-        expect(notificationService.shownGeneric.single.title, 'New Message');
+        expect(notificationService.shown, hasLength(1));
+        expect(notificationService.shown.single.senderUsername, 'Mknoon');
+        expect(notificationService.shown.single.messageText, 'Message');
         expect(
-          notificationService.shownGeneric.single.body,
-          'You have a new message',
-        );
-        expect(
-          notificationService.shownGeneric.single.payload,
+          notificationService.shown.single.payload,
           'group:group-abc-123|message:msg-123',
         );
       },
     );
+
+    test(
+      'foreground group reaction claims transition and uses stable group card and tone lease',
+      () async {
+        final notificationService = FakeNotificationService();
+        const message = RemoteMessage(
+          data: {
+            'type': 'group_reaction',
+            'action': 'add',
+            'group_id': 'group-abc-123',
+            'event_id': 'reaction-event-1',
+            'target_message_id': 'target-message-1',
+            'reactor_peer_id': 'peer-reactor',
+          },
+        );
+        final priorTone = await groupMessageCoordinator.reserveTone(
+          'group:group-abc-123',
+        );
+        expect(priorTone, isNotNull);
+        expect(await priorTone!.commit(), isTrue);
+
+        final shown = await showForegroundPushFallbackNotificationIfNeeded(
+          result: ForegroundRemoteMessageResult.notificationNeeded,
+          notificationService: notificationService,
+          message: message,
+          groupReactionNotificationResolver: (_) async =>
+              const BackgroundPushNotificationFallback(
+                title: 'Project group',
+                body: 'Alice reacted 👍 to your message',
+                payload: 'group:group-abc-123|message:target-message-1',
+              ),
+          durableReactionNotificationCoordinatorResolver: () async =>
+              groupMessageCoordinator,
+          groupConversationTracker: groupConversationTracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+        );
+
+        expect(shown, isTrue);
+        expect(notificationService.shown, hasLength(1));
+        expect(
+          notificationService.shown.single.contactPeerId,
+          'group:group-abc-123',
+        );
+        expect(
+          notificationService.shown.single.senderUsername,
+          'Project group',
+        );
+        expect(
+          notificationService.shown.single.messageText,
+          'Alice reacted 👍 to your message',
+        );
+        expect(
+          notificationService.shown.single.payload,
+          'group:group-abc-123|message:target-message-1',
+        );
+        expect(notificationService.shown.single.silent, isTrue);
+        expect(notificationService.shownGeneric, isEmpty);
+        final eventClaim = File(
+          '${groupMessageCoordinatorDirectory.path}/'
+          '${DurableNotificationToneLease.eventClaimsDirectoryName}/'
+          '${DurableNotificationToneLease.messageEventClaimFileName(type: 'message_reaction', eventIdentity: boundedReactionEventIdentity('reaction-event-1'))}',
+        );
+        expect(eventClaim.existsSync(), isTrue);
+        expect(eventClaim.readAsStringSync(), contains('"state":"committed"'));
+      },
+    );
+
+    test(
+      'canonical group drain fallback deduplicates exact ids and suppresses active conversations',
+      () async {
+        final notificationService = FakeNotificationService();
+        Future<bool> show(String messageId) {
+          return showForegroundPushFallbackNotificationIfNeeded(
+            result: ForegroundRemoteMessageResult.notificationNeeded,
+            notificationService: notificationService,
+            message: RemoteMessage(
+              data: <String, dynamic>{
+                'type': 'group_message',
+                'groupId': 'group-drain',
+                'message_id': messageId,
+              },
+            ),
+            groupMessageDisplayEligibilityResolver: (_) async =>
+                const GroupMessageNotificationDisplayEligibility.allowCurrentMember(),
+            groupConversationTracker: groupConversationTracker,
+            getAppLifecycleState: () => AppLifecycleState.resumed,
+            durableGroupMessageNotificationCoordinatorResolver: () async =>
+                groupMessageCoordinator,
+          );
+        }
+
+        expect(await show('message-exact'), isTrue);
+        expect(await show('message-exact'), isTrue);
+        expect(notificationService.shown, hasLength(1));
+
+        groupConversationTracker.setActive('group:group-drain');
+        expect(await show('message-while-viewing'), isTrue);
+        expect(notificationService.shown, hasLength(1));
+      },
+    );
+
+    test('canonical group drain fallback shares durable tone debounce', () async {
+      final notificationService = FakeNotificationService();
+      for (final messageId in const <String>['message-a', 'message-b']) {
+        await showForegroundPushFallbackNotificationIfNeeded(
+          result: ForegroundRemoteMessageResult.notificationNeeded,
+          notificationService: notificationService,
+          message: RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'group_message',
+              'groupId': 'group-tone',
+              'message_id': messageId,
+            },
+          ),
+          groupMessageDisplayEligibilityResolver: (_) async =>
+              const GroupMessageNotificationDisplayEligibility.allowCurrentMember(),
+          groupConversationTracker: groupConversationTracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          durableGroupMessageNotificationCoordinatorResolver: () async =>
+              groupMessageCoordinator,
+        );
+      }
+
+      expect(notificationService.shown, hasLength(2));
+      expect(
+        notificationService.shown.map((notification) => notification.silent),
+        <bool>[false, true],
+      );
+    });
+
+    test(
+      'unanchored group drain fallback is generic, bare-route, and always silent',
+      () async {
+        final notificationService = FakeNotificationService();
+        final shown = await showForegroundPushFallbackNotificationIfNeeded(
+          result: ForegroundRemoteMessageResult.notificationNeeded,
+          notificationService: notificationService,
+          message: const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'group_message',
+              'groupId': 'group-unanchored',
+              'title': 'ATTACKER TITLE',
+              'body': 'ATTACKER BODY',
+            },
+          ),
+          groupMessageDisplayEligibilityResolver: (_) async =>
+              const GroupMessageNotificationDisplayEligibility.allowCurrentMember(),
+          groupConversationTracker: groupConversationTracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          durableGroupMessageNotificationCoordinatorResolver: () async =>
+              groupMessageCoordinator,
+        );
+
+        expect(shown, isTrue);
+        expect(notificationService.shown, hasLength(1));
+        final notification = notificationService.shown.single;
+        expect(notification.senderUsername, 'Mknoon');
+        expect(notification.messageText, 'Message');
+        expect(notification.payload, 'group:group-unanchored');
+        expect(notification.silent, isTrue);
+        expect(
+          '${notification.senderUsername}|${notification.messageText}',
+          isNot(contains('ATTACKER')),
+        );
+      },
+    );
+
+    test('group drain show error releases the exact claim for retry', () async {
+      final notificationService = _FailOnceNotificationService();
+      const message = RemoteMessage(
+        data: <String, dynamic>{
+          'type': 'group_message',
+          'groupId': 'group-retry',
+          'message_id': 'message-retry',
+        },
+      );
+
+      Future<bool> show() => showForegroundPushFallbackNotificationIfNeeded(
+        result: ForegroundRemoteMessageResult.notificationNeeded,
+        notificationService: notificationService,
+        message: message,
+        groupMessageDisplayEligibilityResolver: (_) async =>
+            const GroupMessageNotificationDisplayEligibility.allowCurrentMember(),
+        groupConversationTracker: groupConversationTracker,
+        getAppLifecycleState: () => AppLifecycleState.resumed,
+        durableGroupMessageNotificationCoordinatorResolver: () async =>
+            groupMessageCoordinator,
+      );
+
+      await expectLater(show(), throwsA(isA<StateError>()));
+      expect(await show(), isTrue);
+      expect(notificationService.shown, hasLength(1));
+      expect(await show(), isTrue);
+      expect(notificationService.shown, hasLength(1));
+    });
 
     test(
       'foreground fallback shows current-member group_message with visible FCM payload',
@@ -248,17 +496,18 @@ void main() {
             expect(groupId, 'group-abc-123');
             return const GroupMessageNotificationDisplayEligibility.allowCurrentMember();
           },
+          groupConversationTracker: groupConversationTracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          durableGroupMessageNotificationCoordinatorResolver: () async =>
+              groupMessageCoordinator,
         );
 
         expect(shown, isTrue);
-        expect(notificationService.shownGeneric, hasLength(1));
-        expect(notificationService.shownGeneric.single.title, 'New Message');
+        expect(notificationService.shown, hasLength(1));
+        expect(notificationService.shown.single.senderUsername, 'Mknoon');
+        expect(notificationService.shown.single.messageText, 'Message');
         expect(
-          notificationService.shownGeneric.single.body,
-          'You have a new message',
-        );
-        expect(
-          notificationService.shownGeneric.single.payload,
+          notificationService.shown.single.payload,
           'group:group-abc-123|message:msg-123',
         );
       },
@@ -292,6 +541,10 @@ void main() {
               'local_member_missing',
             );
           },
+          groupConversationTracker: groupConversationTracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          durableGroupMessageNotificationCoordinatorResolver: () async =>
+              groupMessageCoordinator,
         );
 
         expect(shown, isFalse);
@@ -403,12 +656,16 @@ void main() {
             expect(groupId, 'group-abc-123');
             return const GroupMessageNotificationDisplayEligibility.allowCurrentMember();
           },
+          groupConversationTracker: groupConversationTracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          durableGroupMessageNotificationCoordinatorResolver: () async =>
+              groupMessageCoordinator,
         );
 
         expect(shown, isTrue);
-        expect(notificationService.shownGeneric, hasLength(1));
+        expect(notificationService.shown, hasLength(1));
         expect(
-          notificationService.shownGeneric.single.payload,
+          notificationService.shown.single.payload,
           'group:group-abc-123|message:msg-legacy',
         );
       },
@@ -457,6 +714,10 @@ void main() {
               const GroupMessageNotificationDisplayEligibility.suppressed(
                 'local_member_missing',
               ),
+          groupConversationTracker: groupConversationTracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          durableGroupMessageNotificationCoordinatorResolver: () async =>
+              groupMessageCoordinator,
         );
 
         expect(shown, isFalse);
@@ -729,4 +990,29 @@ void main() {
       expect(shouldShowBackgroundPushFallbackNotification(message), isFalse);
     });
   });
+}
+
+class _FailOnceNotificationService extends FakeNotificationService {
+  var _shouldFail = true;
+
+  @override
+  Future<void> showMessageNotification({
+    required String contactPeerId,
+    required String senderUsername,
+    required String messageText,
+    String? payload,
+    bool silent = false,
+  }) async {
+    if (_shouldFail) {
+      _shouldFail = false;
+      throw StateError('synthetic group fallback display failure');
+    }
+    await super.showMessageNotification(
+      contactPeerId: contactPeerId,
+      senderUsername: senderUsername,
+      messageText: messageText,
+      payload: payload,
+      silent: silent,
+    );
+  }
 }

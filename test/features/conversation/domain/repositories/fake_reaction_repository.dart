@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 
@@ -8,6 +10,7 @@ class FakeReactionRepository implements ReactionRepository {
   int saveReactionCallCount = 0;
   MessageReaction? lastSavedReaction;
   int removeReactionCallCount = 0;
+  Future<void> _incomingAddTail = Future<void>.value();
 
   /// Records the message-id batches passed to [getReactionsForMessages] so
   /// tests can assert the feed reaction fan-out is bounded to the preview
@@ -23,15 +26,50 @@ class FakeReactionRepository implements ReactionRepository {
     lastSavedReaction = reaction;
 
     // Upsert: remove existing for same message + sender
-    _reactions.removeWhere((r) =>
-        r.messageId == reaction.messageId &&
-        r.senderPeerId == reaction.senderPeerId);
+    _reactions.removeWhere(
+      (r) =>
+          r.messageId == reaction.messageId &&
+          r.senderPeerId == reaction.senderPeerId,
+    );
     _reactions.add(reaction);
   }
 
   @override
-  Future<List<MessageReaction>> getReactionsForMessage(
-      String messageId) async {
+  Future<ReactionAddApplyResult> applyIncomingAdd(
+    MessageReaction reaction,
+  ) async {
+    final previous = _incomingAddTail;
+    final release = Completer<void>();
+    _incomingAddTail = release.future;
+    await previous;
+    try {
+      final current = await getReactionForSenderIncludingRemoved(
+        messageId: reaction.messageId,
+        senderPeerId: reaction.senderPeerId,
+      );
+      final incomingAt = DateTime.tryParse(reaction.timestamp);
+      final currentAt = current == null
+          ? null
+          : DateTime.tryParse(current.removedAt ?? current.timestamp);
+      if (incomingAt != null &&
+          currentAt != null &&
+          incomingAt.isBefore(currentAt)) {
+        return ReactionAddApplyResult.stale;
+      }
+      if (current?.id == reaction.id) {
+        return ReactionAddApplyResult.exactReplay;
+      }
+      await saveReaction(reaction);
+      return current == null
+          ? ReactionAddApplyResult.inserted
+          : ReactionAddApplyResult.updated;
+    } finally {
+      release.complete();
+    }
+  }
+
+  @override
+  Future<List<MessageReaction>> getReactionsForMessage(String messageId) async {
     // Tombstoned (removed) reactions are hidden from UI loaders (INV-T1).
     return _reactions
         .where((r) => r.messageId == messageId && r.removedAt == null)
@@ -41,7 +79,8 @@ class FakeReactionRepository implements ReactionRepository {
 
   @override
   Future<Map<String, List<MessageReaction>>> getReactionsForMessages(
-      List<String> messageIds) async {
+    List<String> messageIds,
+  ) async {
     getReactionsForMessagesCalls.add(List<String>.from(messageIds));
     final ids = messageIds.toSet();
     final Map<String, List<MessageReaction>> result = {};

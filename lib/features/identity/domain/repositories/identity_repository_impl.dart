@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
+import 'package:flutter_app/core/notifications/group_reaction_notification_projection.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/core/secure_storage/ml_kem_secret_ring.dart';
@@ -16,6 +18,8 @@ class IdentityRepositoryImpl implements IdentityRepository {
   final Future<void> Function(Map<String, Object?> row) _dbUpsertIdentityRow;
   final SecureKeyStore _secureKeyStore;
   final SecureKeyStore? _pushSharedKeyStore;
+  final DirectReactionNotificationProjection? _directReactionProjection;
+  final GroupReactionNotificationProjection? _groupReactionProjection;
   IdentityModel? _cachedIdentity;
   bool _hasCachedIdentity = false;
 
@@ -25,10 +29,14 @@ class IdentityRepositoryImpl implements IdentityRepository {
     dbUpsertIdentityRow,
     required SecureKeyStore secureKeyStore,
     SecureKeyStore? pushSharedKeyStore,
+    DirectReactionNotificationProjection? directReactionProjection,
+    GroupReactionNotificationProjection? groupReactionProjection,
   }) : _dbLoadIdentityRow = dbLoadIdentityRow,
        _dbUpsertIdentityRow = dbUpsertIdentityRow,
        _secureKeyStore = secureKeyStore,
-       _pushSharedKeyStore = pushSharedKeyStore;
+       _pushSharedKeyStore = pushSharedKeyStore,
+       _directReactionProjection = directReactionProjection,
+       _groupReactionProjection = groupReactionProjection;
 
   void invalidateCache() {
     _cachedIdentity = null;
@@ -60,6 +68,8 @@ class IdentityRepositoryImpl implements IdentityRepository {
     final row = await _dbLoadIdentityRow();
 
     if (row == null) {
+      await _groupReactionProjection?.clearForLogout();
+      await _directReactionProjection?.clearForLogout();
       _cachedIdentity = null;
       _hasCachedIdentity = true;
       emitFlowEvent(
@@ -69,6 +79,20 @@ class IdentityRepositoryImpl implements IdentityRepository {
       );
       return null;
     }
+
+    // Publish an empty new-owner group generation first so old group and
+    // announcement routes become ineligible immediately. Then replace direct
+    // documents: any old direct owner mismatches the new group identity until
+    // both empty direct documents are committed. All of this precedes secret
+    // reads and DB publication.
+    await _groupReactionProjection?.replaceLocalIdentity(
+      accountPeerId: row['peer_id'] as String,
+      deviceId: row['peer_id'] as String,
+      transportPeerId: row['peer_id'] as String,
+    );
+    await _directReactionProjection?.replaceLocalIdentity(
+      accountPeerId: row['peer_id'] as String,
+    );
 
     // Read secrets from secure storage in parallel, fall back to DB columns (pre-migration)
     final ssResults = await Future.wait([
@@ -86,6 +110,8 @@ class IdentityRepositoryImpl implements IdentityRepository {
         ssMlKemSecretKey ?? row['ml_kem_secret_key'] as String?;
 
     if (privateKey == null || mnemonic12 == null) {
+      await _groupReactionProjection?.clearForLogout();
+      await _directReactionProjection?.clearForLogout();
       _cachedIdentity = null;
       _hasCachedIdentity = true;
       emitFlowEvent(
@@ -128,6 +154,18 @@ class IdentityRepositoryImpl implements IdentityRepository {
       layer: 'FL',
       event: 'ID_REPO_SAVE_IDENTITY_CALL',
       details: {'peerId': identity.peerId},
+    );
+
+    // Make every old group/announcement route ineligible first, then bind the
+    // empty direct documents. These transitions happen before secrets or DB so
+    // a later save failure remains fail-closed for both notification families.
+    await _groupReactionProjection?.replaceLocalIdentity(
+      accountPeerId: identity.peerId,
+      deviceId: identity.peerId,
+      transportPeerId: identity.peerId,
+    );
+    await _directReactionProjection?.replaceLocalIdentity(
+      accountPeerId: identity.peerId,
     );
 
     // Write secrets to secure storage

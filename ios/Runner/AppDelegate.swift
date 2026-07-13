@@ -3,6 +3,56 @@ import FirebaseMessaging
 import UIKit
 import UserNotifications
 
+struct NotificationResponseDiagnostic: Equatable {
+  static let redactedValue = "<redacted>"
+  static let emptyValue = "<empty>"
+
+  let threadIdentifier: String
+  let threadIdentifierState: String
+  let threadMatchesRoute: String
+  let categoryIdentifier: String
+  let categoryIdentifierState: String
+
+  static func evaluate(
+    content: UNNotificationContent,
+    userInfo: [AnyHashable: Any]
+  ) -> NotificationResponseDiagnostic {
+    let threadIdentifier = content.threadIdentifier
+    let categoryIdentifier = content.categoryIdentifier
+    let routeThreadIdentifier = nonEmptyString(userInfo["groupId"])
+      ?? nonEmptyString(userInfo["sender_id"])
+    let threadMatchesRoute: String
+    if let routeThreadIdentifier {
+      threadMatchesRoute = threadIdentifier == routeThreadIdentifier ? "true" : "false"
+    } else {
+      threadMatchesRoute = "unavailable"
+    }
+
+    return NotificationResponseDiagnostic(
+      threadIdentifier: threadIdentifier.isEmpty ? emptyValue : redactedValue,
+      threadIdentifierState: threadIdentifier.isEmpty ? "empty" : "present",
+      threadMatchesRoute: threadMatchesRoute,
+      categoryIdentifier: categoryIdentifier.isEmpty ? emptyValue : redactedValue,
+      categoryIdentifierState: categoryIdentifier.isEmpty ? "empty" : "present"
+    )
+  }
+
+  var logSummary: String {
+    return "threadIdentifier=\(threadIdentifier) "
+      + "threadIdentifierState=\(threadIdentifierState) "
+      + "threadMatchesRoute=\(threadMatchesRoute) "
+      + "categoryIdentifier=\(categoryIdentifier) "
+      + "categoryIdentifierState=\(categoryIdentifierState)"
+  }
+
+  private static func nonEmptyString(_ value: Any?) -> String? {
+    guard let string = value as? String, !string.isEmpty else {
+      return nil
+    }
+    return string
+  }
+}
+
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
 #if canImport(GoMknoon)
@@ -141,7 +191,8 @@ import UserNotifications
     didReceive response: UNNotificationResponse,
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
-    let userInfo = response.notification.request.content.userInfo
+    let content = response.notification.request.content
+    let userInfo = content.userInfo
     let keyNames = Set(userInfo.keys.map { String(describing: $0) })
     let flnKeys = ["NotificationId", "payload"].filter { keyNames.contains($0) }
     let fcmKeys = ["gcm.message_id"].filter { keyNames.contains($0) }
@@ -171,6 +222,16 @@ import UserNotifications
       flnKeys.isEmpty ? "none" : flnKeys.joined(separator: ","),
       fcmKeys.isEmpty ? "none" : fcmKeys.joined(separator: ",")
     )
+#if DEBUG
+    let responseDiagnostic = NotificationResponseDiagnostic.evaluate(
+      content: content,
+      userInfo: userInfo
+    )
+    NSLog(
+      "[PUSH_DIAG] ios_native_un_content %@",
+      responseDiagnostic.logSummary
+    )
+#endif
     logApnsProviderProbeNotification(
       context: "didReceive",
       userInfo: userInfo
@@ -611,6 +672,16 @@ import UserNotifications
         trimmedString(payload["ns"]) != nil
     case "group_message":
       return trimmedString(payload["groupId"]) != nil
+    case "group_reaction":
+      let groupId = trimmedString(payload["groupId"])
+      let eventId = trimmedString(payload["event_id"])
+      let targetMessageId = trimmedString(payload["target_message_id"])
+      let reactorPeerId = trimmedString(payload["reactor_peer_id"])
+      return groupId != nil &&
+        eventId != nil &&
+        targetMessageId != nil &&
+        reactorPeerId != nil &&
+        trimmedString(payload["action"]) == "add"
     case "group_invite":
       return trimmedString(payload["groupId"]) != nil
     case "intros":
