@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 
@@ -600,6 +601,158 @@ void main() {
         );
         // media is a transient field on ConversationMessage, not set by toConversationMessage
         expect(msg.media, isEmpty);
+      });
+    });
+
+    group('private media encrypted-inner codec', () {
+      MessagePayload privatePayload(PrivateMediaPolicy policy) =>
+          MessagePayload(
+            id: 'private-1',
+            text: '',
+            senderPeerId: 'sender',
+            senderUsername: 'Sender',
+            timestamp: '2026-07-11T00:00:00.000Z',
+            media: const [
+              {
+                'id': 'attachment-1',
+                'mime': 'image/jpeg',
+                'mediaType': 'image',
+              },
+            ],
+            privateMediaPolicy: policy,
+          );
+
+      test('valid policy round-trips only through encrypted inner JSON', () {
+        final policy = PrivateMediaPolicy.fromJson({
+          'version': 1,
+          'mode': 'disappearing',
+          'durationSeconds': 604800,
+        });
+        final payload = privatePayload(policy);
+
+        final inner = jsonDecode(payload.toInnerJson()) as Map<String, dynamic>;
+        expect(inner['privateMedia'], {
+          'version': 1,
+          'mode': 'disappearing',
+          'durationSeconds': 604800,
+        });
+        final restored = MessagePayload.fromDecryptedJson(
+          payload.toInnerJson(),
+        );
+        expect(restored, isNotNull);
+        expect(restored!.privateMediaPolicy, policy);
+
+        final message = restored.toConversationMessage(
+          contactPeerId: 'sender',
+          isIncoming: true,
+          status: 'delivered',
+        );
+        expect(message.privateMediaPolicyVersion, 1);
+        expect(message.privateMediaMode, PrivateMediaMode.disappearing);
+        expect(message.privateMediaDurationSeconds, 604800);
+        expect(message.privateMediaState, PrivateMediaLifecycleState.available);
+      });
+
+      test('clear v2 envelope and v1 writer never contain privateMedia', () {
+        final payload = privatePayload(
+          PrivateMediaPolicy.fromJson({'version': 1, 'mode': 'protected'}),
+        );
+
+        final v1 = payload.toJson();
+        expect(v1, isNot(contains('privateMedia')));
+        expect(
+          MessagePayload.fromJson(v1)!.privateMediaPolicy,
+          const PrivateMediaPolicy.ordinary(),
+        );
+
+        final outer = MessagePayload.buildEncryptedEnvelope(
+          id: payload.id,
+          senderPeerId: payload.senderPeerId,
+          senderUsername: payload.senderUsername,
+          kem: 'kem',
+          ciphertext: 'ciphertext',
+          nonce: 'nonce',
+        );
+        expect(outer, isNot(contains('privateMedia')));
+      });
+
+      test(
+        'missing policy keeps legacy inner bytes and behavior compatible',
+        () {
+          expect(
+            testPayload.toInnerJson(),
+            '{"id":"msg-uuid-001","text":"Hello! This is my first letter.",'
+            '"senderPeerId":"12D3KooWSender123","senderUsername":"Alice",'
+            '"timestamp":"2026-02-09T15:30:00.000Z"}',
+          );
+          final restored = MessagePayload.fromDecryptedJson(
+            testPayload.toInnerJson(),
+          );
+          expect(
+            restored!.privateMediaPolicy,
+            const PrivateMediaPolicy.ordinary(),
+          );
+        },
+      );
+
+      test(
+        'malformed unknown and ineligible private policy is unsupported',
+        () {
+          Map<String, dynamic> base() => {
+            'id': 'private-bad',
+            'text': '',
+            'senderPeerId': 'sender',
+            'senderUsername': 'Sender',
+            'timestamp': '2026-07-11T00:00:00.000Z',
+            'media': [
+              {'id': 'a1', 'mime': 'image/jpeg', 'mediaType': 'image'},
+            ],
+          };
+
+          for (final invalidPolicy in <Object?>[
+            'protected',
+            {'version': 2, 'mode': 'protected'},
+            {'version': 1, 'mode': 'future'},
+            {'version': 1, 'mode': 'disappearing', 'durationSeconds': 60},
+          ]) {
+            final inner = base()..['privateMedia'] = invalidPolicy;
+            final parsed = MessagePayload.fromDecryptedJson(jsonEncode(inner));
+            expect(parsed, isNotNull);
+            expect(parsed!.privateMediaPolicy.isUnsupported, isTrue);
+          }
+
+          final captioned = base()
+            ..['text'] = 'caption'
+            ..['privateMedia'] = {'version': 1, 'mode': 'view_once'};
+          expect(
+            MessagePayload.fromDecryptedJson(
+              jsonEncode(captioned),
+            )!.privateMediaPolicy.isUnsupported,
+            isTrue,
+          );
+        },
+      );
+
+      test('unknown additive v1 fields are ignored during inner decode', () {
+        final inner =
+            jsonDecode(
+                  privatePayload(
+                    PrivateMediaPolicy.fromJson({
+                      'version': 1,
+                      'mode': 'protected',
+                    }),
+                  ).toInnerJson(),
+                )
+                as Map<String, dynamic>;
+        (inner['privateMedia'] as Map<String, dynamic>)['futureField'] = true;
+
+        final restored = MessagePayload.fromDecryptedJson(jsonEncode(inner));
+        expect(restored!.privateMediaPolicy.isUnsupported, isFalse);
+        expect(restored.privateMediaPolicy.mode, PrivateMediaMode.protected);
+        expect(restored.privateMediaPolicy.toJson(), {
+          'version': 1,
+          'mode': 'protected',
+        });
       });
     });
   });

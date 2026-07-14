@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/received_media_egress.dart';
 import 'package:flutter_app/core/media/received_media_egress_service.dart';
 import 'package:flutter_app/features/conversation/application/direct_media_library_batch_actions.dart';
@@ -106,6 +107,8 @@ void main() {
     required String id,
     bool isIncoming = true,
     String? deletedAt,
+    PrivateMediaPolicy policy = const PrivateMediaPolicy.ordinary(),
+    PrivateMediaLifecycleState state = PrivateMediaLifecycleState.none,
   }) {
     return ConversationMessage(
       id: id,
@@ -117,6 +120,8 @@ void main() {
       isIncoming: isIncoming,
       createdAt: '2026-07-09T10:00:01.000Z',
       deletedAt: deletedAt,
+      privateMediaPolicy: policy,
+      privateMediaState: state,
     );
   }
 
@@ -155,125 +160,126 @@ void main() {
   }
 
   DirectReceivedMediaActionIdentity identity(String messageId, String id) =>
-      DirectReceivedMediaActionIdentity(
-        messageId: messageId,
-        attachmentId: id,
+      DirectReceivedMediaActionIdentity(messageId: messageId, attachmentId: id);
+
+  test(
+    'batch save reloads current direct rows and returns per-item outcomes',
+    () async {
+      final stalePathA1 = writeMediaFile('a1-stale.jpg');
+      final currentPathA1 = writeMediaFile('a1-current.jpg');
+      final pathA2 = writeMediaFile('a2.jpg');
+      final pathProtected = writeMediaFile('protected.jpg');
+      final pathIntegrity = writeMediaFile('integrity.jpg');
+
+      parents['msg-a'] = makeParent(id: 'msg-a');
+      parents['msg-p'] = makeParent(id: 'msg-p');
+      parents['msg-i'] = makeParent(id: 'msg-i');
+      // msg-c is deliberately ABSENT: its attachment must fail preflight.
+
+      repo.seed([
+        makeRow(id: 'att-a1', messageId: 'msg-a', localPath: stalePathA1),
+        makeRow(id: 'att-a2', messageId: 'msg-a', localPath: pathA2),
+        makeRow(id: 'att-c1', messageId: 'msg-c', localPath: pathA2),
+        makeRow(id: 'att-p', messageId: 'msg-p', localPath: pathProtected),
+        makeRow(
+          id: 'att-i',
+          messageId: 'msg-i',
+          localPath: pathIntegrity,
+          downloadStatus: 'integrity_failed',
+        ),
+      ]);
+
+      // The library/viewer snapshot of att-a1 is STALE: the current row moved
+      // to a new path after the page rendered. Only the reloaded current row
+      // may reach the native boundary.
+      await repo.updateLocalPath('att-a1', currentPathA1);
+
+      final qualified = <String>[];
+      final coordinator = buildCoordinator(
+        qualifier: (parent, current) async {
+          qualified.add(current.id);
+          return current.id == 'att-p'
+              ? DirectMediaLaneQualification.protected
+              : DirectMediaLaneQualification.eligible;
+        },
       );
 
-  test('batch save reloads current direct rows and returns per-item outcomes', () async {
-    final stalePathA1 = writeMediaFile('a1-stale.jpg');
-    final currentPathA1 = writeMediaFile('a1-current.jpg');
-    final pathA2 = writeMediaFile('a2.jpg');
-    final pathProtected = writeMediaFile('protected.jpg');
-    final pathIntegrity = writeMediaFile('integrity.jpg');
+      service.scriptedOutcomes['att-a2'] =
+          MediaEgressItemOutcome.permissionDenied;
 
-    parents['msg-a'] = makeParent(id: 'msg-a');
-    parents['msg-p'] = makeParent(id: 'msg-p');
-    parents['msg-i'] = makeParent(id: 'msg-i');
-    // msg-c is deliberately ABSENT: its attachment must fail preflight.
+      final result = await coordinator.performBatchEgress(
+        identities: [
+          identity('msg-a', 'att-a1'),
+          identity('msg-a', 'att-a2'),
+          identity('msg-c', 'att-c1'),
+          identity('msg-p', 'att-p'),
+          identity('msg-i', 'att-i'),
+        ],
+        destination: MediaEgressDestination.files,
+      );
 
-    repo.seed([
-      makeRow(id: 'att-a1', messageId: 'msg-a', localPath: stalePathA1),
-      makeRow(id: 'att-a2', messageId: 'msg-a', localPath: pathA2),
-      makeRow(id: 'att-c1', messageId: 'msg-c', localPath: pathA2),
-      makeRow(id: 'att-p', messageId: 'msg-p', localPath: pathProtected),
-      makeRow(
-        id: 'att-i',
-        messageId: 'msg-i',
-        localPath: pathIntegrity,
-        downloadStatus: 'integrity_failed',
-      ),
-    ]);
+      // ONE exact ordered native request to the CHOSEN destination with only
+      // the current qualified rows — the stale att-a1 path is ignored, and
+      // preflight-failed rows never reach the boundary.
+      expect(service.calls, hasLength(1));
+      expect(service.calls.single.destination, MediaEgressDestination.files);
+      expect(
+        isValidMediaEgressRequestId(service.calls.single.requestId),
+        isTrue,
+      );
+      final selection = service.calls.single.selection;
+      expect(selection.map((c) => c.attachmentId).toList(), [
+        'att-a1',
+        'att-a2',
+      ]);
+      expect(selection.first.storedPath, currentPathA1);
+      expect(selection.last.storedPath, pathA2);
 
-    // The library/viewer snapshot of att-a1 is STALE: the current row moved
-    // to a new path after the page rendered. Only the reloaded current row
-    // may reach the native boundary.
-    await repo.updateLocalPath('att-a1', currentPathA1);
+      // The shared plan-231 qualifier ran against each structurally-qualified
+      // reloaded row (missing parent and integrity-failed never reached it).
+      expect(qualified, ['att-a1', 'att-a2', 'att-p']);
 
-    final qualified = <String>[];
-    final coordinator = buildCoordinator(
-      qualifier: (parent, current) async {
-        qualified.add(current.id);
-        return current.id == 'att-p'
-            ? DirectMediaLaneQualification.protected
-            : DirectMediaLaneQualification.eligible;
-      },
-    );
+      // Merged preflight + native per-item outcomes, in dispatch order.
+      expect(result.items.map((i) => i.attachmentId).toList(), [
+        'att-a1',
+        'att-a2',
+        'att-c1',
+        'att-p',
+        'att-i',
+      ]);
+      expect(result.succeededIds, {'att-a1'});
+      expect(result.failedIds, {'att-a2', 'att-c1', 'att-p', 'att-i'});
+      final byId = {for (final item in result.items) item.attachmentId: item};
+      expect(byId['att-a1']!.itemOutcome, MediaEgressItemOutcome.saved);
+      expect(
+        byId['att-a2']!.itemOutcome,
+        MediaEgressItemOutcome.permissionDenied,
+      );
+      expect(byId['att-c1']!.denial, DirectMediaEgressDenial.parentNotFound);
+      expect(byId['att-p']!.denial, DirectMediaEgressDenial.protected);
+      expect(byId['att-i']!.denial, DirectMediaEgressDenial.integrityFailed);
 
-    service.scriptedOutcomes['att-a2'] = MediaEgressItemOutcome.permissionDenied;
-
-    final result = await coordinator.performBatchEgress(
-      identities: [
-        identity('msg-a', 'att-a1'),
-        identity('msg-a', 'att-a2'),
-        identity('msg-c', 'att-c1'),
-        identity('msg-p', 'att-p'),
-        identity('msg-i', 'att-i'),
-      ],
-      destination: MediaEgressDestination.files,
-    );
-
-    // ONE exact ordered native request to the CHOSEN destination with only
-    // the current qualified rows — the stale att-a1 path is ignored, and
-    // preflight-failed rows never reach the boundary.
-    expect(service.calls, hasLength(1));
-    expect(service.calls.single.destination, MediaEgressDestination.files);
-    expect(
-      isValidMediaEgressRequestId(service.calls.single.requestId),
-      isTrue,
-    );
-    final selection = service.calls.single.selection;
-    expect(selection.map((c) => c.attachmentId).toList(), [
-      'att-a1',
-      'att-a2',
-    ]);
-    expect(selection.first.storedPath, currentPathA1);
-    expect(selection.last.storedPath, pathA2);
-
-    // The shared plan-231 qualifier ran against each structurally-qualified
-    // reloaded row (missing parent and integrity-failed never reached it).
-    expect(qualified, ['att-a1', 'att-a2', 'att-p']);
-
-    // Merged preflight + native per-item outcomes, in dispatch order.
-    expect(result.items.map((i) => i.attachmentId).toList(), [
-      'att-a1',
-      'att-a2',
-      'att-c1',
-      'att-p',
-      'att-i',
-    ]);
-    expect(result.succeededIds, {'att-a1'});
-    expect(result.failedIds, {'att-a2', 'att-c1', 'att-p', 'att-i'});
-    final byId = {for (final item in result.items) item.attachmentId: item};
-    expect(byId['att-a1']!.itemOutcome, MediaEgressItemOutcome.saved);
-    expect(
-      byId['att-a2']!.itemOutcome,
-      MediaEgressItemOutcome.permissionDenied,
-    );
-    expect(byId['att-c1']!.denial, DirectMediaEgressDenial.parentNotFound);
-    expect(byId['att-p']!.denial, DirectMediaEgressDenial.protected);
-    expect(byId['att-i']!.denial, DirectMediaEgressDenial.integrityFailed);
-
-    // Source state is never mutated by a batch egress — including for the
-    // failed items: rows keep their status/path/bookmark, bytes intact.
-    final rowsA = await repo.getAttachmentsForMessage(
-      'msg-a',
-      owner: MediaOwnerLane.direct,
-    );
-    expect(rowsA.map((r) => r.downloadStatus).toSet(), {'done'});
-    expect(
-      rowsA.firstWhere((r) => r.id == 'att-a1').localPath,
-      currentPathA1,
-    );
-    expect(rowsA.map((r) => r.isBookmarked).toSet(), {false});
-    expect(File(currentPathA1).readAsBytesSync(), [7, 8, 9]);
-    expect(File(pathA2).readAsBytesSync(), [7, 8, 9]);
-    final rowsI = await repo.getAttachmentsForMessage(
-      'msg-i',
-      owner: MediaOwnerLane.direct,
-    );
-    expect(rowsI.single.downloadStatus, 'integrity_failed');
-  });
+      // Source state is never mutated by a batch egress — including for the
+      // failed items: rows keep their status/path/bookmark, bytes intact.
+      final rowsA = await repo.getAttachmentsForMessage(
+        'msg-a',
+        owner: MediaOwnerLane.direct,
+      );
+      expect(rowsA.map((r) => r.downloadStatus).toSet(), {'done'});
+      expect(
+        rowsA.firstWhere((r) => r.id == 'att-a1').localPath,
+        currentPathA1,
+      );
+      expect(rowsA.map((r) => r.isBookmarked).toSet(), {false});
+      expect(File(currentPathA1).readAsBytesSync(), [7, 8, 9]);
+      expect(File(pathA2).readAsBytesSync(), [7, 8, 9]);
+      final rowsI = await repo.getAttachmentsForMessage(
+        'msg-i',
+        owner: MediaOwnerLane.direct,
+      );
+      expect(rowsI.single.downloadStatus, 'integrity_failed');
+    },
+  );
 
   test(
     'batch external share is one qualified native request with failed-only retry state',
@@ -320,9 +326,7 @@ void main() {
       expect(presented.succeededIds, {'att-s1', 'att-s2'});
       expect(presented.failedIds, {'att-s3'});
       expect(
-        presented.items
-            .firstWhere((i) => i.attachmentId == 'att-s3')
-            .denial,
+        presented.items.firstWhere((i) => i.attachmentId == 'att-s3').denial,
         DirectMediaEgressDenial.fileMissing,
       );
 
@@ -330,16 +334,121 @@ void main() {
       // truthful retry — cancellation is not success.
       service.shareOutcome = MediaEgressOutcome.cancelled;
       final cancelled = await coordinator.performBatchEgress(
-        identities: [
-          identity('msg-s', 'att-s1'),
-          identity('msg-s', 'att-s2'),
-        ],
+        identities: [identity('msg-s', 'att-s1'), identity('msg-s', 'att-s2')],
         destination: MediaEgressDestination.share,
       );
       expect(service.calls, hasLength(2));
       expect(cancelled.wasCancelled, isTrue);
       expect(cancelled.succeededIds, isEmpty);
       expect(cancelled.failedIds, {'att-s1', 'att-s2'});
+    },
+  );
+
+  test(
+    'mixed current private states stay item-scoped despite a permissive qualifier',
+    () async {
+      final ordinaryPath = writeMediaFile('ordinary.jpg');
+      final protectedPath = writeMediaFile('private.jpg');
+      final unsupportedPath = writeMediaFile('unsupported.jpg');
+      final terminalPath = writeMediaFile('terminal.jpg');
+      parents['msg-ordinary'] = makeParent(id: 'msg-ordinary');
+      parents['msg-private'] = makeParent(
+        id: 'msg-private',
+        policy: const PrivateMediaPolicy.protected(),
+        state: PrivateMediaLifecycleState.available,
+      );
+      parents['msg-unsupported'] = makeParent(
+        id: 'msg-unsupported',
+        policy: const PrivateMediaPolicy.unsupported(sourceVersion: 77),
+        state: PrivateMediaLifecycleState.unsupported,
+      );
+      parents['msg-terminal'] = makeParent(
+        id: 'msg-terminal',
+        policy: const PrivateMediaPolicy.viewOnce(),
+        state: PrivateMediaLifecycleState.expired,
+      );
+      repo.seed([
+        makeRow(
+          id: 'att-ordinary',
+          messageId: 'msg-ordinary',
+          localPath: ordinaryPath,
+        ),
+        makeRow(
+          id: 'att-private',
+          messageId: 'msg-private',
+          localPath: protectedPath,
+        ),
+        makeRow(
+          id: 'att-unsupported',
+          messageId: 'msg-unsupported',
+          localPath: unsupportedPath,
+        ),
+        makeRow(
+          id: 'att-terminal',
+          messageId: 'msg-terminal',
+          localPath: terminalPath,
+        ),
+      ]);
+      final coordinator = buildCoordinator(
+        qualifier: (_, _) async => DirectMediaLaneQualification.eligible,
+      );
+      final identities = [
+        identity('msg-ordinary', 'att-ordinary'),
+        identity('msg-private', 'att-private'),
+        identity('msg-unsupported', 'att-unsupported'),
+        identity('msg-terminal', 'att-terminal'),
+      ];
+
+      for (final destination in const [
+        MediaEgressDestination.files,
+        MediaEgressDestination.share,
+      ]) {
+        final result = await coordinator.performBatchEgress(
+          identities: identities,
+          destination: destination,
+        );
+        expect(service.calls.last.selection.map((item) => item.attachmentId), [
+          'att-ordinary',
+        ]);
+        final byId = {for (final item in result.items) item.attachmentId: item};
+        expect(byId['att-private']!.denial, DirectMediaEgressDenial.protected);
+        expect(
+          byId['att-unsupported']!.denial,
+          DirectMediaEgressDenial.protected,
+        );
+        expect(byId['att-terminal']!.denial, DirectMediaEgressDenial.expired);
+        expect(result.succeededIds, {'att-ordinary'});
+      }
+      expect(service.calls, hasLength(2));
+    },
+  );
+
+  test(
+    'batch deduplication binds the complete message attachment identity',
+    () async {
+      final path = writeMediaFile('identity.jpg');
+      parents['msg-valid'] = makeParent(id: 'msg-valid');
+      parents['msg-other'] = makeParent(id: 'msg-other');
+      repo.seed([
+        makeRow(id: 'same-attachment', messageId: 'msg-valid', localPath: path),
+      ]);
+
+      final result = await buildCoordinator().performBatchEgress(
+        identities: [
+          identity('msg-valid', 'same-attachment'),
+          identity('msg-other', 'same-attachment'),
+        ],
+        destination: MediaEgressDestination.files,
+      );
+
+      expect(service.calls, hasLength(1));
+      expect(service.calls.single.selection, hasLength(1));
+      expect(result.items, hasLength(2));
+      expect(result.items.first.succeeded, isTrue);
+      expect(
+        result.items.last.denial,
+        DirectMediaEgressDenial.attachmentNotCurrent,
+      );
     },
   );
 
@@ -378,9 +487,7 @@ void main() {
     // A full ten-item batch IS dispatched once with per-item-capable
     // handling — never the service's blanket over-cap rejection.
     final result = await coordinator.performBatchEgress(
-      identities: [
-        for (var i = 1; i <= 10; i++) identity('msg-cap', 'cap-$i'),
-      ],
+      identities: [for (var i = 1; i <= 10; i++) identity('msg-cap', 'cap-$i')],
       destination: MediaEgressDestination.photos,
     );
     expect(service.calls, hasLength(1));
@@ -454,16 +561,16 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     for (var i = 1; i <= 10; i++) {
-      await tester.longPress(
-        find.byKey(ValueKey('shared-media-tile-sel-$i')),
-      );
+      await tester.longPress(find.byKey(ValueKey('shared-media-tile-sel-$i')));
       await tester.pump(const Duration(milliseconds: 60));
     }
     expect(find.text('10 selected'), findsOneWidget);
 
     // The eleventh unique selection is refused: truthful limit notice, the
     // count stays at ten, and no selected marker appears on the tile.
-    await tester.longPress(find.byKey(const ValueKey('shared-media-tile-sel-11')));
+    await tester.longPress(
+      find.byKey(const ValueKey('shared-media-tile-sel-11')),
+    );
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('10 selected'), findsOneWidget);
     expect(

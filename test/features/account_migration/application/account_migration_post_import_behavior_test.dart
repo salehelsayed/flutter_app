@@ -17,11 +17,13 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -29,6 +31,7 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
+import '../../../shared/fakes/in_memory_message_repository.dart';
 
 void main() {
   late List<Map<String, dynamic>> flowEvents;
@@ -176,89 +179,121 @@ void main() {
       await tempDir.delete(recursive: true);
     });
 
-    test('imported attachments resolve locally with zero media:download', () async {
-      final bridge = FakeBridge();
-      final repo = InMemoryMediaAttachmentRepository();
-      final fileManager = _ImportedDocsFileManager(tempDir.path);
+    test(
+      'imported attachments resolve locally with zero media:download',
+      () async {
+        final bridge = FakeBridge();
+        final repo = InMemoryMediaAttachmentRepository();
+        final messageRepo = InMemoryMessageRepository();
+        final groupMessageRepo = InMemoryGroupMessageRepository();
+        final fileManager = _ImportedDocsFileManager(tempDir.path);
 
-      // Exactly the import outcome: rows with relative paths + status done,
-      // and the bytes present under the documents root.
-      const oneToOnePath = 'media/peer-bob/blob-imported.jpg';
-      await _writeRelative(tempDir, oneToOnePath, 'image-bytes');
-      final oneToOne = MediaAttachment(
-        id: 'blob-imported',
-        messageId: 'message-1',
-        mime: 'image/jpeg',
-        size: 'image-bytes'.length,
-        mediaType: 'image',
-        localPath: oneToOnePath,
-        downloadStatus: 'done',
-        createdAt: '2026-06-10T08:00:00.000Z',
-      );
-      await repo.saveAttachment(oneToOne, owner: MediaOwnerLane.direct);
+        // Exactly the import outcome: rows with relative paths + status done,
+        // and the bytes present under the documents root.
+        const oneToOnePath = 'media/peer-bob/blob-imported.jpg';
+        await _writeRelative(tempDir, oneToOnePath, 'image-bytes');
+        final oneToOne = MediaAttachment(
+          id: 'blob-imported',
+          messageId: 'message-1',
+          mime: 'image/jpeg',
+          size: 'image-bytes'.length,
+          mediaType: 'image',
+          localPath: oneToOnePath,
+          downloadStatus: 'done',
+          createdAt: '2026-06-10T08:00:00.000Z',
+        );
+        await repo.saveAttachment(oneToOne, owner: MediaOwnerLane.direct);
+        await messageRepo.saveMessage(
+          const ConversationMessage(
+            id: 'message-1',
+            contactPeerId: 'peer-bob',
+            senderPeerId: 'peer-bob',
+            text: '',
+            timestamp: '2026-06-10T08:00:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-06-10T08:00:00.000Z',
+          ),
+        );
 
-      const groupPath = 'media/imported-group-1/blob-group.jpg';
-      await _writeRelative(tempDir, groupPath, 'group-image-bytes');
-      final groupAttachment = MediaAttachment(
-        id: 'blob-group',
-        messageId: 'group-message-1',
-        mime: 'image/jpeg',
-        size: 'group-image-bytes'.length,
-        mediaType: 'image',
-        localPath: groupPath,
-        downloadStatus: 'done',
-        createdAt: '2026-06-10T08:00:00.000Z',
-        contentHash: 'a' * 64,
-        encryptionKeyBase64: 'imported-media-key',
-        encryptionNonce: 'imported-nonce',
-        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-      );
-      await repo.saveAttachment(groupAttachment, owner: MediaOwnerLane.group);
+        const groupPath = 'media/imported-group-1/blob-group.jpg';
+        await _writeRelative(tempDir, groupPath, 'group-image-bytes');
+        final groupAttachment = MediaAttachment(
+          id: 'blob-group',
+          messageId: 'group-message-1',
+          mime: 'image/jpeg',
+          size: 'group-image-bytes'.length,
+          mediaType: 'image',
+          localPath: groupPath,
+          downloadStatus: 'done',
+          createdAt: '2026-06-10T08:00:00.000Z',
+          contentHash: 'a' * 64,
+          encryptionKeyBase64: 'imported-media-key',
+          encryptionNonce: 'imported-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+        await repo.saveAttachment(groupAttachment, owner: MediaOwnerLane.group);
+        await groupMessageRepo.saveMessage(
+          GroupMessage(
+            id: 'group-message-1',
+            groupId: 'imported-group-1',
+            senderPeerId: 'peer-bob',
+            senderUsername: 'Bob',
+            text: '',
+            timestamp: DateTime.utc(2026, 6, 10, 8),
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: DateTime.utc(2026, 6, 10, 8),
+          ),
+        );
 
-      await downloadMedia(
-        bridge: bridge,
-        mediaAttachmentRepo: repo,
-        mediaFileManager: fileManager,
-        attachment: oneToOne,
-        contactPeerId: 'peer-bob',
-        owner: MediaOwnerLane.direct,
-      );
-      await downloadMedia(
-        bridge: bridge,
-        mediaAttachmentRepo: repo,
-        mediaFileManager: fileManager,
-        attachment: groupAttachment,
-        contactPeerId: 'imported-group-1',
-        owner: MediaOwnerLane.group,
-        enforceGroupMediaPolicy: true,
-      );
+        await downloadMedia(
+          bridge: bridge,
+          mediaAttachmentRepo: repo,
+          mediaFileManager: fileManager,
+          attachment: oneToOne,
+          contactPeerId: 'peer-bob',
+          owner: MediaOwnerLane.direct,
+          messageRepo: messageRepo,
+        );
+        await downloadMedia(
+          bridge: bridge,
+          mediaAttachmentRepo: repo,
+          mediaFileManager: fileManager,
+          attachment: groupAttachment,
+          contactPeerId: 'imported-group-1',
+          owner: MediaOwnerLane.group,
+          groupMessageRepo: groupMessageRepo,
+          enforceGroupMediaPolicy: true,
+        );
 
-      expect(
-        bridge.commandLog.where((cmd) => cmd == 'media:download'),
-        isEmpty,
-        reason: 'imported media must open locally, never from the relay',
-      );
-      expect(
-        bridge.commandLog.where((cmd) => cmd == 'blob:decrypt'),
-        isEmpty,
-        reason: 'a present plaintext must not trigger companion restore',
-      );
-      expect(
-        (await repo.getAttachmentById('blob-imported'))?.downloadStatus,
-        'done',
-      );
-      expect(
-        (await repo.getAttachmentById('blob-group'))?.downloadStatus,
-        'done',
-        reason: 'group policy checks must not quarantine healthy imports',
-      );
-      expect(
-        flowEvents.where(
-          (event) => event['event'] == 'MEDIA_DOWNLOAD_SKIP_LOCAL_READY',
-        ),
-        hasLength(2),
-      );
-    });
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'media:download'),
+          isEmpty,
+          reason: 'imported media must open locally, never from the relay',
+        );
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'blob:decrypt'),
+          isEmpty,
+          reason: 'a present plaintext must not trigger companion restore',
+        );
+        expect(
+          (await repo.getAttachmentById('blob-imported'))?.downloadStatus,
+          'done',
+        );
+        expect(
+          (await repo.getAttachmentById('blob-group'))?.downloadStatus,
+          'done',
+          reason: 'group policy checks must not quarantine healthy imports',
+        );
+        expect(
+          flowEvents.where(
+            (event) => event['event'] == 'MEDIA_DOWNLOAD_SKIP_LOCAL_READY',
+          ),
+          hasLength(2),
+        );
+      },
+    );
   });
 }
 

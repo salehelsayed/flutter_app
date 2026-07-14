@@ -59,6 +59,7 @@ import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart'
 import 'package:flutter_app/features/feed/domain/models/feed_session_reply.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart';
+import 'package:flutter_app/features/feed/domain/utils/group_group_messages_into_threads.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
@@ -892,18 +893,21 @@ class _FeedWiredState extends State<FeedWired>
   }
 
   ThreadMessage _toGroupThreadMessage(GroupMessage message) {
+    final displayMessage = projectGroupMessageForFeed(message);
     return ThreadMessage(
-      id: message.id,
-      text: message.text,
-      time: formatMessageTime(message.timestamp.toUtc().toIso8601String()),
-      timestamp: message.timestamp,
-      isUnread: message.isIncoming && message.readAt == null,
-      isIncoming: message.isIncoming,
-      status: message.isIncoming ? null : message.status,
-      quotedMessageId: message.quotedMessageId,
-      senderPeerId: message.senderPeerId,
-      senderUsername: message.senderUsername,
-      media: message.media,
+      id: displayMessage.id,
+      text: displayMessage.text,
+      time: formatMessageTime(
+        displayMessage.timestamp.toUtc().toIso8601String(),
+      ),
+      timestamp: displayMessage.timestamp,
+      isUnread: displayMessage.isIncoming && displayMessage.readAt == null,
+      isIncoming: displayMessage.isIncoming,
+      status: displayMessage.isIncoming ? null : displayMessage.status,
+      quotedMessageId: displayMessage.quotedMessageId,
+      senderPeerId: displayMessage.senderPeerId,
+      senderUsername: displayMessage.senderUsername,
+      media: displayMessage.media,
     );
   }
 
@@ -1226,7 +1230,9 @@ class _FeedWiredState extends State<FeedWired>
     // "new connection" letter.
     final hadHistory =
         currentThread != null ||
-        (_feedStore.connectionForContact(contact.peerId)?.hasConversationHistory ??
+        (_feedStore
+                .connectionForContact(contact.peerId)
+                ?.hasConversationHistory ??
             false);
     _feedStore.replaceContactSnapshot(
       contactPeerId: contact.peerId,
@@ -1266,13 +1272,15 @@ class _FeedWiredState extends State<FeedWired>
         return;
       }
 
-      final displayMessage = message.copyWith(
-        media: await _loadResolvedAttachmentsForMessage(
-          message.id,
-          owner: MediaOwnerLane.group,
-          requireGroupMediaIntegrity: true,
-        ),
-      );
+      final displayMessage = groupMessageAllowsOrdinaryFeedDerivatives(message)
+          ? message.copyWith(
+              media: await _loadResolvedAttachmentsForMessage(
+                message.id,
+                owner: MediaOwnerLane.group,
+                requireGroupMediaIntegrity: true,
+              ),
+            )
+          : projectGroupMessageForFeed(message);
       final currentThread = _threadForGroup(group.id);
       final merge = _mergeGroupThreadMessages(
         currentThread,
@@ -1417,7 +1425,7 @@ class _FeedWiredState extends State<FeedWired>
       final openContact =
           await widget.contactRepository.getContact(request.peerId) ?? contact;
       if (!mounted) return;
-      _openConversationForContact(openContact);
+      unawaited(_openConversationForContact(openContact));
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1631,51 +1639,48 @@ class _FeedWiredState extends State<FeedWired>
       item.contactPeerId,
     );
     if (contact == null || !mounted) return;
-    _openConversationForContact(contact);
+    await _openConversationForContact(contact);
   }
 
   /// Opens the 1:1 [ConversationWired] for [contact] and restores the
   /// per-conversation reply state + feed-item refresh on pop. Shared by the
   /// send-message affordance and the contact-request accept flow (215) so the
   /// deps block lives in exactly one place.
-  void _openConversationForContact(ContactModel contact) {
+  Future<void> _openConversationForContact(ContactModel contact) async {
     _clearFeedComposerFocus();
-    Navigator.of(context)
-        .push(
-          buildConversationRoute(
-            builder: (_) => ConversationWired(
-              contact: contact,
-              identityRepo: widget.repository,
-              messageRepo: widget.messageRepository,
-              chatMessageListener: widget.chatMessageListener,
-              p2pService: widget.p2pService,
-              bridge: widget.bridge,
-              contactRepo: widget.contactRepository,
-              mediaAttachmentRepo: widget.mediaAttachmentRepository,
-              mediaFileManager: widget.mediaFileManager,
-              imageProcessor: widget.imageProcessor,
-              qualityPreference: _qualityPreference,
-              videoQualityPreference: _videoQualityPreference,
-              conversationTracker: widget.conversationTracker,
-              audioRecorderService: widget.audioRecorderService,
-              reactionRepo: widget.reactionRepository,
-              reactionListener: widget.reactionListener,
-              introductionRepository: widget.introductionRepository,
-              forwardGroupRepository: widget.groupRepository,
-              forwardGroupMessageRepository: widget.groupMessageRepository,
-              forwardGroupInviteDeliveryAttemptRepository:
-                  widget.groupInviteDeliveryAttemptRepository,
-              forwardGroupMessageListener: widget.groupMessageListener,
-              forwardGroupConversationTracker: widget.groupConversationTracker,
-              appShellController: widget.appShellController,
-              transportMetrics: widget.transportMetrics,
-            ),
-          ),
-        )
-        .then((_) {
-          _sessionReplies.clear(contact.peerId);
-          unawaited(_refreshContactFeedItem(contact.peerId));
-        });
+    await Navigator.of(context).push(
+      buildConversationRoute(
+        builder: (_) => ConversationWired(
+          contact: contact,
+          identityRepo: widget.repository,
+          messageRepo: widget.messageRepository,
+          chatMessageListener: widget.chatMessageListener,
+          p2pService: widget.p2pService,
+          bridge: widget.bridge,
+          contactRepo: widget.contactRepository,
+          mediaAttachmentRepo: widget.mediaAttachmentRepository,
+          mediaFileManager: widget.mediaFileManager,
+          imageProcessor: widget.imageProcessor,
+          qualityPreference: _qualityPreference,
+          videoQualityPreference: _videoQualityPreference,
+          conversationTracker: widget.conversationTracker,
+          audioRecorderService: widget.audioRecorderService,
+          reactionRepo: widget.reactionRepository,
+          reactionListener: widget.reactionListener,
+          introductionRepository: widget.introductionRepository,
+          forwardGroupRepository: widget.groupRepository,
+          forwardGroupMessageRepository: widget.groupMessageRepository,
+          forwardGroupInviteDeliveryAttemptRepository:
+              widget.groupInviteDeliveryAttemptRepository,
+          forwardGroupMessageListener: widget.groupMessageListener,
+          forwardGroupConversationTracker: widget.groupConversationTracker,
+          appShellController: widget.appShellController,
+          transportMetrics: widget.transportMetrics,
+        ),
+      ),
+    );
+    _sessionReplies.clear(contact.peerId);
+    unawaited(_refreshContactFeedItem(contact.peerId));
   }
 
   void _onReplyToMessage(String contactPeerId) async {
@@ -1885,6 +1890,7 @@ class _FeedWiredState extends State<FeedWired>
               groupRepo: groupRepo,
               msgRepo: msgRepo,
               groupMessageListener: listener,
+              openAnnouncementSenderConversation: _openConversationForContact,
               inviteDeliveryAttemptRepo:
                   widget.groupInviteDeliveryAttemptRepository,
               bridge: widget.bridge,
@@ -1958,8 +1964,7 @@ class _FeedWiredState extends State<FeedWired>
     // the focused 1:1 thread's FULL unread set (+ context) so the opened card
     // renders every unread line and its reactions. NO read-mark on focus
     // (REG-INV3) — read-marking stays on _leaveFocusedThread.
-    if (!threadId.startsWith('group:') &&
-        !threadId.startsWith('connection:')) {
+    if (!threadId.startsWith('group:') && !threadId.startsWith('connection:')) {
       unawaited(_hydrateFocusedContactThread(threadId));
     }
   }
@@ -2727,31 +2732,31 @@ class _FeedWiredState extends State<FeedWired>
       key: const ValueKey<String>('feed-pane-repaint-boundary'),
       child: FeedScreen(
         username: _username,
-      userPeerId: _peerId,
-      feedItems: _feedItems,
-      feedItemsListenable: _feedStore.itemsListenable,
-      feedLoaded: _feedLoaded,
-      onUsernameChanged: _onUsernameChanged,
-      p2pService: widget.p2pService,
-      onSwitchView: _onSwitchView,
-      activeTab: activeTab,
-      onSendMessage: _onSendMessage,
-      totalUnreadCountListenable: _totalUnreadCountNotifier,
-      orbitBadgeCountListenable: _orbitBadgeCountNotifier,
-      onOpenFullConversation: _onOpenFullConversation,
-      onGroupTap: _onGroupTap,
-      focusedId: _focusedId,
-      onFocusCard: _onFocusCard,
-      onClearFocus: _onClearFocus,
-      onComposerSend: _onFeedComposerSend,
-      onComposerDraftChanged: _onFeedComposerDraftChanged,
-      sessionReplies: _feedSessionOutgoing,
-      onRetrySend: _onRetrySend,
-      onSwipeCommit: _leaveFocusedThread,
-      onSwipeDismiss: _onSwipeDismiss,
-      onUndoDismiss: _onUndoDismiss,
-      onCardSwipeActive: _onCardSwipeActive,
-      backgroundPreference: widget.appShellController.backgroundPreference,
+        userPeerId: _peerId,
+        feedItems: _feedItems,
+        feedItemsListenable: _feedStore.itemsListenable,
+        feedLoaded: _feedLoaded,
+        onUsernameChanged: _onUsernameChanged,
+        p2pService: widget.p2pService,
+        onSwitchView: _onSwitchView,
+        activeTab: activeTab,
+        onSendMessage: _onSendMessage,
+        totalUnreadCountListenable: _totalUnreadCountNotifier,
+        orbitBadgeCountListenable: _orbitBadgeCountNotifier,
+        onOpenFullConversation: _onOpenFullConversation,
+        onGroupTap: _onGroupTap,
+        focusedId: _focusedId,
+        onFocusCard: _onFocusCard,
+        onClearFocus: _onClearFocus,
+        onComposerSend: _onFeedComposerSend,
+        onComposerDraftChanged: _onFeedComposerDraftChanged,
+        sessionReplies: _feedSessionOutgoing,
+        onRetrySend: _onRetrySend,
+        onSwipeCommit: _leaveFocusedThread,
+        onSwipeDismiss: _onSwipeDismiss,
+        onUndoDismiss: _onUndoDismiss,
+        onCardSwipeActive: _onCardSwipeActive,
+        backgroundPreference: widget.appShellController.backgroundPreference,
       ),
     );
     final orbitBody = _hasMountedOrbitHost

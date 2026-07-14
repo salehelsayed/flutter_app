@@ -601,6 +601,25 @@ void main() {
           bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
       expect(payload['token'], equals('fcm_token_abc123'));
       expect(payload['platform'], equals('ios'));
+      expect(
+        payload['capabilities'],
+        equals([directReactionPushCapability, groupReactionPushCapability]),
+      );
+    });
+
+    test('legacy compatibility can omit optional capabilities', () async {
+      bridge.nextResponse = {'ok': true, 'registered': true};
+
+      await callP2PInboxRegisterToken(
+        bridge,
+        token: 'legacy_token',
+        platform: 'android',
+        capabilities: const [],
+      );
+
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      expect(payload, isNot(contains('capabilities')));
     });
   });
 

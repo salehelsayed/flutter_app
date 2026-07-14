@@ -19,10 +19,8 @@ const String _kDbEncryptionKey = 'db_encryption_key';
 @visibleForTesting
 const String kRawKeyMarkerPrefix = 'raw:';
 
-@visibleForTesting
 enum CipherKeyMode { absent, raw }
 
-@visibleForTesting
 class CipherKeyRecord {
   const CipherKeyRecord(this.mode, this.hex);
   final CipherKeyMode mode;
@@ -30,7 +28,6 @@ class CipherKeyRecord {
 }
 
 /// Parse a stored `db_encryption_key` value into (mode, hex).
-@visibleForTesting
 CipherKeyRecord parseCipherKeyRecord(String stored) {
   if (stored.startsWith(kRawKeyMarkerPrefix)) {
     return CipherKeyRecord(
@@ -49,7 +46,6 @@ String formatCipherKeyRecord(CipherKeyMode mode, String hex) =>
 /// A full-entropy key is exactly 64 hex chars (256 bits). A stored value that
 /// isn't (after stripping the marker) is a FAILING signal, never a silent
 /// passphrase-fallback (§I2).
-@visibleForTesting
 bool isValid256BitHexKey(String hex) =>
     hex.length == 64 && RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(hex);
 
@@ -134,7 +130,9 @@ Future<Database> openEncryptedDatabase({
         'db_encryption_key is not a 64-hex key (mode=${mode.name})',
       );
     }
-    if (kDebugMode) print('[EAR] DB encryption key: LOADED (mode=${mode.name})');
+    if (kDebugMode) {
+      print('[EAR] DB encryption key: LOADED (mode=${mode.name})');
+    }
   }
 
   // 2. Resolve full path
@@ -233,9 +231,15 @@ Future<Database> openEncryptedDatabase({
           // interrupted swap and re-probe the actual on-disk mode. Assuming
           // passphrase would fail (and could create a fresh empty DB) if the
           // swap had already made the file raw.
-          await _recoverInterruptedRekey(fullPath, dbName, keyPersisted: !isNewKey);
+          await _recoverInterruptedRekey(
+            fullPath,
+            dbName,
+            keyPersisted: !isNewKey,
+          );
           final nowRaw = await _isRawKeyDatabase(fullPath, key, dbName);
-          openPassword = nowRaw ? "x'$key'" : key; // RAW_KEY / LEGACY_PASSPHRASE_FALLBACK
+          openPassword = nowRaw
+              ? "x'$key'"
+              : key; // RAW_KEY / LEGACY_PASSPHRASE_FALLBACK
           openedRaw = nowRaw;
         }
       }
@@ -498,8 +502,8 @@ Future<void> _exportToRawAtomic(
   );
   try {
     final qc = await verify.rawQuery('PRAGMA quick_check');
-    final quickOk = qc.isNotEmpty &&
-        qc.first.values.first.toString().toLowerCase() == 'ok';
+    final quickOk =
+        qc.isNotEmpty && qc.first.values.first.toString().toLowerCase() == 'ok';
     final tmpVersion = await _readUserVersion(verify);
     if (!quickOk || tmpVersion != userVersion) {
       throw StateError(

@@ -4,6 +4,23 @@ import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/utils/group_message_ordering.dart';
 
+/// Safe-disabled copy for nonordinary group-media parents projected into Feed.
+const String groupFeedMediaUnavailableText = 'Media unavailable';
+
+/// Whether Feed may load and expose ordinary media derivatives for [message].
+bool groupMessageAllowsOrdinaryFeedDerivatives(GroupMessage message) =>
+    !message.privateMediaPolicy.requiresRedaction;
+
+/// Removes content-bearing Feed derivatives from private/unsupported parents.
+GroupMessage projectGroupMessageForFeed(GroupMessage message) {
+  if (groupMessageAllowsOrdinaryFeedDerivatives(message)) return message;
+  return message.copyWith(
+    text: groupFeedMediaUnavailableText,
+    quotedMessageId: null,
+    media: const [],
+  );
+}
+
 /// Groups group messages into [GroupThreadFeedItem]s — one per group.
 ///
 /// Includes both sent and received messages. Each group's messages are
@@ -86,23 +103,24 @@ List<GroupThreadFeedItem> groupGroupMessagesIntoThreads({
 
     final latestTs = msgs.last.timestamp;
 
-    final threadMessages = msgs
-        .map(
-          (m) => ThreadMessage(
-            id: m.id,
-            text: m.text,
-            time: formatMessageTime(m.timestamp.toUtc().toIso8601String()),
-            timestamp: m.timestamp,
-            isUnread: m.isIncoming && m.readAt == null,
-            isIncoming: m.isIncoming,
-            status: m.isIncoming ? null : m.status,
-            quotedMessageId: m.quotedMessageId,
-            senderUsername: m.senderUsername,
-            senderPeerId: m.senderPeerId,
-            media: m.media,
-          ),
-        )
-        .toList();
+    final threadMessages = msgs.map((message) {
+      final displayMessage = projectGroupMessageForFeed(message);
+      return ThreadMessage(
+        id: displayMessage.id,
+        text: displayMessage.text,
+        time: formatMessageTime(
+          displayMessage.timestamp.toUtc().toIso8601String(),
+        ),
+        timestamp: displayMessage.timestamp,
+        isUnread: displayMessage.isIncoming && displayMessage.readAt == null,
+        isIncoming: displayMessage.isIncoming,
+        status: displayMessage.isIncoming ? null : displayMessage.status,
+        quotedMessageId: displayMessage.quotedMessageId,
+        senderUsername: displayMessage.senderUsername,
+        senderPeerId: displayMessage.senderPeerId,
+        media: displayMessage.media,
+      );
+    }).toList();
 
     final item = GroupThreadFeedItem(
       id: 'group_thread_$groupId',

@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
+import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_library.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 
 import '../../../../shared/fixtures/media_repository_real_db_fixture.dart';
 
@@ -100,6 +102,200 @@ void main() {
       fixture.repo.saveAttachment(attachment, owner: MediaOwnerLane.direct);
 
   group('MediaAttachmentRepositoryImpl', () {
+    test(
+      'all public row writers queue behind exact lifecycle qualification',
+      () async {
+        final lock = MediaAttachmentLifecycleLock();
+        await fixture.dispose();
+        fixture = await MediaRepositoryRealDbFixture.create(
+          lifecycleLock: lock,
+        );
+
+        Future<void> expectQueued<T>({
+          required String attachmentId,
+          required Future<T> Function() mutate,
+          required Future<void> Function() whileHeld,
+          required Future<void> Function(T result) afterRelease,
+        }) async {
+          final entered = Completer<void>();
+          final release = Completer<void>();
+          final holder = lock.synchronized(attachmentId, () async {
+            entered.complete();
+            await release.future;
+          });
+          await entered.future;
+
+          var completed = false;
+          final mutation = mutate().whenComplete(() => completed = true);
+          await Future<void>.delayed(Duration.zero);
+          await whileHeld();
+          expect(completed, isFalse);
+
+          release.complete();
+          await holder;
+          final result = await mutation;
+          expect(completed, isTrue);
+          await afterRelease(result);
+        }
+
+        await fixture.repo.saveAttachment(
+          makeAttachment(
+            id: 'queued-direct',
+            messageId: 'queued-direct-parent',
+            size: 100,
+          ),
+          owner: MediaOwnerLane.direct,
+        );
+
+        await expectQueued<void>(
+          attachmentId: 'queued-direct',
+          mutate: () => fixture.repo.updateLocalPath(
+            'queued-direct',
+            'media/direct/queued-direct.jpg',
+          ),
+          whileHeld: () async {
+            expect((await rawRow('queued-direct'))!['local_path'], isNull);
+          },
+          afterRelease: (_) async {
+            final row = await rawRow('queued-direct');
+            expect(row!['local_path'], 'media/direct/queued-direct.jpg');
+            expect(row['download_status'], 'done');
+          },
+        );
+
+        await expectQueued<void>(
+          attachmentId: 'queued-direct',
+          mutate: () =>
+              fixture.repo.updateDownloadStatus('queued-direct', 'failed'),
+          whileHeld: () async {
+            expect((await rawRow('queued-direct'))!['download_status'], 'done');
+          },
+          afterRelease: (_) async {
+            expect(
+              (await rawRow('queued-direct'))!['download_status'],
+              'failed',
+            );
+          },
+        );
+
+        await expectQueued<void>(
+          attachmentId: 'queued-direct',
+          mutate: () => fixture.repo.saveAttachment(
+            makeAttachment(
+              id: 'queued-direct',
+              messageId: 'queued-direct-parent',
+              size: 999,
+              downloadStatus: 'done',
+            ),
+            owner: MediaOwnerLane.direct,
+          ),
+          whileHeld: () async {
+            expect((await rawRow('queued-direct'))!['size'], 100);
+          },
+          afterRelease: (_) async {
+            expect((await rawRow('queued-direct'))!['size'], 999);
+          },
+        );
+
+        await expectQueued<int>(
+          attachmentId: 'queued-direct',
+          mutate: () => fixture.repo.deleteAttachmentsForMessage(
+            'queued-direct-parent',
+            owner: MediaOwnerLane.direct,
+          ),
+          whileHeld: () async {
+            expect(await rawRow('queued-direct'), isNotNull);
+          },
+          afterRelease: (deleted) async {
+            expect(deleted, 1);
+            expect(await rawRow('queued-direct'), isNull);
+          },
+        );
+
+        await fixture.repo.saveAttachment(
+          makeAttachment(id: 'queued-group', messageId: 'queued-group-parent'),
+          owner: MediaOwnerLane.group,
+        );
+        await expectQueued<void>(
+          attachmentId: 'queued-group',
+          mutate: () =>
+              fixture.repo.updateDownloadStatus('queued-group', 'failed'),
+          whileHeld: () async {
+            expect(
+              (await rawRow('queued-group'))!['download_status'],
+              'pending',
+            );
+          },
+          afterRelease: (_) async {
+            expect(
+              (await rawRow('queued-group'))!['download_status'],
+              'failed',
+            );
+          },
+        );
+      },
+    );
+
+    test(
+      'authorization stream emits exact path status eviction and delete mutations',
+      () async {
+        final changes = <MediaAttachmentAuthorizationChange>[];
+        final subscription = fixture.repo.authorizationChanges.listen(
+          changes.add,
+        );
+        addTearDown(subscription.cancel);
+        await saveDirect(
+          makeAttachment(
+            id: 'pip-attachment',
+            messageId: 'pip-parent',
+            mediaType: 'video',
+            mime: 'video/mp4',
+            downloadStatus: 'done',
+            localPath: 'media/direct/pip-attachment.mp4',
+          ),
+        );
+        changes.clear();
+
+        await fixture.repo.updateLocalPath(
+          'pip-attachment',
+          'media/direct/pip-attachment-v2.mp4',
+        );
+        await fixture.repo.updateDownloadStatus('pip-attachment', 'failed');
+        await fixture.repo.updateDownloadStatus('pip-attachment', 'done');
+        expect(
+          await fixture.repo.claimMediaEvicted(
+            'pip-attachment',
+            owner: MediaOwnerLane.direct,
+            expectedLocalPath: 'media/direct/pip-attachment-v2.mp4',
+          ),
+          1,
+        );
+        expect(
+          await fixture.repo.deleteAttachmentsForMessage(
+            'pip-parent',
+            owner: MediaOwnerLane.direct,
+          ),
+          1,
+        );
+
+        expect(
+          changes.map((change) => change.kind),
+          <MediaAttachmentAuthorizationMutation>[
+            MediaAttachmentAuthorizationMutation.localPathChanged,
+            MediaAttachmentAuthorizationMutation.downloadStatusChanged,
+            MediaAttachmentAuthorizationMutation.downloadStatusChanged,
+            MediaAttachmentAuthorizationMutation.evicted,
+            MediaAttachmentAuthorizationMutation.removed,
+          ],
+        );
+        for (final change in changes) {
+          expect(change.owner, MediaOwnerLane.direct);
+          expect(change.messageId, 'pip-parent');
+          expect(change.attachmentId, 'pip-attachment');
+        }
+      },
+    );
+
     test('saveAttachment persists to store', () async {
       await saveDirect(makeAttachment());
 
@@ -120,10 +316,52 @@ void main() {
     });
 
     test(
+      'ordinary pending direct replay may correct media type and rotate key',
+      () async {
+        const id = 'ordinary-direct-correction';
+        await saveDirect(
+          makeAttachment(
+            id: id,
+            mime: 'image/jpeg',
+            mediaType: 'image',
+            encryptionKeyBase64: 'b2xkLWtleQ==',
+            encryptionNonce: 'b2xkLW5vbmNl',
+          ),
+        );
+        await saveDirect(
+          makeAttachment(
+            id: id,
+            mime: 'video/mp4',
+            mediaType: 'video',
+            width: null,
+            height: null,
+            durationMs: 900,
+            encryptionKeyBase64: 'bmV3LWtleQ==',
+            encryptionNonce: 'bmV3LW5vbmNl',
+          ),
+        );
+
+        final row = await rawRow(id);
+        expect(row!['mime'], 'video/mp4');
+        expect(row['media_type'], 'video');
+        expect(row['duration_ms'], 900);
+        expect(
+          await fixture.secureKeyStore.read(
+            mediaAttachmentEncryptionKeyStoreName(id),
+          ),
+          'bmV3LWtleQ==',
+        );
+      },
+    );
+
+    test(
       'saveAttachment preserves a completed local path from stale pending saves',
       () async {
         await saveDirect(makeAttachment(downloadStatus: 'pending'));
-        await fixture.repo.updateLocalPath('blob-001', 'media/peer/blob-001.jpg');
+        await fixture.repo.updateLocalPath(
+          'blob-001',
+          'media/peer/blob-001.jpg',
+        );
 
         await saveDirect(makeAttachment(downloadStatus: 'pending'));
 
@@ -306,6 +544,67 @@ void main() {
     );
 
     test(
+      'guarded group save restores replaced keys on refusal and every throw',
+      () async {
+        await fixture.dispose();
+        var guardThrows = false;
+        fixture = await MediaRepositoryRealDbFixture.create(
+          dbSaveGroupMediaAttachmentGuardedOverride:
+              (row, {required groupId}) async {
+                if (guardThrows) {
+                  throw StateError('injected guarded group save failure');
+                }
+                return false;
+              },
+        );
+
+        Future<bool> guardedSave(String id, String key) =>
+            fixture.repo.saveGroupAttachmentGuarded(
+              makeAttachment(
+                id: id,
+                messageId: 'guarded-group-parent',
+                encryptionKeyBase64: key,
+                encryptionNonce: 'guarded-group-nonce',
+                encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+              ),
+              groupId: 'guarded-group',
+            );
+
+        const existingId = 'guarded-group-existing-key';
+        final existingKeyName = mediaAttachmentEncryptionKeyStoreName(
+          existingId,
+        );
+        await fixture.secureKeyStore.write(existingKeyName, 'original-key');
+        expect(await guardedSave(existingId, 'replacement-on-false'), isFalse);
+        expect(
+          await fixture.secureKeyStore.read(existingKeyName),
+          'original-key',
+        );
+        expect(await rawRow(existingId), isNull);
+
+        guardThrows = true;
+        await expectLater(
+          guardedSave(existingId, 'replacement-on-throw'),
+          throwsStateError,
+        );
+        expect(
+          await fixture.secureKeyStore.read(existingKeyName),
+          'original-key',
+        );
+        expect(await rawRow(existingId), isNull);
+
+        const newId = 'guarded-group-new-key';
+        final newKeyName = mediaAttachmentEncryptionKeyStoreName(newId);
+        await expectLater(
+          guardedSave(newId, 'new-key-on-throw'),
+          throwsStateError,
+        );
+        expect(await fixture.secureKeyStore.containsKey(newKeyName), isFalse);
+        expect(await rawRow(newId), isNull);
+      },
+    );
+
+    test(
       'new-message rollback removes exact group rows and secure keys only',
       () async {
         for (final id in const ['rollback-a', 'rollback-b']) {
@@ -397,6 +696,65 @@ void main() {
         expect(deleted, 1);
         expect(await rawRow(attachmentId), isNull);
         expect(await secureStore.containsKey(keyName), isFalse);
+      },
+    );
+
+    test(
+      'empty new-message rollback excludes a concurrent attachment insertion',
+      () async {
+        await fixture.dispose();
+        final loadEntered = Completer<void>();
+        final releaseLoad = Completer<void>();
+        fixture = await MediaRepositoryRealDbFixture.create(
+          dbLoadMediaForMessageAround: (messageId, ownerLane, load) async {
+            if (messageId == 'rollback-insertion-race') {
+              loadEntered.complete();
+              await releaseLoad.future;
+            }
+            return load();
+          },
+        );
+
+        final rollback = fixture.repo.rollbackNewMessageAttachments(
+          messageId: 'rollback-insertion-race',
+          attachmentIds: const <String>{},
+          owner: MediaOwnerLane.group,
+        );
+        await loadEntered.future;
+
+        var insertionCompleted = false;
+        final insertion = fixture.repo
+            .saveAttachment(
+              makeAttachment(
+                id: 'concurrent-insertion',
+                messageId: 'rollback-insertion-race',
+                encryptionKeyBase64: 'concurrent-key',
+                encryptionNonce: 'concurrent-nonce',
+                encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+              ),
+              owner: MediaOwnerLane.group,
+            )
+            .whenComplete(() => insertionCompleted = true);
+        await Future<void>.delayed(Duration.zero);
+        expect(
+          insertionCompleted,
+          isFalse,
+          reason:
+              'the insertion must queue behind rollback exclusive authority',
+        );
+        expect(await rawRow('concurrent-insertion'), isNull);
+
+        releaseLoad.complete();
+        expect(await rollback, 0);
+        await insertion;
+        expect(insertionCompleted, isTrue);
+        expect(await rawRow('concurrent-insertion'), isNotNull);
+        expect(
+          await fixture.secureKeyStore.read(
+            mediaAttachmentEncryptionKeyStoreName('concurrent-insertion'),
+          ),
+          'concurrent-key',
+        );
       },
     );
 
@@ -513,10 +871,10 @@ void main() {
           ),
         );
 
-        final result = await fixture.repo.getAttachmentsForMessages(
-          ['msg-A', 'msg-B'],
-          owner: MediaOwnerLane.direct,
-        );
+        final result = await fixture.repo.getAttachmentsForMessages([
+          'msg-A',
+          'msg-B',
+        ], owner: MediaOwnerLane.direct);
 
         expect(result['msg-A']!.single.encryptionKeyBase64, 'media-key-A');
         expect(result['msg-B']!.single.encryptionKeyBase64, 'media-key-B');
@@ -588,10 +946,10 @@ void main() {
         rowB['owner_lane'] = 'direct';
         await fixture.db.insert('media_attachments', rowB);
 
-        final result = await fixture.repo.getAttachmentsForMessages(
-          ['msg-A', 'msg-B'],
-          owner: MediaOwnerLane.direct,
-        );
+        final result = await fixture.repo.getAttachmentsForMessages([
+          'msg-A',
+          'msg-B',
+        ], owner: MediaOwnerLane.direct);
 
         expect(result['msg-A']!.single.encryptionKeyBase64, isNull);
         expect(result['msg-B']!.single.encryptionKeyBase64, isNull);
@@ -708,10 +1066,10 @@ void main() {
           ),
         );
 
-        final result = await fixture.repo.getAttachmentsForMessages(
-          ['msg-A', 'msg-B'],
-          owner: MediaOwnerLane.direct,
-        );
+        final result = await fixture.repo.getAttachmentsForMessages([
+          'msg-A',
+          'msg-B',
+        ], owner: MediaOwnerLane.direct);
 
         expect(result.length, 2);
         expect(result['msg-A']!.length, 2);
@@ -726,10 +1084,10 @@ void main() {
       test('returns empty map when no matches', () async {
         await saveDirect(makeAttachment(id: 'blob-1', messageId: 'msg-X'));
 
-        final result = await fixture.repo.getAttachmentsForMessages(
-          ['msg-A', 'msg-B'],
-          owner: MediaOwnerLane.direct,
-        );
+        final result = await fixture.repo.getAttachmentsForMessages([
+          'msg-A',
+          'msg-B',
+        ], owner: MediaOwnerLane.direct);
         expect(result, isEmpty);
       });
     });
@@ -909,250 +1267,244 @@ void main() {
 
     // --- 228 TC-228-08 ---
 
-    test(
-      'ordinary replay preserves local viewer state and path while explicit '
-      'clears win',
-      () async {
-        await fixture.seedDirectParent('msg-shared');
-        await fixture.seedGroupParent('msg-shared');
+    test('ordinary replay preserves local viewer state and path while explicit '
+        'clears win', () async {
+      await fixture.seedDirectParent('msg-shared');
+      await fixture.seedGroupParent('msg-shared');
 
-        Future<void> runLaneScenario({
-          required MediaOwnerLane owner,
-          required String id,
-        }) async {
-          // Completed video with viewer state.
-          await fixture.repo.saveAttachment(
-            makeAttachment(
-              id: id,
-              messageId: 'msg-shared',
-              mime: 'video/mp4',
-              mediaType: 'video',
-              durationMs: 10000,
-              downloadStatus: 'done',
-              localPath: 'media/peer/$id.mp4',
-            ),
-            owner: owner,
-          );
-          await fixture.repo.setBookmarked(id, bookmarked: true);
-          await fixture.repo.updatePlaybackPosition(id, 4000);
+      Future<void> runLaneScenario({
+        required MediaOwnerLane owner,
+        required String id,
+      }) async {
+        // Completed video with viewer state.
+        await fixture.repo.saveAttachment(
+          makeAttachment(
+            id: id,
+            messageId: 'msg-shared',
+            mime: 'video/mp4',
+            mediaType: 'video',
+            durationMs: 10000,
+            downloadStatus: 'done',
+            localPath: 'media/peer/$id.mp4',
+          ),
+          owner: owner,
+        );
+        await fixture.repo.setBookmarked(id, bookmarked: true);
+        await fixture.repo.updatePlaybackPosition(id, 4000);
 
-          // Ordinary transport replay: non-terminal status, no local path,
-          // updated metadata (width).
-          await fixture.repo.saveAttachment(
-            makeAttachment(
-              id: id,
-              messageId: 'msg-shared',
-              mime: 'video/mp4',
-              mediaType: 'video',
-              durationMs: 10000,
-              width: 640,
-              downloadStatus: 'pending',
-            ),
-            owner: owner,
-          );
+        // Ordinary transport replay: non-terminal status, no local path,
+        // updated metadata (width).
+        await fixture.repo.saveAttachment(
+          makeAttachment(
+            id: id,
+            messageId: 'msg-shared',
+            mime: 'video/mp4',
+            mediaType: 'video',
+            durationMs: 10000,
+            width: 640,
+            downloadStatus: 'pending',
+          ),
+          owner: owner,
+        );
 
-          final row = await rawRow(id);
-          // Transport metadata updated...
-          expect(row!['width'], 640);
-          // ...but local viewer state and the completed path survive.
-          expect(row['is_bookmarked'], 1);
-          expect(row['last_playback_position_ms'], 4000);
-          expect(row['local_path'], 'media/peer/$id.mp4');
-          expect(row['download_status'], 'done');
-          expect(row['owner_lane'], owner.dbValue);
+        final row = await rawRow(id);
+        // Transport metadata updated...
+        expect(row!['width'], 640);
+        // ...but local viewer state and the completed path survive.
+        expect(row['is_bookmarked'], 1);
+        expect(row['last_playback_position_ms'], 4000);
+        expect(row['local_path'], 'media/peer/$id.mp4');
+        expect(row['download_status'], 'done');
+        expect(row['owner_lane'], owner.dbValue);
 
-          // Explicit clears win and do NOT get merged back by a replay.
-          await fixture.repo.setBookmarked(id, bookmarked: false);
-          await fixture.repo.updatePlaybackPosition(id, 0);
-          await fixture.repo.saveAttachment(
-            makeAttachment(
-              id: id,
-              messageId: 'msg-shared',
-              mime: 'video/mp4',
-              mediaType: 'video',
-              durationMs: 10000,
-              downloadStatus: 'pending',
-            ),
-            owner: owner,
-          );
-          final cleared = await rawRow(id);
-          expect(cleared!['is_bookmarked'], 0);
-          expect(cleared['last_playback_position_ms'], 0);
-        }
+        // Explicit clears win and do NOT get merged back by a replay.
+        await fixture.repo.setBookmarked(id, bookmarked: false);
+        await fixture.repo.updatePlaybackPosition(id, 0);
+        await fixture.repo.saveAttachment(
+          makeAttachment(
+            id: id,
+            messageId: 'msg-shared',
+            mime: 'video/mp4',
+            mediaType: 'video',
+            durationMs: 10000,
+            downloadStatus: 'pending',
+          ),
+          owner: owner,
+        );
+        final cleared = await rawRow(id);
+        expect(cleared!['is_bookmarked'], 0);
+        expect(cleared['last_playback_position_ms'], 0);
+      }
 
-        await runLaneScenario(owner: MediaOwnerLane.direct, id: 'att-d');
-        await runLaneScenario(owner: MediaOwnerLane.group, id: 'att-g');
-      },
-    );
+      await runLaneScenario(owner: MediaOwnerLane.direct, id: 'att-d');
+      await runLaneScenario(owner: MediaOwnerLane.group, id: 'att-g');
+    });
 
     // --- 229 TC-229-12 ---
 
-    test(
-      'ordinary replay preserves evicted and viewer state until explicit '
-      'owner-aware retry',
-      () async {
-        await fixture.seedDirectParent('msg-evict');
-        await fixture.seedGroupParent('msg-evict');
+    test('ordinary replay preserves evicted and viewer state until explicit '
+        'owner-aware retry', () async {
+      await fixture.seedDirectParent('msg-evict');
+      await fixture.seedGroupParent('msg-evict');
 
-        // Collision fixture: both lanes carry attachments under the SAME
-        // parent message id, plus a fail-closed unresolved legacy row.
-        Future<void> seedEvictedLane(MediaOwnerLane owner, String id) async {
-          await fixture.repo.saveAttachment(
-            makeAttachment(
-              id: id,
-              messageId: 'msg-evict',
-              mime: 'video/mp4',
-              mediaType: 'video',
-              durationMs: 9000,
-              downloadStatus: 'done',
-              localPath: 'media/peer/$id.mp4',
-            ),
-            owner: owner,
-          );
-          await fixture.repo.setBookmarked(id, bookmarked: true);
-          await fixture.repo.updatePlaybackPosition(id, 3000);
-          // The owner-aware eviction claim retains the path for deletion...
-          expect(
-            await fixture.repo.claimMediaEvicted(
-              id,
-              owner: owner,
-              expectedLocalPath: 'media/peer/$id.mp4',
-            ),
-            1,
-          );
-          // ...and the post-delete finalize nulls it.
-          expect(
-            await fixture.repo.finalizeMediaEvictedPathCleared(
-              id,
-              owner: owner,
-            ),
-            1,
-          );
-        }
-
-        await seedEvictedLane(MediaOwnerLane.direct, 'att-evict-d');
-        await seedEvictedLane(MediaOwnerLane.group, 'att-evict-g');
-        await fixture.db.insert('media_attachments', {
-          'id': 'att-evict-u',
-          'message_id': 'msg-evict',
-          'mime': 'video/mp4',
-          'size': 10,
-          'media_type': 'video',
-          'download_status': 'done',
-          'local_path': 'media/peer/att-evict-u.mp4',
-          'created_at': '2026-02-20T10:00:00.000Z',
-          'owner_lane': 'unresolved',
-        });
-
-        // Ordinary wire replay (pending, no path, default local fields) in
-        // BOTH lanes: transport metadata updates, but evicted status, null
-        // path, owner, bookmark and playback all survive.
-        for (final (owner, id) in [
-          (MediaOwnerLane.direct, 'att-evict-d'),
-          (MediaOwnerLane.group, 'att-evict-g'),
-        ]) {
-          await fixture.repo.saveAttachment(
-            makeAttachment(
-              id: id,
-              messageId: 'msg-evict',
-              mime: 'video/mp4',
-              mediaType: 'video',
-              durationMs: 9000,
-              width: 640,
-              downloadStatus: 'pending',
-            ),
-            owner: owner,
-          );
-          final row = await rawRow(id);
-          expect(row!['download_status'], 'evicted',
-              reason: '$owner replay must not re-arm an evicted row');
-          expect(row['local_path'], isNull);
-          expect(row['is_bookmarked'], 1);
-          expect(row['last_playback_position_ms'], 3000);
-          expect(row['owner_lane'], owner.dbValue);
-          expect(row['width'], 640);
-        }
-
-        // A blind `done` replay through the ordinary save path cannot
-        // resurrect the local copy either.
+      // Collision fixture: both lanes carry attachments under the SAME
+      // parent message id, plus a fail-closed unresolved legacy row.
+      Future<void> seedEvictedLane(MediaOwnerLane owner, String id) async {
         await fixture.repo.saveAttachment(
           makeAttachment(
-            id: 'att-evict-d',
+            id: id,
             messageId: 'msg-evict',
             mime: 'video/mp4',
             mediaType: 'video',
             durationMs: 9000,
             downloadStatus: 'done',
-            localPath: 'media/peer/att-evict-d.mp4',
+            localPath: 'media/peer/$id.mp4',
           ),
+          owner: owner,
+        );
+        await fixture.repo.setBookmarked(id, bookmarked: true);
+        await fixture.repo.updatePlaybackPosition(id, 3000);
+        // The owner-aware eviction claim retains the path for deletion...
+        expect(
+          await fixture.repo.claimMediaEvicted(
+            id,
+            owner: owner,
+            expectedLocalPath: 'media/peer/$id.mp4',
+          ),
+          1,
+        );
+        // ...and the post-delete finalize nulls it.
+        expect(
+          await fixture.repo.finalizeMediaEvictedPathCleared(id, owner: owner),
+          1,
+        );
+      }
+
+      await seedEvictedLane(MediaOwnerLane.direct, 'att-evict-d');
+      await seedEvictedLane(MediaOwnerLane.group, 'att-evict-g');
+      await fixture.db.insert('media_attachments', {
+        'id': 'att-evict-u',
+        'message_id': 'msg-evict',
+        'mime': 'video/mp4',
+        'size': 10,
+        'media_type': 'video',
+        'download_status': 'done',
+        'local_path': 'media/peer/att-evict-u.mp4',
+        'created_at': '2026-02-20T10:00:00.000Z',
+        'owner_lane': 'unresolved',
+      });
+
+      // Ordinary wire replay (pending, no path, default local fields) in
+      // BOTH lanes: transport metadata updates, but evicted status, null
+      // path, owner, bookmark and playback all survive.
+      for (final (owner, id) in [
+        (MediaOwnerLane.direct, 'att-evict-d'),
+        (MediaOwnerLane.group, 'att-evict-g'),
+      ]) {
+        await fixture.repo.saveAttachment(
+          makeAttachment(
+            id: id,
+            messageId: 'msg-evict',
+            mime: 'video/mp4',
+            mediaType: 'video',
+            durationMs: 9000,
+            width: 640,
+            downloadStatus: 'pending',
+          ),
+          owner: owner,
+        );
+        final row = await rawRow(id);
+        expect(
+          row!['download_status'],
+          'evicted',
+          reason: '$owner replay must not re-arm an evicted row',
+        );
+        expect(row['local_path'], isNull);
+        expect(row['is_bookmarked'], 1);
+        expect(row['last_playback_position_ms'], 3000);
+        expect(row['owner_lane'], owner.dbValue);
+        expect(row['width'], 640);
+      }
+
+      // A blind `done` replay through the ordinary save path cannot
+      // resurrect the local copy either.
+      await fixture.repo.saveAttachment(
+        makeAttachment(
+          id: 'att-evict-d',
+          messageId: 'msg-evict',
+          mime: 'video/mp4',
+          mediaType: 'video',
+          durationMs: 9000,
+          downloadStatus: 'done',
+          localPath: 'media/peer/att-evict-d.mp4',
+        ),
+        owner: MediaOwnerLane.direct,
+      );
+      final blind = await rawRow('att-evict-d');
+      expect(blind!['download_status'], 'evicted');
+      expect(blind['local_path'], isNull);
+
+      // The unresolved legacy row is untouched by every lane-scoped
+      // operation above.
+      final unresolved = await rawRow('att-evict-u');
+      expect(unresolved!['download_status'], 'done');
+      expect(unresolved['owner_lane'], 'unresolved');
+      expect(unresolved['local_path'], 'media/peer/att-evict-u.mp4');
+
+      // A cross-lane retry claim is a lost claim (0 rows), never a
+      // mutation of the sibling.
+      expect(
+        await fixture.repo.beginMediaDownload(
+          'att-evict-g',
           owner: MediaOwnerLane.direct,
-        );
-        final blind = await rawRow('att-evict-d');
-        expect(blind!['download_status'], 'evicted');
-        expect(blind['local_path'], isNull);
+        ),
+        isFalse,
+      );
+      expect((await rawRow('att-evict-g'))!['download_status'], 'evicted');
 
-        // The unresolved legacy row is untouched by every lane-scoped
-        // operation above.
-        final unresolved = await rawRow('att-evict-u');
-        expect(unresolved!['download_status'], 'done');
-        expect(unresolved['owner_lane'], 'unresolved');
-        expect(unresolved['local_path'], 'media/peer/att-evict-u.mp4');
+      // The explicit matching-owner retry transitions ONLY its row, and
+      // the CAS commit from that claim settles done with the fresh path.
+      expect(
+        await fixture.repo.beginMediaDownload(
+          'att-evict-d',
+          owner: MediaOwnerLane.direct,
+        ),
+        isTrue,
+      );
+      expect((await rawRow('att-evict-d'))!['download_status'], 'downloading');
+      expect((await rawRow('att-evict-g'))!['download_status'], 'evicted');
+      expect(
+        await fixture.repo.commitMediaDownloadLocalPath(
+          'att-evict-d',
+          owner: MediaOwnerLane.direct,
+          localPath: 'media/peer/att-evict-d-new.mp4',
+        ),
+        isTrue,
+      );
+      final settled = await rawRow('att-evict-d');
+      expect(settled!['download_status'], 'done');
+      expect(settled['local_path'], 'media/peer/att-evict-d-new.mp4');
+      expect(
+        settled['is_bookmarked'],
+        1,
+        reason: 'viewer state survives the full evict/retry journey',
+      );
 
-        // A cross-lane retry claim is a lost claim (0 rows), never a
-        // mutation of the sibling.
-        expect(
-          await fixture.repo.beginMediaDownload(
-            'att-evict-g',
-            owner: MediaOwnerLane.direct,
-          ),
-          isFalse,
-        );
-        expect((await rawRow('att-evict-g'))!['download_status'], 'evicted');
-
-        // The explicit matching-owner retry transitions ONLY its row, and
-        // the CAS commit from that claim settles done with the fresh path.
-        expect(
-          await fixture.repo.beginMediaDownload(
-            'att-evict-d',
-            owner: MediaOwnerLane.direct,
-          ),
-          isTrue,
-        );
-        expect(
-          (await rawRow('att-evict-d'))!['download_status'],
-          'downloading',
-        );
-        expect((await rawRow('att-evict-g'))!['download_status'], 'evicted');
-        expect(
-          await fixture.repo.commitMediaDownloadLocalPath(
-            'att-evict-d',
-            owner: MediaOwnerLane.direct,
-            localPath: 'media/peer/att-evict-d-new.mp4',
-          ),
-          isTrue,
-        );
-        final settled = await rawRow('att-evict-d');
-        expect(settled!['download_status'], 'done');
-        expect(settled['local_path'], 'media/peer/att-evict-d-new.mp4');
-        expect(settled['is_bookmarked'], 1,
-            reason: 'viewer state survives the full evict/retry journey');
-
-        // A late commit whose claim was lost (row no longer downloading)
-        // affects zero rows.
-        expect(
-          await fixture.repo.commitMediaDownloadLocalPath(
-            'att-evict-d',
-            owner: MediaOwnerLane.direct,
-            localPath: 'media/peer/att-evict-d-stale.mp4',
-          ),
-          isFalse,
-        );
-        expect(
-          (await rawRow('att-evict-d'))!['local_path'],
-          'media/peer/att-evict-d-new.mp4',
-        );
-      },
-    );
+      // A late commit whose claim was lost (row no longer downloading)
+      // affects zero rows.
+      expect(
+        await fixture.repo.commitMediaDownloadLocalPath(
+          'att-evict-d',
+          owner: MediaOwnerLane.direct,
+          localPath: 'media/peer/att-evict-d-stale.mp4',
+        ),
+        isFalse,
+      );
+      expect(
+        (await rawRow('att-evict-d'))!['local_path'],
+        'media/peer/att-evict-d-new.mp4',
+      );
+    });
 
     // --- 228 TC-228-10 ---
 
@@ -1172,10 +1524,7 @@ void main() {
 
         // Negative clamps to zero.
         await fixture.repo.updatePlaybackPosition('vid-unknown', -50);
-        expect(
-          (await rawRow('vid-unknown'))!['last_playback_position_ms'],
-          0,
-        );
+        expect((await rawRow('vid-unknown'))!['last_playback_position_ms'], 0);
 
         // Unknown duration stores any non-negative position.
         await fixture.repo.updatePlaybackPosition('vid-unknown', 123456);
@@ -1208,16 +1557,10 @@ void main() {
           4500,
         );
         await fixture.repo.updatePlaybackPosition('vid-unknown', 12000);
-        expect(
-          (await rawRow('vid-unknown'))!['last_playback_position_ms'],
-          0,
-        );
+        expect((await rawRow('vid-unknown'))!['last_playback_position_ms'], 0);
         await fixture.repo.updatePlaybackPosition('vid-unknown', 4500);
         await fixture.repo.updatePlaybackPosition('vid-unknown', 9000);
-        expect(
-          (await rawRow('vid-unknown'))!['last_playback_position_ms'],
-          0,
-        );
+        expect((await rawRow('vid-unknown'))!['last_playback_position_ms'], 0);
 
         // Non-video rejection: playback state never applies to images.
         await saveDirect(
@@ -1245,104 +1588,280 @@ void main() {
 
     // --- 228 TC-228-11 ---
 
+    test('parent helpers retain but hide orphan media and preserve collision '
+        'siblings', () async {
+      // Collision: the same parent id exists in both lanes, each with an
+      // attachment carrying local viewer state.
+      await fixture.seedDirectParent(
+        'msg-shared',
+        timestamp: '2026-07-01T10:00:00.000Z',
+      );
+      await fixture.seedGroupParent(
+        'msg-shared',
+        timestamp: '2026-07-01T10:00:00.000Z',
+      );
+      await fixture.repo.saveAttachment(
+        makeAttachment(
+          id: 'att-d',
+          messageId: 'msg-shared',
+          downloadStatus: 'done',
+          localPath: '/media/att-d.jpg',
+        ),
+        owner: MediaOwnerLane.direct,
+      );
+      await fixture.repo.saveAttachment(
+        makeAttachment(
+          id: 'att-g-sib',
+          messageId: 'msg-shared',
+          mime: 'video/mp4',
+          mediaType: 'video',
+          durationMs: 10000,
+          downloadStatus: 'done',
+          localPath: '/media/att-g-sib.mp4',
+        ),
+        owner: MediaOwnerLane.group,
+      );
+      await fixture.repo.setBookmarked('att-g-sib', bookmarked: true);
+      await fixture.repo.updatePlaybackPosition('att-g-sib', 3000);
+
+      const directScope = MediaLibraryScope.direct('contact-1');
+      const groupScope = MediaLibraryScope.group('group-1');
+      expect(
+        (await fixture.repo.getMediaLibraryPage(
+          scope: directScope,
+        )).entries.map((e) => e.attachment.id),
+        ['att-d'],
+      );
+      expect(
+        (await fixture.repo.getMediaLibraryPage(
+          scope: groupScope,
+        )).entries.map((e) => e.attachment.id),
+        ['att-g-sib'],
+      );
+
+      // Generic DIRECT parent-only deletion: no attachment cascade — the
+      // raw row is retained but becomes library-invisible (no live
+      // parent). The same-ID group sibling and its viewer state survive.
+      await dbDeleteMessage(fixture.db, 'msg-shared');
+      expect(await rawRow('att-d'), isNotNull);
+      expect(
+        (await fixture.repo.getMediaLibraryPage(scope: directScope)).entries,
+        isEmpty,
+      );
+      final sib = await rawRow('att-g-sib');
+      expect(sib!['is_bookmarked'], 1);
+      expect(sib['last_playback_position_ms'], 3000);
+      expect(
+        (await fixture.repo.getMediaLibraryPage(
+          scope: groupScope,
+        )).entries.map((e) => e.attachment.id),
+        ['att-g-sib'],
+      );
+
+      // Real GROUP tombstone helper: records the durable tombstone and
+      // deletes the parent; the attachment row is retained but hidden, and
+      // an attempted parent reinsertion cannot resurface it.
+      await dbDeleteGroupMessage(fixture.db, 'msg-shared');
+      expect(await rawRow('att-g-sib'), isNotNull);
+      expect(
+        (await fixture.repo.getMediaLibraryPage(scope: groupScope)).entries,
+        isEmpty,
+      );
+      await fixture.seedGroupParent(
+        'msg-shared',
+        timestamp: '2026-07-01T10:00:00.000Z',
+      );
+      expect(
+        (await fixture.repo.getMediaLibraryPage(scope: groupScope)).entries,
+        isEmpty,
+      );
+
+      // Both retained orphans still hold their bytes/state (fail-safe
+      // retention, invisible through predicates — not a product-visible
+      // resurrection).
+      expect((await rawRow('att-d'))!['local_path'], '/media/att-d.jpg');
+      expect((await rawRow('att-g-sib'))!['last_playback_position_ms'], 3000);
+    });
+
     test(
-      'parent helpers retain but hide orphan media and preserve collision '
-      'siblings',
+      'exact direct bookmark loses a parent privacy race with zero write',
       () async {
-        // Collision: the same parent id exists in both lanes, each with an
-        // attachment carrying local viewer state.
-        await fixture.seedDirectParent(
-          'msg-shared',
-          timestamp: '2026-07-01T10:00:00.000Z',
-        );
-        await fixture.seedGroupParent(
-          'msg-shared',
-          timestamp: '2026-07-01T10:00:00.000Z',
-        );
+        await fixture.seedDirectParent('msg-bookmark-race');
         await fixture.repo.saveAttachment(
           makeAttachment(
-            id: 'att-d',
-            messageId: 'msg-shared',
-            downloadStatus: 'done',
-            localPath: '/media/att-d.jpg',
+            id: 'att-bookmark-race',
+            messageId: 'msg-bookmark-race',
+            mediaType: 'image',
+            mime: 'image/jpeg',
           ),
           owner: MediaOwnerLane.direct,
         );
+        final directState = fixture.repo as DirectMediaLibraryStateRepository;
+
+        expect(
+          await directState.setDirectBookmarkedIfOrdinary(
+            messageId: 'msg-bookmark-race',
+            attachmentId: 'att-bookmark-race',
+            bookmarked: true,
+          ),
+          isTrue,
+        );
+        expect((await rawRow('att-bookmark-race'))!['is_bookmarked'], 1);
+
+        await fixture.db.update(
+          'messages',
+          {
+            'private_media_policy_version': 1,
+            'private_media_mode': 'protected',
+            'private_media_state': 'available',
+          },
+          where: 'id = ?',
+          whereArgs: ['msg-bookmark-race'],
+        );
+        expect(
+          await directState.setDirectBookmarkedIfOrdinary(
+            messageId: 'msg-bookmark-race',
+            attachmentId: 'att-bookmark-race',
+            bookmarked: false,
+          ),
+          isFalse,
+        );
+        expect(
+          (await rawRow('att-bookmark-race'))!['is_bookmarked'],
+          1,
+          reason: 'privacy race must not mutate the stale loaded row',
+        );
+      },
+    );
+
+    test(
+      'exact direct bookmark rejects identity owner terminal visibility and corrupt races',
+      () async {
+        final directState = fixture.repo as DirectMediaLibraryStateRepository;
+
+        Future<void> seedDirect(
+          String messageId,
+          String attachmentId, {
+          String? hiddenAt,
+          String? deletedAt,
+        }) async {
+          await fixture.seedDirectParent(
+            messageId,
+            hiddenAt: hiddenAt,
+            deletedAt: deletedAt,
+          );
+          await fixture.repo.saveAttachment(
+            makeAttachment(
+              id: attachmentId,
+              messageId: messageId,
+              mediaType: 'image',
+              mime: 'image/jpeg',
+            ),
+            owner: MediaOwnerLane.direct,
+          );
+        }
+
+        await seedDirect('msg-exact-a', 'att-exact-a');
+        await seedDirect('msg-exact-b', 'att-exact-b');
+        await seedDirect('msg-terminal', 'att-terminal');
+        await seedDirect(
+          'msg-hidden',
+          'att-hidden',
+          hiddenAt: '2026-07-11T10:00:00.000Z',
+        );
+        await seedDirect(
+          'msg-deleted',
+          'att-deleted',
+          deletedAt: '2026-07-11T10:00:00.000Z',
+        );
+        await seedDirect('msg-corrupt', 'att-corrupt');
+        await seedDirect('msg-corrupt-lifecycle', 'att-corrupt-lifecycle');
+        await seedDirect('msg-unresolved', 'att-unresolved');
+        await fixture.db.update(
+          'media_attachments',
+          {'owner_lane': 'unresolved'},
+          where: 'id = ?',
+          whereArgs: ['att-unresolved'],
+        );
+
+        await fixture.seedGroupParent('msg-group-bookmark');
         await fixture.repo.saveAttachment(
           makeAttachment(
-            id: 'att-g-sib',
-            messageId: 'msg-shared',
-            mime: 'video/mp4',
-            mediaType: 'video',
-            durationMs: 10000,
-            downloadStatus: 'done',
-            localPath: '/media/att-g-sib.mp4',
+            id: 'att-group-bookmark',
+            messageId: 'msg-group-bookmark',
+            mediaType: 'image',
+            mime: 'image/jpeg',
           ),
           owner: MediaOwnerLane.group,
         );
-        await fixture.repo.setBookmarked('att-g-sib', bookmarked: true);
-        await fixture.repo.updatePlaybackPosition('att-g-sib', 3000);
-
-        const directScope = MediaLibraryScope.direct('contact-1');
-        const groupScope = MediaLibraryScope.group('group-1');
-        expect(
-          (await fixture.repo.getMediaLibraryPage(scope: directScope))
-              .entries
-              .map((e) => e.attachment.id),
-          ['att-d'],
-        );
-        expect(
-          (await fixture.repo.getMediaLibraryPage(scope: groupScope))
-              .entries
-              .map((e) => e.attachment.id),
-          ['att-g-sib'],
+        await fixture.repo.setBookmarked(
+          'att-group-bookmark',
+          bookmarked: true,
         );
 
-        // Generic DIRECT parent-only deletion: no attachment cascade — the
-        // raw row is retained but becomes library-invisible (no live
-        // parent). The same-ID group sibling and its viewer state survive.
-        await dbDeleteMessage(fixture.db, 'msg-shared');
-        expect(await rawRow('att-d'), isNotNull);
-        expect(
-          (await fixture.repo.getMediaLibraryPage(scope: directScope)).entries,
-          isEmpty,
+        await fixture.db.update(
+          'messages',
+          {
+            'private_media_policy_version': 1,
+            'private_media_mode': 'view_once',
+            'private_media_state': 'expired',
+            'private_media_terminal_at_ms': 1_800_000_000_000,
+          },
+          where: 'id = ?',
+          whereArgs: ['msg-terminal'],
         );
-        final sib = await rawRow('att-g-sib');
-        expect(sib!['is_bookmarked'], 1);
-        expect(sib['last_playback_position_ms'], 3000);
-        expect(
-          (await fixture.repo.getMediaLibraryPage(scope: groupScope))
-              .entries
-              .map((e) => e.attachment.id),
-          ['att-g-sib'],
+        await fixture.db.update(
+          'messages',
+          {'private_media_policy_version': 1},
+          where: 'id = ?',
+          whereArgs: ['msg-corrupt'],
         );
-
-        // Real GROUP tombstone helper: records the durable tombstone and
-        // deletes the parent; the attachment row is retained but hidden, and
-        // an attempted parent reinsertion cannot resurface it.
-        await dbDeleteGroupMessage(fixture.db, 'msg-shared');
-        expect(await rawRow('att-g-sib'), isNotNull);
-        expect(
-          (await fixture.repo.getMediaLibraryPage(scope: groupScope)).entries,
-          isEmpty,
-        );
-        await fixture.seedGroupParent(
-          'msg-shared',
-          timestamp: '2026-07-01T10:00:00.000Z',
-        );
-        expect(
-          (await fixture.repo.getMediaLibraryPage(scope: groupScope)).entries,
-          isEmpty,
+        await fixture.db.update(
+          'messages',
+          {'private_media_expires_at_ms': 1_800_000_000_000},
+          where: 'id = ?',
+          whereArgs: ['msg-corrupt-lifecycle'],
         );
 
-        // Both retained orphans still hold their bytes/state (fail-safe
-        // retention, invisible through predicates — not a product-visible
-        // resurrection).
-        expect((await rawRow('att-d'))!['local_path'], '/media/att-d.jpg');
-        expect(
-          (await rawRow('att-g-sib'))!['last_playback_position_ms'],
-          3000,
-        );
+        final denied = <({String messageId, String attachmentId})>[
+          (messageId: 'msg-exact-b', attachmentId: 'att-exact-a'),
+          (messageId: 'msg-exact-a', attachmentId: 'missing-attachment'),
+          (messageId: 'msg-terminal', attachmentId: 'att-terminal'),
+          (messageId: 'msg-hidden', attachmentId: 'att-hidden'),
+          (messageId: 'msg-deleted', attachmentId: 'att-deleted'),
+          (messageId: 'msg-corrupt', attachmentId: 'att-corrupt'),
+          (
+            messageId: 'msg-corrupt-lifecycle',
+            attachmentId: 'att-corrupt-lifecycle',
+          ),
+          (messageId: 'msg-unresolved', attachmentId: 'att-unresolved'),
+          (messageId: 'msg-group-bookmark', attachmentId: 'att-group-bookmark'),
+        ];
+        for (final identity in denied) {
+          expect(
+            await directState.setDirectBookmarkedIfOrdinary(
+              messageId: identity.messageId,
+              attachmentId: identity.attachmentId,
+              bookmarked: true,
+            ),
+            isFalse,
+            reason: identity.toString(),
+          );
+        }
+
+        for (final attachmentId in const [
+          'att-exact-a',
+          'att-exact-b',
+          'att-terminal',
+          'att-hidden',
+          'att-deleted',
+          'att-corrupt',
+          'att-corrupt-lifecycle',
+          'att-unresolved',
+        ]) {
+          expect((await rawRow(attachmentId))!['is_bookmarked'], 0);
+        }
+        expect((await rawRow('att-group-bookmark'))!['is_bookmarked'], 1);
       },
     );
   });

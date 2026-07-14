@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/media_storage_manager.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -67,22 +69,19 @@ class _FaultInjectingRepository
   Future<void> saveAttachment(
     MediaAttachment attachment, {
     required MediaOwnerLane owner,
-  }) =>
-      inner.saveAttachment(attachment, owner: owner);
+  }) => inner.saveAttachment(attachment, owner: owner);
 
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
     String messageId, {
     required MediaOwnerLane owner,
-  }) =>
-      inner.getAttachmentsForMessage(messageId, owner: owner);
+  }) => inner.getAttachmentsForMessage(messageId, owner: owner);
 
   @override
   Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
     List<String> messageIds, {
     required MediaOwnerLane owner,
-  }) =>
-      inner.getAttachmentsForMessages(messageIds, owner: owner);
+  }) => inner.getAttachmentsForMessages(messageIds, owner: owner);
 
   @override
   Future<void> updateLocalPath(String id, String localPath) =>
@@ -96,8 +95,7 @@ class _FaultInjectingRepository
   Future<int> deleteAttachmentsForMessage(
     String messageId, {
     required MediaOwnerLane owner,
-  }) =>
-      inner.deleteAttachmentsForMessage(messageId, owner: owner);
+  }) => inner.deleteAttachmentsForMessage(messageId, owner: owner);
 
   @override
   Future<int> deleteAttachmentsForContact(String contactPeerId) =>
@@ -107,11 +105,10 @@ class _FaultInjectingRepository
   Future<int> markUploadPendingAttachmentsFailedForMessage(
     String messageId, {
     required MediaOwnerLane owner,
-  }) =>
-      inner.markUploadPendingAttachmentsFailedForMessage(
-        messageId,
-        owner: owner,
-      );
+  }) => inner.markUploadPendingAttachmentsFailedForMessage(
+    messageId,
+    owner: owner,
+  );
 
   @override
   Future<List<MediaAttachment>> getPendingDownloads() =>
@@ -120,8 +117,7 @@ class _FaultInjectingRepository
   @override
   Future<List<MediaAttachment>> getUploadPendingAttachments({
     required MediaOwnerLane owner,
-  }) =>
-      inner.getUploadPendingAttachments(owner: owner);
+  }) => inner.getUploadPendingAttachments(owner: owner);
 
   @override
   Future<MediaAttachment?> getAttachmentById(String id) =>
@@ -136,12 +132,11 @@ class _FaultInjectingRepository
     String id, {
     required MediaOwnerLane owner,
     required String localPath,
-  }) =>
-      inner.commitMediaDownloadLocalPath(
-        id,
-        owner: owner,
-        localPath: localPath,
-      );
+  }) => inner.commitMediaDownloadLocalPath(
+    id,
+    owner: owner,
+    localPath: localPath,
+  );
 
   @override
   Future<int> claimMediaEvicted(
@@ -154,10 +149,11 @@ class _FaultInjectingRepository
       throw StateError('injected claim failure');
     }
     return await inner.claimMediaEvicted(
-      id,
-      owner: owner,
-      expectedLocalPath: expectedLocalPath,
-    ) as int;
+          id,
+          owner: owner,
+          expectedLocalPath: expectedLocalPath,
+        )
+        as int;
   }
 
   @override
@@ -169,8 +165,7 @@ class _FaultInjectingRepository
     if (failFinalize) {
       throw StateError('injected finalize failure');
     }
-    return await inner.finalizeMediaEvictedPathCleared(id, owner: owner)
-        as int;
+    return await inner.finalizeMediaEvictedPathCleared(id, owner: owner) as int;
   }
 
   @override
@@ -182,11 +177,12 @@ class _FaultInjectingRepository
   }) {
     storagePageRequests.add((kind: kind.name, limit: limit, cursor: cursor));
     return inner.getMediaStoragePage(
-      scope: scope,
-      kind: kind,
-      limit: limit,
-      cursor: cursor,
-    ) as Future<MediaStoragePage>;
+          scope: scope,
+          kind: kind,
+          limit: limit,
+          cursor: cursor,
+        )
+        as Future<MediaStoragePage>;
   }
 }
 
@@ -212,22 +208,22 @@ void main() {
   final groupScope = MediaLibraryScope.group(groupScopeId);
 
   String extFor(String mime) => switch (mime) {
-        'image/jpeg' => '.jpg',
-        'image/png' => '.png',
-        'video/mp4' => '.mp4',
-        'audio/mp4' => '.m4a',
-        'application/pdf' => '.pdf',
-        _ => '',
-      };
+    'image/jpeg' => '.jpg',
+    'image/png' => '.png',
+    'video/mp4' => '.mp4',
+    'audio/mp4' => '.m4a',
+    'application/pdf' => '.pdf',
+    _ => '',
+  };
 
   String canonicalRelative(String scopeId, String id, String mime) =>
       'media/$scopeId/$id${extFor(mime)}';
 
   File fileAt(String relativeOrAbsolute) => File(
-        p.isAbsolute(relativeOrAbsolute)
-            ? relativeOrAbsolute
-            : p.join(tempDocs.path, relativeOrAbsolute),
-      );
+    p.isAbsolute(relativeOrAbsolute)
+        ? relativeOrAbsolute
+        : p.join(tempDocs.path, relativeOrAbsolute),
+  );
 
   void createBytes(String relativeOrAbsolute, List<int> bytes) {
     fileAt(relativeOrAbsolute)
@@ -271,16 +267,74 @@ void main() {
   MediaStorageManager makeManager({
     MediaStorageFileGateway? gateway,
     MediaAttachmentRepository? repository,
-  }) =>
-      MediaStorageManager(
-        repository: repository ?? fixture.repo,
-        documentsDirectoryProvider: () async => tempDocs.path,
-        fileGateway: gateway ?? const IoMediaStorageFileGateway(),
-      );
+    MediaAttachmentLifecycleLock? lifecycleLock,
+  }) => MediaStorageManager(
+    repository: repository ?? fixture.repo,
+    documentsDirectoryProvider: () async => tempDocs.path,
+    fileGateway: gateway ?? const IoMediaStorageFileGateway(),
+    lifecycleLock: lifecycleLock,
+  );
 
   group('MediaStorageManager', () {
     test(
-        'clear local copy claims exact owner path before delete and preserves '
+      'clear holds one lifecycle lock through claim delete and finalize',
+      () async {
+        await fixture.seedDirectParent('msg-lock');
+        await seedAttachmentRow(
+          owner: MediaOwnerLane.direct,
+          scopeId: directScopeId,
+          messageId: 'msg-lock',
+          id: 'att-lock',
+          fileBytes: const [1, 2, 3],
+        );
+
+        final lock = MediaAttachmentLifecycleLock();
+        final gateway = _FaultInjectingGateway();
+        late Future<void> competingCleanup;
+        var competitorEntered = false;
+        Map<String, Object?>? rowSeenByCompetitor;
+        gateway.onDelete = (path) async {
+          // This probe represents an independent lifecycle event. Escape the
+          // manager's reentrant lock zone so it queues as a true contender.
+          competingCleanup = Zone.root.run(
+            () => lock.synchronized('att-lock', () async {
+              competitorEntered = true;
+              rowSeenByCompetitor = await fixture.rawAttachmentRow('att-lock');
+            }),
+          );
+          await Future<void>.delayed(Duration.zero);
+          expect(
+            competitorEntered,
+            isFalse,
+            reason: 'another terminal cleanup cannot enter during file I/O',
+          );
+        };
+
+        final manager = makeManager(gateway: gateway, lifecycleLock: lock);
+        expect(
+          await manager.clearLocalCopy(
+            scope: directScope,
+            attachmentId: 'att-lock',
+            mime: 'image/jpeg',
+          ),
+          MediaClearLocalCopyResult.cleared,
+        );
+        await competingCleanup;
+
+        expect(competitorEntered, isTrue);
+        expect(
+          rowSeenByCompetitor!['download_status'],
+          kMediaDownloadStatusEvicted,
+        );
+        expect(
+          rowSeenByCompetitor!['local_path'],
+          isNull,
+          reason: 'the competing saga enters only after eviction finalize',
+        );
+      },
+    );
+
+    test('clear local copy claims exact owner path before delete and preserves '
         'sibling state', () async {
       await fixture.seedDirectParent('msg-clear');
       await fixture.seedGroupParent('msg-clear');
@@ -345,8 +399,11 @@ void main() {
       );
 
       expect(result, MediaClearLocalCopyResult.cleared);
-      expect(statusAtDeleteTime, kMediaDownloadStatusEvicted,
-          reason: 'the durable claim must precede file deletion');
+      expect(
+        statusAtDeleteTime,
+        kMediaDownloadStatusEvicted,
+        reason: 'the durable claim must precede file deletion',
+      );
       expect(gateway.deletedPaths, hasLength(1));
 
       // Exactly the target row became evicted with a cleared path and a
@@ -355,8 +412,9 @@ void main() {
       expect(clearedRow!['download_status'], kMediaDownloadStatusEvicted);
       expect(clearedRow['local_path'], isNull);
       expect(
-        fileAt(canonicalRelative(directScopeId, 'att-clear', 'image/jpeg'))
-            .existsSync(),
+        fileAt(
+          canonicalRelative(directScopeId, 'att-clear', 'image/jpeg'),
+        ).existsSync(),
         isFalse,
       );
       // Descriptor, key reference and viewer state survive.
@@ -368,15 +426,17 @@ void main() {
       final sibling = await fixture.rawAttachmentRow('att-sibling');
       expect(sibling!['download_status'], 'done');
       expect(
-        fileAt(canonicalRelative(directScopeId, 'att-sibling', 'image/jpeg'))
-            .existsSync(),
+        fileAt(
+          canonicalRelative(directScopeId, 'att-sibling', 'image/jpeg'),
+        ).existsSync(),
         isTrue,
       );
       final groupRow = await fixture.rawAttachmentRow('att-clear-group');
       expect(groupRow!['download_status'], 'done');
       expect(
-        fileAt(canonicalRelative(groupScopeId, 'att-clear-group', 'image/jpeg'))
-            .existsSync(),
+        fileAt(
+          canonicalRelative(groupScopeId, 'att-clear-group', 'image/jpeg'),
+        ).existsSync(),
         isTrue,
       );
       final unresolvedRow = await fixture.rawAttachmentRow('att-unres');
@@ -414,550 +474,593 @@ void main() {
       );
     });
 
-    test('eviction failures remain retryable and reconcile after restart',
-        () async {
-      await fixture.seedDirectParent('msg-fail');
+    test(
+      'eviction failures remain retryable and reconcile after restart',
+      () async {
+        await fixture.seedDirectParent('msg-fail');
 
-      // --- Claim failure: no file is touched. ---
-      await seedAttachmentRow(
-        owner: MediaOwnerLane.direct,
-        scopeId: directScopeId,
-        messageId: 'msg-fail',
-        id: 'att-claim-fail',
-        fileBytes: const [1, 1, 1],
-      );
-      final gateway = _FaultInjectingGateway();
-      final faultRepo = _FaultInjectingRepository(fixture.repo)
-        ..failClaim = true;
-      final manager = makeManager(gateway: gateway, repository: faultRepo);
-
-      expect(
-        await manager.clearLocalCopy(
-          scope: directScope,
-          attachmentId: 'att-claim-fail',
-          mime: 'image/jpeg',
-        ),
-        MediaClearLocalCopyResult.conflict,
-      );
-      expect(gateway.deletedPaths, isEmpty,
-          reason: 'a failed claim must never touch the file');
-      final afterClaimFail = await fixture.rawAttachmentRow('att-claim-fail');
-      expect(afterClaimFail!['download_status'], 'done');
-      expect(afterClaimFail['local_path'], isNotNull);
-      expect(
-        fileAt(
-          canonicalRelative(directScopeId, 'att-claim-fail', 'image/jpeg'),
-        ).existsSync(),
-        isTrue,
-      );
-
-      // --- Delete failure: durable evicted claim + retained path, then a
-      // second Clear retries the deletion to completion. ---
-      await seedAttachmentRow(
-        owner: MediaOwnerLane.direct,
-        scopeId: directScopeId,
-        messageId: 'msg-fail',
-        id: 'att-delete-fail',
-        fileBytes: const [2, 2, 2],
-      );
-      faultRepo.failClaim = false;
-      gateway.failDelete = true;
-      expect(
-        await manager.clearLocalCopy(
-          scope: directScope,
-          attachmentId: 'att-delete-fail',
-          mime: 'image/jpeg',
-        ),
-        MediaClearLocalCopyResult.cleanupFailed,
-      );
-      final pendingCleanup = await fixture.rawAttachmentRow('att-delete-fail');
-      expect(pendingCleanup!['download_status'], kMediaDownloadStatusEvicted);
-      expect(
-        pendingCleanup['local_path'],
-        canonicalRelative(directScopeId, 'att-delete-fail', 'image/jpeg'),
-        reason: 'cleanup-pending keeps the expected path for the retry',
-      );
-      expect(
-        fileAt(
-          canonicalRelative(directScopeId, 'att-delete-fail', 'image/jpeg'),
-        ).existsSync(),
-        isTrue,
-      );
-      // The retry (fresh Clear) deletes without needing a second claim.
-      gateway.failDelete = false;
-      final claimsBeforeRetry = faultRepo.claimCalls;
-      expect(
-        await manager.clearLocalCopy(
-          scope: directScope,
-          attachmentId: 'att-delete-fail',
-          mime: 'image/jpeg',
-        ),
-        MediaClearLocalCopyResult.cleared,
-      );
-      expect(faultRepo.claimCalls, claimsBeforeRetry,
-          reason: 'a cleanup-pending row is already durably claimed');
-      expect(
-        fileAt(
-          canonicalRelative(directScopeId, 'att-delete-fail', 'image/jpeg'),
-        ).existsSync(),
-        isFalse,
-      );
-      expect(
-        (await fixture.rawAttachmentRow('att-delete-fail'))!['local_path'],
-        isNull,
-      );
-
-      // --- Finalize failure after successful deletion: evicted + stale
-      // path; a fresh manager's inventory reconciles it to null ONLY after
-      // proving the canonical file absent. ---
-      await seedAttachmentRow(
-        owner: MediaOwnerLane.direct,
-        scopeId: directScopeId,
-        messageId: 'msg-fail',
-        id: 'att-finalize-fail',
-        fileBytes: const [3, 3, 3],
-      );
-      faultRepo.failFinalize = true;
-      expect(
-        await manager.clearLocalCopy(
-          scope: directScope,
-          attachmentId: 'att-finalize-fail',
-          mime: 'image/jpeg',
-        ),
-        MediaClearLocalCopyResult.cleanupFailed,
-      );
-      final stalePath = await fixture.rawAttachmentRow('att-finalize-fail');
-      expect(stalePath!['download_status'], kMediaDownloadStatusEvicted);
-      expect(stalePath['local_path'], isNotNull);
-      expect(
-        fileAt(
-          canonicalRelative(directScopeId, 'att-finalize-fail', 'image/jpeg'),
-        ).existsSync(),
-        isFalse,
-        reason: 'the bytes were reclaimed before the finalize failed',
-      );
-
-      // A cleanup-pending row whose file still EXISTS is NOT reconciled
-      // (and keeps counting its bytes).
-      await seedAttachmentRow(
-        owner: MediaOwnerLane.direct,
-        scopeId: directScopeId,
-        messageId: 'msg-fail',
-        id: 'att-cleanup-present',
-        fileBytes: const [4, 4, 4, 4],
-      );
-      faultRepo.failFinalize = false;
-      gateway.failDelete = true;
-      expect(
-        await manager.clearLocalCopy(
-          scope: directScope,
-          attachmentId: 'att-cleanup-present',
-          mime: 'image/jpeg',
-        ),
-        MediaClearLocalCopyResult.cleanupFailed,
-      );
-      gateway.failDelete = false;
-
-      final freshManager = makeManager();
-      final inventory = await freshManager.inventory(scope: directScope);
-
-      // Reconciled: stale-path row proven absent is now evicted/null...
-      final reconciled = await fixture.rawAttachmentRow('att-finalize-fail');
-      expect(reconciled!['download_status'], kMediaDownloadStatusEvicted);
-      expect(reconciled['local_path'], isNull);
-      // ...while the present-file cleanup-pending row keeps its path and
-      // keeps counting its bytes.
-      final stillPending =
-          await fixture.rawAttachmentRow('att-cleanup-present');
-      expect(stillPending!['download_status'], kMediaDownloadStatusEvicted);
-      expect(stillPending['local_path'], isNotNull);
-      // Totals: att-claim-fail (3 bytes, still done) + att-cleanup-present
-      // (4 bytes, cleanup-pending) — never the deleted/missing rows, never
-      // the descriptor size column.
-      expect(inventory.totalFor('image').count, 2);
-      expect(inventory.totalFor('image').bytes, 7);
-
-      // No auto-download was armed anywhere in the failure protocol.
-      for (final id in const [
-        'att-delete-fail',
-        'att-finalize-fail',
-        'att-cleanup-present',
-      ]) {
-        final row = await fixture.rawAttachmentRow(id);
-        expect(row!['download_status'], kMediaDownloadStatusEvicted,
-            reason: '$id must remain evicted, never pending');
-      }
-    });
-
-    test('clear rejects noncanonical wrong scope and misleading legacy paths',
-        () async {
-      await fixture.seedDirectParent('msg-reject');
-
-      final manager = makeManager();
-
-      Future<void> expectRejectedWithZeroMutation({
-        required String id,
-        required String mime,
-        required MediaClearLocalCopyResult expected,
-        required List<String> mustSurvive,
-      }) async {
-        final before = await fixture.rawAttachmentRow(id);
-        final result = await manager.clearLocalCopy(
-          scope: directScope,
-          attachmentId: id,
-          mime: mime,
+        // --- Claim failure: no file is touched. ---
+        await seedAttachmentRow(
+          owner: MediaOwnerLane.direct,
+          scopeId: directScopeId,
+          messageId: 'msg-fail',
+          id: 'att-claim-fail',
+          fileBytes: const [1, 1, 1],
         );
-        expect(result, expected, reason: '$id must reject as $expected');
-        expect(result.isRejection, isTrue);
-        final after = await fixture.rawAttachmentRow(id);
-        expect(after!['download_status'], before!['download_status'],
-            reason: '$id row must be untouched');
-        expect(after['local_path'], before['local_path']);
-        for (final path in mustSurvive) {
-          expect(fileAt(path).existsSync(), isTrue,
-              reason: '$path must survive the rejected clear of $id');
-        }
-      }
+        final gateway = _FaultInjectingGateway();
+        final faultRepo = _FaultInjectingRepository(fixture.repo)
+          ..failClaim = true;
+        final manager = makeManager(gateway: gateway, repository: faultRepo);
 
-      // 1. Arbitrary absolute path (an export outside the app container).
-      final exportsDir = Directory.systemTemp.createTempSync('msm-exports-');
-      addTearDown(() => exportsDir.deleteSync(recursive: true));
-      final exportedFile = p.join(exportsDir.path, 'att-export.jpg');
-      createBytes(exportedFile, const [1, 2]);
-      await seedAttachmentRow(
-        owner: MediaOwnerLane.direct,
-        scopeId: directScopeId,
-        messageId: 'msg-reject',
-        id: 'att-export',
-        storedPath: exportedFile,
-      );
-      await expectRejectedWithZeroMutation(
-        id: 'att-export',
-        mime: 'image/jpeg',
-        expected: MediaClearLocalCopyResult.rejectedNoncanonicalPath,
-        mustSurvive: [exportedFile],
-      );
+        expect(
+          await manager.clearLocalCopy(
+            scope: directScope,
+            attachmentId: 'att-claim-fail',
+            mime: 'image/jpeg',
+          ),
+          MediaClearLocalCopyResult.conflict,
+        );
+        expect(
+          gateway.deletedPaths,
+          isEmpty,
+          reason: 'a failed claim must never touch the file',
+        );
+        final afterClaimFail = await fixture.rawAttachmentRow('att-claim-fail');
+        expect(afterClaimFail!['download_status'], 'done');
+        expect(afterClaimFail['local_path'], isNotNull);
+        expect(
+          fileAt(
+            canonicalRelative(directScopeId, 'att-claim-fail', 'image/jpeg'),
+          ).existsSync(),
+          isTrue,
+        );
 
-      // 2. Misleading legacy absolute: contains a '/media/' substring a
-      // resolveStoredPath-style remap would extract, but is NOT the exact
-      // current-container absolute path. The CURRENT canonical file must
-      // survive; the row requires an explicit path repair before Clear.
-      final currentCanonical =
-          canonicalRelative(directScopeId, 'att-legacy', 'image/jpeg');
-      createBytes(currentCanonical, const [3, 4, 5]);
-      await seedAttachmentRow(
-        owner: MediaOwnerLane.direct,
-        scopeId: directScopeId,
-        messageId: 'msg-reject',
-        id: 'att-legacy',
-        storedPath:
-            '/old-container/Documents/media/$directScopeId/att-legacy.jpg',
-      );
-      await expectRejectedWithZeroMutation(
-        id: 'att-legacy',
-        mime: 'image/jpeg',
-        expected: MediaClearLocalCopyResult.rejectedNoncanonicalPath,
-        mustSurvive: [currentCanonical],
-      );
+        // --- Delete failure: durable evicted claim + retained path, then a
+        // second Clear retries the deletion to completion. ---
+        await seedAttachmentRow(
+          owner: MediaOwnerLane.direct,
+          scopeId: directScopeId,
+          messageId: 'msg-fail',
+          id: 'att-delete-fail',
+          fileBytes: const [2, 2, 2],
+        );
+        faultRepo.failClaim = false;
+        gateway.failDelete = true;
+        expect(
+          await manager.clearLocalCopy(
+            scope: directScope,
+            attachmentId: 'att-delete-fail',
+            mime: 'image/jpeg',
+          ),
+          MediaClearLocalCopyResult.cleanupFailed,
+        );
+        final pendingCleanup = await fixture.rawAttachmentRow(
+          'att-delete-fail',
+        );
+        expect(pendingCleanup!['download_status'], kMediaDownloadStatusEvicted);
+        expect(
+          pendingCleanup['local_path'],
+          canonicalRelative(directScopeId, 'att-delete-fail', 'image/jpeg'),
+          reason: 'cleanup-pending keeps the expected path for the retry',
+        );
+        expect(
+          fileAt(
+            canonicalRelative(directScopeId, 'att-delete-fail', 'image/jpeg'),
+          ).existsSync(),
+          isTrue,
+        );
+        // The retry (fresh Clear) deletes without needing a second claim.
+        gateway.failDelete = false;
+        final claimsBeforeRetry = faultRepo.claimCalls;
+        expect(
+          await manager.clearLocalCopy(
+            scope: directScope,
+            attachmentId: 'att-delete-fail',
+            mime: 'image/jpeg',
+          ),
+          MediaClearLocalCopyResult.cleared,
+        );
+        expect(
+          faultRepo.claimCalls,
+          claimsBeforeRetry,
+          reason: 'a cleanup-pending row is already durably claimed',
+        );
+        expect(
+          fileAt(
+            canonicalRelative(directScopeId, 'att-delete-fail', 'image/jpeg'),
+          ).existsSync(),
+          isFalse,
+        );
+        expect(
+          (await fixture.rawAttachmentRow('att-delete-fail'))!['local_path'],
+          isNull,
+        );
 
-      // 3. Another attachment's canonical path is not YOURS.
-      final victimPath =
-          canonicalRelative(directScopeId, 'att-victim', 'image/jpeg');
-      createBytes(victimPath, const [6, 6]);
-      await seedAttachmentRow(
-        owner: MediaOwnerLane.direct,
-        scopeId: directScopeId,
-        messageId: 'msg-reject',
-        id: 'att-victim',
-        fileBytes: null,
-        storedPath: victimPath,
-      );
-      await seedAttachmentRow(
-        owner: MediaOwnerLane.direct,
-        scopeId: directScopeId,
-        messageId: 'msg-reject',
-        id: 'att-thief',
-        storedPath: victimPath,
-      );
-      await expectRejectedWithZeroMutation(
-        id: 'att-thief',
-        mime: 'image/jpeg',
-        expected: MediaClearLocalCopyResult.rejectedNoncanonicalPath,
-        mustSurvive: [victimPath],
-      );
+        // --- Finalize failure after successful deletion: evicted + stale
+        // path; a fresh manager's inventory reconciles it to null ONLY after
+        // proving the canonical file absent. ---
+        await seedAttachmentRow(
+          owner: MediaOwnerLane.direct,
+          scopeId: directScopeId,
+          messageId: 'msg-fail',
+          id: 'att-finalize-fail',
+          fileBytes: const [3, 3, 3],
+        );
+        faultRepo.failFinalize = true;
+        expect(
+          await manager.clearLocalCopy(
+            scope: directScope,
+            attachmentId: 'att-finalize-fail',
+            mime: 'image/jpeg',
+          ),
+          MediaClearLocalCopyResult.cleanupFailed,
+        );
+        final stalePath = await fixture.rawAttachmentRow('att-finalize-fail');
+        expect(stalePath!['download_status'], kMediaDownloadStatusEvicted);
+        expect(stalePath['local_path'], isNotNull);
+        expect(
+          fileAt(
+            canonicalRelative(directScopeId, 'att-finalize-fail', 'image/jpeg'),
+          ).existsSync(),
+          isFalse,
+          reason: 'the bytes were reclaimed before the finalize failed',
+        );
 
-      // 4. Wrong extension for the claimed MIME: stored .jpg can never be
-      // authorized under a png expectation, and a mismatched row MIME is
-      // rejected even earlier.
-      final jpgPath =
-          canonicalRelative(directScopeId, 'att-wrong-ext', 'image/jpeg');
-      createBytes(jpgPath, const [8, 8]);
-      await seedAttachmentRow(
-        owner: MediaOwnerLane.direct,
-        scopeId: directScopeId,
-        messageId: 'msg-reject',
-        id: 'att-wrong-ext',
-        mime: 'image/png',
-        storedPath: jpgPath,
-      );
-      await expectRejectedWithZeroMutation(
-        id: 'att-wrong-ext',
-        mime: 'image/jpeg',
-        expected: MediaClearLocalCopyResult.rejectedMimeMismatch,
-        mustSurvive: [jpgPath],
-      );
-      await expectRejectedWithZeroMutation(
-        id: 'att-wrong-ext',
-        mime: 'image/png',
-        expected: MediaClearLocalCopyResult.rejectedNoncanonicalPath,
-        mustSurvive: [jpgPath],
-      );
+        // A cleanup-pending row whose file still EXISTS is NOT reconciled
+        // (and keeps counting its bytes).
+        await seedAttachmentRow(
+          owner: MediaOwnerLane.direct,
+          scopeId: directScopeId,
+          messageId: 'msg-fail',
+          id: 'att-cleanup-present',
+          fileBytes: const [4, 4, 4, 4],
+        );
+        faultRepo.failFinalize = false;
+        gateway.failDelete = true;
+        expect(
+          await manager.clearLocalCopy(
+            scope: directScope,
+            attachmentId: 'att-cleanup-present',
+            mime: 'image/jpeg',
+          ),
+          MediaClearLocalCopyResult.cleanupFailed,
+        );
+        gateway.failDelete = false;
 
-      // 5. Wrong scope directory (a group-scope path stored on a
-      // direct-owned row).
-      final foreignScopePath =
-          canonicalRelative(groupScopeId, 'att-foreign', 'image/jpeg');
-      createBytes(foreignScopePath, const [9]);
-      await seedAttachmentRow(
-        owner: MediaOwnerLane.direct,
-        scopeId: directScopeId,
-        messageId: 'msg-reject',
-        id: 'att-foreign',
-        storedPath: foreignScopePath,
-      );
-      await expectRejectedWithZeroMutation(
-        id: 'att-foreign',
-        mime: 'image/jpeg',
-        expected: MediaClearLocalCopyResult.rejectedNoncanonicalPath,
-        mustSurvive: [foreignScopePath],
-      );
+        final freshManager = makeManager();
+        final inventory = await freshManager.inventory(scope: directScope);
 
-      // 6. Symlink at the canonical path: the stored value looks exact, but
-      // the resolved target escapes — fail closed BEFORE any mutation; the
-      // symlink target survives.
-      final symTargetFile = p.join(exportsDir.path, 'precious-original.jpg');
-      createBytes(symTargetFile, const [42, 42, 42]);
-      final symlinkRelative =
-          canonicalRelative(directScopeId, 'att-symlink', 'image/jpeg');
-      final symlinkAbsolute = p.join(tempDocs.path, symlinkRelative);
-      Directory(p.dirname(symlinkAbsolute)).createSync(recursive: true);
-      Link(symlinkAbsolute).createSync(symTargetFile);
-      await seedAttachmentRow(
-        owner: MediaOwnerLane.direct,
-        scopeId: directScopeId,
-        messageId: 'msg-reject',
-        id: 'att-symlink',
-        storedPath: symlinkRelative,
-      );
-      await expectRejectedWithZeroMutation(
-        id: 'att-symlink',
-        mime: 'image/jpeg',
-        expected: MediaClearLocalCopyResult.rejectedUnsafeTarget,
-        mustSurvive: [symTargetFile],
-      );
-      expect(Link(symlinkAbsolute).existsSync(), isTrue,
-          reason: 'even the symlink itself is never deleted on rejection');
+        // Reconciled: stale-path row proven absent is now evicted/null...
+        final reconciled = await fixture.rawAttachmentRow('att-finalize-fail');
+        expect(reconciled!['download_status'], kMediaDownloadStatusEvicted);
+        expect(reconciled['local_path'], isNull);
+        // ...while the present-file cleanup-pending row keeps its path and
+        // keeps counting its bytes.
+        final stillPending = await fixture.rawAttachmentRow(
+          'att-cleanup-present',
+        );
+        expect(stillPending!['download_status'], kMediaDownloadStatusEvicted);
+        expect(stillPending['local_path'], isNotNull);
+        // Totals: att-claim-fail (3 bytes, still done) + att-cleanup-present
+        // (4 bytes, cleanup-pending) — never the deleted/missing rows, never
+        // the descriptor size column.
+        expect(inventory.totalFor('image').count, 2);
+        expect(inventory.totalFor('image').bytes, 7);
 
-      // 7. A missing row and a row with nothing durable to clear.
-      expect(
-        await manager.clearLocalCopy(
-          scope: directScope,
-          attachmentId: 'att-absent',
-          mime: 'image/jpeg',
-        ),
-        MediaClearLocalCopyResult.rejectedMissingRow,
-      );
-      await seedAttachmentRow(
-        owner: MediaOwnerLane.direct,
-        scopeId: directScopeId,
-        messageId: 'msg-reject',
-        id: 'att-pending',
-        downloadStatus: 'pending',
-      );
-      expect(
-        await manager.clearLocalCopy(
-          scope: directScope,
-          attachmentId: 'att-pending',
-          mime: 'image/jpeg',
-        ),
-        MediaClearLocalCopyResult.rejectedNotClearable,
-      );
-    });
-
-    test('all media inventory exhausts owner scoped pages for exact totals',
-        () async {
-      await fixture.seedDirectParent('msg-inv');
-      await fixture.seedDirectParent(
-        'msg-inv-deleted',
-        deletedAt: '2026-07-09T00:00:00.000Z',
-      );
-      await fixture.seedGroupParent('msg-inv-group');
-
-      // 200 eligible direct rows across all four types with REAL bytes:
-      // 50 images x4B, 50 videos x6B, 50 audio x8B, 50 files x10B.
-      const typeSpecs = [
-        (type: 'image', mime: 'image/jpeg', bytes: 4),
-        (type: 'video', mime: 'video/mp4', bytes: 6),
-        (type: 'audio', mime: 'audio/mp4', bytes: 8),
-        (type: 'file', mime: 'application/pdf', bytes: 10),
-      ];
-      for (final spec in typeSpecs) {
-        for (var i = 0; i < 50; i++) {
-          await seedAttachmentRow(
-            owner: MediaOwnerLane.direct,
-            scopeId: directScopeId,
-            messageId: 'msg-inv',
-            id: 'inv-${spec.type}-${i.toString().padLeft(3, '0')}',
-            mime: spec.mime,
-            mediaType: spec.type,
-            fileBytes: List.filled(spec.bytes, 1),
+        // No auto-download was armed anywhere in the failure protocol.
+        for (final id in const [
+          'att-delete-fail',
+          'att-finalize-fail',
+          'att-cleanup-present',
+        ]) {
+          final row = await fixture.rawAttachmentRow(id);
+          expect(
+            row!['download_status'],
+            kMediaDownloadStatusEvicted,
+            reason: '$id must remain evicted, never pending',
           );
         }
-      }
-      // 201st..205th rows — every excluded form:
-      // (a) deleted-parent direct row WITH bytes;
-      await seedAttachmentRow(
-        owner: MediaOwnerLane.direct,
-        scopeId: directScopeId,
-        messageId: 'msg-inv-deleted',
-        id: 'inv-deleted-parent',
-        fileBytes: const [1, 1, 1, 1],
-      );
-      // (b) descriptor-only row (canonical path, missing file);
-      await seedAttachmentRow(
-        owner: MediaOwnerLane.direct,
-        scopeId: directScopeId,
-        messageId: 'msg-inv',
-        id: 'inv-missing-file',
-      );
-      // (c) noncanonical/exported stored path (file exists elsewhere);
-      final exportsDir = Directory.systemTemp.createTempSync('msm-inv-');
-      addTearDown(() => exportsDir.deleteSync(recursive: true));
-      final exported = p.join(exportsDir.path, 'inv-exported.jpg');
-      createBytes(exported, const [1, 1, 1, 1]);
-      await seedAttachmentRow(
-        owner: MediaOwnerLane.direct,
-        scopeId: directScopeId,
-        messageId: 'msg-inv',
-        id: 'inv-exported',
-        storedPath: exported,
-      );
-      // (d) unresolved legacy row with real bytes under the scope dir;
-      const unresolvedPath = 'media/$directScopeId/inv-unresolved.jpg';
-      createBytes(unresolvedPath, const [1, 1, 1, 1]);
-      await fixture.db.insert('media_attachments', {
-        'id': 'inv-unresolved',
-        'message_id': 'msg-inv',
-        'mime': 'image/jpeg',
-        'size': 4,
-        'media_type': 'image',
-        'download_status': 'done',
-        'local_path': unresolvedPath,
-        'created_at': '2026-07-10T09:00:00.000Z',
-        'owner_lane': 'unresolved',
-      });
-      // (e) group-owned sibling row with bytes (other scope).
-      await seedAttachmentRow(
-        owner: MediaOwnerLane.group,
-        scopeId: groupScopeId,
-        messageId: 'msg-inv-group',
-        id: 'inv-group-sibling',
-        fileBytes: const [2, 2],
-      );
+      },
+    );
 
-      final countingRepo = _FaultInjectingRepository(fixture.repo);
-      final manager = makeManager(repository: countingRepo);
-      final inventory = await manager.inventory(scope: directScope);
+    test(
+      'clear rejects noncanonical wrong scope and misleading legacy paths',
+      () async {
+        await fixture.seedDirectParent('msg-reject');
 
-      // Exact per-type totals from REAL file lengths only.
-      expect(inventory.totalFor('image').count, 50);
-      expect(inventory.totalFor('image').bytes, 200);
-      expect(inventory.totalFor('video').count, 50);
-      expect(inventory.totalFor('video').bytes, 300);
-      expect(inventory.totalFor('audio').count, 50);
-      expect(inventory.totalFor('audio').bytes, 400);
-      expect(inventory.totalFor('file').count, 50);
-      expect(inventory.totalFor('file').bytes, 500);
-      expect(inventory.totalCount, 200);
-      expect(inventory.totalBytes, 1400);
+        final manager = makeManager();
 
-      // The sweep paged to exhaustion through opaque limit-100 cursors:
-      // 100 + 100 + 0, i.e. exactly three requests, final cursor null.
-      expect(countingRepo.storagePageRequests, hasLength(3));
-      expect(
-        countingRepo.storagePageRequests.every(
-          (request) => request.limit == kMediaLibraryMaxPageSize,
-        ),
-        isTrue,
-      );
-      expect(countingRepo.storagePageRequests.first.cursor, isNull);
-      expect(countingRepo.storagePageRequests[1].cursor, isNotNull);
-      expect(countingRepo.storagePageRequests[2].cursor, isNotNull);
-      expect(
-        countingRepo.storagePageRequests[1].cursor,
-        isNot(countingRepo.storagePageRequests[2].cursor),
-      );
+        Future<void> expectRejectedWithZeroMutation({
+          required String id,
+          required String mime,
+          required MediaClearLocalCopyResult expected,
+          required List<String> mustSurvive,
+        }) async {
+          final before = await fixture.rawAttachmentRow(id);
+          final result = await manager.clearLocalCopy(
+            scope: directScope,
+            attachmentId: id,
+            mime: mime,
+          );
+          expect(result, expected, reason: '$id must reject as $expected');
+          expect(result.isRejection, isTrue);
+          final after = await fixture.rawAttachmentRow(id);
+          expect(
+            after!['download_status'],
+            before!['download_status'],
+            reason: '$id row must be untouched',
+          );
+          expect(after['local_path'], before['local_path']);
+          for (final path in mustSurvive) {
+            expect(
+              fileAt(path).existsSync(),
+              isTrue,
+              reason: '$path must survive the rejected clear of $id',
+            );
+          }
+        }
 
-      // The group scope sees ONLY its own sibling.
-      final groupInventory = await manager.inventory(scope: groupScope);
-      expect(groupInventory.totalCount, 1);
-      expect(groupInventory.totalBytes, 2);
+        // 1. Arbitrary absolute path (an export outside the app container).
+        final exportsDir = Directory.systemTemp.createTempSync('msm-exports-');
+        addTearDown(() => exportsDir.deleteSync(recursive: true));
+        final exportedFile = p.join(exportsDir.path, 'att-export.jpg');
+        createBytes(exportedFile, const [1, 2]);
+        await seedAttachmentRow(
+          owner: MediaOwnerLane.direct,
+          scopeId: directScopeId,
+          messageId: 'msg-reject',
+          id: 'att-export',
+          storedPath: exportedFile,
+        );
+        await expectRejectedWithZeroMutation(
+          id: 'att-export',
+          mime: 'image/jpeg',
+          expected: MediaClearLocalCopyResult.rejectedNoncanonicalPath,
+          mustSurvive: [exportedFile],
+        );
 
-      // Cursor and limit discipline on the query itself.
-      final firstPage = await fixture.repo.getMediaStoragePage(
-        scope: directScope,
-      );
-      expect(firstPage.entries, hasLength(100));
-      expect(firstPage.nextCursor, isNotNull);
-      expect(
-        () => fixture.repo.getMediaStoragePage(scope: directScope, limit: 0),
-        throwsArgumentError,
-      );
-      expect(
-        () => fixture.repo.getMediaStoragePage(scope: directScope, limit: 101),
-        throwsArgumentError,
-      );
-      // A cursor replayed under another scope or kind fails before SQL.
-      expect(
-        () => fixture.repo.getMediaStoragePage(
-          scope: groupScope,
-          cursor: firstPage.nextCursor,
-        ),
-        throwsArgumentError,
-      );
-      expect(
-        () => fixture.repo.getMediaStoragePage(
+        // 2. Misleading legacy absolute: contains a '/media/' substring a
+        // resolveStoredPath-style remap would extract, but is NOT the exact
+        // current-container absolute path. The CURRENT canonical file must
+        // survive; the row requires an explicit path repair before Clear.
+        final currentCanonical = canonicalRelative(
+          directScopeId,
+          'att-legacy',
+          'image/jpeg',
+        );
+        createBytes(currentCanonical, const [3, 4, 5]);
+        await seedAttachmentRow(
+          owner: MediaOwnerLane.direct,
+          scopeId: directScopeId,
+          messageId: 'msg-reject',
+          id: 'att-legacy',
+          storedPath:
+              '/old-container/Documents/media/$directScopeId/att-legacy.jpg',
+        );
+        await expectRejectedWithZeroMutation(
+          id: 'att-legacy',
+          mime: 'image/jpeg',
+          expected: MediaClearLocalCopyResult.rejectedNoncanonicalPath,
+          mustSurvive: [currentCanonical],
+        );
+
+        // 3. Another attachment's canonical path is not YOURS.
+        final victimPath = canonicalRelative(
+          directScopeId,
+          'att-victim',
+          'image/jpeg',
+        );
+        createBytes(victimPath, const [6, 6]);
+        await seedAttachmentRow(
+          owner: MediaOwnerLane.direct,
+          scopeId: directScopeId,
+          messageId: 'msg-reject',
+          id: 'att-victim',
+          fileBytes: null,
+          storedPath: victimPath,
+        );
+        await seedAttachmentRow(
+          owner: MediaOwnerLane.direct,
+          scopeId: directScopeId,
+          messageId: 'msg-reject',
+          id: 'att-thief',
+          storedPath: victimPath,
+        );
+        await expectRejectedWithZeroMutation(
+          id: 'att-thief',
+          mime: 'image/jpeg',
+          expected: MediaClearLocalCopyResult.rejectedNoncanonicalPath,
+          mustSurvive: [victimPath],
+        );
+
+        // 4. Wrong extension for the claimed MIME: stored .jpg can never be
+        // authorized under a png expectation, and a mismatched row MIME is
+        // rejected even earlier.
+        final jpgPath = canonicalRelative(
+          directScopeId,
+          'att-wrong-ext',
+          'image/jpeg',
+        );
+        createBytes(jpgPath, const [8, 8]);
+        await seedAttachmentRow(
+          owner: MediaOwnerLane.direct,
+          scopeId: directScopeId,
+          messageId: 'msg-reject',
+          id: 'att-wrong-ext',
+          mime: 'image/png',
+          storedPath: jpgPath,
+        );
+        await expectRejectedWithZeroMutation(
+          id: 'att-wrong-ext',
+          mime: 'image/jpeg',
+          expected: MediaClearLocalCopyResult.rejectedMimeMismatch,
+          mustSurvive: [jpgPath],
+        );
+        await expectRejectedWithZeroMutation(
+          id: 'att-wrong-ext',
+          mime: 'image/png',
+          expected: MediaClearLocalCopyResult.rejectedNoncanonicalPath,
+          mustSurvive: [jpgPath],
+        );
+
+        // 5. Wrong scope directory (a group-scope path stored on a
+        // direct-owned row).
+        final foreignScopePath = canonicalRelative(
+          groupScopeId,
+          'att-foreign',
+          'image/jpeg',
+        );
+        createBytes(foreignScopePath, const [9]);
+        await seedAttachmentRow(
+          owner: MediaOwnerLane.direct,
+          scopeId: directScopeId,
+          messageId: 'msg-reject',
+          id: 'att-foreign',
+          storedPath: foreignScopePath,
+        );
+        await expectRejectedWithZeroMutation(
+          id: 'att-foreign',
+          mime: 'image/jpeg',
+          expected: MediaClearLocalCopyResult.rejectedNoncanonicalPath,
+          mustSurvive: [foreignScopePath],
+        );
+
+        // 6. Symlink at the canonical path: the stored value looks exact, but
+        // the resolved target escapes — fail closed BEFORE any mutation; the
+        // symlink target survives.
+        final symTargetFile = p.join(exportsDir.path, 'precious-original.jpg');
+        createBytes(symTargetFile, const [42, 42, 42]);
+        final symlinkRelative = canonicalRelative(
+          directScopeId,
+          'att-symlink',
+          'image/jpeg',
+        );
+        final symlinkAbsolute = p.join(tempDocs.path, symlinkRelative);
+        Directory(p.dirname(symlinkAbsolute)).createSync(recursive: true);
+        Link(symlinkAbsolute).createSync(symTargetFile);
+        await seedAttachmentRow(
+          owner: MediaOwnerLane.direct,
+          scopeId: directScopeId,
+          messageId: 'msg-reject',
+          id: 'att-symlink',
+          storedPath: symlinkRelative,
+        );
+        await expectRejectedWithZeroMutation(
+          id: 'att-symlink',
+          mime: 'image/jpeg',
+          expected: MediaClearLocalCopyResult.rejectedUnsafeTarget,
+          mustSurvive: [symTargetFile],
+        );
+        expect(
+          Link(symlinkAbsolute).existsSync(),
+          isTrue,
+          reason: 'even the symlink itself is never deleted on rejection',
+        );
+
+        // 7. A missing row and a row with nothing durable to clear.
+        expect(
+          await manager.clearLocalCopy(
+            scope: directScope,
+            attachmentId: 'att-absent',
+            mime: 'image/jpeg',
+          ),
+          MediaClearLocalCopyResult.rejectedMissingRow,
+        );
+        await seedAttachmentRow(
+          owner: MediaOwnerLane.direct,
+          scopeId: directScopeId,
+          messageId: 'msg-reject',
+          id: 'att-pending',
+          downloadStatus: 'pending',
+        );
+        expect(
+          await manager.clearLocalCopy(
+            scope: directScope,
+            attachmentId: 'att-pending',
+            mime: 'image/jpeg',
+          ),
+          MediaClearLocalCopyResult.rejectedNotClearable,
+        );
+      },
+    );
+
+    test(
+      'all media inventory exhausts owner scoped pages for exact totals',
+      () async {
+        await fixture.seedDirectParent('msg-inv');
+        await fixture.seedDirectParent(
+          'msg-inv-deleted',
+          deletedAt: '2026-07-09T00:00:00.000Z',
+        );
+        await fixture.seedGroupParent('msg-inv-group');
+
+        // 200 eligible direct rows across all four types with REAL bytes:
+        // 50 images x4B, 50 videos x6B, 50 audio x8B, 50 files x10B.
+        const typeSpecs = [
+          (type: 'image', mime: 'image/jpeg', bytes: 4),
+          (type: 'video', mime: 'video/mp4', bytes: 6),
+          (type: 'audio', mime: 'audio/mp4', bytes: 8),
+          (type: 'file', mime: 'application/pdf', bytes: 10),
+        ];
+        for (final spec in typeSpecs) {
+          for (var i = 0; i < 50; i++) {
+            await seedAttachmentRow(
+              owner: MediaOwnerLane.direct,
+              scopeId: directScopeId,
+              messageId: 'msg-inv',
+              id: 'inv-${spec.type}-${i.toString().padLeft(3, '0')}',
+              mime: spec.mime,
+              mediaType: spec.type,
+              fileBytes: List.filled(spec.bytes, 1),
+            );
+          }
+        }
+        // 201st..205th rows — every excluded form:
+        // (a) deleted-parent direct row WITH bytes;
+        await seedAttachmentRow(
+          owner: MediaOwnerLane.direct,
+          scopeId: directScopeId,
+          messageId: 'msg-inv-deleted',
+          id: 'inv-deleted-parent',
+          fileBytes: const [1, 1, 1, 1],
+        );
+        // (b) descriptor-only row (canonical path, missing file);
+        await seedAttachmentRow(
+          owner: MediaOwnerLane.direct,
+          scopeId: directScopeId,
+          messageId: 'msg-inv',
+          id: 'inv-missing-file',
+        );
+        // (c) noncanonical/exported stored path (file exists elsewhere);
+        final exportsDir = Directory.systemTemp.createTempSync('msm-inv-');
+        addTearDown(() => exportsDir.deleteSync(recursive: true));
+        final exported = p.join(exportsDir.path, 'inv-exported.jpg');
+        createBytes(exported, const [1, 1, 1, 1]);
+        await seedAttachmentRow(
+          owner: MediaOwnerLane.direct,
+          scopeId: directScopeId,
+          messageId: 'msg-inv',
+          id: 'inv-exported',
+          storedPath: exported,
+        );
+        // (d) unresolved legacy row with real bytes under the scope dir;
+        const unresolvedPath = 'media/$directScopeId/inv-unresolved.jpg';
+        createBytes(unresolvedPath, const [1, 1, 1, 1]);
+        await fixture.db.insert('media_attachments', {
+          'id': 'inv-unresolved',
+          'message_id': 'msg-inv',
+          'mime': 'image/jpeg',
+          'size': 4,
+          'media_type': 'image',
+          'download_status': 'done',
+          'local_path': unresolvedPath,
+          'created_at': '2026-07-10T09:00:00.000Z',
+          'owner_lane': 'unresolved',
+        });
+        // (e) group-owned sibling row with bytes (other scope).
+        await seedAttachmentRow(
+          owner: MediaOwnerLane.group,
+          scopeId: groupScopeId,
+          messageId: 'msg-inv-group',
+          id: 'inv-group-sibling',
+          fileBytes: const [2, 2],
+        );
+
+        final countingRepo = _FaultInjectingRepository(fixture.repo);
+        final manager = makeManager(repository: countingRepo);
+        final inventory = await manager.inventory(scope: directScope);
+
+        // Exact per-type totals from REAL file lengths only.
+        expect(inventory.totalFor('image').count, 50);
+        expect(inventory.totalFor('image').bytes, 200);
+        expect(inventory.totalFor('video').count, 50);
+        expect(inventory.totalFor('video').bytes, 300);
+        expect(inventory.totalFor('audio').count, 50);
+        expect(inventory.totalFor('audio').bytes, 400);
+        expect(inventory.totalFor('file').count, 50);
+        expect(inventory.totalFor('file').bytes, 500);
+        expect(inventory.totalCount, 200);
+        expect(inventory.totalBytes, 1400);
+
+        // The sweep paged to exhaustion through opaque limit-100 cursors:
+        // 100 + 100 + 0, i.e. exactly three requests, final cursor null.
+        expect(countingRepo.storagePageRequests, hasLength(3));
+        expect(
+          countingRepo.storagePageRequests.every(
+            (request) => request.limit == kMediaLibraryMaxPageSize,
+          ),
+          isTrue,
+        );
+        expect(countingRepo.storagePageRequests.first.cursor, isNull);
+        expect(countingRepo.storagePageRequests[1].cursor, isNotNull);
+        expect(countingRepo.storagePageRequests[2].cursor, isNotNull);
+        expect(
+          countingRepo.storagePageRequests[1].cursor,
+          isNot(countingRepo.storagePageRequests[2].cursor),
+        );
+
+        // The group scope sees ONLY its own sibling.
+        final groupInventory = await manager.inventory(scope: groupScope);
+        expect(groupInventory.totalCount, 1);
+        expect(groupInventory.totalBytes, 2);
+
+        // Cursor and limit discipline on the query itself.
+        final firstPage = await fixture.repo.getMediaStoragePage(
           scope: directScope,
-          kind: MediaStorageKind.image,
-          cursor: firstPage.nextCursor,
-        ),
-        throwsArgumentError,
-      );
-      // A visual-library cursor can never address the storage query.
-      final libraryPage = await fixture.repo.getMediaLibraryPage(
-        scope: directScope,
-        limit: 100,
-      );
-      expect(libraryPage.nextCursor, isNotNull);
-      expect(
-        () => fixture.repo.getMediaStoragePage(
+        );
+        expect(firstPage.entries, hasLength(100));
+        expect(firstPage.nextCursor, isNotNull);
+        expect(
+          () => fixture.repo.getMediaStoragePage(scope: directScope, limit: 0),
+          throwsArgumentError,
+        );
+        expect(
+          () =>
+              fixture.repo.getMediaStoragePage(scope: directScope, limit: 101),
+          throwsArgumentError,
+        );
+        // A cursor replayed under another scope or kind fails before SQL.
+        expect(
+          () => fixture.repo.getMediaStoragePage(
+            scope: groupScope,
+            cursor: firstPage.nextCursor,
+          ),
+          throwsArgumentError,
+        );
+        expect(
+          () => fixture.repo.getMediaStoragePage(
+            scope: directScope,
+            kind: MediaStorageKind.image,
+            cursor: firstPage.nextCursor,
+          ),
+          throwsArgumentError,
+        );
+        // A visual-library cursor can never address the storage query.
+        final libraryPage = await fixture.repo.getMediaLibraryPage(
           scope: directScope,
-          cursor: libraryPage.nextCursor,
-        ),
-        throwsArgumentError,
-      );
-      // And a per-type page addresses only its own type.
-      final audioPage = await fixture.repo.getMediaStoragePage(
-        scope: directScope,
-        kind: MediaStorageKind.audio,
-      );
-      expect(
-        audioPage.entries.every(
-          (entry) => entry.attachment.mediaType == 'audio',
-        ),
-        isTrue,
-      );
-      expect(audioPage.entries, hasLength(50));
-    });
+          limit: 100,
+        );
+        expect(libraryPage.nextCursor, isNotNull);
+        expect(
+          () => fixture.repo.getMediaStoragePage(
+            scope: directScope,
+            cursor: libraryPage.nextCursor,
+          ),
+          throwsArgumentError,
+        );
+        // And a per-type page addresses only its own type.
+        final audioPage = await fixture.repo.getMediaStoragePage(
+          scope: directScope,
+          kind: MediaStorageKind.audio,
+        );
+        expect(
+          audioPage.entries.every(
+            (entry) => entry.attachment.mediaType == 'audio',
+          ),
+          isTrue,
+        );
+        expect(audioPage.entries, hasLength(50));
+      },
+    );
   });
 }

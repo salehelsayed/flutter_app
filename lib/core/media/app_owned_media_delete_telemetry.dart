@@ -19,6 +19,7 @@ Future<void> deleteAppOwnedMediaFileIfExists({
   String? storedPath,
   Map<String, Object?> details = const {},
   bool swallowErrors = false,
+  bool redactTelemetry = false,
 }) async {
   await _deleteAppOwnedMediaTargetIfExists(
     path: file.path,
@@ -28,6 +29,7 @@ Future<void> deleteAppOwnedMediaFileIfExists({
     storedPath: storedPath,
     details: details,
     swallowErrors: swallowErrors,
+    redactTelemetry: redactTelemetry,
     exists: file.exists,
     bytes: file.length,
     delete: () => file.delete(),
@@ -49,6 +51,7 @@ Future<void> deleteAppOwnedMediaDirectoryIfExists({
     reason: reason,
     details: {'recursive': recursive, ...details},
     swallowErrors: swallowErrors,
+    redactTelemetry: false,
     exists: directory.exists,
     bytes: () => _directoryEntryCount(directory),
     delete: () => directory.delete(recursive: recursive),
@@ -63,6 +66,7 @@ Future<void> _deleteAppOwnedMediaTargetIfExists({
   String? storedPath,
   required Map<String, Object?> details,
   required bool swallowErrors,
+  required bool redactTelemetry,
   required Future<bool> Function() exists,
   required Future<int> Function() bytes,
   required Future<FileSystemEntity> Function() delete,
@@ -88,16 +92,25 @@ Future<void> _deleteAppOwnedMediaTargetIfExists({
     'caller': caller,
     'reason': reason,
     'targetKind': targetKind,
-    'path': path,
-    'pathKind': appOwnedMediaPathKind(path),
-    if (storedPath != null) 'storedPath': storedPath,
-    if (storedPath != null) 'storedPathKind': appOwnedMediaPathKind(storedPath),
+    'path': redactTelemetry ? '[redacted]' : path,
+    'pathKind': redactTelemetry ? '[redacted]' : appOwnedMediaPathKind(path),
+    if (storedPath != null || redactTelemetry)
+      'storedPath': redactTelemetry ? '[redacted]' : storedPath,
+    if (storedPath != null || redactTelemetry)
+      'storedPathKind': redactTelemetry
+          ? '[redacted]'
+          : appOwnedMediaPathKind(storedPath),
     'existsBefore': existsBefore,
-    if (bytesBefore != null) 'bytesBefore': bytesBefore,
-    if (entryCountBefore != null) 'entryCountBefore': entryCountBefore,
-    if (statError != null) 'statError': statError.toString(),
-    ...details,
+    if (statError != null)
+      'statError': redactTelemetry
+          ? statError.runtimeType.toString()
+          : statError.toString(),
+    if (!redactTelemetry) ...details,
   };
+  if (bytesBefore != null) baseDetails['bytesBefore'] = bytesBefore;
+  if (entryCountBefore != null) {
+    baseDetails['entryCountBefore'] = entryCountBefore;
+  }
 
   emitFlowEvent(
     layer: 'FL',
@@ -125,7 +138,10 @@ Future<void> _deleteAppOwnedMediaTargetIfExists({
     emitFlowEvent(
       layer: 'FL',
       event: 'APP_OWNED_MEDIA_DELETE_ERROR',
-      details: {...baseDetails, 'error': e.toString()},
+      details: {
+        ...baseDetails,
+        'error': redactTelemetry ? e.runtimeType.toString() : e.toString(),
+      },
     );
     if (!swallowErrors) {
       rethrow;

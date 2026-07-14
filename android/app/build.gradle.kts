@@ -25,6 +25,50 @@ val androidApplicationId = providers.gradleProperty("androidApplicationId")
     .orElse(localProperties.getProperty("android.applicationId") ?: "com.mknoon.app")
     .get()
 val hasGoogleServicesConfig = file("google-services.json").exists()
+val disableGoogleServicesForDisposableProof =
+    providers.gradleProperty("disableGoogleServicesForDisposableProof").orNull == "true"
+val enablePictureInPictureEngineDetachProof =
+    when (
+        val raw = providers.gradleProperty(
+            "enablePictureInPictureEngineDetachProof"
+        ).orNull
+    ) {
+        null, "false" -> false
+        "true" -> true
+        else -> throw GradleException(
+            "enablePictureInPictureEngineDetachProof must be exactly true or false."
+        )
+    }
+val enablePictureInPictureInterruptionProof =
+    when (
+        val raw = providers.gradleProperty(
+            "enablePictureInPictureInterruptionProof"
+        ).orNull
+    ) {
+        null, "false" -> false
+        "true" -> true
+        else -> throw GradleException(
+            "enablePictureInPictureInterruptionProof must be exactly true or false."
+        )
+    }
+if (
+    enablePictureInPictureEngineDetachProof &&
+    androidApplicationId != "com.mknoon.app.pipproof"
+) {
+    throw GradleException(
+        "Picture-in-picture engine-detach proof sources require the exact " +
+            "disposable application ID com.mknoon.app.pipproof."
+    )
+}
+if (
+    enablePictureInPictureInterruptionProof &&
+    androidApplicationId != "com.mknoon.app.pipproof"
+) {
+    throw GradleException(
+        "Picture-in-picture interruption proof sources require the exact " +
+            "disposable application ID com.mknoon.app.pipproof."
+    )
+}
 val keystorePropertiesFile = rootProject.file("key.properties")
 val hasReleaseSigning = keystorePropertiesFile.exists()
 val allowDebugSigningInRelease =
@@ -36,12 +80,16 @@ fun requireKeystoreProperty(name: String): String =
             "Missing `$name` in android/key.properties for Android release signing."
         )
 
-if (hasGoogleServicesConfig) {
+if (hasGoogleServicesConfig && !disableGoogleServicesForDisposableProof) {
     apply(plugin = "com.google.gms.google-services")
 } else {
     logger.warn(
-        "google-services.json not found in android/app. " +
-        "Android Firebase services will stay disabled until the file is added."
+        if (disableGoogleServicesForDisposableProof) {
+            "Google services disabled for an explicitly disposable proof build."
+        } else {
+            "google-services.json not found in android/app. " +
+                "Android Firebase services will stay disabled until the file is added."
+        }
     )
 }
 
@@ -49,6 +97,10 @@ android {
     namespace = "com.mknoon.app"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
+
+    buildFeatures {
+        buildConfig = true
+    }
 
     compileOptions {
         isCoreLibraryDesugaringEnabled = true
@@ -77,6 +129,23 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+    }
+
+    sourceSets {
+        if (enablePictureInPictureEngineDetachProof) {
+            getByName("debug") {
+                java.srcDir("src/pipProof/kotlin")
+                manifest.srcFile("src/pipProof/AndroidManifest.xml")
+            }
+        }
+        if (enablePictureInPictureInterruptionProof) {
+            getByName("androidTest") {
+                java.srcDir("src/pipInterruptionProofAndroidTest/java")
+                manifest.srcFile(
+                    "src/pipInterruptionProofAndroidTest/AndroidManifest.xml"
+                )
+            }
+        }
     }
 
     testOptions {
@@ -133,7 +202,7 @@ tasks.register("buildGoAar") {
         @Suppress("DEPRECATION")
         exec {
             workingDir = rootProject.projectDir
-            commandLine("bash", ensureBindingsScript.absolutePath)
+            commandLine("/bin/bash", ensureBindingsScript.absolutePath)
         }
         if (!isValidAar(aar)) {
             aar.delete()
@@ -165,7 +234,7 @@ if (!hasReleaseSigning && !allowDebugSigningInRelease) {
     }
 }
 
-if (!hasGoogleServicesConfig) {
+if (!hasGoogleServicesConfig || disableGoogleServicesForDisposableProof) {
     tasks.matching {
         it.name in setOf("assembleRelease", "bundleRelease", "packageRelease")
     }.configureEach {

@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
@@ -35,6 +36,13 @@ class _UnackedDeleteP2PService extends FakeP2PService {
     int? timeoutMs,
   }) async {
     return SendMessageResult(sent: true, acked: false, transport: transport);
+  }
+}
+
+class _ThrowingReadMessageRepository extends FakeMessageRepository {
+  @override
+  Future<ConversationMessage?> getMessage(String id) async {
+    throw StateError('injected authority read failure');
   }
 }
 
@@ -91,6 +99,175 @@ void main() {
   });
 
   group('delete_message_use_case', () {
+    test(
+      'authority read failure returns zero with no cleanup mutation',
+      () async {
+        final message = makeMessage(id: 'delete-read-failure');
+        mediaAttachmentRepo.seed([
+          makeAttachment(
+            id: 'delete-read-failure-att',
+            messageId: message.id,
+            localPath: 'media/peer-bob/delete-read-failure-att.jpg',
+          ),
+        ]);
+
+        expect(
+          await deleteMessageForMe(
+            message: message,
+            messageRepo: _ThrowingReadMessageRepository(),
+            reactionRepo: reactionRepo,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+          ),
+          0,
+        );
+        expect(
+          await mediaAttachmentRepo.getAttachmentsForMessage(
+            message.id,
+            owner: MediaOwnerLane.direct,
+          ),
+          hasLength(1),
+        );
+        expect(mediaFileManager.deletedFilePaths, isEmpty);
+      },
+    );
+
+    test(
+      'stale ordinary snapshot cannot physically delete current private parent',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        const id = 'private-delete-stale-ordinary';
+        await fixture.seedDirectParent(id);
+        await fixture.db.update(
+          'messages',
+          {
+            'private_media_policy_version': 1,
+            'private_media_mode': 'protected',
+            'private_media_state': 'available',
+            'private_media_received_at_ms': 1000,
+            'private_media_clock_high_water_ms': 1000,
+          },
+          where: 'id = ?',
+          whereArgs: [id],
+        );
+        final current = (await fixture.messageRepo.getMessage(id))!;
+        final staleOrdinary = current.copyWith(
+          privateMediaPolicy: const PrivateMediaPolicy.ordinary(),
+          privateMediaState: PrivateMediaLifecycleState.none,
+        );
+
+        expect(
+          await deleteMessageForMe(
+            message: staleOrdinary,
+            messageRepo: fixture.messageRepo,
+            mediaAttachmentRepo: fixture.repo,
+            mediaFileManager: mediaFileManager,
+          ),
+          1,
+        );
+        final after = await fixture.messageRepo.getMessage(id);
+        expect(after, isNotNull);
+        expect(after!.hiddenAt, isNotNull);
+        expect(after.privateMediaPolicy.mode, PrivateMediaMode.protected);
+        expect(after.privateMediaState, PrivateMediaLifecycleState.available);
+      },
+    );
+
+    test(
+      'stale private snapshot preserves current terminal checkpoint',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        const id = 'private-delete-stale-terminal';
+        await fixture.seedDirectParent(id);
+        await fixture.db.update(
+          'messages',
+          {
+            'private_media_policy_version': 1,
+            'private_media_mode': 'view_once',
+            'private_media_state': 'consumed',
+            'private_media_received_at_ms': 1000,
+            'private_media_terminal_at_ms': 2000,
+            'private_media_clock_high_water_ms': 2000,
+          },
+          where: 'id = ?',
+          whereArgs: [id],
+        );
+        final current = (await fixture.messageRepo.getMessage(id))!;
+        final stalePrivate = current.copyWith(
+          privateMediaPolicy: const PrivateMediaPolicy.protected(),
+          privateMediaState: PrivateMediaLifecycleState.available,
+          privateMediaTerminalAtMs: null,
+        );
+
+        expect(
+          await deleteMessageForMe(
+            message: stalePrivate,
+            messageRepo: fixture.messageRepo,
+            mediaAttachmentRepo: fixture.repo,
+            mediaFileManager: mediaFileManager,
+          ),
+          1,
+        );
+        final after = await fixture.messageRepo.getMessage(id);
+        expect(after, isNotNull);
+        expect(after!.hiddenAt, isNotNull);
+        expect(after.privateMediaPolicy.mode, PrivateMediaMode.viewOnce);
+        expect(after.privateMediaState, PrivateMediaLifecycleState.consumed);
+        expect(after.privateMediaTerminalAtMs, 2000);
+      },
+    );
+
+    test(
+      'private delete retains truthful hidden parent before exact cleanup',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        await fixture.seedDirectParent('private-delete');
+        await fixture.db.update(
+          'messages',
+          {
+            'private_media_policy_version': 1,
+            'private_media_mode': 'protected',
+            'private_media_state': 'available',
+            'private_media_received_at_ms': 1000,
+            'private_media_clock_high_water_ms': 1000,
+          },
+          where: 'id = ?',
+          whereArgs: ['private-delete'],
+        );
+        await fixture.repo.saveAttachment(
+          makeAttachment(
+            id: 'private-delete-att',
+            messageId: 'private-delete',
+            localPath: 'media/contact-1/private-delete-att.jpg',
+          ).copyWith(encryptionKeyBase64: 'a2V5', encryptionNonce: 'bm9uY2U='),
+          owner: MediaOwnerLane.direct,
+        );
+        final privateMessage = (await fixture.messageRepo.getMessage(
+          'private-delete',
+        ))!;
+
+        final count = await deleteMessageForMe(
+          message: privateMessage,
+          messageRepo: fixture.messageRepo,
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: mediaFileManager,
+        );
+
+        final tombstone = await fixture.messageRepo.getMessage(
+          'private-delete',
+        );
+        expect(count, 1);
+        expect(tombstone, isNotNull);
+        expect(tombstone!.hiddenAt, isNotNull);
+        expect(tombstone.privateMediaState.name, 'available');
+        expect(tombstone.privateMediaPolicy.mode.name, 'protected');
+        expect(await fixture.rawAttachmentRow('private-delete-att'), isNull);
+      },
+    );
+
     test(
       'deleteMessageForMe hard-deletes the row after local cleanup',
       () async {

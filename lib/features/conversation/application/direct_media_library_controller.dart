@@ -179,18 +179,29 @@ class DirectMediaLibraryController extends ChangeNotifier {
     if (changed) notifyListeners();
   }
 
-  /// Toggles the durable bookmark flag through the plan-228 ID-based state
-  /// API — but ONLY for an attachment obtained from the current
-  /// direct-scoped pages. Unknown IDs and non-direct rows fail closed with
-  /// zero writes. Under the Bookmarked filter an un-bookmarked entry leaves
-  /// the visible list without disturbing unrelated selection.
+  /// Toggles the durable bookmark flag through the exact guarded direct-state
+  /// capability. Unknown IDs, non-direct rows, missing capabilities, and a
+  /// parent privacy/deletion race fail closed with zero mutation. A race loss
+  /// removes that parent's stale loaded rows instead of presenting them as
+  /// still actionable.
   Future<bool> toggleBookmark(String attachmentId) async {
     final index = _entries.indexWhere((e) => e.attachment.id == attachmentId);
     if (index < 0) return false;
     final entry = _entries[index];
     if (entry.attachment.ownerLane != MediaOwnerLane.direct) return false;
+    final guardedState = _stateRepository;
+    if (guardedState is! DirectMediaLibraryStateRepository) return false;
     final next = !entry.attachment.isBookmarked;
-    await _stateRepository.setBookmarked(attachmentId, bookmarked: next);
+    final changed = await (guardedState as DirectMediaLibraryStateRepository)
+        .setDirectBookmarkedIfOrdinary(
+          messageId: entry.attachment.messageId,
+          attachmentId: attachmentId,
+          bookmarked: next,
+        );
+    if (!changed) {
+      removeEntriesForMessage(entry.attachment.messageId);
+      return false;
+    }
     final reconciled = MediaLibraryEntry(
       attachment: entry.attachment.copyWith(isBookmarked: next),
       parentTimestamp: entry.parentTimestamp,

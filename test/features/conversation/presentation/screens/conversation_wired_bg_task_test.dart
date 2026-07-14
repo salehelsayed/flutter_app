@@ -10,6 +10,7 @@
 import 'dart:async';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -322,7 +323,11 @@ class _FakeP2PService implements P2PService {
     int? timeoutMs,
   }) async => dialPeerResult;
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
     operationLog.add('p2p:storeInInbox');
     return storeInInboxResult;
   }
@@ -357,8 +362,7 @@ class _FakeP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
@@ -471,6 +475,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _instantSuccessSendFn({
   String? recipientMlKemPublicKey,
   String? quotedMessageId,
   List<MediaAttachment>? mediaAttachments,
+  PrivateMediaPolicy? privateMediaPolicy,
   MediaAttachmentRepository? mediaAttachmentRepo,
   TransportMetrics? transportMetrics,
 }) async {
@@ -668,6 +673,7 @@ void main() {
                 String? recipientMlKemPublicKey,
                 String? quotedMessageId,
                 List<MediaAttachment>? mediaAttachments,
+                PrivateMediaPolicy? privateMediaPolicy,
                 MediaAttachmentRepository? mediaAttachmentRepo,
                 TransportMetrics? transportMetrics,
               }) async {
@@ -787,6 +793,7 @@ void main() {
                 String? recipientMlKemPublicKey,
                 String? quotedMessageId,
                 List<MediaAttachment>? mediaAttachments,
+                PrivateMediaPolicy? privateMediaPolicy,
                 MediaAttachmentRepository? mediaAttachmentRepo,
                 TransportMetrics? transportMetrics,
               }) async {
@@ -878,7 +885,11 @@ void main() {
 
         expect(p2pService.sendLocalMediaCallCount, 1);
         _expectOrdered(operationLog, 'bridge:bg:begin', 'p2p:sendLocalMedia');
-        _expectOrdered(operationLog, 'p2p:sendLocalMedia', 'sendVoiceMessageFn');
+        _expectOrdered(
+          operationLog,
+          'p2p:sendLocalMedia',
+          'sendVoiceMessageFn',
+        );
         _expectOrdered(operationLog, 'sendVoiceMessageFn', 'bridge:bg:end');
       },
     );

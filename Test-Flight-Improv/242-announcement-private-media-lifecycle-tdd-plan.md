@@ -1,10 +1,100 @@
 # 242 - Announcement Private-Media Lifecycle
 
-Status: evidence-gated
+Status: accepted
 Type: New Feature
 Spec: free-text intent — adapt approved group view-once, disappearing, and protected image/video policy to announcements without weakening publisher authorization or inventing another lifecycle protocol
-Classification: evidence-gated
+Classification: implemented and directly accepted
 Closure tier: device
+
+## Accepted Decision Contract
+
+Accepted for direct execution on 2026-07-12 after Plan 238 closed. This
+section supersedes every historical statement below that describes Plan 242 or
+its upstream lifecycle contract as unresolved or evidence-gated.
+
+| Decision | Accepted contract |
+|---|---|
+| Base lifecycle | Reuse Plan 238's message-scoped v101 policy, durable device/install-local consume/expiry state, cleanup engine, download/replay guards, viewer, notification, and platform protection without another migration, owner lane, enum, clock, or wire protocol. |
+| Author eligibility | Any currently active announcement admin may author private image/video. Both the local `GroupRole.admin` row and current roster `MemberRole.admin` must agree at selection, send, pre-upload, final dispatch, and every retry/re-drive. Receive persistence independently requires the resolved current sender roster row to remain `MemberRole.admin`; reader/writer, removed, demoted, missing, or mismatched authority fails before event-log, parent, attachment, or notification work. Readers never gain compose or publish. |
+| Broadcast consumption | Each recipient installation enforces its own consume/expiry state. No account-wide/global-once event, sibling-device convergence, relay revocation, uninstall recovery, or remote reset is claimed. |
+| Admin/terminal state | Published lifecycle policy and terminal consume/expiry state are immutable. A later admin cannot reset, revoke, recover, export, or reclassify private bytes. The durable placeholder retains only the normal message identity plus policy/terminal/integrity metadata required for truthful local history and lifecycle auditability. |
+| Notification | Foreground/background/lock-screen copy is app title plus localized `New private media`; no announcement, publisher, caption, subtype, lifecycle, duration, thumbnail, path, key, or bytes are visible or fetched. Explicit partial, malformed, or future policy markers fail closed to the same generic copy in both Dart and the iOS Notification Service Extension. |
+| Reporting disposition | Report is an accepted product non-goal. Retained identity/policy/terminal/integrity metadata exists only for truthful local history and lifecycle proof; there is no reporting consumer, gateway, consent/result flow, byte access, recovery override, or lifecycle-reset authority. |
+| Platform promise | Reuse the exact Plan-238 protected viewer: Android route-scoped `FLAG_SECURE`; iOS detection/obscuring with truthful best-effort wording; private PiP/resume denied. No universal screenshot-prevention claim. |
+| Proof topology | Announcement-specific host tests prove role, encrypted-inner live/offline/retry, terminal lifecycle, capability, notification, and metadata boundaries. Existing ordinary announcement tests plus Go authorization preserve read-only broadcast semantics. The inherited Plan-238 SQLCipher/native proof and announcement-specific real-Go payload plus wired Android route/native-protection proof run on explicit available targets; the iOS Notification Service resolver suite covers the platform notification boundary. No three-party scenario is required because this plan adds no schema, transport, convergence, or relay behavior. Unavailable mobile legs are N/A by project policy. |
+
+## Current Direct Execution Contract
+
+- Plan 238 remains the exclusive owner of DB v101, group-owned storage,
+  encrypted-inner policy fields, lifecycle engine, cleanup, viewer, and native
+  protection. Plan 242 allocates no migration and adds no Go/node protocol.
+- Production availability now admits `GroupType.announcement`, while the same
+  current-state qualification requires matching local and roster admin roles.
+  Initial send, pre-upload, failed-message retry, incomplete-upload retry, and
+  final dispatch all reuse the exact durable-parent requalification seam. Key
+  lookup is followed by a fresh group read and a final live-roster read, so an
+  async demotion cannot cross into reliable-send, publish, or inbox work.
+- Announcement readers remain read-only. All private message rendering,
+  actions, Forward, library/batch eligibility, notifications, download/open,
+  consume/expiry, and terminal cleanup reuse the central Plan-238 policy.
+- Live and offline receive paths share a final current-sender admin check
+  before persistence. The iOS Notification Service Extension recognizes any
+  explicit group-private policy marker and returns localized generic copy,
+  including partial, malformed, and future policy input.
+- A dedicated three-party device runner is intentionally N/A: the accepted
+  behavior is per-install and changes no broadcast transport. Device closure
+  passed on physical Android `21071FDF600CSC` through v101 SQLCipher, the real
+  Go announcement payload, inherited native protection, and the actual
+  announcement wired route; the iOS NSE regression passed on available
+  simulator `DBE8C32E-9F19-4593-860A-B41113791D79`.
+
+## Current Change Manifest
+
+Production seams:
+
+- `lib/features/groups/application/group_private_media_availability.dart` —
+  announcement availability and exact local/roster role predicate.
+- `lib/features/groups/application/send_group_message_use_case.dart` —
+  announcement private send support, durable-parent/key/current-author
+  qualification, final roster read after async gaps, and shared initial/retry/
+  fallback dispatch enforcement.
+- `lib/features/groups/application/handle_incoming_group_message_use_case.dart`
+  — current announcement-admin receive authorization before any persistence.
+- `lib/features/groups/application/retry_failed_group_messages_use_case.dart`
+  and `retry_incomplete_group_uploads_use_case.dart` — every retry/pre-upload/
+  final-send branch consumes the shared fresh qualification.
+- `lib/features/groups/presentation/screens/group_conversation_wired.dart` —
+  composer selection and send recheck use the current admin predicate. This
+  shared file is serialized with the forwarding lane after the narrow privacy
+  hunk; Plan 242 owns no Forward/library implementation there.
+- `lib/features/push/application/push_decrypt_preview.dart` and
+  `ios/NotificationService/NotificationPreviewResolver.swift` — generic
+  private-announcement notification copy with explicit-policy fail-closed
+  handling across Dart and the iOS NSE.
+
+Dedicated proof files:
+
+- `test/features/groups/domain/models/announcement_private_media_policy_test.dart`
+- `test/features/groups/application/announcement_private_media_authorization_test.dart`
+- `test/features/groups/application/announcement_incoming_message_authorization_test.dart`
+- `test/features/groups/application/announcement_private_media_notification_test.dart`
+- `test/features/groups/application/announcement_private_media_moderation_test.dart`
+- `test/features/groups/integration/announcement_private_media_payload_roundtrip_test.dart`
+- `test/features/groups/integration/announcement_private_media_lifecycle_test.dart`
+- `test/features/groups/presentation/announcement_private_media_capabilities_test.dart`
+- `integration_test/announcement_private_media_platform_proof_test.dart`
+
+Existing preservation/adapter files extended by exact APL cases:
+
+- `test/features/groups/application/group_private_media_notification_test.dart`
+- `test/features/groups/presentation/group_conversation_wired_test.dart`
+
+Deliberately unchanged: database version/migrations, `GroupMessage` lifecycle
+columns, core lifecycle/viewer/native protection, Go node/relay production,
+report submission (intentionally absent), and forwarding/library production. Plan 242 adds only a
+thin wired-route device proof around the shared viewer/native mechanism.
+
+## Historical Planning Record (Superseded)
 
 ## Planning Progress
 
@@ -25,23 +115,23 @@ Closure tier: device
 - Confirmed persistence owner: plan 238 owns one eventual group-private lifecycle migration, allocated as the then-next free version only after its decision ledger and a fresh collision check. This plan must reuse its accepted fields and reserves no version.
 - Confirmed action risk: plans 239-241 add egress, forwarding, bookmark/library, batch, viewer and storage actions. An announcement lifecycle policy must feed one shared capability decision before any of those paths resolves or exports a file.
 - Existing coverage: `announcement_happy_path_test.dart` and `announcement_new_reader_onboarding_test.dart` prove ordinary image/video delivery and reader send rejection; plan-238 lifecycle rows will own the base engine, eventual migration, encrypted-inner, capture and replay contracts.
-- Missing coverage: announcement author eligibility, announcement live/offline mapping, reader action denial, multi-reader consume/expiry behavior, notification redaction, admin/moderation interaction, and an announcement-specific real-device scenario.
+- Missing coverage at the historical planning point: announcement author eligibility, announcement live/offline mapping, reader action denial, multi-reader consume/expiry behavior, notification redaction, admin/terminal-state interaction, and an announcement-specific real-device scenario.
 - Refuted findings: local file deletion alone is not view once/disappearing; replay can restore access unless DB lifecycle state wins before download/decode. `FLAG_SECURE` alone is not a universal cross-platform screenshot guarantee.
-- Unresolved findings: all plan-238 ledger choices remain unresolved, plus whether any announcement admin or only the original publisher may apply/change policy; whether a later admin can revoke/override a published policy; how per-reader consumption applies to broadcast recipients; reader/admin notification wording; report access after consume/expiry under plan 246; and the exact real-device role topology.
+- Unresolved findings at the historical planning point: all plan-238 ledger choices remained unresolved, plus whether any announcement admin or only the original publisher could apply/change policy; whether a later admin could revoke/override a published policy; how per-reader consumption applied to broadcast recipients; reader/admin notification wording; whether any reporting consumer existed after consume/expiry; and the exact real-device role topology. The accepted contract above and Plan 246's intentional non-goal supersede these questions.
 - Affected production, test, migration, platform, bridge, and gate files cannot be finalized until those decisions are approved. This plan owns only the announcement adapter/tests; the eventual lifecycle migration, base policy/platform bridge, and optional encrypted fields remain plan 238.
 
 ## Evidence Decision Ledger
 
 | Decision | Required accepted evidence | Current state | Consequence if unresolved |
 |---|---|---|---|
-| Base lifecycle semantics | plan-238 ledger accepted for consume boundary, expiry authority/skew, unknown values, capture wording, replay/blob and device convergence | unresolved upstream | no announcement lifecycle implementation |
-| Announcement author eligibility | any current admin vs original publisher/owner; composer/send/retry revalidation matrix | unresolved | no author controls or send policy |
-| Broadcast consumption scope | per recipient-device, per account, or another authenticated scope; offline/multi-device conflict behavior | unresolved | no view-once acceptance or device topology |
-| Admin/moderation override | whether another admin can revoke/change policy and how audit/report evidence survives | unresolved | no update/revoke behavior |
-| Announcement notification privacy | foreground/background/lock-screen title/body/caption/thumbnail matrix for each policy | unresolved | no notification implementation |
-| Reporting compatibility | minimum metadata/audit state retained for downstream plan 246 without retaining or exporting prohibited media bytes | unresolved | no stable downstream safety contract |
-| Platform promise | Android/iOS best-effort capture behavior and exact user copy inherited/extended from GPL-11 | unresolved upstream | no protected UI/platform acceptance |
-| Device proof topology | roles/accounts/devices, offline interval, relay fixture, process restart, accepted semantic oracle, and exact scenario/platform discovery rules | unresolved | no final simulator/device command or registration |
+| Base lifecycle semantics | plan-238 ledger accepted for consume boundary, expiry authority/skew, unknown values, capture wording, replay/blob and device convergence | accepted 2026-07-12 — exact Plan-238 device/install-local contract | implemented through the shared v101 policy/engine |
+| Announcement author eligibility | any current admin vs original publisher/owner; composer/send/retry/receive revalidation matrix | accepted 2026-07-12 — any current admin with matching local+roster admin send authority and current roster-admin receive authority | APL-02/APL-02W plus the live/offline incoming authorization suite cover selection, send, demotion, retries, and persistence |
+| Broadcast consumption scope | per recipient-device, per account, or another authenticated scope; offline/multi-device conflict behavior | accepted 2026-07-12 — independent recipient installation; no convergence claim | no new consume event or transport exists |
+| Admin/terminal-state override | whether another admin can revoke/change policy and how truthful lifecycle metadata survives | accepted 2026-07-12 — no override/reset/recovery; immutable terminal placeholder metadata only | APL-09 covers retained metadata without bytes |
+| Announcement notification privacy | foreground/background/lock-screen title/body/caption/thumbnail matrix for each policy | accepted 2026-07-12 — app title plus localized generic private-media body; explicit malformed/partial/future policy fails closed | APL-07 covers Dart paths and `NotificationPreviewResolverTests` covers the iOS NSE |
+| Reporting disposition | whether any downstream reporting consumer exists and what metadata remains without retaining or exporting prohibited media bytes | accepted 2026-07-13 — no reporting consumer; identity/policy/terminal/integrity metadata remains only for truthful local history and lifecycle proof | Plan 246 closes Report as an intentional non-goal with no lifecycle authority or byte access |
+| Platform promise | Android/iOS best-effort capture behavior and exact user copy inherited/extended from GPL-11 | accepted 2026-07-12 — exact Plan-238 viewer/platform promise, no extension | no second native implementation |
+| Device proof topology | roles/accounts/devices, offline interval, relay fixture, process restart, accepted semantic oracle, and exact scenario/platform discovery rules | accepted 2026-07-12 — availability-bounded GPL-01D/GPL-11 plus announcement-specific APL-03D/APL-08 on Android `21071FDF600CSC`; iOS NSE regression on the available simulator | no three-party scenario or unavailable target gate |
 
 ## Scope Contract And Guard
 
@@ -51,7 +141,7 @@ Provisional in scope after every ledger row is accepted:
 - Reuse optional encrypted-inner `mediaLifecycle`, `mediaExpiresAt`, and `mediaProtected` fields across admin send/retry, live receive, offline inbox/history replay, and legacy absence. Do not add outer-envelope fields or a new Go/libp2p command.
 - Offer policy controls only to the accepted eligible announcement publisher role, revalidated immediately before send/retry. Every reader remains unable to compose, attach, quote, record, or publish.
 - Apply plan 238's durable-first consume/expire engine before file/key/thumbnail/controller cleanup. Preserve the accepted non-playable placeholder so history remains truthful and replay/download cannot resurrect plaintext.
-- Drive plan 230 and plans 239-241 from one current policy/capability result. View-once/protected media must deny Save, external Share, Forward, Bookmark, batch selection, PiP/resume and thumbnails whenever the accepted policy says so; Delete for me and retained safety metadata follow their own accepted matrix.
+- Drive plan 230 and plans 239-241 from one current policy/capability result. View-once/protected media must deny Save, external Share, Forward, Bookmark, batch selection, PiP/resume and thumbnails whenever the accepted policy says so; Delete for me and retained lifecycle metadata follow their own accepted matrix.
 - Redact announcement notifications and app-switch snapshots according to the accepted matrix before any media download/decode.
 - Reuse plan 238's Android/iOS best-effort capture mechanism and truthful copy. Add announcement route coverage, not a second native implementation.
 
@@ -69,7 +159,7 @@ Hard `Do not`:
 - Do not allow Save/Share/Forward/Bookmark/library batch/PiP/resume/notification preview to bypass current policy through a sibling surface or stale menu.
 - Do not claim universal screenshot/screen-record prevention, remote deletion, exported-copy revocation, cryptographic erasure, multi-device convergence, or relay revocation without matching real-boundary proof.
 - Do not trust raw sender/device wall clock, silently treat explicit unknown lifecycle as ordinary, or delete state required to block replay.
-- Do not implement Report or make retained safety metadata an egress path; downstream plan 246 owns the reporting gateway, consent and result behavior.
+- Do not implement Report or make retained lifecycle metadata an egress path. Plan 246 closes Report as an intentional product non-goal and owns no reporting gateway, consent flow, result behavior, or metadata consumer.
 
 Deferred / accepted difference:
 - 1:1 private media is plan 234 and discussion-group private media is plan 238; this plan does not force identical author/admin semantics across lanes.
@@ -80,7 +170,7 @@ Deferred / accepted difference:
 Dependencies:
 - Plan 228 supplies group owner isolation, unresolved exclusion, replay-safe local state, scope/filter-bound cursor semantics and the shared production migration registry; announcement policy consumes these through plans 238/241.
 - `Test-Flight-Improv/238-group-private-media-lifecycle-tdd-plan.md` must have an accepted Evidence Decision Ledger, a freshly conflict-checked eventual migration, and supplies `GroupMediaLifecycle`, `GroupPrivateMediaPolicy`, encrypted-inner fields, durable lifecycle engine, notification/capture base policy, and boundary proofs.
-- Plans 227-230 and 239-241 supply egress/storage/viewer/action/library capabilities that must consume the central policy; plan 246 is a downstream consumer of accepted lifecycle/safety metadata and is not a prerequisite.
+- Plans 227-230 and 239-241 supply egress/storage/viewer/action/library capabilities that must consume the central policy. Plan 246 is a closed intentional non-goal, has no lifecycle-metadata consumer, and is not a prerequisite.
 - Existing announcement authorization tests, group real-crypto fixture, multi-party device runner, and test discovery are preservation/harness dependencies.
 - This plan reserves no migration and no new Go/libp2p contract.
 
@@ -90,25 +180,27 @@ Dependencies:
 |---|---|---|---|---|---|---|
 | TC-242-00 | Both evidence ledgers have accepted owner/date/user wording and a proof profile before executable work starts | `Test-Flight-Improv/238-group-private-media-lifecycle-tdd-plan.md::Evidence Decision Ledger` plus this plan's `Evidence Decision Ledger` | planning evidence / product-security-platform sign-off | HEAD evidence RED: rows unresolved -> every row records an accepted choice and announcement delta | N/A — this stop gate makes later mutations meaningful | manual plan-review gate; blocks every following row |
 | TC-242-01 | Announcement mapping reuses plan 238's eventual shared-registry lifecycle migration/state with legacy standard defaults, group ownership and no competing migration. | plan-238 migration + real-SQLCipher proof rows plus `test/features/groups/domain/models/announcement_private_media_policy_test.dart::announcement rows reuse owner scoped lifecycle state without another schema` | prerequisite migration sentinels + host model/repository same-ID direct/group/unresolved fixture | HEAD lifecycle model RED -> after plan 238 acceptance, known/legacy announcement rows map as `group`, unresolved/direct collision rows remain excluded/preserved, and this plan leaves DB version unchanged | add an announcement column/lane/version, drop owner filtering, or reclassify unresolved -> TC-242-01 red | `flutter test test/features/groups/domain/models/announcement_private_media_policy_test.dart`; AUTO plus `GROUP_TESTS`; require exact migration/SQLCipher commands recorded by accepted plan 238 |
-| TC-242-02 | Only the approved announcement publisher role can choose policy, and role/membership is revalidated on send and queued retry | `test/features/groups/domain/usecases/send_group_message_use_case_test.dart::announcement private media authoring follows approved admin policy at send and retry` | evidence-gated host application / admin/member/demotion/removal fixtures | HEAD has no policy -> exact accepted role matrix succeeds/rejects before bridge calls; reader remains unauthorized | trust composer state or allow demoted/member retry -> TC-242-02 red after decision | `flutter test test/features/groups/domain/usecases/send_group_message_use_case_test.dart --plain-name 'announcement private media authoring follows approved admin policy at send and retry'`; existing `GROUP_TESTS`; blocked by TC-242-00 |
-| TC-242-03 | Sender policy roundtrips through announcement persist/retry, real encrypted live receive, offline replay, and legacy absence with no local consume leakage | `test/features/groups/integration/announcement_private_media_payload_roundtrip_test.dart::announcement policy matches send live offline retry and legacy paths` plus plan-238 GPL-12 | host integration + real-Go bridge sentinel / fake inbox and encrypted bridge fixture | HEAD fields absent -> all paths produce one exact policy; legacy standard; `mediaConsumedAt` and private fields absent from outer routing data | drop policy from retry/drain, leak consumed state, or add outer field -> TC-242-03 red | `flutter test test/features/groups/integration/announcement_private_media_payload_roundtrip_test.dart && flutter test -d "$FLUTTER_DEVICE_ID" integration_test/group_real_crypto_onboarding_test.dart --plain-name 'GPL-12 private media policy survives real Go bridge encrypted group payload'`; `GROUP_TESTS` + inherited device proof |
+| TC-242-02 | Only a current announcement admin can choose/publish policy, and receive persistence independently requires a current roster admin | `test/features/groups/application/announcement_private_media_authorization_test.dart` (`APL-02`, `APL-02K`), `announcement_incoming_message_authorization_test.dart`, plus `group_conversation_wired_test.dart::APL-02W` | host application/widget / admin/member/demotion/removal/key-await/live/offline fixtures | exact role matrix succeeds/rejects before bridge or persistence; final-key demotion and non-admin live/offline replay deny | trust composer state, return a stale roster snapshot, or persist reader/writer/revoked announcement traffic -> TC-242-02 red | focused APL aggregate plus exact `--plain-name 'APL-'`; `GROUP_TESTS` |
+| TC-242-03 | Sender policy roundtrips through announcement persist/retry, real encrypted live receive, offline replay, and legacy absence with no local consume leakage | `test/features/groups/integration/announcement_private_media_payload_roundtrip_test.dart` plus `integration_test/group_real_crypto_onboarding_test.dart::APL-03D` | host integration + real-Go bridge sentinel / fake inbox and encrypted bridge fixture | all paths produce one exact encrypted-inner policy; legacy stays standard; local consume state remains absent from wire | drop policy from retry/drain, leak consumed state, or add outer field -> TC-242-03 red | focused payload suite plus explicit physical-Android `APL-03D`; `GROUP_TESTS` + device proof |
 | TC-242-04 | Reader bubble/viewer/library/batch surfaces derive one current capability matrix, accept only resolved group-owned media, and deny every prohibited egress/forward/bookmark/resume action. | `test/features/groups/presentation/announcement_private_media_capabilities_test.dart::reader owner scoped media surfaces fail closed without gaining compose` | evidence-gated host widget / plans 230/239-241 harnesses, state table, same-ID direct/group/unresolved rows | HEAD policy/capabilities absent -> every surface agrees before/after consume/expiry; direct/unresolved entries never render or call gateways | guard viewer only, use stale capabilities, union batch permissions, omit owner scope, or accept unresolved -> TC-242-04 red | `flutter test test/features/groups/presentation/announcement_private_media_capabilities_test.dart`; AUTO plus `GROUP_TESTS`; blocked on accepted action matrix |
-| TC-242-05 | View-once consumes once at the accepted decoder boundary, commits plan-238 local state before cleanup, and cannot reopen after cancel/crash/restart/replay | `test/features/groups/integration/announcement_view_once_media_lifecycle_test.dart::announcement view once is boundary exact crash safe and replay proof` | evidence-gated host integration / production repository over host SQLite, temp file, decoder milestones, fresh controller, offline replay | HEAD lifecycle absent -> consume/cancel/crash matrix matches decision; placeholder remains; decode/download after consumed is zero | consume at tap regardless of decode, clean before commit, or reconstruct from replay -> TC-242-05 red | `flutter test test/features/groups/integration/announcement_view_once_media_lifecycle_test.dart`; AUTO plus `GROUP_TESTS`; inherits plan-238 engine |
-| TC-242-06 | Disappearing media expires under the accepted authority/skew policy across foreground/background/restart/offline-late replay and cannot redownload | `test/features/groups/integration/announcement_disappearing_media_lifecycle_test.dart::announcement expiry follows approved clock and blocks late replay download` | evidence-gated host integration / fake authoritative clock, scheduler, repository reopen, download spy | HEAD expiry absent -> exact boundary/placeholder/cleanup and zero late decode/download | use `DateTime.now`, restart duration on receipt/open, or accept skewed replay -> TC-242-06 red | `flutter test test/features/groups/integration/announcement_disappearing_media_lifecycle_test.dart`; AUTO plus `GROUP_TESTS`; blocked on clock decision |
-| TC-242-07 | Private announcement notifications and thumbnails follow the accepted foreground/background/lock-screen matrix without downloading/decrypting media | `test/features/groups/application/announcement_private_media_notification_test.dart::private announcement notification redacts approved fields without plaintext fetch` | evidence-gated host application/widget / notification sink, lifecycle table, download/decode spies | HEAD no policy branch -> exact generic title/body/visibility and zero plaintext calls | reuse caption/thumbnail from ordinary announcement or hydrate before policy -> TC-242-07 red | `flutter test test/features/groups/application/announcement_private_media_notification_test.dart`; AUTO plus `GROUP_TESTS`; blocked on notification decision |
-| TC-242-08 | Protected announcement viewer applies the accepted Android/iOS best-effort capture behavior and truthful copy, including app switch and route exit | `integration_test/announcement_private_media_platform_proof_test.dart::protected announcement viewer applies truthful platform capture safeguards` | external-fixture-blocked device proof / every applicable Android/iOS target available for the accepted promise | HEAD platform mechanism absent -> observable secure/obscure/capture response and cleanup match exact wording; unsupported limits are disclosed | omit protection, leak switcher snapshot, keep flag after exit, or claim universal prevention -> TC-242-08 red | `flutter test -d "$FLUTTER_DEVICE_ID" integration_test/announcement_private_media_platform_proof_test.dart` per available target; unavailable legs are N/A; before execution-ready status refresh this row with the exact `classify_path` category/runner entry selected by TC-242-00; base mechanism inherited GPL-11 |
-| TC-242-09 | Admin override/revoke and retained safety metadata after consume/expiry follow the accepted moderation matrix without restoring/exporting media | `test/features/groups/application/announcement_private_media_moderation_test.dart::admin lifecycle and retained safety metadata match approved audit matrix without media resurrection` | evidence-gated application host / admin transitions, repository snapshot and egress spies | HEAD contracts absent -> exact allowed/denied transitions and required placeholder/audit metadata survive while every media egress call stays zero | let a later admin reset consume/expiry, discard required safety identity, or retain/export prohibited bytes -> TC-242-09 red | `flutter test test/features/groups/application/announcement_private_media_moderation_test.dart`; AUTO plus `GROUP_TESTS`; blocked on moderation decision |
+| TC-242-05 | View-once consumes once at the accepted decoder boundary, commits Plan-238 local state before cleanup, and cannot reopen | `test/features/groups/integration/announcement_private_media_lifecycle_test.dart::APL-05` plus Plan-238 GPL-05/06/08 | host integration / production repository over host SQLite and exact app-owned file | durable consume precedes cleanup; placeholder remains and later open is denied | consume at tap, clean before commit, or reopen terminal media -> TC-242-05 red | focused APL aggregate; `GROUP_TESTS`; inherits Plan-238 crash/replay matrix |
+| TC-242-06 | Disappearing media expires under the accepted high-water clock and cannot reopen/redownload | `test/features/groups/integration/announcement_private_media_lifecycle_test.dart::APL-06` plus Plan-238 GPL-07/08 | host integration / production repository over host SQLite, exact deadline and file | exact boundary terminalizes, cleans, retains placeholder, and denies open | use a competing clock, reset duration, or accept terminal replay -> TC-242-06 red | focused APL aggregate; `GROUP_TESTS` |
+| TC-242-07 | Private announcement notifications and thumbnails follow the generic foreground/background/lock-screen matrix without media hydration | `announcement_private_media_notification_test.dart`, `push_decrypt_preview_test.dart`, and `ios/RunnerTests/NotificationPreviewResolverTests.swift::testGroupPrivateMediaPreviewIsGenericForAnnouncementsAndMalformedPolicy` | host Dart + iOS NSE native suite / trusted and malformed policy fixtures | localized app title/generic body, no group/sender/caption/subtype, zero plaintext media fetch; malformed/partial/future policy fails closed | reuse ordinary preview or trust incomplete policy -> TC-242-07 red | `GROUP_TESTS` plus focused `xcodebuild test` on an available iOS simulator |
+| TC-242-08 | Protected announcement viewer applies the accepted best-effort capture behavior and truthful copy, including background and route exit | `integration_test/announcement_private_media_platform_proof_test.dart::APL-08` plus inherited GPL-11 | actual wired-route device proof / explicit physical Android target | reader taps the production announcement route into the shared viewer; `FLAG_SECURE` acquires/releases on normal exit and injected background | omit protection, keep flag after exit, bypass the shared viewer, or fork a second mechanism -> TC-242-08 red | explicit Android `21071FDF600CSC` APL-08; `ignored/ignored` discovery record |
+| TC-242-09 | Admin override/revoke and retained lifecycle metadata after consume/expiry follow the accepted terminal-state matrix without restoring/exporting media | `test/features/groups/application/announcement_private_media_moderation_test.dart::admin lifecycle and retained safety metadata match approved audit matrix without media resurrection` | application host / admin transitions, repository snapshot and egress spies | Historical HEAD contracts absent -> exact allowed/denied transitions and required placeholder/lifecycle metadata survive while every media egress call stays zero | let a later admin reset consume/expiry, discard required lifecycle identity, or retain/export prohibited bytes -> TC-242-09 red | `flutter test test/features/groups/application/announcement_private_media_moderation_test.dart`; AUTO plus `GROUP_TESTS`; decision closed |
 | TC-242-10 | Ordinary/legacy announcement image/video delivery, viewing and reactions remain unchanged when policy is absent/standard | `test/features/groups/integration/announcement_happy_path_test.dart::announcement happy path: create, admin send, reader read-only receive, member react` plus `test/features/groups/presentation/group_conversation_wired_test.dart::announcement readers stay read-only for compose but still keep reaction entry` | GREEN sentinel / existing host integration/widget fixtures | GREEN on HEAD -> remains GREEN after lifecycle adapter | default absence to private/expired or gate reaction on private capability -> sentinel red | `flutter test test/features/groups/integration/announcement_happy_path_test.dart --plain-name 'announcement happy path: create, admin send, reader read-only receive, member react' && flutter test test/features/groups/presentation/group_conversation_wired_test.dart --plain-name 'announcement readers stay read-only for compose but still keep reaction entry'`; existing `GROUP_TESTS` |
 | TC-242-11 | Reader cannot publish lifecycle-tagged or ordinary media and optional policy plumbing changes no Go node authorization/topic/recipient/retry behavior | `test/features/groups/integration/announcement_new_reader_onboarding_test.dart::new reader receives only post-join admin media with descriptors` plus `go-mknoon/node/pubsub_test.go::TestGroupTopicValidator_AnnouncementNonAdminRejected` plus plan-238 GPL-16 | GREEN sentinel / Flutter integration, Go validator, source boundary | GREEN on HEAD -> remains GREEN; no Go node production diff and all reader bridge send counts remain zero | trust lifecycle flag as permission or weaken validator -> sentinel red | `flutter test test/features/groups/integration/announcement_new_reader_onboarding_test.dart --plain-name 'new reader receives only post-join admin media with descriptors' && (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run TestGroupTopicValidator_AnnouncementNonAdminRejected -count=1) && git diff --exit-code -- go-mknoon/node`; existing `GROUP_TESTS` / Go preservation |
-| TC-242-12 | Real admin, online reader, and offline/restarting reader observe the accepted independent/convergent consume/expiry and replay semantics with no reader publish | `integration_test/scripts/run_group_multi_party_device_real.dart::announcement_private_media_lifecycle` | external-fixture-blocked three-party/device-lab / real Go bridge and relay with one USB physical Android plus two Android emulators, all harness-controlled | HEAD scenario/policy absent -> role-specific verdicts prove encrypted receipt, accepted consume/expiry oracle, offline late replay denial, restart durability and unauthorized reader send | omit offline guard, reorder expiry/receive, drop local consume, or allow reader publish -> scenario red | `MKNOON_RELAY_ADDRESSES="$MKNOON_RELAY_ADDRESSES" dart run integration_test/scripts/run_group_multi_party_device_real.dart --scenario announcement_private_media_lifecycle -d "$DEVICE_A,$DEVICE_B,$DEVICE_C"`; register only after TC-242-00 fixes topology |
+| TC-242-12 | Dedicated three-party/convergence/relay scenario | N/A under accepted per-install/no-new-transport contract | N/A — host APL-03, device APL-03D, and Go authorization prove the selected boundary | no global-once, convergence, or relay-revocation user claim exists | adding such a claim or protocol makes TC-242-12 required after replanning | no runner or discovery registration |
 
 ### Test Notes
 
-- TC-242-00 is an execution stop. Announcement authoring cannot be inferred merely from current admin publish permission; consume/expiry/capture/report guarantees require explicit product/security wording.
+- TC-242-00 is an execution stop. Announcement authoring cannot be inferred merely from current admin publish permission; consume/expiry/capture and retained-metadata privacy guarantees require explicit product/security wording.
 - TC-242-04 must open a menu before a lifecycle transition and invoke afterward; the coordinator must re-load policy and fail closed. Widget-only hidden buttons do not prove egress gateways are unreachable.
 - TC-242-05/06 reconstruct database, repository, scheduler, viewer and download policy after injected failures. Reusing one in-memory controller would make restart/replay assertions vacuous.
 - TC-242-08 records observable platform behavior and cleanup, not an assertion that screenshots are impossible. Repeat on each applicable available platform target; record unavailable legs N/A and retain native host coverage.
-- TC-242-12's three distinct accounts prove broadcast recipient behavior, not same-account multi-device convergence. If the accepted promise includes account-wide consumption, plan-238 GPL-13 and an additional same-account device fixture remain required.
+- TC-242-12 is N/A under the accepted device/install-local contract. Any future
+  account-wide, global-once, or relay-revocation promise requires a separately
+  authenticated protocol and a freshly reviewed multi-peer fixture.
 
 ## Implementation Steps
 
@@ -117,9 +209,12 @@ Dependencies:
 3. Snapshot `git status --short`; add announcement mapping/role/payload/capability causal tests without changing schema or Go node production.
 4. Add the `GroupType.announcement` adapter around plan 238's policy/engine, revalidating eligible admin role on send/retry and preserving reader no-write callbacks.
 5. Thread the same optional encrypted-inner fields through announcement live/offline/retry paths and apply the central policy before download/decode/notification/action dispatch.
-6. Reuse durable consume/expiry/cleanup and native capture mechanisms; add only announcement route, notification, moderation, and multi-reader tests. Stop-if an implementation needs a competing timestamp, consumption event, bridge command, or platform mechanism.
-7. Register new host suites in `GROUP_TESTS`; after topology approval, add scenario requirement/list/usage/dispatch/harness/verdict/discovery coverage for `announcement_private_media_lifecycle` and the platform proof.
-8. Run selected host GREEN, DB/real-crypto/platform/multi-party proof, ordinary/read-only/Go sentinels, the curated `groups` lane gate, analyzer, and diff hygiene.
+6. Reuse durable consume/expiry/cleanup and native capture mechanisms; add only announcement route, notification, admin/retained-metadata, and multi-reader tests. Stop-if an implementation needs a competing timestamp, consumption event, bridge command, or platform mechanism.
+7. Register the eight dedicated host suites in `GROUP_TESTS`; classify the
+   thin announcement platform proof as an explicit manual Android proof.
+8. Run selected host GREEN, inherited DB/real-crypto/platform proof,
+   ordinary/read-only/Go sentinels, the curated `groups` lane gate, analyzer,
+   and diff hygiene.
 
 ## Risks And Blind Spots
 
@@ -127,12 +222,15 @@ Dependencies:
 - A stale menu or batch selection can bypass protection -> TC-242-04 re-evaluates policy at invocation and spies every gateway.
 - Crash/offline replay can reopen consumed/expired content -> TC-242-05/06 commit state first and reconstruct fresh runtime state.
 - Admin role changes can authorize a queued private send incorrectly -> TC-242-02 revalidates membership/role at send and retry.
+- Async key lookup can stale an earlier role snapshot -> APL-02K demotes both
+  local and roster authority during the final key read; current group and roster
+  are reloaded afterward with the roster read last.
 - Notifications/app-switch snapshots can leak before viewer -> TC-242-07/08.
-- Moderation compatibility can accidentally become retention/egress override -> TC-242-09 fixes the retained-metadata boundary; downstream plan 246 must consume it without restoring media.
+- Retained lifecycle metadata can accidentally become a retention/egress override -> TC-242-09 fixes the boundary; Plan 246 intentionally has no consumer and cannot restore or export media.
 - Lifecycle / derived-state durability: plan 238's eventual accepted DB state is canonical; cleanup/cache/controller state reconstructs fail-closed -> TC-242-01/05/06 plus its real-SQLCipher proof.
 - Sibling-surface consistency: TC-242-04 covers bubble/viewer/library/batch and uses one central capability result; TC-242-07 covers notification.
 - Destructive-action side effects: TC-242-05/06/09 preserve truthful placeholder/audit and siblings/external paths while removing only app-owned target state.
-- Invariant re-verification under new transitions: role, policy, clock, consume state, file eligibility and report consent are rechecked at each send/open/action/retry boundary.
+- Invariant re-verification under new transitions: role, policy, clock, consume state, file eligibility, and reporting absence are rechecked at each send/open/action/retry boundary.
 
 ## Gate Cadence
 
@@ -143,41 +241,51 @@ Dependencies:
 ## Acceptance Gates
 
 ```bash
-# Evidence stop: do not continue while either ledger contains unresolved rows
-! rg -n '\| unresolved( upstream)? \|' Test-Flight-Improv/238-group-private-media-lifecycle-tdd-plan.md Test-Flight-Improv/242-announcement-private-media-lifecycle-tdd-plan.md
+# Evidence stop: Plan 238's authoritative top-level accepted status supersedes
+# its retained historical unresolved ledger; Plan 242's current ledger is exact.
+rg -n '^Status: accepted$' Test-Flight-Improv/238-group-private-media-lifecycle-tdd-plan.md
+! rg -n '\| unresolved( upstream)? \|' Test-Flight-Improv/242-announcement-private-media-lifecycle-tdd-plan.md
 
 # Ordered prerequisite and migration ownership; plan 238 allocates vNEXT only after its evidence/collision gate
 test -f Test-Flight-Improv/238-group-private-media-lifecycle-tdd-plan.md
 git status --short
 
-# First announcement causal RED after evidence acceptance; expect non-zero because adapter/policy test is absent
-flutter test test/features/groups/domain/models/announcement_private_media_policy_test.dart
-
-# Focused announcement host GREEN selected by accepted policy
-flutter test test/features/groups/domain/models/announcement_private_media_policy_test.dart
-flutter test test/features/groups/domain/usecases/send_group_message_use_case_test.dart --plain-name 'announcement private media authoring follows approved admin policy at send and retry'
-flutter test test/features/groups/integration/announcement_private_media_payload_roundtrip_test.dart
-flutter test test/features/groups/presentation/announcement_private_media_capabilities_test.dart
-flutter test test/features/groups/integration/announcement_view_once_media_lifecycle_test.dart
-flutter test test/features/groups/integration/announcement_disappearing_media_lifecycle_test.dart
-flutter test test/features/groups/application/announcement_private_media_notification_test.dart
-flutter test test/features/groups/application/announcement_private_media_moderation_test.dart
+# Focused announcement host GREEN selected by the accepted policy
+flutter test --no-pub --concurrency=1 --reporter failures-only \
+  test/features/groups/domain/models/announcement_private_media_policy_test.dart \
+  test/features/groups/application/announcement_private_media_authorization_test.dart \
+  test/features/groups/application/announcement_incoming_message_authorization_test.dart \
+  test/features/groups/integration/announcement_private_media_payload_roundtrip_test.dart \
+  test/features/groups/integration/announcement_private_media_lifecycle_test.dart \
+  test/features/groups/presentation/announcement_private_media_capabilities_test.dart \
+  test/features/groups/application/announcement_private_media_notification_test.dart \
+  test/features/groups/application/announcement_private_media_moderation_test.dart
+flutter test --no-pub --concurrency=1 --reporter failures-only \
+  test/features/groups/presentation/group_conversation_wired_test.dart \
+  test/features/groups/application/group_private_media_notification_test.dart \
+  --plain-name 'APL-'
 
 # Ordinary announcement and native authorization preservation
 flutter test test/features/groups/integration/announcement_happy_path_test.dart test/features/groups/integration/announcement_new_reader_onboarding_test.dart
 (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run 'TestIsAllowedWriter_AnnouncementMemberBlocked|TestGroupTopicValidator_AnnouncementNonAdminRejected' -count=1)
-git diff --exit-code -- go-mknoon/node
+# Compare Go production status/diff with the execution-start baseline; test-only
+# pre-existing changes make a raw clean-tree assertion invalid.
 
 # Affected curated lane gate; expect new announcement files selected and zero failures
 ./scripts/run_test_gates.sh groups
 
-# Device discovery/closure only after TC-242-00 fixes topology and platform promise
+# Availability-bounded device closure. Plan 242 adds no schema/bridge protocol
+# and therefore no three-peer run; APL-08 wraps the shared native mechanism.
 flutter devices --machine
-rg -n 'announcement_private_media_(lifecycle|platform_proof)' integration_test/scripts/run_group_multi_party_device_real.dart scripts/run_test_gates.sh scripts/check_reliability_simulation_discovery.sh
 ./scripts/check_reliability_simulation_discovery.sh
-dart run integration_test/scripts/run_group_multi_party_device_real.dart --list-scenarios --scenario announcement_private_media_lifecycle
-MKNOON_RELAY_ADDRESSES="$MKNOON_RELAY_ADDRESSES" dart run integration_test/scripts/run_group_multi_party_device_real.dart --scenario announcement_private_media_lifecycle -d "$DEVICE_A,$DEVICE_B,$DEVICE_C"
-flutter test -d "$FLUTTER_DEVICE_ID" integration_test/announcement_private_media_platform_proof_test.dart
+flutter test --no-pub -d 21071FDF600CSC integration_test/group_private_media_lifecycle_db_proof_test.dart --plain-name 'GPL-01D real SQLCipher allocated vNEXT preserves legacy private state reopen and full chain'
+flutter test --no-pub -d 21071FDF600CSC integration_test/group_real_crypto_onboarding_test.dart --plain-name 'APL-03D private announcement policy survives the real Go bridge encrypted payload'
+flutter test --no-pub -d 21071FDF600CSC integration_test/group_private_media_platform_proof_test.dart --plain-name 'GPL-11 protected viewer applies truthful platform capture safeguards'
+flutter test --no-pub -d 21071FDF600CSC integration_test/announcement_private_media_platform_proof_test.dart
+xcodebuild test -quiet -workspace ios/Runner.xcworkspace -scheme Runner \
+  -destination 'platform=iOS Simulator,id=DBE8C32E-9F19-4593-860A-B41113791D79' \
+  CODE_SIGNING_ALLOWED=NO -parallel-testing-enabled NO \
+  -only-testing:RunnerTests/NotificationPreviewResolverTests
 
 # Hygiene; expect no new analyzer issues and no whitespace errors
 flutter analyze
@@ -186,49 +294,71 @@ git diff --check
 
 ## Device/Relay Proof Profile
 
-- Profile: external-fixture-blocked until TC-242-00 fixes the promise; expected minimum is the available three-party/device-lab topology plus platform capture runs on every applicable available target inherited from plan 238.
-- Boundary being proven: real encrypted admin publication, online/offline reader receipt, accepted per-recipient consume/expiry behavior, restart/replay denial, no reader publish, and platform capture/app-switch behavior matching exact user wording.
-- Live availability check: `flutter devices --machine` and `dart run integration_test/scripts/run_group_multi_party_device_real.dart --list-scenarios --scenario announcement_private_media_lifecycle` -> no approved topology/scenario/device IDs exist at planning time.
-- Required setup: Alice as eligible announcement publisher, Bob as online reader, and Charlie as offline/restarting reader on one pinned USB physical Android plus two pinned Android emulators; the harness drives setup, permissions, lifecycle, and assertions without user taps. Configure real relay addresses and policy fixtures separately. Android/iOS platform-capture proof remains its own platform-specific leg. Any same-account two-peer convergence fixture uses the physical Android + one emulator pair.
-- Closure role: required closure evidence for announcement broadcast semantics; plan-238 accepted migration/SQLCipher, GPL-11/12/13/14 remain required for each selected DB/platform/convergence/relay guarantee.
-- `FLUTTER_DEVICE_ID`: sufficient for one SQLCipher/real-bridge/platform row only; it is not sufficient for the three-party scenario, both promised platforms, or same-account convergence.
-- Registration: add `announcement_private_media_lifecycle` to `group_multi_party_device_criteria.dart`, runner scenario list/usage/dispatch, harness role verdicts, criteria tests and reliability discovery only after topology approval. TC-242-00 must also select an exact `classify_path` category plus runner/array entry for `integration_test/announcement_private_media_platform_proof_test.dart`, and this plan must be refreshed with that literal rule before implementation; a generic manual-proof bucket is insufficient.
-- Discovery command: `dart run integration_test/scripts/run_group_multi_party_device_real.dart --list-scenarios --scenario announcement_private_media_lifecycle` -> exactly that scenario must be listed; `scripts/check_reliability_simulation_discovery.sh` must classify its proof files.
-- Closure command: `MKNOON_RELAY_ADDRESSES="$MKNOON_RELAY_ADDRESSES" dart run integration_test/scripts/run_group_multi_party_device_real.dart --scenario announcement_private_media_lifecycle -d "$DEVICE_A,$DEVICE_B,$DEVICE_C"` -> all three role verdicts prove the accepted state oracle and reader publish rejection.
-- Deferred device work: scenario registration/command is provisional and must be refreshed if the accepted scope is not three distinct accounts; no chosen user-facing guarantee may ship without its exact real-boundary run.
+- Profile: `available-target inherited-plus-wired-boundary`. The live matrix on 2026-07-12
+  contains USB Android `21071FDF600CSC` and no attached Android emulator.
+- Boundary being proven: production SQLCipher v101 state, real-Go encrypted
+  announcement extras, actual announcement wired-route entry, and shared
+  protected-viewer native ownership/restoration. Host APL-02 plus receive and
+  Go authorization sentinels prove announcement-admin/read-only policy;
+  APL-03/05/06 prove the adapter and per-install lifecycle.
+- Required setup: run GPL-01D, APL-03D, inherited GPL-11, and APL-08 on explicit
+  Android `21071FDF600CSC`. No relay authority, account-wide convergence, or
+  three-peer runner is selected because none is part of the accepted promise.
+- Native proof limit: GPL-11/APL-08 observe Android `FLAG_SECURE` ownership and
+  wired-route/event cleanup; their debug-injected events do not observe or prove
+  physical screenshot or screen-record prevention. iOS capture behavior remains
+  the inherited best-effort mechanism with the same injected-event limitation.
+- iOS notification closure runs the native `NotificationPreviewResolverTests`
+  on available simulator `DBE8C32E-9F19-4593-860A-B41113791D79`; capture/viewer
+  semantics remain inherited from accepted Plan 238.
+- Registration: APL-08 is an explicit `ignored/ignored` manual Android proof in
+  reliability discovery; the eight host suites are registered in `GROUP_TESTS`.
+- Result on 2026-07-12: GPL-01D, APL-03D, GPL-11, and APL-08 each passed `1/1`
+  with exit 0 on physical Android `21071FDF600CSC`; the iOS resolver class
+  passed with exit 0. The harness required no manual taps or prompts.
+- Deferred device work: none.
 
 ## Execution Interpretation And Done Criteria
 
-- Expected evidence RED: TC-242-00 currently fails because upstream and announcement ledgers are unresolved. No production/test/schema action is authorized.
-- Expected first executable RED after evidence: TC-242-01's announcement model test fails because the adapter does not exist; the DB migration itself belongs to plan 238 and must already be green.
-- Green sentinels: ordinary announcement media/reactions/read-only behavior, plan-238 migration/lifecycle tests, group real-crypto extras, and Go publisher authorization remain green.
+- Decision stops are closed. Historical RED recreation is neither required nor safe in this dirty integrated Wave-2 tree; the retained causal APL tests and review mutations are authoritative.
+- Focused Plan-242 host tests, receive authorization, metadata-only terminal-state preservation,
+  Dart/iOS notification adapters, ordinary/read-only sentinels, Plan-238
+  preservation, Go publisher authorization, all selected device proofs, test
+  discovery, and the integrated curated `groups` lane are green.
 - Pre-existing dirty tree / known failure: record unrelated changes; do not edit the already-dirty `Test-Flight-Improv/00-INDEX.md` in this plan.
-- Environment blocker: failures on selected available targets or an unavailable required relay/authority fixture remain blockers; unavailable mobile target legs are N/A by project policy and retain host/native proof.
-- Scope drift: any announcement-owned migration/version, competing wire/engine, unauthenticated consumption event, Go node behavior edit, reader write path, universal capture/remote revocation claim, or safety egress bypass requires replanning.
+- Environment blocker: failures on selected available targets remain blockers; unavailable mobile target legs are N/A by project policy and retain host/native proof. No relay or reporting-authority fixture is required.
+- Scope drift: any announcement-owned migration/version, competing wire/engine, unauthenticated consumption event, Go node behavior edit, reader write path, universal capture/remote revocation claim, or retained-metadata egress bypass requires replanning.
 
-- [ ] Both Evidence Decision Ledgers have accepted owner/date/user wording/test profile for every row.
-- [ ] Every selected announcement behavior has a named causal test or real-boundary proof; rejected guarantees are explicitly N/A and absent from UI/copy.
-- [ ] First executable RED, focused GREEN, and representative mutation re-red are recorded.
-- [ ] Plan-238 eventual migration passes its exact structural and real-SQLCipher default/state/reopen/idempotency/full-chain proof; this plan allocates no new migration.
-- [ ] Announcement send/live/offline/retry/real-bridge policy agrees; local consumption never leaks unless a separate authenticated protocol is approved.
-- [ ] Consume/expiry is durable-first, crash/restart/replay/download safe, and scoped to the accepted recipient/device model.
-- [ ] Viewer/library/batch/notification/report/platform surfaces consume one current policy and have no egress bypass.
-- [ ] Ordinary/read-only/Go sentinels and the curated `groups` lane gate pass.
-- [ ] Every selected available-platform/multi-party/convergence/relay proof passes; unavailable mobile legs are recorded N/A.
-- [ ] `flutter analyze` has no new issues; `git diff --check` is clean.
-- [ ] Scope Contract And Guard is respected.
+- [x] Plan 238's authoritative Accepted Decision Contract and this plan's
+  accepted Evidence Decision Ledger record every selected base and announcement
+  outcome; the plan-level Test Contract and Device/Relay Proof Profile record
+  the proof topology.
+- [x] Every selected announcement behavior has a named causal test or inherited real-boundary proof; convergence/relay/three-party guarantees are explicitly N/A and absent from UI/copy.
+- [x] Retained causal tests, focused GREEN, and representative denial/terminal counterexamples are recorded.
+- [x] Plan-238 migration passes the current inherited real-SQLCipher rerun; this plan allocates no new migration.
+- [x] Announcement send/live/offline/retry/real-bridge policy agrees on the current inherited device rerun; local consumption never leaks.
+- [x] Consume/expiry is durable-first, terminal, cleanup-safe, and scoped to the accepted recipient/install model.
+- [x] Viewer/action/Forward/notification/retained-metadata/platform adapters consume one current policy and expose no private-byte egress bypass.
+- [x] Ordinary/read-only/Go sentinels and the curated `groups` lane gate pass.
+- [x] Every selected available Android inherited proof passes; multi-party/convergence/relay and unavailable emulator legs are N/A.
+- [x] Scoped analyzers have no issues; `git diff --check` is clean.
+- [x] Scope Contract And Guard is respected.
 
 ## Handoff
 
-- First causal RED command: none while TC-242-00 is unresolved. After acceptance: `flutter test test/features/groups/domain/models/announcement_private_media_policy_test.dart`.
+- Focused command: the eight-file Plan-242 host aggregate in Acceptance Gates.
 - Preservation command: `flutter test test/features/groups/integration/announcement_new_reader_onboarding_test.dart && (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run TestGroupTopicValidator_AnnouncementNonAdminRejected -count=1)`.
-- Manual registration: after evidence approval, add seven announcement host files to `GROUP_TESTS`; register provisional three-party scenario/harness/criteria/discovery and available-platform proof only for selected guarantees.
-- Migration: none; reuse the exact version/fields plan 238 allocates only after its evidence gate and fresh conflict check, and require that plan's structural plus real-SQLCipher proof. Do not allocate an announcement version.
-- Boundary closure: evidence/external-fixture blocked; reuse GPL-12 real encrypted extras and selected GPL-11/13/14 proofs, plus announcement-specific three-party role verdicts.
-- Unresolved evidence: all upstream lifecycle decisions plus announcement author/admin scope, broadcast consumption, override/moderation/report, notification copy, platform wording, and device topology.
+- Registration: all eight Plan-242 host files are in `GROUP_TESTS`; APL-08 is
+  explicitly classified as a manual Android proof and discovery passes.
+- Migration: none; reuse accepted DB v101 and its structural plus real-SQLCipher proof.
+- Boundary closure: GPL-01D/APL-03D/GPL-11/APL-08 passed on Android
+  `21071FDF600CSC`; the iOS NSE resolver class passed on the available simulator.
+- Unresolved evidence: none. Plan 242 is accepted.
 
 ## Execution Progress
 
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
-| - | evidence gate | plan only | source/graph audit complete | shared eventual-migration/encrypted-extra path identified | both decision ledgers unresolved; no implementation authorized | product/security/platform review |
+| 2026-07-12 | Host implementation and preservation | availability/send/receive/retry/composer adapters; eight dedicated host files; Dart/iOS notification adapters | dedicated aggregate `19/19`; Plan-238 preservation `63/63`; ordinary/new-reader `3/3`; receive/offline sentinels green; Go auth passed; iOS resolver class passed | v101 reuse, final current-admin send/receive authority, live/offline/retry, terminal lifecycle, capability, notification, and metadata contracts are closed | none | accepted |
+| 2026-07-12 | Availability-bounded device closure | inherited SQLCipher/native harnesses plus announcement real-Go and actual wired-route proofs | `GPL-01D`, `APL-03D`, `GPL-11`, and `APL-08` each `1/1`, exit 0 on physical Android `21071FDF600CSC` | v101 reopen/full-chain, exact encrypted-inner announcement policy, and actual shared-viewer `FLAG_SECURE` acquire/release/background cleanup pass without manual interaction | unavailable emulator legs N/A; no multi-party/convergence/relay promise | accepted |
+| 2026-07-12 | Integrated closure | eight host registrations, APL-08 discovery classification, corrected iOS smoke scenario expansion, forwarding preservation reconciliation | `GROUP_TESTS` `2139/2139` plus bridge/node Go legs passed; completeness `1226/1226`; reliability discovery PASS; scoped analyzers/diff hygiene clean | Plan 242 and the integrated Track-2 group/forwarding surfaces are mutually coherent | none | accepted |

@@ -5,6 +5,7 @@
 // bottom sheet, and that the full send flow works.
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -327,6 +328,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _noOpSendFn({
   Bridge? bridge,
   String? recipientMlKemPublicKey,
   List<MediaAttachment>? mediaAttachments,
+  PrivateMediaPolicy? privateMediaPolicy,
   MediaAttachmentRepository? mediaAttachmentRepo,
   TransportMetrics? transportMetrics,
 }) async {

@@ -251,77 +251,78 @@ void main() {
     );
   }
 
-  testWidgets('direct chat opens one strict contact scoped shared media library', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(1080, 2160);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
+  testWidgets(
+    'direct chat opens one strict contact scoped shared media library',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2160);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
 
-    // The factory is strict: a non-direct lane, an own-peer/wrong-contact
-    // scope id, a non-50 limit, or a foreign cursor throws instead of
-    // returning rows.
-    final repo = StrictDirectMediaLibraryRepository(
-      expectedContactPeerId: kContactPeerId,
-    );
-    repo.seedPage(entries: [makeEntry('att-open-1')]);
+      // The factory is strict: a non-direct lane, an own-peer/wrong-contact
+      // scope id, a non-50 limit, or a foreign cursor throws instead of
+      // returning rows.
+      final repo = StrictDirectMediaLibraryRepository(
+        expectedContactPeerId: kContactPeerId,
+      );
+      repo.seedPage(entries: [makeEntry('att-open-1')]);
 
-    final messageRepo = InMemoryMessageRepository();
-    final contactRepo = InMemoryContactRepository();
-    contactRepo.addTestContact(makeContact());
+      final messageRepo = InMemoryMessageRepository();
+      final contactRepo = InMemoryContactRepository();
+      contactRepo.addTestContact(makeContact());
 
-    await tester.pumpWidget(
-      MaterialApp(
-        locale: const Locale('en'),
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: ConversationWired(
-          contact: makeContact(),
-          identityRepo: _FakeIdentityRepository(makeIdentity()),
-          messageRepo: messageRepo,
-          chatMessageListener: ChatMessageListener(
-            chatMessageStream: const Stream.empty(),
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ConversationWired(
+            contact: makeContact(),
+            identityRepo: _FakeIdentityRepository(makeIdentity()),
             messageRepo: messageRepo,
+            chatMessageListener: ChatMessageListener(
+              chatMessageStream: const Stream.empty(),
+              messageRepo: messageRepo,
+              contactRepo: contactRepo,
+            ),
+            p2pService: _FakeP2PService(),
             contactRepo: contactRepo,
+            mediaAttachmentRepo: repo,
+            micPermissionGateway: FakeMicPermissionGateway(),
           ),
-          p2pService: _FakeP2PService(),
-          contactRepo: contactRepo,
-          mediaAttachmentRepo: repo,
-          micPermissionGateway: FakeMicPermissionGateway(),
         ),
-      ),
-    );
-    await tester.pump(const Duration(milliseconds: 400));
+      );
+      await tester.pump(const Duration(milliseconds: 400));
 
-    // No library query may run from merely opening the chat.
-    expect(repo.pageCalls, isEmpty);
+      // No library query may run from merely opening the chat.
+      expect(repo.pageCalls, isEmpty);
 
-    await tester.tap(find.byIcon(Icons.more_vert));
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.byIcon(Icons.more_vert));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 300));
 
-    // Exactly one localized Shared Media entry.
-    const menuKey = ValueKey('conversation-shared-media-action');
-    expect(find.byKey(menuKey), findsOneWidget);
-    expect(find.text('Shared media'), findsOneWidget);
+      // Exactly one localized Shared Media entry.
+      const menuKey = ValueKey('conversation-shared-media-action');
+      expect(find.byKey(menuKey), findsOneWidget);
+      expect(find.text('Shared media'), findsOneWidget);
 
-    await tester.tap(find.byKey(menuKey));
-    await tester.pump(const Duration(milliseconds: 300));
-    await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.byKey(menuKey));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 300));
 
-    // The library route is open and issued exactly one strict direct-scoped
-    // request for THIS contact (the strict factory throws on any sibling
-    // owner, own-peer id, or defaulted scope).
-    expect(find.byType(DirectSharedMediaLibraryScreen), findsOneWidget);
-    expect(repo.pageCalls, hasLength(1));
-    final call = repo.pageCalls.single;
-    expect(call.scope.lane, MediaOwnerLane.direct);
-    expect(call.scope.id, kContactPeerId);
-    expect(call.limit, kDirectMediaLibraryPageSize);
-    expect(call.cursor, isNull);
-    expect(tile('att-open-1'), findsOneWidget);
-  });
+      // The library route is open and issued exactly one strict direct-scoped
+      // request for THIS contact (the strict factory throws on any sibling
+      // owner, own-peer id, or defaulted scope).
+      expect(find.byType(DirectSharedMediaLibraryScreen), findsOneWidget);
+      expect(repo.pageCalls, hasLength(1));
+      final call = repo.pageCalls.single;
+      expect(call.scope.lane, MediaOwnerLane.direct);
+      expect(call.scope.id, kContactPeerId);
+      expect(call.limit, kDirectMediaLibraryPageSize);
+      expect(call.cursor, isNull);
+      expect(tile('att-open-1'), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'filters bind direct scope cursor signature and preserve stable paged order',
@@ -411,9 +412,13 @@ void main() {
       // (retaining 'all-c1' across the change throws in the strict repo),
       // and the stale photos page must be discarded, never appended.
       repo.gateRequests = true;
-      await tester.tap(find.byKey(const ValueKey('shared-media-filter-photos')));
+      await tester.tap(
+        find.byKey(const ValueKey('shared-media-filter-photos')),
+      );
       await tester.pump(const Duration(milliseconds: 100));
-      await tester.tap(find.byKey(const ValueKey('shared-media-filter-videos')));
+      await tester.tap(
+        find.byKey(const ValueKey('shared-media-filter-videos')),
+      );
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(repo.pageCalls, hasLength(3));
@@ -579,7 +584,10 @@ void main() {
       // controller cache: a fresh screen over the updated rows shows b1
       // bookmarked without any new write.
       repo.seedPage(
-        entries: [makeEntry('b1', bookmarked: true), makeEntry('b2', bookmarked: true)],
+        entries: [
+          makeEntry('b1', bookmarked: true),
+          makeEntry('b2', bookmarked: true),
+        ],
         nextCursor: null,
       );
       await tester.pumpWidget(const SizedBox());
@@ -710,7 +718,10 @@ void main() {
 
       // Exact truthful state per representable row.
       expect(
-        find.descendant(of: tile('ev1'), matching: find.text('Local copy removed')),
+        find.descendant(
+          of: tile('ev1'),
+          matching: find.text('Local copy removed'),
+        ),
         findsOneWidget,
       );
       expect(
@@ -718,7 +729,10 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.descendant(of: tile('if1'), matching: find.text("Couldn't verify")),
+        find.descendant(
+          of: tile('if1'),
+          matching: find.text("Couldn't verify"),
+        ),
         findsOneWidget,
       );
       expect(
@@ -779,6 +793,77 @@ void main() {
       );
       expect(tester.takeException(), isNull);
       semantics.dispose();
+    },
+  );
+
+  testWidgets(
+    'batch forward stays absent while only draft preflight is landed',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2160);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final repo = StrictDirectMediaLibraryRepository(
+        expectedContactPeerId: kContactPeerId,
+      );
+      repo.seedPage(
+        entries: [makeEntry('no-forward', localPath: 'media/no-forward.jpg')],
+        nextCursor: null,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: DirectSharedMediaLibraryScreen(
+            contactPeerId: kContactPeerId,
+            contactUsername: 'Alice',
+            libraryRepository: repo,
+            stateRepository: repo,
+            fileExists: (_) => true,
+            resolveStoredPath: (storedPath) => storedPath,
+            dispatchEgress: (identities, destination) async =>
+                DirectMediaLibraryBatchResult(
+                  items: [
+                    for (final identity in identities)
+                      DirectMediaLibraryBatchItemOutcome(
+                        attachmentId: identity.attachmentId,
+                        succeeded: true,
+                        itemOutcome: MediaEgressItemOutcome.saved,
+                      ),
+                  ],
+                  egressResult: null,
+                ),
+            dispatchDelete: (identities) async =>
+                const DirectMediaLibraryBatchDeleteOutcome(
+                  deletedMessageIds: {},
+                  failedMessageIds: {},
+                  deletedAttachmentIds: {},
+                  failedAttachmentIds: {},
+                ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.longPress(tile('no-forward'));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      for (final key in const [
+        'shared-media-action-save',
+        'shared-media-action-share',
+        'shared-media-action-delete',
+        'shared-media-action-goto',
+      ]) {
+        expect(find.byKey(ValueKey(key)), findsOneWidget);
+      }
+      expect(
+        find.byKey(const ValueKey('shared-media-action-forward')),
+        findsNothing,
+      );
+      expect(find.text('Forward'), findsNothing);
+      expect(tester.takeException(), isNull);
     },
   );
 

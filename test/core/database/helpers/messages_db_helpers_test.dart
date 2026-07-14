@@ -15,8 +15,11 @@ import 'package:flutter_app/core/database/migrations/043_messages_edited_at.dart
 import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.dart';
 import 'package:flutter_app/core/database/migrations/077_message_relay_custody.dart';
 import 'package:flutter_app/core/database/migrations/079_message_dedup_key.dart';
+import 'package:flutter_app/core/database/migrations/097_direct_message_forwarded.dart';
+import 'package:flutter_app/core/database/migrations/100_direct_private_media_lifecycle.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 
 void main() {
@@ -44,6 +47,8 @@ void main() {
     await runMessagesDeletedStateMigration(db);
     await runMessageRelayCustodyMigration(db);
     await runMessageDedupKeyMigration(db);
+    await runDirectMessageForwardedMigration(db);
+    await runDirectPrivateMediaLifecycleMigration(db);
   });
 
   tearDown(() async {
@@ -1417,6 +1422,81 @@ void main() {
           contains('msg-186-fresh'),
           reason: 'dropping the gate (the reconnect pass) picks up the fresh row',
         );
+      },
+    );
+  });
+  group('private media v100 helper round-trip', () {
+    test(
+      'insert and every load seam preserve all direct parent fields',
+      () async {
+        final policy = PrivateMediaPolicy.fromJson({
+          'version': 1,
+          'mode': 'disappearing',
+          'durationSeconds': 3600,
+        });
+        final model = ConversationMessage(
+          id: 'private-helper-1',
+          contactPeerId: 'peer-a',
+          senderPeerId: 'peer-a',
+          text: '',
+          timestamp: '2026-07-11T00:00:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-07-11T00:00:00.000Z',
+          privateMediaPolicy: policy,
+          privateMediaState: PrivateMediaLifecycleState.available,
+          privateMediaReceivedAtMs: 1000,
+          privateMediaExpiresAtMs: 3601000,
+          privateMediaRevealedAtMs: 2000,
+          privateMediaTerminalAtMs: 3000,
+          privateMediaClockHighWaterMs: 4000,
+        );
+
+        await dbInsertMessage(db, model.toMap());
+
+        for (final row in <Map<String, Object?>>[
+          (await dbLoadMessage(db, model.id))!,
+          (await dbLoadMessagesForContact(db, 'peer-a')).single,
+          (await dbLoadMessagesPage(db, 'peer-a')).single,
+          (await dbLoadLatestMessageForContact(db, 'peer-a'))!,
+        ]) {
+          final restored = ConversationMessage.fromMap(row);
+          expect(restored.privateMediaPolicy, policy);
+          expect(
+            restored.privateMediaState,
+            PrivateMediaLifecycleState.available,
+          );
+          expect(restored.privateMediaReceivedAtMs, 1000);
+          expect(restored.privateMediaExpiresAtMs, 3601000);
+          expect(restored.privateMediaRevealedAtMs, 2000);
+          expect(restored.privateMediaTerminalAtMs, 3000);
+          expect(restored.privateMediaClockHighWaterMs, 4000);
+        }
+      },
+    );
+
+    test(
+      'legacy insert that omits v100 fields takes ordinary defaults',
+      () async {
+        await dbInsertMessage(db, makeMessageRow(id: 'legacy-v100-defaults'));
+
+        final row = (await dbLoadMessage(db, 'legacy-v100-defaults'))!;
+        expect(row['private_media_policy_version'], 0);
+        expect(row['private_media_mode'], 'ordinary');
+        expect(row['private_media_duration_seconds'], isNull);
+        expect(row['private_media_state'], 'none');
+        expect(row['private_media_received_at_ms'], isNull);
+        expect(row['private_media_expires_at_ms'], isNull);
+        expect(row['private_media_revealed_at_ms'], isNull);
+        expect(row['private_media_terminal_at_ms'], isNull);
+        expect(row['private_media_clock_high_water_ms'], isNull);
+
+        final restored = ConversationMessage.fromMap(row);
+        expect(
+          restored.privateMediaPolicy,
+          const PrivateMediaPolicy.ordinary(),
+        );
+        expect(restored.privateMediaState, PrivateMediaLifecycleState.none);
       },
     );
   });

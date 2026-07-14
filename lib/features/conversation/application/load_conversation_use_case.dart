@@ -85,14 +85,35 @@ Future<List<ConversationMessage>> _attachMedia(
   MediaAttachmentRepository? mediaAttachmentRepo,
   MediaFileManager? mediaFileManager,
 ) async {
-  if (mediaAttachmentRepo == null || messages.isEmpty) return messages;
+  if (messages.isEmpty) return messages;
 
-  final ids = messages.map((m) => m.id).toList();
+  final projectableMessages = messages
+      .where((message) => !message.mustClearTransientMedia)
+      .toList(growable: false);
+  if (mediaAttachmentRepo == null || projectableMessages.isEmpty) {
+    return messages
+        .map(
+          (message) => message.mustClearTransientMedia
+              ? message.copyWith(media: const <MediaAttachment>[])
+              : message,
+        )
+        .toList();
+  }
+
+  final ids = projectableMessages.map((message) => message.id).toList();
   final mediaMap = await mediaAttachmentRepo.getAttachmentsForMessages(
     ids,
     owner: MediaOwnerLane.direct,
   );
-  if (mediaMap.isEmpty) return messages;
+  if (mediaMap.isEmpty) {
+    return messages
+        .map(
+          (message) => message.mustClearTransientMedia
+              ? message.copyWith(media: const <MediaAttachment>[])
+              : message,
+        )
+        .toList();
+  }
 
   // Resolve relative paths to absolute for display
   final resolvedMap = <String, List<MediaAttachment>>{};
@@ -115,6 +136,12 @@ Future<List<ConversationMessage>> _attachMedia(
   }
 
   return messages
-      .map((m) => m.copyWith(media: resolvedMap[m.id] ?? const []))
+      .map(
+        (message) => message.copyWith(
+          media: message.mustClearTransientMedia
+              ? const <MediaAttachment>[]
+              : resolvedMap[message.id] ?? const <MediaAttachment>[],
+        ),
+      )
       .toList();
 }

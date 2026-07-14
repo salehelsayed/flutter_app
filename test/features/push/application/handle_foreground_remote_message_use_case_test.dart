@@ -36,6 +36,33 @@ void main() {
     });
 
     test(
+      'foreground drained reaction still runs contextual notification gate',
+      () async {
+        final drainedGroups = <String>[];
+        final result = await handleForegroundRemoteMessage(
+          data: const {
+            'type': 'group_reaction',
+            'groupId': 'group-1',
+            'sender_id': 'peer-reactor',
+            'event_id': 'transition-1',
+            'target_message_id': 'target-1',
+            'action': 'add',
+          },
+          messageId: 'provider-1',
+          drainOfflineInbox: () async {
+            fail('group reaction must not use the 1:1 drain');
+          },
+          drainGroupOfflineInboxForGroup: (groupId) async {
+            drainedGroups.add(groupId);
+          },
+        );
+
+        expect(drainedGroups, ['group-1']);
+        expect(result, ForegroundRemoteMessageResult.notificationNeeded);
+      },
+    );
+
+    test(
       'GIRD-006 foreground group image push drains the anchored group message route',
       () async {
         var oneToOneCalls = 0;

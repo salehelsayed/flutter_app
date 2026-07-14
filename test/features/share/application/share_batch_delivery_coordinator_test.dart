@@ -10,11 +10,14 @@ import 'package:flutter_app/core/constants/media_constants.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -83,6 +86,493 @@ void main() {
     expect(processCallCount, 0);
     expect(contactCallCount, 0);
   });
+
+  test(
+    'direct picker authority fails all targets before preprocessing or send after parent delete/private transition',
+    () async {
+      for (final transition in <String>['deleted', 'private']) {
+        final messageRepository = InMemoryMessageRepository();
+        final mediaRepository = InMemoryMediaAttachmentRepository();
+        final messageId = 'direct-transition-$transition';
+        final attachmentId = 'direct-transition-$transition-attachment';
+        final parent = ConversationMessage(
+          id: messageId,
+          contactPeerId: 'direct-source-peer',
+          senderPeerId: 'direct-source-peer',
+          text: 'picker-era caption',
+          timestamp: '2026-07-14T12:00:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-07-14T12:00:00.000Z',
+          deletedAt: transition == 'deleted'
+              ? '2026-07-14T12:01:00.000Z'
+              : null,
+          privateMediaPolicy: transition == 'private'
+              ? const PrivateMediaPolicy.protected()
+              : const PrivateMediaPolicy.ordinary(),
+          privateMediaState: transition == 'private'
+              ? PrivateMediaLifecycleState.available
+              : PrivateMediaLifecycleState.none,
+        );
+        await messageRepository.saveMessage(parent);
+        await mediaRepository.saveAttachment(
+          MediaAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            mime: 'image/jpeg',
+            size: 14,
+            mediaType: 'image',
+            localPath: 'media/direct-source-peer/$attachmentId.jpg',
+            downloadStatus: 'done',
+            createdAt: '2026-07-14T12:00:00.000Z',
+            contentHash: List.filled(64, 'a').join(),
+            encryptionKeyBase64: 'relay-key',
+            encryptionNonce: 'relay-nonce',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            ownerLane: MediaOwnerLane.direct,
+          ),
+          owner: MediaOwnerLane.direct,
+        );
+        var processCallCount = 0;
+        var contactSendCount = 0;
+        var groupSendCount = 0;
+        final currentContact = _makeMlKemContact(
+          'transition-contact',
+          'Contact',
+        );
+        final contactRepository = InMemoryContactRepository()
+          ..addTestContact(currentContact);
+        final currentGroup = _makeGroup('transition-group', 'Group');
+        final groupRepository = InMemoryGroupRepository();
+        await groupRepository.saveGroup(currentGroup);
+        await _seedGroupMembers(groupRepository, currentGroup.id);
+        await _saveLatestGroupKey(groupRepository, currentGroup.id);
+        final coordinator = DefaultShareBatchDeliveryCoordinator(
+          identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+          contactRepository: contactRepository,
+          messageRepository: messageRepository,
+          mediaAttachmentRepository: mediaRepository,
+          groupRepository: groupRepository,
+          groupMessageRepository: InMemoryGroupMessageRepository(),
+          bridge: FakeBridge(),
+          p2pService: FakeP2PService(),
+          mediaFileManager: FakeMediaFileManager(),
+          imageProcessor: _imageProcessor(),
+          processSharedMediaFn: (_) async {
+            processCallCount++;
+            return const ProcessedShareMediaBatch(processedMedia: []);
+          },
+          sendToContactFn:
+              ({
+                required identity,
+                required shareIntent,
+                required contact,
+                required processedMedia,
+                required uploadHooks,
+              }) async {
+                contactSendCount++;
+                return ShareBatchTargetResult(
+                  target: ShareTargetSelection.contact(contact),
+                  status: ShareBatchTargetStatus.sent,
+                  detail: 'must not send',
+                );
+              },
+          sendToGroupFn:
+              ({
+                required identity,
+                required shareIntent,
+                required group,
+                required processedMedia,
+                required uploadHooks,
+              }) async {
+                groupSendCount++;
+                return ShareBatchTargetResult(
+                  target: ShareTargetSelection.group(group),
+                  status: ShareBatchTargetStatus.sent,
+                  detail: 'must not send',
+                );
+              },
+        );
+
+        final result = await coordinator.deliver(
+          shareIntent: ShareIntent(
+            type: ShareIntentType.files,
+            filePaths: const ['/stale/picker/path.jpg'],
+            forwardProvenance: ForwardProvenance(
+              operationDedupKey: 'direct-operation-$transition',
+            ),
+            directForwardSourceAuthority: DirectForwardSourceAuthority(
+              contactPeerId: parent.contactPeerId,
+              messageId: messageId,
+              attachmentIds: [attachmentId],
+            ),
+          ),
+          targets: [
+            ShareTargetSelection.contact(currentContact),
+            ShareTargetSelection.group(currentGroup),
+          ],
+        );
+
+        expect(result.failureCount, 2, reason: transition);
+        expect(result.sentCount, 0, reason: transition);
+        expect(processCallCount, 0, reason: transition);
+        expect(contactSendCount, 0, reason: transition);
+        expect(groupSendCount, 0, reason: transition);
+      }
+    },
+  );
+
+  test(
+    'direct snapshot final parent authority rejects delete hidden private and terminal drift with zero delivery side effects',
+    () async {
+      final fixtureBytes = File(
+        'integration_test/fixtures/received_media_egress_fixture.jpg',
+      ).readAsBytesSync();
+      for (final scenario in <String>[
+        'deleted',
+        'hidden',
+        'private',
+        'terminal',
+      ]) {
+        final snapshotRoot = Directory(
+          path.join(
+            FakeMediaFileManager.testRootPath,
+            MediaFileManager.groupForwardSnapshotRootDirectoryName,
+          ),
+        );
+        if (snapshotRoot.existsSync()) {
+          snapshotRoot.deleteSync(recursive: true);
+        }
+        final messageId = 'final-parent-$scenario-message';
+        final attachmentId = 'final-parent-$scenario-attachment';
+        const sourcePeerId = 'final-parent-source-peer';
+        final parent = ConversationMessage(
+          id: messageId,
+          contactPeerId: sourcePeerId,
+          senderPeerId: sourcePeerId,
+          text: 'source caption',
+          timestamp: '2026-07-14T12:00:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-07-14T12:00:00.000Z',
+        );
+        final mutatedParent = switch (scenario) {
+          'deleted' => parent.copyWith(deletedAt: '2026-07-14T12:01:00.000Z'),
+          'hidden' => parent.copyWith(hiddenAt: '2026-07-14T12:01:00.000Z'),
+          'private' => parent.copyWith(
+            privateMediaPolicy: const PrivateMediaPolicy.protected(),
+            privateMediaState: PrivateMediaLifecycleState.available,
+          ),
+          _ => parent.copyWith(
+            privateMediaPolicy: const PrivateMediaPolicy.viewOnce(),
+            privateMediaState: PrivateMediaLifecycleState.consumed,
+          ),
+        };
+        final canonical = File(
+          path.join(
+            FakeMediaFileManager.testRootPath,
+            'media',
+            sourcePeerId,
+            '$attachmentId.jpg',
+          ),
+        );
+        canonical.parent.createSync(recursive: true);
+        canonical.writeAsBytesSync(fixtureBytes);
+        final messageRepository = InMemoryMessageRepository();
+        await messageRepository.saveMessage(parent);
+        final mediaRepository = _ExactRowAwaitMutationRepository();
+        await mediaRepository.saveAttachment(
+          MediaAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            mime: 'image/jpeg',
+            size: fixtureBytes.length,
+            mediaType: 'image',
+            localPath: path.join('media', sourcePeerId, '$attachmentId.jpg'),
+            downloadStatus: 'done',
+            createdAt: '2026-07-14T12:00:00.000Z',
+            contentHash: List.filled(64, 'a').join(),
+            encryptionKeyBase64: 'relay-key',
+            encryptionNonce: 'relay-nonce',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            ownerLane: MediaOwnerLane.direct,
+          ),
+          owner: MediaOwnerLane.direct,
+        );
+        mediaRepository.onExactRowAwait = (callCount) async {
+          // Capture preflight consumes reads 1-2. Read 3 follows immutable
+          // snapshot copy/signature validation and precedes final parent read.
+          if (callCount != 3) return;
+          await messageRepository.saveMessage(mutatedParent);
+          await Future<void>.delayed(Duration.zero);
+        };
+        final contact = _makeMlKemContact(
+          'final-parent-target-$scenario',
+          'Target $scenario',
+        );
+        final contacts = InMemoryContactRepository()..addTestContact(contact);
+        final bridge = FakeBridge();
+        var processCalls = 0;
+        var sendCalls = 0;
+        final coordinator = DefaultShareBatchDeliveryCoordinator(
+          identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+          contactRepository: contacts,
+          messageRepository: messageRepository,
+          mediaAttachmentRepository: mediaRepository,
+          groupRepository: InMemoryGroupRepository(),
+          groupMessageRepository: InMemoryGroupMessageRepository(),
+          bridge: bridge,
+          p2pService: FakeP2PService(),
+          mediaFileManager: FakeMediaFileManager(),
+          imageProcessor: _imageProcessor(),
+          processSharedMediaFn: (_) async {
+            processCalls++;
+            return const ProcessedShareMediaBatch(processedMedia: []);
+          },
+          sendToContactFn:
+              ({
+                required identity,
+                required shareIntent,
+                required contact,
+                required processedMedia,
+                required uploadHooks,
+              }) async {
+                sendCalls++;
+                return ShareBatchTargetResult(
+                  target: ShareTargetSelection.contact(contact),
+                  status: ShareBatchTargetStatus.sent,
+                  detail: 'must not send',
+                );
+              },
+        );
+
+        final result = await coordinator.deliver(
+          shareIntent: ShareIntent(
+            type: ShareIntentType.files,
+            filePaths: const ['/stale/picker/source.jpg'],
+            forwardProvenance: ForwardProvenance(
+              operationDedupKey: 'final-parent-$scenario-operation',
+            ),
+            directForwardSourceAuthority: DirectForwardSourceAuthority(
+              contactPeerId: sourcePeerId,
+              messageId: messageId,
+              attachmentIds: [attachmentId],
+            ),
+          ),
+          targets: [ShareTargetSelection.contact(contact)],
+        );
+
+        expect(result.failureCount, 1, reason: scenario);
+        expect(result.sentCount, 0, reason: scenario);
+        expect(mediaRepository.exactRowReadCount, 3, reason: scenario);
+        expect(processCalls, 0, reason: scenario);
+        expect(sendCalls, 0, reason: scenario);
+        expect(bridge.sendCallCount, 0, reason: scenario);
+        expect(
+          snapshotRoot.existsSync() ? snapshotRoot.listSync() : const [],
+          isEmpty,
+          reason: '$scenario snapshot lease must be disposed',
+        );
+      }
+    },
+  );
+
+  test(
+    'internal forwards reject missing blocked archived and keyless contacts before preprocessing or send',
+    () async {
+      for (final scenario in <String>[
+        'missing',
+        'blocked',
+        'archived',
+        'missing-encryption-key',
+      ]) {
+        final stale = _makeMlKemContact(
+          'current-contact-$scenario',
+          'Stale $scenario',
+        );
+        final contacts = InMemoryContactRepository();
+        final current = switch (scenario) {
+          'blocked' => stale.copyWith(isBlocked: true),
+          'archived' => stale.copyWith(isArchived: true),
+          'missing-encryption-key' => _makeContact(
+            stale.peerId,
+            'Keyless current contact',
+          ),
+          _ => null,
+        };
+        if (current != null) contacts.addTestContact(current);
+        final bridge = FakeBridge();
+        var processCalls = 0;
+        var contactSendCalls = 0;
+        var groupSendCalls = 0;
+        final coordinator = DefaultShareBatchDeliveryCoordinator(
+          identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+          contactRepository: contacts,
+          messageRepository: InMemoryMessageRepository(),
+          mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+          groupRepository: InMemoryGroupRepository(),
+          groupMessageRepository: InMemoryGroupMessageRepository(),
+          bridge: bridge,
+          p2pService: FakeP2PService(),
+          mediaFileManager: FakeMediaFileManager(),
+          imageProcessor: _imageProcessor(),
+          processSharedMediaFn: (_) async {
+            processCalls++;
+            return const ProcessedShareMediaBatch(processedMedia: []);
+          },
+          sendToContactFn:
+              ({
+                required identity,
+                required shareIntent,
+                required contact,
+                required processedMedia,
+                required uploadHooks,
+              }) async {
+                contactSendCalls++;
+                return ShareBatchTargetResult(
+                  target: ShareTargetSelection.contact(contact),
+                  status: ShareBatchTargetStatus.sent,
+                  detail: 'must not send',
+                );
+              },
+          sendToGroupFn:
+              ({
+                required identity,
+                required shareIntent,
+                required group,
+                required processedMedia,
+                required uploadHooks,
+              }) async {
+                groupSendCalls++;
+                return ShareBatchTargetResult(
+                  target: ShareTargetSelection.group(group),
+                  status: ShareBatchTargetStatus.sent,
+                  detail: 'must not send',
+                );
+              },
+        );
+
+        final result = await coordinator.deliver(
+          shareIntent: ShareIntent(
+            type: ShareIntentType.files,
+            filePaths: const ['/stale/picker/source.jpg'],
+            forwardProvenance: ForwardProvenance(
+              operationDedupKey: 'contact-drift-$scenario',
+            ),
+          ),
+          targets: [ShareTargetSelection.contact(stale)],
+        );
+
+        expect(result.failureCount, 1, reason: scenario);
+        expect(result.sentCount, 0, reason: scenario);
+        expect(processCalls, 0, reason: scenario);
+        expect(contactSendCalls, 0, reason: scenario);
+        expect(groupSendCalls, 0, reason: scenario);
+        expect(bridge.sendCallCount, 0, reason: scenario);
+      }
+    },
+  );
+
+  test(
+    'internal forwards reject missing archived dissolved and keyless groups before preprocessing or send',
+    () async {
+      for (final scenario in <String>[
+        'missing',
+        'archived',
+        'dissolved',
+        'missing-encryption-key',
+      ]) {
+        final stale = _makeGroup('current-group-$scenario', 'Stale $scenario');
+        final groups = InMemoryGroupRepository();
+        if (scenario != 'missing') {
+          final current = switch (scenario) {
+            'archived' => stale.copyWith(
+              isArchived: true,
+              archivedAt: DateTime.parse('2026-07-14T12:00:00.000Z'),
+            ),
+            'dissolved' => stale.copyWith(
+              isDissolved: true,
+              dissolvedAt: DateTime.parse('2026-07-14T12:00:00.000Z'),
+            ),
+            _ => stale,
+          };
+          await groups.saveGroup(current);
+          await _seedGroupMembers(groups, current.id);
+          if (scenario != 'missing-encryption-key') {
+            await _saveLatestGroupKey(groups, current.id);
+          }
+        }
+        final bridge = FakeBridge();
+        var processCalls = 0;
+        var contactSendCalls = 0;
+        var groupSendCalls = 0;
+        final coordinator = DefaultShareBatchDeliveryCoordinator(
+          identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+          contactRepository: InMemoryContactRepository(),
+          messageRepository: InMemoryMessageRepository(),
+          mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+          groupRepository: groups,
+          groupMessageRepository: InMemoryGroupMessageRepository(),
+          bridge: bridge,
+          p2pService: FakeP2PService(),
+          mediaFileManager: FakeMediaFileManager(),
+          imageProcessor: _imageProcessor(),
+          processSharedMediaFn: (_) async {
+            processCalls++;
+            return const ProcessedShareMediaBatch(processedMedia: []);
+          },
+          sendToContactFn:
+              ({
+                required identity,
+                required shareIntent,
+                required contact,
+                required processedMedia,
+                required uploadHooks,
+              }) async {
+                contactSendCalls++;
+                return ShareBatchTargetResult(
+                  target: ShareTargetSelection.contact(contact),
+                  status: ShareBatchTargetStatus.sent,
+                  detail: 'must not send',
+                );
+              },
+          sendToGroupFn:
+              ({
+                required identity,
+                required shareIntent,
+                required group,
+                required processedMedia,
+                required uploadHooks,
+              }) async {
+                groupSendCalls++;
+                return ShareBatchTargetResult(
+                  target: ShareTargetSelection.group(group),
+                  status: ShareBatchTargetStatus.sent,
+                  detail: 'must not send',
+                );
+              },
+        );
+
+        final result = await coordinator.deliver(
+          shareIntent: ShareIntent(
+            type: ShareIntentType.files,
+            filePaths: const ['/stale/picker/source.jpg'],
+            forwardProvenance: ForwardProvenance(
+              operationDedupKey: 'group-drift-$scenario',
+            ),
+          ),
+          targets: [ShareTargetSelection.group(stale)],
+        );
+
+        expect(result.failureCount, 1, reason: scenario);
+        expect(result.sentCount, 0, reason: scenario);
+        expect(processCalls, 0, reason: scenario);
+        expect(contactSendCalls, 0, reason: scenario);
+        expect(groupSendCalls, 0, reason: scenario);
+        expect(bridge.sendCallCount, 0, reason: scenario);
+      }
+    },
+  );
 
   test(
     'processes shared media once before fanout across target kinds',
@@ -909,6 +1399,9 @@ void main() {
           ..writeAsBytesSync([1, 2, 3]);
         final messages = InMemoryMessageRepository();
         final media = InMemoryMediaAttachmentRepository();
+        const baseProvenance = ForwardProvenance(
+          operationDedupKey: 'forward-operation-one',
+        );
         final coordinator = DefaultShareBatchDeliveryCoordinator(
           identityRepository: identityRepository,
           contactRepository: contacts,
@@ -935,9 +1428,7 @@ void main() {
             type: ShareIntentType.mixed,
             text: 'editable caption',
             filePaths: [file.path],
-            forwardProvenance: const ForwardProvenance(
-              operationDedupKey: 'forward-operation-one',
-            ),
+            forwardProvenance: baseProvenance,
           ),
           targets: [
             ShareTargetSelection.contact(first),
@@ -952,8 +1443,17 @@ void main() {
         expect(secondRows, hasLength(1));
         expect(firstRows.single.id, isNot(secondRows.single.id));
         expect(firstRows.single.timestamp, isNot(secondRows.single.timestamp));
-        expect(firstRows.single.dedupKey, 'forward-operation-one');
-        expect(secondRows.single.dedupKey, 'forward-operation-one');
+        final firstOperationKey = announcementForwardProvenanceForContact(
+          base: baseProvenance,
+          contactPeerId: first.peerId,
+        ).operationDedupKey;
+        final secondOperationKey = announcementForwardProvenanceForContact(
+          base: baseProvenance,
+          contactPeerId: second.peerId,
+        ).operationDedupKey;
+        expect(firstOperationKey, isNot(secondOperationKey));
+        expect(firstRows.single.dedupKey, firstOperationKey);
+        expect(secondRows.single.dedupKey, secondOperationKey);
         expect(firstRows.single.isForwarded, isTrue);
         expect(secondRows.single.isForwarded, isTrue);
         final firstMedia = await media.getAttachmentsForMessage(
@@ -1238,11 +1738,21 @@ void main() {
       await groups.saveGroup(group);
       await _seedGroupMembers(groups, group.id);
       await _saveLatestGroupKey(groups, group.id);
+      const baseProvenance = ForwardProvenance(
+        operationDedupKey: 'direct-only-provenance',
+      );
+      final targetOperationKey = groupForwardProvenanceForGroup(
+        base: baseProvenance,
+        groupId: group.id,
+      ).operationDedupKey;
       final dir = Directory.systemTemp.createTempSync('forward_group_owner_');
       addTearDown(() => dir.deleteSync(recursive: true));
-      final file = File('${dir.path}/source.jpg')..writeAsBytesSync([1, 2, 3]);
+      final file = File('${dir.path}/source.jpg');
+      File(
+        'integration_test/fixtures/received_media_egress_fixture.jpg',
+      ).copySync(file.path);
       final bridge = _GroupShareBgBridge(
-        publishMessageId: 'group-forward-owner-message',
+        publishMessageId: targetOperationKey,
         publishTopicPeers: 1,
         inboxStoreOk: true,
       );
@@ -1258,7 +1768,9 @@ void main() {
         mediaFileManager: FakeMediaFileManager(),
         imageProcessor: _imageProcessor(),
         processSharedMediaFn: (_) async => ProcessedShareMediaBatch(
-          processedMedia: [PendingComposerMedia(file: file, budgetBytes: 3)],
+          processedMedia: [
+            PendingComposerMedia(file: file, budgetBytes: file.lengthSync()),
+          ],
         ),
       );
 
@@ -1267,15 +1779,19 @@ void main() {
           type: ShareIntentType.mixed,
           text: 'group caption',
           filePaths: [file.path],
-          forwardProvenance: const ForwardProvenance(
-            operationDedupKey: 'direct-only-provenance',
-          ),
+          forwardProvenance: baseProvenance,
         ),
         targets: [ShareTargetSelection.group(group)],
       );
 
-      expect(result.failureCount, 0);
+      expect(
+        result.failureCount,
+        0,
+        reason: result.results.map((entry) => entry.detail).join('; '),
+      );
       final saved = (await groupMessages.getMessagesPage(group.id)).first;
+      expect(saved.id, targetOperationKey);
+      expect(saved.logicalDeliveryId, targetOperationKey);
       expect(saved.text, 'group caption');
       final attachments = await media.getAttachmentsForMessage(
         saved.id,
@@ -1341,17 +1857,11 @@ void main() {
       final directMessages = InMemoryMessageRepository();
       final media = InMemoryMediaAttachmentRepository();
       final fileManager = FakeMediaFileManager();
-      // Private per-test source dir: the shared testRootPath is deleted by
-      // OTHER suites' teardowns under gate parallelism. Absolute stored paths
-      // pass through resolveStoredPath as-is.
-      final sourceDir = Directory.systemTemp.createTempSync('fwd_src_303_');
-      addTearDown(() {
-        if (sourceDir.existsSync()) sourceDir.deleteSync(recursive: true);
-      });
 
-      // Verified group SOURCE: incoming discussion media with real bytes
-      // whose stored hash matches, plus sentinel source crypto/identity
-      // values that must never reach any destination map.
+      // Verified group SOURCE: incoming discussion media at its canonical
+      // app-owned plaintext path. The relay hash intentionally belongs to a
+      // different byte domain (ciphertext), plus sentinel source crypto/
+      // identity values that must never reach any destination map.
       const srcGroupId = 'src-group-303';
       const srcMessageId = 'src-msg-303';
       const srcAttachmentId = 'src-att-303';
@@ -1372,11 +1882,24 @@ void main() {
           createdAt: DateTime.utc(2026, 7, 10, 12),
         ),
       );
-      final srcBytes = List<int>.generate(128, (i) => (i * 13) % 251);
-      final srcFile = File(path.join(sourceDir.path, '$srcAttachmentId.jpg'));
+      final srcBytes = File(
+        'integration_test/fixtures/received_media_egress_fixture.jpg',
+      ).readAsBytesSync();
+      final srcFile = File(
+        await fileManager.localPathForAttachment(
+          contactPeerId: srcGroupId,
+          blobId: srcAttachmentId,
+          mime: 'image/jpeg',
+        ),
+      );
       srcFile.writeAsBytesSync(srcBytes);
+      addTearDown(() {
+        if (srcFile.existsSync()) srcFile.deleteSync();
+      });
       final srcStoredPath = srcFile.path;
-      final srcHash = sha256.convert(srcBytes).toString();
+      final plaintextHash = sha256.convert(srcBytes).toString();
+      final srcHash = sha256.convert(<int>[...srcBytes, 0xa5]).toString();
+      expect(srcHash, isNot(plaintextHash));
       await media.saveAttachment(
         MediaAttachment(
           id: srcAttachmentId,
@@ -1587,6 +2110,272 @@ void main() {
     },
   );
 
+  for (final fixture
+      in <
+        ({
+          String label,
+          String path,
+          String mime,
+          String mediaType,
+          String suffix,
+        })
+      >[
+        (
+          label: 'JPEG',
+          path: 'integration_test/fixtures/received_media_egress_fixture.jpg',
+          mime: 'image/jpeg',
+          mediaType: 'image',
+          suffix: 'jpg',
+        ),
+        (
+          label: 'MP4',
+          path: 'integration_test/fixtures/received_media_egress_fixture.mp4',
+          mime: 'video/mp4',
+          mediaType: 'video',
+          suffix: 'mp4',
+        ),
+      ]) {
+    test(
+      'GMF-03D ${fixture.label} group origin reaches two direct targets from one source processing pass',
+      () async {
+        final identities = FakeIdentityRepository()..seed(_makeIdentity());
+        final contacts = InMemoryContactRepository();
+        final groups = InMemoryGroupRepository();
+        final groupMessages = InMemoryGroupMessageRepository();
+        final directMessages = InMemoryMessageRepository();
+        final media = InMemoryMediaAttachmentRepository();
+        final fileManager = FakeMediaFileManager();
+        final cleanupPaths = <String>{};
+        addTearDown(() {
+          for (final cleanupPath in cleanupPaths) {
+            final file = File(cleanupPath);
+            if (file.existsSync()) file.deleteSync();
+          }
+        });
+
+        final tag = fixture.suffix;
+        final sourceGroupId = 'src-group-two-direct-$tag';
+        final sourceMessageId = 'src-message-two-direct-$tag';
+        final sourceAttachmentId = 'src-attachment-two-direct-$tag';
+        await groups.saveGroup(
+          _makeGroup(sourceGroupId, 'Two Direct Source ${fixture.label}'),
+        );
+        await groupMessages.saveMessage(
+          GroupMessage(
+            id: sourceMessageId,
+            groupId: sourceGroupId,
+            senderPeerId: 'peer-source-$tag',
+            text: '${fixture.label} source caption',
+            timestamp: DateTime.utc(2026, 7, 10, 12),
+            isIncoming: true,
+            createdAt: DateTime.utc(2026, 7, 10, 12),
+          ),
+        );
+
+        final sourceBytes = File(fixture.path).readAsBytesSync();
+        final sourceFile = File(
+          await fileManager.localPathForAttachment(
+            contactPeerId: sourceGroupId,
+            blobId: sourceAttachmentId,
+            mime: fixture.mime,
+          ),
+        );
+        sourceFile.writeAsBytesSync(sourceBytes);
+        cleanupPaths.add(sourceFile.path);
+        final plaintextHash = sha256.convert(sourceBytes).toString();
+        final relayCiphertextHash = sha256.convert(<int>[
+          ...sourceBytes,
+          0xa5,
+        ]).toString();
+        expect(relayCiphertextHash, isNot(plaintextHash));
+        final sourceAttachment = MediaAttachment(
+          id: sourceAttachmentId,
+          messageId: sourceMessageId,
+          mime: fixture.mime,
+          size: sourceBytes.length,
+          mediaType: fixture.mediaType,
+          // Real iOS container UUIDs drift. The production resolver must
+          // reroot this exact legacy group path onto the current trusted root
+          // for both image and video forwarding.
+          localPath:
+              '/var/mobile/Containers/Data/Application/OLD-$tag/Documents/'
+              'media/$sourceGroupId/$sourceAttachmentId.${fixture.suffix}',
+          downloadStatus: 'done',
+          createdAt: '2026-07-10T12:00:00.000Z',
+          contentHash: relayCiphertextHash,
+          encryptionKeyBase64: 'source-key-$tag',
+          encryptionNonce: 'source-nonce-$tag',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ownerLane: MediaOwnerLane.group,
+        );
+        await media.saveAttachment(
+          sourceAttachment,
+          owner: MediaOwnerLane.group,
+        );
+        final sourceBefore = (await media.getAttachmentsForMessage(
+          sourceMessageId,
+          owner: MediaOwnerLane.group,
+        )).single;
+
+        final first = _makeMlKemContact(
+          'peer-two-direct-first-$tag',
+          'First ${fixture.label}',
+        );
+        final second = _makeMlKemContact(
+          'peer-two-direct-second-$tag',
+          'Second ${fixture.label}',
+        );
+        await contacts.addContact(first);
+        await contacts.addContact(second);
+
+        final bridge = PassthroughCryptoBridge();
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(
+            isStarted: true,
+            peerId: 'my-peer-id-12345',
+          ),
+        );
+        var processCalls = 0;
+        String? immutableSnapshotPath;
+        final coordinator = DefaultShareBatchDeliveryCoordinator(
+          identityRepository: identities,
+          contactRepository: contacts,
+          messageRepository: directMessages,
+          mediaAttachmentRepository: media,
+          groupRepository: groups,
+          groupMessageRepository: groupMessages,
+          bridge: bridge,
+          p2pService: p2pService,
+          mediaFileManager: fileManager,
+          imageProcessor: _imageProcessor(),
+          processSharedMediaFn: (intent) async {
+            processCalls++;
+            immutableSnapshotPath = intent.filePaths.single;
+            expect(immutableSnapshotPath, isNot(sourceFile.path));
+            final snapshotFile = File(immutableSnapshotPath!);
+            expect(snapshotFile.readAsBytesSync(), sourceBytes);
+            return ProcessedShareMediaBatch(
+              processedMedia: [
+                PendingComposerMedia(
+                  file: snapshotFile,
+                  budgetBytes: sourceBytes.length,
+                ),
+              ],
+            );
+          },
+        );
+
+        final result = await coordinator.deliverGroupMediaForward(
+          request: GroupMediaForwardRequest(
+            groupId: sourceGroupId,
+            messageId: sourceMessageId,
+            attachmentId: sourceAttachmentId,
+            initialCaption: '${fixture.label} source caption',
+            provenance: ForwardProvenance(
+              operationDedupKey: 'group-two-direct-$tag',
+            ),
+          ),
+          caption: 'forwarded ${fixture.label}',
+          targets: [
+            ShareTargetSelection.contact(first),
+            ShareTargetSelection.contact(second),
+          ],
+        );
+
+        expect(processCalls, 1, reason: 'the group source is processed once');
+        expect(immutableSnapshotPath, isNotNull);
+        expect(
+          File(immutableSnapshotPath!).existsSync(),
+          isFalse,
+          reason: 'the per-dispatch immutable snapshot is always disposed',
+        );
+        expect(result.results, hasLength(2));
+        expect(
+          result.failureCount,
+          0,
+          reason: result.results.map((entry) => entry.detail).join('; '),
+        );
+
+        final destinationAttachments = <MediaAttachment>[];
+        for (final contact in [first, second]) {
+          final messages = await directMessages.getMessagesForContact(
+            contact.peerId,
+          );
+          expect(messages, hasLength(1));
+          final attachment = (await media.getAttachmentsForMessage(
+            messages.single.id,
+            owner: MediaOwnerLane.direct,
+          )).single;
+          expect(attachment.ownerLane, MediaOwnerLane.direct);
+          expect(attachment.mime, fixture.mime);
+          expect(attachment.mediaType, fixture.mediaType);
+          destinationAttachments.add(attachment);
+          final destinationPath = await fileManager.resolveStoredPath(
+            attachment.localPath!,
+          );
+          cleanupPaths.add(destinationPath);
+          expect(File(destinationPath).readAsBytesSync(), sourceBytes);
+        }
+
+        expect(
+          destinationAttachments.map((attachment) => attachment.id).toSet(),
+          hasLength(2),
+        );
+        expect(
+          destinationAttachments
+              .map((attachment) => attachment.encryptionKeyBase64)
+              .toSet(),
+          hasLength(2),
+        );
+        expect(
+          destinationAttachments
+              .map((attachment) => attachment.encryptionNonce)
+              .toSet(),
+          hasLength(2),
+        );
+        for (final attachment in destinationAttachments) {
+          expect(attachment.id, isNot(sourceAttachmentId));
+          expect(
+            attachment.encryptionKeyBase64,
+            isNot(sourceAttachment.encryptionKeyBase64),
+          );
+          expect(
+            attachment.encryptionNonce,
+            isNot(sourceAttachment.encryptionNonce),
+          );
+        }
+
+        final uploadIds = bridge.sentMessages
+            .map((message) => jsonDecode(message) as Map<String, dynamic>)
+            .where((message) => message['cmd'] == 'media:upload')
+            .map(
+              (message) =>
+                  (message['payload'] as Map<String, dynamic>)['id'] as String,
+            )
+            .toSet();
+        expect(uploadIds, hasLength(2));
+        expect(
+          uploadIds,
+          destinationAttachments.map((attachment) => attachment.id).toSet(),
+        );
+
+        final sourceAfter = (await media.getAttachmentsForMessage(
+          sourceMessageId,
+          owner: MediaOwnerLane.group,
+        )).single;
+        expect(sourceAfter.toMap(), sourceBefore.toMap());
+        expect(sourceFile.readAsBytesSync(), sourceBytes);
+        expect(
+          await media.getAttachmentsForMessage(
+            sourceMessageId,
+            owner: MediaOwnerLane.direct,
+          ),
+          isEmpty,
+        );
+      },
+    );
+  }
+
   test(
     'GMF-03E target exceptions are isolated without aborting later forwards',
     () async {
@@ -1595,10 +2384,6 @@ void main() {
       final groupMessages = InMemoryGroupMessageRepository();
       final media = InMemoryMediaAttachmentRepository();
       final fileManager = FakeMediaFileManager();
-      final sourceDir = Directory.systemTemp.createTempSync('fwd_src_30e_');
-      addTearDown(() {
-        if (sourceDir.existsSync()) sourceDir.deleteSync(recursive: true);
-      });
 
       // Minimal verified source (same seeding as GMF-03).
       const srcGroupId = 'src-group-30e';
@@ -1618,9 +2403,26 @@ void main() {
           createdAt: DateTime.utc(2026, 7, 10, 12),
         ),
       );
-      final bytes = List<int>.filled(48, 5);
-      final file = File(path.join(sourceDir.path, '$srcAttachmentId.jpg'));
+      final bytes = File(
+        'integration_test/fixtures/received_media_egress_fixture.jpg',
+      ).readAsBytesSync();
+      final file = File(
+        await fileManager.localPathForAttachment(
+          contactPeerId: srcGroupId,
+          blobId: srcAttachmentId,
+          mime: 'image/jpeg',
+        ),
+      );
       file.writeAsBytesSync(bytes);
+      addTearDown(() {
+        if (file.existsSync()) file.deleteSync();
+      });
+      final plaintextHash = sha256.convert(bytes).toString();
+      final relayCiphertextHash = sha256.convert(<int>[
+        ...bytes,
+        0xa5,
+      ]).toString();
+      expect(relayCiphertextHash, isNot(plaintextHash));
       await media.saveAttachment(
         MediaAttachment(
           id: srcAttachmentId,
@@ -1631,7 +2433,7 @@ void main() {
           localPath: file.path,
           downloadStatus: 'done',
           createdAt: '2026-07-10T12:00:00.000Z',
-          contentHash: sha256.convert(bytes).toString(),
+          contentHash: relayCiphertextHash,
           encryptionKeyBase64: 'a2V5',
           encryptionNonce: 'bm9uY2U=',
           encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
@@ -1755,6 +2557,433 @@ void main() {
       expect(genericResult.results[1].status, ShareBatchTargetStatus.sent);
     },
   );
+
+  test(
+    'direct batch strict mode requires exactly one input and processed media item',
+    () async {
+      final contact = _makeMlKemContact('strict-contact-one', 'Strict One');
+
+      Future<
+        ({ShareBatchDeliveryResult result, int processCalls, int sendCalls})
+      >
+      run({
+        required ShareIntent intent,
+        required List<PendingComposerMedia> processedMedia,
+      }) async {
+        final contacts = InMemoryContactRepository()..addTestContact(contact);
+        var processCalls = 0;
+        var sendCalls = 0;
+        final coordinator = DefaultShareBatchDeliveryCoordinator(
+          identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+          contactRepository: contacts,
+          messageRepository: InMemoryMessageRepository(),
+          mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+          groupRepository: InMemoryGroupRepository(),
+          groupMessageRepository: InMemoryGroupMessageRepository(),
+          bridge: FakeBridge(),
+          p2pService: FakeP2PService(),
+          mediaFileManager: FakeMediaFileManager(),
+          imageProcessor: _imageProcessor(),
+          processSharedMediaFn: (_) async {
+            processCalls++;
+            return ProcessedShareMediaBatch(processedMedia: processedMedia);
+          },
+          sendToContactFn:
+              ({
+                required identity,
+                required shareIntent,
+                required contact,
+                required processedMedia,
+                required uploadHooks,
+              }) async {
+                sendCalls++;
+                return ShareBatchTargetResult(
+                  target: ShareTargetSelection.contact(contact),
+                  status: ShareBatchTargetStatus.sent,
+                  detail: 'Sent.',
+                );
+              },
+        );
+        final result = await coordinator.deliverDirectMediaBatchForwardStrict(
+          shareIntent: intent,
+          contacts: [contact],
+        );
+        return (
+          result: result,
+          processCalls: processCalls,
+          sendCalls: sendCalls,
+        );
+      }
+
+      final twoInputFiles = await run(
+        intent: const ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: ['/tmp/strict-a.jpg', '/tmp/strict-b.jpg'],
+        ),
+        processedMedia: [
+          PendingComposerMedia(file: File('/tmp/strict-a.jpg'), budgetBytes: 3),
+          PendingComposerMedia(file: File('/tmp/strict-b.jpg'), budgetBytes: 3),
+        ],
+      );
+      expect(twoInputFiles.result.failureCount, 1);
+      expect(twoInputFiles.sendCalls, 0);
+
+      final noProcessedMedia = await run(
+        intent: const ShareIntent(
+          type: ShareIntentType.mixed,
+          text: 'must not become caption-only',
+          filePaths: ['/tmp/strict-source.jpg'],
+        ),
+        processedMedia: const [],
+      );
+      expect(noProcessedMedia.processCalls, 1);
+      expect(noProcessedMedia.result.failureCount, 1);
+      expect(noProcessedMedia.sendCalls, 0);
+
+      final twoProcessedMedia = await run(
+        intent: const ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: ['/tmp/strict-source.jpg'],
+        ),
+        processedMedia: [
+          PendingComposerMedia(
+            file: File('/tmp/strict-processed-a.jpg'),
+            budgetBytes: 3,
+          ),
+          PendingComposerMedia(
+            file: File('/tmp/strict-processed-b.jpg'),
+            budgetBytes: 3,
+          ),
+        ],
+      );
+      expect(twoProcessedMedia.processCalls, 1);
+      expect(twoProcessedMedia.result.failureCount, 1);
+      expect(twoProcessedMedia.sendCalls, 0);
+
+      final exactlyOne = await run(
+        intent: const ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: ['/tmp/strict-source.jpg'],
+        ),
+        processedMedia: [
+          PendingComposerMedia(
+            file: File('/tmp/strict-source.jpg'),
+            budgetBytes: 3,
+          ),
+        ],
+      );
+      expect(exactlyOne.processCalls, 1);
+      expect(exactlyOne.result.sentCount, 1);
+      expect(exactlyOne.sendCalls, 1);
+    },
+  );
+
+  test(
+    'direct batch strict mode fails vanished and oversized media without caption-only send',
+    () async {
+      final tempDir = Directory.systemTemp.createTempSync(
+        'direct_batch_strict_media_',
+      );
+      addTearDown(() {
+        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+      });
+      final missingPath = path.join(tempDir.path, 'vanished.jpg');
+      final oversized = File(path.join(tempDir.path, 'oversized.jpg'));
+      final handle = oversized.openSync(mode: FileMode.write);
+      handle.truncateSync(kGroupMediaImageLimitBytes + 1);
+      handle.closeSync();
+      final contact = _makeMlKemContact('strict-contact-media', 'Strict Media');
+      final contacts = InMemoryContactRepository()..addTestContact(contact);
+      final messages = InMemoryMessageRepository();
+      var sendCalls = 0;
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+        contactRepository: contacts,
+        messageRepository: messages,
+        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        groupRepository: InMemoryGroupRepository(),
+        groupMessageRepository: InMemoryGroupMessageRepository(),
+        bridge: FakeBridge(),
+        p2pService: FakeP2PService(),
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: _imageProcessor(),
+        sendToContactFn:
+            ({
+              required identity,
+              required shareIntent,
+              required contact,
+              required processedMedia,
+              required uploadHooks,
+            }) async {
+              sendCalls++;
+              return ShareBatchTargetResult(
+                target: ShareTargetSelection.contact(contact),
+                status: ShareBatchTargetStatus.sent,
+                detail: 'Sent.',
+              );
+            },
+      );
+
+      for (final sourcePath in [missingPath, oversized.path]) {
+        final result = await coordinator.deliverDirectMediaBatchForwardStrict(
+          shareIntent: ShareIntent(
+            type: ShareIntentType.mixed,
+            text: 'caption must not escape alone',
+            filePaths: [sourcePath],
+          ),
+          contacts: [contact],
+        );
+        expect(result.failureCount, 1, reason: sourcePath);
+        expect(result.sentCount, 0, reason: sourcePath);
+        expect(result.queuedCount, 0, reason: sourcePath);
+      }
+      expect(sendCalls, 0);
+      expect(messages.count, 0);
+    },
+  );
+
+  test(
+    'direct batch strict mode performs a second exact active contact read and continues valid contacts',
+    () async {
+      final staleValid = _makeMlKemContact(
+        'strict-contact-valid',
+        'Stale Valid',
+      );
+      final currentValid = staleValid.copyWith(username: 'Current Valid');
+      final staleMissing = _makeMlKemContact(
+        'strict-contact-missing',
+        'Stale Missing',
+      );
+      final staleMismatch = _makeMlKemContact(
+        'strict-contact-mismatch',
+        'Stale Mismatch',
+      );
+      final staleArchived = _makeMlKemContact(
+        'strict-contact-archived',
+        'Stale Archived',
+      );
+      final staleBlocked = _makeMlKemContact(
+        'strict-contact-blocked',
+        'Stale Blocked',
+      );
+      final staleThrowing = _makeMlKemContact(
+        'strict-contact-throwing',
+        'Stale Throwing',
+      );
+      final staleLater = _makeMlKemContact(
+        'strict-contact-later',
+        'Stale Later',
+      );
+      final currentLater = staleLater.copyWith(username: 'Current Later');
+      final events = <String>[];
+      final contacts = _StrictContactRepository(events: events)
+        ..responses.addAll({
+          staleValid.peerId: currentValid,
+          staleMissing.peerId: null,
+          staleMismatch.peerId: _makeMlKemContact(
+            'strict-contact-replaced',
+            'Replacement',
+          ),
+          staleArchived.peerId: staleArchived.copyWith(isArchived: true),
+          staleBlocked.peerId: staleBlocked.copyWith(isBlocked: true),
+          staleLater.peerId: currentLater,
+        })
+        ..throwingPeerIds.add(staleThrowing.peerId);
+      final source = PendingComposerMedia(
+        file: File('/tmp/strict-current-source.jpg'),
+        budgetBytes: 3,
+      );
+      final sentContacts = <ContactModel>[];
+      final sentForwardKeys = <String, String>{};
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+        contactRepository: contacts,
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        groupRepository: InMemoryGroupRepository(),
+        groupMessageRepository: InMemoryGroupMessageRepository(),
+        bridge: FakeBridge(),
+        p2pService: FakeP2PService(),
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: _imageProcessor(),
+        processSharedMediaFn: (_) async =>
+            ProcessedShareMediaBatch(processedMedia: [source]),
+        sendToContactFn:
+            ({
+              required identity,
+              required shareIntent,
+              required contact,
+              required processedMedia,
+              required uploadHooks,
+            }) async {
+              events.add('send:${contact.peerId}');
+              sentContacts.add(contact);
+              sentForwardKeys[contact.peerId] =
+                  shareIntent.forwardProvenance!.operationDedupKey;
+              return ShareBatchTargetResult(
+                target: ShareTargetSelection.contact(contact),
+                status: ShareBatchTargetStatus.sent,
+                detail: 'Sent.',
+              );
+            },
+      );
+      final requested = [
+        staleValid,
+        staleMissing,
+        staleMismatch,
+        staleArchived,
+        staleBlocked,
+        staleThrowing,
+        staleLater,
+      ];
+
+      final result = await coordinator.deliverDirectMediaBatchForwardStrict(
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: ['/tmp/strict-current-source.jpg'],
+          forwardProvenance: ForwardProvenance(
+            operationDedupKey: 'strict-contact-forward-operation',
+          ),
+        ),
+        contacts: requested,
+      );
+
+      expect(result.results.map((entry) => entry.status), [
+        ShareBatchTargetStatus.sent,
+        ShareBatchTargetStatus.failed,
+        ShareBatchTargetStatus.failed,
+        ShareBatchTargetStatus.failed,
+        ShareBatchTargetStatus.failed,
+        ShareBatchTargetStatus.failed,
+        ShareBatchTargetStatus.sent,
+      ]);
+      expect(
+        contacts.getContactCalls,
+        requested.map((contact) => contact.peerId),
+      );
+      expect(sentContacts.map((contact) => contact.username), [
+        'Current Valid',
+        'Current Later',
+      ]);
+      expect(sentForwardKeys, {
+        currentValid.peerId: 'strict-contact-forward-operation',
+        currentLater.peerId: 'strict-contact-forward-operation',
+      });
+      expect(events, [
+        'read:${staleValid.peerId}',
+        'send:${staleValid.peerId}',
+        'read:${staleMissing.peerId}',
+        'read:${staleMismatch.peerId}',
+        'read:${staleArchived.peerId}',
+        'read:${staleBlocked.peerId}',
+        'read:${staleThrowing.peerId}',
+        'read:${staleLater.peerId}',
+        'send:${staleLater.peerId}',
+      ]);
+    },
+  );
+
+  test(
+    'default direct delivery retains stale fallback unless strict mode is explicitly selected',
+    () async {
+      final stale = _makeMlKemContact(
+        'strict-default-contact',
+        'Stale Default',
+      );
+      final contacts = _StrictContactRepository()
+        ..responses[stale.peerId] = null;
+      final source = PendingComposerMedia(
+        file: File('/tmp/default-preservation.jpg'),
+        budgetBytes: 3,
+      );
+      var sendCalls = 0;
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+        contactRepository: contacts,
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        groupRepository: InMemoryGroupRepository(),
+        groupMessageRepository: InMemoryGroupMessageRepository(),
+        bridge: FakeBridge(),
+        p2pService: FakeP2PService(),
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: _imageProcessor(),
+        processSharedMediaFn: (_) async =>
+            ProcessedShareMediaBatch(processedMedia: [source]),
+        sendToContactFn:
+            ({
+              required identity,
+              required shareIntent,
+              required contact,
+              required processedMedia,
+              required uploadHooks,
+            }) async {
+              sendCalls++;
+              expect(contact, stale);
+              return ShareBatchTargetResult(
+                target: ShareTargetSelection.contact(contact),
+                status: ShareBatchTargetStatus.sent,
+                detail: 'Sent.',
+              );
+            },
+      );
+      const intent = ShareIntent(
+        type: ShareIntentType.files,
+        filePaths: ['/tmp/default-preservation.jpg'],
+      );
+
+      final strict = await coordinator.deliverDirectMediaBatchForwardStrict(
+        shareIntent: intent,
+        contacts: [stale],
+      );
+      expect(strict.failureCount, 1);
+      expect(sendCalls, 0);
+
+      final ordinary = await coordinator.deliver(
+        shareIntent: intent,
+        targets: [ShareTargetSelection.contact(stale)],
+      );
+      expect(ordinary.sentCount, 1);
+      expect(sendCalls, 1);
+      expect(contacts.getContactCalls, [stale.peerId]);
+    },
+  );
+}
+
+class _StrictContactRepository extends InMemoryContactRepository {
+  _StrictContactRepository({this.events});
+
+  final List<String>? events;
+  final Map<String, ContactModel?> responses = <String, ContactModel?>{};
+  final Set<String> throwingPeerIds = <String>{};
+  final List<String> getContactCalls = <String>[];
+
+  @override
+  Future<ContactModel?> getContact(String peerId) async {
+    getContactCalls.add(peerId);
+    events?.add('read:$peerId');
+    if (throwingPeerIds.contains(peerId)) {
+      throw StateError('strict contact lookup failed');
+    }
+    if (responses.containsKey(peerId)) {
+      return responses[peerId];
+    }
+    return super.getContact(peerId);
+  }
+}
+
+class _ExactRowAwaitMutationRepository
+    extends InMemoryMediaAttachmentRepository {
+  Future<void> Function(int callCount)? onExactRowAwait;
+  int exactRowReadCount = 0;
+
+  @override
+  Future<MediaAttachment?> getAttachmentById(String id) async {
+    final row = await super.getAttachmentById(id);
+    exactRowReadCount++;
+    await onExactRowAwait?.call(exactRowReadCount);
+    return row;
+  }
 }
 
 class _LanFakeP2PService extends FakeP2PService {

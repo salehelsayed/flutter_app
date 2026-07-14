@@ -1,0 +1,12 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application
+        android:allowBackup="false"
+        android:label="Mknoon PiP interruption proof"
+        android:theme="@android:style/Theme.Material.NoActionBar">
+        <activity
+            android:name="com.mknoon.app.pipproof.PictureInPictureAudioFocusInterruptionProofActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:finishOnTaskLaunch="true" />
+    </application>
+</manifest>

@@ -1,19 +1,24 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import '../models/conversation_message.dart';
 import '../models/conversation_thread_summary.dart';
+import '../models/media_attachment.dart';
 import 'conversation_thread_summary_repository.dart';
+import 'direct_private_media_lifecycle_repository.dart';
 import 'message_repository.dart';
 
 /// Implementation of MessageRepository using database helper functions.
 class MessageRepositoryImpl
     implements
         MessageRepository,
+        DirectPrivateMediaLifecycleRepository,
         ConversationThreadSummaryRepository,
         MessageRepositoryChangeSource,
+        MessageRepositoryRemovalSource,
         ConversationReadEventSource {
   final Future<void> Function(Map<String, Object?> row) dbInsertMessage;
   final Future<List<Map<String, Object?>>> Function(String contactPeerId)
@@ -83,11 +88,37 @@ class MessageRepositoryImpl
   dbLoadInboxCustodyOutgoingMessages;
   final Future<void> Function(String id, {int? relayExpiresAtMs})?
   dbMarkInboxCustodyChecked;
+  final Future<int> Function(String id, {required int nowMs})?
+  dbClaimDirectPrivateMediaOpening;
+  final Future<int> Function(String id, {required int nowMs})?
+  dbMarkDirectPrivateMediaViewing;
+  final Future<int> Function(String id)? dbRollbackDirectPrivateMediaOpening;
+  final Future<int> Function(String id, {required int nowMs})?
+  dbConsumeDirectPrivateMedia;
+  final Future<int> Function(String id, {required int nowMs})?
+  dbAdvanceDirectPrivateMediaClock;
+  final Future<int> Function(String id, {required int nowMs})?
+  dbFailClosedCorruptDirectPrivateMediaState;
+  final Future<int> Function(
+    String id, {
+    required String hiddenAt,
+    required int nowMs,
+  })?
+  dbHideDirectPrivateMediaForMe;
+  final Future<List<Map<String, Object?>>> Function({int limit})?
+  dbLoadActiveDirectPrivateMediaDisappearing;
+  final Future<List<Map<String, Object?>>> Function({int limit})?
+  dbLoadDirectPrivateMediaRecoveryCandidates;
+  final Future<int> Function(String id, {required int nowMs})?
+  dbRotateDirectPrivateMediaRecoveryCandidate;
+  final Future<int?> Function()? dbLoadNextDirectPrivateMediaExpiryAtMs;
   final DirectReactionNotificationProjection? directReactionProjection;
   final Future<List<Map<String, Object?>>> Function()?
   dbLoadLocallyAuthoredMessagesForProjection;
   final StreamController<ConversationMessage> _messageChangeController =
       StreamController<ConversationMessage>.broadcast();
+  final StreamController<DirectMessageRemoval> _messageRemovalController =
+      StreamController<DirectMessageRemoval>.broadcast(sync: true);
   // 194: conversation-level read-marking signal (peerId), emitted only when a
   // markConversationAsRead call actually flips >=1 row (INV-5).
   final StreamController<String> _conversationReadController =
@@ -120,6 +151,17 @@ class MessageRepositoryImpl
     required this.dbConditionalTransitionStatus,
     this.dbLoadInboxCustodyOutgoingMessages,
     this.dbMarkInboxCustodyChecked,
+    this.dbClaimDirectPrivateMediaOpening,
+    this.dbMarkDirectPrivateMediaViewing,
+    this.dbRollbackDirectPrivateMediaOpening,
+    this.dbConsumeDirectPrivateMedia,
+    this.dbAdvanceDirectPrivateMediaClock,
+    this.dbFailClosedCorruptDirectPrivateMediaState,
+    this.dbHideDirectPrivateMediaForMe,
+    this.dbLoadActiveDirectPrivateMediaDisappearing,
+    this.dbLoadDirectPrivateMediaRecoveryCandidates,
+    this.dbRotateDirectPrivateMediaRecoveryCandidate,
+    this.dbLoadNextDirectPrivateMediaExpiryAtMs,
     this.directReactionProjection,
     this.dbLoadLocallyAuthoredMessagesForProjection,
   });
@@ -127,6 +169,10 @@ class MessageRepositoryImpl
   @override
   Stream<ConversationMessage> get messageChanges =>
       _messageChangeController.stream;
+
+  @override
+  Stream<DirectMessageRemoval> get messageRemovals =>
+      _messageRemovalController.stream;
 
   @override
   Future<void> saveMessage(ConversationMessage message) async {
@@ -144,8 +190,19 @@ class MessageRepositoryImpl
       if (committedRow == null) {
         throw StateError('message save committed without a readable row');
       }
-      final saved = _rememberMessage(ConversationMessage.fromMap(committedRow));
-      await directReactionProjection?.upsertAuthoredTarget(saved);
+      final committed = _rememberMessage(
+        ConversationMessage.fromMap(committedRow),
+      );
+      // `media` is a transient projection from the separate attachments table.
+      // Never retain paths in the row snapshot cache: attachment deletion,
+      // eviction, and private-media redaction are owned by a different
+      // repository and therefore cannot invalidate this cache safely. The
+      // initial ordinary outgoing save may still carry a validated, one-event
+      // projection so an already-open conversation can render immediately.
+      final saved = committed.copyWith(
+        media: _validatedOutgoingSaveMedia(message),
+      );
+      await directReactionProjection?.upsertAuthoredTarget(committed);
 
       emitFlowEvent(
         layer: 'FL',
@@ -329,6 +386,12 @@ class MessageRepositoryImpl
     try {
       final count = await dbDeleteMessagesForContact(contactPeerId);
       if (count > 0) {
+        _messageSnapshots.removeWhere(
+          (_, message) => message.contactPeerId == contactPeerId,
+        );
+        _messageRemovalController.add(
+          DirectMessageRemoval(contactPeerId: contactPeerId, messageId: null),
+        );
         await directReactionProjection?.removeAuthoredTargetsForContact(
           contactPeerId,
         );
@@ -360,9 +423,24 @@ class MessageRepositoryImpl
     );
 
     try {
+      final cached = _messageSnapshots[id];
+      final previousRow = cached == null ? await dbLoadMessage(id) : null;
+      final previous =
+          cached ??
+          (previousRow == null
+              ? null
+              : ConversationMessage.fromMap(previousRow));
       final count = await dbDeleteMessage(id);
       if (count > 0) {
         _messageSnapshots.remove(id);
+        if (previous != null) {
+          _messageRemovalController.add(
+            DirectMessageRemoval(
+              contactPeerId: previous.contactPeerId,
+              messageId: id,
+            ),
+          );
+        }
         await directReactionProjection?.removeAuthoredTarget(id);
       }
 
@@ -554,10 +632,215 @@ class MessageRepositoryImpl
     return summaries;
   }
 
+  T _requirePrivateLifecycleClosure<T>(T? closure, String name) {
+    if (closure == null) {
+      throw StateError(
+        'Direct private-media lifecycle closure $name is not wired; '
+        'conditional state changes fail closed',
+      );
+    }
+    return closure;
+  }
+
+  Future<void> _emitPrivateLifecycleMutation(String id) async {
+    final updated = await _loadAndRememberMessage(id);
+    if (updated != null) _messageChangeController.add(updated);
+  }
+
+  /// Refresh hook for direct-private SQL transactions owned by the media
+  /// repository. Emits only when the lifecycle snapshot changed; repeated
+  /// ineligible writes against the same terminal parent do not duplicate the
+  /// terminal change event.
+  Future<void> refreshPrivateMediaLifecycleAfterExternalMutation(
+    String messageId,
+  ) async {
+    final previous = _messageSnapshots[messageId];
+    final row = await dbLoadMessage(messageId);
+    if (row == null) return;
+    final updated = ConversationMessage.fromMap(row);
+    final changed = previous == null
+        ? updated.privateMediaState.isTerminal ||
+              updated.hiddenAt != null ||
+              updated.deletedAt != null
+        : previous.privateMediaPolicy != updated.privateMediaPolicy ||
+              previous.privateMediaState != updated.privateMediaState ||
+              previous.privateMediaReceivedAtMs !=
+                  updated.privateMediaReceivedAtMs ||
+              previous.privateMediaExpiresAtMs !=
+                  updated.privateMediaExpiresAtMs ||
+              previous.privateMediaRevealedAtMs !=
+                  updated.privateMediaRevealedAtMs ||
+              previous.privateMediaTerminalAtMs !=
+                  updated.privateMediaTerminalAtMs ||
+              previous.privateMediaClockHighWaterMs !=
+                  updated.privateMediaClockHighWaterMs ||
+              previous.hiddenAt != updated.hiddenAt ||
+              previous.deletedAt != updated.deletedAt;
+    _rememberMessage(updated);
+    if (changed) _messageChangeController.add(updated);
+  }
+
+  @override
+  Future<ConversationMessage?> loadPrivateMediaLifecycleMessage(
+    String messageId,
+  ) => getMessage(messageId);
+
+  @override
+  Future<bool> claimPrivateMediaOpening(
+    String messageId, {
+    required int nowMs,
+  }) => _runPrivateLifecycleMutation(
+    messageId,
+    _requirePrivateLifecycleClosure(
+      dbClaimDirectPrivateMediaOpening,
+      'claimOpening',
+    )(messageId, nowMs: nowMs),
+  );
+
+  @override
+  Future<bool> markPrivateMediaViewing(
+    String messageId, {
+    required int nowMs,
+  }) => _runPrivateLifecycleMutation(
+    messageId,
+    _requirePrivateLifecycleClosure(
+      dbMarkDirectPrivateMediaViewing,
+      'markViewing',
+    )(messageId, nowMs: nowMs),
+  );
+
+  @override
+  Future<bool> rollbackPrivateMediaOpening(String messageId) =>
+      _runPrivateLifecycleMutation(
+        messageId,
+        _requirePrivateLifecycleClosure(
+          dbRollbackDirectPrivateMediaOpening,
+          'rollbackOpening',
+        )(messageId),
+      );
+
+  @override
+  Future<bool> consumePrivateMedia(String messageId, {required int nowMs}) =>
+      _runPrivateLifecycleMutation(
+        messageId,
+        _requirePrivateLifecycleClosure(dbConsumeDirectPrivateMedia, 'consume')(
+          messageId,
+          nowMs: nowMs,
+        ),
+      );
+
+  @override
+  Future<bool> advancePrivateMediaClock(
+    String messageId, {
+    required int nowMs,
+  }) => _runPrivateLifecycleMutation(
+    messageId,
+    _requirePrivateLifecycleClosure(
+      dbAdvanceDirectPrivateMediaClock,
+      'advanceClock',
+    )(messageId, nowMs: nowMs),
+  );
+
+  @override
+  Future<bool> failClosedCorruptPrivateMediaState(
+    String messageId, {
+    required int nowMs,
+  }) => _runPrivateLifecycleMutation(
+    messageId,
+    _requirePrivateLifecycleClosure(
+      dbFailClosedCorruptDirectPrivateMediaState,
+      'failClosedCorruptState',
+    )(messageId, nowMs: nowMs),
+  );
+
+  @override
+  Future<bool> hidePrivateMediaForMe(
+    String messageId, {
+    required String hiddenAt,
+    required int nowMs,
+  }) => _runPrivateLifecycleMutation(
+    messageId,
+    _requirePrivateLifecycleClosure(dbHideDirectPrivateMediaForMe, 'hideForMe')(
+      messageId,
+      hiddenAt: hiddenAt,
+      nowMs: nowMs,
+    ),
+  );
+
+  Future<bool> _runPrivateLifecycleMutation(
+    String messageId,
+    Future<int> mutation,
+  ) async {
+    final affected = await mutation;
+    if (affected <= 0) return false;
+    await _emitPrivateLifecycleMutation(messageId);
+    return true;
+  }
+
+  @override
+  Future<List<ConversationMessage>> loadActiveDisappearingPrivateMedia({
+    int limit = 100,
+  }) async {
+    final rows = await _requirePrivateLifecycleClosure(
+      dbLoadActiveDirectPrivateMediaDisappearing,
+      'loadActiveDisappearing',
+    )(limit: limit);
+    return _rememberMessages(rows.map(ConversationMessage.fromMap));
+  }
+
+  @override
+  Future<List<ConversationMessage>> loadPrivateMediaRecoveryCandidates({
+    int limit = 100,
+  }) async {
+    final rows = await _requirePrivateLifecycleClosure(
+      dbLoadDirectPrivateMediaRecoveryCandidates,
+      'loadRecoveryCandidates',
+    )(limit: limit);
+    return _rememberMessages(rows.map(ConversationMessage.fromMap));
+  }
+
+  @override
+  Future<bool> rotatePrivateMediaRecoveryCandidate(
+    String messageId, {
+    required int nowMs,
+  }) async {
+    final affected = await _requirePrivateLifecycleClosure(
+      dbRotateDirectPrivateMediaRecoveryCandidate,
+      'rotateRecoveryCandidate',
+    )(messageId, nowMs: nowMs);
+    return affected > 0;
+  }
+
+  @override
+  Future<int?> loadNextPrivateMediaExpiryAtMs() {
+    return _requirePrivateLifecycleClosure(
+      dbLoadNextDirectPrivateMediaExpiryAtMs,
+      'loadNextExpiry',
+    )();
+  }
 
   ConversationMessage _rememberMessage(ConversationMessage message) {
     _messageSnapshots[message.id] = message;
     return message;
+  }
+
+  List<MediaAttachment> _validatedOutgoingSaveMedia(
+    ConversationMessage message,
+  ) {
+    final media = message.media;
+    if (media.isEmpty ||
+        message.isIncoming ||
+        message.isDeleted ||
+        message.isHidden ||
+        message.privateMediaPolicy.requiresRedaction ||
+        media.any(
+          (attachment) =>
+              attachment.messageId != message.id ||
+              attachment.ownerLane != MediaOwnerLane.direct,
+        )) {
+      return const <MediaAttachment>[];
+    }
+    return List<MediaAttachment>.unmodifiable(media);
   }
 
   List<ConversationMessage> _rememberMessages(

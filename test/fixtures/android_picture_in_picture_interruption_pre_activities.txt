@@ -1,0 +1,14 @@
+ACTIVITY MANAGER ACTIVITIES (dumpsys activity activities)
+  * Task{native #857 type=standard A=10471:com.mknoon.app.pipproof U=0 visible=true visibleRequested=true mode=pinned translucent=false sz=1}
+    * Hist  #0: ActivityRecord{nativeRecord u0 com.mknoon.app.pipproof/com.mknoon.app.ReceivedVideoPictureInPictureActivity t857}
+      state=RESUMED mVisibleRequested=true nowVisible=true
+      windows=[Window{nativeWindow u0 com.mknoon.app.pipproof/com.mknoon.app.ReceivedVideoPictureInPictureActivity}]
+  * Task{flutter #856 type=standard I=com.mknoon.app.pipproof/com.mknoon.app.MainActivity U=0 visible=true visibleRequested=true mode=fullscreen translucent=false sz=1}
+    topResumedActivity=ActivityRecord{flutterRecord u0 com.mknoon.app.pipproof/com.mknoon.app.MainActivity t856}
+    * Hist  #0: ActivityRecord{flutterRecord u0 com.mknoon.app.pipproof/com.mknoon.app.MainActivity t856}
+      state=RESUMED mVisibleRequested=true nowVisible=true
+      windows=[Window{flutterWindow u0 com.mknoon.app.pipproof/com.mknoon.app.MainActivity}]
+  ResumedActivity: ActivityRecord{flutterRecord u0 com.mknoon.app.pipproof/com.mknoon.app.MainActivity t856}
+  topDisplayFocusedRootTask=Task{flutter #856 type=standard I=com.mknoon.app.pipproof/com.mknoon.app.MainActivity}
+  mCurrentFocus=Window{flutterWindow u0 com.mknoon.app.pipproof/com.mknoon.app.MainActivity}
+  mFocusedApp=ActivityRecord{flutterRecord u0 com.mknoon.app.pipproof/com.mknoon.app.MainActivity t856}

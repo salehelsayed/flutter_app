@@ -10,10 +10,12 @@ import 'package:flutter_app/core/database/migrations/073_group_message_last_send
 import 'package:flutter_app/core/database/migrations/074_group_message_logical_delivery_id.dart';
 import 'package:flutter_app/core/database/migrations/087_group_message_retry_backoff_columns.dart';
 import 'package:flutter_app/core/database/migrations/099_group_messages_is_forwarded.dart';
+import 'package:flutter_app/core/database/migrations/101_group_private_media_lifecycle.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_sync_receipts_db_helpers.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message_receipt.dart';
+import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
 
@@ -81,6 +83,8 @@ void main() {
           dbDeleteGroupMessagesForGroup(executor, groupId),
       dbLoadGroupThreadSummaries: (groupIds) =>
           dbLoadGroupThreadSummaries(executor, groupIds),
+      dbLoadGroupThreadPreviewsFn: (groupIds) =>
+          dbLoadGroupThreadPreviews(executor, groupIds),
       dbLoadFailedOutgoingGroupMessagesFn: () =>
           dbLoadFailedOutgoingGroupMessages(executor),
       dbLoadRetryableOutgoingGroupMessagesFn: () =>
@@ -121,6 +125,27 @@ void main() {
                   apply(buildRepo(transactionExecutor)),
             )
           : null,
+      dbAnchorOutgoingGroupPrivateMediaCustodyFn: (id, {required int nowMs}) =>
+          dbAnchorOutgoingGroupPrivateMediaCustody(executor, id, nowMs: nowMs),
+      dbConsumeGroupPrivateMediaFn: (id, {required int nowMs}) =>
+          dbConsumeGroupPrivateMedia(executor, id, nowMs: nowMs),
+      dbAdvanceGroupPrivateMediaClockFn: (id, {required int nowMs}) =>
+          dbAdvanceGroupPrivateMediaClock(executor, id, nowMs: nowMs),
+      dbLoadNextGroupPrivateMediaExpiryAtMsFn: () =>
+          dbLoadNextGroupPrivateMediaExpiryAtMs(executor),
+      dbLoadActiveGroupPrivateMediaDisappearingFn: ({int limit = 100}) =>
+          dbLoadActiveGroupPrivateMediaDisappearing(executor, limit: limit),
+      dbLoadGroupPrivateMediaRecoveryCandidatesFn: ({int limit = 100}) =>
+          dbLoadGroupPrivateMediaRecoveryCandidates(executor, limit: limit),
+      dbRotateGroupPrivateMediaRecoveryCandidateFn:
+          (id, {required int nowMs}) =>
+              dbRotateGroupPrivateMediaRecoveryCandidate(
+                executor,
+                id,
+                nowMs: nowMs,
+              ),
+      dbCompleteGroupPrivateMediaCleanupFn: (id) =>
+          dbCompleteGroupPrivateMediaCleanup(executor, id),
     );
   }
 
@@ -136,6 +161,7 @@ void main() {
     await runGroupMessageLogicalDeliveryIdMigration(db);
     await runGroupMessageRetryBackoffColumnsMigration(db);
     await runGroupMessagesIsForwardedMigration(db);
+    await runGroupPrivateMediaLifecycleMigration(db);
 
     repo = buildRepo(db, enableTransactions: true);
   });
@@ -162,6 +188,14 @@ void main() {
     DateTime? createdAt,
     DateTime? lastSendAttemptAt,
     String? logicalDeliveryId,
+    GroupPrivateMediaPolicy privateMediaPolicy =
+        const GroupPrivateMediaPolicy.ordinary(),
+    int? mediaReceivedAt,
+    int? mediaExpiresAt,
+    int? mediaLastCheckedAt,
+    int? mediaConsumedAt,
+    int? mediaExpiredAt,
+    bool mediaCleanupPending = false,
   }) {
     return GroupMessage(
       id: id,
@@ -179,6 +213,13 @@ void main() {
       readAt: readAt,
       createdAt: createdAt ?? now,
       lastSendAttemptAt: lastSendAttemptAt,
+      privateMediaPolicy: privateMediaPolicy,
+      mediaReceivedAt: mediaReceivedAt,
+      mediaExpiresAt: mediaExpiresAt,
+      mediaLastCheckedAt: mediaLastCheckedAt,
+      mediaConsumedAt: mediaConsumedAt,
+      mediaExpiredAt: mediaExpiredAt,
+      mediaCleanupPending: mediaCleanupPending,
     );
   }
 
@@ -318,12 +359,24 @@ void main() {
           events.add,
         );
         addTearDown(subscription.cancel);
+        final authorizationChanges = <GroupMessageAuthorizationChange>[];
+        final authorizationSubscription = repo.authorizationChanges.listen(
+          authorizationChanges.add,
+        );
+        addTearDown(authorizationSubscription.cancel);
         await repo.deleteMessageForMembershipRepair(msg.id);
         await pumpEventQueue();
         expect(await repo.getMessage(msg.id), isNull);
         expect(await repo.getLocalDeletionGroupId(msg.id), isNull);
         expect(events, hasLength(1));
         expect(events.single.reloadRequired, isTrue);
+        expect(authorizationChanges, hasLength(1));
+        expect(authorizationChanges.single.groupId, msg.groupId);
+        expect(authorizationChanges.single.messageId, msg.id);
+        expect(
+          authorizationChanges.single.kind,
+          GroupMessageAuthorizationMutation.removed,
+        );
 
         await repo.saveMessage(msg.copyWith(text: 'restored after re-add'));
 
@@ -676,42 +729,39 @@ void main() {
     // 'failed' shows a dishonest red bubble after a pause/resume while still
     // offline and bypasses the custody-first repush on reconnect. Only a
     // payload-less queued_offline row (repush impossible) transitions.
-    test(
-      'recoverStuckSendingMessages leaves payload-armed queued_offline rows '
-      'to the repush lane',
-      () async {
-        final ts = DateTime.now().toUtc();
-        await repo.saveMessage(
-          makeMessage(
-            id: 'qo-armed',
-            status: 'queued_offline',
-            isIncoming: false,
-            timestamp: ts,
-            createdAt: ts,
-          ).copyWith(
-            inboxStored: false,
-            inboxRetryPayload: '{"groupId":"group-1"}',
-          ),
-        );
-        await repo.saveMessage(
-          makeMessage(
-            id: 'qo-bare',
-            status: 'queued_offline',
-            isIncoming: false,
-            timestamp: ts,
-            createdAt: ts,
-          ),
-        );
+    test('recoverStuckSendingMessages leaves payload-armed queued_offline rows '
+        'to the repush lane', () async {
+      final ts = DateTime.now().toUtc();
+      await repo.saveMessage(
+        makeMessage(
+          id: 'qo-armed',
+          status: 'queued_offline',
+          isIncoming: false,
+          timestamp: ts,
+          createdAt: ts,
+        ).copyWith(
+          inboxStored: false,
+          inboxRetryPayload: '{"groupId":"group-1"}',
+        ),
+      );
+      await repo.saveMessage(
+        makeMessage(
+          id: 'qo-bare',
+          status: 'queued_offline',
+          isIncoming: false,
+          timestamp: ts,
+          createdAt: ts,
+        ),
+      );
 
-        final recovered = await repo.recoverStuckSendingMessages(
-          olderThan: const Duration(seconds: 30),
-        );
+      final recovered = await repo.recoverStuckSendingMessages(
+        olderThan: const Duration(seconds: 30),
+      );
 
-        expect(recovered, 1);
-        expect((await repo.getMessage('qo-armed'))!.status, 'queued_offline');
-        expect((await repo.getMessage('qo-bare'))!.status, 'failed');
-      },
-    );
+      expect(recovered, 1);
+      expect((await repo.getMessage('qo-armed'))!.status, 'queued_offline');
+      expect((await repo.getMessage('qo-bare'))!.status, 'failed');
+    });
   });
 
   group('pause recovery', () {
@@ -963,6 +1013,42 @@ void main() {
         'msg-parent',
       );
     });
+
+    test(
+      'GPL-01D summary and preview adapters retain the complete private tuple',
+      () async {
+        await repo.saveMessage(
+          makeMessage(
+            id: 'private-latest',
+            text: 'must stay classified',
+            privateMediaPolicy: GroupPrivateMediaPolicy.disappearing(3600),
+            mediaReceivedAt: 1000,
+            mediaExpiresAt: 3601000,
+            mediaLastCheckedAt: 2000,
+          ),
+        );
+
+        final summary = (await repo.getGroupThreadSummaries([
+          'group-1',
+        ]))['group-1']!.latestMessage!;
+        final preview = (await repo.getGroupThreadPreviews([
+          'group-1',
+        ]))['group-1']!.latestMessage!;
+
+        for (final projected in [summary, preview]) {
+          expect(
+            projected.privateMediaPolicy,
+            GroupPrivateMediaPolicy.disappearing(3600),
+          );
+          expect(projected.mediaReceivedAt, 1000);
+          expect(projected.mediaExpiresAt, 3601000);
+          expect(projected.mediaLastCheckedAt, 2000);
+          expect(projected.mediaConsumedAt, isNull);
+          expect(projected.mediaExpiredAt, isNull);
+          expect(projected.mediaCleanupPending, isFalse);
+        }
+      },
+    );
   });
 
   group('InMemoryGroupMessageRepository ordering parity', () {
@@ -1204,6 +1290,41 @@ void main() {
   });
 
   group('markAsRead', () {
+    test('markAsRead emits group read event only when rows changed', () async {
+      await repo.saveMessage(
+        makeMessage(id: 'msg-unread-g1', isIncoming: true, readAt: null),
+      );
+      await repo.saveMessage(
+        makeMessage(
+          id: 'msg-unread-g2',
+          groupId: 'group-2',
+          isIncoming: true,
+          readAt: null,
+        ),
+      );
+      await repo.saveMessage(
+        makeMessage(id: 'msg-outgoing-g1', isIncoming: false, readAt: null),
+      );
+
+      final readEvents = <String>[];
+      final subscription = repo.groupConversationReadStream.listen(
+        readEvents.add,
+      );
+      addTearDown(subscription.cancel);
+
+      await repo.markAsRead('group-1');
+      await pumpEventQueue();
+      expect(readEvents, ['group-1']);
+
+      await repo.markAsRead('group-1');
+      await pumpEventQueue();
+      expect(readEvents, ['group-1']);
+
+      await repo.markAsRead('group-2');
+      await pumpEventQueue();
+      expect(readEvents, ['group-1', 'group-2']);
+    });
+
     test('marks unread incoming messages as read', () async {
       await repo.saveMessage(
         makeMessage(id: 'msg-unread', isIncoming: true, readAt: null),
@@ -1235,6 +1356,61 @@ void main() {
       final result = await repo.getMessage('msg-001');
       expect(result, isNull);
     });
+
+    test(
+      'local delete emits exact authorization change after durable removal',
+      () async {
+        await repo.saveMessage(
+          makeMessage(id: 'pip-parent', groupId: 'group-pip'),
+        );
+        final changes = <GroupMessageAuthorizationChange>[];
+        final subscription = repo.authorizationChanges.listen(changes.add);
+        addTearDown(subscription.cancel);
+
+        await repo.deleteMessage('pip-parent');
+
+        expect(await repo.getMessage('pip-parent'), isNull);
+        expect(changes, hasLength(1));
+        expect(changes.single.groupId, 'group-pip');
+        expect(changes.single.messageId, 'pip-parent');
+        expect(changes.single.kind, GroupMessageAuthorizationMutation.removed);
+      },
+    );
+
+    test(
+      'private lifecycle terminal transition emits exact authorization change',
+      () async {
+        await repo.saveMessage(
+          makeMessage(
+            id: 'pip-expiring-parent',
+            groupId: 'group-pip',
+            privateMediaPolicy: GroupPrivateMediaPolicy.disappearing(3600),
+            mediaReceivedAt: 1000,
+            mediaExpiresAt: 3601000,
+            mediaLastCheckedAt: 1000,
+          ),
+        );
+        final changes = <GroupMessageAuthorizationChange>[];
+        final subscription = repo.authorizationChanges.listen(changes.add);
+        addTearDown(subscription.cancel);
+
+        expect(
+          await repo.advanceGroupPrivateMediaClock(
+            'pip-expiring-parent',
+            nowMs: 3601000,
+          ),
+          isTrue,
+        );
+
+        expect(changes, hasLength(1));
+        expect(changes.single.groupId, 'group-pip');
+        expect(changes.single.messageId, 'pip-expiring-parent');
+        expect(
+          changes.single.kind,
+          GroupMessageAuthorizationMutation.privateLifecycle,
+        );
+      },
+    );
 
     test('does not affect other messages', () async {
       await repo.saveMessage(makeMessage(id: 'msg-1'));

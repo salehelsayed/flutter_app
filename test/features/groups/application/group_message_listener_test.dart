@@ -131,6 +131,7 @@ class _DelayedGroupLeaveBridge extends FakeBridge {
 
 class GateableMediaAttachmentRepository
     extends InMemoryMediaAttachmentRepository {
+  final Completer<void> firstDownloadingUpdateStarted = Completer<void>();
   final Completer<void> firstDownloadingGate = Completer<void>();
   int downloadingUpdateCalls = 0;
   bool _gatedFirstDownloadingUpdate = false;
@@ -141,6 +142,7 @@ class GateableMediaAttachmentRepository
       downloadingUpdateCalls++;
       if (!_gatedFirstDownloadingUpdate) {
         _gatedFirstDownloadingUpdate = true;
+        firstDownloadingUpdateStarted.complete();
         await firstDownloadingGate.future;
       }
     }
@@ -11711,7 +11713,9 @@ void main() {
           ],
         });
 
-        await Future<void>.delayed(const Duration(milliseconds: 50));
+        await mediaRepo.firstDownloadingUpdateStarted.future.timeout(
+          const Duration(seconds: 5),
+        );
         expect(mediaRepo.count, 1);
         expect(mediaRepo.downloadingUpdateCalls, 1);
         expect(
@@ -13735,7 +13739,7 @@ void main() {
             'timestamp': '2026-01-01T00:00:00.000Z',
           }),
         });
-        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await expectNotificationCount(notifications, 1);
 
         expect(notifications.shown, hasLength(1));
         expect(notifications.shown.single.senderUsername, 'Team Announcements');
@@ -13948,7 +13952,7 @@ void main() {
           'timestamp': DateTime.utc(2026, 6, 5, 12, 3).toIso8601String(),
           'messageId': 'late-authored-target',
         });
-        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await expectCommittedNotificationClaim(claimFile);
 
         expect(pendingReactionRepo.reactions, isEmpty);
         expect(claimFile.existsSync(), isTrue);

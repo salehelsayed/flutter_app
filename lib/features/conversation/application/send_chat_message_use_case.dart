@@ -6,6 +6,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/local_discovery/lan_ack.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/chat_console_logger.dart';
@@ -185,6 +186,7 @@ enum SendChatMessageResult {
   success,
   nodeNotRunning,
   invalidMessage,
+  invalidPrivateMedia,
   encryptionRequired,
 
   /// 112 G5: an outbound attachment lacks complete blob-encryption
@@ -207,6 +209,10 @@ String? _sanitizeDirectMediaAttachments(List<MediaAttachment>? attachments) {
     return null;
   }
   for (final attachment in attachments) {
+    if (attachment.ownerLane != null &&
+        attachment.ownerLane != MediaOwnerLane.direct) {
+      return 'wrong_media_owner_lane';
+    }
     if (!attachment.hasEncryptionMetadata ||
         attachment.encryptionScheme == null) {
       return 'missing_media_encryption_metadata';
@@ -216,6 +222,38 @@ String? _sanitizeDirectMediaAttachments(List<MediaAttachment>? attachments) {
     }
   }
   return null;
+}
+
+PrivateMediaEligibility _privateMediaEligibilityForSend({
+  required String text,
+  required String action,
+  required bool isForwarded,
+  required List<MediaAttachment>? attachments,
+}) {
+  var kind = PrivateMediaAttachmentKind.unknown;
+  if (attachments != null && attachments.length == 1) {
+    final attachment = attachments.single;
+    final mime = attachment.mime.toLowerCase();
+    final mediaType = attachment.mediaType.toLowerCase();
+    if (mime == 'image/gif' || mediaType == 'gif') {
+      kind = PrivateMediaAttachmentKind.gif;
+    } else if (mime.startsWith('image/') || mediaType == 'image') {
+      kind = PrivateMediaAttachmentKind.image;
+    } else if (mime.startsWith('video/') || mediaType == 'video') {
+      kind = PrivateMediaAttachmentKind.video;
+    } else if (mime.startsWith('audio/') || mediaType == 'audio') {
+      kind = PrivateMediaAttachmentKind.audio;
+    } else if (mime.isNotEmpty || mediaType == 'file') {
+      kind = PrivateMediaAttachmentKind.file;
+    }
+  }
+  return PrivateMediaEligibility(
+    attachmentCount: attachments?.length ?? 0,
+    attachmentKind: kind,
+    hasTextOrCaption: text.trim().isNotEmpty,
+    isEdit: action == MessagePayload.actionEdit,
+    isForward: isForwarded,
+  );
 }
 
 /// Sends a chat message to a contact via P2P and persists it locally.
@@ -260,6 +298,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   String? recipientMlKemPublicKey,
   String? quotedMessageId,
   List<MediaAttachment>? mediaAttachments,
+  PrivateMediaPolicy? privateMediaPolicy,
   MediaAttachmentRepository? mediaAttachmentRepo,
   bool emitTimingEvent = true,
   TransportMetrics? transportMetrics,
@@ -328,6 +367,35 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     return (SendChatMessageResult.invalidMessage, null);
   }
 
+  final existingOutgoing = messageId == null
+      ? null
+      : await messageRepo.getMessage(messageId);
+  final effectivePrivateMediaPolicy =
+      privateMediaPolicy ??
+      (existingOutgoing != null && !existingOutgoing.isIncoming
+          ? existingOutgoing.privateMediaPolicy
+          : const PrivateMediaPolicy.ordinary());
+  if (effectivePrivateMediaPolicy.mode != PrivateMediaMode.ordinary) {
+    final eligibility = _privateMediaEligibilityForSend(
+      text: sanitizedText,
+      action: action,
+      isForwarded: isForwarded,
+      attachments: mediaAttachments,
+    );
+    final validated = effectivePrivateMediaPolicy.validatedFor(eligibility);
+    if (effectivePrivateMediaPolicy.isUnsupported ||
+        !effectivePrivateMediaPolicy.isPrivate ||
+        validated.isUnsupported) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_INVALID_PRIVATE_MEDIA',
+        details: const {'reason': 'ineligible_shape'},
+      );
+      emitSendTiming(outcome: 'invalid_private_media');
+      return (SendChatMessageResult.invalidPrivateMedia, null);
+    }
+  }
+
   if (action == MessagePayload.actionEdit &&
       (messageId == null || timestamp == null || createdAt == null)) {
     emitFlowEvent(
@@ -346,7 +414,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // persist. All UI retry paths route through retryFailedMessage, so this
   // gate has zero legitimate trips — any field occurrence is a bug detector.
   if (action == MessagePayload.actionSend && messageId != null) {
-    final existing = await messageRepo.getMessage(messageId);
+    final existing = existingOutgoing;
     if (existing != null &&
         !existing.isIncoming &&
         (existing.editedAt != null || existing.isDeleted)) {
@@ -431,6 +499,12 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           createdAt: attachment.createdAt.isEmpty
               ? resolvedTimestamp
               : attachment.createdAt,
+          // This use case is the canonical 1:1 outbound boundary. Upload and
+          // share producers intentionally cannot infer a local DB lane, but
+          // every attachment leaving this boundary is direct-owned — matching
+          // the typed repository write below and the row that rehydrates after
+          // restart. Keep this local-only stamp out of the wire via toJson().
+          ownerLane: MediaOwnerLane.direct,
         ),
       )
       .toList();
@@ -449,6 +523,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         .toList(),
     dedupKey: resolvedDedupKey,
     isForwarded: isForwarded,
+    privateMediaPolicy: effectivePrivateMediaPolicy,
   );
   logChatOutgoing(
     messageId: resolvedMessageId,
@@ -1416,6 +1491,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> editChatMessage({
     dedupKey: originalMessage.dedupKey,
     isForwarded: originalMessage.isForwarded,
     mediaAttachments: originalMessage.media,
+    privateMediaPolicy: originalMessage.privateMediaPolicy,
     mediaAttachmentRepo: mediaAttachmentRepo,
     bridge: bridge,
     recipientMlKemPublicKey: recipientMlKemPublicKey,

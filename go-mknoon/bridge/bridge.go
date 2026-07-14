@@ -11,6 +11,7 @@
 package bridge
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -1348,7 +1349,11 @@ func InboxAck(paramsJSON string) (result string) {
 }
 
 // InboxRegisterToken registers an FCM push token.
-// Input JSON: { "token": "...", "platform": "ios"|"android" }
+// Input JSON: { "token": "...", "platform": "ios"|"android",
+//
+//	"capabilities": ["direct_reaction_v1"] }.
+//
+// Capabilities are optional so legacy clients retain their old frame shape.
 // Returns JSON: { "ok": true }
 func InboxRegisterToken(paramsJSON string) (result string) {
 	defer func() {
@@ -1366,8 +1371,9 @@ func InboxRegisterToken(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		Token    string `json:"token"`
-		Platform string `json:"platform"`
+		Token        string   `json:"token"`
+		Platform     string   `json:"platform"`
+		Capabilities []string `json:"capabilities,omitempty"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -1376,7 +1382,11 @@ func InboxRegisterToken(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing token or platform")
 	}
 
-	if err := n.InboxRegisterToken(params.Token, params.Platform); err != nil {
+	if err := n.InboxRegisterToken(
+		params.Token,
+		params.Platform,
+		params.Capabilities...,
+	); err != nil {
 		return errJSON("INBOX_ERROR", err.Error())
 	}
 
@@ -2007,8 +2017,13 @@ type groupBridgeMessageParams struct {
 	QuotedMessageId          string                   `json:"quotedMessageId,omitempty"`
 	Media                    []map[string]interface{} `json:"media,omitempty"`
 	IsForwarded              bool                     `json:"isForwarded,omitempty"`
+	MediaPolicyVersion       json.RawMessage          `json:"mediaPolicyVersion,omitempty"`
+	MediaLifecycle           json.RawMessage          `json:"mediaLifecycle,omitempty"`
+	MediaDurationSeconds     json.RawMessage          `json:"mediaDurationSeconds,omitempty"`
+	MediaProtected           json.RawMessage          `json:"mediaProtected,omitempty"`
 	RecipientPeerIds         []string                 `json:"recipientPeerIds,omitempty"`
 	PreserveRecipientPeerIds bool                     `json:"preserveRecipientPeerIds,omitempty"`
+	privateMediaPolicy       map[string]interface{}
 }
 
 func decodeGroupBridgeMessageParams(paramsJSON string) (groupBridgeMessageParams, string) {
@@ -2023,7 +2038,73 @@ func decodeGroupBridgeMessageParams(paramsJSON string) (groupBridgeMessageParams
 	if strings.TrimSpace(params.Text) == "" && len(params.Media) == 0 {
 		return params, errJSON("INVALID_INPUT", "either text or media is required")
 	}
+	privateMediaPolicy, err := decodeGroupPrivateMediaPolicy(params)
+	if err != nil {
+		return params, errJSON("INVALID_INPUT", err.Error())
+	}
+	params.privateMediaPolicy = privateMediaPolicy
 	return params, ""
+}
+
+func decodeGroupPrivateMediaPolicy(params groupBridgeMessageParams) (map[string]interface{}, error) {
+	rawFields := []json.RawMessage{
+		params.MediaPolicyVersion,
+		params.MediaLifecycle,
+		params.MediaDurationSeconds,
+		params.MediaProtected,
+	}
+	presentCount := 0
+	for _, raw := range rawFields {
+		if len(raw) > 0 {
+			presentCount++
+		}
+	}
+	if presentCount == 0 {
+		return nil, nil
+	}
+	if presentCount != len(rawFields) {
+		return nil, fmt.Errorf("partial private media policy")
+	}
+
+	var version int
+	if err := json.Unmarshal(params.MediaPolicyVersion, &version); err != nil || version != 1 {
+		return nil, fmt.Errorf("invalid mediaPolicyVersion")
+	}
+	var lifecycle string
+	if err := json.Unmarshal(params.MediaLifecycle, &lifecycle); err != nil {
+		return nil, fmt.Errorf("invalid mediaLifecycle")
+	}
+	var protected bool
+	if err := json.Unmarshal(params.MediaProtected, &protected); err != nil || !protected {
+		return nil, fmt.Errorf("invalid mediaProtected")
+	}
+
+	var duration interface{}
+	switch lifecycle {
+	case "standard", "viewOnce":
+		if string(bytes.TrimSpace(params.MediaDurationSeconds)) != "null" {
+			return nil, fmt.Errorf("invalid mediaDurationSeconds")
+		}
+		duration = nil
+	case "disappearing":
+		var parsedDuration int
+		if err := json.Unmarshal(params.MediaDurationSeconds, &parsedDuration); err != nil {
+			return nil, fmt.Errorf("invalid mediaDurationSeconds")
+		}
+		if parsedDuration != 3600 && parsedDuration != 86400 && parsedDuration != 604800 {
+			return nil, fmt.Errorf("invalid mediaDurationSeconds")
+		}
+		duration = parsedDuration
+	default:
+		return nil, fmt.Errorf("invalid mediaLifecycle")
+	}
+
+	return map[string]interface{}{
+		"mediaPolicyVersion":   version,
+		"mediaLifecycle":       lifecycle,
+		"mediaDurationSeconds": duration,
+		"mediaProtected":       protected,
+	}, nil
 }
 
 func buildGroupBridgeMessageOpts(params groupBridgeMessageParams, includeRecipients bool) map[string]interface{} {
@@ -2057,6 +2138,9 @@ func buildGroupBridgeMessageOpts(params groupBridgeMessageParams, includeRecipie
 	// — never an outer routing field.
 	if params.IsForwarded {
 		opts["isForwarded"] = true
+	}
+	for key, value := range params.privateMediaPolicy {
+		opts[key] = value
 	}
 	if includeRecipients && params.PreserveRecipientPeerIds {
 		opts["recipientPeerIds"] = params.RecipientPeerIds

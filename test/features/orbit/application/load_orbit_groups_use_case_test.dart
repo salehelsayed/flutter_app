@@ -3,6 +3,7 @@ import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_thread_summary.dart';
 import 'package:flutter_app/features/orbit/application/load_orbit_groups_use_case.dart';
 
@@ -26,6 +27,22 @@ class _CountingGroupMessageRepository extends InMemoryGroupMessageRepository {
   ) {
     getGroupThreadSummariesCallCount++;
     return super.getGroupThreadSummaries(groupIds);
+  }
+}
+
+class _CountingMediaAttachmentRepository
+    extends InMemoryMediaAttachmentRepository {
+  int batchReadCount = 0;
+  final List<String> requestedMessageIds = <String>[];
+
+  @override
+  Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
+    List<String> messageIds, {
+    required MediaOwnerLane owner,
+  }) {
+    batchReadCount += 1;
+    requestedMessageIds.addAll(messageIds);
+    return super.getAttachmentsForMessages(messageIds, owner: owner);
   }
 }
 
@@ -56,6 +73,8 @@ GroupMessage _makeMessage({
   required DateTime timestamp,
   String senderUsername = 'Alice',
   bool isIncoming = true,
+  GroupPrivateMediaPolicy privateMediaPolicy =
+      const GroupPrivateMediaPolicy.ordinary(),
 }) {
   return GroupMessage(
     id: id,
@@ -66,6 +85,7 @@ GroupMessage _makeMessage({
     timestamp: timestamp,
     isIncoming: isIncoming,
     createdAt: timestamp,
+    privateMediaPolicy: privateMediaPolicy,
   );
 }
 
@@ -129,6 +149,79 @@ void main() {
       expect(result[0].latestMessage, 'Hello group');
       expect(msgRepo.getGroupThreadSummariesCallCount, 1);
     });
+
+    test(
+      'GPL-01E private and unsupported rows expose no Orbit text or media lookup',
+      () async {
+        await groupRepo.saveGroup(_makeGroup(id: 'g-private', name: 'Private'));
+        await groupRepo.saveGroup(
+          _makeGroup(id: 'g-unsupported', name: 'Unsupported'),
+        );
+        await msgRepo.saveMessage(
+          _makeMessage(
+            id: 'private-message',
+            groupId: 'g-private',
+            text: 'private raw text must not escape',
+            timestamp: DateTime.utc(2026, 3, 1),
+            privateMediaPolicy: const GroupPrivateMediaPolicy.viewOnce(),
+          ),
+        );
+        await msgRepo.saveMessage(
+          _makeMessage(
+            id: 'unsupported-message',
+            groupId: 'g-unsupported',
+            text: 'unsupported raw text must not escape',
+            timestamp: DateTime.utc(2026, 3, 2),
+            privateMediaPolicy: const GroupPrivateMediaPolicy.unsupported(
+              sourceVersion: 7,
+            ),
+          ),
+        );
+        final mediaRepo = _CountingMediaAttachmentRepository();
+        for (final fixture in const [
+          ('private-attachment', 'private-message'),
+          ('unsupported-attachment', 'unsupported-message'),
+        ]) {
+          await mediaRepo.saveAttachment(
+            MediaAttachment(
+              id: fixture.$1,
+              messageId: fixture.$2,
+              mime: 'image/jpeg',
+              size: 1000,
+              mediaType: 'image',
+              downloadStatus: 'done',
+              createdAt: '2026-03-01T00:00:00.000Z',
+            ),
+            owner: MediaOwnerLane.group,
+          );
+        }
+
+        final result = await loadOrbitGroups(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        for (final group in result) {
+          expect(group.latestMessageText, isNull, reason: group.groupId);
+          expect(group.latestMessage, isNull, reason: group.groupId);
+          expect(group.latestMedia, isNull, reason: group.groupId);
+        }
+        expect(mediaRepo.batchReadCount, 0);
+        expect(mediaRepo.requestedMessageIds, isEmpty);
+
+        final snapshot = await loadOrbitGroupSnapshot(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'g-private',
+          mediaAttachmentRepo: mediaRepo,
+        );
+        expect(snapshot!.latestMessageText, isNull);
+        expect(snapshot.latestMessage, isNull);
+        expect(snapshot.latestMedia, isNull);
+        expect(mediaRepo.batchReadCount, 0);
+      },
+    );
 
     test('includes unread count', () async {
       await groupRepo.saveGroup(_makeGroup(id: 'g-1', name: 'Alpha'));

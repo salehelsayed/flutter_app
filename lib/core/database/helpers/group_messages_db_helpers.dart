@@ -1150,3 +1150,191 @@ Future<void> dbUpdateGroupMessageWireEnvelope(
     [wireEnvelope, id],
   );
 }
+
+// ---------------------------------------------------------------------------
+// Group private-media lifecycle (Plan 238)
+// ---------------------------------------------------------------------------
+
+/// Establishes the sender's device-local lifecycle anchor only after a
+/// delivery path has obtained live or relay custody.
+Future<int> dbAnchorOutgoingGroupPrivateMediaCustody(
+  DatabaseExecutor db,
+  String id, {
+  required int nowMs,
+}) {
+  return db.rawUpdate(
+    'UPDATE group_messages SET '
+    'media_received_at = ?, '
+    'media_expires_at = CASE '
+    "WHEN media_lifecycle = 'disappearing' "
+    'THEN ? + (media_duration_seconds * 1000) ELSE NULL END, '
+    'media_last_checked_at = CASE '
+    "WHEN media_lifecycle = 'disappearing' THEN ? "
+    'ELSE media_last_checked_at END '
+    'WHERE id = ? AND is_incoming = 0 '
+    'AND media_policy_version = 1 AND media_protected = 1 '
+    "AND media_lifecycle IN ('standard','view_once','disappearing') "
+    'AND media_received_at IS NULL AND media_consumed_at IS NULL '
+    'AND media_expired_at IS NULL AND media_cleanup_pending = 0',
+    [nowMs, nowMs, nowMs, id],
+  );
+}
+
+/// Durable View Once claim at the group contract's reveal boundary.
+///
+/// The parent row is the authority. Cleanup happens only after this CAS (or a
+/// later recovery pass observes it), so a crash can never make the item
+/// available again merely because its file survived.
+Future<int> dbConsumeGroupPrivateMedia(
+  DatabaseExecutor db,
+  String id, {
+  required int nowMs,
+}) {
+  return db.rawUpdate(
+    'UPDATE group_messages SET '
+    'media_consumed_at = COALESCE(media_consumed_at, ?), '
+    'media_last_checked_at = MAX(COALESCE(media_last_checked_at, 0), ?), '
+    'media_cleanup_pending = 1 '
+    'WHERE id = ? AND is_incoming = 1 '
+    'AND media_policy_version = 1 '
+    "AND media_lifecycle = 'view_once' AND media_protected = 1 "
+    'AND media_consumed_at IS NULL AND media_expired_at IS NULL '
+    'AND media_cleanup_pending = 0',
+    [nowMs, nowMs, id],
+  );
+}
+
+/// Atomically advances the persisted high-water clock and expires one active
+/// disappearing parent when the monotonic effective time reaches its deadline.
+/// Incoming and outgoing rows share this device-local rule; their anchor is
+/// established by receiver commit and sender custody success respectively.
+Future<int> dbAdvanceGroupPrivateMediaClock(
+  DatabaseExecutor db,
+  String id, {
+  required int nowMs,
+}) {
+  return db.rawUpdate(
+    'UPDATE group_messages SET '
+    'media_last_checked_at = MAX(COALESCE(media_last_checked_at, 0), ?), '
+    'media_expired_at = CASE '
+    'WHEN MAX(COALESCE(media_last_checked_at, 0), ?) >= media_expires_at '
+    'THEN COALESCE(media_expired_at, '
+    'MAX(COALESCE(media_last_checked_at, 0), ?)) '
+    'ELSE media_expired_at END, '
+    'media_cleanup_pending = CASE '
+    'WHEN MAX(COALESCE(media_last_checked_at, 0), ?) >= media_expires_at '
+    'THEN 1 ELSE media_cleanup_pending END '
+    'WHERE id = ? AND media_policy_version = 1 '
+    "AND media_lifecycle = 'disappearing' AND media_protected = 1 "
+    'AND media_received_at IS NOT NULL AND media_expires_at IS NOT NULL '
+    'AND media_consumed_at IS NULL AND media_expired_at IS NULL',
+    [nowMs, nowMs, nowMs, nowMs, id],
+  );
+}
+
+/// Rechecks the exact private parent after advancing its high-water clock.
+/// Intended for attachment save/download transactions; callers must still
+/// verify the exact attachment owner and identity in the same transaction.
+Future<bool> dbAdvanceAndQualifyGroupPrivateMediaParent(
+  DatabaseExecutor db,
+  String id, {
+  required String groupId,
+  required int nowMs,
+}) async {
+  await dbAdvanceGroupPrivateMediaClock(db, id, nowMs: nowMs);
+  final rows = await db.rawQuery(
+    'SELECT 1 FROM group_messages WHERE id = ? AND group_id = ? '
+    'AND media_policy_version = 1 AND media_protected = 1 '
+    "AND media_lifecycle IN ('standard','view_once','disappearing') "
+    'AND media_consumed_at IS NULL AND media_expired_at IS NULL '
+    'AND media_cleanup_pending = 0 '
+    "AND (media_lifecycle != 'disappearing' OR ("
+    'media_expires_at IS NOT NULL AND media_last_checked_at IS NOT NULL '
+    'AND media_last_checked_at < media_expires_at)) LIMIT 1',
+    [id, groupId],
+  );
+  return rows.isNotEmpty;
+}
+
+Future<int?> dbLoadNextGroupPrivateMediaExpiryAtMs(DatabaseExecutor db) async {
+  final rows = await db.rawQuery(
+    'SELECT MIN(media_expires_at) AS next_expiry FROM group_messages '
+    'WHERE media_policy_version = 1 AND media_protected = 1 '
+    "AND media_lifecycle = 'disappearing' "
+    'AND media_received_at IS NOT NULL AND media_expires_at IS NOT NULL '
+    'AND media_consumed_at IS NULL AND media_expired_at IS NULL '
+    'AND media_cleanup_pending = 0',
+  );
+  return (rows.single['next_expiry'] as num?)?.toInt();
+}
+
+Future<List<Map<String, Object?>>> dbLoadActiveGroupPrivateMediaDisappearing(
+  DatabaseExecutor db, {
+  int limit = 100,
+}) {
+  return db.query(
+    'group_messages',
+    where:
+        'media_policy_version = 1 AND media_protected = 1 '
+        "AND media_lifecycle = 'disappearing' "
+        'AND media_received_at IS NOT NULL AND media_expires_at IS NOT NULL '
+        'AND media_consumed_at IS NULL AND media_expired_at IS NULL '
+        'AND media_cleanup_pending = 0',
+    orderBy: 'media_expires_at ASC, id ASC',
+    limit: limit,
+  );
+}
+
+/// Bounded terminal cleanup queue. A pending parent remains selectable even
+/// after its last attachment row was deleted: cleanup clears the parent marker
+/// after row deletion, so a crash between those writes must converge on the
+/// next recovery pass. Once the marker is clear, the attachment existence
+/// predicate keeps completed placeholders out of later passes.
+Future<List<Map<String, Object?>>> dbLoadGroupPrivateMediaRecoveryCandidates(
+  DatabaseExecutor db, {
+  int limit = 100,
+}) {
+  return db.query(
+    'group_messages',
+    where:
+        'media_policy_version > 0 AND ('
+        'media_cleanup_pending = 1 OR (('
+        'media_consumed_at IS NOT NULL OR media_expired_at IS NOT NULL '
+        "OR media_lifecycle = 'unsupported') "
+        'AND EXISTS (SELECT 1 FROM media_attachments attachment '
+        'WHERE attachment.message_id = group_messages.id '
+        "AND attachment.owner_lane = 'group')))",
+    orderBy: 'COALESCE(media_last_checked_at, 0) ASC, id ASC',
+    limit: limit,
+  );
+}
+
+Future<int> dbRotateGroupPrivateMediaRecoveryCandidate(
+  DatabaseExecutor db,
+  String id, {
+  required int nowMs,
+}) {
+  return db.rawUpdate(
+    'UPDATE group_messages SET media_last_checked_at = MAX('
+    'COALESCE(media_last_checked_at, 0) + 1, ?) '
+    'WHERE id = ? AND media_policy_version > 0 AND ('
+    'media_cleanup_pending = 1 OR media_consumed_at IS NOT NULL '
+    "OR media_expired_at IS NOT NULL OR media_lifecycle = 'unsupported')",
+    [nowMs, id],
+  );
+}
+
+/// Clears the retry marker only after every exact group-owned attachment row
+/// is gone. A failed/partial cleanup therefore stays durably discoverable.
+Future<int> dbCompleteGroupPrivateMediaCleanup(DatabaseExecutor db, String id) {
+  return db.rawUpdate(
+    'UPDATE group_messages SET media_cleanup_pending = 0 '
+    'WHERE id = ? AND media_policy_version > 0 '
+    'AND (media_consumed_at IS NOT NULL OR media_expired_at IS NOT NULL '
+    "OR media_lifecycle = 'unsupported') "
+    'AND NOT EXISTS (SELECT 1 FROM media_attachments attachment '
+    'WHERE attachment.message_id = group_messages.id '
+    "AND attachment.owner_lane = 'group')",
+    [id],
+  );
+}

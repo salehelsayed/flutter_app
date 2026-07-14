@@ -525,4 +525,329 @@ void main() {
     expect(bridge.commandLog, isNot(contains('payload.verify')));
     expect(bridge.commandLog, isNot(contains('group.decrypt')));
   });
+
+  test(
+    'group reaction notification extension preserves base v1 and verifies event parity',
+    () async {
+      final plaintext = jsonEncode({
+        'id': 'group-reaction-add-state-1',
+        'messageId': 'target-message-1',
+        'emoji': '👍',
+        'action': 'add',
+        'senderPeerId': 'peer-sender',
+        'timestamp': '2026-05-02T07:15:00.000Z',
+        'eventId': 'transition-event-1',
+      });
+      const replayRecipients = <String>[
+        'transport-author-a',
+        'transport-author-b',
+        'transport-bystander',
+      ];
+
+      final legacyRaw = await buildGroupOfflineReplayEnvelope(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        payloadType: groupOfflineReplayPayloadTypeReaction,
+        plaintext: plaintext,
+        messageId: 'group-reaction-add-state-1',
+        senderPeerId: 'peer-sender',
+        senderPublicKey: 'pk-sender',
+        senderPrivateKey: 'sk-sender',
+        senderDeviceId: 'device-sender',
+        senderTransportPeerId: 'transport-sender',
+        recipientPeerIds: replayRecipients,
+      );
+      final upgradedRaw = await buildGroupOfflineReplayEnvelope(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        payloadType: groupOfflineReplayPayloadTypeReaction,
+        plaintext: plaintext,
+        messageId: 'group-reaction-add-state-1',
+        senderPeerId: 'peer-sender',
+        senderPublicKey: 'pk-sender',
+        senderPrivateKey: 'sk-sender',
+        senderDeviceId: 'device-sender',
+        senderTransportPeerId: 'transport-sender',
+        recipientPeerIds: replayRecipients,
+        reactionNotificationExtension:
+            const GroupReactionNotificationExtensionInput(
+              transitionId: 'transition-event-1',
+              action: 'add',
+              targetMessageId: 'target-message-1',
+              reactorPeerId: 'peer-sender',
+              reactorTransportPeerId: 'transport-sender',
+              notificationRecipientTransportPeerIds: [
+                'transport-author-a',
+                'transport-author-b',
+              ],
+            ),
+      );
+
+      final legacy = jsonDecode(legacyRaw) as Map<String, dynamic>;
+      final upgraded = jsonDecode(upgradedRaw) as Map<String, dynamic>;
+      final upgradedBase = Map<String, dynamic>.from(upgraded)
+        ..remove('notificationExtension');
+      expect(upgradedBase, legacy);
+
+      final extension =
+          upgraded['notificationExtension'] as Map<String, dynamic>;
+      expect(extension['version'], 1);
+      expect(extension['transitionId'], 'transition-event-1');
+      expect(extension['action'], 'add');
+      expect(extension['targetMessageId'], 'target-message-1');
+      expect(extension['reactorPeerId'], 'peer-sender');
+      expect(extension['reactorTransportPeerId'], 'transport-sender');
+      expect(extension['notificationRecipientTransportPeerIds'], [
+        'transport-author-a',
+        'transport-author-b',
+      ]);
+      expect(extension['signedPayload'], isA<String>());
+      expect(extension['signature'], 'fake-signature');
+
+      // This fixture intentionally models the reader that shipped before
+      // notificationExtension existed. It parses and reconstructs the literal
+      // v1 base contract without calling the current replay-envelope decoder.
+      // Corrupting the new extension demonstrates that the old reader ignores
+      // the entire unknown top-level field, rather than accidentally relying
+      // on today's extension-aware implementation.
+      final frozenReaderEnvelope =
+          jsonDecode(upgradedRaw) as Map<String, dynamic>;
+      final ignoredExtension =
+          Map<String, dynamic>.from(
+              frozenReaderEnvelope['notificationExtension']
+                  as Map<String, dynamic>,
+            )
+            ..['transitionId'] = 'ignored-by-pre-extension-v1-reader'
+            ..['futureOptionalField'] = const {'version': 2};
+      frozenReaderEnvelope['notificationExtension'] = ignoredExtension;
+      frozenReaderEnvelope['futureOptionalTopLevelField'] = const {
+        'ignored': true,
+      };
+
+      final frozenRead = _readFrozenPreNotificationExtensionV1Fixture(
+        jsonEncode(frozenReaderEnvelope),
+        expectedPlaintext: plaintext,
+      );
+      expect(frozenRead.messageId, 'group-reaction-add-state-1');
+      expect(frozenRead.signature, 'fake-signature');
+      expect(frozenRead.signedPayload, upgraded['signedPayload']);
+
+      final changedMessageId = _cloneJsonMap(frozenReaderEnvelope)
+        ..['messageId'] = 'changed-base-message-id';
+      expect(
+        () => _readFrozenPreNotificationExtensionV1Fixture(
+          jsonEncode(changedMessageId),
+          expectedPlaintext: plaintext,
+        ),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            contains('messageId'),
+          ),
+        ),
+      );
+
+      final changedSignedPayload = _cloneJsonMap(frozenReaderEnvelope)
+        ..['signedPayload'] = '${upgraded['signedPayload']} ';
+      expect(
+        () => _readFrozenPreNotificationExtensionV1Fixture(
+          jsonEncode(changedSignedPayload),
+          expectedPlaintext: plaintext,
+        ),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            contains('signedPayload'),
+          ),
+        ),
+      );
+
+      final changedSignature = _cloneJsonMap(frozenReaderEnvelope)
+        ..['signature'] = 'changed-base-signature';
+      expect(
+        () => _readFrozenPreNotificationExtensionV1Fixture(
+          jsonEncode(changedSignature),
+          expectedPlaintext: plaintext,
+        ),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            contains('signature'),
+          ),
+        ),
+      );
+
+      expect(
+        await decryptGroupOfflineReplayEnvelope(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          envelope: upgraded,
+          expectedRelayPeerId: 'transport-sender',
+          expectedRecipientPeerId: 'transport-author-a',
+        ),
+        plaintext,
+      );
+      expect(
+        await decryptGroupOfflineReplayEnvelope(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          envelope: legacy,
+          expectedRelayPeerId: 'transport-sender',
+          expectedRecipientPeerId: 'transport-author-a',
+        ),
+        plaintext,
+      );
+
+      final tampered = jsonDecode(upgradedRaw) as Map<String, dynamic>;
+      (tampered['notificationExtension']
+              as Map<String, dynamic>)['transitionId'] =
+          'attacker-event';
+      await expectLater(
+        decryptGroupOfflineReplayEnvelope(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          envelope: tampered,
+          expectedRelayPeerId: 'transport-sender',
+        ),
+        throwsA(
+          isA<GroupOfflineReplaySignatureException>().having(
+            (error) => error.reason,
+            'reason',
+            'notification_signed_payload_mismatch',
+          ),
+        ),
+      );
+    },
+  );
+}
+
+/// Frozen wire reader for the pre-notification-extension v1 fixture above.
+///
+/// Keep this independent from [decryptGroupOfflineReplayEnvelope], the current
+/// envelope constants, and the production canonicalizer. Its literal schema is
+/// the compatibility sentinel: a base v1 wire-contract change must make this
+/// reader reject the newly built envelope, while unknown top-level fields stay
+/// ignorable as they were for the original reader.
+_FrozenPreNotificationExtensionV1Envelope
+_readFrozenPreNotificationExtensionV1Fixture(
+  String rawEnvelope, {
+  required String expectedPlaintext,
+}) {
+  final decoded = jsonDecode(rawEnvelope);
+  if (decoded is! Map<String, dynamic>) {
+    throw const FormatException('frozen v1 envelope must be a JSON object');
+  }
+
+  _expectFrozenV1Field(decoded, 'kind', 'group_offline_replay');
+  _expectFrozenV1Field(decoded, 'version', 1);
+  _expectFrozenV1Field(decoded, 'groupId', 'group-1');
+  _expectFrozenV1Field(decoded, 'payloadType', 'group_reaction');
+  _expectFrozenV1Field(decoded, 'keyEpoch', 7);
+  _expectFrozenV1Field(decoded, 'messageId', 'group-reaction-add-state-1');
+  _expectFrozenV1Field(decoded, 'senderPeerId', 'peer-sender');
+  _expectFrozenV1Field(decoded, 'senderDeviceId', 'device-sender');
+  _expectFrozenV1Field(decoded, 'senderTransportPeerId', 'transport-sender');
+  _expectFrozenV1Field(decoded, 'senderPublicKey', 'pk-sender');
+  _expectFrozenV1Field(decoded, 'signatureAlgorithm', 'ed25519');
+
+  const expectedRecipients = <String>[
+    'transport-author-a',
+    'transport-author-b',
+    'transport-bystander',
+  ];
+  final recipients = decoded['recipientPeerIds'];
+  if (recipients is! List ||
+      jsonEncode(recipients) != jsonEncode(expectedRecipients)) {
+    throw const FormatException('frozen v1 field recipientPeerIds changed');
+  }
+
+  final ciphertext = _readFrozenV1String(decoded, 'ciphertext');
+  final nonce = _readFrozenV1String(decoded, 'nonce');
+  if (ciphertext != expectedPlaintext) {
+    throw const FormatException('frozen v1 ciphertext contract changed');
+  }
+  _expectFrozenV1Field(decoded, 'nonce', 'fake-group-nonce');
+
+  final expectedRecipientSetHash = _frozenV1Hash(
+    jsonEncode(expectedRecipients),
+  );
+  _expectFrozenV1Field(decoded, 'recipientSetHash', expectedRecipientSetHash);
+
+  // Keys are written in the exact lexicographic order used by the original v1
+  // canonical signed-payload format. This does not call today's canonicalizer.
+  final expectedSignedPayload = jsonEncode(<String, Object?>{
+    'ciphertextHash': _frozenV1Hash(ciphertext),
+    'groupId': 'group-1',
+    'keyEpoch': 7,
+    'kind': 'group_offline_replay',
+    'messageId': 'group-reaction-add-state-1',
+    'nonceHash': _frozenV1Hash(nonce),
+    'payloadType': 'group_reaction',
+    'plaintextHash': _frozenV1Hash(expectedPlaintext),
+    'recipientSetHash': expectedRecipientSetHash,
+    'schemaVersion': 1,
+    'senderDeviceId': 'device-sender',
+    'senderPeerId': 'peer-sender',
+    'senderSigningPublicKey': 'pk-sender',
+    'senderTransportPeerId': 'transport-sender',
+  });
+  final signedPayload = _readFrozenV1String(decoded, 'signedPayload');
+  if (signedPayload != expectedSignedPayload) {
+    throw const FormatException('frozen v1 canonical signedPayload changed');
+  }
+
+  final signature = _readFrozenV1String(decoded, 'signature');
+  if (signature != 'fake-signature') {
+    throw const FormatException('frozen v1 signature contract changed');
+  }
+
+  return _FrozenPreNotificationExtensionV1Envelope(
+    messageId: decoded['messageId'] as String,
+    signedPayload: signedPayload,
+    signature: signature,
+  );
+}
+
+void _expectFrozenV1Field(
+  Map<String, dynamic> envelope,
+  String field,
+  Object expected,
+) {
+  if (envelope[field] != expected) {
+    throw FormatException('frozen v1 field $field changed');
+  }
+}
+
+String _readFrozenV1String(Map<String, dynamic> envelope, String field) {
+  final value = envelope[field];
+  if (value is! String || value.isEmpty) {
+    throw FormatException('frozen v1 field $field changed');
+  }
+  return value;
+}
+
+String _frozenV1Hash(String value) =>
+    sha256.convert(utf8.encode(value)).toString();
+
+Map<String, dynamic> _cloneJsonMap(Map<String, dynamic> source) =>
+    jsonDecode(jsonEncode(source)) as Map<String, dynamic>;
+
+class _FrozenPreNotificationExtensionV1Envelope {
+  const _FrozenPreNotificationExtensionV1Envelope({
+    required this.messageId,
+    required this.signedPayload,
+    required this.signature,
+  });
+
+  final String messageId;
+  final String signedPayload;
+  final String signature;
 }

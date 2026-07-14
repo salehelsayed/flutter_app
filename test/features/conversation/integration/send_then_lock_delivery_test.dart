@@ -1192,6 +1192,7 @@ void main() {
                 mediaAttachments,
                 mediaAttachmentRepo,
                 transportMetrics,
+                privateMediaPolicy,
               }) async {
                 final savedBeforeSend = await messageRepo.getMessage(
                   messageId!,
@@ -1214,6 +1215,7 @@ void main() {
                   quotedMessageId: quotedMessageId,
                   mediaAttachments: mediaAttachments,
                   mediaAttachmentRepo: mediaAttachmentRepo,
+                  privateMediaPolicy: privateMediaPolicy,
                 );
               },
         );

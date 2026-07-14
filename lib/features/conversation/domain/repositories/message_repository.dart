@@ -150,6 +150,29 @@ abstract class MessageRepositoryChangeSource {
   Stream<ConversationMessage> get messageChanges;
 }
 
+/// Exact, post-commit signal for physical direct-message removals.
+///
+/// A removal cannot ride [MessageRepositoryChangeSource.messageChanges]: that
+/// stream carries rows which UI consumers upsert, while a physically removed
+/// row has no safe synthetic [ConversationMessage] representation. A null
+/// [DirectMessageRemoval.messageId] means every parent in the exact contact
+/// scope was removed.
+class DirectMessageRemoval {
+  const DirectMessageRemoval({
+    required this.contactPeerId,
+    required this.messageId,
+  });
+
+  final String contactPeerId;
+  final String? messageId;
+}
+
+/// Optional repository capability for consumers that must react immediately
+/// to successful physical deletes while retaining polling only as a backstop.
+abstract class MessageRepositoryRemovalSource {
+  Stream<DirectMessageRemoval> get messageRemovals;
+}
+
 /// Optional read-marking event stream (194).
 ///
 /// Emits a contact `peerId` whenever a [MessageRepository.markConversationAsRead]

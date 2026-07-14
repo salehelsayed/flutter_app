@@ -70,8 +70,7 @@ void main() {
       expect(
         block,
         isNot(contains('suppressNotification: true')),
-        reason:
-            'the live-direct block must not suppress notifications',
+        reason: 'the live-direct block must not suppress notifications',
       );
     },
   );
@@ -148,6 +147,34 @@ void main() {
           reason: 'expected exactly one "$label" wiring in lib/main.dart',
         );
       }
+    },
+  );
+
+  test(
+    'main reaction replay publishes the persisted change to the UI listener',
+    () async {
+      final mainSource = await readMain();
+      final replayBlock = sliceBlock(
+        mainSource,
+        'Future<RecoveredInboxReplayOutcome> replayInboxReaction(',
+        'ingestStagedPushEnvelopesUseCase.replayReactionMessage =',
+      );
+
+      expect(replayBlock, contains('final (result, change)'));
+      expect(
+        replayBlock,
+        contains('publishPersistedReactionChange?.call(change)'),
+        reason:
+            'staged/live replay must update an already-mounted conversation '
+            'without re-running persistence or notification policy',
+      );
+      expect(
+        mainSource,
+        contains(
+          'publishPersistedReactionChange = '
+          'reactionListener.publishPersistedChange',
+        ),
+      );
     },
   );
 }

@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -26,6 +28,7 @@ import 'package:flutter_app/features/identity/presentation/widgets/cosmic_backgr
 import 'package:flutter_app/features/identity/presentation/widgets/daylight_lagoon_background.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_system_message.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
+import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
 
 void main() {
@@ -170,7 +173,9 @@ void main() {
     );
   }
 
-  testWidgets('screen marks only the forwarded conversation row', (tester) async {
+  testWidgets('screen marks only the forwarded conversation row', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       buildTestWidget(
         initialLoadDone: true,
@@ -337,11 +342,14 @@ void main() {
 
   MediaAttachment makeImageAttachment({
     String id = 'att-1',
+    String messageId = '',
+    MediaOwnerLane? ownerLane,
     String localPath = '/tmp/att-1.jpg',
   }) {
     return MediaAttachment(
       id: id,
-      messageId: '',
+      messageId: messageId,
+      ownerLane: ownerLane,
       mime: 'image/jpeg',
       size: 42,
       mediaType: 'image',
@@ -353,11 +361,14 @@ void main() {
 
   MediaAttachment makeVideoAttachment({
     String id = 'vid-1',
+    String messageId = '',
+    MediaOwnerLane? ownerLane,
     String localPath = '/tmp/vid-1.mp4',
   }) {
     return MediaAttachment(
       id: id,
-      messageId: '',
+      messageId: messageId,
+      ownerLane: ownerLane,
       mime: 'video/mp4',
       size: 4200,
       mediaType: 'video',
@@ -655,6 +666,53 @@ void main() {
 
       expect(find.text('This message was deleted'), findsOneWidget);
       expect(find.byType(SwipeToQuoteBubble), findsNothing);
+    });
+
+    testWidgets('deleted card suppresses stale media and viewer entry', (
+      tester,
+    ) async {
+      const messageId = 'deleted-with-stale-media';
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [
+            makeMessage(
+              id: messageId,
+              text: '',
+              deletedAt: '2026-02-09T15:32:00.000Z',
+              deletedByPeerId: '12D3KooWTestPeerId1234567890',
+              media: const [
+                MediaAttachment(
+                  id: 'stale-deleted-image',
+                  messageId: messageId,
+                  mime: 'image/png',
+                  size: 1,
+                  mediaType: 'image',
+                  localPath: '/tmp/stale-deleted-image.png',
+                  downloadStatus: 'done',
+                  createdAt: '2026-02-09T15:30:00.000Z',
+                ),
+              ],
+            ),
+          ],
+          initialLoadDone: true,
+        ),
+      );
+      await pumpFrames(tester);
+
+      final card = tester.widget<LetterCard>(
+        find.descendant(
+          of: find.byKey(const ValueKey('msg-$messageId')),
+          matching: find.byType(LetterCard),
+        ),
+      );
+      expect(card.media, isEmpty);
+      expect(
+        find.byKey(
+          const ValueKey('media-grid-cell-$messageId-stale-deleted-image'),
+        ),
+        findsNothing,
+      );
+      expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
     });
 
     testWidgets('renders quoted replies and unavailable fallback in list', (
@@ -2284,7 +2342,13 @@ void main() {
             messages: [
               makeMessage(
                 id: 'image-msg',
-                media: [makeImageAttachment(localPath: imagePath)],
+                media: [
+                  makeImageAttachment(
+                    messageId: 'image-msg',
+                    ownerLane: MediaOwnerLane.direct,
+                    localPath: imagePath,
+                  ),
+                ],
               ),
             ],
             initialLoadDone: true,
@@ -2341,7 +2405,12 @@ void main() {
               makeMessage(
                 id: 'multi-visual-msg',
                 media: [
-                  makeImageAttachment(id: 'img-1', localPath: visual1),
+                  makeImageAttachment(
+                    id: 'img-1',
+                    messageId: 'multi-visual-msg',
+                    ownerLane: MediaOwnerLane.direct,
+                    localPath: visual1,
+                  ),
                   MediaAttachment(
                     id: 'aud-1',
                     messageId: '',
@@ -2352,8 +2421,18 @@ void main() {
                     downloadStatus: 'done',
                     createdAt: '2026-02-09T15:30:00.000Z',
                   ),
-                  makeVideoAttachment(id: 'vid-1', localPath: visual2),
-                  makeImageAttachment(id: 'img-2', localPath: visual3),
+                  makeVideoAttachment(
+                    id: 'vid-1',
+                    messageId: 'multi-visual-msg',
+                    ownerLane: MediaOwnerLane.direct,
+                    localPath: visual2,
+                  ),
+                  makeImageAttachment(
+                    id: 'img-2',
+                    messageId: 'multi-visual-msg',
+                    ownerLane: MediaOwnerLane.direct,
+                    localPath: visual3,
+                  ),
                 ],
               ),
             ],
@@ -2388,6 +2467,156 @@ void main() {
         expect(
           find.text('viewer-all:$visual1,$visual2,$visual3'),
           findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'sender stale image/video paths open the legacy viewer from durable owned copies',
+      (tester) async {
+        const contactPeerId = '12D3KooWTestPeerId1234567890';
+        const messageId = 'sender-legacy-owned-copy';
+        const imageId = 'sender-owned-image';
+        const videoId = 'sender-owned-video';
+        MediaFileManager.cacheDocumentsDir(tempDir.path);
+        addTearDown(MediaFileManager.debugResetDocumentsDirCache);
+
+        final ownedImage = File(
+          '${tempDir.path}/media/$contactPeerId/$imageId.jpg',
+        )..createSync(recursive: true);
+        ownedImage.writeAsBytesSync(const [1, 2, 3]);
+        final ownedVideo = File(
+          '${tempDir.path}/media/$contactPeerId/$videoId.mp4',
+        )..writeAsBytesSync(const [4, 5, 6]);
+        final staleImage =
+            '${tempDir.path}/pending_uploads/$messageId/$imageId.jpg';
+        final staleVideo =
+            '${tempDir.path}/pending_uploads/$messageId/$videoId.mp4';
+        expect(File(staleImage).existsSync(), isFalse);
+        expect(File(staleVideo).existsSync(), isFalse);
+
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: messageId,
+                isIncoming: false,
+                media: [
+                  makeImageAttachment(
+                    id: imageId,
+                    messageId: messageId,
+                    ownerLane: MediaOwnerLane.direct,
+                    localPath: staleImage,
+                  ),
+                  makeVideoAttachment(
+                    id: videoId,
+                    messageId: messageId,
+                    ownerLane: MediaOwnerLane.direct,
+                    localPath: staleVideo,
+                  ),
+                ],
+              ),
+            ],
+            initialLoadDone: true,
+            mediaViewerBuilder:
+                ({
+                  required localPath,
+                  required allPaths,
+                  required initialIndex,
+                }) => Scaffold(
+                  body: Column(
+                    children: [
+                      Text('viewer-path:$localPath'),
+                      Text('viewer-index:$initialIndex'),
+                      Text('viewer-all:${allPaths.join(",")}'),
+                    ],
+                  ),
+                ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.tap(find.byType(MediaGridCell).at(1));
+        await tester.pump();
+        await pumpFrames(tester);
+
+        expect(find.text('viewer-path:${ownedVideo.path}'), findsOneWidget);
+        expect(find.text('viewer-index:1'), findsOneWidget);
+        expect(
+          find.text('viewer-all:${ownedImage.path},${ownedVideo.path}'),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'sender stale image/video paths build typed viewer items from the same durable owned copies',
+      (tester) async {
+        const contactPeerId = '12D3KooWTestPeerId1234567890';
+        const messageId = 'sender-typed-owned-copy';
+        const imageId = 'typed-owned-image';
+        const videoId = 'typed-owned-video';
+        MediaFileManager.cacheDocumentsDir(tempDir.path);
+        addTearDown(MediaFileManager.debugResetDocumentsDirCache);
+
+        final ownedImage =
+            File('${tempDir.path}/media/$contactPeerId/$imageId.jpg')
+              ..createSync(recursive: true)
+              ..writeAsBytesSync(const [1, 2, 3]);
+        final ownedVideo = File(
+          '${tempDir.path}/media/$contactPeerId/$videoId.mp4',
+        )..writeAsBytesSync(const [4, 5, 6]);
+        final staleImage =
+            '${tempDir.path}/pending_uploads/$messageId/$imageId.jpg';
+        final staleVideo =
+            '${tempDir.path}/pending_uploads/$messageId/$videoId.mp4';
+
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: messageId,
+                isIncoming: false,
+                media: [
+                  makeImageAttachment(
+                    id: imageId,
+                    messageId: messageId,
+                    ownerLane: MediaOwnerLane.direct,
+                    localPath: staleImage,
+                  ),
+                  makeVideoAttachment(
+                    id: videoId,
+                    messageId: messageId,
+                    ownerLane: MediaOwnerLane.direct,
+                    localPath: staleVideo,
+                  ),
+                ],
+              ),
+            ],
+            initialLoadDone: true,
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.tap(find.byType(MediaGridCell).first);
+        await tester.pump();
+        await pumpFrames(tester);
+
+        final viewer = tester.widget<FullScreenTypedMediaViewer>(
+          find.byType(FullScreenTypedMediaViewer),
+        );
+        expect(viewer.initialIndex, 0);
+        expect(viewer.items.map((item) => item.attachmentId), [
+          imageId,
+          videoId,
+        ]);
+        expect(viewer.items.map((item) => item.localPath), [
+          ownedImage.path,
+          ownedVideo.path,
+        ]);
+        expect(
+          viewer.items.every((item) => item.protection.isDownloaded),
+          isTrue,
         );
       },
     );

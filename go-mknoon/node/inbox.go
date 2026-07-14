@@ -12,6 +12,11 @@ import (
 	ma "github.com/multiformats/go-multiaddr"
 )
 
+// DirectReactionPushCapability is advertised only by upgraded clients whose
+// direct-reaction notification pipeline is available. Old relays ignore the
+// additive capabilities field; old clients omit it and remain push-ineligible.
+const DirectReactionPushCapability = "direct_reaction_v1"
+
 // InboxMessage represents a message stored in the offline inbox.
 type InboxMessage struct {
 	ID        string `json:"id,omitempty"`
@@ -29,6 +34,9 @@ type inboxRequest struct {
 	EntryIds []string `json:"entryIds,omitempty"`
 	Token    string   `json:"token,omitempty"`
 	Platform string   `json:"platform,omitempty"`
+	// Plan 256: additive push-token capabilities. Omitted for legacy clients so
+	// their register_token frame remains byte-compatible with old relays.
+	Capabilities []string `json:"capabilities,omitempty"`
 	// FDC-09 presence_set write field (additive): carries {state, ttlMs} for the
 	// self-publish action. omitempty keeps every other action's frame unchanged.
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
@@ -782,8 +790,14 @@ func (n *Node) InboxAck(entryIDs []string, timeoutMs int) (int, error) {
 }
 
 // InboxRegisterToken registers an FCM push token with all configured relays.
-// Succeeds if at least one relay accepts the token.
-func (n *Node) InboxRegisterToken(token string, platform string) error {
+// Optional capabilities are additive: an upgraded client advertises
+// DirectReactionPushCapability, while an omitted slice preserves the legacy
+// register_token frame. Succeeds if at least one relay accepts the token.
+func (n *Node) InboxRegisterToken(
+	token string,
+	platform string,
+	capabilities ...string,
+) error {
 	n.mu.RLock()
 	h := n.host
 	n.mu.RUnlock()
@@ -812,9 +826,10 @@ func (n *Node) InboxRegisterToken(token string, platform string) error {
 		setStreamDeadline(s, timeout)
 
 		req := inboxRequest{
-			Action:   "register_token",
-			Token:    token,
-			Platform: platform,
+			Action:       "register_token",
+			Token:        token,
+			Platform:     platform,
+			Capabilities: append([]string(nil), capabilities...),
 		}
 
 		reqBytes, err := json.Marshal(req)

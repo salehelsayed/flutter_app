@@ -6,6 +6,46 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+/// One app-owned temporary forward directory with concurrency-safe,
+/// idempotent cleanup.
+///
+/// Direct and group forward lanes may shape their own typed capture results,
+/// but directory ownership and disposal live here so they cannot grow
+/// feature-specific retry or orphan-cleanup implementations.
+class MediaForwardSnapshotLease {
+  MediaForwardSnapshotLease._({
+    required this.directory,
+    required MediaFileManager mediaFileManager,
+  }) : _mediaFileManager = mediaFileManager;
+
+  final Directory directory;
+  final MediaFileManager _mediaFileManager;
+  bool _disposed = false;
+  Future<bool>? _disposeInFlight;
+
+  Future<void> dispose() async {
+    if (_disposed) return;
+    final current = _disposeInFlight;
+    if (current != null) {
+      await current;
+      return;
+    }
+    final attempt = _mediaFileManager.deleteGroupForwardSnapshotDirectory(
+      directory.path,
+    );
+    _disposeInFlight = attempt;
+    try {
+      if (await attempt) {
+        _disposed = true;
+      }
+    } finally {
+      if (identical(_disposeInFlight, attempt)) {
+        _disposeInFlight = null;
+      }
+    }
+  }
+}
+
 /// Manages local file paths for media attachments.
 ///
 /// Directory structure: `<app_documents>/media/<contactPeerId>/<blobId>.<ext>`
@@ -15,6 +55,16 @@ import 'package:path_provider/path_provider.dart';
 /// changes across app restarts. Use [resolveStoredPath] to get an absolute
 /// path for file I/O or display.
 class MediaFileManager {
+  static const String groupForwardSnapshotRootDirectoryName =
+      'mknoon_group_forward_snapshots_v1';
+  static const String groupForwardSnapshotDirectoryPrefix = 'snapshot_';
+  static const Duration groupForwardSnapshotStaleAfter = Duration(hours: 6);
+  static const int _groupForwardSnapshotScanLimit = 64;
+  static const int _groupForwardSnapshotDeleteLimit = 16;
+  static const int _groupForwardSnapshotDeleteAttempts = 3;
+  static final Set<String> _activeGroupForwardSnapshotDirectories = <String>{};
+  static final Set<String> _failedGroupForwardSnapshotDirectories = <String>{};
+
   /// Process-wide cached documents-dir for SYNCHRONOUS path resolution at the
   /// render boundary.
   ///
@@ -121,6 +171,236 @@ class MediaFileManager {
       blobId: blobId,
       mime: mime,
     );
+  }
+
+  /// Returns the independently trusted root for canonical attachment files.
+  ///
+  /// Unlike [resolveStoredPath], this never derives authority from a stored
+  /// path or from a `/media/` substring supplied by a database row. Security
+  /// boundaries must construct their expected target beneath this root first,
+  /// then treat legacy-path resolution only as a compatibility comparison.
+  Future<String> trustedMediaRootPath() async {
+    final appDir = await getApplicationDocumentsDirectory();
+    return p.join(appDir.path, 'media');
+  }
+
+  /// App-owned, process-temporary storage for immutable forward snapshots.
+  ///
+  /// A dedicated root keeps scavenging bounded and prevents cleanup from ever
+  /// enumerating or deleting unrelated system-temp entries.
+  @protected
+  Future<String> groupForwardSnapshotRootPath() async =>
+      p.join(Directory.systemTemp.path, groupForwardSnapshotRootDirectoryName);
+
+  /// Creates and registers one active forward-snapshot directory.
+  ///
+  /// A bounded stale-orphan pass runs first so a prior failed dispose is
+  /// reclaimed by the next safe forward operation.
+  Future<Directory> createGroupForwardSnapshotDirectory() async {
+    await scavengeGroupForwardSnapshotOrphans();
+    final rootPath = p.normalize(await groupForwardSnapshotRootPath());
+    if (!_isTrustedGroupForwardSnapshotRoot(rootPath)) {
+      throw const FileSystemException('Untrusted forward snapshot root');
+    }
+    final rootType = await FileSystemEntity.type(rootPath, followLinks: false);
+    if (rootType == FileSystemEntityType.link ||
+        (rootType != FileSystemEntityType.directory &&
+            rootType != FileSystemEntityType.notFound)) {
+      throw const FileSystemException('Unsafe forward snapshot root');
+    }
+    if (rootType == FileSystemEntityType.notFound) {
+      await Directory(rootPath).create(recursive: true);
+    }
+    if (await FileSystemEntity.type(rootPath, followLinks: false) !=
+        FileSystemEntityType.directory) {
+      throw const FileSystemException('Unsafe forward snapshot root');
+    }
+
+    final created = await Directory(
+      rootPath,
+    ).createTemp(groupForwardSnapshotDirectoryPrefix);
+    final createdPath = p.normalize(created.path);
+    if (!_isOwnedGroupForwardSnapshotDirectory(
+      directoryPath: createdPath,
+      rootPath: rootPath,
+    )) {
+      try {
+        await created.delete(recursive: true);
+      } catch (_) {}
+      throw const FileSystemException('Unsafe forward snapshot directory');
+    }
+    _activeGroupForwardSnapshotDirectories.add(createdPath);
+    return Directory(createdPath);
+  }
+
+  /// Allocates one shared forward snapshot lease.
+  ///
+  /// All callers must dispose the lease in a `finally` block. A failed bounded
+  /// delete remains registered for the existing orphan scavenger.
+  Future<MediaForwardSnapshotLease> createMediaForwardSnapshotLease() async {
+    final directory = await createGroupForwardSnapshotDirectory();
+    return MediaForwardSnapshotLease._(
+      directory: directory,
+      mediaFileManager: this,
+    );
+  }
+
+  /// Deletes one owned snapshot directory with bounded retries.
+  ///
+  /// Missing directories are successful (idempotent). A failed deletion is
+  /// removed from the active set and remembered for the next scavenger pass.
+  Future<bool> deleteGroupForwardSnapshotDirectory(String directoryPath) async {
+    final normalized = p.normalize(directoryPath);
+    final rootPath = p.normalize(await groupForwardSnapshotRootPath());
+    if (!_isTrustedGroupForwardSnapshotRoot(rootPath) ||
+        !_isOwnedGroupForwardSnapshotDirectory(
+          directoryPath: normalized,
+          rootPath: rootPath,
+        )) {
+      return false;
+    }
+    final initialType = await FileSystemEntity.type(
+      normalized,
+      followLinks: false,
+    );
+    if (initialType == FileSystemEntityType.notFound) {
+      _activeGroupForwardSnapshotDirectories.remove(normalized);
+      _failedGroupForwardSnapshotDirectories.remove(normalized);
+      return true;
+    }
+    if (await FileSystemEntity.type(rootPath, followLinks: false) !=
+        FileSystemEntityType.directory) {
+      return false;
+    }
+
+    var deleted = false;
+    for (
+      var attempt = 0;
+      attempt < _groupForwardSnapshotDeleteAttempts;
+      attempt++
+    ) {
+      final type = await FileSystemEntity.type(normalized, followLinks: false);
+      if (type == FileSystemEntityType.notFound) {
+        deleted = true;
+        break;
+      }
+      if (type != FileSystemEntityType.directory) {
+        break;
+      }
+      try {
+        await deleteGroupForwardSnapshotDirectoryOnce(Directory(normalized));
+      } catch (_) {}
+      if (await FileSystemEntity.type(normalized, followLinks: false) ==
+          FileSystemEntityType.notFound) {
+        deleted = true;
+        break;
+      }
+      if (attempt + 1 < _groupForwardSnapshotDeleteAttempts) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+    }
+
+    _activeGroupForwardSnapshotDirectories.remove(normalized);
+    if (deleted) {
+      _failedGroupForwardSnapshotDirectories.remove(normalized);
+    } else {
+      _failedGroupForwardSnapshotDirectories.add(normalized);
+    }
+    return deleted;
+  }
+
+  /// One physical deletion attempt. Tests may override this failure seam; all
+  /// ownership checks, retry bounds, and orphan tracking remain non-bypassable
+  /// in [deleteGroupForwardSnapshotDirectory].
+  @protected
+  Future<void> deleteGroupForwardSnapshotDirectoryOnce(Directory directory) =>
+      directory.delete(recursive: true);
+
+  /// Reclaims only inactive, app-owned snapshot children.
+  ///
+  /// Normal calls delete stale or previously failed entries. Startup may set
+  /// [deleteFreshOrphans] because no snapshot from the prior process can still
+  /// be active. Scanning and deletion are both strictly bounded.
+  Future<int> scavengeGroupForwardSnapshotOrphans({
+    bool deleteFreshOrphans = false,
+    DateTime? now,
+  }) async {
+    final rootPath = p.normalize(await groupForwardSnapshotRootPath());
+    if (!_isTrustedGroupForwardSnapshotRoot(rootPath) ||
+        await FileSystemEntity.type(rootPath, followLinks: false) !=
+            FileSystemEntityType.directory) {
+      return 0;
+    }
+
+    final effectiveNow = now ?? DateTime.now();
+    var inspected = 0;
+    var deleted = 0;
+    try {
+      await for (final entity in Directory(rootPath).list(followLinks: false)) {
+        if (inspected >= _groupForwardSnapshotScanLimit ||
+            deleted >= _groupForwardSnapshotDeleteLimit) {
+          break;
+        }
+        inspected++;
+        final candidatePath = p.normalize(entity.path);
+        if (!_isOwnedGroupForwardSnapshotDirectory(
+              directoryPath: candidatePath,
+              rootPath: rootPath,
+            ) ||
+            _activeGroupForwardSnapshotDirectories.contains(candidatePath)) {
+          continue;
+        }
+        if (await FileSystemEntity.type(candidatePath, followLinks: false) !=
+            FileSystemEntityType.directory) {
+          continue;
+        }
+        var shouldDelete =
+            deleteFreshOrphans ||
+            _failedGroupForwardSnapshotDirectories.contains(candidatePath);
+        if (!shouldDelete) {
+          try {
+            final modified = (await entity.stat()).modified;
+            shouldDelete =
+                !modified.isAfter(effectiveNow) &&
+                effectiveNow.difference(modified) >=
+                    groupForwardSnapshotStaleAfter;
+          } catch (_) {
+            shouldDelete = false;
+          }
+        }
+        if (shouldDelete &&
+            await deleteGroupForwardSnapshotDirectory(candidatePath)) {
+          deleted++;
+        }
+      }
+    } catch (_) {
+      return deleted;
+    }
+    return deleted;
+  }
+
+  bool _isOwnedGroupForwardSnapshotDirectory({
+    required String directoryPath,
+    required String rootPath,
+  }) {
+    if (!p.isAbsolute(directoryPath) ||
+        !p.isAbsolute(rootPath) ||
+        !p.equals(p.dirname(directoryPath), rootPath)) {
+      return false;
+    }
+    return RegExp(
+      '^${RegExp.escape(groupForwardSnapshotDirectoryPrefix)}[A-Za-z0-9_-]+\$',
+    ).hasMatch(p.basename(directoryPath));
+  }
+
+  bool _isTrustedGroupForwardSnapshotRoot(String rootPath) {
+    final systemTempPath = p.normalize(Directory.systemTemp.path);
+    if (!p.isAbsolute(rootPath) ||
+        !p.isWithin(systemTempPath, rootPath) ||
+        p.basename(rootPath) != groupForwardSnapshotRootDirectoryName) {
+      return false;
+    }
+    return true;
   }
 
   /// Returns the absolute local file path for a Posts attachment.
@@ -277,6 +557,7 @@ class MediaFileManager {
     String reason = 'media_file_delete',
     String? storedPath,
     Map<String, Object?> details = const {},
+    bool redactTelemetry = false,
   }) async {
     await deleteAppOwnedMediaFileIfExists(
       file: File(localPath),
@@ -284,6 +565,7 @@ class MediaFileManager {
       reason: reason,
       storedPath: storedPath,
       details: details,
+      redactTelemetry: redactTelemetry,
     );
   }
 

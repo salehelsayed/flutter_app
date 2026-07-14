@@ -160,7 +160,9 @@ class DirectReceivedMediaInfoSheet extends StatelessWidget {
         : const Color.fromRGBO(255, 255, 255, 0.94);
     final maxHeight = MediaQuery.of(context).size.height * 0.72;
 
-    final state = info.isIntegrityFailed
+    final state = info.isPrivacyMinimized
+        ? info.privateInfo!.state.wireValue
+        : info.isIntegrityFailed
         ? l10n.media_info_state_unverified
         : info.isDownloaded
         ? l10n.media_info_state_downloaded
@@ -185,15 +187,19 @@ class DirectReceivedMediaInfoSheet extends StatelessWidget {
       ),
       _InfoRow(
         label: l10n.media_info_type,
-        value: info.mime,
+        value: info.isPrivacyMinimized
+            ? l10n.private_media_notification_body
+            : info.mime,
         valueKey: typeValueKey,
       ),
-      _InfoRow(
-        label: l10n.media_info_size,
-        value: _formatBytes(info.sizeBytes),
-        valueKey: sizeValueKey,
-      ),
-      if (info.mediaType != 'video' &&
+      if (!info.isPrivacyMinimized)
+        _InfoRow(
+          label: l10n.media_info_size,
+          value: _formatBytes(info.sizeBytes),
+          valueKey: sizeValueKey,
+        ),
+      if (!info.isPrivacyMinimized &&
+          info.mediaType != 'video' &&
           info.width != null &&
           info.height != null)
         _InfoRow(
@@ -201,7 +207,9 @@ class DirectReceivedMediaInfoSheet extends StatelessWidget {
           value: '${info.width} × ${info.height}',
           valueKey: dimensionsValueKey,
         ),
-      if (info.mediaType == 'video' && info.durationMs != null)
+      if (!info.isPrivacyMinimized &&
+          info.mediaType == 'video' &&
+          info.durationMs != null)
         _InfoRow(
           label: l10n.media_info_duration,
           value: _formatDurationMs(info.durationMs!),

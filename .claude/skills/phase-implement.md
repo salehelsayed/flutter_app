@@ -1,6 +1,7 @@
 ---
 description: Implement a specific phase from the Resilient libp2p Network Architecture TDD plan
 user-invocable: true
+disable-model-invocation: true
 ---
 
 # Phase Implementation Agent

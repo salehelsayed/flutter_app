@@ -5,6 +5,7 @@ import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.d
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
+import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 
@@ -52,6 +53,21 @@ class MediaRepositoryRealDbFixture {
       Future<void> Function() persist,
     )?
     dbSaveMediaAttachmentAround,
+    Future<List<Map<String, Object?>>> Function(
+      String messageId,
+      String ownerLane,
+      Future<List<Map<String, Object?>>> Function() load,
+    )?
+    dbLoadMediaForMessageAround,
+    Future<bool> Function(
+      Map<String, Object?> row, {
+      required String messageId,
+      required int nowMs,
+    })?
+    dbSaveDirectPrivateMediaAttachmentGuardedOverride,
+    Future<bool> Function(Map<String, Object?> row, {required String groupId})?
+    dbSaveGroupMediaAttachmentGuardedOverride,
+    MediaAttachmentLifecycleLock? lifecycleLock,
   }) async {
     sqfliteFfiInit();
     final db = await databaseFactoryFfi.openDatabase(
@@ -63,6 +79,7 @@ class MediaRepositoryRealDbFixture {
       ),
     );
     final effectiveSecureKeyStore = secureKeyStore ?? RecordingSecureKeyStore();
+    final messageRepo = _buildMessageRepository(db);
     final repo = MediaAttachmentRepositoryImpl(
       dbSaveMediaAttachmentPreservingLocalState:
           dbSaveMediaAttachmentOverride ??
@@ -73,7 +90,13 @@ class MediaRepositoryRealDbFixture {
                   () => dbSaveMediaAttachmentPreservingLocalState(db, row),
                 ),
       dbLoadMediaForMessage: (messageId, ownerLane) =>
-          dbLoadMediaForMessage(db, messageId, ownerLane: ownerLane),
+          dbLoadMediaForMessageAround == null
+          ? dbLoadMediaForMessage(db, messageId, ownerLane: ownerLane)
+          : dbLoadMediaForMessageAround(
+              messageId,
+              ownerLane,
+              () => dbLoadMediaForMessage(db, messageId, ownerLane: ownerLane),
+            ),
       dbLoadMediaById: (id) => dbLoadMediaById(db, id),
       dbLoadMediaForMessages: (messageIds, ownerLane) =>
           dbLoadMediaForMessages(db, messageIds, ownerLane: ownerLane),
@@ -101,6 +124,27 @@ class MediaRepositoryRealDbFixture {
               ),
       dbSetMediaBookmarked: (id, bookmarked) =>
           dbSetMediaBookmarked(db, id, bookmarked: bookmarked),
+      dbSetDirectMediaBookmarkedIfOrdinary:
+          ({required messageId, required attachmentId, required bookmarked}) =>
+              dbSetDirectMediaBookmarkedIfOrdinary(
+                db,
+                messageId: messageId,
+                attachmentId: attachmentId,
+                bookmarked: bookmarked,
+              ),
+      dbSetGroupMediaBookmarkedIfOrdinary:
+          ({
+            required groupId,
+            required messageId,
+            required attachmentId,
+            required bookmarked,
+          }) => dbSetGroupMediaBookmarkedIfOrdinary(
+            db,
+            groupId: groupId,
+            messageId: messageId,
+            attachmentId: attachmentId,
+            bookmarked: bookmarked,
+          ),
       dbUpdateMediaPlaybackPosition: (id, positionMs) =>
           dbUpdateMediaPlaybackPosition(db, id, positionMs),
       dbLoadMediaLibraryPage:
@@ -168,12 +212,198 @@ class MediaRepositoryRealDbFixture {
           ),
       dbFinalizeMediaEvictedPathCleared: (id, {required String ownerLane}) =>
           dbFinalizeMediaEvictedPathCleared(db, id, ownerLane: ownerLane),
+      dbCommitDirectPrivateMediaDownloadIfEligible:
+          ({
+            required messageId,
+            required attachmentId,
+            required localPath,
+            required nowMs,
+          }) => dbCommitDirectPrivateMediaDownloadIfEligible(
+            db,
+            messageId: messageId,
+            attachmentId: attachmentId,
+            localPath: localPath,
+            nowMs: nowMs,
+          ),
+      dbBeginDirectPrivateMediaDownloadIfEligible:
+          ({required messageId, required attachmentId, required nowMs}) =>
+              dbBeginDirectPrivateMediaDownloadIfEligible(
+                db,
+                messageId: messageId,
+                attachmentId: attachmentId,
+                nowMs: nowMs,
+              ),
+      dbQualifyDirectPrivateMediaLocalReadyIfEligible:
+          ({
+            required messageId,
+            required attachmentId,
+            required expectedLocalPath,
+            required nowMs,
+          }) => dbQualifyDirectPrivateMediaLocalReadyIfEligible(
+            db,
+            messageId: messageId,
+            attachmentId: attachmentId,
+            expectedLocalPath: expectedLocalPath,
+            nowMs: nowMs,
+          ),
+      dbQualifyDirectPrivateMediaDownloadClaimIfEligible:
+          ({required messageId, required attachmentId, required nowMs}) =>
+              dbQualifyDirectPrivateMediaDownloadClaimIfEligible(
+                db,
+                messageId: messageId,
+                attachmentId: attachmentId,
+                nowMs: nowMs,
+              ),
+      dbRecordDirectPrivateMediaDownloadFailureIfEligible:
+          ({
+            required messageId,
+            required attachmentId,
+            required nowMs,
+            required incrementRetryCount,
+            required failureStatus,
+            required expectedDownloadStatus,
+            expectedLocalPath,
+            clearLocalPath = false,
+          }) => dbRecordDirectPrivateMediaDownloadFailureIfEligible(
+            db,
+            messageId: messageId,
+            attachmentId: attachmentId,
+            nowMs: nowMs,
+            incrementRetryCount: incrementRetryCount,
+            failureStatus: failureStatus,
+            expectedDownloadStatus: expectedDownloadStatus,
+            expectedLocalPath: expectedLocalPath,
+            clearLocalPath: clearLocalPath,
+          ),
+      dbSaveDirectPrivateMediaAttachmentGuarded:
+          dbSaveDirectPrivateMediaAttachmentGuardedOverride ??
+          (row, {required messageId, required nowMs}) =>
+              dbSaveDirectPrivateMediaAttachmentGuarded(
+                db,
+                row,
+                messageId: messageId,
+                nowMs: nowMs,
+              ),
+      lifecycleLock: lifecycleLock,
+      dbCanCleanupDirectPrivateMediaAttachmentExact:
+          ({required messageId, required attachmentId}) =>
+              dbCanCleanupDirectPrivateMediaAttachmentExact(
+                db,
+                messageId: messageId,
+                attachmentId: attachmentId,
+              ),
+      dbDeleteDirectPrivateMediaAttachmentExact:
+          ({required messageId, required attachmentId}) =>
+              dbDeleteDirectPrivateMediaAttachmentExact(
+                db,
+                messageId: messageId,
+                attachmentId: attachmentId,
+              ),
+      dbBeginGroupPrivateMediaDownloadIfEligible:
+          ({
+            required groupId,
+            required messageId,
+            required attachmentId,
+            required nowMs,
+          }) => dbBeginGroupPrivateMediaDownloadIfEligible(
+            db,
+            groupId: groupId,
+            messageId: messageId,
+            attachmentId: attachmentId,
+            nowMs: nowMs,
+          ),
+      dbQualifyGroupPrivateMediaLocalReadyIfEligible:
+          ({
+            required groupId,
+            required messageId,
+            required attachmentId,
+            required expectedLocalPath,
+            required nowMs,
+          }) => dbQualifyGroupPrivateMediaLocalReadyIfEligible(
+            db,
+            groupId: groupId,
+            messageId: messageId,
+            attachmentId: attachmentId,
+            expectedLocalPath: expectedLocalPath,
+            nowMs: nowMs,
+          ),
+      dbQualifyGroupPrivateMediaDownloadClaimIfEligible:
+          ({
+            required groupId,
+            required messageId,
+            required attachmentId,
+            required nowMs,
+          }) => dbQualifyGroupPrivateMediaDownloadClaimIfEligible(
+            db,
+            groupId: groupId,
+            messageId: messageId,
+            attachmentId: attachmentId,
+            nowMs: nowMs,
+          ),
+      dbRecordGroupPrivateMediaDownloadFailureIfEligible:
+          ({
+            required groupId,
+            required messageId,
+            required attachmentId,
+            required nowMs,
+            required incrementRetryCount,
+            required failureStatus,
+            required expectedDownloadStatus,
+            expectedLocalPath,
+            clearLocalPath = false,
+          }) => dbRecordGroupPrivateMediaDownloadFailureIfEligible(
+            db,
+            groupId: groupId,
+            messageId: messageId,
+            attachmentId: attachmentId,
+            nowMs: nowMs,
+            incrementRetryCount: incrementRetryCount,
+            failureStatus: failureStatus,
+            expectedDownloadStatus: expectedDownloadStatus,
+            expectedLocalPath: expectedLocalPath,
+            clearLocalPath: clearLocalPath,
+          ),
+      dbCommitGroupPrivateMediaDownloadIfEligible:
+          ({
+            required groupId,
+            required messageId,
+            required attachmentId,
+            required localPath,
+            required nowMs,
+          }) => dbCommitGroupPrivateMediaDownloadIfEligible(
+            db,
+            groupId: groupId,
+            messageId: messageId,
+            attachmentId: attachmentId,
+            localPath: localPath,
+            nowMs: nowMs,
+          ),
+      dbCanCleanupGroupPrivateMediaAttachmentExact:
+          ({required messageId, required attachmentId}) =>
+              dbCanCleanupGroupPrivateMediaAttachmentExact(
+                db,
+                messageId: messageId,
+                attachmentId: attachmentId,
+              ),
+      dbDeleteGroupPrivateMediaAttachmentExact:
+          ({required messageId, required attachmentId}) =>
+              dbDeleteGroupPrivateMediaAttachmentExact(
+                db,
+                messageId: messageId,
+                attachmentId: attachmentId,
+              ),
+      dbSaveGroupMediaAttachmentGuarded:
+          dbSaveGroupMediaAttachmentGuardedOverride ??
+          (row, {required groupId}) =>
+              dbSaveGroupMediaAttachmentGuarded(db, row, groupId: groupId),
       secureKeyStore: effectiveSecureKeyStore,
+      refreshDirectPrivateMediaParent:
+          messageRepo.refreshPrivateMediaLifecycleAfterExternalMutation,
     );
     return MediaRepositoryRealDbFixture._(
       db,
       repo,
-      _buildMessageRepository(db),
+      messageRepo,
       effectiveSecureKeyStore,
       databasePath,
     );
@@ -208,8 +438,8 @@ class MediaRepositoryRealDbFixture {
       'status': 'delivered',
       'is_incoming': 1,
       'created_at': timestamp,
-      if (hiddenAt != null) 'hidden_at': hiddenAt,
-      if (deletedAt != null) 'deleted_at': deletedAt,
+      'hidden_at': ?hiddenAt,
+      'deleted_at': ?deletedAt,
     });
   }
 
@@ -318,5 +548,27 @@ MessageRepositoryImpl _buildMessageRepository(Database db) {
             ),
     dbMarkInboxCustodyChecked: (id, {relayExpiresAtMs}) =>
         dbMarkInboxCustodyChecked(db, id, relayExpiresAtMs: relayExpiresAtMs),
+    dbClaimDirectPrivateMediaOpening: (id, {required nowMs}) =>
+        dbClaimDirectPrivateMediaOpening(db, id, nowMs: nowMs),
+    dbMarkDirectPrivateMediaViewing: (id, {required nowMs}) =>
+        dbMarkDirectPrivateMediaViewing(db, id, nowMs: nowMs),
+    dbRollbackDirectPrivateMediaOpening: (id) =>
+        dbRollbackDirectPrivateMediaOpening(db, id),
+    dbConsumeDirectPrivateMedia: (id, {required nowMs}) =>
+        dbConsumeDirectPrivateMedia(db, id, nowMs: nowMs),
+    dbAdvanceDirectPrivateMediaClock: (id, {required nowMs}) =>
+        dbAdvanceDirectPrivateMediaClock(db, id, nowMs: nowMs),
+    dbFailClosedCorruptDirectPrivateMediaState: (id, {required nowMs}) =>
+        dbFailClosedCorruptDirectPrivateMediaState(db, id, nowMs: nowMs),
+    dbHideDirectPrivateMediaForMe: (id, {required hiddenAt, required nowMs}) =>
+        dbHideDirectPrivateMediaForMe(db, id, hiddenAt: hiddenAt, nowMs: nowMs),
+    dbLoadActiveDirectPrivateMediaDisappearing: ({limit = 100}) =>
+        dbLoadActiveDirectPrivateMediaDisappearing(db, limit: limit),
+    dbLoadDirectPrivateMediaRecoveryCandidates: ({limit = 100}) =>
+        dbLoadDirectPrivateMediaRecoveryCandidates(db, limit: limit),
+    dbRotateDirectPrivateMediaRecoveryCandidate: (id, {required nowMs}) =>
+        dbRotateDirectPrivateMediaRecoveryCandidate(db, id, nowMs: nowMs),
+    dbLoadNextDirectPrivateMediaExpiryAtMs: () =>
+        dbLoadNextDirectPrivateMediaExpiryAtMs(db),
   );
 }

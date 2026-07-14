@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/received_media_egress.dart';
 import 'package:flutter_app/features/conversation/application/direct_media_library_batch_actions.dart';
 import 'package:flutter_app/features/conversation/application/direct_media_library_batch_delete.dart';
+import 'package:flutter_app/features/conversation/application/private_media_action_eligibility.dart';
 import 'package:flutter_app/features/conversation/application/received_media_action_controller.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_library.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/direct_shared_media_library_screen.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -40,6 +43,7 @@ void main() {
     StrictDirectMediaLibraryRepository repo, {
     DirectMediaLibraryEgressDispatch? dispatchEgress,
     DirectMediaLibraryDeleteDispatch? dispatchDelete,
+    DirectPrivateMediaActionDecisionLoader? loadActionDecision,
     void Function(Set<String>)? onMessagesDeleted,
   }) {
     return MaterialApp(
@@ -53,6 +57,7 @@ void main() {
         stateRepository: repo,
         fileExists: (_) => true,
         resolveStoredPath: (storedPath) => storedPath,
+        loadActionDecision: loadActionDecision,
         dispatchEgress: dispatchEgress,
         dispatchDelete: dispatchDelete,
         onMessagesDeleted: onMessagesDeleted,
@@ -139,18 +144,11 @@ void main() {
       expect(egressCalls, hasLength(1));
       expect(egressCalls.single.identities.single.attachmentId, 'vb');
       expect(egressCalls.single.identities.single.messageId, 'msg-b');
-      expect(
-        egressCalls.single.destination,
-        MediaEgressDestination.share,
-      );
+      expect(egressCalls.single.destination, MediaEgressDestination.share);
 
       // Swiping to the next page updates identity/metadata to THAT item —
       // never retained from the first parent message.
-      await tester.fling(
-        find.byType(PageView),
-        const Offset(-400, 0),
-        1000,
-      );
+      await tester.fling(find.byType(PageView), const Offset(-400, 0), 1000);
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.text('3 / 3'), findsOneWidget);
@@ -160,6 +158,64 @@ void main() {
       expect(egressCalls, hasLength(2));
       expect(egressCalls.last.identities.single.attachmentId, 'vc');
       expect(egressCalls.last.identities.single.messageId, 'msg-c');
+    },
+  );
+
+  testWidgets(
+    'stale Shared Media parent is revalidated and removed before viewer entry',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2160);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final repo = StrictDirectMediaLibraryRepository(
+        expectedContactPeerId: kContactPeerId,
+      );
+      final staleEntry = makeEntry(
+        'stale-private',
+        messageId: 'msg-stale-private',
+      );
+      repo.seedPage(entries: [staleEntry], nextCursor: null);
+      final currentParent = ConversationMessage(
+        id: 'msg-stale-private',
+        contactPeerId: kContactPeerId,
+        senderPeerId: kContactPeerId,
+        text: 'SECRET stale caption',
+        timestamp: '2026-02-11T10:00:00.000Z',
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: '2026-02-11T10:00:01.000Z',
+        privateMediaPolicy: const PrivateMediaPolicy.protected(),
+        privateMediaState: PrivateMediaLifecycleState.available,
+      );
+      var decisionLoads = 0;
+
+      await tester.pumpWidget(
+        buildLibraryApp(
+          repo,
+          loadActionDecision: (identity) async {
+            decisionLoads++;
+            return DirectPrivateMediaActionEligibility.evaluate(
+              parent: currentParent,
+              attachment: staleEntry.attachment,
+              expectedMessageId: identity.messageId,
+              expectedAttachmentId: identity.attachmentId,
+            );
+          },
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+
+      await tester.tap(tile('stale-private'));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(decisionLoads, 1);
+      expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
+      expect(tile('stale-private'), findsNothing);
+      expect(find.textContaining('SECRET'), findsNothing);
+      expect(tester.takeException(), isNull);
     },
   );
 
@@ -232,6 +288,112 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.text('7 / 8'), findsOneWidget);
+      expect(repo.pageCalls, hasLength(2));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'later Shared Media page requalifies PiP true while protected media stays false',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2160);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final repo = StrictDirectMediaLibraryRepository(
+        expectedContactPeerId: kContactPeerId,
+      );
+      final firstPage = [
+        for (var i = 1; i <= 4; i++)
+          makeEntry('initial-$i', messageId: 'initial-message-$i'),
+      ];
+      final eligibleVideo = makeEntry(
+        'later-eligible-video',
+        messageId: 'later-eligible-message',
+        mediaType: 'video',
+        localPath: 'media/later-eligible.mp4',
+      );
+      final protectedVideo = makeEntry(
+        'later-protected-video',
+        messageId: 'later-protected-message',
+        mediaType: 'video',
+        localPath: 'media/later-protected.mp4',
+      );
+      repo.seedPage(entries: firstPage, nextCursor: 'later-page');
+      repo.seedPage(
+        cursor: 'later-page',
+        entries: [eligibleVideo, protectedVideo],
+        nextCursor: null,
+      );
+      final entriesByAttachmentId = {
+        for (final entry in [...firstPage, eligibleVideo, protectedVideo])
+          entry.attachment.id: entry,
+      };
+      final qualifiedAttachmentIds = <String>[];
+
+      await tester.pumpWidget(
+        buildLibraryApp(
+          repo,
+          loadActionDecision: (identity) async {
+            qualifiedAttachmentIds.add(identity.attachmentId);
+            final entry = entriesByAttachmentId[identity.attachmentId]!;
+            final isProtected =
+                identity.attachmentId == protectedVideo.attachment.id;
+            final parent = ConversationMessage(
+              id: identity.messageId,
+              contactPeerId: kContactPeerId,
+              senderPeerId: kContactPeerId,
+              text: isProtected ? 'private' : 'ordinary',
+              timestamp: entry.parentTimestamp,
+              status: 'delivered',
+              isIncoming: true,
+              createdAt: entry.parentTimestamp,
+              privateMediaPolicy: isProtected
+                  ? const PrivateMediaPolicy.protected()
+                  : const PrivateMediaPolicy.ordinary(),
+              privateMediaState: isProtected
+                  ? PrivateMediaLifecycleState.available
+                  : PrivateMediaLifecycleState.none,
+            );
+            return DirectPrivateMediaActionEligibility.evaluate(
+              parent: parent,
+              attachment: entry.attachment,
+              expectedMessageId: identity.messageId,
+              expectedAttachmentId: identity.attachmentId,
+            );
+          },
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // Index 1 is inside the continuation threshold for a four-item page.
+      await tester.tap(tile('initial-2'));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final viewer = tester.widget<FullScreenTypedMediaViewer>(
+        find.byType(FullScreenTypedMediaViewer),
+      );
+      final eligible = viewer.items.singleWhere(
+        (item) => item.attachmentId == eligibleVideo.attachment.id,
+      );
+      expect(eligible.canEnterPictureInPicture, isTrue);
+      expect(
+        viewer.items.any(
+          (item) => item.attachmentId == protectedVideo.attachment.id,
+        ),
+        isFalse,
+        reason: 'a protected continuation parent must be reconciled, not shown',
+      );
+      expect(
+        qualifiedAttachmentIds,
+        containsAll(<String>[
+          eligibleVideo.attachment.id,
+          protectedVideo.attachment.id,
+        ]),
+      );
       expect(repo.pageCalls, hasLength(2));
       expect(tester.takeException(), isNull);
     },
@@ -316,9 +478,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('media_action_save')));
     await tester.pump(const Duration(milliseconds: 300));
     await tester.pump(const Duration(milliseconds: 300));
-    await tester.tap(
-      find.byKey(const ValueKey('direct-media-save-files')),
-    );
+    await tester.tap(find.byKey(const ValueKey('direct-media-save-files')));
     await tester.pump(const Duration(milliseconds: 300));
     expect(egressCalls, hasLength(1));
     expect(egressCalls.single.identities.single.attachmentId, 'wa');
@@ -346,7 +506,10 @@ void main() {
     expect(deleteCalls, hasLength(1));
     expect(deleteCalls.single.single.messageId, 'msg-missing');
     expect(deleteCalls.single.single.attachmentId, 'wb');
-    expect(find.byKey(const ValueKey('media_action_result_failure')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('media_action_result_failure')),
+      findsOneWidget,
+    );
     expect(deletedNotifications, isEmpty);
     expect(find.text('2 / 2'), findsOneWidget);
 

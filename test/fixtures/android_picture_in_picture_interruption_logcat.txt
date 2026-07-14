@@ -1,0 +1,2 @@
+07-13 23:03:08.301 24555 24555 I MknoonPiPInterrupt: [MKNOON_PIP_INTERRUPT] FOCUS_REQUEST nonce=0123456789abcdef0123456789abcdef gain=GAIN usage=USAGE_MEDIA content=CONTENT_TYPE_MOVIE result=granted uid=10472
+07-13 23:03:08.307 24452 24452 I MknoonPiP: [MKNOON_PIP] TERMINAL state=stopped reason=interrupted

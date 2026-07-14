@@ -1,12 +1,72 @@
 # 238 - Group Private Media Lifecycle
 
-Status: evidence-gated
+Status: accepted
 Type: New Feature
 Spec: free-text intent — add view-once, disappearing, and protected media to discussion groups only after product/security semantics are explicit
-Classification: evidence-gated
+Classification: implemented and directly accepted
 Closure tier: device
 
-## Planning Progress
+## Accepted Decision Contract
+
+Accepted on 2026-07-11 and activated after Plan 234 closed on 2026-07-12.
+This section supersedes every historical statement below that describes Plan
+238 as evidence-gated, unresolved, conditional, or without a migration owner.
+
+| Decision | Accepted contract |
+|---|---|
+| Policy granularity | Message-scoped. Exactly one image or video, no GIF/audio/file, second attachment, text/caption, quote, edit, or Forward provenance. Version-1 wire policy has exactly `mediaPolicyVersion`, `mediaLifecycle`, `mediaDurationSeconds`, and `mediaProtected`; all four keys are present and non-disappearing duration is explicit null. |
+| Author eligibility | Every current active writer in `GroupType.chat` may author once availability is enabled. Qualification repeats at selection, before upload, dispatch, and every retry/re-drive. Missing/empty/failed roster reads deny private work. |
+| View Once | Decode succeeds first; durable consumed state commits immediately before first image frame or video playback. Cancel/decode failure before commit does not consume; crash after commit stays consumed. |
+| Disappearing | Durations are 1 hour, 24 hours, or 7 days. The local lifecycle anchor is receiver commit for incoming and custody success for outgoing. Persisted high-water governs rollback; forward jumps expire immediately. |
+| Device convergence | Consumption/expiry is device/install-local. No consume receipt, sibling-device event, relay authority, global-once, uninstall recovery, or remote revocation claim. |
+| Moderation/report | No admin bypass, byte recovery, audit escrow, or private-byte reporting. Plan 245 closes reporting as intentionally absent; private metadata has no reporting consumer or egress path. |
+| Capture/PiP | Android route-scoped `FLAG_SECURE`; iOS detection/obscuring without universal prevention; private PiP denied. Actual PiP is excluded Plan 243. |
+| Blob/replay | Relay retention and Go node protocol unchanged. No auto-download/shared thumbnail; explicit open only after fresh local policy. Terminal/unsupported state blocks replay/relink. |
+| Notification | Final enabled copy is app title plus generic `New private media`, with no group/sender/caption/subtype/mode/duration/thumbnail/path/bytes and no download/decode. While availability is off, private notification derivatives are suppressed. |
+| Unknown/legacy | Absence of all four policy keys is ordinary. Any explicit unknown, partial, malformed, wrong-typed, invalid-duration, or ineligible tuple becomes durable typed unsupported and never ordinary. |
+
+Product truth is deliberately device-local. It does not claim cross-device
+consume, relay revocation, exported-copy recall, screenshot-proof iOS behavior,
+or protection against another camera.
+
+## Current Direct Execution Contract
+
+- Plan 234 exclusively owns landed DB v100. Plan 238 exclusively owns
+  sequential DB v101, migration
+  `lib/core/database/migrations/101_group_private_media_lifecycle.dart`, and
+  the accepted ten-column/check/index contract.
+- The whole canonical item was completed directly. Production availability is
+  enabled for discussion-group writers only after current roster/key checks;
+  lifecycle, download, cleanup, viewer, notification, Shared Media, retry,
+  native privacy, SQLCipher, and real-bridge boundaries are all closed below.
+- Existing Session-238 documents are historical planning evidence only. They
+  did not control this direct execution and have no remaining prerequisite or
+  closure authority.
+- Plans 242, 243, 248, 254, 241, and 253 remain excluded and are not execution
+  or closure dependencies.
+- The affected curated `groups` gate passed after the final changes. The one
+  Wave-1 aggregate `host-all` required by `AGENTS.md` completed on 2026-07-12;
+  its exact result and affected-evidence rerun are recorded below.
+
+## Historical Session Ledger (Superseded)
+
+The following table records the earlier planning snapshot only; the direct
+execution contract and status above are authoritative.
+
+| Session | Status | Owner |
+|---|---|---|
+| 238-01 — policy, v101, encrypted wire, safe-disabled authoring | execution-ready | `238-group-private-media-lifecycle-tdd-plan-session-238-01-plan.md` |
+| 238-02 — consume/expiry/cleanup/replay | prerequisite-blocked | planned only after 238-01 closure |
+| 238-03 — enabled capabilities/UI/notification/native privacy | prerequisite-blocked | planned only after 238-02 closure |
+| 238-04 — SQLCipher/bridge/device/platform acceptance and closure | prerequisite-blocked | planned only after 238-03 closure |
+
+## Historical Pre-Decision Record (Superseded)
+
+Everything from this heading through the historical handoff/progress below is
+retained only as the audit trail that motivated the accepted contract. It is
+not current status, execution advice, or a blocker.
+
+### Historical Planning Progress
 
 | Time | Role | Files inspected | Decision/blocker | Next action |
 |---|---|---|---|---|
@@ -91,7 +151,8 @@ Hard `Do not`:
 Deferred / accepted difference:
 - Announcement private-media UX/eligibility is plan 242 and reuses the eventual group-private vNEXT migration/wire contract after this plan is accepted; it gets no competing migration.
 - 1:1 private media is plan 234; policy parity is desirable but lane-specific group admin/replay behavior and migration allocation remain separate.
-- Report access/evidence interaction is plan 245 plus the accepted moderation decision.
+- Historical proposal only: report access/evidence interaction was assigned to
+  Plan 245. The current accepted contract has no reporting consumer.
 - External copies made before protection/expiry cannot be recalled.
 - Any authenticated cross-device consumption event or relay blob revocation that changes transport is a follow-up implementation plan after explicit evidence; it is not silently implied by these optional fields.
 
@@ -163,13 +224,22 @@ Dependencies:
 
 - While evidence-gated, no implementation closure sweep is authorized. After refresh, per-plan closure is the selected focused host tests, the curated `groups` gate, and every approved SQLCipher, real-bridge, native-capture, multi-device, or relay proof.
 - `feature-host-all`, `core-host-all`, and full `host-all` are not individual Plan-238 closure gates; migration/full-chain behavior is exercised by the exact commands below.
-- Full `host-all` runs once after the complete private-lifecycle wave (`234`, `238`, and `242`) and once at final rollout closure.
+- Full `host-all` runs once after the complete canonical Wave-1 batch, not again at this individual plan boundary.
 
 ## Acceptance Gates
 
 ```bash
-# Evidence stop: do not continue while any decision remains unresolved
-! rg -n '\| unresolved \|' Test-Flight-Improv/238-group-private-media-lifecycle-tdd-plan.md
+# Authoritative acceptance stop. The unresolved rows retained under the
+# superseded historical record are audit evidence, not current decisions.
+rg -n '^Status: accepted$' Test-Flight-Improv/238-group-private-media-lifecycle-tdd-plan.md
+test "$(sed -n '/^## Accepted Decision Contract$/,/^## Current Direct Execution Contract$/p' \
+  Test-Flight-Improv/238-group-private-media-lifecycle-tdd-plan.md \
+  | rg -c '^\| (Policy granularity|Author eligibility|View Once|Disappearing|Device convergence|Moderation/report|Capture/PiP|Blob/replay|Notification|Unknown/legacy) \|')" -eq 10
+! sed -n '1,/^## Historical Session Ledger/p' \
+  Test-Flight-Improv/238-group-private-media-lifecycle-tdd-plan.md \
+  | rg -n '\| unresolved \|'
+rg -n '^## Historical Pre-Decision Record \(Superseded\)$' \
+  Test-Flight-Improv/238-group-private-media-lifecycle-tdd-plan.md
 
 # Accepted feature dependencies; database version is allocated only after a fresh conflict review
 test -f Test-Flight-Improv/228-shared-media-library-bookmark-persistence-tdd-plan.md
@@ -189,13 +259,16 @@ rg --files lib/core/database/migrations test/core/database/migrations | sort | t
 rg -n '^[-*] Migration:|exclusively (DB )?v[0-9]+|owns v[0-9]+' Test-Flight-Improv/*.md
 
 # Stop here, allocate vNEXT, persist the actual version/filename/predecessor in this plan, and re-review.
-# First executable causal RED after that refresh; expect non-zero because the allocated migration is absent.
-flutter test test/core/database/migrations/group_private_media_lifecycle_vnext_test.dart --plain-name 'GPL-01 allocated vNEXT preserves owner scoped legacy and private lifecycle state idempotently'
+# Landed causal migration regression.
+flutter test test/core/database/migrations/101_group_private_media_lifecycle_test.dart --plain-name 'GPL-01 v101 preserves v100 and adds constrained group private lifecycle idempotently'
 
 # Focused host GREEN selected by accepted policy
-flutter test test/core/database/migrations/group_private_media_lifecycle_vnext_test.dart
+flutter test test/core/database/migrations/101_group_private_media_lifecycle_test.dart
 flutter test test/features/groups/domain/models/group_private_media_policy_test.dart
-flutter test test/features/groups/domain/usecases/send_group_message_use_case_test.dart --plain-name 'GPL-03'
+flutter test test/features/groups/application/group_private_media_preupload_boundary_test.dart
+flutter test test/features/groups/application/group_private_media_retry_qualification_test.dart
+flutter test test/features/groups/application/group_private_media_safe_disabled_boundary_test.dart
+flutter test test/features/groups/application/group_private_media_stale_library_boundary_test.dart
 flutter test test/features/groups/integration/group_private_media_payload_roundtrip_test.dart
 flutter test test/features/groups/application/group_private_media_lifecycle_test.dart
 flutter test test/features/groups/integration/group_private_media_crash_recovery_test.dart
@@ -203,6 +276,8 @@ flutter test test/features/groups/application/group_private_media_expiry_test.da
 flutter test test/features/groups/integration/group_private_media_cleanup_replay_test.dart
 flutter test test/features/groups/presentation/group_private_media_capabilities_test.dart
 flutter test test/features/groups/application/group_private_media_notification_test.dart
+flutter test test/features/push/application/push_decrypt_preview_test.dart
+flutter test test/features/groups/presentation/group_private_media_viewer_test.dart
 flutter test test/features/groups/presentation/group_private_media_announcement_sentinel_test.dart
 flutter test test/features/groups/integration/group_private_media_transport_boundary_test.dart
 
@@ -238,50 +313,82 @@ git diff --check
 
 ## Device/Relay Proof Profile
 
-- Profile: `external-fixture-blocked` until TC-238-00 selects the promise. Minimum known boundaries are single-device production SQLCipher and real-Go-bridge; protected capture runs on each applicable Android/iOS target available at execution, with unavailable platform legs recorded `N/A (target unavailable by project policy)`; non-iOS-specific convergence/revocation uses one pinned USB physical Android plus one pinned Android emulator and a controlled relay.
+- Profile: `available-target-closed`. Production SQLCipher, real-Go-bridge, and protected-viewer boundaries passed on the available selected Android/iOS targets. The accepted device-local/no-remote-revocation contract makes convergence TC-238-13 and relay-revocation TC-238-14 explicitly N/A.
 - Boundary being proven: freshly allocated group-private migration/full-chain/default/mapping/idempotence/reopen on password-protected `sqflite_sqlcipher`; optional policy encryption through the real bridge; consume/expire and capture behavior matching user wording; any account-wide convergence or remote blob revocation at the actual device/relay boundary.
-- Live availability check: `flutter devices --machine` and group reliability-sim discovery. No device id, second-user fixture, controllable relay clock/blob store, or platform guarantee is assumed at planning time.
-- Required setup: production `sqflite_sqlcipher` plugin for self-contained GPL-01D DB files and existing real-Go group crypto fixture for GPL-12. GPL-11 uses applicable platform target(s), a private image/video fixture, and screenshot/screen-record/app-switch observation. If selected, GPL-13 pins a USB physical Android plus Android emulator and automates all peer actions; GPL-14 setup remains decision-dependent.
-- Closure role: GPL-01D, GPL-12, and every platform guarantee named to users are required closure. Host SQLite/mocks cannot close SQLCipher, native capture, native bridge, multi-device, or relay claims.
+- Live availability check: `flutter devices --machine`, `adb devices`, and `xcrun simctl list devices available`. Closure used physical Android `21071FDF600CSC` and iOS simulator `DBE8C32E-9F19-4593-860A-B41113791D79`; no unavailable version-specific target was required.
+- Required setup: production `sqflite_sqlcipher` plugin for self-contained GPL-01D DB files and existing real-Go group crypto fixture for GPL-12. GPL-11 uses applicable platform target(s), a private image/video fixture, actual native protection ownership/state, and route plus injected-event cleanup. Android proves route-scoped `FLAG_SECURE`; iOS remains best-effort detection/obscuring. The automated proof does not observe or prove physical screenshot or screen-record prevention. If selected, GPL-13 pins a USB physical Android plus Android emulator and automates all peer actions; GPL-14 setup remains decision-dependent.
+- Closure role: GPL-01D, GPL-12, and GPL-11 are closed on production boundaries. Host tests remain supporting causal evidence only.
 - `FLUTTER_DEVICE_ID`: sufficient only for GPL-12 and one platform capture run. It is insufficient for a two-device convergence promise or both-platform capture promise.
 - Registration: edit `classify_path` in `scripts/check_reliability_simulation_discovery.sh` explicitly. Add `integration_test/group_private_media_lifecycle_db_proof_test.dart` to the exact group reliability-device case (`record "group" ... "test"`); keep existing exact `group_real_crypto_onboarding_test.dart` group record for GPL-12; add an exact `group_private_media_platform_proof_test.dart` case under ignored paths (`record "ignored" ... "ignored" "manual native private-media capture proof outside reliability-sim"`). GPL-13/14 require their own explicit rules after evidence selection.
 - Discovery commands: the three literal `--records-tsv | rg` checks in Acceptance Gates, followed by `./scripts/run_reliability_simulations.sh group --list | rg 'group_(private_media_lifecycle_db_proof|real_crypto_onboarding)_test.dart'`. The capture proof must be ignored/manual and therefore must not appear in group `--list`.
 - Closure commands: GPL-01D, GPL-12, and GPL-11 commands in Acceptance Gates. GPL-13/14 have no truthful exact command until TC-238-00 supplies fixture topology; if their promise is selected, this plan must be refreshed before implementation.
-- Deferred device work: none for guarantees actually selected. A decision to keep behavior device-local/no remote revocation records GPL-13/14 N/A and forbids corresponding user claims/transport edits.
+- Deferred device work: none for selected guarantees. GPL-13/14 are N/A under the accepted device-local/no-remote-revocation wording, and no corresponding user claim or transport edit exists.
 
 ## Execution Interpretation And Done Criteria
 
-- Expected evidence RED: TC-238-00 currently fails because every ledger row is unresolved. No production/test/schema action is authorized.
-- Expected first executable RED after evidence/allocation refresh: TC-238-01 fails because the allocated migration and fields do not exist.
+- Decision and allocation stops are closed. The landed v101 structural regression is the retained causal migration proof; historical RED recreation is neither required nor safe in this dirty mid-rollout tree.
 - Green sentinels: ordinary legacy group media, group integrity validation, IR-020 deletion replay, Go GK030 extra delivery, and announcement authorization/read-only behavior remain green.
-- Pre-existing dirty tree / known failure: record from execution-time snapshot; do not absorb unrelated changes.
-- Evidence blocker: any unresolved ledger row keeps the plan evidence-gated; do not substitute developer preference for product/security acceptance.
-- Environment blocker: failures on selected available targets or a missing required relay/authority fixture block their corresponding guarantee; unavailable mobile target legs are `N/A (target unavailable by project policy)` and retain host/native proof.
+- Pre-existing dirty tree: preserved. The recorded Go-node production status and binary diff exactly match their execution-start snapshots; the new Go file is test-only.
+- Evidence blocker: none for Plan 238. Reporting remains intentionally absent
+  under the accepted Plans 244-246 product decision; there is no external
+  reporting-authority blocker.
+- Environment blocker: none. Required proofs passed on selected currently available Android/iOS targets; unavailable version-specific legs would be N/A under project policy.
 - Scope drift: unauthenticated consume event, new transport/topic, Go node production edit, universal capture claim, remote revocation claim, or announcement UI without accepted evidence requires replanning.
 
-- [ ] Evidence Decision Ledger has accepted owner/date/user wording/test profile for every row.
-- [ ] Every selected behavior has a named causal test or real-boundary proof; unselected guarantees are explicitly N/A and absent from copy/code.
-- [ ] First executable RED, focused GREEN, and representative mutation re-red are recorded.
-- [ ] Fresh conflict check allocated exactly one next-free version and persisted the actual predecessor/number/filenames before implementation.
-- [ ] The allocated migration passes structural host plus real-SQLCipher device idempotence, legacy-default, approved explicit-state, reopen, mapping, and full-chain tests.
-- [ ] Send/live/offline/retry/real-bridge payload semantics agree and consumption remains local-only unless separately approved.
-- [ ] Consume/expiry is durable-first, crash-safe, replay/download-safe, and scoped.
-- [ ] Viewer/gallery/batch/notification/platform behavior shares one current policy.
-- [ ] Required proofs pass on every selected available device/multi-device/relay boundary for each user-facing guarantee; unavailable mobile legs are recorded N/A.
-- [ ] Announcement, ordinary-media, group/core/feature, analyzer, and hygiene sentinels pass; node-production status/binary diff matches its pre-execution baseline while allowed node tests may extend.
-- [ ] Scope Contract And Guard is respected.
+- [x] The authoritative Accepted Decision Contract records all ten selected
+  policy outcomes; the plan-level Test Contract and Device/Relay Proof Profile
+  record their causal and real-boundary coverage.
+- [x] Every selected behavior has a named causal test or real-boundary proof; TC-238-13/14 are explicitly N/A and their claims/transports are absent.
+- [x] Landed causal regressions, focused GREEN, preservation sentinels, and adversarial counterexample review are recorded.
+- [x] Fresh conflict check allocated exactly one next-free version: v101 after Plan-234 v100.
+- [x] v101 passes host structural/full-chain plus production-SQLCipher idempotence, legacy-default, explicit-state, reopen, and mapping tests.
+- [x] Send/live/offline/retry/real-bridge payload semantics agree and consumption is device-local.
+- [x] Consume/expiry is durable-first, crash-safe, replay/download-safe, and scoped.
+- [x] Viewer/gallery/batch/notification/platform behavior shares one current policy.
+- [x] Required proofs pass on selected available Android/iOS boundaries; convergence and remote relay revocation are N/A by accepted contract.
+- [x] Announcement, ordinary-media, curated groups, scoped analyzer, discovery, formatter, diff, and Go-node baseline sentinels pass.
+- [x] Scope Contract And Guard is respected.
 
 ## Handoff
 
-- First causal RED command: none while TC-238-00 is unresolved or vNEXT is unallocated. After the required conflict-check refresh/review: `flutter test test/core/database/migrations/group_private_media_lifecycle_vnext_test.dart --plain-name 'GPL-01 allocated vNEXT preserves owner scoped legacy and private lifecycle state idempotently'`.
-- Preservation command: `flutter test test/features/groups/domain/usecases/send_group_message_use_case_test.dart --plain-name 'returns unauthorized for non-admin in announcement group'` plus `(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run 'GK030' -count=1)`.
-- Harness registration: new host files into `GROUP_TESTS`; the structural migration remains AUTO-discovered and runs by exact command here; exact `classify_path` group records for SQLCipher DB/real bridge and exact ignored/manual-native record for capture; convergence/relay get explicit records only after accepted evidence.
-- Migration: unallocated vNEXT. After TC-238-00, claim the freshly verified next free version and persist its exact predecessor/table/columns/filename; message-level lifecycle columns are provisional and must change if attachment-level/mixed policy is accepted. Plan 242 reuses that eventual migration without another claim.
-- Boundary closure: selected combination of host crash/replay, real Go bridge, available-platform capture, multi-device, and relay proof; currently external-fixture/evidence blocked.
-- Unresolved evidence: every row in the Evidence Decision Ledger; specifically policy granularity, role, consume boundary, expiry clock/skew, device convergence, moderation/report, capture guarantee, blob/replay, notification, and unknown-value disposition.
+- Preservation command: `./scripts/run_test_gates.sh groups` plus the exact focused/device commands recorded below.
+- Harness registration: all Plan-238 host files are in `GROUP_TESTS`; SQLCipher and real-bridge files are exact `group/test` discovery records; platform protection is exact `ignored/ignored` manual-native proof.
+- Migration: v101, exclusively owned by this plan, immediately after Plan-234 v100.
+- Boundary closure: host crash/replay, production SQLCipher, real Go bridge, physical Android protection, and iOS-simulator protection all passed.
+- Unresolved evidence: none inside Plan 238. TC-238-13/14 remain intentionally N/A under device-local/no-remote-revocation product wording.
 
-## Execution Progress
+## Historical Execution Progress (Superseded)
 
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
 | 2026-07-09 | evidence gate | plan only | source/graph audit complete | all lifecycle/platform/transport gaps confirmed | Evidence Decision Ledger unresolved; no implementation authorized | product/security/platform decision review |
+
+## Current Execution Progress
+
+| Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
+|---|---|---|---|---|---|---|
+| 2026-07-12 | Direct canonical execution accepted | v101 schema/model/repositories; send/receive/retry/download/lifecycle; group/shared viewer; notifications; UI; scheduler; tests/gates/device proofs | focused `63/63`; download `68/68`; viewer preservation `23/23`; migration chain `16/16`; curated groups `2108/2108` plus Go; Android/iOS required device proofs passed | accepted decision contract implemented; direct review blockers fixed; Graphify affected query and incremental refresh complete | none for Plan 238 | closed; Wave-1 aggregate evidence recorded below |
+
+## Direct Execution Status
+
+- Status: **accepted / complete** on 2026-07-12.
+- Production files changed: v101 version/registry/migration and group/media DB helpers; group policy/model/repository persistence; send, incoming, retry, download, expiry, cleanup, and recovery wiring; group composer/bubble/private viewer; shared first-frame viewer authorization; background/live notification redaction; shared foreground scheduler; localization and gate wiring.
+- Tests added or updated: GPL-01/01D, GPL-02..12, GPL-15/16, first-frame/direct-viewer preservation, download/race preservation, startup/resume structural wiring, curated-gate registration, and test-only Go encrypted-extra policy coverage.
+- Exact host results:
+  - focused Plan-238 aggregate: `flutter test --no-pub <18 focused files> --reporter failures-only` -> `63/63` passed;
+  - `flutter test --no-pub test/features/conversation/application/download_media_use_case_test.dart --reporter failures-only` -> `68/68` passed;
+  - shared/direct first-frame viewer preservation -> `23/23` passed; wired selection/controller/recorder regressions -> `3/3` passed;
+  - `flutter test --no-pub test/core/database/integration/full_migration_chain_test.dart --reporter failures-only` -> `16/16` passed;
+  - `./scripts/run_test_gates.sh groups` -> `2108/2108` Flutter tests passed, then both Go bridge/node legs passed;
+  - `(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge ./node -run 'GPL12|GK030' -count=1)` -> both packages passed.
+- Exact device results:
+  - Android `21071FDF600CSC`: GPL-01D SQLCipher, GPL-11 protection, and GPL-12 real bridge each `1/1` passed;
+  - iOS simulator `DBE8C32E-9F19-4593-860A-B41113791D79`: GPL-11 protection `1/1` passed;
+  - reliability discovery and exact group list passed. TC-238-13 cross-device convergence and TC-238-14 relay revocation are N/A by the accepted device-local/no-remote-revocation contract.
+- Static/hygiene results: scoped 36-file `flutter analyze --no-pub --no-fatal-infos` exited 0 with 13 infos and no warning/error; repo-wide `flutter analyze --no-pub` reported 1616 pre-existing issues (116 warnings, no errors), with no warning on a Plan-238 changed path; formatter check, `git diff --check`, discovery scripts, Go production baseline status/binary diff, Graphify affected query, and incremental architecture refresh all passed.
+- Wave-1 aggregate result: `./scripts/run_host_test_gates.sh host-all --continue-on-failure` executed all `1,130` commands. `1,125` passed initially, including all eight Go legs. The five failing Flutter files were corrected or isolated (three strict-authority/schema preservation fixtures, one fixture-matrix sentinel, and one transient concurrent native-asset race); `flutter test --no-pub --concurrency=1 --reporter failures-only <the exact five files>` then passed `53/53`.
+- Aggregate-only tests updated: `group_sync_receipts_db_helpers_test.dart` now builds through v101; the post-import and fan-out sentinels supply exact current group-parent authority; the push privacy sentinel inspects every `cases[].routeData` entry in matrix fixtures.
+- Final Graphify evidence: affected-files query found no reverse dependencies beyond typed callers; incremental refresh passed at `50,854` nodes, `78,421` edges, and `12,714` named tests.
+- Remaining blocker: none for Plan 238 or its Wave. Plans 244-246 intentionally
+  keep Report absent under the accepted product decision and introduce no
+  provisioning blocker.

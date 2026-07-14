@@ -11,6 +11,8 @@ scope="all"
 dry_run=0
 continue_on_failure=0
 include_direct_targets=0
+simultaneous=0
+max_parallel="${SIMS_MAX_PARALLEL:-4}"
 start_at=1
 only_selector=""
 
@@ -28,6 +30,10 @@ Options:
   --continue-on-failure      Run the remaining commands after a failure.
   --include-direct-targets   Also run direct integration_test files even when a
                              selected runner already targets the same file.
+  --simultaneous             Run only resource-compatible rows concurrently.
+                             Shared devices/build outputs stay serial; read-only
+                             post-capture validators run afterward in a bounded
+                             pool.
   --start-at <N>             Run the planned command list starting at item N.
   --only <N|path|path:scenario>
                              Run only planned item N, path, or path:scenario.
@@ -59,6 +65,8 @@ Environment:
   RELIABILITY_NOTIFICATION_SOUND_INTERACTIVE=1
                                     Do not force notification sound smoke into
                                     non-interactive mode.
+  SIMS_MAX_PARALLEL                 Maximum concurrent post-capture validators
+                                    under --simultaneous (default: 4; range: 1-64).
 EOF
 }
 
@@ -88,6 +96,10 @@ while (($# > 0)); do
       include_direct_targets=1
       shift
       ;;
+    --simultaneous|--parallel)
+      simultaneous=1
+      shift
+      ;;
     --start-at)
       start_at="${2:?missing --start-at value}"
       if ! [[ "$start_at" =~ ^[0-9]+$ ]] || [ "$start_at" -lt 1 ]; then
@@ -111,6 +123,13 @@ while (($# > 0)); do
   esac
 done
 
+if [ "$simultaneous" -eq 1 ] &&
+   ! [[ "$max_parallel" =~ ^([1-9]|[1-5][0-9]|6[0-4])$ ]]; then
+  printf 'Invalid SIMS_MAX_PARALLEL: %s (expected 1 through 64).\n' \
+    "$max_parallel" >&2
+  exit 2
+fi
+
 if [ ! -x "$CHECKER" ]; then
   printf 'Missing executable discovery checker: %s\n' "$CHECKER" >&2
   exit 1
@@ -123,9 +142,12 @@ raw_plan_file="$(mktemp)"
 plan_file="$(mktemp)"
 indexed_plan_file="$(mktemp)"
 active_plan_file="$(mktemp)"
+serial_plan_file="$(mktemp)"
+parallel_plan_file="$(mktemp)"
 failures_file="$(mktemp)"
 group_multi_party_all_scenarios_file="$(mktemp)"
-trap 'rm -f "$records_file" "$selected_file" "$targeted_tests_file" "$raw_plan_file" "$plan_file" "$indexed_plan_file" "$active_plan_file" "$failures_file" "$group_multi_party_all_scenarios_file"' EXIT
+parallel_work_dir="$(mktemp -d)"
+trap 'rm -f "$records_file" "$selected_file" "$targeted_tests_file" "$raw_plan_file" "$plan_file" "$indexed_plan_file" "$active_plan_file" "$serial_plan_file" "$parallel_plan_file" "$failures_file" "$group_multi_party_all_scenarios_file"; rm -rf "$parallel_work_dir"' EXIT
 
 printf 'Checking reliability simulation discovery...\n'
 "$CHECKER" --records-tsv >"$records_file"
@@ -359,6 +381,32 @@ if [ ! -s "$active_plan_file" ]; then
   exit 1
 fi
 
+resource_class_for_path() {
+  case "$1" in
+    integration_test/scripts/validate_group_reaction_notification_artifacts.dart)
+      printf 'post-capture-validator\n'
+      ;;
+    *)
+      # Fail closed. A path is parallel only after it is explicitly proven to
+      # be read-only and independent of every device, build output, relay
+      # mutation, and performance measurement.
+      printf 'exclusive-shared-device-build\n'
+      ;;
+  esac
+}
+
+while IFS=$'\t' read -r index kind path scenario; do
+  [ -n "$kind" ] || continue
+  if [ "$simultaneous" -eq 1 ] &&
+     [ "$(resource_class_for_path "$path")" = "post-capture-validator" ]; then
+    printf '%s\t%s\t%s\t%s\n' "$index" "$kind" "$path" "$scenario" \
+      >>"$parallel_plan_file"
+  else
+    printf '%s\t%s\t%s\t%s\n' "$index" "$kind" "$path" "$scenario" \
+      >>"$serial_plan_file"
+  fi
+done <"$active_plan_file"
+
 quote_for_display() {
   local value="$1"
   printf "'%s'" "${value//\'/\'\\\'\'}"
@@ -455,6 +503,15 @@ path_needs_multi_device() {
 
 device_arg_for_path() {
   local path="$1"
+
+  case "$path" in
+    integration_test/scripts/validate_group_reaction_notification_artifacts.dart)
+      # This is a read-only post-capture validator. It consumes an artifact,
+      # not a Flutter target, and is the only current reliability row allowed
+      # into the simultaneous pool.
+      return
+      ;;
+  esac
 
   if path_needs_four_device "$path"; then
     four_device_ids
@@ -631,6 +688,10 @@ run_path() {
 
 printf '\nReliability simulation command plan: %s\n' "$scope"
 printf 'Relay addresses: %s\n' "$(relay_addresses)"
+if [ "$simultaneous" -eq 1 ]; then
+  printf 'Simultaneous policy: shared device/build rows serialize; post-capture validators run after producers with max %s.\n' \
+    "$max_parallel"
+fi
 group_multi_party_active_count="$(
   awk -F '\t' '
     $3 == "integration_test/scripts/run_group_multi_party_device_real.dart" {
@@ -668,6 +729,9 @@ while IFS=$'\t' read -r index kind path scenario; do
   command_count=$((command_count + 1))
   printf '  %2d. ' "$index"
   print_command_for_path "$kind" "$path" "$scenario"
+  if [ "$simultaneous" -eq 1 ]; then
+    printf ' [resource: %s]' "$(resource_class_for_path "$path")"
+  fi
   printf '\n'
 done <"$active_plan_file"
 
@@ -704,9 +768,17 @@ preflight_transport_census_processes() {
   fi
 }
 
-preflight_transport_census_processes
+if [ -s "$serial_plan_file" ]; then
+  preflight_transport_census_processes
+fi
 
 printf '\nRunning %s reliability simulation command(s)...\n' "$command_count"
+if [ "$simultaneous" -eq 1 ]; then
+  serial_count="$(awk 'END { print NR + 0 }' "$serial_plan_file")"
+  parallel_count="$(awk 'END { print NR + 0 }' "$parallel_plan_file")"
+  printf 'Schedule: %s exclusive row(s), then %s post-capture validator row(s) with max %s concurrent.\n' \
+    "$serial_count" "$parallel_count" "$max_parallel"
+fi
 # Read the plan on FD 3, not stdin: run_path executes real commands (e.g. smoke
 # shell scripts that read stdin), and if the loop fed them from "$active_plan_file"
 # on stdin they would consume the remaining plan lines — silently skipping the
@@ -736,7 +808,123 @@ while IFS=$'\t' read -r index kind path scenario <&3; do
       exit "$status"
     fi
   fi
-done 3<"$active_plan_file"
+done 3<"$serial_plan_file"
+
+run_parallel_batch() {
+  local -a rows=("$@")
+  local -a pids=()
+  local -a log_files=()
+  local -a indexes=()
+  local -a paths=()
+  local -a scenarios=()
+  local row
+  local index
+  local kind
+  local path
+  local scenario
+  local log_file
+  local status
+  local first_failure=0
+  local i
+
+  for row in "${rows[@]}"; do
+    IFS=$'\t' read -r index kind path scenario <<<"$row"
+    log_file="$parallel_work_dir/$index.log"
+    : >"$log_file"
+
+    printf '\n==> #%s [parallel post-capture] ' "$index"
+    print_command_for_path "$kind" "$path" "$scenario"
+    printf '\n'
+
+    (
+      run_path "$kind" "$path" "$scenario"
+    ) >"$log_file" 2>&1 &
+    pids+=("$!")
+    log_files+=("$log_file")
+    indexes+=("$index")
+    paths+=("$path")
+    scenarios+=("$scenario")
+  done
+
+  for ((i = 0; i < ${#pids[@]}; i++)); do
+    if wait "${pids[$i]}"; then
+      status=0
+    else
+      status=$?
+    fi
+
+    if [ -s "${log_files[$i]}" ]; then
+      cat "${log_files[$i]}"
+    fi
+
+    if [ "$status" -eq 0 ]; then
+      if [ -n "${scenarios[$i]}" ]; then
+        printf 'PASS: #%s %s --scenario %s\n' \
+          "${indexes[$i]}" "${paths[$i]}" "${scenarios[$i]}"
+      else
+        printf 'PASS: #%s %s\n' "${indexes[$i]}" "${paths[$i]}"
+      fi
+      continue
+    fi
+
+    if [ -n "${scenarios[$i]}" ]; then
+      printf 'FAIL: #%s %s --scenario %s exited with %s\n' \
+        "${indexes[$i]}" "${paths[$i]}" "${scenarios[$i]}" "$status" >&2
+      printf '%s\t%s --scenario %s\t%s\n' \
+        "${indexes[$i]}" "${paths[$i]}" "${scenarios[$i]}" "$status" \
+        >>"$failures_file"
+    else
+      printf 'FAIL: #%s %s exited with %s\n' \
+        "${indexes[$i]}" "${paths[$i]}" "$status" >&2
+      printf '%s\t%s\t%s\n' \
+        "${indexes[$i]}" "${paths[$i]}" "$status" >>"$failures_file"
+    fi
+    if [ "$first_failure" -eq 0 ]; then
+      first_failure="$status"
+    fi
+  done
+
+  if [ "$first_failure" -ne 0 ] && [ "$continue_on_failure" -ne 1 ]; then
+    return "$first_failure"
+  fi
+}
+
+run_parallel_queue() {
+  local -a batch=()
+  local row
+  local status
+
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    batch+=("$row")
+    if [ "${#batch[@]}" -ge "$max_parallel" ]; then
+      if run_parallel_batch "${batch[@]}"; then
+        batch=()
+      else
+        status=$?
+        return "$status"
+      fi
+    fi
+  done <"$parallel_plan_file"
+
+  if [ "${#batch[@]}" -gt 0 ]; then
+    if run_parallel_batch "${batch[@]}"; then
+      :
+    else
+      status=$?
+      return "$status"
+    fi
+  fi
+}
+
+if [ -s "$parallel_plan_file" ]; then
+  if run_parallel_queue; then
+    :
+  else
+    status=$?
+    exit "$status"
+  fi
+fi
 
 failure_count="$(awk 'END { print NR + 0 }' "$failures_file")"
 if [ "$failure_count" -gt 0 ]; then

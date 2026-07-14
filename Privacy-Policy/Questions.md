@@ -1008,7 +1008,7 @@ If you reply with:
 67. **No content moderation** — No automated scanning, no human review, no user-report system.
 68. **N/A** — No reporting mechanism exists.
 69. **No** — No third-party trust/safety vendors.
-70. **No server-side banning** — Users can locally block contacts (`is_blocked` column), which prevents receiving messages from that peer. No centralized ban list.
+70. **No server-side banning** — Users can locally block contacts (`is_blocked` column). Blocking is enforced for direct/contact-lane messages and reactions, contact admission, and future contact-backed group invitations. It does not filter an existing member's messages inside a group or announcement the user has already joined. No centralized ban list.
 71. **No** — No CSAM, terrorism, or abuse scanning. The relay cannot read encrypted content.
 
 ---

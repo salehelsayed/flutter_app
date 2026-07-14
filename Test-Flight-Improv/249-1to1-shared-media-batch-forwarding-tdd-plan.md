@@ -1,184 +1,191 @@
 # 249 - 1:1 Shared Media Batch Forwarding
 
-Status: evidence-gated
+Status: accepted
 Type: New Feature
-Spec: free-text intent — forward a bounded multi-message selection from the direct Shared Media library without collapsing captions, ordering, provenance, dedup, encryption, or partial retry truth
-Classification: evidence-gated
-Closure tier: host/paired-device conditional
+Spec: forward a bounded direct Shared Media selection as independent ordinary Plan-232 messages without collapsing captions, ordering, provenance, dedup, encryption, or retry truth
+Classification: host-only ordinary-send composition
+Closure tier: host-only; no schema, wire, relay, native, or device boundary changes
 
 ## Planning Progress
 
-| Time | Role | Files inspected | Decision/blocker | Next action |
-|---|---|---|---|---|
-| 2026-07-09 | Evidence Collector / Planner | `graphify-arch` query; plans 232/233; `ShareIntent`; share picker/screen/wired/coordinator and tests; direct `dedupKey` send/receive/retry tests; group destination branch | Plan 232 deliberately has one source message/current item, one caption, and one opaque provenance key. Plan 233 can select entries from several parent messages. Flattening that selection into the current intent would invent album, caption, and receiver-dedup behavior. | Resolve D-249-01..07, refresh the output/provenance/retry contract, then author REDs or split a new-wire branch before implementation. |
-| 2026-07-10 | Dependency refresh | revised plan 228 owner-scoped library/cursor contract and shared migration registry | Any future batch selection must contain resolved `direct` entries from one scope/filter-bound cursor sequence; local owner identity is dispatch-only and never provenance. Conditional schema must extend the shared registry. | Preserve the evidence gate and add these invariants to the post-decision refresh. |
+| Time | Role | Evidence / decision | Next action |
+|---|---|---|---|
+| 2026-07-09 | Evidence Collector / Planner | Plans 232/233 and the existing one-source picker/delivery seam could not safely define multi-source grouping, caption, provenance, or retry behavior without explicit decisions. | Resolve D-249-01..07 before implementation. |
+| 2026-07-11 | Decision / decomposition review | The accepted three-session breakdown resolves D-249-01..07 as direct-only composition over independent ordinary Plan-232 sends. It rejects album/grouped output, new schema/wire state, and group/announcement destinations. | Execute Session 01's hidden atomic draft/preflight foundation after Plan-234 Session 04. |
+| 2026-07-11 | Dependency refresh | Plan-234 Session 04 is accepted and supplies `qualifyCurrentDirectMediaRow`, the exact-current direct owner/private/lifecycle/download/integrity/path boundary. | Reuse that boundary; do not fork its policy matrix. |
 
-## Problem And Evidence
+## Problem And Landed Evidence
 
-- Behavior to improve: a user selecting several images/videos in one direct Shared Media library should be able to forward them to one or more eligible contacts/groups with predictable grouping, order, captions, markers, privacy, and retry results.
-- Impact: a naive implementation can collapse unrelated source messages under one dedup key, lose captions, reorder items, reuse encryption material, duplicate successful deliveries during retry, or leak original sender/conversation identity.
-- Confirmed current mechanism: `ShareTargetPickerScreen` accepts one `captionController` and one file-path collection (`lib/features/share/presentation/screens/share_target_picker_screen.dart:19-51`, `:63-70`). It has no per-source caption or album model.
-- Confirmed current mechanism: `DefaultShareBatchDeliveryCoordinator.deliver` preprocesses one shared intent then iterates selected targets at `lib/features/share/application/share_batch_delivery_coordinator.dart:163-217`; the contact leg mints/uploads/sends from that single intent at `:279-357` and the group leg follows a separate contract at `:382-485`.
-- Confirmed direct contract: plan 232 intentionally builds provenance from one source message (`source.dedupKey ?? source.id`), gives each target fresh identity/encryption, and stores one forwarded marker. Its scope explicitly excludes a multi-message library selection.
-- Confirmed library contract: plan 233 pages/selects stable `MediaLibraryEntry` values across parent messages and owns batch Save/Share/Delete, but deliberately exposes no batch Forward action.
-- Existing coverage: single-source forward draft/picker/fan-out/dedup/retry tests in plan 232; library selection/filter/paging tests in plan 233; existing picker tests for target-set uniqueness and failed-only target retry. None can distinguish multiple source keys/captions within one selection.
-- Missing coverage: album-versus-individual output, stable selection/order cap, caption ownership, duplicate source-parent coalescing, per-source/per-target provenance, receiver dedup, encryption/ID fan-out, partial result matrix, retry/reopen, legacy fallback, group destination semantics, and wire/transport boundary.
-- Refuted finding: one `ForwardProvenance.dedupKey` cannot truthfully represent attachments from several source messages. Reusing it can make receiver dedup collapse unrelated forwarded content; dropping it loses the source-replay guarantee.
-- Refuted finding: concatenating captions or silently choosing the first caption is not a source-grounded product rule.
-- Unresolved findings (blocking): **D-249-01** send one album/grouped message versus one forwarded message per source parent/attachment, including duplicate attachments from the same parent; **D-249-02** stable order, caption preservation/edit/removal, per-item versus shared caption, and receiver presentation; **D-249-03** per-source/per-target opaque provenance shape, dedup discriminator, legacy fallback, and whether a new encrypted-inner wire field is required; **D-249-04** selection/media/byte cap, mixed unavailable/protected state, preprocessing/memory limits, and all-or-eligible-subset behavior; **D-249-05** per-source/per-target result, cancellation, queued state, failed-only retry, restart, idempotency, and whether successes remain selected; **D-249-06** group destinations, plan-236 marker/dedup interaction, announcements, permission revalidation, and mixed direct/group result copy; **D-249-07** confirmation/preview, privacy disclosure, diagnostics, accessibility, and whether multi-source forwarding is available before every recipient supports the chosen contract.
-- Affected production/test/gate files are conditional: a library Forward action; a multi-source draft/preview; picker/coordinator extensions; possibly direct inner payload/retry state and a freshly allocated DB vNEXT; three-locale l10n; focused host tests; and a paired-device proof only if decisions introduce a new wire shape. Exact files cannot be frozen before D-249-01..07.
+- Plan 233 supplies stable bounded selection from the direct Shared Media library, but intentionally has no Batch Forward action.
+- Plan 232 supplies one ordinary forwarded message from one current source, including an opaque explicit-action operation token, fresh per-destination identity/encryption, existing persistence, receiver dedup, and ordinary retry.
+- Plan-234 Session 04 supplies the mandatory exact-current direct-row qualification boundary. Private, unsupported, consumed, expired, corrupt, hidden, deleted, unresolved, group-owned, incomplete, or otherwise ineligible media must never reach picker or delivery work.
+- The accepted Plan-249 contract composes those landed owners. It does not add an album, batch envelope, receiver payload, durable batch table, group lane, or announcement lane.
+- Three selected attachments and two active direct contacts therefore mean six ordinary direct messages in canonical source-major order, with independent captions and per-source operation tokens.
+
+## Resolved Decision Ledger
+
+| Decision | Accepted contract | Observable consequence |
+|---|---|---|
+| D-249-01 output shape | Emit one independent ordinary Plan-232 forward for every selected attachment and every chosen direct contact. Never coalesce attachments that share a parent; never create an album, grouped message, or batch receiver payload. | Three selected attachments to two contacts produce six ordinary outgoing messages in source-major stable order. Receiver compatibility is unchanged. |
+| D-249-02 order and captions | Order selected sources by `(parent timestamp DESC, message id DESC, attachment id DESC)`, never tap order or path. Each attachment receives its parent caption as an independent initial value that may be preserved, edited, or cleared. | Same-parent siblings remain distinct and independently editable; source rows/text are never mutated. |
+| D-249-03 provenance and compatibility | Mint one opaque random Plan-232 `ForwardProvenance.operationDedupKey` per selected attachment at draft creation. Reuse that token across contact fan-out and failed-only in-route retry. Every destination still receives fresh ordinary message/blob IDs, timestamp, recipient key/nonce, and ciphertext. | No source identity enters wire provenance, outer envelopes, UI, or diagnostics. No new encrypted-inner field or legacy fallback exists. |
+| D-249-04 cap and source eligibility | Selection is `1..10`. Re-read exact direct parent/attachment rows and local bytes at build and immediately before dispatch. Only incoming, live-parent, ordinary, locally complete, integrity-verified visual sources pass. Any ineligible source aborts the whole source preflight before delivery and preserves selection. | Pending, failed, corrupt, evicted, missing, deleted, outgoing, unresolved/group, private/protected/unsupported/terminal, or stale-path rows cannot produce a partial send. |
+| D-249-05 result, progress, and retry | Session 02 exposes a source-by-contact `sent`/`queued`/`failed` matrix. Retry only failed cells with the same item token; never resubmit sent or queued cells. Persisted ordinary rows remain owned by existing direct retry. | No batch retry table. Pre-message upload failures can retry only while the action remains open; reopening is a new explicit action. |
+| D-249-06 destinations | Load, render, and dispatch active direct contacts only. Revalidate contacts before dispatch; invalid contacts become failed cells without changing valid contacts' ordinary-send contract. | Groups and announcements remain Plans 250/251 and cannot inherit Plan-249 state or copy. |
+| D-249-07 UX, privacy, and diagnostics | Session 02 supplies bounded source preview, count, independent captions, direct-contact selection, progress, batch-level denial, localized accessible small-screen/RTL behavior, and truthful cell outcomes. Diagnostics expose redacted counts/phases/outcomes only. | No provenance, source sender/conversation identity, path, key, bytes, or caption history is displayed or logged. No mid-send cancellation promise is introduced. |
 
 ## Scope Contract And Guard
 
-Conditionally in scope after D-249-01..07:
-- Add Batch Forward to plan 233 only for a non-empty, bounded, eligible selection and preserve stable attachment/message identity from selection through result handling.
-- Implement exactly one approved output model: ordered individual forwards or an explicitly defined album/group. Specify how selected attachments sharing a parent message coalesce and how captions are preserved/edited/removed.
-- Carry an approved opaque provenance value for every logical source through every destination. Each destination still gets fresh message/blob IDs, timestamps, recipient-scoped keys/nonces, and independent retry identity.
-- Extend picker preview/result state to the approved per-source/per-target matrix; revalidate contact/group eligibility immediately before each send and retain exactly the approved failed/cancelled cells for retry.
-- Keep provenance and forwarding markers encrypted-inner-only and attribution-free. Diagnostics may use redacted stable prefixes/outcome counts, never source keys, sender identity, captions, paths, or media bytes.
-- If durable grouped retry state needs schema, allocate DB vNEXT only after approval and a fresh version-ledger conflict check; reserve no number here.
+In scope across the three sessions:
+
+- Session 01: refresh this source contract and land one hidden immutable direct-source draft/preflight builder for `1..10` exact `(messageId, attachmentId)` identities from one contact scope.
+- Session 02: compose existing ordinary Plan-232 direct delivery per source/contact, add the direct-only picker/action/result matrix, failed-cell retry, l10n, accessibility, and wiring.
+- Session 03: independently audit the complete feature, mutations, registrations, focused/curated gates, and synchronize stable closure documents.
 
 Must preserve:
-- Accepted Plan 232 one-source viewer/bubble Forward remains unchanged -> TC-249-01/12.
-- Plan-233 paging, filters, bookmarks, Save/Share/Delete, selection, and Go to Message remain usable with Batch Forward unavailable/disabled -> TC-249-01/10/12.
-- Every target gets new recipient-scoped upload encryption and no source file/key/row/caption is mutated -> TC-249-05/09.
-- Existing writable-group checks, group encryption/publish/background-task lifecycle, and plan-236 marker rules remain owning behavior -> TC-249-07/11.
+
+- Plan-232 one-source Forward reloads and qualifies the source before token/path/picker work and keeps its existing explicit-action semantics.
+- Plan-233 paging, filters, bookmark, Save/Share/Delete, selection, viewers, and Go to Message remain unchanged.
+- Plan-234 exact-current private/terminal/unsupported/corrupt denial remains the sole direct source qualification authority.
+- Every destination gets ordinary recipient-scoped message/blob identity, key/nonce, ciphertext, persistence, and retry ownership. Source rows, bytes, keys, captions, and state are never mutated.
 
 Hard `Do not`:
-- Do not expose Batch Forward, invent album semantics, concatenate/select captions silently, or flatten several source keys until D-249-01..07 are approved and this plan is refreshed.
-- Do not reuse one source dedup key for unrelated parent messages, expose original sender/conversation identity, or put provenance in a v2 outer envelope/diagnostic.
-- Do not reuse message/blob IDs, encryption keys/nonces, ciphertext, or queued identity across targets.
-- Do not send pending, missing, evicted, integrity-failed, expired, or protected media contrary to the approved D-249-04 policy.
-- Do not edit go-libp2p, relay framing/routing, group publish/auth internals, or announcement payloads in this plan.
-- Do not reserve a migration version speculatively. The landed spine is plan 228 `v96` shared media state, plan 232 `v97` direct forwarded marker, plan 235 `v98` group deletion journal, and plan 236 `v99` group forwarded marker; later work may advance the ledger before this plan is approved.
-- Do not accept plan-228 `unresolved` or group-owned source entries in a direct batch, reuse a cursor after scope/filter change, or serialize local owner identity into wire provenance/diagnostics.
 
-Deferred / accepted difference:
-- Plan 233 ships batch Save/Share/Bookmark/Delete/Go to Message without Batch Forward; the missing action is intentional until this plan becomes execution-ready.
-- Single source-message/current-viewer-item Forward remains plan 232 and does not wait for this plan.
-- Announcement-source/destination forwarding policy remains plan 240; this plan cannot infer announcement permissions.
-- If D-249-01/03 selects an album/new wire contract rather than ordinary individual sends, refresh or split that wire slice for independent `$tdd-review` and paired-device closure.
+- Do not create an album, grouped direct message, shared caption, batch provenance token, provenance array, receiver codec branch, batch envelope, or legacy fallback.
+- Do not add a schema/migration/version/registry/table/column or durable batch retry state. DB v100 belongs to Plan 234 and sequential v101 belongs to Plan 238.
+- Do not load or dispatch group/announcement targets. Plans 250/251 own those lanes.
+- Do not edit Go/libp2p/relay, native Android/iOS, platform transport, device harness, notification, or media-viewer boundaries.
+- Do not expose Session-01's draft/preflight as a production Batch Forward action before Session 02 lands the complete route.
+- Do not serialize or log source identity, sender/conversation identity, captions, paths, tokens, keys, nonces, or bytes.
 
-Dependencies:
-- Plan 228 supplies resolved owner-scoped library entries, scope/filter-bound cursors, the `1..100` query ceiling and shared production migration registry.
-- Accepted `Test-Flight-Improv/232-1to1-received-media-forwarding-tdd-plan.md` supplies one-source `ForwardProvenance`, picker launch, direct forwarded marker, fresh per-target encryption, dedup, and retry primitives.
-- Accepted `Test-Flight-Improv/233-1to1-shared-media-library-batch-tdd-plan.md` supplies stable bounded selection and library UI without Batch Forward.
-- Implemented/device-proven `Test-Flight-Improv/236-group-received-media-forwarding-tdd-plan.md` supplies the group DB `v99` marker/dedup behavior required before group destinations can claim parity.
-- Accepted `Test-Flight-Improv/240-announcement-received-media-forwarding-tdd-plan.md` supplies announcement policy.
-- D-249-01..07 are approval dependencies; any new schema/wire shape is allocated and reviewed only after decisions.
+## No-Migration And No-New-Wire Contract
+
+- Plan 249 reserves no database version and changes neither the create/upgrade registry nor `currentIdentityDatabaseVersion`.
+- It adds no batch table, message/attachment column, album field, provenance array, receiver codec branch, or transport-envelope field.
+- Each output remains an existing ordinary Plan-232 direct send. In-route pre-message retry state is memory-only; once a row is persisted, existing message/attachment storage and retry use cases are authoritative.
+- Device/relay proof is N/A because receiver and transport shapes are unchanged. A need for schema, new wire data, group publish, relay, or native work is a structural contradiction that stops execution for re-planning.
 
 ## Test Contract
 
-| Case | Behavior | Named test/proof | Tier / fixture | HEAD -> GREEN | Mutation | Gate / registration |
-|---|---|---|---|---|---|---|
-| TC-249-01 | Plan 233 exposes no Batch Forward action while the contract/configuration is undecided, and all existing library actions plus plan-232 single-source Forward remain available. | `test/features/conversation/presentation/screens/conversation_shared_media_library_test.dart::batch forward stays absent until multi-source policy is approved` | future `GREEN sentinel` / plan-233 library + plan-232 action fixtures | HEAD/library plans lack Batch Forward -> after dependencies the exact absence/core-action assertions stay GREEN until approved configuration exists | enable on missing policy, hide Save/Share/Delete, or suppress single-source Forward -> TC-249-01 red | Reserve this named test in plan-233 file/both 1:1 arrays when dependencies execute; no production action before D-249 approval |
-| TC-249-02 | Selection uses stable attachment/message IDs from one direct scope/filter signature, applies the approved cap, preserves repository order, and rejects group/unresolved/cursor-mismatched entries. | `test/features/conversation/application/build_shared_media_batch_forward_test.dart::selection enforces direct ownership cursor signature cap order and parent grouping` | evidence-gated host application / mixed direct/group/unresolved pages, stale cursor and file sizes | HEAD compile RED: builder absent -> exact selected IDs/order/ineligible result follow D-249-01/04 and no cross-owner entry reaches preprocessing | key by path, exceed cap, reuse stale cursor, reorder, or include group/unresolved/protected media -> TC-249-02 red | `flutter test test/features/conversation/application/build_shared_media_batch_forward_test.dart`; reserve AUTO + both 1:1 arrays; blocked by D-249-01/04 |
-| TC-249-03 | The approved album-versus-individual output creates the exact logical message count/order and assigns captions according to the approved per-source/shared edit model. | `test/features/conversation/application/build_shared_media_batch_forward_test.dart::approved output shape preserves order and caption ownership` | evidence-gated host application / three attachments across two captioned parent messages | HEAD causal gap: no output contract -> exact message/album/caption mapping becomes observable after D-249-01/02 | collapse two parents, concatenate/choose first caption, reorder items, or apply one edit to the wrong source -> TC-249-03 red | Same focused file; reserve both 1:1 arrays; blocked by D-249-01/02 |
-| TC-249-04 | Every logical source carries only its approved opaque provenance through encrypted inner state; outer payload/UI/diagnostics reveal no source key, sender, contact, conversation, or caption history. | `test/features/conversation/domain/models/multi_source_forward_provenance_test.dart::per-source provenance is opaque inner-only attribution-free and legacy-safe` | evidence-gated domain host / v1/v2/legacy codec matrix + event sink | HEAD compile RED: multi-source provenance absent -> exact list/map/fallback and negative fields follow D-249-03/07 | reuse one key, expose array in outer envelope, serialize sender identity, or log provenance -> TC-249-04 red | `flutter test test/features/conversation/domain/models/multi_source_forward_provenance_test.dart`; reserve AUTO + both 1:1 arrays; blocked by D-249-03/07 |
-| TC-249-05 | For every approved source-target cell, preprocessing is bounded and each destination gets fresh message/blob identity and independently generated key/nonce while source bytes/rows/keys remain unchanged. | `test/features/share/application/multi_source_forward_delivery_coordinator_test.dart::fanout preserves sources and remints identity encryption per source target` | evidence-gated host application / two sources, two contacts, content-transforming bridge, temp snapshots | HEAD compile RED: coordinator shape absent -> exact call matrix and distinct ids/keys/nonces follow D-249-01/04 | reuse an upload/key across targets, mint one ID per batch, preprocess unboundedly, or mutate a source -> TC-249-05 red | `flutter test test/features/share/application/multi_source_forward_delivery_coordinator_test.dart`; reserve AUTO + both 1:1 arrays; blocked by D-249-01/04 |
-| TC-249-06 | Receiver dedup uses the approved per-source/group discriminator: replay drops only the matching logical source, distinct selected sources survive, and a genuine repeat remains possible as approved. | `test/features/conversation/integration/multi_source_forward_dedup_test.dart::receiver dedups each approved source without collapsing siblings or genuine repeat` | evidence-gated host integration / two-user v2 fake transport + replay controls | HEAD lacks multi-source flow -> exact card/receipt counts depend on D-249-01/03 but must distinguish replay, sibling, and genuine repeat | hash content, use one batch key, omit sender/contact discriminator, or drop a distinct source -> TC-249-06 red | `flutter test test/features/conversation/integration/multi_source_forward_dedup_test.dart`; reserve AUTO + both 1:1 arrays; blocked by D-249-01/03 |
-| TC-249-07 | Picker preview and multi-target send revalidate namespaced contacts/writable groups once, preserve approved source order/captions, and return a per-source/per-target result matrix. | `test/features/share/presentation/share_target_picker_wired_test.dart::multi-source forward revalidates targets and returns approved result matrix` | evidence-gated widget host / mixed contact/group selections + recording coordinator | HEAD partial: target sets/one-intent results exist but multi-source preview/matrix does not -> exact cells and stale-target removal follow D-249-05/06 | flatten results by target only, skip group revalidation, duplicate namespaced key, or reorder previews -> TC-249-07 red | `flutter test test/features/share/presentation/share_target_picker_wired_test.dart --plain-name 'multi-source forward revalidates targets and returns approved result matrix'`; AUTO + both 1:1 arrays; blocked by D-249-05/06 |
-| TC-249-08 | Failure/cancel/queue/retry/reopen preserves the approved cells, never resends successes, reuses stored send identity/envelope, and settles truthful partial status. | `test/features/share/integration/multi_source_forward_retry_test.dart::partial matrix retries failed cells only across reopen without reminting` | evidence-gated host integration / gated source-target failures + repository recreation | HEAD compile RED: result/retry matrix absent -> exact retained cells/status/identities follow D-249-05 | clear all selection, retry successes, remint queued identity/key, or report whole batch success -> TC-249-08 red | `flutter test test/features/share/integration/multi_source_forward_retry_test.dart`; reserve AUTO + both 1:1 arrays; blocked by D-249-05 |
-| TC-249-09 | If approved retry/provenance state needs new schema, a freshly conflict-checked DB vNEXT extends the shared production registry, preserves owner/local-state predecessors and survives PRAGMA/before-after/run-twice/encrypted reopen; otherwise the row records exact N/A. | `test/core/database/migrations/shared_media_batch_forward_state_migration_test.dart::approved vNEXT preserves owner scoped prior rows and batch retry state idempotently` plus `integration_test/shared_media_batch_forward_sqlcipher_proof_test.dart` | conditional host structure + Android/iOS real SQLCipher / same-ID direct/group/unresolved predecessor | HEAD evidence gap: no schema decision/version -> exact columns/defaults/checks/actual registry/full-chain/device proof follow D-249-03/05 and a fresh ledger check | recreate callbacks, omit state/default/guard, reclassify unresolved, lose a sibling, or fail reopen/rerun -> TC-249-09 red if schema selected | Reserve no number; refresh literal host/Android/iOS commands and exact `1to1` discovery only if schema is approved, otherwise document N/A with existing persisted-send tests |
-| TC-249-10 | Preview, cap/selection count, caption controls, per-target progress, partial results, and confirmations are localized, accessible, virtualized, and RTL-safe on small screens. | `test/features/conversation/presentation/screens/conversation_shared_media_batch_forward_test.dart::multi-source preview is bounded localized accessible and RTL-safe` | evidence-gated widget / en/de/ar, semantics tester, 320x568, large bounded fixture | HEAD causal RED: action/preview absent -> exact approved controls/copy become assertable after D-249-01/02/04/05/07 | build all items eagerly, hardcode English, hide per-cell failures, or lose order semantics -> TC-249-10 red | `flutter test test/features/conversation/presentation/screens/conversation_shared_media_batch_forward_test.dart`; reserve AUTO + both 1:1 arrays + ARB parity; blocked by D-249 decisions |
-| TC-249-11 | Group destinations follow plan-236 marker/dedup/permissions exactly; announcements follow plan 240; mixed destinations cannot inherit direct-only provenance or bypass writable policy. | `test/features/share/application/multi_source_forward_destination_boundary_test.dart::batch forward preserves direct group and announcement ownership` | evidence-gated host source/behavior contract / direct+group spies and announcement policy fixture | HEAD has separate group branch but no multi-source rule -> exact allowed/denied matrix follows D-249-06 and dependencies 236/240 | inject direct provenance into group payload, bypass writable group, or enable announcement implicitly -> TC-249-11 red | `flutter test test/features/share/application/multi_source_forward_destination_boundary_test.dart`; reserve AUTO + direct/group owning gates only after D-249-06 |
-| TC-249-12 | Plan-232 single-source Forward and plan-233 library Save/Share/Delete/Bookmark/Go-to-message remain unchanged under disabled/cancelled/successful batch flow. | Plan-232 focused tests plus plan-233 focused tests | `GREEN sentinels` / existing host fixtures | GREEN after dependencies -> remain GREEN after approved batch implementation | route a one-source action through ambiguous batch state or clear library selection on unrelated action -> sentinels red | Run plan-232/233 focused suites and both 1:1 gates; exact commands are already literal in those accepted plans |
-| TC-249-13 | The chosen implementation changes no Go/libp2p/relay routing; if D-249-01/03 introduces a new encrypted-inner wire shape, two direct peers prove the production send/retry/receive leg end to end. | `test/features/conversation/application/shared_media_batch_forward_transport_boundary_test.dart::batch forwarding is Dart-owned and Go-opaque` plus conditional `integration_test/direct_multi_source_forward_real_harness.dart::approved batch arrives ordered deduped and attribution-free` | host source-contract + conditional paired-device real transport / one pinned USB physical Android plus one available Android emulator by default, fully automated | HEAD compile RED: batch sources absent; paired-device GREEN undefined until output/wire decision -> forbidden Go paths remain unchanged and any approved new wire survives the actual boundary | add Bridge/Go command, expose provenance outer-side, reorder/drop one source, or duplicate on retry -> TC-249-13 red/fails device proof | Reserve host file in both 1:1 arrays; add a dedicated exact `1to1` paired-device record only if refreshed plan changes wire shape; pin discovered target IDs, record unavailable mobile legs N/A, and retain baseline-safe Go/relay diff comparison |
+| Case | Behavior / named proof | Owning session | Gate |
+|---|---|---|---|
+| TC-249-S01-01 | `rejects empty over-cap duplicate blank-identity and cross-scope selections before token mint` | 01 | new focused builder suite + both 1:1 arrays |
+| TC-249-S01-02 | `qualifies every exact current direct visual source atomically` | 01 | new focused builder suite + Plan-234 boundary sentinels |
+| TC-249-S01-03 | `sorts reverse tap order and same-parent siblings by the canonical library keyset` | 01 | new focused builder suite |
+| TC-249-S01-04 | `creates independent captions and unique opaque tokens per attachment` | 01 | new focused builder suite |
+| TC-249-S01-05 | `dispatch revalidation preserves edited captions and tokens while refreshing paths scope kind and order` | 01 | new focused builder suite |
+| TC-249-S01-06 | `one source scope kind or eligibility race denies the whole revalidation with no ready subset` | 01 | new focused builder suite |
+| TC-249-S01-07 | `draft and denial diagnostics expose no source payload or media secrets` | 01 | new focused builder suite |
+| TC-249-S01-08 | `batch forward stays absent while only draft preflight is landed` | 01 | Shared Media widget sentinel |
+| TC-249-S02-01 | Exact source-major/direct-contact ordinary delivery produces one message per source/contact with fresh recipient identity and encryption. | 02 | delivery coordinator causal suite + Plan-232 sentinels |
+| TC-249-S02-02 | Picker loads only active direct contacts, revalidates sources/contacts before delivery, and exposes no group/announcement target. | 02 | picker/wiring/boundary suites |
+| TC-249-S02-03 | Results remain a truthful source-by-contact sent/queued/failed matrix; failed-only retry preserves captions/tokens and never replays sent/queued cells. | 02 | delivery/retry causal suites |
+| TC-249-S02-04 | Bounded preview, independent captions, progress, denial/results, l10n, semantics, small-screen, and RTL behavior remain truthful. | 02 | widget + l10n suites |
+| TC-249-S03-01 | Independent counterexample/mutation audit covers ordering, sibling separation, caption isolation, token stability, eligibility bypass, preflight atomicity, direct-only destinations, and retry truth. | 03 | exact focused suites + curated `1to1` |
+| TC-249-S03-02 | No schema/wire/Go/relay/group/announcement/native scope changed; all gate registrations and stable documents agree. | 03 | scope guard + inventory/completeness + closure audit |
 
-### Test Notes
+All new direct/cross-feature Plan-249 suites must be registered in both `ONE_TO_ONE_TESTS` and `ONE_TO_ONE_HOST_TESTS` and classified in `Test-Flight-Improv/test-gate-definitions.md`.
 
-- TC-249-03/04/06 are the central decision triangle. Output grouping, provenance cardinality, and receiver dedup must be decided together; approving only one leaves the plan evidence-gated.
-- TC-249-05 counts distinct IDs/keys/nonces for every logical source-target cell, not merely upload call count.
-- TC-249-08 must represent partial success in both dimensions. A target-only `success/failure` list is underpowered when some sources succeed and others fail for the same target.
-- TC-249-09 reserves no version. It is removed as N/A if approved individual forwarding reuses existing persisted direct/group rows without new durable batch state.
-- TC-249-13 requires paired-device proof only for a genuinely new wire/output contract; ordinary repeated plan-232 sends must not gain ceremonial device scope.
+## Ordered Session Ledger
+
+| Session | Title | Depends on | Current status |
+|---|---|---|---|
+| 01 | Source-plan refresh and atomic direct-source draft/preflight | accepted Plan-234 Session 04 | accepted |
+| 02 | Direct-contact cell delivery, picker UX, and failed-cell retry | Session 01 | accepted |
+| 03 | Independent acceptance, mutations, registration, and closure synchronization | Sessions 01-02 | accepted |
+
+Plan 249 is accepted and closed. Sessions 01-02 provide the complete
+user-visible host flow; Session 03 independently accepted the combined feature
+and synchronized its durable maintenance record without production changes.
 
 ## Implementation Steps
 
-1. Do not implement. Resolve D-249-01..07 with product/messaging/privacy owners, including one worked example with three attachments from two captioned source messages and mixed contact/group targets.
-2. Refresh this plan with the exact output count/order, caption mapping, provenance schema/cardinality, selection caps, eligibility behavior, per-source/per-target state machine, legacy fallback, and group/announcement matrix.
-3. If decisions introduce a new direct inner wire shape, isolate that slice, name the production end-to-end leg, and run `$tdd-review`; if they require schema, allocate vNEXT only after a fresh conflict check.
-4. After an execution-ready verdict, add causal builder/provenance/delivery/dedup/retry REDs before production edits while keeping TC-249-01/12 sentinels GREEN.
-5. Implement pure draft/output policy first, then picker preview/result matrix, then delivery/retry persistence, then lane integration/l10n.
-6. Run focused host gates, dependency sentinels, representative grouping/provenance/crypto/retry mutations, and only the conditional boundary proof selected by the refreshed contract.
-
-## Risks And Blind Spots
-
-- A single source key can collapse unrelated selections -> TC-249-03/04/06.
-- Batch retry can redeliver successes or remint identities -> TC-249-07/08.
-- Large selections can cause memory/crypto bursts -> D-249-04 and TC-249-02/05/10 require explicit bounds and virtualization.
-- Lifecycle / derived-state durability: TC-249-08 recreates retry state; TC-249-09 supplies SQLCipher reopen only if new schema is selected.
-- Sibling-surface consistency: TC-249-01/12 keep single-source Forward and every plan-233 library action intentionally independent.
-- Destructive-action side effects: N/A — Batch Forward creates new destination rows and must not mutate/delete source state; TC-249-05/08 assert source and success-cell preservation.
-- Invariant re-verification under new transitions: every delayed target result/retry rechecks selected source identity, target writability, stored send identity, and current eligibility in TC-249-07/08.
+1. Session 01 authors the builder/action-absence REDs before production, lands the sole hidden application builder, registers its suite, and proves exact Plan-232/233/234 preservation.
+2. Session 02 authors delivery/picker/retry REDs before production, wires the complete direct-only route, adds localized accessible UX, and proves ordinary-send identity/encryption/retry ownership.
+3. Session 03 independently reviews the combined implementation, runs representative mutations and all proportional gates, then synchronizes source, breakdown, index, closure reference, and gate-definition evidence.
 
 ## Acceptance Gates
 
-```bash
-# Snapshot before any future execution; record unrelated changes
-git status --short
+Per implementation session, run its exact focused causal suites, exact preservation sentinels, the curated `1to1` lane, host `1to1 --list`, completeness, scoped analyzer/formatter, `git diff --check`, and a baseline-safe scope guard. Run Graphify `affected` over attributable production files.
 
-# Structural blocker inventory only; this does not approve the decisions
-test -f Test-Flight-Improv/232-1to1-received-media-forwarding-tdd-plan.md
-test -f Test-Flight-Improv/233-1to1-shared-media-library-batch-tdd-plan.md
-rg -n 'D-249-01|D-249-02|D-249-03|D-249-04|D-249-05|D-249-06|D-249-07' Test-Flight-Improv/249-1to1-shared-media-batch-forwarding-tdd-plan.md
+- Do not run `core-host-all`, `feature-host-all`, a performance family, or full `host-all` as a per-session gate.
+- Full `host-all` runs once at the relevant Wave-1 batch boundary and once at final rollout/release closure.
+- Device, SQLCipher, Go, relay, and native gates are N/A for Plan 249's unchanged ordinary-send boundary.
 
-# Approval evidence gate: no shell command can close it. Written D-249-01..07,
-# refreshed exact output/provenance/retry contracts, and tdd-review are required.
+## Risks And Blind Spots
 
-# First causal RED: N/A while output/caption/provenance semantics are unspecified.
-
-# Preservation baseline after plans 232/233 land
-flutter test test/features/conversation/application/build_received_media_forward_test.dart
-flutter test test/features/conversation/presentation/screens/conversation_shared_media_library_test.dart
-./scripts/run_test_gates.sh 1to1
-./scripts/run_host_test_gates.sh 1to1 --list
-
-# Conditional vNEXT/device commands are inserted only by the refreshed plan;
-# placeholders are not executable acceptance gates while evidence-gated.
-
-flutter analyze
-git diff --check
-```
-
-## Device/Relay Proof Profile
-
-- Profile status: decision-blocked. D-249-01/03 determines whether this is composition over ordinary plan-232 sends or a new grouped/wire contract.
-- Ordinary-individual branch: if every approved output is an independent existing plan-232 send with unchanged inner payload, host fan-out/dedup/retry proofs plus plan-232 preservation close the feature; no extra relay/device ceremony is justified.
-- New-album/wire branch: require a dedicated paired-device direct scenario over the production transport with actual media upload/encryption/send/retry/receive, proving order, captions, per-source dedup, markers, attribution privacy, and failed-only retry. Add exact accounts/devices/relay setup and runner during refresh.
-- Group destination branch: consume plan-236's real boundary evidence for unchanged group sends; add a new group device scenario only if D-249-06 changes the group payload/wire contract.
-- SQLCipher branch: only if D-249-05 selects new durable batch state, allocate vNEXT after a fresh ledger check and run dedicated PRAGMA/before-after/reopen/run-twice proof on each applicable Android/iOS target available at execution. Unavailable platform legs are `N/A (target unavailable by project policy)`. No version is reserved now.
-- Registration: dedicated exact `1to1` records only; do not broaden-classify mixed SQLCipher or generic messaging suites.
-- Go/relay scope: the plan must remain Go-opaque. Any new Go/protocol requirement is a separate plan and blocks this one from reclassification.
+- Partial source eligibility could leak a private/stale selection into delivery; all-source exact-current preflight must finish before token minting/dispatch.
+- Tap order, path order, or asynchronous callback order could drift from Shared Media's stable keyset; the immutable draft and revalidation both sort the persisted timestamp/message/attachment strings descending.
+- A shared caption or operation token could collapse sibling meaning/dedup; every attachment owns independent immutable values.
+- A race after preview could retain stale scope/kind/path/bytes; dispatch revalidation reloads every complete identity and denies the whole source batch.
+- Flattened retry could replay sent/queued cells; Session 02 retains a source-by-contact matrix and existing persisted-send retry ownership.
 
 ## Execution Interpretation And Done Criteria
 
-- Expected RED: N/A while evidence-gated; no honest GREEN exists for album/message count, captions, provenance, or retry matrix until D-249-01..07 are approved.
-- Green sentinel: plan-232 single-source Forward and plan-233 library actions remain unchanged with Batch Forward absent.
-- Pre-existing dirty tree / known failure: snapshot at any future execution start; preserve unrelated Go test-vector and other user changes with a baseline-safe path comparison rather than raw clean-tree assumptions.
-- Environment blocker: none currently determines status. Product/wire decisions are the blocker; paired devices become a blocker only for a selected new-wire branch.
-- Scope drift: guessed grouping/captions/provenance, speculative migration, Go/relay edits, or unapproved group/announcement behavior blocks progress.
-
-- [ ] D-249-01..07 form one consistent output/provenance/dedup/retry contract with worked examples.
-- [ ] The refreshed plan names exact selection caps, caption mapping, result cells, legacy fallback, and privacy negatives.
-- [ ] Every approved behavior has a causal test/mutation and every new test has exact owning gate registration.
-- [ ] Any vNEXT is freshly conflict-checked and receives structural/full-chain plus real-SQLCipher proof.
-- [ ] Any new wire/output contract has production paired-device proof; ordinary-send composition avoids unnecessary transport edits.
-- [ ] Plans 232/233 and group/announcement ownership remain intact.
-- [ ] Analyzer, diff hygiene, and baseline-safe Go/relay scope comparison pass.
-- [ ] Scope Contract And Guard is respected.
+- [x] D-249-01..07 form one consistent direct-only ordinary-send contract.
+- [x] Selection cap, canonical order, independent captions/tokens, all-source policy, result cells, compatibility, and privacy negatives are explicit.
+- [x] No schema, wire, group/announcement, Go/relay, native, or device proof is required by the accepted design.
+- [x] Session 01 hidden draft/preflight and registrations are accepted.
+- [x] Session 02 direct delivery/picker/result/retry UX is accepted.
+- [x] Session 03 independent mutations, aggregate Plan-249 gates, and closure synchronization are accepted.
+- [x] Plans 232/233/234 and ordinary direct behavior remain preserved through Session 02.
+- [x] Session-01/02 implementation evidence and Session-03 mutation, scope, analyzer, registration, completeness, QA, and closure evidence are recorded.
 
 ## Handoff
 
-- First causal RED command: N/A — approve D-249-01..07, refresh the plan, and run `$tdd-review` before authoring behavior tests.
-- Preservation command: `flutter test test/features/conversation/application/build_received_media_forward_test.dart test/features/conversation/presentation/screens/conversation_shared_media_library_test.dart`.
-- Manual registration: after refresh, add dedicated direct host files to both 1:1 arrays; add dedicated SQLCipher/paired-device discovery only for the selected schema/wire branch.
-- Migration: none reserved; allocate vNEXT only if approved retry/provenance durability cannot reuse existing persisted sends, after a fresh conflict check.
-- Boundary closure: host-only for composition over ordinary plan-232 sends; paired-device production transport for an approved album/new-wire branch; no Go/relay edits in either case.
-- Unresolved evidence: D-249-01..07 and the resulting ordinary-send-versus-new-wire branch. Status remains `evidence-gated`.
+- Accepted Session 01: `Test-Flight-Improv/249-1to1-shared-media-batch-forwarding-tdd-plan-session-01-plan.md`.
+- Session-01 production owner remains only `lib/features/conversation/application/build_direct_media_library_batch_forward.dart`.
+- Accepted Session 02: `Test-Flight-Improv/249-1to1-shared-media-batch-forwarding-tdd-plan-session-02-plan.md`.
+- Accepted Session 03: `Test-Flight-Improv/249-1to1-shared-media-batch-forwarding-tdd-plan-session-03-plan.md`.
+- No Plan-249 session remains open.
+- Overall verdict: `accepted`; Plan 249 is closed.
 
 ## Execution Progress
 
-| Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
-|---|---|---|---|---|---|---|
-| - | not started | - | - | - | D-249-01..07 unresolved | obtain decisions and refresh plan |
+| Time | Phase | Evidence | Result / next |
+|---|---|---|---|
+| 2026-07-11 | source-contract refresh | Accepted Plan-249 three-session breakdown and closed Plan-234 Session 04 | D-249-01..07 are now executable as direct-only ordinary-send composition. Session 01 owns the hidden draft/preflight foundation; overall Plan 249 remains open. |
+| 2026-07-11 | Session-01 acceptance | RED-first builder implementation; exact Plan-232/233/234 preservation; curated `1to1` `1,909/1,909`; host inventory `81`; completeness `1,167/1,167`; clean static/scope checks; fresh independent QA `ACCEPTED`, `fix_passes=0`; exactly one post-QA incremental Graphify refresh | Session 01 is accepted and closed. Session 02 is pending/runnable; Session 03 remains blocked on Session 02; overall Plan 249 remains `implementation-in-progress`. |
+| 2026-07-11 | Session-02 acceptance | RED-first direct coordinator/strict seam/picker/action/wiring/l10n implementation; final primary `45/45`; Plan-234 `27/27`; Plan-232 `3/3`; Plan-233 `13/13`; generic picker `16/16`; l10n `3/3`; curated `1to1` `1,962/1,962`; host inventory `87`; completeness `1,174/1,174`; clean static/scope checks; fresh independent QA `ACCEPTED` with explicit bounded `fix_passes=3` exception; exactly one post-QA incremental Graphify refresh | Session 02 is accepted and closed. Session 03 is pending/runnable and owns combined mutations plus stable closure synchronization; overall Plan 249 remains `implementation-in-progress` / `still_open`. |
+| 2026-07-11 | Session-03 final acceptance | Complete 42-file SHA/status audit; nine mutations repeated RED/inverse/GREEN with exact restoration; focused `7 + 45 + 1 + 19 + 3 + 12 + 16 + 3`; curated `1,962/1,962`; host inventory `87`; completeness `1,174/1,174`; analyzer exact parity `1,626`; independent QA `ACCEPTED`, `fix_passes=0`; no Graphify refresh | Session 03 and overall Plan 249 are accepted and closed. Stable index, closure reference, and gate-definition guidance now own maintenance. |
+
+## Final Execution Result
+
+`accepted`
+
+Plan 249 forwards `1..10` exact eligible direct Shared Media visual sources to
+active direct contacts as independent ordinary messages in canonical
+source-major order. Captions and opaque operation tokens remain per source;
+source/contact rows are current-revalidated; results remain truthful by cell;
+and in-route retry touches failed cells only while persisted rows remain owned
+by ordinary retry. No album, batch wire/schema, group/announcement target,
+native/device, Go/relay, or private-media forwarding contract was added.
+
+Final acceptance is backed by exact restored mutations, curated `1to1`
+`1,962/1,962`, host inventory `87`, completeness `1,174/1,174`, full analyzer
+parity, independent QA, and synchronized durable docs. Session 03 ran no
+Graphify refresh because it changed no production/test architecture.
+
+## Direct Revalidation Status
+
+Status: `accepted` (revalidated 2026-07-12 after the Wave-1 shared
+private-media viewer/download changes).
+
+- Changed by this revalidation: this canonical status section only; no
+  Plan-249 production or test file required a change.
+- Tests added or updated: none. The five Plan-249 causal suites and the two
+  exact Plan-234 current-direct/private qualification sentinels remain
+  registered and non-vacuous.
+- `flutter test test/features/conversation/application/build_direct_media_library_batch_forward_test.dart test/features/conversation/application/direct_media_batch_forward_transport_boundary_test.dart test/features/conversation/presentation/screens/conversation_shared_media_batch_forward_test.dart test/features/share/application/direct_media_batch_forward_delivery_coordinator_test.dart test/features/share/presentation/direct_media_batch_forward_picker_wired_test.dart test/features/conversation/application/private_media_action_eligibility_test.dart test/features/conversation/application/direct_private_media_boundary_test.dart --reporter compact` -> PASS, `46/46`.
+- `./scripts/run_test_gates.sh 1to1` -> PASS, `2,062/2,062`.
+- `dart format --output=none --set-exit-if-changed <13 Plan-249 production/test files>`
+  -> PASS, `13` files checked, `0` changed.
+- `flutter analyze <13 Plan-249 production/test files>` -> PASS, no issues.
+- Dedicated production scope guard -> PASS: no database/schema,
+  group/announcement, Go/relay, platform-channel, or native dependency was
+  introduced. Existing ordinary direct-send wire/persistence remains the sole
+  delivery boundary, so SQLCipher, relay, native, and device proof remain N/A.
+- Remaining blocker: none. The Wave-1 boundary `host-all` completed on
+  2026-07-12: all `1,130` commands executed (`1,125` initial passes, including
+  all eight Go legs), followed by an exact clean `53/53` rerun of the five
+  remediated files.

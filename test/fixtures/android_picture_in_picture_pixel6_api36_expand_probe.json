@@ -1,0 +1,18 @@
+{
+  "sourceArtifact": "build/received-video-pip-proof/android-physical-21071FDF600CSC-20260713T185347Z/return-retry-3/native-active-pip-menu.png",
+  "sourceSha256": "cd5ae429d69ca39284d7e5f1fdabc2b487444beaa1c4b1b830d36e0848addc20",
+  "deviceCodename": "oriole",
+  "deviceModel": "Pixel 6",
+  "sdk": 36,
+  "display": [1080, 2400],
+  "density": 420,
+  "rotation": 0,
+  "pipBounds": [389, 2002, 910, 2295],
+  "brightPixelCounts": {
+    "topLeft": 125,
+    "bottomLeft": 125,
+    "topRight": 125,
+    "bottomRight": 125,
+    "centerGap": 0
+  }
+}

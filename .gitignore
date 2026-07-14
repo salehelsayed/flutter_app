@@ -167,6 +167,13 @@ output/
 # Graphify AST/stat cache — content-keyed, per-host scratch regenerated on every
 # build/update. Tracking it produces constant churn and drowns real diffs.
 **/graphify-out/cache/
+graphify-arch/.needs_incremental_refresh
+graphify-arch/.auto_refresh.lock/
+graphify-arch/tdd-overlay.json
 
 # transient manual test logs
 .manual_test_logs/
+
+# Generated build artifacts — keep local, never commit.
+/build_group_forward_agent/test_cache/build_group_forward_agent/8730b13ca0249799964d0a71255a8f3b.cache.dill.track.dill
+/go-relay-server/relay-server-linux-amd64

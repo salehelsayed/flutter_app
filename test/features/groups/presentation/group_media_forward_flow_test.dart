@@ -1,19 +1,19 @@
+import 'dart:async';
 import 'dart:io';
 
-import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
-import 'package:flutter_app/core/media/group_media_mime_policy.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/groups/application/announcement_media_forward_request.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
-import 'package:flutter_app/features/groups/application/group_media_forward_policy.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -46,6 +46,8 @@ import '../../identity/domain/repositories/fake_identity_repository.dart';
 const _localPeerId = 'my-peer-id-12345';
 const _srcGroupId = 'src-group';
 const _srcMessageId = 'src-msg-1';
+const _relayCiphertextHash =
+    'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
 
 void main() {
   late InMemoryContactRepository contactRepository;
@@ -57,9 +59,8 @@ void main() {
   late FakeMediaFileManager fileManager;
   late ChatMessageListener chatMessageListener;
   late GroupMessageListener groupMessageListener;
-  // Private per-test source dir: the shared testRootPath is deleted by OTHER
-  // suites' teardowns under gate parallelism. Absolute stored paths pass
-  // through resolveStoredPath as-is.
+  // Per-test canonical source lane. The production gate constructs this exact
+  // group/attachment path from independently trusted app-owned authority.
   late Directory sourceDir;
 
   // Delivery observation: the REAL coordinator with send-lane spies. The
@@ -69,6 +70,7 @@ void main() {
   late List<ShareIntent> contactSendIntents;
   late List<ShareIntent> groupSendIntents;
   late List<ShareIntent> processedIntents;
+  late Completer<void> pickerForwardCompletion;
 
   setUp(() {
     contactRepository = InMemoryContactRepository();
@@ -78,7 +80,11 @@ void main() {
     mediaAttachmentRepository = InMemoryMediaAttachmentRepository();
     identityRepository = FakeIdentityRepository()..seed(_makeIdentity());
     fileManager = FakeMediaFileManager();
-    sourceDir = Directory.systemTemp.createTempSync('gmf_flow_src_');
+    sourceDir = Directory(
+      p.join(FakeMediaFileManager.testRootPath, 'media', _srcGroupId),
+    );
+    if (sourceDir.existsSync()) sourceDir.deleteSync(recursive: true);
+    sourceDir.createSync(recursive: true);
     chatMessageListener = ChatMessageListener(
       chatMessageStream: const Stream<ChatMessage>.empty(),
       messageRepo: messageRepository,
@@ -111,28 +117,17 @@ void main() {
       p2pService: FakeP2PService(),
       mediaFileManager: fileManager,
       imageProcessor: _imageProcessor(),
-      // Sync file probe/hash seams: real dart:io streams never complete in
-      // the widget test's fake-async zone (GMF-01R pins the real defaults).
-      groupMediaForwardSourceGate: GroupMediaForwardSourceGate(
-        groupRepository: groupRepository,
-        messageRepository: groupMessageRepository,
-        mediaAttachmentRepository: mediaAttachmentRepository,
-        mediaFileManager: fileManager,
-        fileExists: (path) async => File(path).existsSync(),
-        validateContentHash: ({required path, required expectedHash}) async {
-          final actual = sha256
-              .convert(File(path).readAsBytesSync())
-              .toString();
-          return actual == expectedHash
-              ? const GroupMediaValidationResult.valid()
-              : const GroupMediaValidationResult.invalid(
-                  'content_hash_mismatch',
-                );
-        },
-      ),
       processSharedMediaFn: (intent) async {
         processedIntents.add(intent);
-        return const ProcessedShareMediaBatch(processedMedia: []);
+        final source = File(intent.filePaths.single);
+        return ProcessedShareMediaBatch(
+          processedMedia: [
+            PendingComposerMedia(
+              file: source,
+              budgetBytes: source.lengthSync(),
+            ),
+          ],
+        );
       },
       sendToContactFn:
           ({
@@ -169,16 +164,21 @@ void main() {
     );
   }
 
-  /// Seeds the forward SOURCE: an incoming discussion parent message with one
-  /// (or more) verified group-owned attachments backed by real files whose
-  /// stored hash matches the current bytes.
+  /// Seeds the forward SOURCE: an incoming group parent message with one
+  /// (or more) verified group-owned attachments backed by local plaintext.
+  /// The stored hash deliberately represents a different relay-ciphertext
+  /// byte domain and must never be compared to these local bytes.
   Future<List<String>> seedForwardSource({
     List<String> attachmentIds = const ['src-att-1'],
     String caption = 'original caption',
+    GroupType sourceType = GroupType.chat,
   }) async {
     await _saveWritableGroup(
       groupRepository,
-      _makeGroup(_srcGroupId, 'Source Group', GroupType.chat, GroupRole.member),
+      _makeGroup(_srcGroupId, 'Source Group', sourceType, GroupRole.member),
+      memberRole: sourceType == GroupType.announcement
+          ? MemberRole.reader
+          : null,
     );
     await groupMessageRepository.saveMessage(
       GroupMessage(
@@ -193,10 +193,13 @@ void main() {
     );
     final resolvedPaths = <String>[];
     for (final (index, attachmentId) in attachmentIds.indexed) {
-      final bytes = List<int>.generate(
-        64 + index,
-        (i) => (i * 7 + index) % 251,
-      );
+      final bytes = <int>[
+        0xff,
+        0xd8,
+        0xff,
+        0xe0,
+        ...List<int>.generate(60 + index, (i) => (i * 7 + index) % 251),
+      ];
       final file = File(p.join(sourceDir.path, '$attachmentId.jpg'));
       file.writeAsBytesSync(bytes);
       await mediaAttachmentRepository.saveAttachment(
@@ -209,7 +212,7 @@ void main() {
           localPath: file.path,
           downloadStatus: 'done',
           createdAt: '2026-07-10T12:00:00.000Z',
-          contentHash: sha256.convert(bytes).toString(),
+          contentHash: _relayCiphertextHash,
           encryptionKeyBase64: 'a2V5',
           encryptionNonce: 'bm9uY2U=',
           encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
@@ -225,14 +228,24 @@ void main() {
   GroupMediaForwardRequest forwardRequest({
     String attachmentId = 'src-att-1',
     String initialCaption = 'original caption',
+    bool announcement = false,
   }) {
-    return GroupMediaForwardRequest(
-      groupId: _srcGroupId,
-      messageId: _srcMessageId,
-      attachmentId: attachmentId,
-      initialCaption: initialCaption,
-      provenance: const ForwardProvenance(operationDedupKey: 'op-flow-1'),
-    );
+    const provenance = ForwardProvenance(operationDedupKey: 'op-flow-1');
+    return announcement
+        ? AnnouncementMediaForwardRequest(
+            groupId: _srcGroupId,
+            messageId: _srcMessageId,
+            attachmentId: attachmentId,
+            initialCaption: initialCaption,
+            provenance: provenance,
+          )
+        : GroupMediaForwardRequest(
+            groupId: _srcGroupId,
+            messageId: _srcMessageId,
+            attachmentId: attachmentId,
+            initialCaption: initialCaption,
+            provenance: provenance,
+          );
   }
 
   Future<void> pumpPicker(
@@ -240,6 +253,24 @@ void main() {
     GroupMediaForwardRequest? request,
     ShareIntent? shareIntent,
   }) async {
+    final coordinator = buildCoordinator();
+    if (request != null) {
+      pickerForwardCompletion = Completer<void>();
+    }
+    final observedCoordinator = request == null
+        ? coordinator
+        : _ForwardCompletionCoordinator(
+            delegate: coordinator,
+            runRealAsync: (body) async {
+              final result = await tester.runAsync(body);
+              return result!;
+            },
+            onComplete: () {
+              if (!pickerForwardCompletion.isCompleted) {
+                pickerForwardCompletion.complete();
+              }
+            },
+          );
     await tester.pumpWidget(
       MaterialApp(
         locale: const Locale('en'),
@@ -267,7 +298,7 @@ void main() {
           groupRepository: groupRepository,
           groupMessageRepository: groupMessageRepository,
           groupMessageListener: groupMessageListener,
-          batchShareCoordinator: buildCoordinator(),
+          batchShareCoordinator: observedCoordinator,
           groupMediaForwardRequest: request,
         ),
       ),
@@ -279,9 +310,9 @@ void main() {
 
   Future<void> tapSendAndSettle(WidgetTester tester) async {
     await tester.tap(find.text('Send'));
-    for (var i = 0; i < 8; i++) {
-      await tester.pump(const Duration(milliseconds: 50));
-    }
+    await tester.pump();
+    await pickerForwardCompletion.future.timeout(const Duration(seconds: 5));
+    await tester.pump();
   }
 
   Future<void> seedDestinations() async {
@@ -348,14 +379,14 @@ void main() {
 
       await pumpPicker(tester, request: forwardRequest());
 
-      // Destination-lane filter: contacts, writable discussion groups, and
-      // admin-owned announcements. Reader announcements, QA, archived, and
-      // dissolved groups remain excluded.
+      // Discussion-source destination filter: contacts and writable
+      // discussion groups only. Announcement, QA, archived, and dissolved
+      // groups remain excluded.
       expect(find.text('Alice'), findsOneWidget);
       expect(find.text('Bob'), findsOneWidget);
       expect(find.text('Carol'), findsOneWidget);
       expect(find.text('Friends'), findsOneWidget);
-      expect(find.text('Admin Announcements'), findsOneWidget);
+      expect(find.text('Admin Announcements'), findsNothing);
       expect(find.text('Announcements'), findsNothing);
       expect(find.text('QA Corner'), findsNothing);
       expect(find.text('Archived Group'), findsNothing);
@@ -406,11 +437,14 @@ void main() {
       );
 
       Future<ShareBatchTargetResult> forwardTo(GroupModel target) async {
-        final result = await coordinator.deliverGroupMediaForward(
-          request: forwardRequest(),
-          caption: 'edited caption',
-          targets: [ShareTargetSelection.group(target)],
-        );
+        late ShareBatchDeliveryResult result;
+        await tester.runAsync(() async {
+          result = await coordinator.deliverGroupMediaForward(
+            request: forwardRequest(),
+            caption: 'edited caption',
+            targets: [ShareTargetSelection.group(target)],
+          );
+        });
         return result.results.single;
       }
 
@@ -534,7 +568,7 @@ void main() {
 
       // Only the viewer-selected attachment is read for delivery.
       expect(processedIntents, hasLength(1));
-      expect(processedIntents.single.filePaths, [selectedPath]);
+      expect(processedIntents.single.filePaths.single, isNot(selectedPath));
       // Every new target message uses the EDITED caption.
       expect(contactSendIntents.single.text, 'edited caption');
       expect(groupSendIntents.single.text, 'edited caption');
@@ -560,13 +594,16 @@ void main() {
       // the dispatch then omits text entirely. The source caption survives.
       contactSendIntents.clear();
       processedIntents.clear();
-      final cleared = await buildCoordinator().deliverGroupMediaForward(
-        request: forwardRequest(attachmentId: 'src-att-2'),
-        caption: null,
-        targets: [
-          ShareTargetSelection.contact(_makeContact('peer-alice', 'Alice')),
-        ],
-      );
+      late ShareBatchDeliveryResult cleared;
+      await tester.runAsync(() async {
+        cleared = await buildCoordinator().deliverGroupMediaForward(
+          request: forwardRequest(attachmentId: 'src-att-2'),
+          caption: null,
+          targets: [
+            ShareTargetSelection.contact(_makeContact('peer-alice', 'Alice')),
+          ],
+        );
+      });
       expect(cleared.results.single.status, ShareBatchTargetStatus.sent);
       expect(contactSendIntents.single.text, isNull);
       expect(
@@ -577,13 +614,35 @@ void main() {
   );
 
   testWidgets(
-    'GMF-12 announcement forwarding allows admin destinations and preserves authoring rules',
+    'GMF-02A picker keeps discussion and announcement forward target lanes distinct',
     (tester) async {
       await seedForwardSource();
       await seedDestinations();
 
-      // Plan 240 widens Forward mode to admin-writable announcement targets.
       await pumpPicker(tester, request: forwardRequest());
+      expect(find.text('Friends'), findsOneWidget);
+      expect(find.text('Admin Announcements'), findsNothing);
+
+      await seedForwardSource(sourceType: GroupType.announcement);
+      await pumpPicker(tester, request: forwardRequest(announcement: true));
+      expect(find.text('Friends'), findsOneWidget);
+      expect(find.text('Admin Announcements'), findsOneWidget);
+      expect(
+        find.text('Source Group'),
+        findsNothing,
+        reason: 'the source announcement can never be its own destination',
+      );
+    },
+  );
+
+  testWidgets(
+    'GMF-12 announcement forwarding allows admin destinations and preserves authoring rules',
+    (tester) async {
+      await seedForwardSource(sourceType: GroupType.announcement);
+      await seedDestinations();
+
+      // Plan 240 widens Forward mode to admin-writable announcement targets.
+      await pumpPicker(tester, request: forwardRequest(announcement: true));
       expect(find.text('Admin Announcements'), findsOneWidget);
       expect(find.text('QA Corner'), findsNothing);
       expect(find.text('Friends'), findsOneWidget);
@@ -600,24 +659,74 @@ void main() {
 
       // Coordinator-direct also accepts the current admin announcement target.
       final coordinator = buildCoordinator();
-      final result = await coordinator.deliverGroupMediaForward(
-        request: forwardRequest(),
-        caption: null,
-        targets: [
-          ShareTargetSelection.group(
-            _makeGroup(
-              'ann-admin',
-              'Admin Announcements',
-              GroupType.announcement,
-              GroupRole.admin,
+      late ShareBatchDeliveryResult result;
+      await tester.runAsync(() async {
+        result = await coordinator.deliverGroupMediaForward(
+          request: forwardRequest(announcement: true),
+          caption: null,
+          targets: [
+            ShareTargetSelection.group(
+              _makeGroup(
+                'ann-admin',
+                'Admin Announcements',
+                GroupType.announcement,
+                GroupRole.admin,
+              ),
             ),
-          ),
-        ],
-      );
+          ],
+        );
+      });
       expect(result.results.single.status, ShareBatchTargetStatus.sent);
       expect(groupSends.single.id, 'ann-admin');
     },
   );
+}
+
+class _ForwardCompletionCoordinator implements ShareBatchDeliveryCoordinator {
+  const _ForwardCompletionCoordinator({
+    required this.delegate,
+    required this.runRealAsync,
+    required this.onComplete,
+  });
+
+  final ShareBatchDeliveryCoordinator delegate;
+  final Future<ShareBatchDeliveryResult> Function(
+    Future<ShareBatchDeliveryResult> Function() body,
+  )
+  runRealAsync;
+  final void Function() onComplete;
+
+  @override
+  Future<ShareBatchDeliveryResult> deliver({
+    required ShareIntent shareIntent,
+    required List<ShareTargetSelection> targets,
+    ShareBatchDeliveryProgressCallback? onProgress,
+  }) {
+    return delegate.deliver(
+      shareIntent: shareIntent,
+      targets: targets,
+      onProgress: onProgress,
+    );
+  }
+
+  @override
+  Future<ShareBatchDeliveryResult> deliverGroupMediaForward({
+    required GroupMediaForwardRequest request,
+    String? caption,
+    required List<ShareTargetSelection> targets,
+  }) {
+    return runRealAsync(() async {
+      try {
+        return await delegate.deliverGroupMediaForward(
+          request: request,
+          caption: caption,
+          targets: targets,
+        );
+      } finally {
+        onComplete();
+      }
+    });
+  }
 }
 
 ContactModel _makeContact(

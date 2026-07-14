@@ -8,16 +8,18 @@ import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 /// device-aware path consumes it via activeDevicesWithLegacyFallback(). This test
 /// locks that contract so nobody adds an unneeded backfill migration.
 void main() {
-  GroupMember member({String? publicKey = 'pk-bob', String? mlKem = 'mlkem-bob'}) =>
-      GroupMember(
-        groupId: 'g1',
-        peerId: 'bob',
-        role: MemberRole.writer,
-        publicKey: publicKey,
-        mlKemPublicKey: mlKem,
-        devices: const [], // simulates an un-backfilled (NULL devices_json) row
-        joinedAt: DateTime.utc(2026, 1, 1),
-      );
+  GroupMember member({
+    String? publicKey = 'pk-bob',
+    String? mlKem = 'mlkem-bob',
+  }) => GroupMember(
+    groupId: 'g1',
+    peerId: 'bob',
+    role: MemberRole.writer,
+    publicKey: publicKey,
+    mlKemPublicKey: mlKem,
+    devices: const [], // simulates an un-backfilled (NULL devices_json) row
+    joinedAt: DateTime.utc(2026, 1, 1),
+  );
 
   test('a device-less member resolves to a synthesized legacy device', () {
     final m = member();
@@ -50,9 +52,39 @@ void main() {
     expect(m.activeDevicesWithLegacyFallback(), hasLength(1));
   });
 
-  test('a member with NO account keys has no legacy device (non-deliverable)', () {
-    final m = member(publicKey: null, mlKem: null);
-    expect(m.legacyDeviceIdentity, isNull);
+  test(
+    'a member with NO account keys has no legacy device (non-deliverable)',
+    () {
+      final m = member(publicKey: null, mlKem: null);
+      expect(m.legacyDeviceIdentity, isNull);
+      expect(m.activeDevicesWithLegacyFallback(), isEmpty);
+    },
+  );
+
+  test('an explicit all-revoked roster never resurrects the legacy device', () {
+    final m = member().copyWith(
+      devices: <GroupMemberDeviceIdentity>[
+        GroupMemberDeviceIdentity(
+          deviceId: 'revoked-device',
+          transportPeerId: 'revoked-transport',
+          deviceSigningPublicKey: 'pk-bob',
+          status: GroupMemberDeviceStatus.revoked,
+          revokedAt: DateTime.utc(2026, 7, 12),
+        ),
+      ],
+    );
+
+    expect(m.activeDevices, isEmpty);
+    expect(m.legacyDeviceIdentity, isNotNull);
     expect(m.activeDevicesWithLegacyFallback(), isEmpty);
+    expect(m.findDeviceById('bob', allowLegacyFallback: true), isNull);
+    expect(
+      m.findDeviceByTransportPeerId('bob', allowLegacyFallback: true),
+      isNull,
+    );
+    expect(
+      m.firstActiveDeviceForSigningKey('pk-bob', allowLegacyFallback: true),
+      isNull,
+    );
   });
 }

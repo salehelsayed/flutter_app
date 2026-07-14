@@ -11,6 +11,28 @@ class ForwardProvenance {
   const ForwardProvenance({required this.operationDedupKey});
 }
 
+/// Local-only stable authority for one explicit direct received-media Forward.
+///
+/// Paths, MIME values, protection flags, keys, and captions are deliberately
+/// absent. The dispatch boundary reloads these exact identities from durable
+/// direct-owned state immediately before it snapshots any plaintext bytes.
+/// This object is never serialized into a chat or group payload.
+class DirectForwardSourceAuthority {
+  DirectForwardSourceAuthority({
+    required this.contactPeerId,
+    required this.messageId,
+    required Iterable<String> attachmentIds,
+  }) : attachmentIds = List.unmodifiable(attachmentIds);
+
+  final String contactPeerId;
+  final String messageId;
+  final List<String> attachmentIds;
+
+  @override
+  String toString() =>
+      'DirectForwardSourceAuthority(attachmentCount: ${attachmentIds.length})';
+}
+
 /// Represents content shared into the app from an external source.
 ///
 /// Created from `receive_sharing_intent` plugin data and passed through
@@ -28,11 +50,16 @@ class ShareIntent {
   /// Null for external OS shares. Non-null only for an in-app Forward action.
   final ForwardProvenance? forwardProvenance;
 
+  /// Stable local authority for direct received-media forwarding. This is
+  /// consumed before ordinary share preprocessing and never crosses transport.
+  final DirectForwardSourceAuthority? directForwardSourceAuthority;
+
   const ShareIntent({
     required this.type,
     this.text,
     this.filePaths = const [],
     this.forwardProvenance,
+    this.directForwardSourceAuthority,
   });
 
   /// Whether this intent contains text content.
@@ -46,6 +73,8 @@ class ShareIntent {
     Object? text = _shareIntentTextUnchanged,
     List<String>? filePaths,
     Object? forwardProvenance = _shareIntentProvenanceUnchanged,
+    Object? directForwardSourceAuthority =
+        _shareIntentDirectForwardAuthorityUnchanged,
   }) {
     final nextText = identical(text, _shareIntentTextUnchanged)
         ? this.text
@@ -59,6 +88,13 @@ class ShareIntent {
           identical(forwardProvenance, _shareIntentProvenanceUnchanged)
           ? this.forwardProvenance
           : forwardProvenance as ForwardProvenance?,
+      directForwardSourceAuthority:
+          identical(
+            directForwardSourceAuthority,
+            _shareIntentDirectForwardAuthorityUnchanged,
+          )
+          ? this.directForwardSourceAuthority
+          : directForwardSourceAuthority as DirectForwardSourceAuthority?,
     );
   }
 
@@ -80,3 +116,4 @@ class ShareIntent {
 
 const Object _shareIntentTextUnchanged = Object();
 const Object _shareIntentProvenanceUnchanged = Object();
+const Object _shareIntentDirectForwardAuthorityUnchanged = Object();

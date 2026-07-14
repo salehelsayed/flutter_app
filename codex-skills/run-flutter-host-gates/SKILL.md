@@ -32,7 +32,10 @@ description: Run this Flutter repo's host-side non-simulator gates, including ho
 - `performance-host`: all `test/performance/**/*_test.dart`.
 - Existing named host gates can still be run through `./scripts/run_test_gates.sh`: `baseline`, `1to1`, `intro`, `groups`, `feed`, `posts`, `runtime-telemetry`, `benchmark`, and `completeness-check`.
 
-Do not use this skill for simulator/device-backed reliability suites. Use `$run-flutter-reliability-sims` for `reliability-sim`, 1:1/group/intro simulator checks, relay env handling, and multi-device resolution.
+Do not use this skill for simulator/device-backed reliability suites. Report the
+scope mismatch. Invoke `$run-flutter-reliability-sims` only when the user's
+current message also explicitly requests that skill; otherwise handle the
+requested simulator command directly without switching skills.
 
 ## Fix As You Go
 

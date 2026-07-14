@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -7,10 +9,13 @@ import 'package:flutter_app/features/conversation/domain/models/media_library.da
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/direct_received_media_action_sheet.dart';
 import 'package:flutter_app/features/groups/application/group_shared_media_batch_actions.dart';
+import 'package:flutter_app/features/groups/application/group_media_batch_forward.dart';
 import 'package:flutter_app/features/groups/application/group_shared_media_library_controller.dart';
+import 'package:flutter_app/features/share/application/group_media_batch_forward_delivery_coordinator.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
+import 'package:flutter_app/shared/widgets/media/media_video_resume_controller.dart';
 import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
 
 sealed class GroupSharedMediaLibraryResult {
@@ -31,6 +36,8 @@ typedef GroupSharedMediaEvictionDispatch =
     Future<Set<String>> Function(List<MediaLibraryEntry> entries);
 typedef GroupSharedMediaForwardDispatch =
     Future<bool> Function(GroupSharedMediaIdentity identity);
+typedef GroupSharedMediaViewerEntryQualification =
+    Future<bool> Function(GroupSharedMediaIdentity identity);
 typedef GroupSharedMediaBookmarkDispatch =
     Future<GroupSharedMediaLocalBatchResult> Function(
       List<GroupSharedMediaIdentity> identities,
@@ -44,6 +51,7 @@ enum GroupSharedMediaAction {
   evict,
   forward,
   goToMessage,
+  pictureInPicture,
 }
 
 typedef GroupSharedMediaCapabilityResolver =
@@ -61,6 +69,11 @@ class GroupSharedMediaLibraryScreen extends StatefulWidget {
     this.dispatchDelete,
     this.dispatchEviction,
     this.dispatchForward,
+    this.launchBatchForward,
+    this.qualifyViewerEntry,
+    this.pictureInPictureControllerFactory,
+    this.loadPictureInPictureAuthorization,
+    this.mediaViewerResumeStore,
     this.dispatchBookmark,
     this.onMessagesDeleted,
     this.capabilitiesForEntry,
@@ -74,6 +87,13 @@ class GroupSharedMediaLibraryScreen extends StatefulWidget {
   final GroupSharedMediaDeleteDispatch? dispatchDelete;
   final GroupSharedMediaEvictionDispatch? dispatchEviction;
   final GroupSharedMediaForwardDispatch? dispatchForward;
+  final GroupMediaBatchForwardLibraryLaunch? launchBatchForward;
+  final GroupSharedMediaViewerEntryQualification? qualifyViewerEntry;
+  final MediaPictureInPictureControllerFactory?
+  pictureInPictureControllerFactory;
+  final MediaPictureInPictureAuthorizationLoader?
+  loadPictureInPictureAuthorization;
+  final MediaViewerResumeStore? mediaViewerResumeStore;
   final GroupSharedMediaBookmarkDispatch? dispatchBookmark;
   final void Function(Set<String> messageIds)? onMessagesDeleted;
   final GroupSharedMediaCapabilityResolver? capabilitiesForEntry;
@@ -88,6 +108,9 @@ class _GroupSharedMediaLibraryScreenState
     with WidgetsBindingObserver {
   late final GroupSharedMediaLibraryController _controller;
   final ScrollController _scrollController = ScrollController();
+  final Map<String, MediaLibraryEntry> _qualifiedEntries = {};
+  final Map<String, MediaLibraryEntry> _qualificationFlights = {};
+  bool _batchForwardActive = false;
 
   @override
   void initState() {
@@ -123,7 +146,68 @@ class _GroupSharedMediaLibraryScreenState
   }
 
   void _onControllerChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    final liveKeys = {
+      for (final entry in _controller.entries) _qualificationKey(entry),
+    };
+    _qualifiedEntries.removeWhere((key, _) => !liveKeys.contains(key));
+    _qualificationFlights.removeWhere((key, _) => !liveKeys.contains(key));
+    setState(() {});
+    _schedulePendingQualifications();
+  }
+
+  String _qualificationKey(MediaLibraryEntry entry) =>
+      '${entry.attachment.messageId}\u0000${entry.attachment.id}';
+
+  bool _isEntryQualified(MediaLibraryEntry entry) {
+    if (widget.qualifyViewerEntry == null) return true;
+    return identical(_qualifiedEntries[_qualificationKey(entry)], entry);
+  }
+
+  void _schedulePendingQualifications() {
+    final qualify = widget.qualifyViewerEntry;
+    if (qualify == null || !mounted) return;
+    for (final entry in _controller.entries) {
+      final key = _qualificationKey(entry);
+      if (identical(_qualifiedEntries[key], entry) ||
+          identical(_qualificationFlights[key], entry)) {
+        continue;
+      }
+      _qualificationFlights[key] = entry;
+      unawaited(_qualifyEntry(entry, key, qualify));
+    }
+  }
+
+  Future<void> _qualifyEntry(
+    MediaLibraryEntry entry,
+    String key,
+    GroupSharedMediaViewerEntryQualification qualify,
+  ) async {
+    var allowed = false;
+    try {
+      allowed = await qualify(
+        GroupSharedMediaIdentity(
+          groupId: widget.groupId,
+          messageId: entry.attachment.messageId,
+          attachmentId: entry.attachment.id,
+        ),
+      );
+    } catch (_) {
+      allowed = false;
+    }
+    if (!mounted || !identical(_qualificationFlights[key], entry)) return;
+    _qualificationFlights.remove(key);
+    final current = _controller.entryFor(entry.attachment.id);
+    if (!identical(current, entry)) {
+      _schedulePendingQualifications();
+      return;
+    }
+    if (!allowed) {
+      _qualifiedEntries.remove(key);
+      _controller.removeEntriesForMessages({entry.attachment.messageId});
+      return;
+    }
+    setState(() => _qualifiedEntries[key] = entry);
   }
 
   void _onScroll() {
@@ -260,7 +344,31 @@ class _GroupSharedMediaLibraryScreenState
       );
   }
 
-  void _openViewer(String attachmentId) {
+  Future<void> _openViewer(String attachmentId) async {
+    final messageId = _controller.messageIdOf(attachmentId);
+    if (messageId == null) return;
+    final identity = GroupSharedMediaIdentity(
+      groupId: widget.groupId,
+      messageId: messageId,
+      attachmentId: attachmentId,
+    );
+    final qualify = widget.qualifyViewerEntry;
+    if (qualify != null) {
+      var allowed = false;
+      try {
+        allowed = await qualify(identity);
+      } catch (_) {
+        allowed = false;
+      }
+      if (!mounted) return;
+      if (!allowed) {
+        // The policy is message-scoped: one denied current parent invalidates
+        // every cached thumbnail/viewer item for that parent.
+        _controller.removeEntriesForMessages({messageId});
+        return;
+      }
+    }
+    if (_controller.entryFor(attachmentId) == null || !mounted) return;
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => _GroupSharedMediaViewerHost(
@@ -359,6 +467,13 @@ class _GroupSharedMediaLibraryScreenState
 
   Widget _buildTile(MediaLibraryEntry entry) {
     final attachment = entry.attachment;
+    if (!_isEntryQualified(entry)) {
+      _schedulePendingQualifications();
+      return KeyedSubtree(
+        key: ValueKey('group-shared-media-tile-${attachment.id}'),
+        child: const ColoredBox(color: Color.fromRGBO(0, 0, 0, 0.08)),
+      );
+    }
     final selected = _controller.isSelected(attachment.id);
     return KeyedSubtree(
       key: ValueKey('group-shared-media-tile-${attachment.id}'),
@@ -409,6 +524,56 @@ class _GroupSharedMediaLibraryScreenState
         : selectedEntries
               .map(_capabilitiesFor)
               .reduce((left, right) => left.intersection(right));
+
+    Future<void> performBatchForward() async {
+      final launch = widget.launchBatchForward;
+      if (launch == null || _batchForwardActive) return;
+      final identities = _controller.identitiesFor(_controller.selectedIds);
+      if (identities.length < kGroupMediaBatchForwardRouteMinItems ||
+          identities.length > kGroupMediaBatchForwardMaxItems) {
+        return;
+      }
+      setState(() => _batchForwardActive = true);
+      try {
+        final result = await launch(identities);
+        if (!mounted) return;
+        switch (result.status) {
+          case GroupMediaBatchForwardLibraryLaunchStatus.cancelled:
+            break;
+          case GroupMediaBatchForwardLibraryLaunchStatus.denied:
+            final denial = result.denial;
+            ScaffoldMessenger.maybeOf(context)
+              ?..hideCurrentSnackBar()
+              ..showSnackBar(
+                SnackBar(
+                  key: ValueKey(
+                    denial == GroupMediaBatchForwardDenial.sizeLimitExceeded
+                        ? 'group-batch-forward-size-limit'
+                        : 'group-batch-forward-source-unavailable',
+                  ),
+                  content: Text(
+                    denial == GroupMediaBatchForwardDenial.sizeLimitExceeded
+                        ? l10n.media_attachments_too_large_note
+                        : l10n.direct_batch_forward_source_unavailable,
+                  ),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+          case GroupMediaBatchForwardLibraryLaunchStatus.completed:
+            final completion = result.completion;
+            if (completion != null) {
+              _controller.unselect(
+                completion.fullySettledSourceIdentities.map(
+                  (identity) => identity.attachmentId,
+                ),
+              );
+            }
+        }
+      } finally {
+        if (mounted) setState(() => _batchForwardActive = false);
+      }
+    }
+
     return SafeArea(
       top: false,
       child: SingleChildScrollView(
@@ -461,6 +626,17 @@ class _GroupSharedMediaLibraryScreenState
                 onPressed: _performDelete,
                 icon: const Icon(Icons.delete_outline),
                 label: Text(l10n.shared_media_action_delete),
+              ),
+            if (_controller.selectedCount >=
+                    kGroupMediaBatchForwardRouteMinItems &&
+                _controller.selectedCount <= kGroupMediaBatchForwardMaxItems &&
+                intersection.contains(GroupSharedMediaAction.forward) &&
+                widget.launchBatchForward != null)
+              TextButton.icon(
+                key: const ValueKey('group-shared-media-action-batch-forward'),
+                onPressed: _batchForwardActive ? null : performBatchForward,
+                icon: const Icon(Icons.forward_to_inbox_rounded),
+                label: Text(l10n.media_viewer_action_forward),
               ),
             if (_controller.selectedCount == 1) ...[
               if (intersection.contains(GroupSharedMediaAction.forward) &&
@@ -533,6 +709,8 @@ class _GroupSharedMediaViewerHostState
     extends State<_GroupSharedMediaViewerHost> {
   late int _currentIndex;
   late String _currentAttachmentId;
+  final Map<String, MediaLibraryEntry> _qualifiedEntries = {};
+  final Map<String, MediaLibraryEntry> _qualificationFlights = {};
 
   @override
   void initState() {
@@ -551,6 +729,68 @@ class _GroupSharedMediaViewerHostState
       widget.controller.loadNextPage();
     }
   }
+
+  String _qualificationKey(MediaLibraryEntry entry) =>
+      '${entry.attachment.messageId}\u0000${entry.attachment.id}';
+
+  bool _isEntryQualified(MediaLibraryEntry entry) {
+    if (widget.screen.qualifyViewerEntry == null) return true;
+    return identical(_qualifiedEntries[_qualificationKey(entry)], entry);
+  }
+
+  void _schedulePendingQualifications(List<MediaLibraryEntry> entries) {
+    final qualify = widget.screen.qualifyViewerEntry;
+    if (qualify == null || !mounted) return;
+    final liveKeys = {for (final entry in entries) _qualificationKey(entry)};
+    _qualifiedEntries.removeWhere((key, _) => !liveKeys.contains(key));
+    _qualificationFlights.removeWhere((key, _) => !liveKeys.contains(key));
+    for (final entry in entries) {
+      final key = _qualificationKey(entry);
+      if (identical(_qualifiedEntries[key], entry) ||
+          identical(_qualificationFlights[key], entry)) {
+        continue;
+      }
+      _qualificationFlights[key] = entry;
+      unawaited(_qualifyEntry(entry, key, qualify));
+    }
+  }
+
+  Future<void> _qualifyEntry(
+    MediaLibraryEntry entry,
+    String key,
+    GroupSharedMediaViewerEntryQualification qualify,
+  ) async {
+    var allowed = false;
+    try {
+      allowed = await qualify(
+        GroupSharedMediaIdentity(
+          groupId: widget.screen.groupId,
+          messageId: entry.attachment.messageId,
+          attachmentId: entry.attachment.id,
+        ),
+      );
+    } catch (_) {
+      allowed = false;
+    }
+    if (!mounted || !identical(_qualificationFlights[key], entry)) return;
+    _qualificationFlights.remove(key);
+    final current = widget.controller.entryFor(entry.attachment.id);
+    if (!identical(current, entry)) {
+      setState(() {});
+      return;
+    }
+    if (!allowed) {
+      _qualifiedEntries.remove(key);
+      widget.controller.removeEntriesForMessages({entry.attachment.messageId});
+      return;
+    }
+    setState(() => _qualifiedEntries[key] = entry);
+  }
+
+  Widget _pendingQualificationPlaceholder() => const ColoredBox(
+    key: ValueKey('group-shared-media-viewer-qualification-pending'),
+    color: Colors.black,
+  );
 
   Future<MediaViewerActionResult> _onAction(
     MediaViewerItem item,
@@ -610,6 +850,9 @@ class _GroupSharedMediaViewerHostState
             : MediaViewerActionResult.failure;
       case MediaViewerAction.info:
       case MediaViewerAction.reply:
+      case MediaViewerAction.messageSender:
+        // Plan 247 exposes Message sender only from an exact live
+        // conversation parent, never from paged Shared Media.
         return MediaViewerActionResult.failure;
     }
   }
@@ -642,6 +885,10 @@ class _GroupSharedMediaViewerHostState
       durationMs: attachment.durationMs,
       senderLabel: entry.parentSenderPeerId,
       timestamp: DateTime.tryParse(entry.parentTimestamp),
+      canEnterPictureInPicture:
+          capabilities.contains(GroupSharedMediaAction.pictureInPicture) &&
+          attachment.mediaType == 'video' &&
+          egressEligible,
       protection: MediaViewerProtection(
         isDownloaded: egressEligible,
         isIntegrityVerified:
@@ -679,25 +926,43 @@ class _GroupSharedMediaViewerHostState
           });
           return const SizedBox.shrink();
         }
-        final currentIndex = entries.indexWhere(
-          (entry) => entry.attachment.id == _currentAttachmentId,
-        );
-        if (currentIndex < 0) {
+        _schedulePendingQualifications(entries);
+        final currentEntry = entries
+            .where((entry) => entry.attachment.id == _currentAttachmentId)
+            .firstOrNull;
+        if (currentEntry == null) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) Navigator.of(context).pop();
           });
           return const SizedBox.shrink();
         }
+        if (!_isEntryQualified(currentEntry)) {
+          return _pendingQualificationPlaceholder();
+        }
+        final qualifiedEntries = entries
+            .where(_isEntryQualified)
+            .toList(growable: false);
+        final currentIndex = qualifiedEntries.indexWhere(
+          (entry) => entry.attachment.id == _currentAttachmentId,
+        );
+        if (currentIndex < 0) {
+          return _pendingQualificationPlaceholder();
+        }
         _currentIndex = currentIndex;
         return FullScreenTypedMediaViewer(
-          items: [for (final entry in entries) _item(entry)],
-          initialIndex: _currentIndex.clamp(0, entries.length - 1),
+          items: [for (final entry in qualifiedEntries) _item(entry)],
+          initialIndex: _currentIndex.clamp(0, qualifiedEntries.length - 1),
           onPageChanged: (index) {
             _currentIndex = index;
-            _currentAttachmentId = entries[index].attachment.id;
+            _currentAttachmentId = qualifiedEntries[index].attachment.id;
             _loadNearBoundary();
           },
           onAction: _onAction,
+          resumeStore: widget.screen.mediaViewerResumeStore,
+          pictureInPictureControllerFactory:
+              widget.screen.pictureInPictureControllerFactory,
+          loadPictureInPictureAuthorization:
+              widget.screen.loadPictureInPictureAuthorization,
         );
       },
     );

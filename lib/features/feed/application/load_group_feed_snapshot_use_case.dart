@@ -50,25 +50,32 @@ Future<GroupThreadFeedItem?> loadGroupFeedSnapshot({
 
   // Batch-attach media to group messages, resolving relative paths
   if (mediaAttachmentRepo != null && messages.isNotEmpty) {
-    final ids = messages.map((m) => m.id).toList();
-    final mediaMap = await mediaAttachmentRepo.getAttachmentsForMessages(
-      ids,
-      owner: MediaOwnerLane.group,
-    );
-    if (mediaMap.isNotEmpty) {
-      final resolvedMap = <String, List<MediaAttachment>>{};
-      for (final entry in mediaMap.entries) {
-        resolvedMap[entry.key] = await resolveGroupFeedMediaForDisplay(
-          attachments: entry.value,
-          mediaFileManager: mediaFileManager,
-        );
-      }
+    final ids = messages
+        .where(groupMessageAllowsOrdinaryFeedDerivatives)
+        .map((message) => message.id)
+        .toList();
+    if (ids.isNotEmpty) {
+      final mediaMap = await mediaAttachmentRepo.getAttachmentsForMessages(
+        ids,
+        owner: MediaOwnerLane.group,
+      );
+      if (mediaMap.isNotEmpty) {
+        final resolvedMap = <String, List<MediaAttachment>>{};
+        for (final entry in mediaMap.entries) {
+          resolvedMap[entry.key] = await resolveGroupFeedMediaForDisplay(
+            attachments: entry.value,
+            mediaFileManager: mediaFileManager,
+          );
+        }
 
-      messages = messages
-          .map((m) => m.copyWith(media: resolvedMap[m.id] ?? const []))
-          .toList();
+        messages = messages
+            .map((m) => m.copyWith(media: resolvedMap[m.id] ?? const []))
+            .toList();
+      }
     }
   }
+
+  messages = messages.map(projectGroupMessageForFeed).toList();
 
   return groupGroupMessagesIntoThreads(
     allGroupMessages: messages,

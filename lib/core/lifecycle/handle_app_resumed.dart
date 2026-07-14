@@ -82,6 +82,13 @@ Future<bool?> handleAppResumed({
   /// proceeds regardless.
   Future<void> Function()? groupMediaDeletionCleanupFn,
 
+  /// 234 Session 03: one bounded, local-only direct private-media lifecycle
+  /// recovery pass. It terminalizes interrupted opening/viewing state, expires
+  /// due disappearing media, and retries terminal file/key/row cleanup. This
+  /// must run before the account-migration network gate so a denied network
+  /// resume cannot strand already-local lifecycle work. Errors are isolated.
+  Future<void> Function()? privateMediaLifecycleRecoveryFn,
+
   /// FDC-04 (DESIGN-3/SRC-1): resolves the single active conversation peer so
   /// resume can eagerly warm ONLY it (PS-4 — never the roster). In production
   /// wired to `ActiveConversationTracker.activePeerId`. Null / null-return /
@@ -142,6 +149,23 @@ Future<bool?> handleAppResumed({
         layer: 'FL',
         event: 'APP_LIFECYCLE_RESUME_GROUP_MEDIA_CLEANUP_FAILED',
         details: {'error': e.toString()},
+      );
+    }
+  }
+
+  if (privateMediaLifecycleRecoveryFn != null) {
+    try {
+      await privateMediaLifecycleRecoveryFn();
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'APP_LIFECYCLE_RESUME_PRIVATE_MEDIA_RECOVERY_DONE',
+        details: {},
+      );
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'APP_LIFECYCLE_RESUME_PRIVATE_MEDIA_RECOVERY_FAILED',
+        details: {'error': error.runtimeType.toString()},
       );
     }
   }

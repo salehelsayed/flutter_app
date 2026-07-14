@@ -321,6 +321,7 @@ Future<Map<String, dynamic>> callGroupPublish(
   String? quotedMessageId,
   List<Map<String, dynamic>>? media,
   bool isForwarded = false,
+  Map<String, Object?>? privateMediaPolicy,
   Duration timeout = const Duration(seconds: 10),
 }) async {
   emitFlowEvent(
@@ -374,6 +375,12 @@ Future<Map<String, dynamic>> callGroupPublish(
   if (isForwarded) {
     payload['isForwarded'] = true;
   }
+  final normalizedPrivateMediaPolicy = _normalizeGroupPrivateMediaPolicyFields(
+    privateMediaPolicy,
+  );
+  if (normalizedPrivateMediaPolicy != null) {
+    payload.addAll(normalizedPrivateMediaPolicy);
+  }
 
   final request = {'cmd': 'group:publish', 'payload': payload};
 
@@ -424,6 +431,7 @@ Future<Map<String, dynamic>> callGroupSendReliable(
   String? quotedMessageId,
   List<Map<String, dynamic>>? media,
   bool isForwarded = false,
+  Map<String, Object?>? privateMediaPolicy,
   List<String>? recipientPeerIds,
   bool preserveRecipientPeerIds = false,
   Duration timeout = groupSendReliableDefaultTimeout,
@@ -472,6 +480,12 @@ Future<Map<String, dynamic>> callGroupSendReliable(
   if (isForwarded) {
     payload['isForwarded'] = true;
   }
+  final normalizedPrivateMediaPolicy = _normalizeGroupPrivateMediaPolicyFields(
+    privateMediaPolicy,
+  );
+  if (normalizedPrivateMediaPolicy != null) {
+    payload.addAll(normalizedPrivateMediaPolicy);
+  }
   if (preserveRecipientPeerIds) {
     payload['recipientPeerIds'] = normalizedRecipientPeerIds;
     payload['preserveRecipientPeerIds'] = true;
@@ -491,6 +505,61 @@ Future<Map<String, dynamic>> callGroupSendReliable(
       'errorMessage': 'Timed out waiting for group:sendReliable response',
     };
   }
+}
+
+Map<String, Object?>? _normalizeGroupPrivateMediaPolicyFields(
+  Map<String, Object?>? raw,
+) {
+  if (raw == null || raw.isEmpty) return null;
+  const keys = <String>{
+    'mediaPolicyVersion',
+    'mediaLifecycle',
+    'mediaDurationSeconds',
+    'mediaProtected',
+  };
+  if (raw.length != keys.length || !keys.every(raw.containsKey)) {
+    throw ArgumentError.value(raw, 'privateMediaPolicy', 'partial_policy');
+  }
+  final version = raw['mediaPolicyVersion'];
+  final lifecycle = raw['mediaLifecycle'];
+  final duration = raw['mediaDurationSeconds'];
+  final protected = raw['mediaProtected'];
+  if (version is! int || version != 1) {
+    throw ArgumentError.value(raw, 'privateMediaPolicy', 'invalid_version');
+  }
+  if (protected is! bool || !protected) {
+    throw ArgumentError.value(raw, 'privateMediaPolicy', 'invalid_protected');
+  }
+  switch (lifecycle) {
+    case 'standard':
+    case 'viewOnce':
+      if (duration != null) {
+        throw ArgumentError.value(
+          raw,
+          'privateMediaPolicy',
+          'invalid_duration',
+        );
+      }
+      break;
+    case 'disappearing':
+      if (duration is! int ||
+          !const <int>{3600, 86400, 604800}.contains(duration)) {
+        throw ArgumentError.value(
+          raw,
+          'privateMediaPolicy',
+          'invalid_duration',
+        );
+      }
+      break;
+    default:
+      throw ArgumentError.value(raw, 'privateMediaPolicy', 'invalid_lifecycle');
+  }
+  return <String, Object?>{
+    'mediaPolicyVersion': version,
+    'mediaLifecycle': lifecycle,
+    'mediaDurationSeconds': duration,
+    'mediaProtected': protected,
+  };
 }
 
 List<String> _normalizeRecipientPeerIds(List<String>? recipientPeerIds) {

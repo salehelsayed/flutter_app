@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 
 void main() {
@@ -202,6 +203,115 @@ void main() {
       test('copyWith sets transport', () {
         final tagged = testMessage.copyWith(transport: 'inbox');
         expect(tagged.transport, 'inbox');
+      });
+    });
+
+    group('private media v100 mapping', () {
+      final policy = PrivateMediaPolicy.fromJson({
+        'version': 1,
+        'mode': 'disappearing',
+        'durationSeconds': 86400,
+      });
+
+      test('round-trips every typed lifecycle field', () {
+        final privateMessage = testMessage.copyWith(
+          privateMediaPolicy: policy,
+          privateMediaState: PrivateMediaLifecycleState.viewing,
+          privateMediaReceivedAtMs: 1000,
+          privateMediaExpiresAtMs: 87400000,
+          privateMediaRevealedAtMs: 2000,
+          privateMediaTerminalAtMs: 3000,
+          privateMediaClockHighWaterMs: 4000,
+        );
+
+        final map = privateMessage.toMap();
+        expect(map['private_media_policy_version'], 1);
+        expect(map['private_media_mode'], 'disappearing');
+        expect(map['private_media_duration_seconds'], 86400);
+        expect(map['private_media_state'], 'viewing');
+        expect(map['private_media_received_at_ms'], 1000);
+        expect(map['private_media_expires_at_ms'], 87400000);
+        expect(map['private_media_revealed_at_ms'], 2000);
+        expect(map['private_media_terminal_at_ms'], 3000);
+        expect(map['private_media_clock_high_water_ms'], 4000);
+
+        final restored = ConversationMessage.fromMap(map);
+        expect(restored.privateMediaPolicy, policy);
+        expect(restored.privateMediaPolicyVersion, 1);
+        expect(restored.privateMediaMode, PrivateMediaMode.disappearing);
+        expect(restored.privateMediaDurationSeconds, 86400);
+        expect(restored.privateMediaState, PrivateMediaLifecycleState.viewing);
+        expect(restored.privateMediaReceivedAtMs, 1000);
+        expect(restored.privateMediaExpiresAtMs, 87400000);
+        expect(restored.privateMediaRevealedAtMs, 2000);
+        expect(restored.privateMediaTerminalAtMs, 3000);
+        expect(restored.privateMediaClockHighWaterMs, 4000);
+      });
+
+      test('legacy maps default atomically to ordinary and none', () {
+        final legacy = ConversationMessage.fromMap(
+          testMessage.toMap()
+            ..removeWhere((key, _) => key.startsWith('private_media_')),
+        );
+
+        expect(legacy.privateMediaPolicyVersion, 0);
+        expect(legacy.privateMediaMode, PrivateMediaMode.ordinary);
+        expect(legacy.privateMediaDurationSeconds, isNull);
+        expect(legacy.privateMediaState, PrivateMediaLifecycleState.none);
+        expect(legacy.privateMediaReceivedAtMs, isNull);
+        expect(legacy.privateMediaExpiresAtMs, isNull);
+        expect(legacy.privateMediaRevealedAtMs, isNull);
+        expect(legacy.privateMediaTerminalAtMs, isNull);
+        expect(legacy.privateMediaClockHighWaterMs, isNull);
+      });
+
+      test('unknown database policy or lifecycle state fails closed', () {
+        final map = testMessage.toMap()
+          ..['private_media_policy_version'] = 4
+          ..['private_media_mode'] = 'future_mode'
+          ..['private_media_state'] = 'future_state';
+
+        final restored = ConversationMessage.fromMap(map);
+        expect(restored.privateMediaPolicy.isUnsupported, isTrue);
+        expect(restored.privateMediaMode, PrivateMediaMode.unsupported);
+        expect(
+          restored.privateMediaState,
+          PrivateMediaLifecycleState.unsupported,
+        );
+      });
+
+      test('copyWith preserves overrides and explicitly clears timestamps', () {
+        final privateMessage = testMessage.copyWith(
+          privateMediaPolicy: policy,
+          privateMediaState: PrivateMediaLifecycleState.expired,
+          privateMediaReceivedAtMs: 1000,
+          privateMediaExpiresAtMs: 2000,
+          privateMediaRevealedAtMs: 3000,
+          privateMediaTerminalAtMs: 4000,
+          privateMediaClockHighWaterMs: 5000,
+        );
+
+        final preserved = privateMessage.copyWith(text: 'updated');
+        expect(preserved.privateMediaPolicy, policy);
+        expect(preserved.privateMediaState, PrivateMediaLifecycleState.expired);
+        expect(preserved.privateMediaReceivedAtMs, 1000);
+        expect(preserved.privateMediaExpiresAtMs, 2000);
+        expect(preserved.privateMediaRevealedAtMs, 3000);
+        expect(preserved.privateMediaTerminalAtMs, 4000);
+        expect(preserved.privateMediaClockHighWaterMs, 5000);
+
+        final cleared = privateMessage.copyWith(
+          privateMediaReceivedAtMs: null,
+          privateMediaExpiresAtMs: null,
+          privateMediaRevealedAtMs: null,
+          privateMediaTerminalAtMs: null,
+          privateMediaClockHighWaterMs: null,
+        );
+        expect(cleared.privateMediaReceivedAtMs, isNull);
+        expect(cleared.privateMediaExpiresAtMs, isNull);
+        expect(cleared.privateMediaRevealedAtMs, isNull);
+        expect(cleared.privateMediaTerminalAtMs, isNull);
+        expect(cleared.privateMediaClockHighWaterMs, isNull);
       });
     });
   });

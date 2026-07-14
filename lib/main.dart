@@ -23,6 +23,7 @@ import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_forward_authorization_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_invite_consumptions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_reaction_replay_outbox_db_helpers.dart';
@@ -107,6 +108,8 @@ import 'package:flutter_app/features/conversation/domain/repositories/reaction_r
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
+import 'package:flutter_app/features/conversation/application/private_media_expiry_scheduler.dart';
 import 'package:flutter_app/features/conversation/application/delivery_receipt_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_delivery_receipt_use_case.dart'
     show sendDeliveryReceipt;
@@ -143,6 +146,7 @@ import 'package:flutter_app/features/groups/application/delete_group_media_for_m
 import 'package:flutter_app/features/groups/application/group_media_delete_for_me_coordinator.dart';
 import 'package:flutter_app/features/groups/application/group_media_deletion_journal_reconciler.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_private_media_lifecycle.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/group_invite_identity_callbacks.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
@@ -196,6 +200,7 @@ import 'package:flutter_app/core/local_discovery/local_media_server.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/media/record_audio_recorder_service.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_paused.dart';
@@ -289,6 +294,24 @@ import 'package:flutter_app/features/feed/data/feed_cleared_repository_impl.dart
 /// mirror backfill so it runs off the pre-runApp critical path without the
 /// analyzer/GC silently dropping it. Assigned (not awaited) in [main].
 Future<void>? keychainMirrorBackfill;
+
+Stream<void> _mergeVoidStreams(Iterable<Stream<void>> inputs) {
+  return Stream<void>.multi((controller) {
+    final subscriptions = inputs
+        .map(
+          (input) => input.listen(
+            (_) => controller.addSync(null),
+            onError: controller.addErrorSync,
+          ),
+        )
+        .toList(growable: false);
+    controller.onCancel = () async {
+      for (final subscription in subscriptions) {
+        await subscription.cancel();
+      }
+    };
+  });
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -633,6 +656,31 @@ void main() async {
               fromStatus: fromStatus,
               toStatus: toStatus,
             ),
+    dbClaimDirectPrivateMediaOpening: (id, {required nowMs}) =>
+        dbClaimDirectPrivateMediaOpening(db, id, nowMs: nowMs),
+    dbMarkDirectPrivateMediaViewing: (id, {required nowMs}) =>
+        dbMarkDirectPrivateMediaViewing(db, id, nowMs: nowMs),
+    dbRollbackDirectPrivateMediaOpening: (id) =>
+        dbRollbackDirectPrivateMediaOpening(db, id),
+    dbConsumeDirectPrivateMedia: (id, {required nowMs}) =>
+        dbConsumeDirectPrivateMedia(db, id, nowMs: nowMs),
+    dbAdvanceDirectPrivateMediaClock: (id, {required nowMs}) =>
+        dbAdvanceDirectPrivateMediaClock(db, id, nowMs: nowMs),
+    dbFailClosedCorruptDirectPrivateMediaState: (id, {required nowMs}) =>
+        dbFailClosedCorruptDirectPrivateMediaState(db, id, nowMs: nowMs),
+    dbHideDirectPrivateMediaForMe: (id, {required hiddenAt, required nowMs}) =>
+        dbHideDirectPrivateMediaForMe(db, id, hiddenAt: hiddenAt, nowMs: nowMs),
+    dbLoadActiveDirectPrivateMediaDisappearing: ({limit = 100}) =>
+        dbLoadActiveDirectPrivateMediaDisappearing(db, limit: limit),
+    dbLoadDirectPrivateMediaRecoveryCandidates: ({limit = 100}) =>
+        dbLoadDirectPrivateMediaRecoveryCandidates(db, limit: limit),
+    dbRotateDirectPrivateMediaRecoveryCandidate: (id, {required nowMs}) =>
+        dbRotateDirectPrivateMediaRecoveryCandidate(db, id, nowMs: nowMs),
+    dbLoadNextDirectPrivateMediaExpiryAtMs: () =>
+        dbLoadNextDirectPrivateMediaExpiryAtMs(db),
+    directReactionProjection: directReactionNotificationProjection,
+    dbLoadLocallyAuthoredMessagesForProjection: () =>
+        dbLoadLocallyAuthoredMessagesForReactionProjection(db),
   );
 
   await groupReactionProjectionIdentityReady;
@@ -844,6 +892,27 @@ void main() async {
             ),
     dbSetMediaBookmarked: (id, bookmarked) =>
         dbSetMediaBookmarked(db, id, bookmarked: bookmarked),
+    dbSetDirectMediaBookmarkedIfOrdinary:
+        ({required messageId, required attachmentId, required bookmarked}) =>
+            dbSetDirectMediaBookmarkedIfOrdinary(
+              db,
+              messageId: messageId,
+              attachmentId: attachmentId,
+              bookmarked: bookmarked,
+            ),
+    dbSetGroupMediaBookmarkedIfOrdinary:
+        ({
+          required groupId,
+          required messageId,
+          required attachmentId,
+          required bookmarked,
+        }) => dbSetGroupMediaBookmarkedIfOrdinary(
+          db,
+          groupId: groupId,
+          messageId: messageId,
+          attachmentId: attachmentId,
+          bookmarked: bookmarked,
+        ),
     dbUpdateMediaPlaybackPosition: (id, positionMs) =>
         dbUpdateMediaPlaybackPosition(db, id, positionMs),
     dbLoadMediaLibraryPage:
@@ -908,9 +977,189 @@ void main() async {
             ),
     dbFinalizeMediaEvictedPathCleared: (id, {required String ownerLane}) =>
         dbFinalizeMediaEvictedPathCleared(db, id, ownerLane: ownerLane),
+    dbCommitDirectPrivateMediaDownloadIfEligible:
+        ({
+          required messageId,
+          required attachmentId,
+          required localPath,
+          required nowMs,
+        }) => dbCommitDirectPrivateMediaDownloadIfEligible(
+          db,
+          messageId: messageId,
+          attachmentId: attachmentId,
+          localPath: localPath,
+          nowMs: nowMs,
+        ),
+    dbBeginDirectPrivateMediaDownloadIfEligible:
+        ({required messageId, required attachmentId, required nowMs}) =>
+            dbBeginDirectPrivateMediaDownloadIfEligible(
+              db,
+              messageId: messageId,
+              attachmentId: attachmentId,
+              nowMs: nowMs,
+            ),
+    dbQualifyDirectPrivateMediaLocalReadyIfEligible:
+        ({
+          required messageId,
+          required attachmentId,
+          required expectedLocalPath,
+          required nowMs,
+        }) => dbQualifyDirectPrivateMediaLocalReadyIfEligible(
+          db,
+          messageId: messageId,
+          attachmentId: attachmentId,
+          expectedLocalPath: expectedLocalPath,
+          nowMs: nowMs,
+        ),
+    dbQualifyDirectPrivateMediaDownloadClaimIfEligible:
+        ({required messageId, required attachmentId, required nowMs}) =>
+            dbQualifyDirectPrivateMediaDownloadClaimIfEligible(
+              db,
+              messageId: messageId,
+              attachmentId: attachmentId,
+              nowMs: nowMs,
+            ),
+    dbRecordDirectPrivateMediaDownloadFailureIfEligible:
+        ({
+          required messageId,
+          required attachmentId,
+          required nowMs,
+          required incrementRetryCount,
+          required failureStatus,
+          required expectedDownloadStatus,
+          expectedLocalPath,
+          clearLocalPath = false,
+        }) => dbRecordDirectPrivateMediaDownloadFailureIfEligible(
+          db,
+          messageId: messageId,
+          attachmentId: attachmentId,
+          nowMs: nowMs,
+          incrementRetryCount: incrementRetryCount,
+          failureStatus: failureStatus,
+          expectedDownloadStatus: expectedDownloadStatus,
+          expectedLocalPath: expectedLocalPath,
+          clearLocalPath: clearLocalPath,
+        ),
+    dbSaveDirectPrivateMediaAttachmentGuarded:
+        (row, {required messageId, required nowMs}) =>
+            dbSaveDirectPrivateMediaAttachmentGuarded(
+              db,
+              row,
+              messageId: messageId,
+              nowMs: nowMs,
+            ),
+    dbCanCleanupDirectPrivateMediaAttachmentExact:
+        ({required messageId, required attachmentId}) =>
+            dbCanCleanupDirectPrivateMediaAttachmentExact(
+              db,
+              messageId: messageId,
+              attachmentId: attachmentId,
+            ),
+    dbDeleteDirectPrivateMediaAttachmentExact:
+        ({required messageId, required attachmentId}) =>
+            dbDeleteDirectPrivateMediaAttachmentExact(
+              db,
+              messageId: messageId,
+              attachmentId: attachmentId,
+            ),
+    dbBeginGroupPrivateMediaDownloadIfEligible:
+        ({
+          required groupId,
+          required messageId,
+          required attachmentId,
+          required nowMs,
+        }) => dbBeginGroupPrivateMediaDownloadIfEligible(
+          db,
+          groupId: groupId,
+          messageId: messageId,
+          attachmentId: attachmentId,
+          nowMs: nowMs,
+        ),
+    dbQualifyGroupPrivateMediaLocalReadyIfEligible:
+        ({
+          required groupId,
+          required messageId,
+          required attachmentId,
+          required expectedLocalPath,
+          required nowMs,
+        }) => dbQualifyGroupPrivateMediaLocalReadyIfEligible(
+          db,
+          groupId: groupId,
+          messageId: messageId,
+          attachmentId: attachmentId,
+          expectedLocalPath: expectedLocalPath,
+          nowMs: nowMs,
+        ),
+    dbQualifyGroupPrivateMediaDownloadClaimIfEligible:
+        ({
+          required groupId,
+          required messageId,
+          required attachmentId,
+          required nowMs,
+        }) => dbQualifyGroupPrivateMediaDownloadClaimIfEligible(
+          db,
+          groupId: groupId,
+          messageId: messageId,
+          attachmentId: attachmentId,
+          nowMs: nowMs,
+        ),
+    dbRecordGroupPrivateMediaDownloadFailureIfEligible:
+        ({
+          required groupId,
+          required messageId,
+          required attachmentId,
+          required nowMs,
+          required incrementRetryCount,
+          required failureStatus,
+          required expectedDownloadStatus,
+          expectedLocalPath,
+          required clearLocalPath,
+        }) => dbRecordGroupPrivateMediaDownloadFailureIfEligible(
+          db,
+          groupId: groupId,
+          messageId: messageId,
+          attachmentId: attachmentId,
+          nowMs: nowMs,
+          incrementRetryCount: incrementRetryCount,
+          failureStatus: failureStatus,
+          expectedDownloadStatus: expectedDownloadStatus,
+          expectedLocalPath: expectedLocalPath,
+          clearLocalPath: clearLocalPath,
+        ),
+    dbCommitGroupPrivateMediaDownloadIfEligible:
+        ({
+          required groupId,
+          required messageId,
+          required attachmentId,
+          required localPath,
+          required nowMs,
+        }) => dbCommitGroupPrivateMediaDownloadIfEligible(
+          db,
+          groupId: groupId,
+          messageId: messageId,
+          attachmentId: attachmentId,
+          localPath: localPath,
+          nowMs: nowMs,
+        ),
+    dbCanCleanupGroupPrivateMediaAttachmentExact:
+        ({required messageId, required attachmentId}) =>
+            dbCanCleanupGroupPrivateMediaAttachmentExact(
+              db,
+              messageId: messageId,
+              attachmentId: attachmentId,
+            ),
+    dbDeleteGroupPrivateMediaAttachmentExact:
+        ({required messageId, required attachmentId}) =>
+            dbDeleteGroupPrivateMediaAttachmentExact(
+              db,
+              messageId: messageId,
+              attachmentId: attachmentId,
+            ),
     dbSaveGroupMediaAttachmentGuarded: (row, {required String groupId}) =>
         dbSaveGroupMediaAttachmentGuarded(db, row, groupId: groupId),
     secureKeyStore: secureKeyStore,
+    refreshDirectPrivateMediaParent:
+        messageRepository.refreshPrivateMediaLifecycleAfterExternalMutation,
   );
 
   // 235: deletion-journal reconciler + the production Delete-for-me
@@ -1085,6 +1334,8 @@ void main() async {
     dbLoadActiveGroups: () => dbLoadActiveGroups(db),
     dbArchiveGroup: (id) => dbArchiveGroup(db, id),
     dbUnarchiveGroup: (id) => dbUnarchiveGroup(db, id),
+    dbLoadGroupForwardAuthorizationSnapshot: (groupId) =>
+        dbLoadGroupForwardAuthorizationSnapshot(db, groupId),
     dbInsertGroupMember: (row) => dbInsertGroupMember(db, row),
     dbLoadAllGroupMembers: (groupId) => dbLoadAllGroupMembers(db, groupId),
     dbLoadGroupMember: (groupId, peerId) =>
@@ -1322,6 +1573,26 @@ void main() async {
           dbClearGroupMessageRetryBackoff(executor),
       dbResetGroupMessageRetryStateFn: (id) =>
           dbResetGroupMessageRetryState(executor, id),
+      dbAnchorOutgoingGroupPrivateMediaCustodyFn: (id, {required nowMs}) =>
+          dbAnchorOutgoingGroupPrivateMediaCustody(executor, id, nowMs: nowMs),
+      dbConsumeGroupPrivateMediaFn: (id, {required nowMs}) =>
+          dbConsumeGroupPrivateMedia(executor, id, nowMs: nowMs),
+      dbAdvanceGroupPrivateMediaClockFn: (id, {required nowMs}) =>
+          dbAdvanceGroupPrivateMediaClock(executor, id, nowMs: nowMs),
+      dbLoadNextGroupPrivateMediaExpiryAtMsFn: () =>
+          dbLoadNextGroupPrivateMediaExpiryAtMs(executor),
+      dbLoadActiveGroupPrivateMediaDisappearingFn: ({int limit = 100}) =>
+          dbLoadActiveGroupPrivateMediaDisappearing(executor, limit: limit),
+      dbLoadGroupPrivateMediaRecoveryCandidatesFn: ({int limit = 100}) =>
+          dbLoadGroupPrivateMediaRecoveryCandidates(executor, limit: limit),
+      dbRotateGroupPrivateMediaRecoveryCandidateFn: (id, {required nowMs}) =>
+          dbRotateGroupPrivateMediaRecoveryCandidate(
+            executor,
+            id,
+            nowMs: nowMs,
+          ),
+      dbCompleteGroupPrivateMediaCleanupFn: (id) =>
+          dbCompleteGroupPrivateMediaCleanup(executor, id),
       dbLoadGroupMessageLocalDeletionFn: (messageId) =>
           dbLoadGroupMessageLocalDeletion(executor, messageId),
       dbLoadGroupInboxCursorFn: (groupId) async {
@@ -1669,6 +1940,94 @@ void main() async {
 
   // Create media file manager
   final mediaFileManager = MediaFileManager();
+  // A new process cannot have a live forward snapshot from its predecessor.
+  // Reclaim only app-owned snapshot children before this process can create a
+  // live one. The pass is bounded and fail-safe, and awaiting it avoids a
+  // startup scavenger racing the first forward operation.
+  await mediaFileManager.scavengeGroupForwardSnapshotOrphans(
+    deleteFreshOrphans: true,
+  );
+  final directPrivateMediaLifecycle = DirectPrivateMediaLifecycle(
+    messageRepository: messageRepository,
+    mediaAttachmentRepository: mediaAttachmentRepository,
+    mediaFileManager: mediaFileManager,
+  );
+  final directPrivateMediaLifecycleEngine = PrivateMediaLifecycleEngine(
+    adapter: directPrivateMediaLifecycle,
+    lifecycleLock: mediaAttachmentRepository.lifecycleLock,
+    nowMs: () => DateTime.now().toUtc().millisecondsSinceEpoch,
+  );
+  final groupPrivateMediaLifecycleEngine = GroupPrivateMediaLifecycleEngine(
+    messageRepository: groupMessageRepository,
+    mediaAttachmentRepository: mediaAttachmentRepository,
+    cleanupRepository: mediaAttachmentRepository,
+    mediaFileManager: mediaFileManager,
+    lifecycleLock: mediaAttachmentRepository.lifecycleLock,
+    nowMs: () => DateTime.now().toUtc().millisecondsSinceEpoch,
+  );
+  final privateMediaExpiryScheduler = PrivateMediaExpiryScheduler(
+    loadNextExpiryAtMs: () async {
+      final direct = await directPrivateMediaLifecycleEngine
+          .loadNextExpiryAtMs();
+      final group = await groupPrivateMediaLifecycleEngine.loadNextExpiryAtMs();
+      if (direct == null) return group;
+      if (group == null) return direct;
+      return min(direct, group);
+    },
+    sweepDueExpiries: (evaluationFloorMs) async {
+      await directPrivateMediaLifecycleEngine.sweepExpiries(
+        evaluationFloorMs: evaluationFloorMs,
+      );
+      await groupPrivateMediaLifecycleEngine.sweepExpiries(
+        evaluationFloorMs: evaluationFloorMs,
+      );
+    },
+    rescheduleSignals: _mergeVoidStreams([
+      directPrivateMediaExpiryRescheduleSignals(
+        messageRepository.messageChanges,
+      ),
+      groupPrivateMediaExpirySignals,
+    ]),
+    nowMs: () => DateTime.now().toUtc().millisecondsSinceEpoch,
+  );
+  final privateMediaLifecycleForegroundRuntime =
+      PrivateMediaLifecycleForegroundRuntime(
+        isForeground: () =>
+            WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed,
+        recoverLocalLifecycle: () async {
+          await directPrivateMediaLifecycleEngine.reconcileLocalLifecycle();
+          await groupPrivateMediaLifecycleEngine.reconcileLocalLifecycle();
+        },
+        startScheduler: privateMediaExpiryScheduler.start,
+        stopScheduler: privateMediaExpiryScheduler.stop,
+        disposeScheduler: privateMediaExpiryScheduler.dispose,
+      );
+  Future<void>? privateMediaColdRecoveryFuture;
+  Future<void> ensurePrivateMediaColdRecovery() {
+    final existing = privateMediaColdRecoveryFuture;
+    if (existing != null) return existing;
+    final recovery = () async {
+      try {
+        await privateMediaLifecycleForegroundRuntime.recoverColdStartAndArm();
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PRIVATE_MEDIA_STARTUP_RECOVERY_DONE',
+          details: {},
+        );
+      } catch (error) {
+        // The shared future always resolves: local recovery failure is
+        // observable and retryable on resume, but cannot permanently suppress
+        // unrelated runtime startup.
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PRIVATE_MEDIA_STARTUP_RECOVERY_FAILED',
+          details: {'error': error.runtimeType.toString()},
+        );
+      }
+    }();
+    privateMediaColdRecoveryFuture = recovery;
+    return recovery;
+  }
 
   // Create image processor (EXIF stripping + quality compression)
   final imageProcessor = ImageProcessor();
@@ -3033,6 +3392,8 @@ void main() async {
         bridge: bridge,
         msgRepo: groupMessageRepository,
         reactionReplayOutboxRepo: groupReactionReplayOutboxRepository,
+        groupRepo: groupRepository,
+        identityRepo: repository,
       ),
     ),
     // Finding 05 Phase 4: reconnect re-arms backed-off failed group rows (local
@@ -3122,11 +3483,19 @@ void main() async {
     if (liveServicesStarted) {
       return;
     }
+    // 234 Session 03: this is the shared cold-start recovery future also
+    // kicked after runApp. Await it before even consulting the network gate so
+    // bridge/listener/P2P startup can never overtake local terminalization and
+    // cleanup. A concurrent caller reuses the same future.
+    await ensurePrivateMediaColdRecovery();
     final groupContextBackfill = keychainMirrorBackfill;
     if (groupContextBackfill != null) {
       await groupContextBackfill;
     }
     await groupReactionComparandBackfill;
+    if (liveServicesStarted) {
+      return;
+    }
     if (!await allowsAccountRuntimeNetworkSideEffects('live_services_start')) {
       return;
     }
@@ -3231,6 +3600,12 @@ void main() async {
       groupMediaDeletionCleanup: () async {
         await groupMediaDeletionReconciler.runBounded();
       },
+      privateMediaLifecycleRecovery:
+          privateMediaLifecycleForegroundRuntime.recoverResumeAndArm,
+      stopPrivateMediaExpiryScheduler:
+          privateMediaLifecycleForegroundRuntime.onBackgrounded,
+      disposePrivateMediaExpiryScheduler:
+          privateMediaLifecycleForegroundRuntime.dispose,
       chatMessageListener: chatMessageListener,
       postListener: postListener,
       postCommentListener: postCommentListener,
@@ -3325,6 +3700,10 @@ void main() async {
     ),
   );
   StartupTiming.instance.mark('run_app_called');
+  // 234 Session 03: kick the same local-only future that startLiveServices
+  // awaits. The call remains off the pre-runApp path, while network startup is
+  // causally ordered behind it.
+  unawaited(ensurePrivateMediaColdRecovery());
   unawaited(
     sweepExpiredPosts(
       postRepo: postRepository,
@@ -3476,6 +3855,13 @@ class MyApp extends StatefulWidget {
   /// 235: one bounded deletion-journal reconciliation pass; runs on resume
   /// BEFORE the account-migration network gate (local-only work).
   final Future<void> Function() groupMediaDeletionCleanup;
+
+  /// 234 Session 03: the same bounded local direct private-media recovery is
+  /// used at cold start and resume. Scheduler callbacks keep expiry strictly
+  /// foreground-only without coupling it to network readiness.
+  final Future<void> Function()? privateMediaLifecycleRecovery;
+  final void Function()? stopPrivateMediaExpiryScheduler;
+  final void Function()? disposePrivateMediaExpiryScheduler;
   final ChatMessageListener chatMessageListener;
   final PostListener postListener;
   final PostCommentListener postCommentListener;
@@ -3577,6 +3963,9 @@ class MyApp extends StatefulWidget {
     required this.mediaAttachmentRepository,
     required this.groupMediaDeleteForMeCoordinator,
     required this.groupMediaDeletionCleanup,
+    this.privateMediaLifecycleRecovery,
+    this.stopPrivateMediaExpiryScheduler,
+    this.disposePrivateMediaExpiryScheduler,
     required this.chatMessageListener,
     required this.postListener,
     required this.postCommentListener,
@@ -4436,6 +4825,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               groupRepo: widget.groupRepository,
               msgRepo: widget.groupMessageRepository,
               groupMessageListener: widget.groupMessageListener,
+              openAnnouncementSenderConversation: (contact) =>
+                  _openConversationForContact(
+                    navigator: navigator,
+                    contact: contact,
+                  ),
               inviteDeliveryAttemptRepo:
                   widget.groupInviteDeliveryAttemptRepository,
               bridge: widget.bridge,
@@ -4576,7 +4970,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     required ContactModel contact,
     DateTime? notificationTappedAt,
   }) async {
-    navigator.push(
+    await navigator.push(
       buildConversationRoute(
         builder: (_) => ConversationWired(
           contact: contact,
@@ -4774,6 +5168,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    widget.disposePrivateMediaExpiryScheduler?.call();
 
     // Orderly teardown: retriers → listeners → router → service → bridge
     widget.keyExchangeRetrier.dispose();
@@ -4866,6 +5261,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   void _onPaused() {
+    widget.stopPrivateMediaExpiryScheduler?.call();
     // Fire-and-forget (PS-4): we have at most a few hundred milliseconds of
     // foreground execution. handleAppPaused() is local-DB-only EXCEPT for the
     // FDC-06 bounded pause-flush, which ships ENABLED (kFdcPauseFlushEnabled;
@@ -4940,8 +5336,34 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _onResumed() async {
+    // Private lifecycle recovery has its own generation/queue. Start it before
+    // the broad network-resume coalescing guard: resume A may still be pending
+    // after a pause when resume B arrives, and B must be able to re-arm the
+    // foreground expiry scheduler independently.
+    Future<void>? privateMediaRecovery;
+    try {
+      privateMediaRecovery = widget.privateMediaLifecycleRecovery?.call();
+    } catch (error, stackTrace) {
+      privateMediaRecovery = Future<void>.error(error, stackTrace);
+    }
     if (_isResuming) {
       debugPrint('[LIFECYCLE] _onResumed() skipped — already resuming');
+      if (privateMediaRecovery != null) {
+        try {
+          await privateMediaRecovery;
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'APP_LIFECYCLE_COALESCED_PRIVATE_MEDIA_RECOVERY_DONE',
+            details: {},
+          );
+        } catch (error) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'APP_LIFECYCLE_COALESCED_PRIVATE_MEDIA_RECOVERY_FAILED',
+            details: {'error': error.runtimeType.toString()},
+          );
+        }
+      }
       return;
     }
     _isResuming = true;
@@ -4970,6 +5392,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             widget.accountMigrationRecoverExportPause,
         // 235: local deletion-journal cleanup — before the network gate.
         groupMediaDeletionCleanupFn: widget.groupMediaDeletionCleanup,
+        privateMediaLifecycleRecoveryFn: privateMediaRecovery == null
+            ? null
+            : () => privateMediaRecovery!,
         retryPushRegistrationFn: widget.pushRegistrationCoordinator?.retryNow,
         contactRepo: widget.contactRepository,
         identityRepo: widget.repository,
@@ -5061,6 +5486,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           bridge: widget.bridge,
           msgRepo: widget.groupMessageRepository,
           reactionReplayOutboxRepo: widget.groupReactionReplayOutboxRepository,
+          groupRepo: widget.groupRepository,
+          identityRepo: widget.repository,
         ),
       );
       await sweepExpiredPosts(

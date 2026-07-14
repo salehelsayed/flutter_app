@@ -87,7 +87,8 @@ Future<List<FeedItem>> loadContactFeedItems({
       mediaFileManager: mediaFileManager,
     );
     allMessages.addAll(windowed);
-    totalMessageCounts[contact.peerId] = summary?.messageCount ?? windowed.length;
+    totalMessageCounts[contact.peerId] =
+        summary?.messageCount ?? windowed.length;
     unreadCounts[contact.peerId] = unread;
     lastOutgoingAtByContact[contact.peerId] = summary?.lastOutgoingAt;
   }
@@ -198,26 +199,33 @@ Future<List<GroupThreadFeedItem>> loadGroupFeedItems({
 
   // Batch-attach media to group messages, resolving relative paths
   if (mediaAttachmentRepo != null && allGroupMessages.isNotEmpty) {
-    final ids = allGroupMessages.map((m) => m.id).toList();
-    final mediaMap = await mediaAttachmentRepo.getAttachmentsForMessages(
-      ids,
-      // These ids come from group_messages — group lane, not direct.
-      owner: MediaOwnerLane.group,
-    );
-    if (mediaMap.isNotEmpty) {
-      final resolvedMap = <String, List<MediaAttachment>>{};
-      for (final entry in mediaMap.entries) {
-        resolvedMap[entry.key] = await resolveGroupFeedMediaForDisplay(
-          attachments: entry.value,
-          mediaFileManager: mediaFileManager,
-        );
-      }
+    final ids = allGroupMessages
+        .where(groupMessageAllowsOrdinaryFeedDerivatives)
+        .map((message) => message.id)
+        .toList();
+    if (ids.isNotEmpty) {
+      final mediaMap = await mediaAttachmentRepo.getAttachmentsForMessages(
+        ids,
+        // These ids come from group_messages — group lane, not direct.
+        owner: MediaOwnerLane.group,
+      );
+      if (mediaMap.isNotEmpty) {
+        final resolvedMap = <String, List<MediaAttachment>>{};
+        for (final entry in mediaMap.entries) {
+          resolvedMap[entry.key] = await resolveGroupFeedMediaForDisplay(
+            attachments: entry.value,
+            mediaFileManager: mediaFileManager,
+          );
+        }
 
-      allGroupMessages = allGroupMessages
-          .map((m) => m.copyWith(media: resolvedMap[m.id] ?? const []))
-          .toList();
+        allGroupMessages = allGroupMessages
+            .map((m) => m.copyWith(media: resolvedMap[m.id] ?? const []))
+            .toList();
+      }
     }
   }
+
+  allGroupMessages = allGroupMessages.map(projectGroupMessageForFeed).toList();
 
   return groupGroupMessagesIntoThreads(
     allGroupMessages: allGroupMessages,

@@ -47,6 +47,8 @@ void main() {
         'asymmetry)', () {
       for (final result in [
         HandleReactionResult.senderMismatch,
+        HandleReactionResult.metadataMismatch,
+        HandleReactionResult.blockedSender,
         HandleReactionResult.notReaction,
       ]) {
         final outcome = mapReactionReplayResultToDisposition(result);

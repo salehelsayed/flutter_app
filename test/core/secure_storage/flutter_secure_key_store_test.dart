@@ -15,6 +15,7 @@ void main() {
       );
 
       expect(store.appleAccessGroup, mknoonSharedAppleAccessGroup);
+      expect(store.appleAccessGroup, '397R9Q4WMX.group.com.mknoon.app.share');
     });
   });
 }

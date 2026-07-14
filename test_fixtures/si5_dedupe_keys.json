@@ -33,5 +33,20 @@
     "dartPayload": null,
     "dartMessageId": null,
     "expectedKey": null
+  },
+  {
+    "description": "1:1 message_reaction bounded identity",
+    "push": {
+      "type": "message_reaction",
+      "sender_id": "peer-reactor",
+      "event_id": "reaction-event-123",
+      "target_message_id": "target-message-7",
+      "action": "add"
+    },
+    "dartPayload": "peer-reactor",
+    "dartMessageId": "reaction-event-123",
+    "expectedKey": "message:peer-reactor|reaction-event-123",
+    "reactionEventId": "reaction-event-123",
+    "expectedReactionIdentity": "reaction:813117a606a0d109f3414152f6092e5c33da6c311a4a7736"
   }
 ]

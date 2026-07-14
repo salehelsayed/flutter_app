@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -6,12 +7,15 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/received_media_egress.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/features/share/application/direct_media_batch_forward_delivery_coordinator.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
+import 'package:flutter_app/shared/widgets/media/media_video_resume_controller.dart';
 import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
 
 import '../../application/direct_media_library_batch_actions.dart';
 import '../../application/direct_media_library_batch_delete.dart';
 import '../../application/direct_media_library_controller.dart';
+import '../../application/private_media_action_eligibility.dart';
 import '../../application/received_media_action_controller.dart';
 import '../../domain/models/media_attachment.dart';
 import '../../domain/models/media_library.dart';
@@ -32,6 +36,17 @@ class DirectSharedMediaGoToMessage extends DirectSharedMediaLibraryResult {
 
 bool _defaultFileExists(String resolvedPath) => File(resolvedPath).existsSync();
 
+bool _canEnterDirectLibraryPictureInPicture(
+  MediaLibraryEntry entry,
+  DirectPrivateMediaActionDecision decision,
+) {
+  final attachment = entry.attachment;
+  return decision.isOrdinary &&
+      decision.canEnterPictureInPicture &&
+      attachment.ownerLane == MediaOwnerLane.direct &&
+      attachment.mediaType == 'video';
+}
+
 /// 233: the 1:1 Shared Media library.
 ///
 /// Strictly direct-scoped: the screen accepts ONLY a contact peer id — the
@@ -50,8 +65,13 @@ class DirectSharedMediaLibraryScreen extends StatefulWidget {
     required this.contactUsername,
     required this.libraryRepository,
     required this.stateRepository,
+    this.loadActionDecision,
+    this.pictureInPictureControllerFactory,
+    this.loadPictureInPictureAuthorization,
+    this.mediaViewerResumeStore,
     this.dispatchEgress,
     this.dispatchDelete,
+    this.launchBatchForward,
     this.onMessagesDeleted,
     this.resolveStoredPath = MediaFileManager.resolveStoredPathSync,
     // Sync existence probe: widget tests run in a fake-async zone where
@@ -64,6 +84,16 @@ class DirectSharedMediaLibraryScreen extends StatefulWidget {
   final MediaLibraryRepository libraryRepository;
   final MediaLibraryStateRepository stateRepository;
 
+  /// Fresh exact current-parent authority for ordinary viewer entry. The
+  /// production route always supplies this; direct widget tests may omit it
+  /// when exercising pre-Session-04 ordinary presentation in isolation.
+  final DirectPrivateMediaActionDecisionLoader? loadActionDecision;
+  final MediaPictureInPictureControllerFactory?
+  pictureInPictureControllerFactory;
+  final MediaPictureInPictureAuthorizationLoader?
+  loadPictureInPictureAuthorization;
+  final MediaViewerResumeStore? mediaViewerResumeStore;
+
   /// Batch/current-item Save and Share authority (plan-231 current-row
   /// qualification + one plan-227 list-capable native call). Null leaves
   /// Save/Share unwired.
@@ -72,6 +102,10 @@ class DirectSharedMediaLibraryScreen extends StatefulWidget {
   /// Confirmed whole-message Delete-for-Me authority. Null leaves Delete
   /// unwired.
   final DirectMediaLibraryDeleteDispatch? dispatchDelete;
+
+  /// Complete Plan-249 direct-only Batch Forward route. Null keeps the action
+  /// absent; this screen never constructs transport or destination state.
+  final DirectMediaBatchForwardLibraryLaunch? launchBatchForward;
 
   /// Notifies the owning conversation of locally deleted message ids so its
   /// open window can reconcile.
@@ -89,6 +123,7 @@ class _DirectSharedMediaLibraryScreenState
     extends State<DirectSharedMediaLibraryScreen> {
   late final DirectMediaLibraryController _controller;
   final ScrollController _scrollController = ScrollController();
+  bool _batchForwardActive = false;
 
   @override
   void initState() {
@@ -208,13 +243,47 @@ class _DirectSharedMediaLibraryScreenState
       );
   }
 
-  void _openViewer(String attachmentId) {
+  Future<void> _openViewer(String attachmentId) async {
+    final loadDecision = widget.loadActionDecision;
+    final pictureInPictureByAttachmentId = <String, bool>{};
+    if (loadDecision != null) {
+      // Every currently loaded item can become a viewer page. Revalidate each
+      // exact identity before constructing the ordinary cross-message viewer,
+      // then reconcile any stale private/terminal/missing parent as a unit.
+      final deniedMessageIds = <String>{};
+      final entries = List<MediaLibraryEntry>.of(_controller.entries);
+      for (final entry in entries) {
+        final attachment = entry.attachment;
+        final decision = await loadDecision(
+          DirectReceivedMediaActionIdentity(
+            messageId: attachment.messageId,
+            attachmentId: attachment.id,
+          ),
+        );
+        pictureInPictureByAttachmentId[attachment.id] =
+            _canEnterDirectLibraryPictureInPicture(entry, decision);
+        if (!decision.isOrdinary) {
+          deniedMessageIds.add(attachment.messageId);
+        }
+      }
+      if (!mounted) return;
+      for (final messageId in deniedMessageIds) {
+        _controller.removeEntriesForMessage(messageId);
+      }
+      if (!_controller.entries.any(
+        (entry) => entry.attachment.id == attachmentId,
+      )) {
+        return;
+      }
+    }
+    if (!mounted) return;
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => _SharedMediaViewerHost(
           screen: widget,
           controller: _controller,
           initialAttachmentId: attachmentId,
+          pictureInPictureByAttachmentId: pictureInPictureByAttachmentId,
           confirmDelete: _confirmDeleteForMe,
         ),
       ),
@@ -317,6 +386,45 @@ class _DirectSharedMediaLibraryScreenState
       _applyDeleteOutcome(outcome);
     }
 
+    Future<void> performBatchForward() async {
+      final launch = widget.launchBatchForward;
+      if (launch == null || _batchForwardActive) return;
+      final identities = _identitiesFor(selectedIds);
+      if (identities.isEmpty) return;
+      setState(() => _batchForwardActive = true);
+      try {
+        final result = await launch(identities);
+        if (!mounted) return;
+        switch (result.status) {
+          case DirectMediaBatchForwardLibraryLaunchStatus.cancelled:
+            break;
+          case DirectMediaBatchForwardLibraryLaunchStatus.sourceUnavailable:
+            ScaffoldMessenger.maybeOf(context)
+              ?..hideCurrentSnackBar()
+              ..showSnackBar(
+                SnackBar(
+                  key: const ValueKey(
+                    'shared-media-batch-forward-source-unavailable',
+                  ),
+                  content: Text(l10n.direct_batch_forward_source_unavailable),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+          case DirectMediaBatchForwardLibraryLaunchStatus.completed:
+            final completion = result.completion;
+            if (completion != null) {
+              _controller.unselect(
+                completion.fullySettledSourceIdentities
+                    .map((identity) => identity.attachmentId)
+                    .toSet(),
+              );
+            }
+        }
+      } finally {
+        if (mounted) setState(() => _batchForwardActive = false);
+      }
+    }
+
     return SafeArea(
       top: false,
       child: SingleChildScrollView(
@@ -325,15 +433,21 @@ class _DirectSharedMediaLibraryScreenState
         child: Row(
           key: const ValueKey('shared-media-selection-actions'),
           children: [
+            if (widget.launchBatchForward != null)
+              TextButton.icon(
+                key: const ValueKey('shared-media-action-forward'),
+                icon: const Icon(Icons.forward_to_inbox_rounded, size: 18),
+                label: Text(l10n.shared_media_action_forward),
+                onPressed: _batchForwardActive ? null : performBatchForward,
+              ),
             if (widget.dispatchEgress != null) ...[
               TextButton.icon(
                 key: const ValueKey('shared-media-action-save'),
                 icon: const Icon(Icons.download_rounded, size: 18),
                 label: Text(l10n.shared_media_action_save),
                 onPressed: () async {
-                  final destination = await DirectMediaSaveDestinationSheet.show(
-                    context,
-                  );
+                  final destination =
+                      await DirectMediaSaveDestinationSheet.show(context);
                   if (destination == null || !mounted) return;
                   await performEgress(destination);
                 },
@@ -358,9 +472,7 @@ class _DirectSharedMediaLibraryScreenState
                 icon: const Icon(Icons.my_location_rounded, size: 18),
                 label: Text(l10n.shared_media_action_go_to_message),
                 onPressed: () {
-                  final messageId = _controller.messageIdOf(
-                    selectedIds.single,
-                  );
+                  final messageId = _controller.messageIdOf(selectedIds.single);
                   if (messageId == null) return;
                   Navigator.of(
                     context,
@@ -430,7 +542,7 @@ class _DirectSharedMediaLibraryScreenState
           if (_controller.hasSelection) {
             _toggleSelection(attachment.id);
           } else {
-            _openViewer(attachment.id);
+            unawaited(_openViewer(attachment.id));
           }
         },
         onLongPress: () => _toggleSelection(attachment.id),
@@ -537,12 +649,14 @@ class _SharedMediaViewerHost extends StatefulWidget {
     required this.screen,
     required this.controller,
     required this.initialAttachmentId,
+    required this.pictureInPictureByAttachmentId,
     required this.confirmDelete,
   });
 
   final DirectSharedMediaLibraryScreen screen;
   final DirectMediaLibraryController controller;
   final String initialAttachmentId;
+  final Map<String, bool> pictureInPictureByAttachmentId;
   final Future<bool> Function(int messageCount) confirmDelete;
 
   @override
@@ -553,6 +667,9 @@ class _SharedMediaViewerHostState extends State<_SharedMediaViewerHost> {
   static const int _continuationThreshold = 3;
 
   late int _currentIndex;
+  late final Map<String, bool> _pictureInPictureByAttachmentId;
+  final Set<String> _qualifiedPictureInPictureIdentities = <String>{};
+  final Set<String> _pictureInPictureQualificationsInFlight = <String>{};
 
   @override
   void initState() {
@@ -561,11 +678,83 @@ class _SharedMediaViewerHostState extends State<_SharedMediaViewerHost> {
       (entry) => entry.attachment.id == widget.initialAttachmentId,
     );
     if (_currentIndex < 0) _currentIndex = 0;
+    _pictureInPictureByAttachmentId = Map<String, bool>.of(
+      widget.pictureInPictureByAttachmentId,
+    );
+    for (final entry in widget.controller.entries) {
+      if (_pictureInPictureByAttachmentId.containsKey(entry.attachment.id)) {
+        _qualifiedPictureInPictureIdentities.add(_identityKey(entry));
+      }
+    }
+    widget.controller.addListener(_onControllerChanged);
     // Post-frame: the controller notifies synchronously when a load starts,
     // and initState runs during the route's first build.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _maybeRequestContinuation();
+      if (!mounted) return;
+      _maybeRequestContinuation();
+      _qualifyAppendedEntries();
     });
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onControllerChanged);
+    super.dispose();
+  }
+
+  void _onControllerChanged() {
+    _qualifyAppendedEntries();
+  }
+
+  String _identityKey(MediaLibraryEntry entry) =>
+      '${entry.attachment.messageId}\u0000${entry.attachment.id}';
+
+  void _qualifyAppendedEntries() {
+    if (!mounted || widget.screen.loadActionDecision == null) return;
+    for (final entry in List<MediaLibraryEntry>.of(widget.controller.entries)) {
+      final identity = _identityKey(entry);
+      if (_qualifiedPictureInPictureIdentities.contains(identity) ||
+          !_pictureInPictureQualificationsInFlight.add(identity)) {
+        continue;
+      }
+      unawaited(_qualifyAppendedEntry(entry, identity));
+    }
+  }
+
+  Future<void> _qualifyAppendedEntry(
+    MediaLibraryEntry entry,
+    String identity,
+  ) async {
+    DirectPrivateMediaActionDecision? decision;
+    try {
+      decision = await widget.screen.loadActionDecision!(
+        DirectReceivedMediaActionIdentity(
+          messageId: entry.attachment.messageId,
+          attachmentId: entry.attachment.id,
+        ),
+      );
+    } catch (_) {
+      // A continuation page has no authority to retain an unqualified parent.
+    }
+    if (!mounted) return;
+    final stillCurrent = widget.controller.entries.any(
+      (current) => _identityKey(current) == identity,
+    );
+    if (!stillCurrent) {
+      _pictureInPictureQualificationsInFlight.remove(identity);
+      return;
+    }
+
+    _qualifiedPictureInPictureIdentities.add(identity);
+    _pictureInPictureQualificationsInFlight.remove(identity);
+    _pictureInPictureByAttachmentId[entry.attachment.id] =
+        decision != null &&
+        _canEnterDirectLibraryPictureInPicture(entry, decision);
+    if (decision == null || !decision.isOrdinary) {
+      widget.controller.removeEntriesForMessage(entry.attachment.messageId);
+      return;
+    }
+    setState(() {});
   }
 
   void _onPageChanged(int index) {
@@ -596,9 +785,7 @@ class _SharedMediaViewerHostState extends State<_SharedMediaViewerHost> {
       case MediaViewerAction.save:
         final dispatch = widget.screen.dispatchEgress;
         if (dispatch == null) return MediaViewerActionResult.failure;
-        final destination = await DirectMediaSaveDestinationSheet.show(
-          context,
-        );
+        final destination = await DirectMediaSaveDestinationSheet.show(context);
         if (destination == null || !mounted) {
           return MediaViewerActionResult.cancelled;
         }
@@ -637,8 +824,10 @@ class _SharedMediaViewerHostState extends State<_SharedMediaViewerHost> {
       case MediaViewerAction.forward:
       case MediaViewerAction.info:
       case MediaViewerAction.reply:
+      case MediaViewerAction.messageSender:
         // Not offered on the library surface (plan 232 owns Forward; Info/
-        // Reply stay on the conversation surface).
+        // Reply stay on the conversation surface; Message sender is group
+        // announcement-only under plan 247).
         return MediaViewerActionResult.failure;
     }
   }
@@ -685,6 +874,8 @@ class _SharedMediaViewerHostState extends State<_SharedMediaViewerHost> {
           ? screen.contactUsername
           : null,
       timestamp: DateTime.tryParse(entry.parentTimestamp),
+      canEnterPictureInPicture:
+          _pictureInPictureByAttachmentId[attachment.id] ?? false,
       protection: MediaViewerProtection(
         isDownloaded:
             attachment.downloadStatus == kMediaDownloadStatusDone && hasBytes,
@@ -709,7 +900,16 @@ class _SharedMediaViewerHostState extends State<_SharedMediaViewerHost> {
     return ListenableBuilder(
       listenable: widget.controller,
       builder: (context, _) {
-        final entries = widget.controller.entries;
+        final controllerEntries = widget.controller.entries;
+        final entries = widget.screen.loadActionDecision == null
+            ? controllerEntries
+            : [
+                for (final entry in controllerEntries)
+                  if (_qualifiedPictureInPictureIdentities.contains(
+                    _identityKey(entry),
+                  ))
+                    entry,
+              ];
         if (entries.isEmpty) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) Navigator.of(context).pop();
@@ -721,6 +921,11 @@ class _SharedMediaViewerHostState extends State<_SharedMediaViewerHost> {
           initialIndex: _currentIndex,
           onPageChanged: _onPageChanged,
           onAction: _onAction,
+          resumeStore: widget.screen.mediaViewerResumeStore,
+          pictureInPictureControllerFactory:
+              widget.screen.pictureInPictureControllerFactory,
+          loadPictureInPictureAuthorization:
+              widget.screen.loadPictureInPictureAuthorization,
         );
       },
     );

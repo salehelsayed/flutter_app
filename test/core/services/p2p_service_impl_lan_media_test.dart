@@ -11,6 +11,7 @@ import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
     as p2p;
 
 import '../../shared/fakes/in_memory_inbox_staging_repository.dart';
+import '../../shared/fixtures/media_bytes.dart';
 import '../local_discovery/fake_local_p2p_service.dart';
 
 /// FDC-15 — Dart send leg + the NEW `hasNonCircuitDirectConn` predicate.
@@ -21,8 +22,7 @@ import '../local_discovery/fake_local_p2p_service.dart';
 /// caller (preserved — the 112-P2.4 guard).
 
 const _directQuicAddr = '/ip4/192.168.1.55/udp/4001/quic-v1';
-const _circuitAddr =
-    '/dns4/relay.example/tcp/4001/p2p/relay-peer/p2p-circuit';
+const _circuitAddr = '/dns4/relay.example/tcp/4001/p2p/relay-peer/p2p-circuit';
 
 class _FakeBridge extends Bridge {
   final Map<String, FutureOr<String> Function(Map<String, dynamic>?)>
@@ -81,7 +81,10 @@ void main() {
   setUp(() {
     bridge = _FakeBridge();
     localP2P = FakeLocalP2PService()..sendWillSucceed = true;
-    bridge.whenCommand('inbox:ack', (_) => jsonEncode({'ok': true, 'acked': 1}));
+    bridge.whenCommand(
+      'inbox:ack',
+      (_) => jsonEncode({'ok': true, 'acked': 1}),
+    );
     bridge.whenCommand(
       'media:lan_send',
       (_) => jsonEncode({
@@ -215,7 +218,10 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 20));
 
     expect(bridge.lanMediaSends, hasLength(1));
-    expect(bridge.lanMediaSends.single['filePath'], '/tmp/artifact-ciphertext.enc');
+    expect(
+      bridge.lanMediaSends.single['filePath'],
+      '/tmp/artifact-ciphertext.enc',
+    );
     expect(bridge.lanMediaSends.single['mime'], kOpaqueMediaTransportMime);
   });
 
@@ -271,7 +277,7 @@ void main() {
     final dir = await Directory.systemTemp.createTemp('fdc15-td6-');
     addTearDown(() => dir.delete(recursive: true));
     final source = File('${dir.path}/group.jpg');
-    await source.writeAsString('group-source-bytes');
+    await source.writeAsBytes(validJpegFixtureBytes);
     final cipher = File('${dir.path}/group.enc');
     await cipher.writeAsString('opaque-group-ciphertext');
     final artifact = EncryptedMediaArtifact(

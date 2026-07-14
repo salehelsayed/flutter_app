@@ -23,6 +23,7 @@ import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
@@ -1716,11 +1717,17 @@ void main() {
       expect(canonical!.logicalDeliveryId, 'logical-delivery-shared-1');
       expect(canonical.quotedMessageId, 'logical-parent-row');
       expect(
-        await mediaRepo.getAttachmentsForMessage('logical-local-row-a', owner: MediaOwnerLane.group),
+        await mediaRepo.getAttachmentsForMessage(
+          'logical-local-row-a',
+          owner: MediaOwnerLane.group,
+        ),
         hasLength(1),
       );
       expect(
-        await mediaRepo.getAttachmentsForMessage('logical-local-row-b', owner: MediaOwnerLane.group),
+        await mediaRepo.getAttachmentsForMessage(
+          'logical-local-row-b',
+          owner: MediaOwnerLane.group,
+        ),
         isEmpty,
       );
 
@@ -2329,7 +2336,8 @@ void main() {
     expect(mediaRepo.count, 1);
 
     final attachments = await mediaRepo.getAttachmentsForMessage(
-      sharedMessageId, owner: MediaOwnerLane.group,
+      sharedMessageId,
+      owner: MediaOwnerLane.group,
     );
     expect(attachments, hasLength(1));
     expect(attachments.first.id, 'blob-repair-1');
@@ -2666,7 +2674,10 @@ void main() {
       expect(mediaRepo.count, 1);
 
       // Verify attachment has the message's ID
-      final attachments = await mediaRepo.getAttachmentsForMessage(result!.id, owner: MediaOwnerLane.group);
+      final attachments = await mediaRepo.getAttachmentsForMessage(
+        result!.id,
+        owner: MediaOwnerLane.group,
+      );
       expect(attachments.length, 1);
       expect(attachments.first.mime, 'image/jpeg');
     });
@@ -2728,7 +2739,7 @@ void main() {
           groupId: 'group-announce-1',
           peerId: 'peer-sender',
           username: 'Sender',
-          role: MemberRole.writer,
+          role: MemberRole.admin,
           joinedAt: DateTime.now().toUtc(),
         ),
       );
@@ -2857,10 +2868,12 @@ void main() {
         expect(await msgRepo.getMessage(remintedMessageId), isNull);
 
         final originalAttachments = await mediaRepo.getAttachmentsForMessage(
-          originalMessageId, owner: MediaOwnerLane.group,
+          originalMessageId,
+          owner: MediaOwnerLane.group,
         );
         final duplicateAttachments = await mediaRepo.getAttachmentsForMessage(
-          remintedMessageId, owner: MediaOwnerLane.group,
+          remintedMessageId,
+          owner: MediaOwnerLane.group,
         );
         expect(originalAttachments, hasLength(1));
         expect(originalAttachments.single.id, 'blob-gird003-shared');
@@ -2916,10 +2929,12 @@ void main() {
         expect(msgRepo.count, 2);
 
         final firstAttachments = await mediaRepo.getAttachmentsForMessage(
-          firstMessageId, owner: MediaOwnerLane.group,
+          firstMessageId,
+          owner: MediaOwnerLane.group,
         );
         final secondAttachments = await mediaRepo.getAttachmentsForMessage(
-          secondMessageId, owner: MediaOwnerLane.group,
+          secondMessageId,
+          owner: MediaOwnerLane.group,
         );
         expect(firstAttachments, hasLength(1));
         expect(firstAttachments.single.id, 'blob-gird003-intentional-a');
@@ -3123,6 +3138,58 @@ void main() {
       expect(await msgRepo.getMessage('msg-malformed-media'), isNull);
       expect(mediaRepo.count, 0);
     });
+
+    test(
+      'GPL-04C explicit policy plus corrupt descriptor persists unsupported without attachment',
+      () async {
+        final result = await handleIncomingGroupMessage(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          senderId: 'peer-sender',
+          senderUsername: 'Sender',
+          keyEpoch: 0,
+          text: '',
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          messageId: 'msg-corrupt-private-media',
+          privateMediaPolicyFields: const {
+            'mediaPolicyVersion': 1,
+            'mediaLifecycle': 'viewOnce',
+            'mediaDurationSeconds': null,
+            'mediaProtected': true,
+          },
+          media: [
+            {
+              'id': 'blob-corrupt-private-media',
+              'mime': 42,
+              'size': 5000,
+              'mediaType': 'image',
+              'contentHash': _validContentHash,
+              'encryptionKeyBase64': 'key-fixture',
+              'encryptionNonce': 'nonce-fixture',
+              'encryptionScheme': 'blob_aes_256_gcm_v1',
+              'downloadStatus': 'pending',
+              'createdAt': DateTime.now().toUtc().toIso8601String(),
+            },
+          ],
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(result, isNotNull);
+        expect(result!.id, 'msg-corrupt-private-media');
+        expect(
+          result.privateMediaPolicy,
+          const GroupPrivateMediaPolicy.unsupported(sourceVersion: 1),
+        );
+        expect(
+          (await msgRepo.getMessage(
+            'msg-corrupt-private-media',
+          ))!.privateMediaPolicy,
+          const GroupPrivateMediaPolicy.unsupported(sourceVersion: 1),
+        );
+        expect(mediaRepo.count, 0);
+      },
+    );
 
     test('rejects malformed media size before storage', () async {
       final media = [

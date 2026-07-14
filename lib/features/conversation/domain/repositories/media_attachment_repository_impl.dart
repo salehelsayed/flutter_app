@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
@@ -23,14 +24,31 @@ import 'media_attachment_repository.dart';
 /// preserving local-only owner/bookmark/playback state and a completed local
 /// path, and re-validate identity inside the write transaction as the final
 /// race guard.
+///
+/// Every public attachment-row mutator enters [lifecycleLock]. Methods whose
+/// names end in `WithinLock` also enter it defensively; acquisition is
+/// reentrant only for the same async-zone attachment lease, so these public
+/// capabilities cannot be used to bypass the row mutation authority. Bulk
+/// message/contact writers use the lock's exclusive mode because their full
+/// affected attachment set cannot be frozen before the database statement.
 class MediaAttachmentRepositoryImpl
     implements
         MediaAttachmentRepository,
+        MediaAttachmentAuthorizationChangeSource,
         MediaAttachmentByIdLookup,
         MediaPreviewDescriptorLookup,
         MediaLibraryStateRepository,
+        DirectMediaLibraryStateRepository,
+        GroupMediaLibraryStateRepository,
         MediaLibraryRepository,
         MediaDownloadStateRepository,
+        DirectPrivateMediaDownloadStateRepository,
+        DirectPrivateMediaAttachmentSaveRepository,
+        DirectPrivateMediaCleanupRepository,
+        DirectPrivateMediaCleanupRuntime,
+        GroupPrivateMediaDownloadStateRepository,
+        GroupPrivateMediaCleanupRepository,
+        GroupPrivateMediaCleanupRuntime,
         MediaStorageInventoryRepository,
         GroupGuardedMediaAttachmentSave,
         NewMessageMediaPersistenceRollback {
@@ -68,6 +86,19 @@ class MediaAttachmentRepositoryImpl
   })
   dbLoadUploadPendingAttachments;
   final Future<void> Function(String id, bool bookmarked) dbSetMediaBookmarked;
+  final Future<bool> Function({
+    required String messageId,
+    required String attachmentId,
+    required bool bookmarked,
+  })?
+  dbSetDirectMediaBookmarkedIfOrdinary;
+  final Future<bool> Function({
+    required String groupId,
+    required String messageId,
+    required String attachmentId,
+    required bool bookmarked,
+  })?
+  dbSetGroupMediaBookmarkedIfOrdinary;
   final Future<void> Function(String id, int positionMs)
   dbUpdateMediaPlaybackPosition;
   final Future<List<Map<String, Object?>>> Function({
@@ -115,18 +146,133 @@ class MediaAttachmentRepositoryImpl
   dbClaimMediaEvicted;
   final Future<int> Function(String id, {required String ownerLane})?
   dbFinalizeMediaEvictedPathCleared;
+  final Future<int> Function({
+    required String messageId,
+    required String attachmentId,
+    required String localPath,
+    required int nowMs,
+  })?
+  dbCommitDirectPrivateMediaDownloadIfEligible;
+  final Future<int> Function({
+    required String messageId,
+    required String attachmentId,
+    required int nowMs,
+  })?
+  dbBeginDirectPrivateMediaDownloadIfEligible;
+  final Future<int> Function({
+    required String messageId,
+    required String attachmentId,
+    required String expectedLocalPath,
+    required int nowMs,
+  })?
+  dbQualifyDirectPrivateMediaLocalReadyIfEligible;
+  final Future<int> Function({
+    required String messageId,
+    required String attachmentId,
+    required int nowMs,
+  })?
+  dbQualifyDirectPrivateMediaDownloadClaimIfEligible;
+  final Future<int> Function({
+    required String messageId,
+    required String attachmentId,
+    required int nowMs,
+    required bool incrementRetryCount,
+    required String failureStatus,
+    required String expectedDownloadStatus,
+    String? expectedLocalPath,
+    bool clearLocalPath,
+  })?
+  dbRecordDirectPrivateMediaDownloadFailureIfEligible;
+  final Future<bool> Function(
+    Map<String, Object?> row, {
+    required String messageId,
+    required int nowMs,
+  })?
+  dbSaveDirectPrivateMediaAttachmentGuarded;
+  final Future<bool> Function({
+    required String messageId,
+    required String attachmentId,
+  })?
+  dbCanCleanupDirectPrivateMediaAttachmentExact;
+  final Future<int> Function({
+    required String messageId,
+    required String attachmentId,
+  })?
+  dbDeleteDirectPrivateMediaAttachmentExact;
+  final Future<int> Function({
+    required String groupId,
+    required String messageId,
+    required String attachmentId,
+    required int nowMs,
+  })?
+  dbBeginGroupPrivateMediaDownloadIfEligible;
+  final Future<int> Function({
+    required String groupId,
+    required String messageId,
+    required String attachmentId,
+    required String expectedLocalPath,
+    required int nowMs,
+  })?
+  dbQualifyGroupPrivateMediaLocalReadyIfEligible;
+  final Future<int> Function({
+    required String groupId,
+    required String messageId,
+    required String attachmentId,
+    required int nowMs,
+  })?
+  dbQualifyGroupPrivateMediaDownloadClaimIfEligible;
+  final Future<int> Function({
+    required String groupId,
+    required String messageId,
+    required String attachmentId,
+    required int nowMs,
+    required bool incrementRetryCount,
+    required String failureStatus,
+    required String expectedDownloadStatus,
+    String? expectedLocalPath,
+    required bool clearLocalPath,
+  })?
+  dbRecordGroupPrivateMediaDownloadFailureIfEligible;
+  final Future<int> Function({
+    required String groupId,
+    required String messageId,
+    required String attachmentId,
+    required String localPath,
+    required int nowMs,
+  })?
+  dbCommitGroupPrivateMediaDownloadIfEligible;
+  final Future<bool> Function({
+    required String messageId,
+    required String attachmentId,
+  })?
+  dbCanCleanupGroupPrivateMediaAttachmentExact;
+  final Future<int> Function({
+    required String messageId,
+    required String attachmentId,
+  })?
+  dbDeleteGroupPrivateMediaAttachmentExact;
 
   // 235: guarded final write for incoming GROUP media (parent + deletion-
   // journal check in the SAME transaction as the row write). Optional like
   // the CAS closures; the capability fails closed when missing.
-  final Future<bool> Function(Map<String, Object?> row, {required String groupId})?
+  final Future<bool> Function(
+    Map<String, Object?> row, {
+    required String groupId,
+  })?
   dbSaveGroupMediaAttachmentGuarded;
 
   final SecureKeyStore? secureKeyStore;
+  final Future<void> Function(String messageId)?
+  refreshDirectPrivateMediaParent;
 
   /// 235: serializes row/key/file work per attachment across the guarded
   /// save, the download commit, and the deletion-journal cleanup saga.
   final MediaAttachmentLifecycleLock lifecycleLock;
+  final StreamController<MediaAttachmentAuthorizationChange>
+  _authorizationChangesController =
+      StreamController<MediaAttachmentAuthorizationChange>.broadcast(
+        sync: true,
+      );
 
   MediaAttachmentRepositoryImpl({
     required this.dbSaveMediaAttachmentPreservingLocalState,
@@ -141,6 +287,8 @@ class MediaAttachmentRepositoryImpl
     required this.dbLoadPendingMediaDownloads,
     required this.dbLoadUploadPendingAttachments,
     required this.dbSetMediaBookmarked,
+    this.dbSetDirectMediaBookmarkedIfOrdinary,
+    this.dbSetGroupMediaBookmarkedIfOrdinary,
     required this.dbUpdateMediaPlaybackPosition,
     required this.dbLoadMediaLibraryPage,
     this.dbLoadMediaStoragePage,
@@ -148,10 +296,94 @@ class MediaAttachmentRepositoryImpl
     this.dbCommitMediaDownloadLocalPath,
     this.dbClaimMediaEvicted,
     this.dbFinalizeMediaEvictedPathCleared,
+    this.dbCommitDirectPrivateMediaDownloadIfEligible,
+    this.dbBeginDirectPrivateMediaDownloadIfEligible,
+    this.dbQualifyDirectPrivateMediaLocalReadyIfEligible,
+    this.dbQualifyDirectPrivateMediaDownloadClaimIfEligible,
+    this.dbRecordDirectPrivateMediaDownloadFailureIfEligible,
+    this.dbSaveDirectPrivateMediaAttachmentGuarded,
+    this.dbCanCleanupDirectPrivateMediaAttachmentExact,
+    this.dbDeleteDirectPrivateMediaAttachmentExact,
+    this.dbBeginGroupPrivateMediaDownloadIfEligible,
+    this.dbQualifyGroupPrivateMediaLocalReadyIfEligible,
+    this.dbQualifyGroupPrivateMediaDownloadClaimIfEligible,
+    this.dbRecordGroupPrivateMediaDownloadFailureIfEligible,
+    this.dbCommitGroupPrivateMediaDownloadIfEligible,
+    this.dbCanCleanupGroupPrivateMediaAttachmentExact,
+    this.dbDeleteGroupPrivateMediaAttachmentExact,
     this.dbSaveGroupMediaAttachmentGuarded,
     this.secureKeyStore,
+    this.refreshDirectPrivateMediaParent,
     MediaAttachmentLifecycleLock? lifecycleLock,
   }) : lifecycleLock = lifecycleLock ?? mediaAttachmentLifecycleLock;
+
+  @override
+  Stream<MediaAttachmentAuthorizationChange> get authorizationChanges =>
+      _authorizationChangesController.stream;
+
+  void _emitAuthorizationChange({
+    required MediaOwnerLane owner,
+    String? scopeId,
+    String? messageId,
+    String? attachmentId,
+    required MediaAttachmentAuthorizationMutation kind,
+  }) {
+    _authorizationChangesController.add(
+      MediaAttachmentAuthorizationChange(
+        owner: owner,
+        scopeId: scopeId,
+        messageId: messageId,
+        attachmentId: attachmentId,
+        kind: kind,
+      ),
+    );
+  }
+
+  void _emitAuthorizationChangeForRow(
+    Map<String, Object?> row,
+    MediaAttachmentAuthorizationMutation kind,
+  ) {
+    final owner = mediaOwnerLaneFromDbValue(row['owner_lane'] as String?);
+    final messageId = row['message_id'] as String?;
+    final attachmentId = row['id'] as String?;
+    if (owner == null || messageId == null || attachmentId == null) return;
+    _emitAuthorizationChange(
+      owner: owner,
+      messageId: messageId,
+      attachmentId: attachmentId,
+      kind: kind,
+    );
+  }
+
+  @override
+  MediaAttachmentLifecycleLock get directPrivateMediaLifecycleLock =>
+      lifecycleLock;
+
+  @override
+  MediaAttachmentLifecycleLock get groupPrivateMediaLifecycleLock =>
+      lifecycleLock;
+
+  @override
+  Future<bool> deleteDirectPrivateMediaEncryptionKeyWithinLock({
+    required String messageId,
+    required String attachmentId,
+  }) => lifecycleLock.synchronized(attachmentId, () async {
+    final canCleanup = _requireCasClosure(
+      dbCanCleanupDirectPrivateMediaAttachmentExact,
+      'deleteDirectPrivateMediaEncryptionKeyWithinLock',
+    );
+    if (!await canCleanup(messageId: messageId, attachmentId: attachmentId)) {
+      return false;
+    }
+    final store = secureKeyStore;
+    if (store == null) {
+      throw StateError(
+        'direct private-media cleanup requires secure key storage',
+      );
+    }
+    await store.delete(mediaAttachmentEncryptionKeyStoreName(attachmentId));
+    return true;
+  });
 
   T _requireCasClosure<T>(T? closure, String name) {
     if (closure == null) {
@@ -165,34 +397,279 @@ class MediaAttachmentRepositoryImpl
     return closure;
   }
 
-  Future<T> _withLifecycleLocks<T>(
-    Iterable<String> attachmentIds,
-    Future<T> Function() action,
-  ) {
-    final ids = attachmentIds.toSet().toList()..sort();
-    Future<T> acquire(int index) {
-      if (index >= ids.length) return action();
-      return lifecycleLock.synchronized(ids[index], () => acquire(index + 1));
+  Future<T> _withCompensatedEncryptionKeyWrite<T>(
+    MediaAttachment attachment,
+    Future<T> Function(Map<String, Object?> row) persist, {
+    required bool Function(T result) committed,
+  }) async {
+    final snapshot = await _captureEncryptionKeyWriteSnapshot(attachment);
+    try {
+      final row = await _toStorageRow(attachment);
+      final result = await persist(row);
+      if (!committed(result)) await snapshot.restore();
+      return result;
+    } catch (_) {
+      await snapshot.restore();
+      rethrow;
     }
+  }
 
-    return acquire(0);
+  Future<_MediaEncryptionKeyWriteSnapshot> _captureEncryptionKeyWriteSnapshot(
+    MediaAttachment attachment,
+  ) async {
+    final store = secureKeyStore;
+    final rawKey = attachment.encryptionKeyBase64;
+    if (store == null ||
+        rawKey == null ||
+        rawKey.isEmpty ||
+        isSecureStoreReference(rawKey)) {
+      return _MediaEncryptionKeyWriteSnapshot.inactive();
+    }
+    final keyName = mediaAttachmentEncryptionKeyStoreName(attachment.id);
+    final existed = await store.containsKey(keyName);
+    final previousValue = existed ? await store.read(keyName) : null;
+    if (existed && previousValue == null) {
+      throw StateError(
+        'existing secure media key is unreadable; refusing overwrite',
+      );
+    }
+    return _MediaEncryptionKeyWriteSnapshot(
+      store: store,
+      keyName: keyName,
+      existed: existed,
+      previousValue: previousValue,
+    );
   }
 
   @override
-  Future<bool> beginMediaDownload(
-    String id, {
-    required MediaOwnerLane owner,
+  Future<bool> saveDirectPrivateAttachmentGuarded(
+    MediaAttachment attachment, {
+    required String messageId,
+    required int nowMs,
   }) async {
-    final claim = _requireCasClosure(dbBeginMediaDownload, 'beginMediaDownload');
-    return await claim(id, ownerLane: owner.dbValue) > 0;
+    if (attachment.messageId != messageId ||
+        (attachment.ownerLane != null &&
+            attachment.ownerLane != MediaOwnerLane.direct)) {
+      throw MediaAttachmentOwnerViolation(
+        'guarded direct private save received mismatched identity',
+      );
+    }
+    final guarded = _requireCasClosure(
+      dbSaveDirectPrivateMediaAttachmentGuarded,
+      'saveDirectPrivateAttachmentGuarded',
+    );
+    final stamped = attachment.copyWith(ownerLane: MediaOwnerLane.direct);
+    return lifecycleLock.synchronized(stamped.id, () async {
+      final existingRow = await dbLoadMediaById(stamped.id);
+      if (existingRow != null &&
+          (existingRow['owner_lane'] != MediaOwnerLane.direct.dbValue ||
+              existingRow['message_id'] != messageId)) {
+        throw MediaAttachmentOwnerViolation(
+          'guarded direct private save would re-parent attachment '
+          '${stamped.id}',
+        );
+      }
+      final saved = await _withCompensatedEncryptionKeyWrite<bool>(stamped, (
+        row,
+      ) async {
+        try {
+          return await guarded(row, messageId: messageId, nowMs: nowMs);
+        } finally {
+          await _refreshDirectPrivateParent(messageId);
+        }
+      }, committed: (saved) => saved);
+      if (saved) {
+        _emitAuthorizationChange(
+          owner: MediaOwnerLane.direct,
+          messageId: messageId,
+          attachmentId: stamped.id,
+          kind: MediaAttachmentAuthorizationMutation.saved,
+        );
+      }
+      return saved;
+    });
   }
+
+  @override
+  Future<bool> beginDirectPrivateMediaDownload(
+    String id, {
+    required String messageId,
+    required int nowMs,
+  }) {
+    return lifecycleLock.synchronized(
+      id,
+      () => beginDirectPrivateMediaDownloadWithinLock(
+        id,
+        messageId: messageId,
+        nowMs: nowMs,
+      ),
+    );
+  }
+
+  @override
+  Future<bool> beginDirectPrivateMediaDownloadWithinLock(
+    String id, {
+    required String messageId,
+    required int nowMs,
+  }) => lifecycleLock.synchronized(id, () async {
+    final begin = _requireCasClosure(
+      dbBeginDirectPrivateMediaDownloadIfEligible,
+      'beginDirectPrivateMediaDownload',
+    );
+    try {
+      return await begin(messageId: messageId, attachmentId: id, nowMs: nowMs) >
+          0;
+    } finally {
+      await _refreshDirectPrivateParent(messageId);
+    }
+  });
+
+  @override
+  Future<bool> qualifyDirectPrivateMediaLocalReady(
+    String id, {
+    required String messageId,
+    required String expectedLocalPath,
+    required int nowMs,
+  }) {
+    return lifecycleLock.synchronized(
+      id,
+      () => qualifyDirectPrivateMediaLocalReadyWithinLock(
+        id,
+        messageId: messageId,
+        expectedLocalPath: expectedLocalPath,
+        nowMs: nowMs,
+      ),
+    );
+  }
+
+  @override
+  Future<bool> qualifyDirectPrivateMediaLocalReadyWithinLock(
+    String id, {
+    required String messageId,
+    required String expectedLocalPath,
+    required int nowMs,
+  }) => lifecycleLock.synchronized(id, () async {
+    final qualify = _requireCasClosure(
+      dbQualifyDirectPrivateMediaLocalReadyIfEligible,
+      'qualifyDirectPrivateMediaLocalReady',
+    );
+    try {
+      return await qualify(
+            messageId: messageId,
+            attachmentId: id,
+            expectedLocalPath: expectedLocalPath,
+            nowMs: nowMs,
+          ) >
+          0;
+    } finally {
+      await _refreshDirectPrivateParent(messageId);
+    }
+  });
+
+  @override
+  Future<bool> qualifyDirectPrivateMediaDownloadClaimWithinLock(
+    String id, {
+    required String messageId,
+    required int nowMs,
+  }) => lifecycleLock.synchronized(id, () async {
+    final qualify = _requireCasClosure(
+      dbQualifyDirectPrivateMediaDownloadClaimIfEligible,
+      'qualifyDirectPrivateMediaDownloadClaim',
+    );
+    try {
+      return await qualify(
+            messageId: messageId,
+            attachmentId: id,
+            nowMs: nowMs,
+          ) >
+          0;
+    } finally {
+      await _refreshDirectPrivateParent(messageId);
+    }
+  });
+
+  @override
+  Future<bool> recordDirectPrivateMediaDownloadFailure(
+    String id, {
+    required String messageId,
+    required int nowMs,
+    required bool incrementRetryCount,
+    required String failureStatus,
+    required String expectedDownloadStatus,
+    String? expectedLocalPath,
+    bool clearLocalPath = false,
+  }) {
+    return lifecycleLock.synchronized(
+      id,
+      () => recordDirectPrivateMediaDownloadFailureWithinLock(
+        id,
+        messageId: messageId,
+        nowMs: nowMs,
+        incrementRetryCount: incrementRetryCount,
+        failureStatus: failureStatus,
+        expectedDownloadStatus: expectedDownloadStatus,
+        expectedLocalPath: expectedLocalPath,
+        clearLocalPath: clearLocalPath,
+      ),
+    );
+  }
+
+  @override
+  Future<bool> recordDirectPrivateMediaDownloadFailureWithinLock(
+    String id, {
+    required String messageId,
+    required int nowMs,
+    required bool incrementRetryCount,
+    required String failureStatus,
+    required String expectedDownloadStatus,
+    String? expectedLocalPath,
+    bool clearLocalPath = false,
+  }) => lifecycleLock.synchronized(id, () async {
+    final record = _requireCasClosure(
+      dbRecordDirectPrivateMediaDownloadFailureIfEligible,
+      'recordDirectPrivateMediaDownloadFailure',
+    );
+    try {
+      return await record(
+            messageId: messageId,
+            attachmentId: id,
+            nowMs: nowMs,
+            incrementRetryCount: incrementRetryCount,
+            failureStatus: failureStatus,
+            expectedDownloadStatus: expectedDownloadStatus,
+            expectedLocalPath: expectedLocalPath,
+            clearLocalPath: clearLocalPath,
+          ) >
+          0;
+    } finally {
+      await _refreshDirectPrivateParent(messageId);
+    }
+  });
+
+  @override
+  Future<bool> beginMediaDownload(String id, {required MediaOwnerLane owner}) =>
+      lifecycleLock.synchronized(id, () async {
+        final claim = _requireCasClosure(
+          dbBeginMediaDownload,
+          'beginMediaDownload',
+        );
+        final previous = await dbLoadMediaById(id);
+        final changed = await claim(id, ownerLane: owner.dbValue) > 0;
+        if (changed && previous != null) {
+          _emitAuthorizationChangeForRow(
+            previous,
+            MediaAttachmentAuthorizationMutation.downloadStarted,
+          );
+        }
+        return changed;
+      });
 
   @override
   Future<bool> commitMediaDownloadLocalPath(
     String id, {
     required MediaOwnerLane owner,
     required String localPath,
-  }) async {
+  }) => lifecycleLock.synchronized(id, () async {
     final commit = _requireCasClosure(
       dbCommitMediaDownloadLocalPath,
       'commitMediaDownloadLocalPath',
@@ -201,12 +678,336 @@ class MediaAttachmentRepositoryImpl
     // group save and the deletion-journal cleanup saga so a cleanup never
     // interleaves with a promotion on the same attachment. The SQL CAS (plus
     // the group journal anti-join) remains the correctness authority.
+    final previous = await dbLoadMediaById(id);
+    final changed =
+        await commit(id, ownerLane: owner.dbValue, localPath: localPath) > 0;
+    if (changed && previous != null) {
+      _emitAuthorizationChangeForRow(
+        previous,
+        MediaAttachmentAuthorizationMutation.downloadCommitted,
+      );
+    }
+    return changed;
+  });
+
+  @override
+  Future<bool> commitDirectPrivateMediaDownloadLocalPath(
+    String id, {
+    required String messageId,
+    required String localPath,
+    required int nowMs,
+  }) {
     return lifecycleLock.synchronized(
       id,
-      () async =>
-          await commit(id, ownerLane: owner.dbValue, localPath: localPath) > 0,
+      () => commitDirectPrivateMediaDownloadLocalPathWithinLock(
+        id,
+        messageId: messageId,
+        localPath: localPath,
+        nowMs: nowMs,
+      ),
     );
   }
+
+  @override
+  Future<bool> commitDirectPrivateMediaDownloadLocalPathWithinLock(
+    String id, {
+    required String messageId,
+    required String localPath,
+    required int nowMs,
+  }) => lifecycleLock.synchronized(id, () async {
+    final commit = _requireCasClosure(
+      dbCommitDirectPrivateMediaDownloadIfEligible,
+      'commitDirectPrivateMediaDownloadLocalPath',
+    );
+    try {
+      return await commit(
+            messageId: messageId,
+            attachmentId: id,
+            localPath: localPath,
+            nowMs: nowMs,
+          ) >
+          0;
+    } finally {
+      await _refreshDirectPrivateParent(messageId);
+    }
+  });
+
+  Future<void> _refreshDirectPrivateParent(String messageId) async {
+    final refresh = refreshDirectPrivateMediaParent;
+    if (refresh == null) return;
+    try {
+      await refresh(messageId);
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PRIVATE_MEDIA_PARENT_REFRESH_ERROR',
+        details: {'error': error.runtimeType.toString()},
+      );
+    }
+  }
+
+  @override
+  Future<List<DirectPrivateMediaLifecycleAttachmentMetadata>>
+  loadDirectPrivateMediaLifecycleAttachmentMetadata(String messageId) async {
+    final rows = await dbLoadMediaForMessage(
+      messageId,
+      MediaOwnerLane.direct.dbValue,
+    );
+    return rows
+        .where(
+          (row) =>
+              row['message_id'] == messageId &&
+              row['owner_lane'] == MediaOwnerLane.direct.dbValue,
+        )
+        .map(
+          (row) => DirectPrivateMediaLifecycleAttachmentMetadata(
+            id: row['id'] as String,
+            messageId: row['message_id'] as String,
+            mime: row['mime'] as String,
+            size: (row['size'] as num).toInt(),
+            downloadStatus: row['download_status'] as String,
+            localPath: row['local_path'] as String?,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  @override
+  Future<List<DirectPrivateMediaCleanupAttachment>>
+  loadDirectPrivateMediaCleanupAttachments(String messageId) async {
+    final rows = await dbLoadMediaForMessage(
+      messageId,
+      MediaOwnerLane.direct.dbValue,
+    );
+    return rows
+        .where(
+          (row) =>
+              row['message_id'] == messageId &&
+              row['owner_lane'] == MediaOwnerLane.direct.dbValue,
+        )
+        .map(
+          (row) => DirectPrivateMediaCleanupAttachment(
+            id: row['id'] as String,
+            messageId: row['message_id'] as String,
+            mime: row['mime'] as String,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  @override
+  Future<int> deleteDirectPrivateMediaAttachmentWithinLock({
+    required String messageId,
+    required String attachmentId,
+  }) => lifecycleLock.synchronized(attachmentId, () {
+    final delete = _requireCasClosure(
+      dbDeleteDirectPrivateMediaAttachmentExact,
+      'deleteDirectPrivateMediaAttachmentWithinLock',
+    );
+    return delete(messageId: messageId, attachmentId: attachmentId);
+  });
+
+  @override
+  Future<bool> beginGroupPrivateMediaDownloadWithinLock(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required int nowMs,
+  }) => lifecycleLock.synchronized(id, () async {
+    final begin = _requireCasClosure(
+      dbBeginGroupPrivateMediaDownloadIfEligible,
+      'beginGroupPrivateMediaDownloadWithinLock',
+    );
+    return await begin(
+          groupId: groupId,
+          messageId: messageId,
+          attachmentId: id,
+          nowMs: nowMs,
+        ) ==
+        1;
+  });
+
+  @override
+  Future<bool> qualifyGroupPrivateMediaLocalReadyWithinLock(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required String expectedLocalPath,
+    required int nowMs,
+  }) => lifecycleLock.synchronized(id, () async {
+    final qualify = _requireCasClosure(
+      dbQualifyGroupPrivateMediaLocalReadyIfEligible,
+      'qualifyGroupPrivateMediaLocalReadyWithinLock',
+    );
+    return await qualify(
+          groupId: groupId,
+          messageId: messageId,
+          attachmentId: id,
+          expectedLocalPath: expectedLocalPath,
+          nowMs: nowMs,
+        ) ==
+        1;
+  });
+
+  @override
+  Future<bool> qualifyGroupPrivateMediaDownloadClaimWithinLock(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required int nowMs,
+  }) => lifecycleLock.synchronized(id, () async {
+    final qualify = _requireCasClosure(
+      dbQualifyGroupPrivateMediaDownloadClaimIfEligible,
+      'qualifyGroupPrivateMediaDownloadClaimWithinLock',
+    );
+    return await qualify(
+          groupId: groupId,
+          messageId: messageId,
+          attachmentId: id,
+          nowMs: nowMs,
+        ) ==
+        1;
+  });
+
+  @override
+  Future<bool> recordGroupPrivateMediaDownloadFailure(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required int nowMs,
+    required bool incrementRetryCount,
+    required String failureStatus,
+    required String expectedDownloadStatus,
+    String? expectedLocalPath,
+    required bool clearLocalPath,
+  }) {
+    return lifecycleLock.synchronized(
+      id,
+      () => recordGroupPrivateMediaDownloadFailureWithinLock(
+        id,
+        groupId: groupId,
+        messageId: messageId,
+        nowMs: nowMs,
+        incrementRetryCount: incrementRetryCount,
+        failureStatus: failureStatus,
+        expectedDownloadStatus: expectedDownloadStatus,
+        expectedLocalPath: expectedLocalPath,
+        clearLocalPath: clearLocalPath,
+      ),
+    );
+  }
+
+  @override
+  Future<bool> recordGroupPrivateMediaDownloadFailureWithinLock(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required int nowMs,
+    required bool incrementRetryCount,
+    required String failureStatus,
+    required String expectedDownloadStatus,
+    String? expectedLocalPath,
+    required bool clearLocalPath,
+  }) => lifecycleLock.synchronized(id, () async {
+    final record = _requireCasClosure(
+      dbRecordGroupPrivateMediaDownloadFailureIfEligible,
+      'recordGroupPrivateMediaDownloadFailureWithinLock',
+    );
+    return await record(
+          groupId: groupId,
+          messageId: messageId,
+          attachmentId: id,
+          nowMs: nowMs,
+          incrementRetryCount: incrementRetryCount,
+          failureStatus: failureStatus,
+          expectedDownloadStatus: expectedDownloadStatus,
+          expectedLocalPath: expectedLocalPath,
+          clearLocalPath: clearLocalPath,
+        ) ==
+        1;
+  });
+
+  @override
+  Future<bool> commitGroupPrivateMediaDownloadLocalPathWithinLock(
+    String id, {
+    required String groupId,
+    required String messageId,
+    required String localPath,
+    required int nowMs,
+  }) => lifecycleLock.synchronized(id, () async {
+    final commit = _requireCasClosure(
+      dbCommitGroupPrivateMediaDownloadIfEligible,
+      'commitGroupPrivateMediaDownloadLocalPathWithinLock',
+    );
+    final committed = await commit(
+      groupId: groupId,
+      messageId: messageId,
+      attachmentId: id,
+      localPath: localPath,
+      nowMs: nowMs,
+    );
+    return committed == 1;
+  });
+
+  @override
+  Future<List<GroupPrivateMediaLifecycleAttachmentMetadata>>
+  loadGroupPrivateMediaLifecycleAttachmentMetadata(String messageId) async {
+    final rows = await dbLoadMediaForMessage(
+      messageId,
+      MediaOwnerLane.group.dbValue,
+    );
+    return rows
+        .where(
+          (row) =>
+              row['message_id'] == messageId &&
+              row['owner_lane'] == MediaOwnerLane.group.dbValue,
+        )
+        .map(
+          (row) => GroupPrivateMediaLifecycleAttachmentMetadata(
+            id: row['id'] as String,
+            messageId: row['message_id'] as String,
+            mime: row['mime'] as String,
+            size: (row['size'] as num).toInt(),
+            downloadStatus: row['download_status'] as String,
+            localPath: row['local_path'] as String?,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  @override
+  Future<bool> deleteGroupPrivateMediaEncryptionKeyWithinLock({
+    required String messageId,
+    required String attachmentId,
+  }) => lifecycleLock.synchronized(attachmentId, () async {
+    final canCleanup = _requireCasClosure(
+      dbCanCleanupGroupPrivateMediaAttachmentExact,
+      'deleteGroupPrivateMediaEncryptionKeyWithinLock',
+    );
+    if (!await canCleanup(messageId: messageId, attachmentId: attachmentId)) {
+      return false;
+    }
+    final store = secureKeyStore;
+    if (store == null) {
+      throw StateError(
+        'group private-media cleanup requires secure key storage',
+      );
+    }
+    await store.delete(mediaAttachmentEncryptionKeyStoreName(attachmentId));
+    return true;
+  });
+
+  @override
+  Future<int> deleteGroupPrivateMediaAttachmentWithinLock({
+    required String messageId,
+    required String attachmentId,
+  }) => lifecycleLock.synchronized(attachmentId, () {
+    final delete = _requireCasClosure(
+      dbDeleteGroupPrivateMediaAttachmentExact,
+      'deleteGroupPrivateMediaAttachmentWithinLock',
+    );
+    return delete(messageId: messageId, attachmentId: attachmentId);
+  });
 
   @override
   Future<bool> saveGroupAttachmentGuarded(
@@ -226,18 +1027,22 @@ class MediaAttachmentRepositoryImpl
     }
     final stamped = attachment.copyWith(ownerLane: MediaOwnerLane.group);
     return lifecycleLock.synchronized(stamped.id, () async {
-      // _toStorageRow writes the secure encryption key BEFORE the guarded
-      // transaction. When the guard refuses (delete/tombstone won) the save
-      // must leave ZERO side effects, so a key that did not exist before is
-      // compensated away — under the same lock, so cleanup cannot interleave.
-      final keyName = mediaAttachmentEncryptionKeyStoreName(stamped.id);
-      final store = secureKeyStore;
-      final keyExistedBefore =
-          store != null && await store.containsKey(keyName);
-      final row = await _toStorageRow(stamped);
-      final saved = await guarded(row, groupId: groupId);
-      if (!saved && store != null && !keyExistedBefore) {
-        await store.delete(keyName);
+      // Secure-key write + guarded row persistence form one compensated saga.
+      // A refused or throwing guard restores the exact prior key value (or
+      // removes a newly introduced key) while this attachment lock is held.
+      final saved = await _withCompensatedEncryptionKeyWrite<bool>(
+        stamped,
+        (row) => guarded(row, groupId: groupId),
+        committed: (saved) => saved,
+      );
+      if (saved) {
+        _emitAuthorizationChange(
+          owner: MediaOwnerLane.group,
+          scopeId: groupId,
+          messageId: stamped.messageId,
+          attachmentId: stamped.id,
+          kind: MediaAttachmentAuthorizationMutation.saved,
+        );
       }
       return saved;
     });
@@ -248,26 +1053,42 @@ class MediaAttachmentRepositoryImpl
     String id, {
     required MediaOwnerLane owner,
     required String expectedLocalPath,
-  }) {
+  }) => lifecycleLock.synchronized(id, () async {
     final claim = _requireCasClosure(dbClaimMediaEvicted, 'claimMediaEvicted');
-    return claim(
+    final previous = await dbLoadMediaById(id);
+    final count = await claim(
       id,
       ownerLane: owner.dbValue,
       expectedLocalPath: expectedLocalPath,
     );
-  }
+    if (count > 0 && previous != null) {
+      _emitAuthorizationChangeForRow(
+        previous,
+        MediaAttachmentAuthorizationMutation.evicted,
+      );
+    }
+    return count;
+  });
 
   @override
   Future<int> finalizeMediaEvictedPathCleared(
     String id, {
     required MediaOwnerLane owner,
-  }) {
+  }) => lifecycleLock.synchronized(id, () async {
     final finalize = _requireCasClosure(
       dbFinalizeMediaEvictedPathCleared,
       'finalizeMediaEvictedPathCleared',
     );
-    return finalize(id, ownerLane: owner.dbValue);
-  }
+    final previous = await dbLoadMediaById(id);
+    final count = await finalize(id, ownerLane: owner.dbValue);
+    if (count > 0 && previous != null) {
+      _emitAuthorizationChangeForRow(
+        previous,
+        MediaAttachmentAuthorizationMutation.evictionFinalized,
+      );
+    }
+    return count;
+  });
 
   @override
   Future<void> saveAttachment(
@@ -343,6 +1164,12 @@ class MediaAttachmentRepositoryImpl
       final storageRow = await _toStorageRow(stamped);
       await dbSaveMediaAttachmentPreservingLocalState(storageRow);
       rowPersisted = true;
+      _emitAuthorizationChange(
+        owner: owner,
+        messageId: stamped.messageId,
+        attachmentId: stamped.id,
+        kind: MediaAttachmentAuthorizationMutation.saved,
+      );
 
       emitFlowEvent(
         layer: 'FL',
@@ -392,7 +1219,7 @@ class MediaAttachmentRepositoryImpl
     required String messageId,
     required Set<String> attachmentIds,
     required MediaOwnerLane owner,
-  }) => _withLifecycleLocks(attachmentIds, () async {
+  }) => lifecycleLock.synchronizedAll(() async {
     final rows = await dbLoadMediaForMessage(messageId, owner.dbValue);
     final persistedIds = rows
         .map((row) => row['id'])
@@ -487,19 +1314,74 @@ class MediaAttachmentRepositoryImpl
   }
 
   @override
-  Future<void> updateLocalPath(String id, String localPath) async {
-    await dbUpdateMediaLocalPath(id, localPath, 'done');
-  }
+  Future<void> updateLocalPath(String id, String localPath) =>
+      lifecycleLock.synchronized(id, () async {
+        final previous = await dbLoadMediaById(id);
+        await dbUpdateMediaLocalPath(id, localPath, 'done');
+        final updated = await dbLoadMediaById(id);
+        if (updated != null &&
+            (previous == null ||
+                previous['local_path'] != updated['local_path'] ||
+                previous['download_status'] != updated['download_status'])) {
+          _emitAuthorizationChangeForRow(
+            updated,
+            MediaAttachmentAuthorizationMutation.localPathChanged,
+          );
+        }
+      });
 
   @override
-  Future<void> updateDownloadStatus(String id, String downloadStatus) async {
-    await dbUpdateMediaDownloadStatus(id, downloadStatus);
-  }
+  Future<void> updateDownloadStatus(String id, String downloadStatus) =>
+      lifecycleLock.synchronized(id, () async {
+        final previous = await dbLoadMediaById(id);
+        await dbUpdateMediaDownloadStatus(id, downloadStatus);
+        final updated = await dbLoadMediaById(id);
+        if (updated != null &&
+            previous?['download_status'] != updated['download_status']) {
+          _emitAuthorizationChangeForRow(
+            updated,
+            MediaAttachmentAuthorizationMutation.downloadStatusChanged,
+          );
+        }
+      });
 
   @override
-  Future<void> setBookmarked(String id, {required bool bookmarked}) async {
-    await dbSetMediaBookmarked(id, bookmarked);
-  }
+  Future<void> setBookmarked(String id, {required bool bookmarked}) =>
+      lifecycleLock.synchronized(id, () async {
+        await dbSetMediaBookmarked(id, bookmarked);
+      });
+
+  @override
+  Future<bool> setDirectBookmarkedIfOrdinary({
+    required String messageId,
+    required String attachmentId,
+    required bool bookmarked,
+  }) => lifecycleLock.synchronized(attachmentId, () async {
+    final guarded = dbSetDirectMediaBookmarkedIfOrdinary;
+    if (guarded == null) return false;
+    return guarded(
+      messageId: messageId,
+      attachmentId: attachmentId,
+      bookmarked: bookmarked,
+    );
+  });
+
+  @override
+  Future<bool> setGroupBookmarkedIfOrdinary({
+    required String groupId,
+    required String messageId,
+    required String attachmentId,
+    required bool bookmarked,
+  }) => lifecycleLock.synchronized(attachmentId, () async {
+    final guarded = dbSetGroupMediaBookmarkedIfOrdinary;
+    if (guarded == null) return false;
+    return guarded(
+      groupId: groupId,
+      messageId: messageId,
+      attachmentId: attachmentId,
+      bookmarked: bookmarked,
+    );
+  });
 
   @override
   Future<MediaLibraryPage> getMediaLibraryPage({
@@ -647,15 +1529,16 @@ class MediaAttachmentRepositoryImpl
   }
 
   @override
-  Future<void> updatePlaybackPosition(String id, int positionMs) async {
-    await dbUpdateMediaPlaybackPosition(id, positionMs);
-  }
+  Future<void> updatePlaybackPosition(String id, int positionMs) =>
+      lifecycleLock.synchronized(id, () async {
+        await dbUpdateMediaPlaybackPosition(id, positionMs);
+      });
 
   @override
   Future<int> deleteAttachmentsForMessage(
     String messageId, {
     required MediaOwnerLane owner,
-  }) async {
+  }) => lifecycleLock.synchronizedAll(() async {
     emitFlowEvent(
       layer: 'FL',
       event: 'MEDIA_REPO_DELETE_FOR_MESSAGE_START',
@@ -668,7 +1551,27 @@ class MediaAttachmentRepositoryImpl
     );
 
     try {
+      final previousRows = await dbLoadMediaForMessage(
+        messageId,
+        owner.dbValue,
+      );
       final count = await dbDeleteMediaForMessage(messageId, owner.dbValue);
+      if (count > 0) {
+        if (previousRows.isEmpty) {
+          _emitAuthorizationChange(
+            owner: owner,
+            messageId: messageId,
+            kind: MediaAttachmentAuthorizationMutation.removed,
+          );
+        } else {
+          for (final row in previousRows) {
+            _emitAuthorizationChangeForRow(
+              row,
+              MediaAttachmentAuthorizationMutation.removed,
+            );
+          }
+        }
+      }
 
       emitFlowEvent(
         layer: 'FL',
@@ -685,45 +1588,53 @@ class MediaAttachmentRepositoryImpl
       );
       rethrow;
     }
-  }
+  });
 
   @override
-  Future<int> deleteAttachmentsForContact(String contactPeerId) async {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'MEDIA_REPO_DELETE_FOR_CONTACT_START',
-      details: {
-        'contactPeerId': contactPeerId.length > 10
-            ? contactPeerId.substring(0, 10)
-            : contactPeerId,
-      },
-    );
+  Future<int> deleteAttachmentsForContact(String contactPeerId) =>
+      lifecycleLock.synchronizedAll(() async {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'MEDIA_REPO_DELETE_FOR_CONTACT_START',
+          details: {
+            'contactPeerId': contactPeerId.length > 10
+                ? contactPeerId.substring(0, 10)
+                : contactPeerId,
+          },
+        );
 
-    try {
-      final count = await dbDeleteMediaForContact(contactPeerId);
+        try {
+          final count = await dbDeleteMediaForContact(contactPeerId);
+          if (count > 0) {
+            _emitAuthorizationChange(
+              owner: MediaOwnerLane.direct,
+              scopeId: contactPeerId,
+              kind: MediaAttachmentAuthorizationMutation.removed,
+            );
+          }
 
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'MEDIA_REPO_DELETE_FOR_CONTACT_SUCCESS',
-        details: {'count': count},
-      );
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'MEDIA_REPO_DELETE_FOR_CONTACT_SUCCESS',
+            details: {'count': count},
+          );
 
-      return count;
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'MEDIA_REPO_DELETE_FOR_CONTACT_ERROR',
-        details: {'error': e.toString()},
-      );
-      rethrow;
-    }
-  }
+          return count;
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'MEDIA_REPO_DELETE_FOR_CONTACT_ERROR',
+            details: {'error': e.toString()},
+          );
+          rethrow;
+        }
+      });
 
   @override
   Future<int> markUploadPendingAttachmentsFailedForMessage(
     String messageId, {
     required MediaOwnerLane owner,
-  }) async {
+  }) => lifecycleLock.synchronizedAll(() async {
     emitFlowEvent(
       layer: 'FL',
       event: 'MEDIA_REPO_TERMINALIZE_UPLOADS_START',
@@ -754,7 +1665,7 @@ class MediaAttachmentRepositoryImpl
       );
       rethrow;
     }
-  }
+  });
 
   @override
   Future<List<MediaAttachment>> getPendingDownloads() async {
@@ -766,9 +1677,7 @@ class MediaAttachmentRepositoryImpl
   Future<List<MediaAttachment>> getUploadPendingAttachments({
     required MediaOwnerLane owner,
   }) async {
-    final rows = await dbLoadUploadPendingAttachments(
-      ownerLane: owner.dbValue,
-    );
+    final rows = await dbLoadUploadPendingAttachments(ownerLane: owner.dbValue);
     return _attachmentsFromRows(rows);
   }
 
@@ -818,6 +1727,39 @@ class MediaAttachmentRepositoryImpl
     }
 
     return Map<String, Object?>.from(row)..['encryption_key_base64'] = hydrated;
+  }
+}
+
+class _MediaEncryptionKeyWriteSnapshot {
+  _MediaEncryptionKeyWriteSnapshot({
+    required this.store,
+    required this.keyName,
+    required this.existed,
+    required this.previousValue,
+  });
+
+  _MediaEncryptionKeyWriteSnapshot.inactive()
+    : store = null,
+      keyName = null,
+      existed = false,
+      previousValue = null;
+
+  final SecureKeyStore? store;
+  final String? keyName;
+  final bool existed;
+  final String? previousValue;
+  var _restored = false;
+
+  Future<void> restore() async {
+    final effectiveStore = store;
+    final effectiveKeyName = keyName;
+    if (_restored || effectiveStore == null || effectiveKeyName == null) return;
+    if (existed) {
+      await effectiveStore.write(effectiveKeyName, previousValue!);
+    } else {
+      await effectiveStore.delete(effectiveKeyName);
+    }
+    _restored = true;
   }
 }
 
@@ -935,8 +1877,7 @@ class _MediaLibraryCursor {
         scopeId: decoded['scopeId'] as String,
         kind: decoded['kind'] as String,
         bookmarkedOnly: decoded['bookmarkedOnly'] as bool,
-        incomingOnly:
-            version == 1 ? false : decoded['incomingOnly'] as bool,
+        incomingOnly: version == 1 ? false : decoded['incomingOnly'] as bool,
         timestamp: decoded['ts'] as String,
         messageId: decoded['mid'] as String,
         attachmentId: decoded['aid'] as String,

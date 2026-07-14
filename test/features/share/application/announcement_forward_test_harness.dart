@@ -17,7 +17,6 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/share/application/share_batch_delivery_coordinator.dart';
-import 'package:path/path.dart' as p;
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
@@ -152,13 +151,17 @@ class AnnouncementForwardHarness {
         updatedAt: '2026-07-10T00:00:00.000Z',
       ),
     );
-    sourceDirectory = Directory.systemTemp.createTempSync('tc240_source_');
-    sourceFile = File(p.join(sourceDirectory.path, 'source.png'))
-      ..writeAsBytesSync(
-        base64Decode(
-          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-        ),
-      );
+    final sourceBytes = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    );
+    sourceFile = File(
+      await fileManager.localPathForAttachment(
+        contactPeerId: announcementSourceGroupId,
+        blobId: announcementSourceAttachmentId,
+        mime: 'image/png',
+      ),
+    )..writeAsBytesSync(sourceBytes);
+    sourceDirectory = sourceFile.parent;
 
     final sourceGroup = group(
       announcementSourceGroupId,
@@ -199,7 +202,8 @@ class AnnouncementForwardHarness {
         localPath: sourceFile.path,
         downloadStatus: 'done',
         createdAt: '2026-07-10T12:00:00.000Z',
-        contentHash: sha256.convert(sourceFile.readAsBytesSync()).toString(),
+        // Relay integrity covers ciphertext, not this canonical plaintext.
+        contentHash: sha256.convert(<int>[...sourceBytes, 0xa5]).toString(),
         encryptionKeyBase64: announcementSourceKey,
         encryptionNonce: announcementSourceNonce,
         encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
@@ -278,6 +282,7 @@ class AnnouncementForwardHarness {
   DefaultShareBatchDeliveryCoordinator coordinator({
     SendToContactFn? sendToContactFn,
     SendToGroupFn? sendToGroupFn,
+    DateTime Function()? forwardNow,
   }) => DefaultShareBatchDeliveryCoordinator(
     identityRepository: identities,
     contactRepository: contacts,
@@ -291,6 +296,7 @@ class AnnouncementForwardHarness {
     imageProcessor: imageProcessor(),
     sendToContactFn: sendToContactFn,
     sendToGroupFn: sendToGroupFn,
+    forwardNow: forwardNow,
     processSharedMediaFn: (intent) async {
       preprocessCount++;
       return ProcessedShareMediaBatch(

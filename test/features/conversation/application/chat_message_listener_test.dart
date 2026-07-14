@@ -1775,7 +1775,7 @@ void main() {
         );
         listener.start();
 
-        chatStreamController.add(
+        final outcome = await listener.processIncomingMessage(
           _makeChatMessage(
             from: senderPeerId,
             id: 'msg-notif-001',
@@ -1784,8 +1784,7 @@ void main() {
           ),
         );
 
-        await Future.delayed(const Duration(milliseconds: 200));
-
+        expect(outcome.state, ChatMessageProcessState.stored);
         expect(notificationService.shown, hasLength(1));
         expect(notificationService.shown.first.senderUsername, 'Bob');
         expect(notificationService.shown.first.messageText, 'Hey there!');
@@ -1808,7 +1807,7 @@ void main() {
       );
       listener.start();
 
-      chatStreamController.add(
+      final outcome = await listener.processIncomingMessage(
         _makeChatMessage(
           from: senderPeerId,
           id: 'direct-message-claim-1',
@@ -1817,7 +1816,7 @@ void main() {
         ),
       );
 
-      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(outcome.state, ChatMessageProcessState.stored);
       expect(notificationService.shown, hasLength(1));
       final claim = File(
         '${directory.path}/NotificationServiceDedupe/'
@@ -1860,8 +1859,6 @@ void main() {
           );
           expect(outcome.state, ChatMessageProcessState.stored);
         }
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-
         expect(notificationService.shown, hasLength(2));
         for (final shown in notificationService.shown) {
           expect(shown.messageText, 'Private media');
@@ -1902,7 +1899,7 @@ void main() {
         );
         listener.start();
 
-        chatStreamController.add(
+        final firstOutcome = await listener.processIncomingMessage(
           _makeChatMessage(
             from: senderPeerId,
             id: 'msg-tone-wired-1',
@@ -1910,9 +1907,8 @@ void main() {
             senderUsername: 'Bob',
           ),
         );
-        await Future.delayed(const Duration(milliseconds: 150));
 
-        chatStreamController.add(
+        final secondOutcome = await listener.processIncomingMessage(
           _makeChatMessage(
             from: senderPeerId,
             id: 'msg-tone-wired-2',
@@ -1920,8 +1916,9 @@ void main() {
             senderUsername: 'Bob',
           ),
         );
-        await Future.delayed(const Duration(milliseconds: 150));
 
+        expect(firstOutcome.state, ChatMessageProcessState.stored);
+        expect(secondOutcome.state, ChatMessageProcessState.stored);
         expect(notificationService.shown, hasLength(2));
         expect(notificationService.shown[0].silent, isFalse);
         expect(notificationService.shown[1].silent, isTrue);
@@ -1949,7 +1946,7 @@ void main() {
         );
         listener.start();
 
-        chatStreamController.add(
+        final outcome = await listener.processIncomingMessage(
           _makeChatMessage(
             from: senderPeerId,
             id: 'msg-mark-wired-1',
@@ -1957,8 +1954,8 @@ void main() {
             senderUsername: 'Bob',
           ),
         );
-        await Future.delayed(const Duration(milliseconds: 150));
 
+        expect(outcome.state, ChatMessageProcessState.stored);
         expect(notificationService.shown, hasLength(1));
         expect(spyGate.markCalls, hasLength(1));
         expect(spyGate.markCalls.single.payload, senderPeerId);
@@ -1990,7 +1987,7 @@ void main() {
         );
         listener.start();
 
-        chatStreamController.add(
+        final outcome = await listener.processIncomingMessage(
           _makeChatMessage(
             from: senderPeerId,
             id: 'msg-notif-remote-push',
@@ -1999,8 +1996,7 @@ void main() {
           ),
         );
 
-        await Future.delayed(const Duration(milliseconds: 200));
-
+        expect(outcome.state, ChatMessageProcessState.stored);
         expect(notificationService.shown, isEmpty);
         expect(messageRepo.saved, hasLength(1));
 
@@ -2048,7 +2044,7 @@ void main() {
         listener.start();
 
         // User is on feed screen (tracker has no active conversation)
-        chatStreamController.add(
+        final outcome = await listener.processIncomingMessage(
           _makeChatMessage(
             from: senderPeerId,
             id: 'msg-notif-002',
@@ -2057,8 +2053,7 @@ void main() {
           ),
         );
 
-        await Future.delayed(const Duration(milliseconds: 200));
-
+        expect(outcome.state, ChatMessageProcessState.stored);
         expect(notificationService.shown, hasLength(1));
 
         listener.dispose();
@@ -2080,7 +2075,7 @@ void main() {
         );
         listener.start();
 
-        chatStreamController.add(
+        final outcome = await listener.processIncomingMessage(
           _makeChatMessage(
             from: senderPeerId,
             id: 'msg-notif-003',
@@ -2089,8 +2084,7 @@ void main() {
           ),
         );
 
-        await Future.delayed(const Duration(milliseconds: 200));
-
+        expect(outcome.state, ChatMessageProcessState.stored);
         expect(notificationService.shown, isEmpty);
         // But message should still be persisted and emitted
         expect(messageRepo.saved, hasLength(1));
@@ -2111,13 +2105,12 @@ void main() {
       );
       listener.start();
 
-      chatStreamController.add(
+      final outcome = await listener.processIncomingMessage(
         _makeChatMessage(from: senderPeerId, id: 'msg-notif-004'),
       );
 
-      await Future.delayed(const Duration(milliseconds: 200));
-
       // Message should still be persisted
+      expect(outcome.state, ChatMessageProcessState.stored);
       expect(messageRepo.saved, hasLength(1));
       // No notification service was provided, so no notifications
       expect(notificationService.shown, isEmpty);
@@ -2132,13 +2125,12 @@ void main() {
       final listener = createListenerWithNotifications();
       listener.start();
 
-      chatStreamController.add(
+      final outcome = await listener.processIncomingMessage(
         _makeChatMessage(from: senderPeerId, id: 'msg-notif-005'),
       );
 
-      await Future.delayed(const Duration(milliseconds: 200));
-
       // Message rejected — neither persisted nor notification shown
+      expect(outcome.state, ChatMessageProcessState.blockedSender);
       expect(messageRepo.saved, isEmpty);
       expect(notificationService.shown, isEmpty);
 
@@ -2152,13 +2144,12 @@ void main() {
       final listener = createListenerWithNotifications();
       listener.start();
 
-      chatStreamController.add(
+      final outcome = await listener.processIncomingMessage(
         _makeChatMessage(from: senderPeerId, id: 'msg-notif-006'),
       );
 
-      await Future.delayed(const Duration(milliseconds: 200));
-
       // Message persisted but UI emission suppressed — no notification
+      expect(outcome.state, ChatMessageProcessState.stored);
       expect(messageRepo.saved, hasLength(1));
       expect(notificationService.shown, isEmpty);
 
@@ -2179,7 +2170,7 @@ void main() {
         );
         listener.start();
 
-        chatStreamController.add(
+        final outcome = await listener.processIncomingMessage(
           _makeChatMessage(
             from: senderPeerId,
             id: 'msg-notif-007',
@@ -2188,8 +2179,7 @@ void main() {
           ),
         );
 
-        await Future.delayed(const Duration(milliseconds: 200));
-
+        expect(outcome.state, ChatMessageProcessState.stored);
         expect(notificationService.shown, hasLength(1));
         expect(notificationService.shown.first.senderUsername, 'Dave');
 
@@ -2204,7 +2194,7 @@ void main() {
       final listener = createListenerWithNotifications();
       listener.start();
 
-      chatStreamController.add(
+      final outcome = await listener.processIncomingMessage(
         _makeChatMessage(
           from: senderPeerId,
           id: 'msg-notif-008',
@@ -2213,8 +2203,7 @@ void main() {
         ),
       );
 
-      await Future.delayed(const Duration(milliseconds: 200));
-
+      expect(outcome.state, ChatMessageProcessState.stored);
       expect(notificationService.shown, hasLength(1));
       expect(notificationService.shown.first.senderUsername, 'Eve');
 
@@ -2242,13 +2231,15 @@ void main() {
         listener.incomingMessageStream.listen(emitted.add);
         listener.start();
 
+        ChatMessageProcessState? outcomeState;
         final lines = await _captureDebugPrintedLines(() async {
-          chatStreamController.add(
+          final outcome = await listener.processIncomingMessage(
             _makeV2EncryptedChatMessage(from: senderPeerId),
           );
-          await Future.delayed(const Duration(milliseconds: 200));
+          outcomeState = outcome.state;
         });
 
+        expect(outcomeState, ChatMessageProcessState.decryptionFailed);
         expect(messageRepo.saved, isEmpty);
         expect(emitted, isEmpty);
         expect(notificationService.shown, isEmpty);

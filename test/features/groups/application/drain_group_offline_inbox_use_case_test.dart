@@ -2554,7 +2554,10 @@ void main() {
       expect(await msgRepo.getInboxCursor('group-1'), 'st013-cursor-page2');
       expect(await msgRepo.getMessage('st013-media-msg'), isNotNull);
       expect(
-        await mediaRepo.getAttachmentsForMessage('st013-media-msg', owner: MediaOwnerLane.group),
+        await mediaRepo.getAttachmentsForMessage(
+          'st013-media-msg',
+          owner: MediaOwnerLane.group,
+        ),
         isEmpty,
       );
 
@@ -2584,7 +2587,8 @@ void main() {
         );
       }
       final attachments = await mediaRepo.getAttachmentsForMessage(
-        'st013-media-msg', owner: MediaOwnerLane.group,
+        'st013-media-msg',
+        owner: MediaOwnerLane.group,
       );
       expect(attachments, hasLength(1));
       expect(attachments.single.id, 'st013-media-att');
@@ -3514,10 +3518,7 @@ void main() {
         afterRepairRepeat.where((row) => row.id == 'gmf09-gap-fwd'),
         hasLength(1),
       );
-      expect(
-        (await msgRepo.getMessage('gmf09-gap-fwd'))!.isForwarded,
-        isTrue,
-      );
+      expect((await msgRepo.getMessage('gmf09-gap-fwd'))!.isForwarded, isTrue);
     },
   );
 
@@ -8387,7 +8388,8 @@ void main() {
       expect(msgRepo.count, 1);
 
       final attachments = await mediaRepo.getAttachmentsForMessage(
-        'msg-repair-1', owner: MediaOwnerLane.group,
+        'msg-repair-1',
+        owner: MediaOwnerLane.group,
       );
       expect(attachments, hasLength(2));
       final byId = {
@@ -8426,7 +8428,10 @@ void main() {
 
       expect(msgRepo.count, 1);
       expect(
-        await mediaRepo.getAttachmentsForMessage('msg-repair-1', owner: MediaOwnerLane.group),
+        await mediaRepo.getAttachmentsForMessage(
+          'msg-repair-1',
+          owner: MediaOwnerLane.group,
+        ),
         hasLength(2),
       );
     },
@@ -9069,7 +9074,10 @@ void main() {
       expect(saved.readAt, isNull);
       expect(await msgRepo.getInboxCursor('group-1'), 'cursor-de004');
 
-      final attachments = await mediaRepo.getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group);
+      final attachments = await mediaRepo.getAttachmentsForMessage(
+        messageId,
+        owner: MediaOwnerLane.group,
+      );
       expect(attachments, hasLength(1));
       expect(attachments.single.id, 'de004-replay-image');
 
@@ -10090,7 +10098,10 @@ void main() {
       expect(saved, isNotNull);
       expect(saved!.quotedMessageId, 'msg-parent-1');
 
-      final attachments = await mediaRepo.getAttachmentsForMessage(saved.id, owner: MediaOwnerLane.group);
+      final attachments = await mediaRepo.getAttachmentsForMessage(
+        saved.id,
+        owner: MediaOwnerLane.group,
+      );
       expect(attachments, hasLength(4));
 
       final byId = {
@@ -10222,7 +10233,10 @@ void main() {
       expect(saved.quotedMessageId, parentMessageId);
       expect(saved.keyGeneration, 1);
 
-      final attachments = await mediaRepo.getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group);
+      final attachments = await mediaRepo.getAttachmentsForMessage(
+        messageId,
+        owner: MediaOwnerLane.group,
+      );
       expect(attachments, hasLength(4));
       final byId = {
         for (final attachment in attachments) attachment.id: attachment,

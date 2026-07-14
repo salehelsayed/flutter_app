@@ -17,7 +17,8 @@ class InMemoryGroupMessageRepository
         GroupThreadPreviewRepository,
         GroupMembershipRepairDeletionRepository,
         GroupConversationReadEventSource,
-        GroupOutgoingLocalMessageChangeSource {
+        GroupOutgoingLocalMessageChangeSource,
+        GroupMessageLocalDeletionAuthority {
   final Map<String, GroupMessage> _messages = {};
   final Map<String, String> _inboxCursors = {};
   final Map<String, GroupMessageReceipt> _receipts = {};
@@ -253,6 +254,13 @@ class InMemoryGroupMessageRepository
   @override
   Future<String?> getLocalDeletionGroupId(String messageId) async =>
       _localDeletionGroupIds[messageId];
+
+  @override
+  Future<GroupMessageLocalDeletionState> getGroupMessageLocalDeletionState(
+    String messageId,
+  ) async => _localDeletionTombstones.contains(messageId)
+      ? GroupMessageLocalDeletionState.deleted
+      : GroupMessageLocalDeletionState.knownClear;
 
   /// 235 test seam: seeds a tombstone identity directly.
   void seedLocalDeletion({required String messageId, required String groupId}) {

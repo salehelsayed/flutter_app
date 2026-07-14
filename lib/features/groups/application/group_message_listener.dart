@@ -1824,6 +1824,7 @@ class GroupMessageListener {
             contactPeerId: message.groupId,
             owner: MediaOwnerLane.group,
             enforceGroupMediaPolicy: true,
+            groupMessageRepo: _msgRepo,
           );
         } catch (e) {
           emitFlowEvent(

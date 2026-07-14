@@ -104,6 +104,9 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/application/remove_reaction_use_case_test.dart"
   "test/features/conversation/application/handle_incoming_reaction_use_case_test.dart"
   "test/features/conversation/integration/reaction_roundtrip_test.dart"
+  # Plan 256: composed actor-copy, stable conversation-card identity, and
+  # message-unread non-increment contract through the real local plugin seam.
+  "test/features/conversation/integration/reaction_notification_pipeline_test.dart"
   # FDC-08: 1:1 presence-emphasis send locks (C5/C6/C7). Auto-globs into
   # feature-host-all; appended here so the load-bearing "presence is never a
   # delivery gate" locks also run in the curated 1to1 gate.
@@ -190,7 +193,47 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/share/application/share_batch_delivery_coordinator_test.dart"
   "test/features/share/presentation/share_target_picker_wired_test.dart"
   "test/features/share/integration/external_share_media_ux_test.dart"
+  "test/features/share/integration/outgoing_share_media_owner_viewer_test.dart"
+  "test/features/share/integration/direct_received_media_to_group_preservation_test.dart"
   "test/features/conversation/domain/models/message_payload_test.dart"
+  # 234 Session 01: typed encrypted-inner policy plus direct-parent v100
+  # durability. Dedicated host proofs are pinned in both 1:1 inventories.
+  "test/features/conversation/domain/models/private_media_policy_test.dart"
+  "test/features/conversation/domain/models/conversation_message_test.dart"
+  "test/core/database/helpers/messages_db_helpers_test.dart"
+  "test/core/database/migrations/100_direct_private_media_lifecycle_test.dart"
+  "test/core/database/integration/full_migration_chain_test.dart"
+  # 234 Session 03: direct private-media SQL/CAS, reveal lease, monotonic
+  # expiry scheduler, restart/cleanup convergence, and resume ordering.
+  "test/core/database/helpers/messages_db_helpers_private_media_lifecycle_test.dart"
+  "test/features/conversation/application/consume_private_media_use_case_test.dart"
+  "test/features/conversation/application/private_media_expiry_scheduler_test.dart"
+  "test/features/conversation/integration/private_media_restart_replay_test.dart"
+  "test/features/conversation/application/private_media_cleanup_race_test.dart"
+  "test/core/lifecycle/private_media_lifecycle_recovery_wiring_test.dart"
+  # 234 Session 04: central current-parent direct-media capability matrix and
+  # stale/direct-call action boundary (egress, Forward, library, download, PiP).
+  "test/features/conversation/application/private_media_action_eligibility_test.dart"
+  "test/features/conversation/application/direct_private_media_boundary_test.dart"
+  # 234 Session 05: dedicated private route/lifecycle/native-protection host
+  # contract. Native and device proofs stay exact manual commands.
+  "test/features/conversation/presentation/screens/direct_private_media_viewer_test.dart"
+  "test/core/media/private_media_protection_coordinator_test.dart"
+  # 234 Session 06: strict fail-closed evaluator for the fully automated,
+  # availability-bounded physical-Android + emulator device-local artifact.
+  "test/integration/direct_private_media_device_local_journey_criteria_test.dart"
+  # 249 Session 01: hidden direct-library batch-forward source qualification,
+  # canonical order, independent captions/tokens, and atomic revalidation.
+  "test/features/conversation/application/build_direct_media_library_batch_forward_test.dart"
+  # 249 Session 02: direct-only source/contact delivery matrix, strict ordinary
+  # transport boundary, dedicated picker state, and Shared Media reconciliation.
+  "test/features/share/application/direct_media_batch_forward_delivery_coordinator_test.dart"
+  "test/features/share/presentation/direct_media_batch_forward_picker_wired_test.dart"
+  "test/features/conversation/presentation/screens/conversation_shared_media_batch_forward_test.dart"
+  "test/features/conversation/application/direct_media_batch_forward_transport_boundary_test.dart"
+  # 247 Session 03: the real direct-route boundary must remain blank and
+  # delivery-free when entered from eligible announcement media.
+  "test/features/groups/integration/announcement_private_reply_no_auto_send_test.dart"
   # 233: 1:1 shared media library — strict direct-scoped paging/filters/
   # cursors, cross-message typed viewer + lazy continuation, scoped-page
   # bookmarks, batch save/share with the ten-item ceiling, confirmed
@@ -350,6 +393,27 @@ readonly GROUP_TESTS=(
   # every ReceivedMediaEgressService call; refusals make zero egress calls).
   "test/features/groups/application/group_received_media_action_policy_test.dart"
   "test/features/groups/application/group_received_media_actions_test.dart"
+  # 247 Session 02: minimum local request, fresh fail-closed announcement
+  # sender/contact qualification, and the read-only transport boundary.
+  "test/features/groups/application/announcement_private_reply_request_test.dart"
+  "test/features/groups/application/announcement_private_reply_policy_test.dart"
+  "test/features/groups/application/announcement_private_reply_transport_boundary_test.dart"
+  # 247 Session 03: distinct bubble/viewer action, exact five-owner opener
+  # census, blank direct route, current-item dispatch, and localized feedback.
+  "test/features/groups/presentation/announcement_private_reply_routing_test.dart"
+  "test/features/groups/presentation/announcement_private_reply_entry_surface_test.dart"
+  "test/features/groups/integration/announcement_private_reply_no_auto_send_test.dart"
+  # 257: compatible payload/send/remove/roundtrip coverage, composed
+  # reaction-notification/unread policy, routed Orbit refresh, and the strict
+  # five-row device-evidence contract. The device proof itself remains in the
+  # manual reliability-sim lane and cannot pass without captured artifacts.
+  "test/features/groups/domain/models/group_reaction_payload_test.dart"
+  "test/features/groups/application/send_group_reaction_use_case_test.dart"
+  "test/features/groups/application/remove_group_reaction_use_case_test.dart"
+  "test/features/groups/integration/group_reaction_roundtrip_test.dart"
+  "test/features/groups/integration/group_reaction_notification_pipeline_test.dart"
+  "test/features/orbit/presentation/screens/orbit_group_unread_notification_wired_test.dart"
+  "test/integration/group_reaction_notification_device_criteria_test.dart"
   # 235 persistence slice: v98 deletion journal (atomic delete-prepare +
   # exact reaction cleanup), the file->key->DB cleanup saga with restart
   # convergence, the guarded incoming final write / journal-aware download
@@ -369,6 +433,9 @@ readonly GROUP_TESTS=(
   # listener + durable membership buffer, ordinary drain + history-gap
   # repair, bubble label, and the transport-boundary source contract.
   "test/features/groups/application/group_media_forward_policy_test.dart"
+  # P1 media-forwarding regression: preview and dispatch share the same locked,
+  # canonical JPEG/MP4 qualification and fail closed on lifecycle/file drift.
+  "test/features/groups/application/group_media_forward_preview_gate_test.dart"
   "test/features/groups/application/group_media_forward_intent_test.dart"
   "test/features/groups/presentation/group_media_forward_flow_test.dart"
   "test/features/share/application/share_batch_delivery_coordinator_test.dart"
@@ -412,6 +479,56 @@ readonly GROUP_TESTS=(
   "test/features/groups/presentation/announcement_media_library_actions_test.dart"
   "test/features/groups/application/announcement_media_library_batch_actions_test.dart"
   "test/features/groups/application/announcement_media_library_batch_delete_test.dart"
+  # 238 group-private foundation: sequential v101 policy persistence, strict
+  # encrypted-inner four-field roundtrip, current-role retry/pre-upload
+  # qualification, and fail-closed action/library/announcement shields.
+  "test/core/database/migrations/101_group_private_media_lifecycle_test.dart"
+  "test/features/groups/domain/models/group_private_media_policy_test.dart"
+  "test/features/groups/integration/group_private_media_payload_roundtrip_test.dart"
+  "test/features/groups/application/group_private_media_safe_disabled_boundary_test.dart"
+  "test/features/groups/application/group_private_media_retry_qualification_test.dart"
+  "test/features/groups/application/group_private_media_preupload_boundary_test.dart"
+  "test/features/groups/application/group_private_media_stale_library_boundary_test.dart"
+  "test/features/groups/integration/group_private_media_transport_boundary_test.dart"
+  "test/features/groups/presentation/group_private_media_announcement_sentinel_test.dart"
+  # 238 group lifecycle closure: first-frame CAS, restart recovery,
+  # monotonic expiry, exact cleanup, and guarded explicit download replay.
+  "test/features/groups/application/group_private_media_lifecycle_test.dart"
+  "test/features/groups/integration/group_private_media_crash_recovery_test.dart"
+  "test/features/groups/application/group_private_media_expiry_test.dart"
+  "test/features/groups/integration/group_private_media_cleanup_replay_test.dart"
+  "test/features/groups/presentation/group_private_media_capabilities_test.dart"
+  "test/features/groups/application/group_private_media_notification_test.dart"
+  "test/features/push/application/push_decrypt_preview_test.dart"
+  "test/features/groups/presentation/group_private_media_viewer_test.dart"
+  # 242 announcement-private lifecycle: exact current-admin author/receive
+  # authority, encrypted-inner policy, shared durable lifecycle/capabilities,
+  # minimized moderation metadata, and generic notification privacy.
+  "test/features/groups/domain/models/announcement_private_media_policy_test.dart"
+  "test/features/groups/application/announcement_private_media_authorization_test.dart"
+  "test/features/groups/integration/announcement_private_media_payload_roundtrip_test.dart"
+  "test/features/groups/integration/announcement_private_media_lifecycle_test.dart"
+  "test/features/groups/presentation/announcement_private_media_capabilities_test.dart"
+  "test/features/groups/application/announcement_private_media_notification_test.dart"
+  "test/features/groups/application/announcement_private_media_moderation_test.dart"
+  # Receive-side current-admin authorization completes Plan 242's exact eight
+  # dedicated host suites across live and offline persistence paths.
+  "test/features/groups/application/announcement_incoming_message_authorization_test.dart"
+  # 250/251 shared Plan-249-derived batch foundation: owner-scoped draft,
+  # bounded preflight, current target authorization, one-statement SQLite
+  # authorization snapshot, and source-target-cell delivery/retry truth.
+  "test/features/groups/application/group_media_batch_forward_draft_test.dart"
+  "test/features/groups/application/group_media_batch_forward_preflight_test.dart"
+  "test/features/groups/application/group_media_batch_forward_authorization_test.dart"
+  "test/core/database/helpers/group_forward_authorization_db_helpers_test.dart"
+  "test/features/groups/application/group_media_batch_forward_delivery_test.dart"
+  # 250 discussion-library opt-in batch surface and scope preservation.
+  "test/features/groups/presentation/group_shared_media_batch_forward_test.dart"
+  # 251 announcement-library batch surface, exact target policy, and opaque
+  # target-unit provenance / durable retry without source mutation.
+  "test/features/groups/presentation/announcement_media_batch_forward_test.dart"
+  "test/features/share/presentation/announcement_batch_forward_target_policy_test.dart"
+  "test/features/share/application/announcement_batch_forward_provenance_test.dart"
 )
 
 readonly POSTS_TESTS=(
@@ -733,30 +850,59 @@ array_contains() {
   return 1
 }
 
-# 236: exact non-vacuous Go legs for group-media forwarding — the bridge
-# JSON->options marker mapping plus the unchanged-node encrypted-extra
-# delivery sentinel (GK030). Wired into BOTH the `groups` and `all` gates.
+# 236/238: exact non-vacuous Go legs for group-media forwarding and private
+# policy — bridge option mapping plus unchanged-node encrypted-extra delivery
+# sentinels. Wired into BOTH the `groups` and `all` gates.
 run_group_forwarding_go_bridge_gate() {
-  echo "=== Group Forwarding Go Bridge Gate ==="
+  echo "=== Group Forwarding / Private Media Go Bridge Gate ==="
   (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge -run '^TestGMF11ForwardedMarkerMapsToPublishOptions$' -count=1)
-  (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run '^TestGK030PublishGroupMessagePreservesExtraFieldsInReceivedEvent$' -count=1)
+  (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge ./node -run 'GPL12|GK030' -count=1)
 }
 
 # Notification relay closure: curated 1:1 and group gates run only the focused
 # provider-routing sentinels. The wave/all gate runs the complete relay module
 # once, matching the repository's full-Go cadence.
+run_relay_toolchain_contract_gate() {
+  echo "=== Relay Go Toolchain Contract Gate ==="
+  bash scripts/test/relay_go_toolchain_contract_test.sh
+}
+
 run_relay_notification_go_gate() {
   echo "=== Relay Notification Go Gate ==="
+  run_relay_toolchain_contract_gate
   (cd go-relay-server && GOTOOLCHAIN=go1.25.0 go test ./... -run '^TestRelayNotificationClosure_' -count=1)
 }
 
 run_relay_all_go_gate() {
   echo "=== Relay Full Go Gate ==="
+  run_relay_toolchain_contract_gate
   (cd go-relay-server && GOTOOLCHAIN=go1.25.0 go test ./... -count=1)
 }
 
 classify_path() {
   local path="$1"
+
+  # Plan 257 device campaign controller/validator/capture sources are expanded
+  # by reliability discovery, not executed as host tests. Keep them explicitly
+  # classified here so manual completeness queries cannot mistake them for an
+  # unowned integration path.
+  case "$path" in
+    integration_test/scripts/run_group_reaction_notification_device.dart|\
+    integration_test/scripts/capture_group_reaction_notification_device.dart|\
+    integration_test/scripts/validate_group_reaction_notification_artifacts.dart|\
+    integration_test/scripts/group_reaction_notification_device_criteria.dart)
+      printf 'Plan 257 device-capture runner'
+      return 0
+      ;;
+  esac
+
+  # Plan 257 driver-owned SQLCipher observer. It is launched on the explicit
+  # recipient only after the OS notification/tap journey; running it in a host
+  # array would be both impossible and misleading.
+  if [[ "$path" == "integration_test/group_reaction_notification_sqlcipher_probe_test.dart" ]]; then
+    printf 'Plan 257 device-capture support'
+    return 0
+  fi
 
   if array_contains "$path" "${BASELINE_TESTS[@]}"; then
     printf 'baseline gate'
@@ -960,9 +1106,36 @@ run_completeness_check() {
   printf 'Completeness check PASS.\n'
 }
 
+has_host_batch_control() {
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --batch-flutter|--batch-flutter=*|\
+        --concurrency|--concurrency=*|\
+        --reporter|--reporter=*)
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
 main() {
   local gate="${1:-}"
   local -a gate_args=("${@:2}")
+
+  case "$gate" in
+    move-feature|host-all|feature-host-all|core-host-all|performance-host)
+      ;;
+    *)
+      if ((${#gate_args[@]} > 0)) &&
+        has_host_batch_control "${gate_args[@]}"; then
+        printf 'Host batch options are not supported for gate: %s\n' \
+          "${gate:-<missing>}" >&2
+        return 2
+      fi
+      ;;
+  esac
 
   case "$gate" in
     baseline)

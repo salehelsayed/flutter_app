@@ -1,9 +1,13 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
+import '../../constants/retry_constants.dart';
 import '../../media/group_media_integrity_policy.dart';
+import '../../media/media_file_path_convention.dart';
 import '../../media/media_owner_lane.dart';
 import '../../utils/flow_event_emitter.dart';
 import '../db_write_transaction.dart';
+import 'group_messages_db_helpers.dart';
+import 'messages_db_helpers.dart';
 
 /// Inserts a media attachment row verbatim (no merge, REPLACE on conflict).
 ///
@@ -141,14 +145,418 @@ Future<void> dbSaveMediaAttachmentPreservingLocalState(
   }
 }
 
+/// Atomic final save for an incoming direct private attachment. The parent
+/// clock/expiry check and preserving attachment write share one transaction;
+/// a terminal/hidden/wrong parent produces zero row mutation.
+Future<bool> dbSaveDirectPrivateMediaAttachmentGuarded(
+  Database db,
+  Map<String, Object?> row, {
+  required String messageId,
+  required int nowMs,
+}) {
+  return dbWriteTransaction(db, (txn) async {
+    final parentEligible =
+        await dbAdvanceAndQualifyDirectPrivateMediaParentWithinTransaction(
+          txn,
+          messageId,
+          nowMs: nowMs,
+        );
+    if (!parentEligible ||
+        row['message_id'] != messageId ||
+        row['owner_lane'] != MediaOwnerLane.direct.dbValue) {
+      return false;
+    }
+    await _applyMediaAttachmentPreservingSave(
+      txn,
+      row,
+      row['id'] as String? ?? '',
+      preserveDurableMimeIdentity: true,
+    );
+    return true;
+  });
+}
+
+/// Parent-qualified claim for a direct-private transfer. The parent clock and
+/// attachment claim are evaluated atomically; a terminal/hidden/expired parent
+/// cannot leave its row in `downloading`.
+Future<int> dbBeginDirectPrivateMediaDownloadIfEligible(
+  Database db, {
+  required String messageId,
+  required String attachmentId,
+  required int nowMs,
+}) {
+  return dbWriteTransaction(db, (txn) async {
+    final parentEligible =
+        await dbAdvanceAndQualifyDirectPrivateMediaParentWithinTransaction(
+          txn,
+          messageId,
+          nowMs: nowMs,
+        );
+    if (!parentEligible) return 0;
+    // `downloading` is deliberately not reclaimable without a durable transfer
+    // token. Two concurrent discriminator/nonces must not both own the row.
+    final statuses = <String>[
+      kMediaDownloadStatusPending,
+      kMediaDownloadStatusFailed,
+      kMediaDownloadStatusDownloadFailed,
+      kMediaDownloadStatusEvicted,
+    ];
+    final placeholders = List.filled(statuses.length, '?').join(', ');
+    return txn.rawUpdate(
+      'UPDATE media_attachments SET download_status = ? '
+      'WHERE id = ? AND message_id = ? AND owner_lane = ? '
+      'AND download_status IN ($placeholders)',
+      [
+        kMediaDownloadStatusDownloading,
+        attachmentId,
+        messageId,
+        MediaOwnerLane.direct.dbValue,
+        ...statuses,
+      ],
+    );
+  });
+}
+
+/// Fresh direct-private local-ready qualification under the shared attachment
+/// lock. This never repairs a status or inserts a row.
+Future<int> dbQualifyDirectPrivateMediaLocalReadyIfEligible(
+  Database db, {
+  required String messageId,
+  required String attachmentId,
+  required String expectedLocalPath,
+  required int nowMs,
+}) {
+  return dbWriteTransaction(db, (txn) async {
+    final parentEligible =
+        await dbAdvanceAndQualifyDirectPrivateMediaParentWithinTransaction(
+          txn,
+          messageId,
+          nowMs: nowMs,
+        );
+    if (!parentEligible) return 0;
+    final rows = await txn.rawQuery(
+      'SELECT 1 FROM media_attachments WHERE id = ? AND message_id = ? '
+      'AND owner_lane = ? AND download_status = ? AND local_path = ? LIMIT 1',
+      [
+        attachmentId,
+        messageId,
+        MediaOwnerLane.direct.dbValue,
+        kMediaDownloadStatusDone,
+        expectedLocalPath,
+      ],
+    );
+    return rows.isEmpty ? 0 : 1;
+  });
+}
+
+/// Fresh parent + exact transfer-claim qualification used immediately before
+/// direct-private promotion. It runs under the caller's attachment lock and
+/// performs no attachment mutation.
+Future<int> dbQualifyDirectPrivateMediaDownloadClaimIfEligible(
+  Database db, {
+  required String messageId,
+  required String attachmentId,
+  required int nowMs,
+}) {
+  return dbWriteTransaction(db, (txn) async {
+    final parentEligible =
+        await dbAdvanceAndQualifyDirectPrivateMediaParentWithinTransaction(
+          txn,
+          messageId,
+          nowMs: nowMs,
+        );
+    if (!parentEligible) return 0;
+    final rows = await txn.rawQuery(
+      'SELECT 1 FROM media_attachments WHERE id = ? AND message_id = ? '
+      'AND owner_lane = ? AND download_status = ? LIMIT 1',
+      [
+        attachmentId,
+        messageId,
+        MediaOwnerLane.direct.dbValue,
+        kMediaDownloadStatusDownloading,
+      ],
+    );
+    return rows.isEmpty ? 0 : 1;
+  });
+}
+
+/// Exact UPDATE-only failure transition for a direct-private download. It
+/// cannot reinsert metadata/key state after lifecycle cleanup wins.
+Future<int> dbRecordDirectPrivateMediaDownloadFailureIfEligible(
+  Database db, {
+  required String messageId,
+  required String attachmentId,
+  required int nowMs,
+  required bool incrementRetryCount,
+  required String failureStatus,
+  required String expectedDownloadStatus,
+  String? expectedLocalPath,
+  bool clearLocalPath = false,
+}) {
+  const allowedStatuses = {
+    kMediaDownloadStatusFailed,
+    kMediaDownloadStatusDownloadFailed,
+    kMediaDownloadStatusIntegrityFailed,
+  };
+  if (!allowedStatuses.contains(failureStatus)) {
+    throw ArgumentError.value(failureStatus, 'failureStatus');
+  }
+  return dbWriteTransaction(db, (txn) async {
+    final parentEligible =
+        await dbAdvanceAndQualifyDirectPrivateMediaParentWithinTransaction(
+          txn,
+          messageId,
+          nowMs: nowMs,
+        );
+    if (!parentEligible) return 0;
+    return txn.rawUpdate(
+      'UPDATE media_attachments SET '
+      'download_status = CASE WHEN ? = 1 THEN '
+      'CASE WHEN COALESCE(download_retry_count, 0) + 1 >= ? THEN ? ELSE ? END '
+      'ELSE ? END, '
+      'download_retry_count = CASE WHEN ? = 1 '
+      'THEN COALESCE(download_retry_count, 0) + 1 '
+      'ELSE download_retry_count END, '
+      'local_path = CASE WHEN ? = 1 THEN NULL ELSE local_path END '
+      'WHERE id = ? AND message_id = ? AND owner_lane = ? '
+      'AND download_status = ? '
+      'AND (? = 0 OR local_path = ?)',
+      [
+        incrementRetryCount ? 1 : 0,
+        kMaxDownloadRetries,
+        kMediaDownloadStatusDownloadFailed,
+        kMediaDownloadStatusFailed,
+        failureStatus,
+        incrementRetryCount ? 1 : 0,
+        clearLocalPath ? 1 : 0,
+        attachmentId,
+        messageId,
+        MediaOwnerLane.direct.dbValue,
+        expectedDownloadStatus,
+        expectedLocalPath == null ? 0 : 1,
+        expectedLocalPath,
+      ],
+    );
+  });
+}
+
+Future<int> dbBeginGroupPrivateMediaDownloadIfEligible(
+  Database db, {
+  required String groupId,
+  required String messageId,
+  required String attachmentId,
+  required int nowMs,
+}) {
+  return dbWriteTransaction(db, (txn) async {
+    if (!await dbAdvanceAndQualifyGroupPrivateMediaParent(
+      txn,
+      messageId,
+      groupId: groupId,
+      nowMs: nowMs,
+    )) {
+      return 0;
+    }
+    const statuses = <String>[
+      kMediaDownloadStatusPending,
+      kMediaDownloadStatusFailed,
+      kMediaDownloadStatusDownloadFailed,
+      kMediaDownloadStatusEvicted,
+    ];
+    final placeholders = List.filled(statuses.length, '?').join(', ');
+    return txn.rawUpdate(
+      'UPDATE media_attachments SET download_status = ? '
+      'WHERE id = ? AND message_id = ? AND owner_lane = ? '
+      'AND download_status IN ($placeholders)',
+      [
+        kMediaDownloadStatusDownloading,
+        attachmentId,
+        messageId,
+        MediaOwnerLane.group.dbValue,
+        ...statuses,
+      ],
+    );
+  });
+}
+
+Future<int> dbQualifyGroupPrivateMediaLocalReadyIfEligible(
+  Database db, {
+  required String groupId,
+  required String messageId,
+  required String attachmentId,
+  required String expectedLocalPath,
+  required int nowMs,
+}) {
+  return dbWriteTransaction(db, (txn) async {
+    if (!await dbAdvanceAndQualifyGroupPrivateMediaParent(
+      txn,
+      messageId,
+      groupId: groupId,
+      nowMs: nowMs,
+    )) {
+      return 0;
+    }
+    final rows = await txn.rawQuery(
+      'SELECT 1 FROM media_attachments WHERE id = ? AND message_id = ? '
+      'AND owner_lane = ? AND download_status = ? AND local_path = ? LIMIT 1',
+      [
+        attachmentId,
+        messageId,
+        MediaOwnerLane.group.dbValue,
+        kMediaDownloadStatusDone,
+        expectedLocalPath,
+      ],
+    );
+    return rows.isEmpty ? 0 : 1;
+  });
+}
+
+Future<int> dbQualifyGroupPrivateMediaDownloadClaimIfEligible(
+  Database db, {
+  required String groupId,
+  required String messageId,
+  required String attachmentId,
+  required int nowMs,
+}) {
+  return dbWriteTransaction(db, (txn) async {
+    if (!await dbAdvanceAndQualifyGroupPrivateMediaParent(
+      txn,
+      messageId,
+      groupId: groupId,
+      nowMs: nowMs,
+    )) {
+      return 0;
+    }
+    final rows = await txn.rawQuery(
+      'SELECT 1 FROM media_attachments WHERE id = ? AND message_id = ? '
+      'AND owner_lane = ? AND download_status = ? LIMIT 1',
+      [
+        attachmentId,
+        messageId,
+        MediaOwnerLane.group.dbValue,
+        kMediaDownloadStatusDownloading,
+      ],
+    );
+    return rows.isEmpty ? 0 : 1;
+  });
+}
+
+Future<int> dbRecordGroupPrivateMediaDownloadFailureIfEligible(
+  Database db, {
+  required String groupId,
+  required String messageId,
+  required String attachmentId,
+  required int nowMs,
+  required bool incrementRetryCount,
+  required String failureStatus,
+  required String expectedDownloadStatus,
+  String? expectedLocalPath,
+  bool clearLocalPath = false,
+}) {
+  const allowedStatuses = {
+    kMediaDownloadStatusFailed,
+    kMediaDownloadStatusDownloadFailed,
+    kMediaDownloadStatusIntegrityFailed,
+  };
+  if (!allowedStatuses.contains(failureStatus)) {
+    throw ArgumentError.value(failureStatus, 'failureStatus');
+  }
+  return dbWriteTransaction(db, (txn) async {
+    if (!await dbAdvanceAndQualifyGroupPrivateMediaParent(
+      txn,
+      messageId,
+      groupId: groupId,
+      nowMs: nowMs,
+    )) {
+      return 0;
+    }
+    return txn.rawUpdate(
+      'UPDATE media_attachments SET '
+      'download_status = CASE WHEN ? = 1 THEN '
+      'CASE WHEN COALESCE(download_retry_count, 0) + 1 >= ? THEN ? ELSE ? END '
+      'ELSE ? END, '
+      'download_retry_count = CASE WHEN ? = 1 '
+      'THEN COALESCE(download_retry_count, 0) + 1 '
+      'ELSE download_retry_count END, '
+      'local_path = CASE WHEN ? = 1 THEN NULL ELSE local_path END '
+      'WHERE id = ? AND message_id = ? AND owner_lane = ? '
+      'AND download_status = ? AND (? = 0 OR local_path = ?)',
+      [
+        incrementRetryCount ? 1 : 0,
+        kMaxDownloadRetries,
+        kMediaDownloadStatusDownloadFailed,
+        kMediaDownloadStatusFailed,
+        failureStatus,
+        incrementRetryCount ? 1 : 0,
+        clearLocalPath ? 1 : 0,
+        attachmentId,
+        messageId,
+        MediaOwnerLane.group.dbValue,
+        expectedDownloadStatus,
+        expectedLocalPath == null ? 0 : 1,
+        expectedLocalPath,
+      ],
+    );
+  });
+}
+
+Future<int> dbCommitGroupPrivateMediaDownloadIfEligible(
+  Database db, {
+  required String groupId,
+  required String messageId,
+  required String attachmentId,
+  required String localPath,
+  required int nowMs,
+}) {
+  return dbWriteTransaction(db, (txn) async {
+    final identity = await txn.rawQuery(
+      'SELECT parent.group_id AS group_id, attachment.mime AS mime '
+      'FROM media_attachments attachment '
+      'JOIN group_messages parent ON parent.id = attachment.message_id '
+      'WHERE attachment.id = ? AND attachment.message_id = ? '
+      "AND attachment.owner_lane = 'group' LIMIT 1",
+      [attachmentId, messageId],
+    );
+    if (identity.isEmpty || identity.single['group_id'] != groupId) return 0;
+    final expectedLocalPath = MediaFilePathConvention.relativePathForAttachment(
+      contactPeerId: groupId,
+      blobId: attachmentId,
+      mime: identity.single['mime'] as String,
+    );
+    if (localPath != expectedLocalPath ||
+        !await dbAdvanceAndQualifyGroupPrivateMediaParent(
+          txn,
+          messageId,
+          groupId: groupId,
+          nowMs: nowMs,
+        )) {
+      return 0;
+    }
+    return txn.rawUpdate(
+      'UPDATE media_attachments SET local_path = ?, download_status = ?, '
+      'download_retry_count = 0 '
+      'WHERE id = ? AND message_id = ? AND owner_lane = ? '
+      'AND download_status = ?',
+      [
+        localPath,
+        kMediaDownloadStatusDone,
+        attachmentId,
+        messageId,
+        MediaOwnerLane.group.dbValue,
+        kMediaDownloadStatusDownloading,
+      ],
+    );
+  });
+}
+
 /// The shared preserving-save merge body. MUST run inside a
 /// [dbWriteTransaction]; both the plain and the 235 group-guarded save reuse
 /// this exact logic so their preservation semantics can never drift.
 Future<void> _applyMediaAttachmentPreservingSave(
   DatabaseExecutor txn,
   Map<String, Object?> row,
-  String id,
-) async {
+  String id, {
+  bool preserveDurableMimeIdentity = false,
+}) async {
   final existingRows = await txn.query(
     'media_attachments',
     where: 'id = ?',
@@ -172,6 +580,19 @@ Future<void> _applyMediaAttachmentPreservingSave(
   }
 
   final merged = Map<String, Object?>.from(row);
+  // MIME/media type become path identity only after a durable copy exists, or
+  // when a DB-qualified private parent invokes the guarded save. Ordinary
+  // pending/failed direct replays must still be able to correct descriptors.
+  final existingHasDurablePath =
+      mediaLocalPathHasValue(existing['local_path'] as String?) &&
+      const {
+        kMediaDownloadStatusDone,
+        kMediaDownloadStatusEvicted,
+      }.contains(existing['download_status']);
+  if (preserveDurableMimeIdentity || existingHasDurablePath) {
+    merged['mime'] = existing['mime'];
+    merged['media_type'] = existing['media_type'];
+  }
   // 229: a user-evicted local copy survives ordinary replay (wire rows
   // decode as `pending` with no path — they must not re-arm a transfer
   // or resurrect a path). Only an explicit local retry, which writes
@@ -242,12 +663,21 @@ Future<bool> dbSaveGroupMediaAttachmentGuarded(
 
   try {
     final saved = await dbWriteTransaction(db, (txn) async {
-      final parentRows = await txn.query(
-        'group_messages',
-        columns: ['id'],
-        where: 'id = ? AND group_id = ?',
-        whereArgs: [messageId, groupId],
-        limit: 1,
+      final parentRows = await txn.rawQuery(
+        'SELECT 1 FROM group_messages WHERE id = ? AND group_id = ? AND ('
+        '(media_policy_version = 0 AND media_lifecycle = ? '
+        'AND media_duration_seconds IS NULL AND media_protected = 0 '
+        'AND media_received_at IS NULL AND media_expires_at IS NULL '
+        'AND media_last_checked_at IS NULL AND media_consumed_at IS NULL '
+        'AND media_expired_at IS NULL AND media_cleanup_pending = 0) OR '
+        '(media_policy_version = 1 AND media_protected = 1 '
+        "AND media_lifecycle IN ('standard','view_once','disappearing') "
+        'AND media_consumed_at IS NULL AND media_expired_at IS NULL '
+        'AND media_cleanup_pending = 0 '
+        "AND (media_lifecycle != 'disappearing' OR ("
+        'media_expires_at IS NOT NULL AND media_last_checked_at IS NOT NULL '
+        'AND media_last_checked_at < media_expires_at)))) LIMIT 1',
+        [messageId, groupId, 'standard'],
       );
       if (parentRows.isEmpty) {
         return false;
@@ -548,8 +978,13 @@ Future<int> dbCommitMediaDownloadLocalPath(
     'UPDATE media_attachments SET local_path = ?, download_status = ?, '
     'download_retry_count = 0 '
     'WHERE id = ? AND owner_lane = ? AND download_status = ? $journalAntiJoin',
-    [localPath, kMediaDownloadStatusDone, id, ownerLane,
-        kMediaDownloadStatusDownloading],
+    [
+      localPath,
+      kMediaDownloadStatusDone,
+      id,
+      ownerLane,
+      kMediaDownloadStatusDownloading,
+    ],
   );
   emitFlowEvent(
     layer: 'DB',
@@ -624,6 +1059,95 @@ Future<int> dbFinalizeMediaEvictedPathCleared(
   return affected;
 }
 
+const _directPrivateMediaCleanupAuthorityPredicate =
+    'EXISTS ('
+    'SELECT 1 FROM messages parent '
+    'WHERE parent.id = ? '
+    'AND parent.id = media_attachments.message_id '
+    'AND parent.private_media_policy_version IS NOT NULL '
+    'AND parent.private_media_policy_version > 0 '
+    "AND parent.private_media_mode IN "
+    "('protected','view_once','disappearing','unsupported') "
+    'AND ('
+    'parent.hidden_at IS NOT NULL OR parent.deleted_at IS NOT NULL OR '
+    "parent.private_media_state IN ('consumed','expired','unsupported')"
+    '))';
+
+/// Exact DB-backed authorization for private file/key/row cleanup. Knowing an
+/// attachment ID alone must never authorize active or cross-lane key removal.
+Future<bool> dbCanCleanupDirectPrivateMediaAttachmentExact(
+  Database db, {
+  required String messageId,
+  required String attachmentId,
+}) async {
+  final rows = await db.rawQuery(
+    'SELECT 1 FROM media_attachments '
+    'WHERE id = ? AND message_id = ? AND owner_lane = ? '
+    'AND $_directPrivateMediaCleanupAuthorityPredicate '
+    'LIMIT 1',
+    [attachmentId, messageId, 'direct', messageId],
+  );
+  return rows.isNotEmpty;
+}
+
+/// Exact direct-owned attachment-row finalize used only after durable private
+/// terminal authority and successful file/key cleanup.
+///
+/// The terminal/hidden parent predicate is intentionally repeated here rather
+/// than trusting an earlier application-layer read. This method is exposed as
+/// a narrow repository capability, so a direct caller must not be able to
+/// remove an attachment from an active private message by bypassing the
+/// lifecycle adapter.
+Future<int> dbDeleteDirectPrivateMediaAttachmentExact(
+  Database db, {
+  required String messageId,
+  required String attachmentId,
+}) {
+  return db.rawDelete(
+    'DELETE FROM media_attachments '
+    'WHERE id = ? AND message_id = ? AND owner_lane = ? '
+    'AND $_directPrivateMediaCleanupAuthorityPredicate',
+    [attachmentId, messageId, 'direct', messageId],
+  );
+}
+
+const _groupPrivateMediaCleanupAuthorityPredicate =
+    'EXISTS ('
+    'SELECT 1 FROM group_messages parent '
+    'WHERE parent.id = ? AND parent.id = media_attachments.message_id '
+    'AND parent.media_policy_version > 0 '
+    'AND (parent.media_consumed_at IS NOT NULL '
+    'OR parent.media_expired_at IS NOT NULL '
+    "OR parent.media_lifecycle = 'unsupported') "
+    'AND parent.media_cleanup_pending = 1)';
+
+Future<bool> dbCanCleanupGroupPrivateMediaAttachmentExact(
+  Database db, {
+  required String messageId,
+  required String attachmentId,
+}) async {
+  final rows = await db.rawQuery(
+    'SELECT 1 FROM media_attachments '
+    'WHERE id = ? AND message_id = ? AND owner_lane = ? '
+    'AND $_groupPrivateMediaCleanupAuthorityPredicate LIMIT 1',
+    [attachmentId, messageId, MediaOwnerLane.group.dbValue, messageId],
+  );
+  return rows.isNotEmpty;
+}
+
+Future<int> dbDeleteGroupPrivateMediaAttachmentExact(
+  Database db, {
+  required String messageId,
+  required String attachmentId,
+}) {
+  return db.rawDelete(
+    'DELETE FROM media_attachments '
+    'WHERE id = ? AND message_id = ? AND owner_lane = ? '
+    'AND $_groupPrivateMediaCleanupAuthorityPredicate',
+    [attachmentId, messageId, MediaOwnerLane.group.dbValue, messageId],
+  );
+}
+
 /// 228: sets the local bookmark flag. Only visual media (image/video) can be
 /// bookmarked; a missing row or another media type fails with ArgumentError.
 Future<void> dbSetMediaBookmarked(
@@ -680,6 +1204,75 @@ Future<void> dbSetMediaBookmarked(
     );
     rethrow;
   }
+}
+
+/// Atomically updates one exact direct bookmark only while its current parent
+/// remains live, visible, and canonically ordinary.
+///
+/// A legitimate privacy/terminal/deletion race returns false with zero write;
+/// the generic ID-only writer remains unchanged for group/announcement use.
+Future<bool> dbSetDirectMediaBookmarkedIfOrdinary(
+  Database db, {
+  required String messageId,
+  required String attachmentId,
+  required bool bookmarked,
+}) async {
+  final changed = await db.rawUpdate(
+    'UPDATE media_attachments SET is_bookmarked = ? '
+    'WHERE id = ? AND message_id = ? AND owner_lane = ? '
+    "AND media_type IN ('image', 'video') "
+    'AND EXISTS (SELECT 1 FROM messages p '
+    'WHERE p.id = media_attachments.message_id '
+    'AND p.hidden_at IS NULL AND p.deleted_at IS NULL '
+    'AND p.private_media_policy_version = 0 '
+    "AND p.private_media_mode = 'ordinary' "
+    'AND p.private_media_duration_seconds IS NULL '
+    "AND p.private_media_state = 'none' "
+    'AND p.private_media_received_at_ms IS NULL '
+    'AND p.private_media_expires_at_ms IS NULL '
+    'AND p.private_media_revealed_at_ms IS NULL '
+    'AND p.private_media_terminal_at_ms IS NULL '
+    'AND p.private_media_clock_high_water_ms IS NULL)',
+    [bookmarked ? 1 : 0, attachmentId, messageId, 'direct'],
+  );
+  return changed == 1;
+}
+
+/// Atomically updates one exact group bookmark only while its current parent
+/// remains live, visible, and canonically ordinary.
+///
+/// The exact group/message/attachment identity and owner lane are repeated in
+/// SQL. A privacy transition, local deletion, missing row, or same-ID sibling
+/// therefore returns false with zero mutation.
+Future<bool> dbSetGroupMediaBookmarkedIfOrdinary(
+  Database db, {
+  required String groupId,
+  required String messageId,
+  required String attachmentId,
+  required bool bookmarked,
+}) async {
+  final changed = await db.rawUpdate(
+    'UPDATE media_attachments SET is_bookmarked = ? '
+    'WHERE id = ? AND message_id = ? AND owner_lane = ? '
+    "AND media_type IN ('image', 'video') "
+    'AND EXISTS (SELECT 1 FROM group_messages p '
+    'WHERE p.id = media_attachments.message_id '
+    'AND p.id = ? AND p.group_id = ? '
+    'AND p.media_policy_version = 0 '
+    "AND p.media_lifecycle = 'standard' "
+    'AND p.media_duration_seconds IS NULL '
+    'AND p.media_protected = 0 '
+    'AND p.media_received_at IS NULL '
+    'AND p.media_expires_at IS NULL '
+    'AND p.media_last_checked_at IS NULL '
+    'AND p.media_consumed_at IS NULL '
+    'AND p.media_expired_at IS NULL '
+    'AND p.media_cleanup_pending = 0 '
+    'AND NOT EXISTS (SELECT 1 FROM group_message_local_deletions t '
+    'WHERE t.message_id = p.id AND t.group_id = p.group_id))',
+    [bookmarked ? 1 : 0, attachmentId, messageId, 'group', messageId, groupId],
+  );
+  return changed == 1;
 }
 
 /// 228: stores a durable video resume position.

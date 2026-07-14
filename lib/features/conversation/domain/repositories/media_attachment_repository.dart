@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 
@@ -82,6 +84,45 @@ abstract class MediaAttachmentRepository {
   Future<List<MediaAttachment>> getUploadPendingAttachments({
     required MediaOwnerLane owner,
   });
+}
+
+/// Durable attachment mutations that can change current playback authority.
+enum MediaAttachmentAuthorizationMutation {
+  saved,
+  localPathChanged,
+  downloadStatusChanged,
+  downloadStarted,
+  downloadCommitted,
+  evicted,
+  evictionFinalized,
+  removed,
+}
+
+/// Exact post-commit identity for an authorization-relevant attachment write.
+///
+/// [scopeId] is present when the mutation itself is contact/group scoped.
+/// Message- and attachment-scoped operations instead carry their exact IDs.
+/// A null [attachmentId] applies to every attachment under [messageId], and a
+/// null [messageId] applies to the exact [scopeId].
+class MediaAttachmentAuthorizationChange {
+  const MediaAttachmentAuthorizationChange({
+    required this.owner,
+    this.scopeId,
+    this.messageId,
+    this.attachmentId,
+    required this.kind,
+  }) : assert(scopeId != null || messageId != null || attachmentId != null);
+
+  final MediaOwnerLane owner;
+  final String? scopeId;
+  final String? messageId;
+  final String? attachmentId;
+  final MediaAttachmentAuthorizationMutation kind;
+}
+
+/// Optional repository capability for exact, post-commit media invalidation.
+abstract class MediaAttachmentAuthorizationChangeSource {
+  Stream<MediaAttachmentAuthorizationChange> get authorizationChanges;
 }
 
 /// Optional compensation capability for a brand-new message whose attachment

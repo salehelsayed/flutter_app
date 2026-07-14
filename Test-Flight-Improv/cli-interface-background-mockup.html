@@ -1,0 +1,1348 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <link rel="icon" href="data:,">
+  <title>Mknoon — CLI Background Concept</title>
+  <style>
+    :root {
+      --void: #020403;
+      --void-soft: #070b08;
+      --ink: #e8f5ea;
+      --muted: #75847a;
+      --phosphor: #9cff45;
+      --phosphor-rgb: 156, 255, 69;
+      --signal: #ffb52e;
+      --danger: #ff4d32;
+      --cyan: #42d9ff;
+      --line: rgba(156, 255, 69, .18);
+      --glass: rgba(5, 10, 6, .78);
+      --mono: "IBM Plex Mono", "SFMono-Regular", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --bg-density: .8;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { min-width: 320px; background: var(--void); }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      overflow-x: hidden;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 10% 12%, rgba(var(--phosphor-rgb), .055), transparent 26rem),
+        radial-gradient(circle at 86% 90%, rgba(66, 217, 255, .035), transparent 30rem),
+        var(--void);
+      font-family: var(--sans);
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      opacity: .28;
+      background-image:
+        linear-gradient(rgba(255,255,255,.012) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.012) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: linear-gradient(to bottom, #000, transparent 92%);
+    }
+
+    button, input { font: inherit; }
+    button { -webkit-tap-highlight-color: transparent; }
+
+    .page-shell {
+      width: min(1320px, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 28px 0 54px;
+    }
+
+    .lab-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      border-bottom: 1px solid rgba(var(--phosphor-rgb), .16);
+      padding: 0 2px 18px;
+      font-family: var(--mono);
+    }
+
+    .brand-lockup { display: flex; align-items: center; gap: 12px; }
+
+    .brand-mark {
+      display: grid;
+      width: 31px;
+      height: 31px;
+      place-items: center;
+      border: 1px solid rgba(var(--phosphor-rgb), .5);
+      color: var(--phosphor);
+      box-shadow: inset 0 0 18px rgba(var(--phosphor-rgb), .07);
+      font-size: 15px;
+    }
+
+    .eyebrow {
+      margin: 0 0 3px;
+      color: var(--phosphor);
+      font-size: 10px;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+
+    .lab-title { margin: 0; font-size: 13px; font-weight: 500; letter-spacing: .01em; }
+
+    .live-state {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: #a6b0a9;
+      font-size: 10px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .live-state i {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--phosphor);
+      box-shadow: 0 0 12px rgba(var(--phosphor-rgb), .9);
+      animation: status-pulse 2s ease-in-out infinite;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(430px, 1fr) minmax(330px, 420px);
+      align-items: center;
+      gap: clamp(42px, 7vw, 106px);
+      min-height: calc(100vh - 108px);
+      padding: 42px clamp(10px, 4vw, 54px) 12px;
+    }
+
+    .preview-zone {
+      position: relative;
+      display: grid;
+      place-items: center;
+      min-height: 790px;
+    }
+
+    .preview-zone::before,
+    .preview-zone::after {
+      content: "";
+      position: absolute;
+      pointer-events: none;
+    }
+
+    .preview-zone::before {
+      width: min(650px, 100%);
+      aspect-ratio: 1;
+      border: 1px dashed rgba(var(--phosphor-rgb), .08);
+      border-radius: 50%;
+      animation: slow-spin 80s linear infinite;
+    }
+
+    .preview-zone::after {
+      width: 74%;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(var(--phosphor-rgb), .12), transparent);
+      box-shadow: 0 -275px 0 rgba(var(--phosphor-rgb), .04), 0 275px 0 rgba(var(--phosphor-rgb), .04);
+    }
+
+    .axis-note {
+      position: absolute;
+      z-index: 3;
+      color: rgba(var(--phosphor-rgb), .42);
+      font-family: var(--mono);
+      font-size: 8px;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+
+    .axis-note.left { left: 0; top: 48%; transform: rotate(-90deg); }
+    .axis-note.bottom { bottom: 30px; right: 5%; }
+
+    .device {
+      --accent: var(--phosphor);
+      --accent-rgb: var(--phosphor-rgb);
+      position: relative;
+      z-index: 5;
+      width: 390px;
+      height: 780px;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,.15);
+      border-radius: 46px;
+      background: #020503;
+      box-shadow:
+        0 38px 90px rgba(0,0,0,.78),
+        0 0 0 7px #090c0a,
+        0 0 0 8px rgba(255,255,255,.14),
+        0 0 80px rgba(var(--accent-rgb), .08);
+      isolation: isolate;
+      transition: box-shadow .35s ease;
+    }
+
+    .device[data-accent="cyan"] { --accent: #42d9ff; --accent-rgb: 66, 217, 255; }
+    .device[data-accent="amber"] { --accent: #ffc13b; --accent-rgb: 255, 193, 59; }
+
+    .phone-bg,
+    .grid-field,
+    .scanlines,
+    .packet-map,
+    .hex-field,
+    .memory-map,
+    .cipher-field,
+    .noise {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .phone-bg {
+      z-index: -6;
+      background:
+        radial-gradient(circle at 50% 7%, rgba(var(--accent-rgb), .16), transparent 25%),
+        radial-gradient(circle at 82% 60%, rgba(var(--accent-rgb), .055), transparent 30%),
+        linear-gradient(160deg, #061007 0%, #020503 45%, #010201 100%);
+    }
+
+    .grid-field {
+      z-index: -5;
+      opacity: calc(.27 * var(--bg-density));
+      background-image:
+        linear-gradient(rgba(var(--accent-rgb), .12) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(var(--accent-rgb), .12) 1px, transparent 1px);
+      background-size: 19px 19px;
+      mask-image: radial-gradient(circle at 50% 45%, #000 0, transparent 80%);
+      transition: opacity .2s ease;
+    }
+
+    .noise {
+      z-index: 20;
+      opacity: .12;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.28'/%3E%3C/svg%3E");
+      mix-blend-mode: screen;
+    }
+
+    .scanlines {
+      z-index: 21;
+      opacity: .18;
+      background: repeating-linear-gradient(to bottom, transparent 0 3px, rgba(0,0,0,.46) 3px 4px);
+      transition: opacity .2s ease;
+    }
+
+    .device.no-scanlines .scanlines { opacity: 0; }
+
+    .packet-map {
+      z-index: -3;
+      opacity: 0;
+      transition: opacity .2s ease;
+    }
+
+    .device[data-backdrop="packets"] .packet-map { opacity: calc(.7 * var(--bg-density)); }
+
+    .packet-map text { fill: rgba(var(--accent-rgb), .68); font: 7px var(--mono); letter-spacing: .11em; }
+    .packet-map .map-line { fill: none; stroke: rgba(var(--accent-rgb), .3); stroke-width: .8; stroke-dasharray: 3 5; }
+    .packet-map .map-node { fill: rgba(2, 7, 3, .7); stroke: rgba(var(--accent-rgb), .55); stroke-width: .8; }
+    .packet-map .packet { fill: var(--accent); filter: drop-shadow(0 0 3px rgba(var(--accent-rgb), .8)); }
+    .packet-map .packet-a { offset-path: path("M38 188 C100 140 125 218 188 173 S285 152 352 108"); animation: packet-run 5.4s linear infinite; }
+    .packet-map .packet-b { offset-path: path("M50 505 C120 455 210 560 342 478"); animation: packet-run 7.2s linear -3s infinite; }
+
+    .hex-field {
+      z-index: -3;
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 15px;
+      overflow: hidden;
+      opacity: 0;
+      padding: 90px 17px 40px;
+      color: rgba(var(--accent-rgb), .42);
+      font: 6.5px/1.9 var(--mono);
+      letter-spacing: .08em;
+      mask-image: linear-gradient(to bottom, transparent, #000 14%, #000 82%, transparent);
+      transition: opacity .2s ease;
+    }
+
+    .device[data-backdrop="hex"] .hex-field { opacity: calc(.72 * var(--bg-density)); }
+    .hex-column { white-space: pre-line; animation: hex-drift 13s linear infinite; }
+    .hex-column:nth-child(2) { animation-duration: 17s; animation-delay: -8s; }
+    .hex-column:nth-child(3) { animation-duration: 11s; animation-delay: -4s; color: rgba(255,181,46,.35); }
+    .hex-column:nth-child(4) { animation-duration: 19s; animation-delay: -11s; }
+    .hex-column:nth-child(5) { animation-duration: 14s; animation-delay: -6s; }
+
+    .memory-map,
+    .cipher-field {
+      z-index: -3;
+      opacity: 0;
+      transition: opacity .2s ease;
+    }
+
+    .device[data-backdrop="memory"] .memory-map { opacity: calc(.78 * var(--bg-density)); }
+    .memory-map text,
+    .cipher-field text { fill: rgba(var(--accent-rgb), .62); font: 6.5px var(--mono); letter-spacing: .09em; }
+    .memory-map .mem-box { fill: rgba(2,7,3,.68); stroke: rgba(var(--accent-rgb), .42); stroke-width: .8; }
+    .memory-map .mem-cell { fill: rgba(var(--accent-rgb), .08); stroke: rgba(var(--accent-rgb), .34); stroke-width: .45; }
+    .memory-map .mem-cell.hot { fill: rgba(255,77,50,.28); stroke: rgba(255,77,50,.62); animation: cell-fault 2.4s steps(2) infinite; }
+    .memory-map .mem-cell.warm { fill: rgba(255,181,46,.22); stroke: rgba(255,181,46,.52); }
+    .memory-map .mem-arrow { fill: none; stroke: rgba(255,181,46,.58); stroke-width: .8; stroke-dasharray: 3 3; }
+
+    .device[data-backdrop="cipher"] .cipher-field { opacity: calc(.72 * var(--bg-density)); }
+    .cipher-field .cipher-ring { fill: none; stroke: rgba(var(--accent-rgb), .26); stroke-width: .7; stroke-dasharray: 2 7; transform-origin: 195px 390px; animation: cipher-spin 36s linear infinite; }
+    .cipher-field .cipher-ring.reverse { stroke: rgba(255,181,46,.22); animation-direction: reverse; animation-duration: 48s; }
+    .cipher-field .cipher-axis { stroke: rgba(var(--accent-rgb), .14); stroke-width: .6; }
+    .cipher-field .key-node { fill: rgba(2,7,3,.82); stroke: rgba(var(--accent-rgb), .55); stroke-width: .8; }
+    .cipher-field .key-pulse { fill: var(--accent); filter: drop-shadow(0 0 5px rgba(var(--accent-rgb),.8)); animation: key-pulse 2.8s ease-in-out infinite; }
+
+    .phone-ui,
+    .orbit-ui { position: relative; z-index: 3; display: flex; height: 100%; flex-direction: column; }
+
+    .device[data-view="orbit"] .phone-ui { display: none; }
+    .device:not([data-view="orbit"]) .orbit-ui { display: none; }
+
+    .orbit-ui { color: #e4eee6; }
+
+    .orbit-head {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      min-height: 64px;
+      padding: 9px 16px 11px;
+      border-top: 1px solid rgba(var(--accent-rgb), .11);
+      border-bottom: 1px solid rgba(var(--accent-rgb), .21);
+      background: rgba(1,5,2,.66);
+      backdrop-filter: blur(16px);
+    }
+
+    .orbit-title { margin: 0 0 4px; font: 600 17px var(--mono); }
+    .orbit-subtitle { color: rgba(var(--accent-rgb),.62); font: 7px var(--mono); letter-spacing: .09em; text-transform: uppercase; }
+    .orbit-head-actions { display: flex; gap: 7px; }
+    .orbit-head-actions button { width: 31px; height: 31px; border: 1px solid rgba(var(--accent-rgb),.28); color: var(--accent); background: rgba(var(--accent-rgb),.05); font: 13px var(--mono); cursor: pointer; }
+
+    .orbit-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+    .orbit-stage::before { content: ""; position: absolute; inset: 0; background: radial-gradient(circle at 50% 45%, rgba(var(--accent-rgb),.1), transparent 43%); pointer-events: none; }
+    .orbit-links { position: absolute; inset: 42px 0 84px; width: 100%; height: calc(100% - 126px); pointer-events: none; }
+    .orbit-links circle { fill: none; stroke: rgba(var(--accent-rgb),.25); stroke-width: .7; stroke-dasharray: 3 5; }
+    .orbit-links path { fill: none; stroke: rgba(var(--accent-rgb),.34); stroke-width: .75; stroke-dasharray: 2 4; }
+    .orbit-links .route-live { stroke: var(--accent); filter: drop-shadow(0 0 3px rgba(var(--accent-rgb),.7)); stroke-dasharray: 5 7; animation: route-dash 6s linear infinite; }
+
+    .orbit-caption { position: absolute; top: 15px; left: 16px; color: #667168; font: 7px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+    .orbit-counter { position: absolute; top: 15px; right: 16px; color: rgba(var(--accent-rgb),.7); font: 7px var(--mono); }
+
+    .orbit-node {
+      position: absolute;
+      display: grid;
+      width: 44px;
+      height: 44px;
+      place-items: center;
+      transform: translate(-50%, -50%);
+      border: 1px solid rgba(var(--accent-rgb),.55);
+      border-radius: 50%;
+      color: #dce8de;
+      background: rgba(3,9,4,.92);
+      box-shadow: 0 0 0 5px rgba(var(--accent-rgb),.035), 0 0 20px rgba(var(--accent-rgb),.08);
+      font: 8px var(--mono);
+      cursor: pointer;
+      transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+    }
+
+    .orbit-node:hover,
+    .orbit-node[aria-pressed="true"] { transform: translate(-50%,-50%) scale(1.12); border-color: var(--accent); box-shadow: 0 0 0 5px rgba(var(--accent-rgb),.08), 0 0 24px rgba(var(--accent-rgb),.28); }
+    .orbit-node.self { left: 50%; top: 45%; width: 62px; height: 62px; color: #071004; background: var(--accent); border-color: var(--accent); font-weight: 800; box-shadow: 0 0 35px rgba(var(--accent-rgb),.35); }
+    .orbit-node.n1 { left: 50%; top: 20%; }
+    .orbit-node.n2 { left: 77%; top: 31%; }
+    .orbit-node.n3 { left: 78%; top: 62%; }
+    .orbit-node.n4 { left: 49%; top: 73%; }
+    .orbit-node.n5 { left: 22%; top: 61%; }
+    .orbit-node.n6 { left: 22%; top: 31%; }
+    .orbit-node.group { border-radius: 11px; border-color: rgba(255,181,46,.65); color: #ffd27b; }
+    .orbit-node .unread { position: absolute; top: -3px; right: -2px; display: grid; width: 15px; height: 15px; place-items: center; border-radius: 50%; color: #071004; background: var(--accent); font: 700 6px var(--mono); }
+    .orbit-node .node-label { position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); color: #8b968d; font: 6.5px var(--mono); white-space: nowrap; }
+    .orbit-stage.labels-hidden .node-label { opacity: 0; }
+    .orbit-stage.sculpting .orbit-node:not(.self) { border-style: dashed; animation: sculpt-pulse 1.8s ease-in-out infinite; }
+    .orbit-stage.sculpting .orbit-links circle { stroke: rgba(255,181,46,.45); }
+
+    .peer-inspector { position: absolute; right: 14px; bottom: 77px; left: 14px; display: grid; grid-template-columns: 1fr auto; gap: 8px; border: 1px solid rgba(var(--accent-rgb),.26); background: rgba(2,7,3,.88); padding: 10px 11px; backdrop-filter: blur(12px); }
+    .peer-inspector b { display: block; margin-bottom: 3px; font: 600 10px var(--mono); }
+    .peer-inspector span { color: #748078; font: 7px var(--mono); }
+    .peer-inspector button { border: 0; color: var(--accent); background: transparent; font: 8px var(--mono); cursor: pointer; }
+
+    .orbit-toolbar { position: absolute; right: 14px; bottom: 28px; left: 14px; display: flex; justify-content: space-between; gap: 8px; }
+    .orbit-tool { min-height: 32px; border: 1px solid rgba(var(--accent-rgb),.24); color: #89958b; background: rgba(2,7,3,.78); padding: 0 10px; font: 7px var(--mono); letter-spacing: .06em; cursor: pointer; }
+    .orbit-tool.on { border-color: rgba(var(--accent-rgb),.55); color: var(--accent); }
+
+    .orbit-nav { display: grid; grid-template-columns: repeat(4,1fr); height: 58px; border-top: 1px solid rgba(var(--accent-rgb),.18); background: rgba(0,3,1,.86); padding-bottom: 6px; }
+    .orbit-nav button { position: relative; border: 0; color: #5f6b62; background: transparent; font: 7px var(--mono); cursor: pointer; }
+    .orbit-nav button.active { color: var(--accent); }
+    .orbit-nav button.active::before { content: ""; position: absolute; top: 0; left: 32%; right: 32%; height: 1px; background: var(--accent); box-shadow: 0 0 7px rgba(var(--accent-rgb),.8); }
+
+    .status-bar {
+      display: flex;
+      height: 35px;
+      align-items: end;
+      justify-content: space-between;
+      padding: 0 24px 6px;
+      color: rgba(236, 246, 238, .72);
+      font: 9px var(--mono);
+      letter-spacing: .04em;
+    }
+
+    .sensor {
+      position: absolute;
+      top: 9px;
+      left: 50%;
+      width: 92px;
+      height: 22px;
+      transform: translateX(-50%);
+      border-radius: 20px;
+      background: #000;
+      box-shadow: 0 0 0 1px rgba(255,255,255,.02);
+    }
+
+    .conversation-head {
+      display: grid;
+      grid-template-columns: 34px 1fr auto;
+      align-items: center;
+      gap: 10px;
+      min-height: 62px;
+      padding: 8px 15px 10px;
+      border-top: 1px solid rgba(var(--accent-rgb), .11);
+      border-bottom: 1px solid rgba(var(--accent-rgb), .21);
+      background: rgba(1, 5, 2, .68);
+      backdrop-filter: blur(16px);
+    }
+
+    .back-btn, .head-action, .send-btn, .icon-btn {
+      display: grid;
+      place-items: center;
+      border: 0;
+      color: var(--accent);
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .back-btn { width: 34px; height: 34px; font: 20px var(--mono); }
+    .head-copy { min-width: 0; }
+    .head-name { margin: 0 0 3px; font: 600 14px var(--mono); letter-spacing: .02em; }
+    .head-route { display: flex; align-items: center; gap: 6px; color: #879088; font: 8px var(--mono); letter-spacing: .07em; text-transform: uppercase; }
+    .head-route i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 7px rgba(var(--accent-rgb), .8); }
+
+    .head-action {
+      min-width: 58px;
+      height: 29px;
+      border: 1px solid rgba(var(--accent-rgb), .3);
+      font: 8px var(--mono);
+      letter-spacing: .08em;
+    }
+
+    .terminal-strip {
+      height: 73px;
+      overflow: hidden;
+      border-bottom: 1px solid rgba(var(--accent-rgb), .14);
+      background: rgba(0, 3, 1, .58);
+      padding: 9px 16px;
+      color: rgba(var(--accent-rgb), .7);
+      font: 7.5px/1.7 var(--mono);
+      letter-spacing: .025em;
+    }
+
+    .terminal-strip .dim { color: rgba(163, 181, 168, .45); }
+    .terminal-strip .ok { color: var(--accent); }
+    .terminal-strip .amber { color: var(--signal); }
+
+    .message-stream {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      gap: 10px;
+      overflow-y: auto;
+      padding: 22px 14px 18px;
+      scrollbar-width: none;
+    }
+
+    .message-stream::-webkit-scrollbar { display: none; }
+
+    .date-marker {
+      align-self: center;
+      padding: 4px 8px;
+      color: rgba(var(--accent-rgb), .58);
+      border: 1px solid rgba(var(--accent-rgb), .14);
+      background: rgba(1, 5, 2, .64);
+      font: 7px var(--mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .message {
+      position: relative;
+      width: min(78%, 270px);
+      padding: 10px 11px 8px;
+      border: 1px solid rgba(255,255,255,.1);
+      color: #e5ece6;
+      background: rgba(7, 13, 8, .84);
+      box-shadow: 0 7px 20px rgba(0,0,0,.22);
+      backdrop-filter: blur(11px);
+      animation: message-in .28s cubic-bezier(.2,.8,.2,1) both;
+    }
+
+    .message.incoming { align-self: flex-start; border-radius: 3px 13px 13px 13px; }
+    .message.outgoing { align-self: flex-end; border-color: rgba(var(--accent-rgb), .3); border-radius: 13px 3px 13px 13px; background: rgba(var(--accent-rgb), .105); }
+    .message p { margin: 0; font-size: 12px; line-height: 1.42; }
+    .message-meta { display: flex; justify-content: flex-end; gap: 5px; margin-top: 6px; color: #6e7a71; font: 7px var(--mono); letter-spacing: .03em; }
+    .message-meta .ticks { color: var(--accent); }
+
+    .encryption-detail {
+      display: none;
+      margin-top: 8px;
+      padding-top: 7px;
+      border-top: 1px dashed rgba(var(--accent-rgb), .2);
+      color: rgba(var(--accent-rgb), .67);
+      font: 7px/1.5 var(--mono);
+    }
+
+    .message.inspecting .encryption-detail { display: block; }
+
+    .composer-wrap {
+      padding: 8px 10px 5px;
+      border-top: 1px solid rgba(var(--accent-rgb), .18);
+      background: rgba(0, 3, 1, .8);
+      backdrop-filter: blur(17px);
+    }
+
+    .composer {
+      display: grid;
+      grid-template-columns: 32px 1fr 35px;
+      align-items: center;
+      gap: 6px;
+      min-height: 43px;
+      border: 1px solid rgba(var(--accent-rgb), .22);
+      background: rgba(255,255,255,.025);
+      padding: 4px 5px;
+    }
+
+    .composer input {
+      width: 100%;
+      border: 0;
+      outline: 0;
+      color: #e7efe8;
+      background: transparent;
+      font: 11px var(--mono);
+    }
+
+    .composer input::placeholder { color: #59635c; }
+    .composer:focus-within { border-color: rgba(var(--accent-rgb), .58); box-shadow: 0 0 0 1px rgba(var(--accent-rgb), .1); }
+    .icon-btn { width: 32px; height: 32px; color: #7e8a80; font-size: 17px; }
+
+    .send-btn {
+      width: 34px;
+      height: 34px;
+      border: 1px solid rgba(var(--accent-rgb), .45);
+      background: rgba(var(--accent-rgb), .1);
+      font: 13px var(--mono);
+    }
+
+    .home-indicator { width: 105px; height: 4px; margin: 7px auto 1px; border-radius: 9px; background: rgba(255,255,255,.4); }
+
+    .control-panel { position: relative; max-width: 420px; }
+
+    .section-kicker {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+      color: var(--phosphor);
+      font: 9px var(--mono);
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+
+    .section-kicker::before { content: ""; width: 34px; height: 1px; background: var(--phosphor); }
+
+    h1 {
+      max-width: 9ch;
+      margin: 0;
+      color: #f1f6f2;
+      font: 500 clamp(42px, 5.2vw, 68px)/.93 var(--mono);
+      letter-spacing: -.075em;
+    }
+
+    h1 .cursor {
+      display: inline-block;
+      width: .55em;
+      height: .09em;
+      margin-left: .07em;
+      vertical-align: .12em;
+      background: var(--phosphor);
+      box-shadow: 0 0 13px rgba(var(--phosphor-rgb), .55);
+      animation: blink 1.05s steps(2) infinite;
+    }
+
+    .intro {
+      max-width: 40ch;
+      margin: 22px 0 28px;
+      color: #8b978e;
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .intro strong { color: #dbe5dd; font-weight: 500; }
+
+    .control-stack { border-top: 1px solid rgba(var(--phosphor-rgb), .17); }
+
+    .control-row {
+      display: grid;
+      grid-template-columns: 115px 1fr;
+      align-items: center;
+      min-height: 62px;
+      border-bottom: 1px solid rgba(var(--phosphor-rgb), .12);
+    }
+
+    .control-label {
+      color: #6f7e73;
+      font: 8px var(--mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .segmented {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      width: min(210px, 100%);
+      border: 1px solid rgba(255,255,255,.1);
+      padding: 3px;
+    }
+
+    .segment {
+      min-height: 30px;
+      border: 0;
+      color: #6f7d73;
+      background: transparent;
+      font: 8px var(--mono);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+
+    .segment[aria-pressed="true"] { color: var(--void); background: var(--phosphor); font-weight: 700; }
+
+    .backdrop-row { align-items: start; padding: 13px 0; }
+    .backdrop-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+    .backdrop-option { min-height: 51px; border: 1px solid rgba(255,255,255,.1); color: #7f8b82; background: rgba(255,255,255,.015); padding: 8px 9px; text-align: left; cursor: pointer; }
+    .backdrop-option b { display: block; margin-bottom: 3px; color: #cdd7cf; font: 8px var(--mono); font-weight: 500; }
+    .backdrop-option small { display: block; color: #58635b; font: 6px/1.35 var(--mono); }
+    .backdrop-option[aria-pressed="true"] { border-color: rgba(var(--phosphor-rgb),.52); background: rgba(var(--phosphor-rgb),.06); }
+    .backdrop-option[aria-pressed="true"] b { color: var(--phosphor); }
+
+    .swatches { display: flex; gap: 8px; }
+
+    .swatch {
+      position: relative;
+      width: 38px;
+      height: 27px;
+      border: 1px solid rgba(255,255,255,.16);
+      color: transparent;
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .swatch::before { content: ""; position: absolute; inset: 6px; background: var(--swatch); box-shadow: 0 0 9px color-mix(in srgb, var(--swatch), transparent 40%); }
+    .swatch[aria-pressed="true"] { border-color: var(--swatch); }
+    .swatch[aria-pressed="true"]::after { content: ""; position: absolute; right: -3px; bottom: -3px; width: 6px; height: 6px; background: var(--swatch); }
+
+    .range-wrap { display: flex; align-items: center; gap: 12px; }
+    input[type="range"] { width: min(180px, 100%); accent-color: var(--phosphor); cursor: pointer; }
+    .range-value { width: 31px; color: #c8d2ca; font: 9px var(--mono); }
+
+    .toggle {
+      position: relative;
+      width: 42px;
+      height: 22px;
+      border: 1px solid rgba(var(--phosphor-rgb), .32);
+      background: rgba(var(--phosphor-rgb), .07);
+      cursor: pointer;
+    }
+
+    .toggle::before { content: ""; position: absolute; top: 4px; left: 4px; width: 12px; height: 12px; background: #5e6a61; transition: transform .18s ease, background .18s ease; }
+    .toggle[aria-pressed="true"]::before { transform: translateX(20px); background: var(--phosphor); box-shadow: 0 0 9px rgba(var(--phosphor-rgb), .6); }
+
+    .action-row { display: flex; align-items: center; gap: 11px; margin-top: 23px; }
+
+    .primary-action {
+      display: inline-flex;
+      min-height: 44px;
+      align-items: center;
+      gap: 12px;
+      border: 1px solid rgba(var(--phosphor-rgb), .7);
+      color: var(--void);
+      background: var(--phosphor);
+      padding: 0 17px;
+      font: 700 9px var(--mono);
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      cursor: pointer;
+      box-shadow: 0 0 24px rgba(var(--phosphor-rgb), .11);
+      transition: transform .18s ease, box-shadow .18s ease;
+    }
+
+    .primary-action:hover { transform: translateY(-2px); box-shadow: 0 8px 30px rgba(var(--phosphor-rgb), .19); }
+    .primary-action .prompt { font-size: 15px; }
+
+    .microcopy { color: #5c685f; font: 8px/1.5 var(--mono); }
+
+    .contact-switcher { display: flex; gap: 8px; margin-top: 27px; }
+
+    .contact-chip {
+      display: flex;
+      flex: 1;
+      min-width: 0;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid rgba(255,255,255,.09);
+      color: #7f8c82;
+      background: rgba(255,255,255,.018);
+      padding: 8px;
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .contact-chip[aria-pressed="true"] { border-color: rgba(var(--phosphor-rgb), .42); color: #dce6de; background: rgba(var(--phosphor-rgb), .055); }
+    .contact-avatar { display: grid; width: 28px; height: 28px; flex: none; place-items: center; border: 1px solid currentColor; font: 8px var(--mono); }
+    .contact-meta { min-width: 0; }
+    .contact-name { display: block; overflow: hidden; font: 9px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+    .contact-route { display: block; margin-top: 2px; color: #566159; font: 6px var(--mono); letter-spacing: .05em; text-transform: uppercase; }
+
+    .design-note {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 10px;
+      margin-top: 20px;
+      color: #5e6961;
+      font: 7.5px/1.6 var(--mono);
+    }
+
+    .design-note b { color: var(--signal); font-weight: 500; }
+
+    button:focus-visible,
+    input:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+
+    .toast {
+      position: fixed;
+      z-index: 40;
+      left: 50%;
+      bottom: 24px;
+      transform: translate(-50%, 18px);
+      border: 1px solid rgba(var(--phosphor-rgb), .4);
+      color: #dce9df;
+      background: rgba(2, 7, 3, .94);
+      padding: 11px 15px;
+      font: 9px var(--mono);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s ease, transform .2s ease;
+      box-shadow: 0 12px 40px #000;
+    }
+
+    .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+    @keyframes packet-run { from { offset-distance: 0%; } to { offset-distance: 100%; } }
+    @keyframes hex-drift { from { transform: translateY(-24%); } to { transform: translateY(18%); } }
+    @keyframes cipher-spin { to { transform: rotate(360deg); } }
+    @keyframes cell-fault { 50% { fill: rgba(255,77,50,.08); } }
+    @keyframes key-pulse { 50% { opacity: .3; transform: scale(.7); transform-origin: center; } }
+    @keyframes route-dash { to { stroke-dashoffset: -48; } }
+    @keyframes sculpt-pulse { 50% { box-shadow: 0 0 0 8px rgba(var(--accent-rgb),.08), 0 0 28px rgba(var(--accent-rgb),.2); } }
+    @keyframes blink { 50% { opacity: 0; } }
+    @keyframes status-pulse { 50% { opacity: .35; } }
+    @keyframes slow-spin { to { transform: rotate(360deg); } }
+    @keyframes message-in { from { opacity: 0; transform: translateY(7px) scale(.98); } }
+
+    @media (max-width: 980px) {
+      .page-shell { width: min(720px, calc(100% - 32px)); }
+      .workspace { grid-template-columns: 1fr; gap: 44px; padding-top: 36px; }
+      .control-panel { order: -1; max-width: 590px; margin: 0 auto; }
+      h1 { max-width: 11ch; }
+      .intro { max-width: 52ch; }
+      .preview-zone { min-height: 800px; }
+    }
+
+    @media (max-width: 520px) {
+      .page-shell { width: 100%; padding-top: 16px; }
+      .lab-header { margin: 0 16px; padding-bottom: 14px; }
+      .live-state span { display: none; }
+      .workspace { gap: 28px; padding: 30px 16px 0; }
+      h1 { font-size: clamp(40px, 13vw, 56px); }
+      .control-row { grid-template-columns: 105px 1fr; }
+      .contact-switcher { overflow-x: auto; padding-bottom: 4px; }
+      .contact-chip { min-width: 112px; }
+      .preview-zone { min-height: auto; margin: 24px -16px 0; overflow: hidden; padding: 9px 0 58px; }
+      .device { width: min(390px, calc(100vw - 32px)); height: min(780px, calc((100vw - 32px) * 2)); border-radius: 39px; }
+      .axis-note { display: none; }
+      .preview-zone::before { width: 540px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page-shell">
+    <header class="lab-header">
+      <div class="brand-lockup">
+        <div class="brand-mark" aria-hidden="true">M:</div>
+        <div>
+          <p class="eyebrow">Mknoon labs // visual system</p>
+          <p class="lab-title">Background experiment 05</p>
+        </div>
+      </div>
+      <div class="live-state"><i aria-hidden="true"></i><span>Prototype running locally</span></div>
+    </header>
+
+    <section class="workspace" aria-labelledby="concept-title">
+      <div class="preview-zone">
+        <span class="axis-note left">encrypted / local-first / user-owned</span>
+        <span class="axis-note bottom">viewport_390 × 780</span>
+
+        <article class="device" id="device" data-accent="green" data-backdrop="packets" data-view="chat" aria-label="Interactive Mknoon preview">
+          <div class="phone-bg"></div>
+          <div class="grid-field"></div>
+          <svg class="packet-map" viewBox="0 0 390 780" preserveAspectRatio="none" aria-hidden="true">
+            <path class="map-line" d="M38 188 C100 140 125 218 188 173 S285 152 352 108" />
+            <path class="map-line" d="M50 505 C120 455 210 560 342 478" />
+            <path class="map-line" d="M74 610 L74 681 L307 681 L307 610" />
+            <rect class="map-node" x="23" y="174" width="44" height="25" />
+            <rect class="map-node" x="166" y="159" width="49" height="25" />
+            <rect class="map-node" x="327" y="94" width="44" height="25" />
+            <rect class="map-node" x="28" y="493" width="49" height="25" />
+            <rect class="map-node" x="319" y="466" width="50" height="25" />
+            <text x="28" y="170">LOCAL</text>
+            <text x="168" y="155">ML-KEM</text>
+            <text x="330" y="90">PEER</text>
+            <text x="30" y="489">QUEUE</text>
+            <text x="321" y="462">RELAY</text>
+            <circle class="packet packet-a" r="2.7" cx="0" cy="0" />
+            <circle class="packet packet-b" r="2.7" cx="0" cy="0" />
+          </svg>
+          <div class="hex-field" aria-hidden="true">
+            <span class="hex-column">A7 F1 20 C4
+9D 7E 88 01
+MK KEM 768
+4A 11 FF 02
+AES 256 GCM
+7B 00 E2 19
+SIG VALID
+C3 6D 90 AF
+REPLAY 00</span>
+            <span class="hex-column">10 0A C7 42
+E1 9B 33 7D
+NONCE 8F1A
+00 4C 22 D0
+SEALED 1.2K
+77 3A B9 F1
+PEER 12D3
+CC 80 A1 05
+ACK 0046</span>
+            <span class="hex-column">FF 09 2D A8
+ROUTE QUIC
+51 B0 0C 1E
+KEY ROTATE
+AE 91 7C 22
+EPOCH 0012
+03 77 DA 4B
+CUSTODY OK
+1A 0E 59 7F</span>
+            <span class="hex-column">D4 81 09 EF
+HASH BLAKE3
+70 6A 11 03
+ID VERIFIED
+E8 40 2C B1
+QUEUE LIVE
+19 AA 73 0D
+ORDER 0192
+00 7F 42 C8</span>
+            <span class="hex-column">2A C1 09 44
+PACKET 0A7F
+B2 0E 77 C9
+DIRECT 46MS
+90 1D AE 37
+INBOX 0000
+4F C2 18 6A
+SYNC TRUE
+8A 0D 31 E5</span>
+          </div>
+          <svg class="memory-map" viewBox="0 0 390 780" preserveAspectRatio="none" aria-hidden="true">
+            <rect class="mem-box" x="25" y="155" width="137" height="110" />
+            <text x="25" y="145">FILE-BACKED FRAGMENT</text>
+            <rect class="mem-cell warm" x="40" y="176" width="18" height="18"/><rect class="mem-cell warm" x="62" y="176" width="18" height="18"/><rect class="mem-cell" x="84" y="176" width="18" height="18"/><rect class="mem-cell" x="106" y="176" width="18" height="18"/><rect class="mem-cell" x="128" y="176" width="18" height="18"/>
+            <rect class="mem-cell warm" x="40" y="199" width="18" height="18"/><rect class="mem-cell warm" x="62" y="199" width="18" height="18"/><rect class="mem-cell warm" x="84" y="199" width="18" height="18"/><rect class="mem-cell" x="106" y="199" width="18" height="18"/><rect class="mem-cell" x="128" y="199" width="18" height="18"/>
+            <text x="40" y="245">CLONE / COW</text>
+            <path class="mem-arrow" d="M170 210 C205 210 200 320 229 320"/>
+            <rect class="mem-box" x="228" y="252" width="137" height="164" />
+            <text x="228" y="242">IN-MEMORY PAGE CACHE</text>
+            <rect class="mem-cell" x="244" y="275" width="18" height="18"/><rect class="mem-cell" x="266" y="275" width="18" height="18"/><rect class="mem-cell hot" x="288" y="275" width="18" height="18"/><rect class="mem-cell hot" x="310" y="275" width="18" height="18"/><rect class="mem-cell" x="332" y="275" width="18" height="18"/>
+            <rect class="mem-cell" x="244" y="298" width="18" height="18"/><rect class="mem-cell hot" x="266" y="298" width="18" height="18"/><rect class="mem-cell hot" x="288" y="298" width="18" height="18"/><rect class="mem-cell hot" x="310" y="298" width="18" height="18"/><rect class="mem-cell" x="332" y="298" width="18" height="18"/>
+            <rect class="mem-cell" x="244" y="321" width="18" height="18"/><rect class="mem-cell" x="266" y="321" width="18" height="18"/><rect class="mem-cell hot" x="288" y="321" width="18" height="18"/><rect class="mem-cell" x="310" y="321" width="18" height="18"/><rect class="mem-cell" x="332" y="321" width="18" height="18"/>
+            <text x="244" y="373">! MUTATION DETECTED</text>
+            <text x="244" y="391">guard: overwrite / denied</text>
+            <rect class="mem-box" x="30" y="517" width="155" height="68" />
+            <text x="42" y="541">LOCAL STORE / SQLCIPHER</text>
+            <text x="42" y="562">pages: 2048  integrity: OK</text>
+            <path class="mem-arrow" d="M185 550 L225 550"/>
+            <rect class="mem-box" x="226" y="517" width="132" height="68" />
+            <text x="239" y="541">DISK / UNCHANGED</text>
+            <text x="239" y="562">sealed / at-rest</text>
+          </svg>
+          <svg class="cipher-field" viewBox="0 0 390 780" preserveAspectRatio="none" aria-hidden="true">
+            <line class="cipher-axis" x1="30" y1="390" x2="360" y2="390"/><line class="cipher-axis" x1="195" y1="150" x2="195" y2="630"/>
+            <circle class="cipher-ring" cx="195" cy="390" r="76"/><circle class="cipher-ring reverse" cx="195" cy="390" r="126"/><circle class="cipher-ring" cx="195" cy="390" r="174"/>
+            <rect class="key-node" x="165" y="173" width="60" height="25"/><text x="174" y="189">PUBLIC KEY</text>
+            <rect class="key-node" x="40" y="378" width="61" height="25"/><text x="47" y="394">DEVICE_A</text>
+            <rect class="key-node" x="290" y="378" width="61" height="25"/><text x="297" y="394">DEVICE_B</text>
+            <rect class="key-node" x="161" y="577" width="68" height="25"/><text x="169" y="593">SHARED KEY</text>
+            <circle class="key-pulse" cx="195" cy="390" r="4"/><text x="172" y="374">ML-KEM-768</text><text x="170" y="416">AES-256-GCM</text>
+          </svg>
+          <div class="scanlines"></div>
+          <div class="noise"></div>
+
+          <div class="phone-ui">
+            <div class="sensor" aria-hidden="true"></div>
+            <div class="status-bar"><span id="clock">09:41</span><span>QUIC&nbsp; ◉ &nbsp;87%</span></div>
+
+            <header class="conversation-head">
+              <button class="back-btn" type="button" aria-label="Back to conversations">‹</button>
+              <div class="head-copy">
+                <h2 class="head-name" id="head-name">Nadia</h2>
+                <div class="head-route"><i id="route-dot"></i><span id="route-label">direct route · verified</span></div>
+              </div>
+              <button class="head-action" id="inspect-button" type="button">inspect</button>
+            </header>
+
+            <div class="terminal-strip" id="terminal-log" aria-live="polite">
+              <div><span class="dim">09:41:03</span> <span class="ok">✓</span> identity proof verified</div>
+              <div><span class="dim">09:41:04</span> route /quic/p2p <span class="ok">DIRECT</span></div>
+              <div><span class="dim">09:41:04</span> cipher <span class="amber">ML-KEM-768 + AES-256</span></div>
+            </div>
+
+            <div class="message-stream" id="messages">
+              <div class="date-marker">today // secure session 04</div>
+              <div class="message incoming" tabindex="0">
+                <p>The relay can’t read this, right?</p>
+                <div class="message-meta"><span>09:38</span></div>
+                <div class="encryption-detail">packet_id: a7f1:20c4<br>custody: direct_peer<br>ciphertext: 1.2kb</div>
+              </div>
+              <div class="message outgoing" tabindex="0">
+                <p>Right. Keys never leave your devices.</p>
+                <div class="message-meta"><span>09:39</span><span class="ticks">✓✓</span></div>
+                <div class="encryption-detail">delivery: acknowledged<br>route: quic_direct<br>latency: 46ms</div>
+              </div>
+              <div class="message incoming" tabindex="0">
+                <p>That’s the kind of boring infrastructure I like.</p>
+                <div class="message-meta"><span>09:41</span></div>
+                <div class="encryption-detail">signature: valid<br>ordering: monotonic<br>replay_guard: passed</div>
+              </div>
+            </div>
+
+            <div class="composer-wrap">
+              <form class="composer" id="message-form">
+                <button class="icon-btn" type="button" aria-label="Add attachment">＋</button>
+                <input id="message-input" maxlength="180" autocomplete="off" aria-label="Message" placeholder="message Nadia…">
+                <button class="send-btn" type="submit" aria-label="Send message">↗</button>
+              </form>
+              <div class="home-indicator"></div>
+            </div>
+          </div>
+
+          <div class="orbit-ui">
+            <div class="sensor" aria-hidden="true"></div>
+            <div class="status-bar"><span class="clock-mirror">09:41</span><span>P2P&nbsp; ◉ &nbsp;87%</span></div>
+            <header class="orbit-head">
+              <div><h2 class="orbit-title">Orbit</h2><div class="orbit-subtitle">inner circle // 6 reachable</div></div>
+              <div class="orbit-head-actions">
+                <button type="button" id="orbit-chat-close" aria-label="Return to chat">↵</button>
+                <button type="button" aria-label="Create group">＋</button>
+              </div>
+            </header>
+            <div class="orbit-stage">
+              <span class="orbit-caption">live peer topology</span><span class="orbit-counter">06/07 ONLINE</span>
+              <svg class="orbit-links" viewBox="0 0 390 510" preserveAspectRatio="none" aria-hidden="true">
+                <circle cx="195" cy="230" r="104"/><circle cx="195" cy="230" r="166"/>
+                <path class="route-live" d="M195 230 L195 102 M195 230 L300 158 M195 230 L304 316 M195 230 L191 372 M195 230 L86 311 M195 230 L86 158"/>
+              </svg>
+              <button class="orbit-node self" type="button" data-peer="You" data-peer-status="identity root · tap opens settings" aria-label="You, identity root">YOU</button>
+              <button class="orbit-node n1" type="button" data-peer="Nadia" data-peer-status="direct · 46ms · 2 unread" aria-label="Nadia, 2 unread" aria-pressed="true">ND<span class="unread">2</span><span class="node-label">Nadia</span></button>
+              <button class="orbit-node n2" type="button" data-peer="Karim" data-peer-status="relay custody · last seen 4m" aria-label="Karim via relay">KR<span class="node-label">Karim</span></button>
+              <button class="orbit-node n3 group" type="button" data-peer="Root Crew" data-peer-status="group · epoch 12 · synced" aria-label="Root Crew group">#7<span class="unread">5</span><span class="node-label">Root Crew</span></button>
+              <button class="orbit-node n4" type="button" data-peer="Layla" data-peer-status="direct · 71ms · verified" aria-label="Layla">LY<span class="node-label">Layla</span></button>
+              <button class="orbit-node n5" type="button" data-peer="Mina" data-peer-status="offline · sealed inbox available" aria-label="Mina offline">MN<span class="node-label">Mina</span></button>
+              <button class="orbit-node n6" type="button" data-peer="Tariq" data-peer-status="local wifi · 12ms · verified" aria-label="Tariq">TR<span class="node-label">Tariq</span></button>
+
+              <div class="peer-inspector" aria-live="polite"><div><b id="orbit-peer-name">Nadia</b><span id="orbit-peer-status">direct · 46ms · 2 unread</span></div><button id="orbit-open-chat" type="button">open ↗</button></div>
+              <div class="orbit-toolbar"><button class="orbit-tool" id="orbit-find" type="button">⌕ find</button><button class="orbit-tool on" id="orbit-labels" type="button">labels: on</button><button class="orbit-tool" id="orbit-edit" type="button">◇ sculpt</button></div>
+            </div>
+            <nav class="orbit-nav" aria-label="App sections"><button type="button">Feed</button><button type="button">Posts</button><button type="button">Groups</button><button type="button" class="active">Orbit</button></nav>
+            <div class="home-indicator"></div>
+          </div>
+        </article>
+      </div>
+
+      <aside class="control-panel" aria-label="Mockup controls">
+        <div class="section-kicker">CLI / phosphor field</div>
+        <h1 id="concept-title">Quietly technical<span class="cursor" aria-hidden="true"></span></h1>
+        <p class="intro"><strong>A terminal-inspired background for people who notice the protocol.</strong> The nerd layer stays ambient; messages remain the highest-contrast object on screen.</p>
+
+        <div class="control-stack">
+          <div class="control-row">
+            <span class="control-label">Screen</span>
+            <div class="segmented" aria-label="Preview screen">
+              <button class="segment view-option" type="button" data-view="chat" aria-pressed="true">Chat</button>
+              <button class="segment view-option" type="button" data-view="orbit" aria-pressed="false">Orbit</button>
+            </div>
+          </div>
+          <div class="control-row backdrop-row">
+            <span class="control-label">Backdrop module</span>
+            <div class="backdrop-options" aria-label="Background detail style">
+              <button class="backdrop-option" type="button" data-backdrop="packets" aria-pressed="true"><b>Packet Flow</b><small>routes + custody</small></button>
+              <button class="backdrop-option" type="button" data-backdrop="hex" aria-pressed="false"><b>Hex Stream</b><small>encrypted fragments</small></button>
+              <button class="backdrop-option" type="button" data-backdrop="memory" aria-pressed="false"><b>Memory Map</b><small>pages + corruption</small></button>
+              <button class="backdrop-option" type="button" data-backdrop="cipher" aria-pressed="false"><b>Cipher Rings</b><small>keys + exchange</small></button>
+            </div>
+          </div>
+          <div class="control-row">
+            <span class="control-label">Phosphor</span>
+            <div class="swatches" aria-label="Accent color">
+              <button class="swatch" style="--swatch:#9cff45" data-accent="green" aria-label="Green phosphor" aria-pressed="true">Green</button>
+              <button class="swatch" style="--swatch:#42d9ff" data-accent="cyan" aria-label="Cyan phosphor" aria-pressed="false">Cyan</button>
+              <button class="swatch" style="--swatch:#ffc13b" data-accent="amber" aria-label="Amber phosphor" aria-pressed="false">Amber</button>
+            </div>
+          </div>
+          <label class="control-row" for="density">
+            <span class="control-label">Telemetry intensity</span>
+            <span class="range-wrap"><input id="density" type="range" min="25" max="100" value="80" aria-label="Telemetry intensity"><output class="range-value" id="density-value">80%</output></span>
+          </label>
+          <div class="control-row">
+            <span class="control-label">CRT scanlines</span>
+            <button class="toggle" id="scanline-toggle" type="button" aria-label="Toggle CRT scanlines" aria-pressed="true"></button>
+          </div>
+        </div>
+
+        <div class="action-row">
+          <button class="primary-action" id="ping-button" type="button"><span class="prompt">›_</span><span>simulate route</span></button>
+          <span class="microcopy">Cycles direct → relay<br>→ recovered</span>
+        </div>
+
+        <div class="contact-switcher" aria-label="Preview conversation">
+          <button class="contact-chip" type="button" data-name="Nadia" data-route="direct route · verified" aria-pressed="true">
+            <span class="contact-avatar">ND</span><span class="contact-meta"><span class="contact-name">Nadia</span><span class="contact-route">direct</span></span>
+          </button>
+          <button class="contact-chip" type="button" data-name="Karim" data-route="relay custody · encrypted" aria-pressed="false">
+            <span class="contact-avatar">KR</span><span class="contact-meta"><span class="contact-name">Karim</span><span class="contact-route">relay</span></span>
+          </button>
+          <button class="contact-chip" type="button" data-name="Root Crew" data-route="group epoch 12 · synced" aria-pressed="false">
+            <span class="contact-avatar">#7</span><span class="contact-meta"><span class="contact-name">Root Crew</span><span class="contact-route">group</span></span>
+          </button>
+        </div>
+
+        <p class="design-note"><b>NOTE_06</b><span id="mode-note">Packet Flow is the clearest everyday background: technical enough to reward inspection, quiet enough to live behind a conversation.</span></p>
+      </aside>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" role="status"></div>
+
+  <script>
+    const device = document.getElementById('device');
+    const density = document.getElementById('density');
+    const densityValue = document.getElementById('density-value');
+    const scanlineToggle = document.getElementById('scanline-toggle');
+    const pingButton = document.getElementById('ping-button');
+    const terminalLog = document.getElementById('terminal-log');
+    const messages = document.getElementById('messages');
+    const messageForm = document.getElementById('message-form');
+    const messageInput = document.getElementById('message-input');
+    const headName = document.getElementById('head-name');
+    const routeLabel = document.getElementById('route-label');
+    const inspectButton = document.getElementById('inspect-button');
+    const toast = document.getElementById('toast');
+    const modeNote = document.getElementById('mode-note');
+    const orbitStage = document.querySelector('.orbit-stage');
+    const orbitPeerName = document.getElementById('orbit-peer-name');
+    const orbitPeerStatus = document.getElementById('orbit-peer-status');
+
+    const accentMap = {
+      green: { color: '#9cff45', rgb: '156, 255, 69' },
+      cyan: { color: '#42d9ff', rgb: '66, 217, 255' },
+      amber: { color: '#ffc13b', rgb: '255, 193, 59' }
+    };
+
+    const backdropNotes = {
+      packets: 'Packet Flow is the clearest everyday background: technical enough to reward inspection, quiet enough to live behind a conversation.',
+      hex: 'Hex Stream feels the most recognizably “hacker,” but its vertical motion works best at 40–65% intensity.',
+      memory: 'Memory Map is closest to the reference image: file fragments, page-cache blocks, and a restrained corruption warning.',
+      cipher: 'Cipher Rings is the calmest option. It communicates cryptography through geometry rather than dense terminal text.'
+    };
+
+    const routeStates = [
+      {
+        label: 'direct route · verified',
+        lines: [
+          ['probe /mdns/peer', 'SEARCH'],
+          ['handshake noise_xx', 'OK'],
+          ['route /quic/p2p', 'DIRECT 42ms']
+        ],
+        toast: 'Direct peer route established'
+      },
+      {
+        label: 'relay custody · encrypted',
+        lines: [
+          ['direct dial timeout', 'RETRY'],
+          ['circuit relay v2', 'RESERVED'],
+          ['sealed packet custody', 'INBOXED']
+        ],
+        toast: 'Encrypted packet accepted by relay'
+      },
+      {
+        label: 'direct route · recovered',
+        lines: [
+          ['network interface up', 'RESUME'],
+          ['offline inbox drain', '03 ITEMS'],
+          ['delivery acknowledgements', 'SYNCED']
+        ],
+        toast: 'Route recovered — inbox synchronized'
+      }
+    ];
+
+    let routeIndex = 0;
+    let toastTimer;
+
+    function nowTime(withSeconds = false) {
+      return new Intl.DateTimeFormat([], {
+        hour: '2-digit', minute: '2-digit', second: withSeconds ? '2-digit' : undefined,
+        hour12: false
+      }).format(new Date());
+    }
+
+    function showToast(text) {
+      toast.textContent = text;
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 1900);
+    }
+
+    function writeLog(lines) {
+      terminalLog.replaceChildren();
+      lines.forEach(([text, result], index) => {
+        const row = document.createElement('div');
+        const stamp = document.createElement('span');
+        stamp.className = 'dim';
+        stamp.textContent = nowTime(true);
+        const outcome = document.createElement('span');
+        outcome.className = index === 0 ? 'amber' : 'ok';
+        outcome.textContent = result;
+        row.append(stamp, ' ' + text + ' ', outcome);
+        terminalLog.appendChild(row);
+      });
+    }
+
+    function setView(view, announce = true) {
+      device.dataset.view = view;
+      document.querySelectorAll('.view-option').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.view === view)));
+      device.setAttribute('aria-label', view === 'orbit' ? 'Interactive Mknoon Orbit preview' : 'Interactive Mknoon conversation preview');
+      if (announce) showToast(view === 'orbit' ? 'Orbit topology opened' : 'Conversation preview opened');
+    }
+
+    document.querySelectorAll('.view-option').forEach((button) => {
+      button.addEventListener('click', () => setView(button.dataset.view));
+    });
+
+    document.querySelectorAll('.backdrop-option').forEach((button) => {
+      button.addEventListener('click', () => {
+        const backdrop = button.dataset.backdrop;
+        device.dataset.backdrop = backdrop;
+        document.querySelectorAll('.backdrop-option').forEach((item) => item.setAttribute('aria-pressed', String(item === button)));
+        modeNote.textContent = backdropNotes[backdrop];
+        showToast(button.querySelector('b').textContent + ' backdrop loaded');
+      });
+    });
+
+    document.querySelectorAll('.swatch').forEach((button) => {
+      button.addEventListener('click', () => {
+        const accent = button.dataset.accent;
+        const palette = accentMap[accent];
+        device.dataset.accent = accent;
+        document.documentElement.style.setProperty('--phosphor', palette.color);
+        document.documentElement.style.setProperty('--phosphor-rgb', palette.rgb);
+        document.querySelectorAll('.swatch').forEach((item) => item.setAttribute('aria-pressed', String(item === button)));
+        showToast(accent.toUpperCase() + ' phosphor loaded');
+      });
+    });
+
+    density.addEventListener('input', () => {
+      const amount = Number(density.value);
+      device.style.setProperty('--bg-density', amount / 100);
+      densityValue.value = amount + '%';
+      densityValue.textContent = amount + '%';
+    });
+
+    scanlineToggle.addEventListener('click', () => {
+      const enabled = scanlineToggle.getAttribute('aria-pressed') !== 'true';
+      scanlineToggle.setAttribute('aria-pressed', String(enabled));
+      device.classList.toggle('no-scanlines', !enabled);
+      showToast('CRT scanlines ' + (enabled ? 'enabled' : 'disabled'));
+    });
+
+    pingButton.addEventListener('click', () => {
+      routeIndex = (routeIndex + 1) % routeStates.length;
+      const state = routeStates[routeIndex];
+      routeLabel.textContent = state.label;
+      writeLog(state.lines);
+      showToast(state.toast);
+    });
+
+    document.querySelectorAll('.contact-chip').forEach((button) => {
+      button.addEventListener('click', () => {
+        document.querySelectorAll('.contact-chip').forEach((item) => item.setAttribute('aria-pressed', String(item === button)));
+        headName.textContent = button.dataset.name;
+        routeLabel.textContent = button.dataset.route;
+        messageInput.placeholder = 'message ' + button.dataset.name + '…';
+        writeLog([
+          ['session target', button.dataset.name.toLowerCase().replace(' ', '_')],
+          ['identity signature', 'VERIFIED'],
+          ['session keys', 'ROTATED']
+        ]);
+        showToast('Secure session switched to ' + button.dataset.name);
+      });
+    });
+
+    function selectOrbitPeer(button, announce = true) {
+      document.querySelectorAll('.orbit-node:not(.self)').forEach((node) => node.setAttribute('aria-pressed', String(node === button)));
+      orbitPeerName.textContent = button.dataset.peer;
+      orbitPeerStatus.textContent = button.dataset.peerStatus;
+      if (announce) showToast(button.dataset.peer + ' selected in Orbit');
+    }
+
+    document.querySelectorAll('.orbit-node:not(.self)').forEach((button) => {
+      button.addEventListener('click', () => selectOrbitPeer(button));
+    });
+
+    document.querySelector('.orbit-node.self').addEventListener('click', () => showToast('Identity root — opens Settings in the app'));
+
+    document.getElementById('orbit-chat-close').addEventListener('click', () => setView('chat'));
+    document.getElementById('orbit-open-chat').addEventListener('click', () => {
+      const matchingContact = [...document.querySelectorAll('.contact-chip')].find((button) => button.dataset.name === orbitPeerName.textContent);
+      if (matchingContact) {
+        matchingContact.click();
+      } else {
+        headName.textContent = orbitPeerName.textContent;
+        routeLabel.textContent = orbitPeerStatus.textContent;
+        messageInput.placeholder = 'message ' + orbitPeerName.textContent + '…';
+        writeLog([
+          ['orbit target', orbitPeerName.textContent.toLowerCase().replace(' ', '_')],
+          ['identity signature', 'VERIFIED'],
+          ['secure session', 'OPEN']
+        ]);
+      }
+      setView('chat');
+    });
+
+    let findIndex = 0;
+    document.getElementById('orbit-find').addEventListener('click', () => {
+      const peers = [...document.querySelectorAll('.orbit-node:not(.self)')];
+      findIndex = (findIndex + 1) % peers.length;
+      selectOrbitPeer(peers[findIndex], false);
+      showToast('Find in circle: ' + peers[findIndex].dataset.peer);
+    });
+
+    document.getElementById('orbit-labels').addEventListener('click', (event) => {
+      const hidden = orbitStage.classList.toggle('labels-hidden');
+      event.currentTarget.classList.toggle('on', !hidden);
+      event.currentTarget.textContent = 'labels: ' + (hidden ? 'off' : 'on');
+      showToast('Orbit labels ' + (hidden ? 'hidden' : 'shown'));
+    });
+
+    document.getElementById('orbit-edit').addEventListener('click', (event) => {
+      const editing = orbitStage.classList.toggle('sculpting');
+      event.currentTarget.classList.toggle('on', editing);
+      event.currentTarget.textContent = editing ? '◇ editing' : '◇ sculpt';
+      showToast(editing ? 'Sculpt mode — drag handles in the app' : 'Orbit geometry saved');
+    });
+
+    function toggleInspection(force) {
+      const messageNodes = [...messages.querySelectorAll('.message')];
+      const shouldShow = typeof force === 'boolean' ? force : !messageNodes.every((message) => message.classList.contains('inspecting'));
+      messageNodes.forEach((message) => message.classList.toggle('inspecting', shouldShow));
+      inspectButton.textContent = shouldShow ? 'hide meta' : 'inspect';
+      showToast(shouldShow ? 'Packet metadata revealed' : 'Packet metadata hidden');
+    }
+
+    inspectButton.addEventListener('click', () => toggleInspection());
+
+    messages.addEventListener('click', (event) => {
+      const message = event.target.closest('.message');
+      if (message) message.classList.toggle('inspecting');
+    });
+
+    messages.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        const message = event.target.closest('.message');
+        if (message) {
+          event.preventDefault();
+          message.classList.toggle('inspecting');
+        }
+      }
+    });
+
+    messageForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const text = messageInput.value.trim();
+      if (!text) {
+        messageInput.focus();
+        showToast('Type a message first');
+        return;
+      }
+
+      const bubble = document.createElement('div');
+      bubble.className = 'message outgoing';
+      bubble.tabIndex = 0;
+      const copy = document.createElement('p');
+      copy.textContent = text;
+      const meta = document.createElement('div');
+      meta.className = 'message-meta';
+      const time = document.createElement('span');
+      time.textContent = nowTime();
+      const ticks = document.createElement('span');
+      ticks.className = 'ticks';
+      ticks.textContent = '✓';
+      const detail = document.createElement('div');
+      detail.className = 'encryption-detail';
+      detail.innerHTML = 'state: encrypting<br>cipher: ml-kem-768<br>queue: interactive';
+      meta.append(time, ticks);
+      bubble.append(copy, meta, detail);
+      messages.appendChild(bubble);
+      messages.scrollTo({ top: messages.scrollHeight, behavior: 'smooth' });
+      messageInput.value = '';
+      writeLog([
+        ['payload sealed', 'AES-256-GCM'],
+        ['transport ladder', 'DIRECT'],
+        ['awaiting peer ack', '46ms']
+      ]);
+      showToast('Message encrypted and sent');
+
+      setTimeout(() => {
+        ticks.textContent = '✓✓';
+        detail.innerHTML = 'delivery: acknowledged<br>route: quic_direct<br>latency: 46ms';
+      }, 850);
+    });
+
+    function updateClocks() {
+      document.getElementById('clock').textContent = nowTime();
+      document.querySelectorAll('.clock-mirror').forEach((clock) => { clock.textContent = nowTime(); });
+    }
+
+    updateClocks();
+    setInterval(updateClocks, 30000);
+  </script>
+</body>
+</html>

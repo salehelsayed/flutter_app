@@ -12,8 +12,10 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/conversation/application/build_received_media_forward.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -23,6 +25,7 @@ import 'package:flutter_app/features/groups/application/group_media_forward_inte
 import 'package:flutter_app/features/groups/application/group_media_forward_policy.dart';
 import 'package:flutter_app/features/groups/application/announcement_media_forward_request.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -35,6 +38,8 @@ import 'share_target_selection.dart';
 
 const _shareBatchUuid = Uuid();
 
+DateTime _defaultForwardNow() => DateTime.now().toUtc();
+
 /// Stable only for one action+contact retry and opaque outside this process.
 /// Source identities are not inputs and cannot appear in the resulting key.
 ForwardProvenance announcementForwardProvenanceForContact({
@@ -42,7 +47,9 @@ ForwardProvenance announcementForwardProvenanceForContact({
   required String contactPeerId,
 }) => ForwardProvenance(
   operationDedupKey: sha256
-      .convert(utf8.encode('${base.operationDedupKey}\u0000$contactPeerId'))
+      .convert(
+        utf8.encode('${base.operationDedupKey}\u0000contact:$contactPeerId'),
+      )
       .toString(),
 );
 
@@ -61,13 +68,48 @@ bool canDeliverAnnouncementForwardToGroup({
   required bool isAnnouncement,
   required bool isAdmin,
   required bool hasLatestKey,
-  required bool isMember,
-}) =>
-    !isArchived &&
-    !isDissolved &&
-    (!isAnnouncement || isAdmin) &&
-    hasLatestKey &&
-    isMember;
+  required MemberRole? ownMemberRole,
+}) {
+  final canWrite =
+      ownMemberRole == MemberRole.admin ||
+      (!isAnnouncement && ownMemberRole == MemberRole.writer);
+  return !isArchived &&
+      !isDissolved &&
+      (!isAnnouncement || isAdmin) &&
+      hasLatestKey &&
+      canWrite;
+}
+
+class _ForwardGroupAuthority {
+  const _ForwardGroupAuthority({required this.group, required this.members});
+
+  final GroupModel group;
+  final List<GroupMember> members;
+}
+
+class _InternalForwardTargetResolution {
+  const _InternalForwardTargetResolution.ready({
+    required this.requested,
+    required this.current,
+  }) : failureDetail = null;
+
+  const _InternalForwardTargetResolution.failed({
+    required this.requested,
+    required this.failureDetail,
+  }) : current = null;
+
+  final ShareTargetSelection requested;
+  final ShareTargetSelection? current;
+  final String? failureDetail;
+
+  bool get isReady => current != null;
+
+  ShareBatchTargetResult get failure => ShareBatchTargetResult(
+    target: requested,
+    status: ShareBatchTargetStatus.failed,
+    detail: failureDetail ?? 'Share failed.',
+  );
+}
 
 enum ShareBatchTargetStatus { sent, queued, failed }
 
@@ -116,6 +158,18 @@ class ShareBatchUploadHooks {
 
   void sending() => _onSending();
 }
+
+/// Retry-stable and opaque for one explicit group destination. The target id
+/// is only a local derivation input; neither it nor any source identity appears
+/// in the resulting encrypted-inner operation key.
+ForwardProvenance groupForwardProvenanceForGroup({
+  required ForwardProvenance base,
+  required String groupId,
+}) => ForwardProvenance(
+  operationDedupKey: sha256
+      .convert(utf8.encode('${base.operationDedupKey}\u0000group:$groupId'))
+      .toString(),
+);
 
 class ShareBatchTargetResult {
   final ShareTargetSelection target;
@@ -173,9 +227,10 @@ abstract class ShareBatchDeliveryCoordinator {
 
   /// 236: one explicit accepted group-media Forward. Unlike [deliver], the
   /// source is a stable `(groupId, messageId, attachmentId)` identity that is
-  /// reloaded and hash-verified at dispatch time, and every destination is
-  /// reloaded from its repository immediately before its upload — a missing
-  /// or ineligible target is a failed result, never a stale-picker fallback.
+  /// reloaded, canonically validated, and snapshotted at dispatch time. Every
+  /// destination is reloaded from its repository immediately before its upload
+  /// — a missing or ineligible target is a failed result, never a stale-picker
+  /// fallback.
   Future<ShareBatchDeliveryResult> deliverGroupMediaForward({
     required GroupMediaForwardRequest request,
     String? caption,
@@ -236,12 +291,10 @@ class DefaultShareBatchDeliveryCoordinator
   final SendToContactFn? sendToContactFn;
   final SendToGroupFn? sendToGroupFn;
   final Stream<Map<String, dynamic>>? mediaUploadProgressEvents;
+  final DateTime Function() _forwardNow;
+  final Map<String, DateTime> _forwardTimestampByOperationKey = {};
 
-  /// 236 test seam: overrides the dispatch-time forward source gate. The
-  /// production default is built from this coordinator's own repositories.
-  final GroupMediaForwardSourceGate? groupMediaForwardSourceGate;
-
-  const DefaultShareBatchDeliveryCoordinator({
+  DefaultShareBatchDeliveryCoordinator({
     required this.identityRepository,
     required this.contactRepository,
     required this.messageRepository,
@@ -259,12 +312,33 @@ class DefaultShareBatchDeliveryCoordinator
     this.sendToContactFn,
     this.sendToGroupFn,
     this.mediaUploadProgressEvents,
-    this.groupMediaForwardSourceGate,
-  });
+    DateTime Function()? forwardNow,
+  }) : _forwardNow = forwardNow ?? _defaultForwardNow;
 
   String? get _currentSenderDeviceId {
     final peerId = p2pService.currentState.peerId?.trim();
     return peerId == null || peerId.isEmpty ? null : peerId;
+  }
+
+  ShareIntent _targetScopedForwardIntent({
+    required ShareIntent shareIntent,
+    required ShareTargetSelection target,
+  }) {
+    final base = shareIntent.forwardProvenance;
+    if (base == null) return shareIntent;
+
+    final targetProvenance = switch (target.kind) {
+      ShareTargetSelectionKind.contact =>
+        announcementForwardProvenanceForContact(
+          base: base,
+          contactPeerId: target.requireContact.peerId,
+        ),
+      ShareTargetSelectionKind.group => groupForwardProvenanceForGroup(
+        base: base,
+        groupId: target.requireGroup.id,
+      ),
+    };
+    return shareIntent.copyWith(forwardProvenance: targetProvenance);
   }
 
   @override
@@ -277,7 +351,93 @@ class DefaultShareBatchDeliveryCoordinator
       return const ShareBatchDeliveryResult(results: []);
     }
 
+    final isInternalForward =
+        shareIntent.forwardProvenance != null ||
+        shareIntent.directForwardSourceAuthority != null;
+    if (!isInternalForward) {
+      // External OS shares retain their historical target and fallback
+      // semantics. Current-target fail-closed authorization is scoped only to
+      // explicit in-app Forward operations.
+      return _deliverOrdinary(
+        shareIntent: shareIntent,
+        targets: targets,
+        onProgress: onProgress,
+      );
+    }
+
     final identity = await identityRepository.loadIdentity();
+    if (identity == null) {
+      return _failAllTargets(targets, 'Identity unavailable.');
+    }
+    final targetResolutions = await _authorizeInternalForwardTargets(
+      identity: identity,
+      targets: targets,
+      allowAnnouncementTarget: true,
+    );
+    if (!targetResolutions.any((resolution) => resolution.isReady)) {
+      return ShareBatchDeliveryResult(
+        results: targetResolutions
+            .map((resolution) => resolution.failure)
+            .toList(growable: false),
+      );
+    }
+
+    final directAuthority = shareIntent.directForwardSourceAuthority;
+    if (directAuthority == null) {
+      return _deliverOrdinary(
+        shareIntent: shareIntent,
+        targets: targets,
+        onProgress: onProgress,
+        preloadedIdentity: identity,
+        internalForwardTargetResolutions: targetResolutions,
+      );
+    }
+
+    // Direct received-media paths carried through the picker are previews, not
+    // dispatch authority. Reload the exact current direct rows, requalify their
+    // parent/policy/canonical bytes, and consume only immutable lock-captured
+    // snapshots below. A denial occurs before preprocessing, upload, or send.
+    final capture = await BuildReceivedMediaForward(
+      loadParentMessage: messageRepository.getMessage,
+      mediaAttachmentRepository: mediaAttachmentRepository,
+      mediaFileManager: mediaFileManager,
+    ).captureForDispatch(shareIntent);
+    final lease = capture.lease;
+    if (lease == null) {
+      return ShareBatchDeliveryResult(
+        results: targets
+            .map(
+              (target) => ShareBatchTargetResult(
+                target: target,
+                status: ShareBatchTargetStatus.failed,
+                detail: 'Source media is unavailable.',
+              ),
+            )
+            .toList(growable: false),
+      );
+    }
+    try {
+      return await _deliverOrdinary(
+        shareIntent: lease.shareIntent,
+        targets: targets,
+        onProgress: onProgress,
+        preloadedIdentity: identity,
+        internalForwardTargetResolutions: targetResolutions,
+      );
+    } finally {
+      await lease.dispose();
+    }
+  }
+
+  Future<ShareBatchDeliveryResult> _deliverOrdinary({
+    required ShareIntent shareIntent,
+    required List<ShareTargetSelection> targets,
+    ShareBatchDeliveryProgressCallback? onProgress,
+    IdentityModel? preloadedIdentity,
+    List<_InternalForwardTargetResolution>? internalForwardTargetResolutions,
+  }) async {
+    final identity =
+        preloadedIdentity ?? await identityRepository.loadIdentity();
     if (identity == null) {
       return ShareBatchDeliveryResult(
         results: targets
@@ -302,7 +462,18 @@ class DefaultShareBatchDeliveryCoordinator
     for (final media in processedMedia) {
       bytesPerTarget += media.budgetBytes;
     }
-    final totalBytes = bytesPerTarget * targets.length;
+    final targetPlan =
+        internalForwardTargetResolutions ??
+        targets
+            .map(
+              (target) => _InternalForwardTargetResolution.ready(
+                requested: target,
+                current: target,
+              ),
+            )
+            .toList(growable: false);
+    final totalBytes =
+        bytesPerTarget * targetPlan.where((item) => item.isReady).length;
     final progressTracker = onProgress == null || totalBytes <= 0
         ? null
         : _ShareBatchProgressTracker(
@@ -317,25 +488,56 @@ class DefaultShareBatchDeliveryCoordinator
           );
 
     try {
-      for (final target in targets) {
+      for (final planned in targetPlan) {
+        if (!planned.isReady) {
+          results.add(planned.failure);
+          continue;
+        }
+        var target = planned.current!;
+        if (internalForwardTargetResolutions != null) {
+          final current = await _authorizeInternalForwardTarget(
+            identity: identity,
+            target: planned.requested,
+            allowAnnouncementTarget: true,
+          );
+          if (!current.isReady) {
+            results.add(current.failure);
+            continue;
+          }
+          target = current.current!;
+        }
         // 236 TC-236-03E: each target is its own exception boundary — one
         // thrown target becomes one typed failed result and can never abort
         // the targets after it.
         ShareBatchTargetResult result;
         try {
+          final targetIntent = _targetScopedForwardIntent(
+            shareIntent: shareIntent,
+            target: target,
+          );
           result = switch (target.kind) {
             ShareTargetSelectionKind.contact =>
-              await (sendToContactFn ?? _sendToContact)(
-                identity: identity,
-                shareIntent: shareIntent,
-                contact: target.requireContact,
-                processedMedia: processedMedia,
-                uploadHooks: uploadHooks,
-              ),
+              sendToContactFn != null
+                  ? await sendToContactFn!(
+                      identity: identity,
+                      shareIntent: targetIntent,
+                      contact: target.requireContact,
+                      processedMedia: processedMedia,
+                      uploadHooks: uploadHooks,
+                    )
+                  : await _sendToContact(
+                      identity: identity,
+                      shareIntent: targetIntent,
+                      contact: target.requireContact,
+                      processedMedia: processedMedia,
+                      uploadHooks: uploadHooks,
+                      requireCurrentContact:
+                          internalForwardTargetResolutions != null,
+                    ),
             ShareTargetSelectionKind.group =>
               await (sendToGroupFn ?? _sendToGroup)(
                 identity: identity,
-                shareIntent: shareIntent,
+                shareIntent: targetIntent,
                 group: target.requireGroup,
                 processedMedia: processedMedia,
                 uploadHooks: uploadHooks,
@@ -350,6 +552,228 @@ class DefaultShareBatchDeliveryCoordinator
           );
         }
         results.add(result);
+      }
+    } finally {
+      await progressSubscription?.cancel();
+    }
+
+    return ShareBatchDeliveryResult(
+      results: results,
+      skippedOversizedGifCount: processedBatch.skippedOversizedGifCount,
+      skippedOversizedGifReason: processedBatch.skippedOversizedGifReason,
+    );
+  }
+
+  ShareBatchDeliveryResult _failAllTargets(
+    List<ShareTargetSelection> targets,
+    String detail,
+  ) => ShareBatchDeliveryResult(
+    results: targets
+        .map(
+          (target) => ShareBatchTargetResult(
+            target: target,
+            status: ShareBatchTargetStatus.failed,
+            detail: detail,
+          ),
+        )
+        .toList(growable: false),
+  );
+
+  Future<List<_InternalForwardTargetResolution>>
+  _authorizeInternalForwardTargets({
+    required IdentityModel identity,
+    required List<ShareTargetSelection> targets,
+    required bool allowAnnouncementTarget,
+    String? sourceGroupIdToExclude,
+  }) async {
+    final resolutions = <_InternalForwardTargetResolution>[];
+    for (final target in targets) {
+      resolutions.add(
+        await _authorizeInternalForwardTarget(
+          identity: identity,
+          target: target,
+          allowAnnouncementTarget: allowAnnouncementTarget,
+          sourceGroupIdToExclude: sourceGroupIdToExclude,
+        ),
+      );
+    }
+    return List.unmodifiable(resolutions);
+  }
+
+  /// Reloads one exact destination from durable repositories. Picker rows are
+  /// display state only and are never a fallback for an internal Forward.
+  Future<_InternalForwardTargetResolution> _authorizeInternalForwardTarget({
+    required IdentityModel identity,
+    required ShareTargetSelection target,
+    required bool allowAnnouncementTarget,
+    String? sourceGroupIdToExclude,
+  }) async {
+    try {
+      switch (target.kind) {
+        case ShareTargetSelectionKind.contact:
+          final requestedPeerId = target.requireContact.peerId;
+          final current = await contactRepository.getContact(requestedPeerId);
+          final mlKemKey = current?.mlKemPublicKey?.trim();
+          if (current == null ||
+              current.peerId != requestedPeerId ||
+              !GroupMediaForwardPolicy.canTargetContact(current) ||
+              mlKemKey == null ||
+              mlKemKey.isEmpty) {
+            return _InternalForwardTargetResolution.failed(
+              requested: target,
+              failureDetail: 'Contact is no longer available.',
+            );
+          }
+          return _InternalForwardTargetResolution.ready(
+            requested: target,
+            current: ShareTargetSelection.contact(current),
+          );
+        case ShareTargetSelectionKind.group:
+          final groupRepo = groupRepository;
+          if (groupRepo == null) {
+            return _InternalForwardTargetResolution.failed(
+              requested: target,
+              failureDetail: 'Group sharing is unavailable.',
+            );
+          }
+          final authority = await _loadForwardGroupAuthority(
+            groupRepo: groupRepo,
+            groupId: target.requireGroup.id,
+            senderPeerId: identity.peerId,
+            allowAnnouncementTarget: allowAnnouncementTarget,
+            sourceGroupIdToExclude: sourceGroupIdToExclude,
+          );
+          if (authority == null ||
+              authority.group.id != target.requireGroup.id) {
+            return _InternalForwardTargetResolution.failed(
+              requested: target,
+              failureDetail: 'You no longer have permission to post there.',
+            );
+          }
+          return _InternalForwardTargetResolution.ready(
+            requested: target,
+            current: ShareTargetSelection.group(authority.group),
+          );
+      }
+    } catch (_) {
+      return _InternalForwardTargetResolution.failed(
+        requested: target,
+        failureDetail: 'Share failed.',
+      );
+    }
+  }
+
+  /// Plan 249's explicit direct-only ordinary-delivery seam.
+  ///
+  /// Unlike [deliver], this rejects any source that does not remain exactly
+  /// one processed media item and reloads each exact active contact directly
+  /// before its send. Existing callers retain [deliver]'s historical
+  /// preprocessing and stale-picker fallback behavior unless they opt in to
+  /// this concrete method.
+  Future<ShareBatchDeliveryResult> deliverDirectMediaBatchForwardStrict({
+    required ShareIntent shareIntent,
+    required List<ContactModel> contacts,
+    ShareBatchDeliveryProgressCallback? onProgress,
+  }) async {
+    if (contacts.isEmpty) {
+      return const ShareBatchDeliveryResult(results: []);
+    }
+
+    ShareBatchDeliveryResult failAll(String detail) => ShareBatchDeliveryResult(
+      results: contacts
+          .map(
+            (contact) => ShareBatchTargetResult(
+              target: ShareTargetSelection.contact(contact),
+              status: ShareBatchTargetStatus.failed,
+              detail: detail,
+            ),
+          )
+          .toList(growable: false),
+    );
+
+    if (shareIntent.filePaths.length != 1) {
+      return failAll('Source media is unavailable.');
+    }
+
+    final identity = await identityRepository.loadIdentity();
+    if (identity == null) {
+      return failAll('Identity unavailable.');
+    }
+
+    final ProcessedShareMediaBatch processedBatch;
+    try {
+      processedBatch = await (processSharedMediaFn ?? _processSharedMedia)(
+        shareIntent,
+      );
+    } catch (_) {
+      return failAll('Source media is unavailable.');
+    }
+    if (processedBatch.processedMedia.length != 1) {
+      return failAll('Source media is unavailable.');
+    }
+    final processedMedia = processedBatch.processedMedia;
+
+    final mediaBytes = processedMedia.single.budgetBytes;
+    final totalBytes = mediaBytes * contacts.length;
+    final progressTracker = onProgress == null || totalBytes <= 0
+        ? null
+        : _ShareBatchProgressTracker(
+            totalBytes: totalBytes,
+            onProgress: onProgress,
+          );
+    final uploadHooks = progressTracker?.hooks ?? ShareBatchUploadHooks.none;
+    final progressSubscription = progressTracker == null
+        ? null
+        : (mediaUploadProgressEvents ?? mediaUploadProgressStream).listen(
+            progressTracker.onUploadEvent,
+          );
+
+    final results = <ShareBatchTargetResult>[];
+    try {
+      for (final requested in contacts) {
+        ShareBatchTargetResult failed() => ShareBatchTargetResult(
+          target: ShareTargetSelection.contact(requested),
+          status: ShareBatchTargetStatus.failed,
+          detail: 'Contact is no longer available.',
+        );
+
+        try {
+          final current = await contactRepository.getContact(requested.peerId);
+          final currentMlKemKey = current?.mlKemPublicKey?.trim();
+          if (current == null ||
+              current.peerId != requested.peerId ||
+              !GroupMediaForwardPolicy.canTargetContact(current) ||
+              currentMlKemKey == null ||
+              currentMlKemKey.isEmpty) {
+            results.add(failed());
+            continue;
+          }
+
+          final sender = sendToContactFn;
+          final result = sender != null
+              ? await sender(
+                  identity: identity,
+                  // Plan 249: one item operation token is intentionally reused
+                  // across its contact fan-out. Each destination still gets a
+                  // fresh message/attachment identity and encryption material.
+                  shareIntent: shareIntent,
+                  contact: current,
+                  processedMedia: processedMedia,
+                  uploadHooks: uploadHooks,
+                )
+              : await _sendToContact(
+                  identity: identity,
+                  shareIntent: shareIntent,
+                  contact: current,
+                  processedMedia: processedMedia,
+                  uploadHooks: uploadHooks,
+                  useSuppliedContact: true,
+                );
+          results.add(result);
+        } catch (_) {
+          uploadHooks.settled(succeeded: false);
+          results.add(failed());
+        }
       }
     } finally {
       await progressSubscription?.cancel();
@@ -395,60 +819,115 @@ class DefaultShareBatchDeliveryCoordinator
     if (groupRepo == null || groupMsgRepo == null) {
       return failAll('Group forwarding is unavailable.');
     }
-
-    // Dispatch-time source verification: reload the exact parent and
-    // group-owned row and hash the CURRENT file before any target lookup,
-    // source read, or upload.
-    final gate =
-        groupMediaForwardSourceGate ??
-        GroupMediaForwardSourceGate(
-          groupRepository: groupRepo,
-          messageRepository: groupMsgRepo,
-          mediaAttachmentRepository: mediaAttachmentRepository,
-          mediaFileManager: mediaFileManager,
-        );
-    final sourceResult = await gate.verify(request);
-    final source = sourceResult.source;
-    if (source == null) {
-      return failAll('This media can no longer be forwarded.');
-    }
-
-    final trimmedCaption = caption?.trim() ?? '';
-    final shareIntent = ShareIntent(
-      type: trimmedCaption.isEmpty
-          ? ShareIntentType.files
-          : ShareIntentType.mixed,
-      text: trimmedCaption.isEmpty ? null : trimmedCaption,
-      filePaths: [source.resolvedPath],
-      forwardProvenance: request.provenance,
+    final allowAnnouncementTarget = request is AnnouncementMediaForwardRequest;
+    final sourceGroupIdToExclude = allowAnnouncementTarget
+        ? request.groupId
+        : null;
+    final targetResolutions = await _authorizeInternalForwardTargets(
+      identity: identity,
+      targets: targets,
+      allowAnnouncementTarget: allowAnnouncementTarget,
+      sourceGroupIdToExclude: sourceGroupIdToExclude,
     );
-
-    // Read/process the verified source bytes once; every destination below
-    // still gets its own fresh attachment id, encryption, and upload.
-    final processedBatch = await (processSharedMediaFn ?? _processSharedMedia)(
-      shareIntent,
-    );
-    final processedMedia = processedBatch.processedMedia;
-    final results = <ShareBatchTargetResult>[];
-    for (final target in targets) {
-      results.add(
-        await _deliverForwardTarget(
-          identity: identity,
-          shareIntent: shareIntent,
-          target: target,
-          processedMedia: processedMedia,
-          sourceGroupIdToExclude: request is AnnouncementMediaForwardRequest
-              ? request.groupId
-              : null,
-        ),
+    if (!targetResolutions.any((resolution) => resolution.isReady)) {
+      return ShareBatchDeliveryResult(
+        results: targetResolutions
+            .map((resolution) => resolution.failure)
+            .toList(growable: false),
       );
     }
 
-    return ShareBatchDeliveryResult(
-      results: results,
-      skippedOversizedGifCount: processedBatch.skippedOversizedGifCount,
-      skippedOversizedGifReason: processedBatch.skippedOversizedGifReason,
+    // Dispatch-time source verification: reload the exact parent and
+    // group-owned row and revalidate the CURRENT canonical plaintext before
+    // any target lookup, source read, or upload. Its relay contentHash belongs
+    // to the authenticated ciphertext and is never applied to this file.
+    final gate = GroupMediaForwardSourceGate(
+      groupRepository: groupRepo,
+      messageRepository: groupMsgRepo,
+      mediaAttachmentRepository: mediaAttachmentRepository,
+      mediaFileManager: mediaFileManager,
     );
+    final sourceResult = await gate.verify(
+      request,
+      captureImmutableSnapshot: true,
+    );
+    final source = sourceResult.source;
+    if (source == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_MEDIA_FORWARD_SOURCE_DENIED',
+        details: {
+          'reason': sourceResult.denialReason ?? 'unknown_source_denial',
+          'targetCount': targets.length,
+          'sourceKind': request is AnnouncementMediaForwardRequest
+              ? 'announcement'
+              : 'discussion',
+        },
+      );
+      return failAll('This media can no longer be forwarded.');
+    }
+    final snapshot = source.immutableSnapshot;
+    if (snapshot == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_MEDIA_FORWARD_SOURCE_DENIED',
+        details: {
+          'reason': 'immutable_snapshot_missing',
+          'targetCount': targets.length,
+          'sourceKind': request is AnnouncementMediaForwardRequest
+              ? 'announcement'
+              : 'discussion',
+        },
+      );
+      return failAll('This media can no longer be forwarded.');
+    }
+
+    try {
+      final trimmedCaption = caption?.trim() ?? '';
+      final shareIntent = ShareIntent(
+        type: trimmedCaption.isEmpty
+            ? ShareIntentType.files
+            : ShareIntentType.mixed,
+        text: trimmedCaption.isEmpty ? null : trimmedCaption,
+        filePaths: [snapshot.path],
+        forwardProvenance: request.provenance,
+      );
+
+      // Process the immutable, lock-captured source once; every destination
+      // below still gets its own fresh attachment id, encryption, and upload.
+      final processedBatch =
+          await (processSharedMediaFn ?? _processSharedMedia)(shareIntent);
+      final processedMedia = processedBatch.processedMedia;
+      if (processedMedia.length != 1 ||
+          processedBatch.skippedOversizedGifCount > 0) {
+        return failAll('This media can no longer be forwarded.');
+      }
+      final results = <ShareBatchTargetResult>[];
+      for (final planned in targetResolutions) {
+        if (!planned.isReady) {
+          results.add(planned.failure);
+          continue;
+        }
+        results.add(
+          await _deliverForwardTarget(
+            identity: identity,
+            shareIntent: shareIntent,
+            target: planned.current!,
+            processedMedia: processedMedia,
+            sourceGroupIdToExclude: sourceGroupIdToExclude,
+            allowAnnouncementTarget: allowAnnouncementTarget,
+          ),
+        );
+      }
+
+      return ShareBatchDeliveryResult(
+        results: results,
+        skippedOversizedGifCount: processedBatch.skippedOversizedGifCount,
+        skippedOversizedGifReason: processedBatch.skippedOversizedGifReason,
+      );
+    } finally {
+      await snapshot.dispose();
+    }
   }
 
   /// One forward destination: reload the CURRENT target from its repository
@@ -460,6 +939,7 @@ class DefaultShareBatchDeliveryCoordinator
     required ShareTargetSelection target,
     required List<PendingComposerMedia> processedMedia,
     String? sourceGroupIdToExclude,
+    required bool allowAnnouncementTarget,
   }) async {
     ShareBatchTargetResult failed(String detail) {
       return ShareBatchTargetResult(
@@ -485,19 +965,27 @@ class DefaultShareBatchDeliveryCoordinator
           if (mlKemKey == null || mlKemKey.isEmpty) {
             return failed('Contact is missing required encryption support.');
           }
-          final targetIntent = shareIntent.copyWith(
-            forwardProvenance: announcementForwardProvenanceForContact(
-              base: shareIntent.forwardProvenance!,
-              contactPeerId: current.peerId,
-            ),
+          final targetIntent = _targetScopedForwardIntent(
+            shareIntent: shareIntent,
+            target: ShareTargetSelection.contact(current),
           );
-          return await (sendToContactFn ?? _sendToContact)(
-            identity: identity,
-            shareIntent: targetIntent,
-            contact: current,
-            processedMedia: processedMedia,
-            uploadHooks: ShareBatchUploadHooks.none,
-          );
+          final sender = sendToContactFn;
+          return sender != null
+              ? await sender(
+                  identity: identity,
+                  shareIntent: targetIntent,
+                  contact: current,
+                  processedMedia: processedMedia,
+                  uploadHooks: ShareBatchUploadHooks.none,
+                )
+              : await _sendToContact(
+                  identity: identity,
+                  shareIntent: targetIntent,
+                  contact: current,
+                  processedMedia: processedMedia,
+                  uploadHooks: ShareBatchUploadHooks.none,
+                  requireCurrentContact: true,
+                );
         case ShareTargetSelectionKind.group:
           final groupRepo = groupRepository!;
           final current = await groupRepo.getGroup(target.requireGroup.id);
@@ -510,28 +998,43 @@ class DefaultShareBatchDeliveryCoordinator
           if (!GroupMediaForwardPolicy.canTargetGroup(current)) {
             return failed('You no longer have permission to post there.');
           }
+          if (current.type == GroupType.announcement &&
+              !allowAnnouncementTarget) {
+            return failed('You no longer have permission to post there.');
+          }
           if (current.isArchived || current.isDissolved) {
             return failed('You no longer have permission to post there.');
           }
-          final latestKey = await groupRepo.getLatestKey(current.id);
-          final members = await groupRepo.getMembers(current.id);
-          final isMember = members.any(
-            (member) => member.peerId == identity.peerId,
+          final targetIntent = _targetScopedForwardIntent(
+            shareIntent: shareIntent,
+            target: ShareTargetSelection.group(current),
           );
-          if (!canDeliverAnnouncementForwardToGroup(
-            isArchived: current.isArchived,
-            isDissolved: current.isDissolved,
-            isAnnouncement: current.type == GroupType.announcement,
-            isAdmin: current.myRole == GroupRole.admin,
-            hasLatestKey: latestKey != null,
-            isMember: isMember,
-          )) {
+          final sender = sendToGroupFn;
+          if (sender == null) {
+            return _sendToGroup(
+              identity: identity,
+              shareIntent: targetIntent,
+              group: current,
+              processedMedia: processedMedia,
+              uploadHooks: ShareBatchUploadHooks.none,
+              allowAnnouncementTarget: allowAnnouncementTarget,
+              sourceGroupIdToExclude: sourceGroupIdToExclude,
+            );
+          }
+          final authority = await _loadForwardGroupAuthority(
+            groupRepo: groupRepo,
+            groupId: current.id,
+            senderPeerId: identity.peerId,
+            allowAnnouncementTarget: allowAnnouncementTarget,
+            sourceGroupIdToExclude: sourceGroupIdToExclude,
+          );
+          if (authority == null) {
             return failed('You no longer have permission to post there.');
           }
-          return await (sendToGroupFn ?? _sendToGroup)(
+          return await sender(
             identity: identity,
-            shareIntent: shareIntent,
-            group: current,
+            shareIntent: targetIntent,
+            group: authority.group,
             processedMedia: processedMedia,
             uploadHooks: ShareBatchUploadHooks.none,
           );
@@ -539,6 +1042,53 @@ class DefaultShareBatchDeliveryCoordinator
     } catch (_) {
       return failed('Share failed.');
     }
+  }
+
+  /// Hydrates the key first, then makes the coherent repository snapshot the
+  /// final await before the caller starts any upload/sender work.
+  Future<_ForwardGroupAuthority?> _loadForwardGroupAuthority({
+    required GroupRepository groupRepo,
+    required String groupId,
+    required String senderPeerId,
+    required bool allowAnnouncementTarget,
+    String? sourceGroupIdToExclude,
+  }) async {
+    final GroupForwardAuthorizationSnapshotRepository? snapshotRepo =
+        groupRepo is GroupForwardAuthorizationSnapshotRepository
+        ? groupRepo as GroupForwardAuthorizationSnapshotRepository
+        : null;
+    if (snapshotRepo == null) return null;
+    final hydratedLatestKey = await groupRepo.getLatestKey(groupId);
+    final snapshot = await snapshotRepo.loadGroupForwardAuthorizationSnapshot(
+      groupId,
+    );
+    final group = snapshot?.group;
+    if (snapshot == null || group == null) return null;
+
+    final normalizedSender = senderPeerId.trim();
+    final ownMembers = snapshot.members
+        .where((member) => member.peerId.trim() == normalizedSender)
+        .toList(growable: false);
+    final ownMember = ownMembers.length == 1 ? ownMembers.single : null;
+    final keyMatches =
+        hydratedLatestKey != null &&
+        hydratedLatestKey.groupId == group.id &&
+        snapshot.latestKeyGeneration == hydratedLatestKey.keyGeneration;
+    if (group.id != groupId ||
+        group.id == sourceGroupIdToExclude ||
+        !GroupMediaForwardPolicy.canTargetGroup(group) ||
+        (group.type == GroupType.announcement && !allowAnnouncementTarget) ||
+        !canDeliverAnnouncementForwardToGroup(
+          isArchived: group.isArchived,
+          isDissolved: group.isDissolved,
+          isAnnouncement: group.type == GroupType.announcement,
+          isAdmin: group.myRole == GroupRole.admin,
+          hasLatestKey: keyMatches,
+          ownMemberRole: ownMember?.role,
+        )) {
+      return null;
+    }
+    return _ForwardGroupAuthority(group: group, members: snapshot.members);
   }
 
   Future<ProcessedShareMediaBatch> _processSharedMedia(
@@ -607,9 +1157,26 @@ class DefaultShareBatchDeliveryCoordinator
     required ContactModel contact,
     required List<PendingComposerMedia> processedMedia,
     required ShareBatchUploadHooks uploadHooks,
+    bool useSuppliedContact = false,
+    bool requireCurrentContact = false,
   }) async {
-    final resolvedContact =
-        await contactRepository.getContact(contact.peerId) ?? contact;
+    assert(!(useSuppliedContact && requireCurrentContact));
+    final currentContact = useSuppliedContact
+        ? contact
+        : await contactRepository.getContact(contact.peerId);
+    final currentMlKemKey = currentContact?.mlKemPublicKey?.trim();
+    if (requireCurrentContact &&
+        (currentContact == null ||
+            !GroupMediaForwardPolicy.canTargetContact(currentContact) ||
+            currentMlKemKey == null ||
+            currentMlKemKey.isEmpty)) {
+      return ShareBatchTargetResult(
+        target: ShareTargetSelection.contact(contact),
+        status: ShareBatchTargetStatus.failed,
+        detail: 'Contact is no longer available.',
+      );
+    }
+    final resolvedContact = currentContact ?? contact;
     final attachments = <MediaAttachment>[];
 
     for (final media in processedMedia) {
@@ -720,6 +1287,8 @@ class DefaultShareBatchDeliveryCoordinator
     required GroupModel group,
     required List<PendingComposerMedia> processedMedia,
     required ShareBatchUploadHooks uploadHooks,
+    bool allowAnnouncementTarget = true,
+    String? sourceGroupIdToExclude,
   }) async {
     final groupRepo = groupRepository;
     final msgRepo = groupMessageRepository;
@@ -734,10 +1303,63 @@ class DefaultShareBatchDeliveryCoordinator
     String? bgTaskId;
     try {
       bgTaskId = await callBgBegin(bridge);
-      final resolvedGroup = await groupRepo.getGroup(group.id) ?? group;
-      final allowedPeers = (await groupRepo.getMembers(
-        resolvedGroup.id,
-      )).map((member) => member.peerId).toList(growable: false);
+      final operationKey = shareIntent.forwardProvenance?.operationDedupKey
+          .trim();
+      final stableOperationKey = operationKey == null || operationKey.isEmpty
+          ? null
+          : operationKey;
+      final existingOutput = stableOperationKey == null
+          ? null
+          : await msgRepo.getMessage(stableOperationKey);
+
+      final authority = await _loadForwardGroupAuthority(
+        groupRepo: groupRepo,
+        groupId: group.id,
+        senderPeerId: identity.peerId,
+        allowAnnouncementTarget: allowAnnouncementTarget,
+        sourceGroupIdToExclude: sourceGroupIdToExclude,
+      );
+      if (authority == null) {
+        return ShareBatchTargetResult(
+          target: ShareTargetSelection.group(group),
+          status: ShareBatchTargetStatus.failed,
+          detail: 'You no longer have permission to post there.',
+        );
+      }
+      final resolvedGroup = authority.group;
+      final members = authority.members;
+      if (existingOutput != null) {
+        final coherent =
+            stableOperationKey != null &&
+            existingOutput.id == stableOperationKey &&
+            existingOutput.logicalDeliveryId == stableOperationKey &&
+            existingOutput.groupId == resolvedGroup.id &&
+            existingOutput.senderPeerId == identity.peerId &&
+            !existingOutput.isIncoming &&
+            existingOutput.isForwarded;
+        if (!coherent) {
+          return ShareBatchTargetResult(
+            target: ShareTargetSelection.group(resolvedGroup),
+            status: ShareBatchTargetStatus.failed,
+            detail: 'Forward identity is no longer available.',
+          );
+        }
+        final alreadySent =
+            existingOutput.status == 'sent' ||
+            existingOutput.status == 'delivered';
+        return ShareBatchTargetResult(
+          target: ShareTargetSelection.group(resolvedGroup),
+          status: alreadySent
+              ? ShareBatchTargetStatus.sent
+              : ShareBatchTargetStatus.queued,
+          detail: alreadySent ? 'Sent.' : 'Saved locally for existing retry.',
+        );
+      }
+      final allowedPeers = members
+          .map((member) => member.peerId.trim())
+          .where((peerId) => peerId.isNotEmpty)
+          .toSet()
+          .toList(growable: false);
       final attachments = <MediaAttachment>[];
 
       for (final media in processedMedia) {
@@ -777,6 +1399,12 @@ class DefaultShareBatchDeliveryCoordinator
       }
 
       final senderDeviceId = _currentSenderDeviceId;
+      final forwardTimestamp = stableOperationKey == null
+          ? null
+          : _forwardTimestampByOperationKey.putIfAbsent(
+              stableOperationKey,
+              _forwardNow,
+            );
       uploadHooks.sending();
       final (result, message) = await sendGroupMessage(
         bridge: bridge,
@@ -790,6 +1418,9 @@ class DefaultShareBatchDeliveryCoordinator
         senderUsername: identity.username,
         senderDeviceId: senderDeviceId,
         senderTransportPeerId: senderDeviceId,
+        messageId: stableOperationKey,
+        logicalDeliveryId: stableOperationKey,
+        timestamp: forwardTimestamp,
         mediaAttachments: attachments.isEmpty ? null : attachments,
         mediaAttachmentRepo: mediaAttachmentRepository,
         inviteDeliveryAttemptRepo: groupInviteDeliveryAttemptRepository,

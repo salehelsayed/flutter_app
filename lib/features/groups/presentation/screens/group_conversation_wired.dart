@@ -10,6 +10,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/amplitude_buffer.dart';
+import 'package:flutter_app/core/media/app_owned_media_path_authority.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
@@ -24,7 +25,9 @@ import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/media_storage_manager.dart';
+import 'package:flutter_app/core/media/private_media_protection_coordinator.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
+import 'package:flutter_app/core/media/picture_in_picture_gateway.dart';
 import 'package:flutter_app/core/media/received_media_egress.dart';
 import 'package:flutter_app/core/media/received_media_egress_service.dart';
 import 'package:flutter_app/core/widgets/quiet_confirm.dart';
@@ -33,8 +36,10 @@ import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/notification_tap_timing.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
+import 'package:flutter_app/features/conversation/application/media_viewer_repository_resume_store.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_rejection.dart';
@@ -45,11 +50,20 @@ import 'package:flutter_app/features/conversation/presentation/widgets/upload_pr
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/groups/application/group_media_delete_for_me_coordinator.dart';
+import 'package:flutter_app/features/groups/application/announcement_private_reply_policy.dart';
+import 'package:flutter_app/features/groups/application/announcement_private_reply_request.dart';
 import 'package:flutter_app/features/groups/application/announcement_media_forward_request.dart';
+import 'package:flutter_app/features/groups/application/group_media_batch_forward.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_policy.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
+import 'package:flutter_app/features/groups/application/group_private_media_lifecycle.dart';
+import 'package:flutter_app/features/groups/application/group_private_media_viewer_controller.dart';
 import 'package:flutter_app/features/share/presentation/navigation/share_target_picker_route.dart';
+import 'package:flutter_app/features/share/application/group_media_batch_forward_delivery_coordinator.dart';
+import 'package:flutter_app/features/share/application/share_batch_delivery_coordinator.dart';
+import 'package:flutter_app/features/share/presentation/navigation/group_media_batch_forward_picker_route.dart';
 import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
 import 'package:flutter_app/features/groups/application/group_received_media_action_policy.dart';
 import 'package:flutter_app/features/groups/application/group_received_media_actions.dart';
@@ -72,6 +86,7 @@ import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/application/group_member_device_safety.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_history_gap_repair.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository.dart';
@@ -84,6 +99,7 @@ import 'package:flutter_app/features/groups/presentation/group_backlog_retention
 import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_wired.dart';
+import 'package:flutter_app/features/groups/presentation/screens/group_private_media_viewer.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_shared_media_library_screen.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_media_info_sheet.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_reaction_details_sheet.dart';
@@ -94,7 +110,7 @@ import 'package:flutter_app/features/settings/domain/models/image_quality_prefer
 import 'package:flutter_app/features/settings/domain/models/media_download_preferences.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
-import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
+import 'package:flutter_app/shared/widgets/media/media_picture_in_picture_controller.dart';
 import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -147,6 +163,85 @@ class _RestoredGroupVoiceContinuation {
 }
 
 /// Wired widget connecting GroupConversationScreen to business logic.
+/// App-owner-only navigation seam. The freshly resolved contact is the sole
+/// value allowed to cross from an announcement into the existing 1:1 route.
+typedef OpenAnnouncementSenderConversation =
+    Future<void> Function(ContactModel contact);
+
+Stream<void> _mergeGroupPictureInPictureAuthorizationStreams(
+  Iterable<Stream<void>> streams,
+) => Stream<void>.multi((controller) {
+  final subscriptions = streams
+      .map(
+        (stream) => stream.listen(
+          (_) => controller.addSync(null),
+          onError: controller.addErrorSync,
+        ),
+      )
+      .toList(growable: false);
+  controller.onCancel = () async {
+    for (final subscription in subscriptions) {
+      await subscription.cancel();
+    }
+  };
+});
+
+bool _groupAttachmentChangeMatchesCurrent({
+  required MediaAttachmentAuthorizationChange change,
+  required String groupId,
+  required MediaViewerItem? Function()? currentItem,
+}) {
+  if (change.owner != MediaOwnerLane.group) return false;
+  if (change.scopeId != null && change.scopeId != groupId) return false;
+  final current = currentItem?.call();
+  if (current == null) return true;
+  if (current.owner != MediaOwnerLane.group) return false;
+  if (change.messageId != null && change.messageId != current.messageId) {
+    return false;
+  }
+  if (change.attachmentId != null &&
+      change.attachmentId != current.attachmentId) {
+    return false;
+  }
+  return true;
+}
+
+/// Exact-current view of group listener, local repository, and attachment
+/// mutations. Remote tombstones stay group-scoped because their system row id
+/// differs from the parent they durably removed.
+Stream<void> groupPictureInPictureAuthorizationChanges(
+  Stream<GroupMessage> messageChanges, {
+  required String groupId,
+  Stream<GroupMessageAuthorizationChange> repositoryChanges =
+      const Stream<GroupMessageAuthorizationChange>.empty(),
+  Stream<MediaAttachmentAuthorizationChange> attachmentChanges =
+      const Stream<MediaAttachmentAuthorizationChange>.empty(),
+  MediaViewerItem? Function()? currentItem,
+}) => _mergeGroupPictureInPictureAuthorizationStreams([
+  messageChanges
+      .where((message) => message.groupId == groupId)
+      .map<void>((_) {}),
+  repositoryChanges
+      .where((change) {
+        if (change.groupId != groupId) return false;
+        final current = currentItem?.call();
+        return current == null ||
+            (current.owner == MediaOwnerLane.group &&
+                (change.messageId == null ||
+                    change.messageId == current.messageId));
+      })
+      .map<void>((_) {}),
+  attachmentChanges
+      .where(
+        (change) => _groupAttachmentChangeMatchesCurrent(
+          change: change,
+          groupId: groupId,
+          currentItem: currentItem,
+        ),
+      )
+      .map<void>((_) {}),
+]);
+
 class GroupConversationWired extends StatefulWidget {
   /// 204 (BUG-1): the explicit Cancel row on the attach-source bottom sheet.
   /// Distinct from the 1:1 key so surface-specific tests target each
@@ -198,9 +293,15 @@ class GroupConversationWired extends StatefulWidget {
   groupReactionReplayOutboxRepository;
   final GroupHistoryGapRepairRepository? historyGapRepairRepo;
   final UploadMediaFn uploadMediaFn;
+  final GroupPrivateMediaPolicy privateMediaPolicy;
+  final GroupPrivateMediaAvailability privateMediaAvailability;
   final int maxAttachmentBudgetBytes;
   final DateTime? notificationTappedAt;
   final BackgroundPreference backgroundPreference;
+
+  /// 247: complete app-owner route to an existing direct conversation. Null
+  /// means this construction path cannot safely offer Message sender.
+  final OpenAnnouncementSenderConversation? openAnnouncementSenderConversation;
 
   /// 229: user auto-download policy consulted immediately before every
   /// automatic group media transfer (initial load and live-stream recovery).
@@ -267,9 +368,12 @@ class GroupConversationWired extends StatefulWidget {
     this.groupReactionReplayOutboxRepository,
     this.historyGapRepairRepo,
     this.uploadMediaFn = uploadMedia,
+    this.privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary(),
+    this.privateMediaAvailability = productionGroupPrivateMediaAvailability,
     this.maxAttachmentBudgetBytes = kGeneralMediaAttachmentBudgetBytes,
     this.notificationTappedAt,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
+    this.openAnnouncementSenderConversation,
     this.autoDownloadDecider,
     this.mediaActionsController,
     this.mediaDeleteForMeCoordinator,
@@ -300,6 +404,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   late GroupModel _group;
   List<GroupMessage> _messages = [];
+  AnnouncementPrivateReplyResolver? _announcementPrivateReplyResolver;
+  bool _announcementPrivateReplyDispatchInFlight = false;
+  final Map<String, AnnouncementPrivateReplyRequest>
+  _viewerPrivateReplyRequests = <String, AnnouncementPrivateReplyRequest>{};
 
   // 159 (main-isolate-blocking-1): the group run-grouping memo, hoisted to the
   // wired State because GroupConversationScreen is a StatelessWidget. Keyed on
@@ -360,6 +468,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   Set<String> _retryingFailedMessageIds = const {};
   String? _activeQuoteMessageId;
   String _draftText = '';
+  GroupPrivateMediaPolicy _privateMediaPolicy =
+      const GroupPrivateMediaPolicy.ordinary();
   String? _messageLoadErrorText;
   GroupSecurityStatusViewState? _securityStatus;
   GroupHistoryGapRepair? _historyGapRepair;
@@ -381,6 +491,65 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   // row before every egress call; the delete coordinator is UI-injected only
   // until the v98 journal persistence slice lands.
   GroupReceivedMediaActionsController? _mediaActionsController;
+  GroupPrivateMediaViewerController? _lazyPrivateMediaViewerController;
+  MediaViewerRepositoryResumeStore? _lazyMediaViewerResumeStore;
+  final Set<GroupPrivateMediaViewerIdentity> _privateMediaOpenInFlight = {};
+
+  MediaViewerRepositoryResumeStore? get _mediaViewerResumeStore {
+    final existing = _lazyMediaViewerResumeStore;
+    if (existing != null) return existing;
+    final attachments = widget.mediaAttachmentRepo;
+    if (attachments == null || attachments is! MediaLibraryStateRepository) {
+      return null;
+    }
+    return _lazyMediaViewerResumeStore = MediaViewerRepositoryResumeStore(
+      attachmentRepository: attachments,
+      stateRepository: attachments as MediaLibraryStateRepository,
+    );
+  }
+
+  MediaPictureInPictureController _createMediaPictureInPictureController({
+    required MediaPictureInPictureCurrentAuthorizer reloadCurrent,
+    required MediaPictureInPictureRestorePlayback restorePlayback,
+  }) {
+    final resumeStore = _mediaViewerResumeStore;
+    if (resumeStore == null) {
+      throw StateError('PiP composition requires media library state');
+    }
+    final messageRepository = widget.msgRepo;
+    final attachmentRepository = widget.mediaAttachmentRepo;
+    MediaViewerItem? activeItem;
+    Future<MediaPictureInPictureAuthorization?> trackedReloadCurrent() async {
+      final authorization = await reloadCurrent();
+      if (authorization != null) activeItem = authorization.item;
+      return authorization;
+    }
+
+    final repositoryChanges =
+        messageRepository is GroupMessageAuthorizationChangeSource
+        ? (messageRepository as GroupMessageAuthorizationChangeSource)
+              .authorizationChanges
+        : const Stream<GroupMessageAuthorizationChange>.empty();
+    final attachmentChanges =
+        attachmentRepository is MediaAttachmentAuthorizationChangeSource
+        ? (attachmentRepository as MediaAttachmentAuthorizationChangeSource)
+              .authorizationChanges
+        : const Stream<MediaAttachmentAuthorizationChange>.empty();
+    return MediaPictureInPictureController(
+      gateway: PictureInPictureChannelGateway.platform(),
+      pathAuthority: IoAppOwnedMediaPathAuthority(),
+      reloadCurrent: trackedReloadCurrent,
+      resumeStore: resumeStore,
+      restorePlayback: restorePlayback,
+      authorizationChanges: groupPictureInPictureAuthorizationChanges(
+        widget.groupMessageListener.groupMessageStream,
+        groupId: widget.group.id,
+        repositoryChanges: repositoryChanges,
+        attachmentChanges: attachmentChanges,
+        currentItem: () => activeItem,
+      ),
+    );
+  }
 
   /// 235: injected coordinator wins; otherwise the process-wide production
   /// default set by main() (null in tests that set neither -> Delete hidden).
@@ -537,6 +706,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _group = widget.group;
     _highlightedMessageId = widget.initialHighlightedMessageId;
     final mediaRepo = widget.mediaAttachmentRepo;
+    _announcementPrivateReplyResolver = mediaRepo == null
+        ? null
+        : AnnouncementPrivateReplyResolver(
+            identityRepository: widget.identityRepo,
+            groupMessageRepository: widget.msgRepo,
+            groupRepository: widget.groupRepo,
+            mediaAttachmentRepository: mediaRepo,
+            contactRepository: widget.contactRepo,
+          );
     _mediaActionsController =
         widget.mediaActionsController ??
         (mediaRepo != null
@@ -552,6 +730,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         defaultGroupMediaDeleteForMeCoordinator;
     _isLifecycleResumed = _currentLifecycleAllowsVisibleRead();
     _draftText = widget.initialText ?? '';
+    _privateMediaPolicy = widget.privateMediaPolicy;
     widget.groupConversationTracker?.setActive(_activeGroupConversationKey);
     _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
     final initialPendingMedia = widget.initialPendingMedia;
@@ -745,6 +924,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (activeUpload == null || !activeUpload.cancelRequested) {
       return false;
     }
+    final uploadCancelledText = AppLocalizations.of(context)!.upload_cancelled;
     await widget.mediaAttachmentRepo
         ?.markUploadPendingAttachmentsFailedForMessage(
           activeUpload.messageId,
@@ -755,7 +935,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     await _restoreComposerSnapshot(
       activeUpload.composerSnapshot,
       activeUpload.messageId,
-      snackText: AppLocalizations.of(context)!.upload_cancelled,
+      snackText: uploadCancelledText,
       showSnackBar: true,
     );
     return true;
@@ -797,6 +977,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     }
     if (!identical(widget.msgRepo, oldWidget.msgRepo)) {
       _restartOutgoingLocalMessageChangeSubscription();
+    }
+    if (widget.privateMediaPolicy != oldWidget.privateMediaPolicy &&
+        _privateMediaPolicy == oldWidget.privateMediaPolicy) {
+      _privateMediaPolicy = widget.privateMediaPolicy;
     }
     final oldCanWrite = _canWrite;
     final newCanWrite = _canWriteForGroup(widget.group);
@@ -873,6 +1057,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _initialLoadDone = false;
     _activeQuoteMessageId = null;
     _draftText = widget.initialText ?? '';
+    _privateMediaPolicy = widget.privateMediaPolicy;
     _pendingAttachments = [];
     _clearRestoredMediaContinuationTracking();
     _clearRestoredVoiceContinuationTracking();
@@ -959,7 +1144,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     );
     if (!mounted || accepted == null || accepted.isEmpty) return;
     _clearRestoredMediaContinuationTracking();
-    _pendingAttachments = [..._pendingAttachments, ...accepted];
+    setState(() {
+      _pendingAttachments = [..._pendingAttachments, ...accepted];
+    });
     _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
   }
 
@@ -1104,6 +1291,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       _draftText = '';
       _pendingAttachments = [];
       _activeQuoteMessageId = null;
+      _privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary();
       _upsertMessage(message.copyWith(media: hydratedMedia));
       _updateMediaForMessage(message.id, hydratedMedia);
     });
@@ -1650,6 +1838,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         if (!await _autoDownloadAllowed(attachment)) {
           continue;
         }
+        final currentParent = await widget.msgRepo.getMessage(entry.key);
+        if (currentParent == null ||
+            currentParent.groupId != _group.id ||
+            !currentParent.privateMediaPolicy.isOrdinary) {
+          continue;
+        }
 
         final retrying = attachment.copyWith(
           clearLocalPath: true,
@@ -1681,6 +1875,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             contactPeerId: widget.group.id,
             enforceGroupMediaPolicy: true,
             owner: MediaOwnerLane.group,
+            groupMessageRepo: widget.msgRepo,
           );
         } catch (_) {
           downloaded = null;
@@ -2243,6 +2438,65 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     );
   }
 
+  GroupPrivateMediaAttachmentKind _pendingPrivateMediaAttachmentKind(
+    List<PendingComposerMedia> media,
+  ) {
+    if (media.length != 1) {
+      return GroupPrivateMediaAttachmentKind.unknown;
+    }
+    final mime = _mimeFromPath(media.single.file.path).toLowerCase();
+    if (mime == 'image/gif') return GroupPrivateMediaAttachmentKind.gif;
+    if (mime.startsWith('image/')) {
+      return GroupPrivateMediaAttachmentKind.image;
+    }
+    if (mime.startsWith('video/')) {
+      return GroupPrivateMediaAttachmentKind.video;
+    }
+    if (mime.startsWith('audio/')) {
+      return GroupPrivateMediaAttachmentKind.audio;
+    }
+    return GroupPrivateMediaAttachmentKind.file;
+  }
+
+  bool get _privateMediaComposerEligible {
+    if (!widget.privateMediaAvailability.canAuthorPrivateMedia(_group.type) ||
+        !_canWrite ||
+        !_supportsDurableGroupMediaUploads) {
+      return false;
+    }
+    final ownPeerId = _ownPeerId?.trim();
+    if (!_securityStatusLoaded ||
+        ownPeerId == null ||
+        ownPeerId.isEmpty ||
+        _membersByPeerId.isEmpty) {
+      return false;
+    }
+    final ownMember = _membersByPeerId[ownPeerId];
+    if (ownMember == null ||
+        !widget.privateMediaAvailability.canCurrentMemberAuthorPrivateMedia(
+          groupType: _group.type,
+          localRole: _group.myRole,
+          memberRole: ownMember.role,
+        )) {
+      return false;
+    }
+    final eligibility = GroupPrivateMediaEligibility(
+      attachmentCount: _pendingAttachments.length,
+      attachmentKind: _pendingPrivateMediaAttachmentKind(_pendingAttachments),
+      hasTextOrCaption: _draftText.trim().isNotEmpty,
+      hasQuote: _activeQuoteMessageId?.trim().isNotEmpty == true,
+    );
+    return eligibility.allowsPrivateMedia;
+  }
+
+  void _onPrivateMediaPolicyChanged(GroupPrivateMediaPolicy policy) {
+    final next = policy.isPrivate && _privateMediaComposerEligible
+        ? policy
+        : const GroupPrivateMediaPolicy.ordinary();
+    if (_privateMediaPolicy == next) return;
+    setState(() => _privateMediaPolicy = next);
+  }
+
   Future<void> _onSend(String text) async {
     if (!_canWrite) return;
     if (!await _refreshSendCapabilityAndCanWrite()) return;
@@ -2253,6 +2507,24 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (text.isEmpty && !hasAttachments) return;
     final draftText = text;
     final quotedMessageId = _activeQuoteMessageId;
+    final privateMediaPolicy = _privateMediaPolicy;
+    var privateKeyGeneration = 0;
+    if (privateMediaPolicy.isUnsupported) return;
+    if (privateMediaPolicy.isPrivate) {
+      final eligibility = GroupPrivateMediaEligibility(
+        attachmentCount: mediaToUpload.length,
+        attachmentKind: _pendingPrivateMediaAttachmentKind(mediaToUpload),
+        hasTextOrCaption: text.trim().isNotEmpty,
+        hasQuote: quotedMessageId?.trim().isNotEmpty == true,
+      );
+      if (privateMediaPolicy.validatedFor(eligibility) != privateMediaPolicy ||
+          !_privateMediaComposerEligible) {
+        return;
+      }
+      final latestKey = await widget.groupRepo.getLatestKey(widget.group.id);
+      if (latestKey == null) return;
+      privateKeyGeneration = latestKey.keyGeneration;
+    }
     final restoredResolution = await _resolveRestoredMediaContinuationForSend(
       draftText: draftText,
       quotedMessageId: quotedMessageId,
@@ -2271,6 +2543,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       draftText: draftText,
       quotedMessageId: quotedMessageId,
       pendingAttachments: List<PendingComposerMedia>.from(_pendingAttachments),
+      privateMediaPolicy: privateMediaPolicy,
     );
 
     // 1. Generate IDs upfront for optimistic display
@@ -2303,6 +2576,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
     _pendingAttachments = [];
     _draftText = '';
+    _privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary();
     _updateComposerState(
       pendingAttachments: const [],
       isUploading: mediaToUpload.isNotEmpty,
@@ -2320,6 +2594,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       text: text,
       timestamp: now,
       quotedMessageId: quotedMessageId,
+      keyGeneration: privateKeyGeneration,
       // 210: while the sender is offline the optimistic bubble must show a CLOCK
       // from the very first frame (no 'sending' tick flash). The send result
       // handler re-affirms 'queued_offline' after the awaited send fails.
@@ -2328,6 +2603,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           : GroupMessage.statusQueuedOffline,
       isIncoming: false,
       createdAt: now,
+      privateMediaPolicy: privateMediaPolicy,
     );
 
     void showOptimisticMessage() {
@@ -2376,11 +2652,33 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                 .toList(growable: false);
             showOptimisticMessage();
             await Future<void>.delayed(Duration.zero);
-            uploadedAttachments = await _uploadPreparedGroupMediaUploads(
-              messageId: messageId,
-              preparedUploads: preparedUploads,
-              allowedPeers: allowedPeers,
-            );
+            var initialUploadQualified = false;
+            uploadedAttachments =
+                await runQualifiedPrivateGroupMediaInitialUpload<
+                  List<MediaAttachment>
+                >(
+                  groupRepo: widget.groupRepo,
+                  msgRepo: widget.msgRepo,
+                  expectedParent: optimisticMessage,
+                  senderPeerId: _ownPeerId!,
+                  privateMediaAvailability: widget.privateMediaAvailability,
+                  expectedAllowedPeerIds: allowedPeers,
+                  upload: () {
+                    initialUploadQualified = true;
+                    return _uploadPreparedGroupMediaUploads(
+                      messageId: messageId,
+                      preparedUploads: preparedUploads,
+                      allowedPeers: allowedPeers,
+                    );
+                  },
+                );
+            if (!initialUploadQualified) {
+              await _restoreComposerSnapshotWithoutFailure(
+                composerSnapshot,
+                messageId,
+              );
+              return;
+            }
             if (await _cancelActiveAttachmentUploadIfRequested()) {
               return;
             }
@@ -2501,6 +2799,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         messageId: messageId,
         timestamp: now,
         quotedMessageId: quotedMessageId,
+        privateMediaPolicy: privateMediaPolicy,
+        privateMediaAvailability: widget.privateMediaAvailability,
+        expectedPrivateParentBeforeDispatch: privateMediaPolicy.isPrivate
+            ? optimisticMessage
+            : null,
         senderDeviceId: senderDeviceId,
         senderTransportPeerId: senderDeviceId,
         mediaAttachments: uploadedAttachments,
@@ -2568,13 +2871,27 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         // attachments) and latch the composer read-only — instead of deleting
         // the row and flashing a 4s snackbar. saveMessage upserts, so even a
         // plain-text row that was never pre-persisted survives a reopen.
-        final failedMessage = optimisticMessage.copyWith(
-          status: GroupMessage.statusSendFailed,
-        );
-        try {
-          await widget.msgRepo.saveMessage(failedMessage);
-        } catch (_) {}
-        _updateLocalMessageStatus(messageId, GroupMessage.statusSendFailed);
+        final preserveCurrentPrivateParent =
+            privateMediaPolicy.isPrivate &&
+            result == SendGroupMessageResult.unauthorized &&
+            message != null &&
+            !sameExactGroupPrivateMediaDispatchParent(
+              message,
+              optimisticMessage,
+            );
+        if (preserveCurrentPrivateParent) {
+          if (mounted) {
+            setState(() => _upsertMessage(message));
+          }
+        } else {
+          final failedMessage = optimisticMessage.copyWith(
+            status: GroupMessage.statusSendFailed,
+          );
+          try {
+            await widget.msgRepo.saveMessage(failedMessage);
+          } catch (_) {}
+          _updateLocalMessageStatus(messageId, GroupMessage.statusSendFailed);
+        }
         if (result == SendGroupMessageResult.groupDissolved) {
           // Refreshes the rest of the group UI. The read-only override below is
           // what actually flips the banner: the row is NOT marked dissolved in
@@ -2620,7 +2937,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   void _onDraftChanged(String text) {
     if (_draftText == text) return;
-    setState(() => _draftText = text);
+    setState(() {
+      _draftText = text;
+      if (text.trim().isNotEmpty && _privateMediaPolicy.isPrivate) {
+        _privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary();
+      }
+    });
     final restored = _restoredMediaContinuation;
     if (restored != null && text != restored.draftText) {
       _clearRestoredMediaContinuationTracking();
@@ -2640,6 +2962,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       );
       return;
     }
+    var currentParent = await widget.msgRepo.getMessage(messageId);
+    if (currentParent == null ||
+        currentParent.groupId != _group.id ||
+        !currentParent.privateMediaPolicy.isOrdinary) {
+      return;
+    }
 
     final persisted = await mediaAttachmentRepo.getAttachmentsForMessage(
       messageId,
@@ -2650,10 +2978,17 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         .where((attachment) => attachment.id == attachmentId)
         .firstOrNull;
     if (target == null) {
+      if (!mounted) return;
       _showFloatingSnackBar(
         AppLocalizations.of(context)!.media_unavailable_now,
         backgroundColor: Colors.red[700],
       );
+      return;
+    }
+    currentParent = await widget.msgRepo.getMessage(messageId);
+    if (currentParent == null ||
+        currentParent.groupId != _group.id ||
+        !currentParent.privateMediaPolicy.isOrdinary) {
       return;
     }
 
@@ -2686,6 +3021,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         contactPeerId: widget.group.id,
         enforceGroupMediaPolicy: true,
         owner: MediaOwnerLane.group,
+        groupMessageRepo: widget.msgRepo,
       );
     } catch (_) {
       downloaded = null;
@@ -2785,6 +3121,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             uploadMediaFn: widget.uploadMediaFn,
             mediaFileManager: mediaFileManager,
             messageId: messageId,
+            privateMediaAvailability: widget.privateMediaAvailability,
             inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
           );
         } catch (e) {
@@ -2826,6 +3163,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       identityRepo: widget.identityRepo,
       bridge: widget.bridge,
       mediaAttachmentRepo: mediaAttachmentRepo,
+      privateMediaAvailability: widget.privateMediaAvailability,
       inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
     );
 
@@ -2859,11 +3197,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         identityRepo: widget.identityRepo,
         bridge: widget.bridge,
         mediaAttachmentRepo: mediaAttachmentRepo,
+        privateMediaAvailability: widget.privateMediaAvailability,
         inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
       );
 
       await _refreshMessageWithHydratedMedia(messageId);
 
+      if (!mounted) return;
       if (retried == 0) {
         _showFloatingSnackBar(
           AppLocalizations.of(context)!.failed_message_retry_failed,
@@ -2930,6 +3270,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }) async {
     _draftText = '';
     _pendingAttachments = [];
+    _privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary();
     _clearRestoredMediaContinuationTracking();
     if (mounted) {
       _updateComposerState(pendingAttachments: const [], isUploading: false);
@@ -2966,6 +3307,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _pendingAttachments = List<PendingComposerMedia>.from(
       snapshot.pendingAttachments,
     );
+    _privateMediaPolicy = snapshot.privateMediaPolicy;
     if (mounted) {
       _updateComposerState(
         pendingAttachments: _pendingAttachmentFiles(),
@@ -3013,6 +3355,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           snapshot.pendingAttachments,
         );
         _activeQuoteMessageId = snapshot.quotedMessageId;
+        _privateMediaPolicy = snapshot.privateMediaPolicy;
         _removeLocalMessage(messageId);
       });
       _updateComposerState(
@@ -3466,9 +3809,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     String path, {
     String? storedPath,
   }) async {
+    final storedPathKind = storedPath == null
+        ? null
+        : _groupMediaPathKind(storedPath);
     final details = <String, Object?>{
-      if (storedPath != null) 'storedPath': storedPath,
-      if (storedPath != null) 'storedPathKind': _groupMediaPathKind(storedPath),
+      'storedPath': ?storedPath,
+      'storedPathKind': ?storedPathKind,
       'resolvedPath': path,
       'resolvedPathKind': _groupMediaPathKind(path),
     };
@@ -3909,6 +4255,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     final updated = List<PendingComposerMedia>.from(_pendingAttachments);
     updated.removeAt(index);
     _pendingAttachments = updated;
+    if (_privateMediaPolicy.isPrivate && !_privateMediaComposerEligible) {
+      if (mounted) {
+        setState(
+          () => _privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary(),
+        );
+      } else {
+        _privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary();
+      }
+    }
     _clearRestoredMediaContinuationTracking();
     _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
   }
@@ -4778,6 +5133,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     }
     setState(() {
       _activeQuoteMessageId = messageId;
+      _privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary();
     });
   }
 
@@ -4804,16 +5160,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       return (null, true);
     }
 
-    if (quoted.text.isNotEmpty) {
-      return (quoted.text, false);
-    }
-
     final quotedMedia = _mediaMap[quoted.id] ?? quoted.media;
-    if (quotedMedia.isNotEmpty) {
-      return (mediaPreviewText(quotedMedia), false);
-    }
-
-    return (null, true);
+    return resolveGroupQuotedPreview(
+      quoted: quoted,
+      quotedMedia: quotedMedia,
+      privatePlaceholder: AppLocalizations.of(context)!.media_unavailable,
+    );
   }
 
   Future<void> _onRecordCancel() async {
@@ -4928,7 +5280,366 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   // Media tap (full screen viewer)
   // -------------------------------------------------------------------------
 
-  void _onMediaTap(String messageId, int index) {
+  Future<AnnouncementPrivateReplyResolution> _resolveAnnouncementPrivateReply(
+    AnnouncementPrivateReplyRequest request,
+  ) {
+    final resolver = _announcementPrivateReplyResolver;
+    if (resolver == null) {
+      return Future<AnnouncementPrivateReplyResolution>.value(
+        AnnouncementPrivateReplyResolution.unavailable,
+      );
+    }
+    return resolver.resolve(
+      request,
+      hasCompleteOpener: widget.openAnnouncementSenderConversation != null,
+    );
+  }
+
+  Future<bool> _isMessageSenderEligible(
+    String messageId,
+    String senderPeerId,
+  ) async {
+    final request = AnnouncementPrivateReplyRequest(
+      sourceMessageId: messageId,
+      senderPeerId: senderPeerId,
+    );
+    return (await _resolveAnnouncementPrivateReply(request)).isAvailable;
+  }
+
+  Future<void> _onMessageSenderTap(
+    String messageId,
+    String senderPeerId,
+  ) async {
+    await _dispatchAnnouncementPrivateReply(
+      AnnouncementPrivateReplyRequest(
+        sourceMessageId: messageId,
+        senderPeerId: senderPeerId,
+      ),
+    );
+  }
+
+  String _viewerPrivateReplyKey(MediaViewerItem item) =>
+      '${item.messageId}\u0000${item.attachmentId}';
+
+  void _showAnnouncementPrivateReplyFeedback(String message) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<MediaViewerActionResult> _dispatchAnnouncementPrivateReply(
+    AnnouncementPrivateReplyRequest selectedRequest, {
+    VoidCallback? dismissAfterResolution,
+  }) async {
+    if (_announcementPrivateReplyDispatchInFlight) {
+      return MediaViewerActionResult.cancelled;
+    }
+    _announcementPrivateReplyDispatchInFlight = true;
+    try {
+      // Re-read every Session-02 authority using the exact selection-time
+      // message/sender anchor. A drifted sender denies; it is never replaced
+      // with the newly loaded value.
+      final resolution = await _resolveAnnouncementPrivateReply(
+        selectedRequest,
+      );
+      if (!mounted) return MediaViewerActionResult.failure;
+
+      // Viewer callers keep the transient surface alive during the fresh read,
+      // then dismiss it before either feedback or navigation. Bubble callers
+      // have already dismissed synchronously and pass no callback.
+      dismissAfterResolution?.call();
+      if (!resolution.isAvailable) {
+        _showAnnouncementPrivateReplyFeedback(
+          AppLocalizations.of(context)!.announcement_private_reply_unavailable,
+        );
+        return MediaViewerActionResult.failure;
+      }
+
+      final opener = widget.openAnnouncementSenderConversation;
+      final contact = resolution.contact;
+      if (opener == null || contact == null) {
+        _showAnnouncementPrivateReplyFeedback(
+          AppLocalizations.of(context)!.announcement_private_reply_unavailable,
+        );
+        return MediaViewerActionResult.failure;
+      }
+      try {
+        await opener(contact);
+        return MediaViewerActionResult.success;
+      } catch (_) {
+        if (!mounted) return MediaViewerActionResult.failure;
+        _showAnnouncementPrivateReplyFeedback(
+          AppLocalizations.of(context)!.announcement_private_reply_open_failed,
+        );
+        return MediaViewerActionResult.failure;
+      }
+    } finally {
+      _announcementPrivateReplyDispatchInFlight = false;
+    }
+  }
+
+  Future<({GroupMessage parent, MediaAttachment attachment})?>
+  _loadCurrentOrdinaryGroupMediaIdentity({
+    required String groupId,
+    required String messageId,
+    required String attachmentId,
+    required bool requireIncoming,
+  }) async {
+    final parent = await widget.msgRepo.getMessage(messageId);
+    if (parent == null ||
+        parent.groupId != groupId ||
+        (requireIncoming && !parent.isIncoming) ||
+        parent.privateMediaPolicy.requiresRedaction) {
+      return null;
+    }
+    final tombstoneGroupId = await widget.msgRepo.getLocalDeletionGroupId(
+      messageId,
+    );
+    if (tombstoneGroupId == groupId) return null;
+
+    final mediaRepository = widget.mediaAttachmentRepo;
+    if (mediaRepository == null) return null;
+    final rows = await mediaRepository.getAttachmentsForMessage(
+      messageId,
+      owner: MediaOwnerLane.group,
+    );
+    MediaAttachment? matchedAttachment;
+    for (final attachment in rows) {
+      if (attachment.id == attachmentId &&
+          attachment.messageId == messageId &&
+          attachment.ownerLane == MediaOwnerLane.group &&
+          (attachment.mediaType == 'image' ||
+              attachment.mediaType == 'video')) {
+        matchedAttachment = attachment;
+        break;
+      }
+    }
+    if (matchedAttachment == null) return null;
+
+    // Tombstone and attachment qualification are await boundaries. Reload the
+    // exact parent after both, immediately before any caller can materialize a
+    // viewer item, thumbnail, path, or Info metadata.
+    final currentParent = await widget.msgRepo.getMessage(messageId);
+    if (currentParent == null ||
+        currentParent.groupId != groupId ||
+        (requireIncoming && !currentParent.isIncoming) ||
+        currentParent.privateMediaPolicy.requiresRedaction) {
+      return null;
+    }
+    return (parent: currentParent, attachment: matchedAttachment);
+  }
+
+  Future<MediaPictureInPictureAuthorization?>
+  _loadGroupPictureInPictureAuthorization(MediaViewerItem displayed) async {
+    if (!mounted ||
+        displayed.owner != MediaOwnerLane.group ||
+        !displayed.isVideo) {
+      return null;
+    }
+    final current = await _loadCurrentOrdinaryGroupMediaIdentity(
+      groupId: _group.id,
+      messageId: displayed.messageId,
+      attachmentId: displayed.attachmentId,
+      requireIncoming: true,
+    );
+    if (!mounted || current == null) return null;
+    final attachment = current.attachment;
+    if (attachment.mediaType != 'video') return null;
+    final storedPath = attachment.localPath;
+    final resolvedPath = storedPath == null || storedPath.isEmpty
+        ? null
+        : MediaFileManager.resolveStoredPathSync(storedPath);
+    final hasBytes = resolvedPath != null && File(resolvedPath).existsSync();
+    final transferComplete =
+        attachment.downloadStatus == kMediaDownloadStatusDone;
+    final integrityVerified =
+        GroupMediaIntegrityPolicy.hasRequiredVerificationMetadata(attachment);
+    final item = MediaViewerItem(
+      attachmentId: attachment.id,
+      messageId: attachment.messageId,
+      kind: MediaViewerKind.video,
+      mime: attachment.mime,
+      owner: MediaOwnerLane.group,
+      localPath: resolvedPath,
+      sizeBytes: attachment.size > 0 ? attachment.size : null,
+      width: attachment.width,
+      height: attachment.height,
+      durationMs: attachment.durationMs,
+      canEnterPictureInPicture: true,
+      protection: MediaViewerProtection(
+        isDownloaded: transferComplete && hasBytes,
+        isIntegrityVerified: integrityVerified,
+      ),
+    );
+    return MediaPictureInPictureAuthorization(
+      item: item,
+      generation:
+          Object.hash(MediaOwnerLane.group, item.messageId, item.attachmentId) &
+          0x7fffffff,
+      policyState: MediaPictureInPicturePolicyState.ordinary,
+      isIncoming: current.parent.isIncoming,
+      isTransferComplete: transferComplete,
+      routeActive: mounted,
+    );
+  }
+
+  GroupPrivateMediaViewerController? get _privateMediaViewerController {
+    final existing = _lazyPrivateMediaViewerController;
+    if (existing != null) return existing;
+    final messages = widget.msgRepo;
+    final media = widget.mediaAttachmentRepo;
+    final files = widget.mediaFileManager;
+    if (!widget.privateMediaAvailability.isEnabled ||
+        messages is! GroupPrivateMediaLifecycleRepository ||
+        media == null ||
+        media is! GroupPrivateMediaCleanupRepository ||
+        media is! GroupPrivateMediaCleanupRuntime ||
+        files == null) {
+      return null;
+    }
+    final lifecycleMessages = messages as GroupPrivateMediaLifecycleRepository;
+    final cleanupMedia = media as GroupPrivateMediaCleanupRepository;
+    final cleanupRuntime = media as GroupPrivateMediaCleanupRuntime;
+    final engine = GroupPrivateMediaLifecycleEngine(
+      messageRepository: lifecycleMessages,
+      mediaAttachmentRepository: media,
+      cleanupRepository: cleanupMedia,
+      mediaFileManager: files,
+      lifecycleLock: cleanupRuntime.groupPrivateMediaLifecycleLock,
+      nowMs: () => DateTime.now().toUtc().millisecondsSinceEpoch,
+    );
+    return _lazyPrivateMediaViewerController =
+        GroupPrivateMediaViewerController(
+          lifecycleEngine: engine,
+          protectionCoordinator:
+              PrivateMediaProtectionCoordinator.sharedPlatform(),
+          disposeProtectionCoordinator: false,
+        );
+  }
+
+  Future<void> _openGroupPrivateMedia(String messageId) async {
+    final controller = _privateMediaViewerController;
+    final mediaRepository = widget.mediaAttachmentRepo;
+    final fileManager = widget.mediaFileManager;
+    if (controller == null || mediaRepository == null || fileManager == null) {
+      return;
+    }
+    var parent = await widget.msgRepo.getMessage(messageId);
+    if (parent == null ||
+        parent.groupId != _group.id ||
+        !parent.isIncoming ||
+        !parent.privateMediaPolicy.isPrivate ||
+        parent.mediaConsumedAt != null ||
+        parent.mediaExpiredAt != null ||
+        parent.mediaCleanupPending) {
+      return;
+    }
+    var rows = await mediaRepository.getAttachmentsForMessage(
+      messageId,
+      owner: MediaOwnerLane.group,
+    );
+    if (rows.length != 1) return;
+    var attachment = rows.single;
+    final identity = GroupPrivateMediaViewerIdentity(
+      groupId: _group.id,
+      messageId: messageId,
+      attachmentId: attachment.id,
+    );
+    if (!_privateMediaOpenInFlight.add(identity)) return;
+    try {
+      if (attachment.downloadStatus != kMediaDownloadStatusDone ||
+          attachment.localPath == null ||
+          attachment.localPath!.isEmpty) {
+        final downloaded = await downloadMedia(
+          bridge: widget.bridge,
+          mediaAttachmentRepo: mediaRepository,
+          mediaFileManager: fileManager,
+          attachment: attachment,
+          contactPeerId: _group.id,
+          owner: MediaOwnerLane.group,
+          groupMessageRepo: widget.msgRepo,
+          intent: MediaDownloadIntent.explicitUser,
+          enforceGroupMediaPolicy: true,
+        );
+        if (downloaded == null) return;
+        rows = await mediaRepository.getAttachmentsForMessage(
+          messageId,
+          owner: MediaOwnerLane.group,
+        );
+        if (rows.length != 1) return;
+        attachment = rows.single;
+      }
+      parent = await widget.msgRepo.getMessage(messageId);
+      if (parent == null ||
+          parent.groupId != _group.id ||
+          parent.mediaConsumedAt != null ||
+          parent.mediaExpiredAt != null ||
+          parent.mediaCleanupPending) {
+        return;
+      }
+      final grant = await controller.prepare(identity);
+      if (grant == null) return;
+      if (!mounted) {
+        await controller.settle(
+          grant,
+          GroupPrivateMediaExitReason.routePushFailure,
+        );
+        return;
+      }
+      try {
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) =>
+                GroupPrivateMediaViewer(grant: grant, controller: controller),
+          ),
+        );
+      } catch (_) {
+        await controller.settle(
+          grant,
+          GroupPrivateMediaExitReason.routePushFailure,
+        );
+      } finally {
+        if (mounted) await _applyMessageUpdate(parent, markAsRead: false);
+      }
+    } finally {
+      _privateMediaOpenInFlight.remove(identity);
+    }
+  }
+
+  Future<bool> _showCurrentGroupMediaInfo({
+    required String messageId,
+    required String attachmentId,
+  }) async {
+    final current = await _loadCurrentOrdinaryGroupMediaIdentity(
+      groupId: _group.id,
+      messageId: messageId,
+      attachmentId: attachmentId,
+      requireIncoming: true,
+    );
+    if (current == null || !mounted) return false;
+    await GroupMediaInfoSheet.show(
+      context,
+      attachment: current.attachment,
+      senderDisplayName: _senderLabelFor(current.parent) ?? '',
+      sentAt: current.parent.timestamp,
+      caption: current.parent.text,
+    );
+    return true;
+  }
+
+  Future<void> _onMediaTap(String messageId, int index) async {
+    final message = await widget.msgRepo.getMessage(messageId);
+    if (message == null ||
+        message.groupId != _group.id ||
+        message.privateMediaPolicy.requiresRedaction) {
+      return;
+    }
+    final tombstoneGroupId = await widget.msgRepo.getLocalDeletionGroupId(
+      messageId,
+    );
+    if (tombstoneGroupId == _group.id) return;
     final attachments = _mediaMap[messageId];
     if (attachments == null) return;
 
@@ -4951,27 +5662,54 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     final tappedId = visual[index].id;
     var startIndex = displayable.indexWhere((a) => a.id == tappedId);
     if (startIndex < 0) startIndex = 0;
-    final message = _messageById(messageId);
+    final selectedRequest = AnnouncementPrivateReplyRequest(
+      sourceMessageId: message.id,
+      senderPeerId: message.senderPeerId,
+    );
+    final messageSenderEligible = (await _resolveAnnouncementPrivateReply(
+      selectedRequest,
+    )).isAvailable;
+    if (!mounted) return;
     final items = displayable
-        .map((attachment) => _viewerItemFor(message, attachment))
+        .map(
+          (attachment) => _viewerItemFor(
+            message,
+            attachment,
+            allowMessageSender: messageSenderEligible,
+          ),
+        )
         .toList();
 
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => FullScreenTypedMediaViewer(
-          items: items,
-          initialIndex: startIndex,
-          onAction: _onViewerAction,
-        ),
-      ),
-    );
-  }
-
-  GroupMessage? _messageById(String messageId) {
-    for (final message in _messages) {
-      if (message.id == messageId) return message;
+    if (messageSenderEligible) {
+      for (final item in items) {
+        if (item.capabilities.allows(MediaViewerAction.messageSender)) {
+          _viewerPrivateReplyRequests[_viewerPrivateReplyKey(item)] =
+              selectedRequest;
+        }
+      }
     }
-    return null;
+    try {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => FullScreenTypedMediaViewer(
+            items: items,
+            initialIndex: startIndex,
+            onAction: _onViewerAction,
+            resumeStore: _mediaViewerResumeStore,
+            pictureInPictureControllerFactory: _mediaViewerResumeStore == null
+                ? null
+                : _createMediaPictureInPictureController,
+            loadPictureInPictureAuthorization: _mediaViewerResumeStore == null
+                ? null
+                : _loadGroupPictureInPictureAuthorization,
+          ),
+        ),
+      );
+    } finally {
+      for (final item in items) {
+        _viewerPrivateReplyRequests.remove(_viewerPrivateReplyKey(item));
+      }
+    }
   }
 
   String? _senderLabelFor(GroupMessage? message) {
@@ -4989,8 +5727,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   MediaViewerItem _viewerItemFor(
     GroupMessage? message,
-    MediaAttachment attachment,
-  ) {
+    MediaAttachment attachment, {
+    required bool allowMessageSender,
+  }) {
     // No trusted parent row -> no capabilities; the item stays view-only.
     final capabilities = message == null
         ? const <GroupReceivedMediaAction>{}
@@ -4999,6 +5738,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             isIncoming: message.isIncoming,
             attachment: attachment,
             canWrite: _canWrite,
+            mediaPolicy: message.privateMediaPolicy,
           );
     final allowed = <MediaViewerAction>{
       if (_mediaActionsController != null &&
@@ -5014,6 +5754,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         MediaViewerAction.delete,
       if (capabilities.contains(GroupReceivedMediaAction.reply))
         MediaViewerAction.reply,
+      if (allowMessageSender &&
+          message != null &&
+          !message.privateMediaPolicy.requiresRedaction &&
+          attachment.messageId == message.id &&
+          attachment.ownerLane == MediaOwnerLane.group &&
+          (attachment.mediaType == 'image' || attachment.mediaType == 'video'))
+        MediaViewerAction.messageSender,
       // 236: Forward only for eligible incoming verified ordinary media in a
       // discussion group, and only when a forward launch path exists. The
       // request builder and the dispatch gate re-verify everything again.
@@ -5023,10 +5770,17 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             groupType: _group.type,
             isIncoming: message.isIncoming,
             attachment: attachment,
+            mediaPolicy: message.privateMediaPolicy,
           ))
         MediaViewerAction.forward,
     };
     final localPath = attachment.localPath;
+    final resolvedPath = localPath == null || localPath.isEmpty
+        ? null
+        : MediaFileManager.resolveStoredPathSync(localPath);
+    final hasBytes = resolvedPath != null && File(resolvedPath).existsSync();
+    final integrityVerified =
+        GroupMediaIntegrityPolicy.hasRequiredVerificationMetadata(attachment);
     final caption = message?.text.trim();
     return MediaViewerItem(
       attachmentId: attachment.id,
@@ -5038,9 +5792,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                 : MediaViewerKind.image),
       mime: attachment.mime,
       owner: MediaOwnerLane.group,
-      localPath: localPath == null
-          ? null
-          : MediaFileManager.resolveStoredPathSync(localPath),
+      localPath: resolvedPath,
       sizeBytes: attachment.size > 0 ? attachment.size : null,
       width: attachment.width,
       height: attachment.height,
@@ -5048,6 +5800,18 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       caption: caption == null || caption.isEmpty ? null : caption,
       senderLabel: _senderLabelFor(message),
       timestamp: message?.timestamp,
+      canEnterPictureInPicture:
+          message?.isIncoming == true &&
+          !message!.privateMediaPolicy.requiresRedaction &&
+          attachment.mediaType == 'video' &&
+          attachment.downloadStatus == kMediaDownloadStatusDone &&
+          integrityVerified &&
+          hasBytes,
+      protection: MediaViewerProtection(
+        isDownloaded:
+            attachment.downloadStatus == kMediaDownloadStatusDone && hasBytes,
+        isIntegrityVerified: integrityVerified,
+      ),
       capabilities: MediaViewerActionCapabilities(allowed: allowed),
     );
   }
@@ -5082,31 +5846,39 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         if (mounted) Navigator.of(context).pop();
         return MediaViewerActionResult.success;
       case MediaViewerAction.info:
-        final message = _messageById(item.messageId);
-        MediaAttachment? attachment;
-        for (final row
-            in _mediaMap[item.messageId] ?? const <MediaAttachment>[]) {
-          if (row.id == item.attachmentId) {
-            attachment = row;
-            break;
-          }
-        }
-        if (message == null || attachment == null || !mounted) {
-          return MediaViewerActionResult.failure;
-        }
-        await GroupMediaInfoSheet.show(
-          context,
-          attachment: attachment,
-          senderDisplayName: _senderLabelFor(message) ?? '',
-          sentAt: message.timestamp,
-          caption: message.text,
-        );
-        return MediaViewerActionResult.success;
+        return await _showCurrentGroupMediaInfo(
+              messageId: item.messageId,
+              attachmentId: item.attachmentId,
+            )
+            ? MediaViewerActionResult.success
+            : MediaViewerActionResult.failure;
       case MediaViewerAction.reply:
         if (!_canWrite) return MediaViewerActionResult.failure;
         if (mounted) Navigator.of(context).pop();
         _onQuoteReply(item.messageId);
         return MediaViewerActionResult.success;
+      case MediaViewerAction.messageSender:
+        final request =
+            _viewerPrivateReplyRequests[_viewerPrivateReplyKey(item)];
+        if (request == null) {
+          if (mounted && Navigator.of(context).canPop()) {
+            Navigator.of(context).pop();
+          }
+          _showAnnouncementPrivateReplyFeedback(
+            AppLocalizations.of(
+              context,
+            )!.announcement_private_reply_unavailable,
+          );
+          return MediaViewerActionResult.failure;
+        }
+        return _dispatchAnnouncementPrivateReply(
+          request,
+          dismissAfterResolution: () {
+            if (mounted && Navigator.of(context).canPop()) {
+              Navigator.of(context).pop();
+            }
+          },
+        );
       case MediaViewerAction.forward:
         final launched = await _forwardGroupReceivedMedia(
           messageId: item.messageId,
@@ -5132,6 +5904,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         widget.mediaFileManager != null &&
         widget.imageProcessor != null;
   }
+
+  bool get _canLaunchBatchForward =>
+      widget.forwardMessageRepository != null &&
+      widget.forwardChatMessageListener != null &&
+      widget.mediaAttachmentRepo != null &&
+      widget.mediaFileManager != null &&
+      widget.imageProcessor != null;
 
   /// 236: builds one accepted forward request from freshly reloaded rows and
   /// opens the share target picker in forward mode. Only the stable
@@ -5166,36 +5945,18 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       return false;
     }
 
-    // The picker preview is presentation-only. Resolve it from a fresh,
-    // owner-scoped attachment lookup instead of putting a source path on the
-    // forward request (which remains stable identity only). Dispatch still
-    // re-runs the full source gate and never trusts this preview path.
-    final previewRows = await mediaRepo.getAttachmentsForMessage(
-      request.messageId,
-      owner: MediaOwnerLane.group,
-    );
-    MediaAttachment? previewAttachment;
-    for (final row in previewRows) {
-      if (row.id == request.attachmentId) {
-        previewAttachment = row;
-        break;
-      }
-    }
-    final storedPreviewPath = previewAttachment?.localPath?.trim();
-    if (previewAttachment == null ||
-        storedPreviewPath == null ||
-        storedPreviewPath.isEmpty ||
-        !GroupMediaForwardPolicy.canOfferForward(
-          groupType: _group.type,
-          isIncoming: true,
-          attachment: previewAttachment,
-        )) {
-      return false;
-    }
-    final resolvedPreviewPath = await mediaFileManager.resolveStoredPath(
-      storedPreviewPath,
-    );
-    if (!File(resolvedPreviewPath).existsSync() || !mounted) return false;
+    // Preview and dispatch share the same locked canonical source qualifier.
+    // Preview returns no snapshot, while dispatch still captures an immutable
+    // copy immediately before delivery.
+    final preview = await GroupMediaForwardPreviewGate(
+      groupRepository: widget.groupRepo,
+      messageRepository: widget.msgRepo,
+      mediaAttachmentRepository: mediaRepo,
+      mediaFileManager: mediaFileManager,
+      isLifecycleRestricted: _mediaActionsController?.isEgressRestricted,
+    ).verify(groupType: _group.type, request: request);
+    final resolvedPreviewPath = preview.resolvedPath;
+    if (resolvedPreviewPath == null || !mounted) return false;
 
     final initialCaption = switch (request) {
       AnnouncementMediaForwardRequest announcement =>
@@ -5231,6 +5992,81 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       ),
     );
     return true;
+  }
+
+  Future<GroupMediaBatchForwardLibraryLaunchResult>
+  _forwardGroupSharedMediaBatch({
+    required GroupModel sourceGroup,
+    required List<GroupSharedMediaIdentity> identities,
+  }) async {
+    if (!_canLaunchBatchForward ||
+        identities.length < kGroupMediaBatchForwardRouteMinItems ||
+        identities.length > kGroupMediaBatchForwardMaxItems) {
+      return const GroupMediaBatchForwardLibraryLaunchResult.denied(
+        GroupMediaBatchForwardDenial.invalidSelection,
+      );
+    }
+    final mediaRepo = widget.mediaAttachmentRepo!;
+    final mediaFileManager = widget.mediaFileManager!;
+    final requestBuilder = GroupMediaForwardRequestBuilder(
+      messageRepository: widget.msgRepo,
+      mediaAttachmentRepository: mediaRepo,
+      isLifecycleRestricted: _mediaActionsController?.isEgressRestricted,
+    );
+    final sourceGate = GroupMediaForwardSourceGate(
+      groupRepository: widget.groupRepo,
+      messageRepository: widget.msgRepo,
+      mediaAttachmentRepository: mediaRepo,
+      mediaFileManager: mediaFileManager,
+      isLifecycleRestricted: _mediaActionsController?.isEgressRestricted,
+    );
+    final draftBuilder = GroupMediaBatchForwardDraftBuilder.fromPolicies(
+      groupRepository: widget.groupRepo,
+      messageRepository: widget.msgRepo,
+      requestBuilder: requestBuilder,
+      sourceGate: sourceGate,
+    );
+    final built = await draftBuilder.build(
+      sourceGroup: sourceGroup,
+      identities: identities,
+    );
+    final draft = built.draft;
+    if (!built.isReady || draft == null || !mounted) {
+      return GroupMediaBatchForwardLibraryLaunchResult.denied(
+        built.denial ?? GroupMediaBatchForwardDenial.sourceUnavailable,
+      );
+    }
+
+    final ordinary = DefaultShareBatchDeliveryCoordinator(
+      identityRepository: widget.identityRepo,
+      contactRepository: widget.contactRepo,
+      messageRepository: widget.forwardMessageRepository!,
+      mediaAttachmentRepository: mediaRepo,
+      groupRepository: widget.groupRepo,
+      groupMessageRepository: widget.msgRepo,
+      groupInviteDeliveryAttemptRepository: widget.inviteDeliveryAttemptRepo,
+      bridge: widget.bridge,
+      p2pService: widget.p2pService,
+      mediaFileManager: mediaFileManager,
+      imageProcessor: widget.imageProcessor!,
+    );
+    final delivery = GroupMediaBatchForwardDeliveryCoordinator(
+      revalidateForDispatch: draftBuilder.revalidateForDispatch,
+      deliverSingle: ordinary.deliverGroupMediaForward,
+    );
+    final completion = await Navigator.of(context).push(
+      buildGroupMediaBatchForwardPickerRoute(
+        draft: draft,
+        identityRepository: widget.identityRepo,
+        contactRepository: widget.contactRepo,
+        groupRepository: widget.groupRepo,
+        deliveryCoordinator: delivery,
+      ),
+    );
+    if (completion == null) {
+      return const GroupMediaBatchForwardLibraryLaunchResult.cancelled();
+    }
+    return GroupMediaBatchForwardLibraryLaunchResult.completed(completion);
   }
 
   MediaViewerActionResult _egressAttemptToViewerResult(
@@ -5439,7 +6275,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             !lifecycleRestricted &&
             GroupMediaIntegrityPolicy.canDisplayVerifiedGroupMedia(attachment);
         final forwardEligible =
-            liveGroup.type == GroupType.chat &&
             _canLaunchForward &&
             GroupMediaForwardPolicy.canOfferForward(
               groupType: liveGroup.type,
@@ -5459,10 +6294,16 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           if (egressEligible) ...{
             GroupSharedMediaAction.save,
             GroupSharedMediaAction.share,
+            if (attachment.mediaType == 'video')
+              GroupSharedMediaAction.pictureInPicture,
             if (forwardEligible) GroupSharedMediaAction.forward,
           },
         };
       },
+      pictureInPictureControllerFactory: _createMediaPictureInPictureController,
+      loadPictureInPictureAuthorization:
+          _loadGroupPictureInPictureAuthorization,
+      mediaViewerResumeStore: _mediaViewerResumeStore,
       dispatchEgress: (identities, destination) => batchActions
           .performBatchEgress(identities: identities, destination: destination),
       dispatchDelete: deleteCoordinator == null
@@ -5488,12 +6329,26 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
               );
               return result.succeededIds;
             },
-      dispatchForward: liveGroup.type == GroupType.chat && _canLaunchForward
+      dispatchForward: _canLaunchForward
           ? (identity) => _forwardGroupReceivedMedia(
               messageId: identity.messageId,
               attachmentId: identity.attachmentId,
             )
           : null,
+      launchBatchForward: _canLaunchBatchForward
+          ? (identities) => _forwardGroupSharedMediaBatch(
+              sourceGroup: liveGroup,
+              identities: identities,
+            )
+          : null,
+      qualifyViewerEntry: (identity) async =>
+          await _loadCurrentOrdinaryGroupMediaIdentity(
+            groupId: identity.groupId,
+            messageId: identity.messageId,
+            attachmentId: identity.attachmentId,
+            requireIncoming: false,
+          ) !=
+          null,
       onMessagesDeleted: (messageIds) {
         for (final messageId in messageIds) {
           _removeLocalMessage(messageId);
@@ -6123,17 +6978,30 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   Future<void> _loadReactions(List<GroupMessage> messages) async {
     if (widget.reactionRepo == null) return;
-    final messageIds = messages.map((m) => m.id).toList();
-    if (messageIds.isEmpty) return;
+    final eligibleMessageIds = messages
+        .where((message) => message.privateMediaPolicy.isOrdinary)
+        .map((message) => message.id)
+        .toList(growable: false);
+    final ineligibleMessageIds = messages
+        .where((message) => !message.privateMediaPolicy.isOrdinary)
+        .map((message) => message.id)
+        .toSet();
 
-    final reactionsByMessage = await loadReactionsForConversation(
-      reactionRepo: widget.reactionRepo!,
-      messageIds: messageIds,
-    );
+    final reactionsByMessage = eligibleMessageIds.isEmpty
+        ? const <String, List<MessageReaction>>{}
+        : await loadReactionsForConversation(
+            reactionRepo: widget.reactionRepo!,
+            messageIds: eligibleMessageIds,
+          );
     if (!mounted) return;
 
     setState(() {
-      _reactions = {..._reactions, ...reactionsByMessage};
+      final nextReactions = Map<String, List<MessageReaction>>.from(_reactions);
+      for (final messageId in ineligibleMessageIds) {
+        nextReactions.remove(messageId);
+      }
+      nextReactions.addAll(reactionsByMessage);
+      _reactions = nextReactions;
     });
   }
 
@@ -6363,6 +7231,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _mediaUploadProgressSubscription?.cancel();
     _durationSub?.cancel();
     _amplitudeSub?.cancel();
+    final privateController = _lazyPrivateMediaViewerController;
+    _lazyPrivateMediaViewerController = null;
+    if (privateController != null) unawaited(privateController.dispose());
     if (_isRecording) {
       final recorder = widget.audioRecorderService;
       // Only cancel a session this surface still owns — our recording state
@@ -6416,6 +7287,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         if (!mounted || _canWrite || _activeQuoteMessageId == null) return;
         setState(() {
           _activeQuoteMessageId = null;
+          _privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary();
         });
       });
     }
@@ -6474,12 +7346,42 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                 : null,
             recordingState: _composerViewState.recordingState,
             onMediaTap: _onMediaTap,
+            onOpenPrivateMedia: _privateMediaViewerController == null
+                ? null
+                : (messageId) => unawaited(_openGroupPrivateMedia(messageId)),
+            privateMediaEnabled: widget.privateMediaAvailability.isEnabled,
+            privateMediaComposerEligible: _privateMediaComposerEligible,
+            privateMediaPolicy: _privateMediaPolicy,
+            onPrivateMediaPolicyChanged:
+                widget.privateMediaAvailability.canAuthorPrivateMedia(
+                  _group.type,
+                )
+                ? _onPrivateMediaPolicyChanged
+                : null,
             onMediaSave: _mediaActionsController != null ? _onMediaSave : null,
             onMediaShare: _mediaActionsController != null
                 ? _onMediaShare
                 : null,
+            onMediaInfo: widget.mediaAttachmentRepo != null
+                ? (messageId, attachmentId) async {
+                    await _showCurrentGroupMediaInfo(
+                      messageId: messageId,
+                      attachmentId: attachmentId,
+                    );
+                  }
+                : null,
             onMediaDeleteForMe: _mediaDeleteForMeCoordinator != null
                 ? _onMediaDeleteForMe
+                : null,
+            isMessageSenderEligible:
+                _announcementPrivateReplyResolver != null &&
+                    widget.openAnnouncementSenderConversation != null
+                ? _isMessageSenderEligible
+                : null,
+            onMessageSenderTap:
+                _announcementPrivateReplyResolver != null &&
+                    widget.openAnnouncementSenderConversation != null
+                ? _onMessageSenderTap
                 : null,
             reactions: _reactions,
             onReactionTap: _onReactionTap,
@@ -6540,11 +7442,13 @@ class _GroupComposerSnapshot {
   final String draftText;
   final String? quotedMessageId;
   final List<PendingComposerMedia> pendingAttachments;
+  final GroupPrivateMediaPolicy privateMediaPolicy;
 
   const _GroupComposerSnapshot({
     required this.draftText,
     required this.quotedMessageId,
     required this.pendingAttachments,
+    this.privateMediaPolicy = const GroupPrivateMediaPolicy.ordinary(),
   });
 }
 

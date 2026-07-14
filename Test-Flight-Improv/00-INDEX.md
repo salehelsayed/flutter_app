@@ -189,9 +189,10 @@ semantics. The ordered schema spine is `v96` (plan `228` shared local media
 state) -> `v97` (plan `232` 1:1 forwarded marker) -> `v98` (plan `235`
 discussion-group deletion journal) -> `v99` (plan `236` discussion-group
 forwarded marker). Every
-private-media, reporting, and multi-source Forward plan is evidence-gated and
-reserves no database version. Plan `248` belongs to an unrelated theme track,
-so this program continues at `249`.
+private-media schema versions are allocated only by accepted owners: Plan 234
+owns landed DB v100 and Plan 238 reserves sequential v101. Reporting and
+multi-source Forward plans reserve no speculative version. Plan `248` belongs
+to an unrelated theme track, so this program continues at `249`.
 
 Plan `228` is the hard local-storage boundary for every later media plan:
 attachments are explicitly `direct` or `group`, ambiguous/orphan legacy rows
@@ -216,7 +217,7 @@ accepted and the plan is refreshed/reviewed.
 | [228-shared-media-library-bookmark-persistence-tdd-plan.md](228-shared-media-library-bookmark-persistence-tdd-plan.md) | Closed / device-proven (`fc7dfa842`) | Owner-lane-safe library/retry/delete seams, replay- and key-safe local state, exact production registries/current encrypted fixtures, and DB `v96` physical Android/iOS SQLCipher upgrade/downgrade-floor proof. |
 | [229-cross-track-media-download-storage-controls-tdd-plan.md](229-cross-track-media-download-storage-controls-tdd-plan.md) | Implemented host-green 2026-07-10 (see plan Execution Progress) | Auto-download policy, local availability, eviction, clear-local-copy, and storage controls across lanes. |
 | [230-shared-typed-media-viewer-tdd-plan.md](230-shared-typed-media-viewer-tdd-plan.md) | Implemented / host-green | Typed current-item/action callback seam, safe Info metadata, and video seek/speed/mute/resume/lifecycle controls; callback-only and transport-free. |
-| [243-native-media-picture-in-picture-tdd-plan.md](243-native-media-picture-in-picture-tdd-plan.md) | Evidence-gated | Native video-only PiP ownership, capability, privacy, and Android/iOS device proof after a bounded platform spike. |
+| [243-native-media-picture-in-picture-tdd-plan.md](243-native-media-picture-in-picture-tdd-plan.md) | Accepted/closed; physical Android and user-directed segmented Wave-3/final host coverage frozen | Path 3 native video-only PiP: Android API 26+/feature-present only, with typed revocation/paging/one-owner settlement and six coherent Pixel-6/API-36 scenarios; iOS/other platforms hidden and fail-closed, with iOS device proof N/A. |
 
 #### 1:1 chats
 
@@ -225,9 +226,9 @@ accepted and the plan is refreshed/reviewed.
 | [231-1to1-received-media-core-actions-tdd-plan.md](231-1to1-received-media-core-actions-tdd-plan.md) | Implemented / host-green | Bubble/viewer parity for Save, external Share, whole-message Delete for Me, Info, and Reply; local-only. |
 | [232-1to1-received-media-forwarding-tdd-plan.md](232-1to1-received-media-forwarding-tdd-plan.md) | Accepted | Single-source internal Forward, fresh per-target encryption, direct forwarded marker, and DB `v97`; no Go/libp2p change. |
 | [233-1to1-shared-media-library-batch-tdd-plan.md](233-1to1-shared-media-library-batch-tdd-plan.md) | Accepted (`a28525db7`) | Conversation Shared Media, filters, Go to Message, and safe local batch actions; multi-source Forward excluded. |
-| [234-1to1-private-media-lifecycle-tdd-plan.md](234-1to1-private-media-lifecycle-tdd-plan.md) | Evidence-gated | View-once/disappearing/protected lifecycle, capture truth, notification privacy, multi-device/relay policy, and fresh `vNEXT` only after decisions. |
-| [244-1to1-received-media-reporting-tdd-plan.md](244-1to1-received-media-reporting-tdd-plan.md) | Evidence-gated | Report authority, payload minimization, retention, offline result, moderation side effects, and observable boundary proof. |
-| [249-1to1-shared-media-batch-forwarding-tdd-plan.md](249-1to1-shared-media-batch-forwarding-tdd-plan.md) | Evidence-gated | Multi-source Forward output, caption/order, provenance, selection cap, partial failure, and retry semantics. |
+| [234-1to1-private-media-lifecycle-tdd-plan.md](234-1to1-private-media-lifecycle-tdd-plan.md) | Accepted / closed | Device/install-local direct Protected, View Once, and Disappearing lifecycle with encrypted-inner policy, generic previews, fail-closed egress/library/viewer/PiP eligibility, guarded manual download, truthful Android/iOS protection, and landed DB `v100`; no relay/account-wide consume or actual PiP claim. |
+| [244-1to1-received-media-reporting-tdd-plan.md](244-1to1-received-media-reporting-tdd-plan.md) | Accepted / intentionally not applicable | Direct received-media Report is an explicit product non-goal, not a provisioning gap. Existing Save, Share, Reply, Info, Delete for me, QR/contact admission, and direct/contact Block/Unblock remain independent; no reporting backend, gateway, queue, receipt, UI, or device/relay boundary exists. |
+| [249-1to1-shared-media-batch-forwarding-tdd-plan.md](249-1to1-shared-media-batch-forwarding-tdd-plan.md) | Accepted / revalidated | Direct Shared Media forwards `1..10` exact eligible visual sources to active direct contacts as canonical source-major ordinary messages with independent captions/tokens, atomic current-row preflight, truthful cell outcomes, and failed-cell-only in-route retry; no schema, wire, group/announcement, native/device, or relay change. |
 
 #### Discussion groups
 
@@ -236,9 +237,9 @@ accepted and the plan is refreshed/reviewed.
 | [235-group-received-media-core-actions-tdd-plan.md](235-group-received-media-core-actions-tdd-plan.md) | Implemented / device-proven (UI and DB-v98 persistence slices complete) | Discussion bubble/viewer Save, external Share, tombstone-safe Delete for Me, Info, and Reply; announcement sentinel included. |
 | [236-group-received-media-forwarding-tdd-plan.md](236-group-received-media-forwarding-tdd-plan.md) | **IMPLEMENTED 2026-07-10 (host-green + device-proven: GMF-06D SQLCipher v99, GMF-11 real Go bridge)** | Single-source internal Forward, fresh destination encryption, group forwarded marker, and DB `v99`; only a narrow optional-bool Go bridge mapping, with no node/topic/auth/fanout/retry change. |
 | [237-group-shared-media-library-batch-tdd-plan.md](237-group-shared-media-library-batch-tdd-plan.md) | Implemented / accepted | Discussion Shared Media, paging/filtering, Go to Message, and bounded local batch actions; multi-source Forward excluded. |
-| [238-group-private-media-lifecycle-tdd-plan.md](238-group-private-media-lifecycle-tdd-plan.md) | Evidence-gated | Group view-once/disappearing/protected state, replay-safe cleanup, capture/notification truth, convergence/relay policy, and freshly allocated `vNEXT`. |
-| [245-group-received-media-reporting-tdd-plan.md](245-group-received-media-reporting-tdd-plan.md) | Evidence-gated | Group report authority, evidence envelope, moderator visibility, offline/retry behavior, retention, and transport/storage owner. |
-| [250-group-shared-media-batch-forwarding-tdd-plan.md](250-group-shared-media-batch-forwarding-tdd-plan.md) | Evidence-gated | Multi-source group Forward album/order/caption/provenance/cap/retry/auth decisions without inventing wire behavior. |
+| [238-group-private-media-lifecycle-tdd-plan.md](238-group-private-media-lifecycle-tdd-plan.md) | Accepted / closed | Direct canonical execution closed group private-media policy/DB `v101`, durable lifecycle, guarded download/cleanup/replay, capability/notification/native privacy, and available-target SQLCipher/bridge/platform proof while preserving Plan-234 DB `v100`. |
+| [245-group-received-media-reporting-tdd-plan.md](245-group-received-media-reporting-tdd-plan.md) | Accepted / intentionally not applicable | Discussion-group Report is an explicit product non-goal. Existing media actions, invite Accept/Decline, notification-only Mute, and Leave remain independent; contact Block is not existing-member group-message moderation, and no reporting implementation or external provisioning gate exists. |
+| [250-group-shared-media-batch-forwarding-tdd-plan.md](250-group-shared-media-batch-forwarding-tdd-plan.md) | Accepted / closed | Discussion Shared Media forwards `2..10` exact eligible sources as ordinary per-item × target messages with independent captions, current source/target authorization, opaque retry-stable provenance, truthful cell outcomes, and failed-cell-only in-route retry; no album, schema, wire, native/device, or durable-job change. |
 
 #### Announcements
 
@@ -247,10 +248,96 @@ accepted and the plan is refreshed/reviewed.
 | [239-announcement-received-media-core-actions-tdd-plan.md](239-announcement-received-media-core-actions-tdd-plan.md) | Implemented / host-green | Reader Save, external Share, tombstone-safe Delete for Me, and Info while compose/quote publishing stays absent. |
 | [240-announcement-received-media-forwarding-tdd-plan.md](240-announcement-received-media-forwarding-tdd-plan.md) | Accepted | Single-source Forward adapter reusing plans `232`/`236`, with target revalidation and no source-announcement publish. |
 | [241-announcement-shared-media-library-batch-tdd-plan.md](241-announcement-shared-media-library-batch-tdd-plan.md) | Accepted (`21b6b54e2`, `61cda3415`, `e3e5bfa7d`) | Announcement Shared Media and safe local batch actions while preserving reader/admin authorization; multi-source Forward excluded. |
-| [242-announcement-private-media-lifecycle-tdd-plan.md](242-announcement-private-media-lifecycle-tdd-plan.md) | Evidence-gated | Announcement adaptation of plan `238` lifecycle/state, including broadcast-consumption semantics; no competing migration or protocol. |
-| [246-announcement-received-media-reporting-tdd-plan.md](246-announcement-received-media-reporting-tdd-plan.md) | Evidence-gated | Announcement report authority, secure auth provisioning, evidence/privacy/retention contract, and reader/admin moderation boundaries. |
-| [247-announcement-media-private-reply-routing-tdd-plan.md](247-announcement-media-private-reply-routing-tdd-plan.md) | Evidence-gated | Decision-selected announcement-to-1:1 private routing after explicit action-label, identity, context, and exceptional-state decisions; never publishes to the announcement. |
-| [251-announcement-shared-media-batch-forwarding-tdd-plan.md](251-announcement-shared-media-batch-forwarding-tdd-plan.md) | Evidence-gated | Multi-source announcement Forward output/provenance/caption/order/cap/retry semantics while retaining destination publisher authorization. |
+| [242-announcement-private-media-lifecycle-tdd-plan.md](242-announcement-private-media-lifecycle-tdd-plan.md) | Accepted / closed | Announcement adapter reuses Plan 238 DB `v101` and its device-local lifecycle with current local-and-roster-admin send authority, current-roster-admin receive authority, generic notification privacy, retained terminal/integrity metadata without byte recovery or egress, and available-target SQLCipher, real-Go, protected-route, and iOS-NSE proof; no migration, new transport, convergence, relay-revocation, or three-party claim. |
+| [246-announcement-received-media-reporting-tdd-plan.md](246-announcement-received-media-reporting-tdd-plan.md) | Accepted / intentionally not applicable (Track-3/Wave-3) | Announcement Report is an explicit product non-goal. Exact Save/Share/Delete for me/Info actions and invite Accept/Decline, notification-only Mute, and Leave remain independent; QR/contact Block is not existing-member announcement moderation, and no reporting implementation or external provisioning gate exists. |
+| [247-announcement-media-private-reply-routing-tdd-plan.md](247-announcement-media-private-reply-routing-tdd-plan.md) | Accepted / closed | Explicit **Message sender** uses fresh fail-closed, callback-only navigation to an existing active sender contact's blank 1:1 composer; it copies no context, changes no announcement write authority, and sends nothing automatically. |
+| [251-announcement-shared-media-batch-forwarding-tdd-plan.md](251-announcement-shared-media-batch-forwarding-tdd-plan.md) | Accepted / closed | Announcement Shared Media reuses the shared `2..10` ordinary-output batch route with exact current admin/roster/key authorization, non-source announcement targeting, opaque retry-stable provenance, and source-byte/state preservation; no source publish, schema, wire, native/device, or durable-job change. |
+
+#### Wave 1 direct execution rollup (2026-07-12)
+
+- Plans 234, 238, 249, and 247 are accepted/closed. Plan 238 owns landed DB
+  `v101`; the other three retain their recorded schema/transport boundaries.
+- The shared Plans 244-246 product decision is accepted: Report is intentionally
+  absent, not waiting for Trust & Safety provisioning. Plans 244/245 belong to
+  Track-2; Plan 246 records the same disposition for Track-3/Wave-3. Existing
+  local actions and relationship/membership controls are not reporting
+  substitutes.
+- `./scripts/run_host_test_gates.sh host-all --continue-on-failure` executed all
+  `1,130` registered commands: `1,125` passed initially, including all eight Go
+  legs. Five failing Flutter files exposed three Wave-owned preservation-fixture
+  gaps, one new fixture-matrix shape, and one transient concurrent native-asset
+  build race. The exact five-file post-fix rerun passed `53/53`; repository
+  cadence required only this affected-evidence rerun.
+- Required available-target proof is complete on physical Android
+  `21071FDF600CSC` and iOS simulator
+  `DBE8C32E-9F19-4593-860A-B41113791D79`; no unavailable hardware/OS leg is a
+  blocker. The final affected-files query and incremental architecture refresh
+  also passed (`50,854` nodes, `78,421` edges, `12,714` named tests at refresh).
+
+#### Track-2 / Wave-2 final closure (2026-07-13)
+
+- [Track-2/Wave-2 final closure](track-2-wave-2-final-closure.md) records the
+  authoritative rollup: Plans 238, 242, 249, 250, and 251 are accepted/closed;
+  Plans 244 and 245 are accepted/closed as intentionally not applicable. The
+  shared decision also resolves Plan 246 in its owning Track-3/Wave-3 record;
+  Plan 246 is not counted in the Track-2 inventory.
+- Reporting preservation passed `19/19` focused Flutter invocations (`21/21`
+  cases), `2/2` named Go cases, both zero-match production-absence scans, and
+  global diff hygiene. No reporting production or test fake was added.
+- The single wave-level `host-all` passed `1151/1151` commands across `1143`
+  Flutter files (`11502` tests passed, `1` skipped) and `8/8` Go legs. Former
+  failures `#407` and `#616` passed in full-suite context. Retained log:
+  `/tmp/track2_wave2_host_all_rerun2.log`.
+- The final incremental Graphify refresh ran once and passed: `8` changed code,
+  `2587` unchanged, `0` deleted; graph `51767` nodes / `79663` edges; TDD overlay
+  `1331` files / `12862` named tests / `979` production targets.
+
+#### Track-3 / Wave-3 final closure (2026-07-14)
+
+- [Track-3/Wave-3 final handover](track-3-wave-3-handover.md) is the current
+  rollup, frozen at SHA-256
+  `46731d5c3464a269496994cff8ee50f335d28e7ad43a0c300c83a6a4d7f0c504`.
+  Plan 243 implementation, focused/static/route/native/preservation
+  tests, curated `1to1`/`groups`, analyzer reconciliation, diff hygiene, one
+  incremental Graphify refresh, and available-device proof are closed. Plan 246
+  is accepted/intentionally not applicable.
+- Path 3 advertises PiP only on eligible Android API 26+ devices with the PiP
+  feature. iOS and other platforms remain hidden/unsupported with no native
+  owner/channel/handoff. Earlier physical-iPhone evidence is historical; iOS
+  device proof is N/A and not a closure gate.
+- The coherent physical root
+  `build/received-video-pip-proof/final-coherent-20260714T072110Z` passes return,
+  close, process recreation, completion, engine-detach shared-seam, and
+  distinct-UID audio-focus interruption on physical Pixel 6/API 36. It uses
+  production sources under disposable debug ID `com.mknoon.app.pipproof`; it is
+  not a production-ID or release-signed APK.
+- The engine-detach leg records `realCleanupCallback=false` and proves the
+  shared cleanup seam; source/static/JVM/build-boundary tests prove the real
+  callback wiring. The physical protected negative is composite; focused host
+  tests isolate each protection state.
+
+| Aggregate gate | Result |
+|---|---|
+| Wave-3 `host-all` | ACCEPTED under user-directed segmented-resume semantics: preserved items 1–416 plus exact resume 417–1,173; suffix passed 8,291 Flutter tests across 749 paths and 8/8 Go legs. Not a single uninterrupted invocation. |
+| Final rollout `host-all` | ACCEPTED under user-directed segmented-resume semantics: preserved items 1–1,114 plus exact concurrency-1 resume 1,115–1,173; suffix passed 1,063 Flutter tests across 51 paths and 8/8 Go legs; full indexed coverage is 1,165 Flutter paths plus 8 Go legs. Not a single uninterrupted invocation. |
+
+All unsuccessful histories remain non-acceptance: the 1,163-Flutter-path
+completeness-wrapper run was interrupted with exit 130 before Go; the
+1,164-path tone-tracker run reached `+3886`, `~1`, `-1` and was interrupted
+with exit 141 before Go; the later 1,172-item run failed first at planned item
+417 (`link_incoming_lan_media_test.dart`) and was interrupted; pass-3 and the
+older SIGTERM/143 run are diagnostic only. The initial final-release
+concurrency-4 run failed at item 1,115 when a child Dart process hit a host
+native-assets rename race; it is not a pass.
+
+Current isolation removes delayed stream scheduling from the notification
+integration cases and gives `FakeMediaFileManager` process-and-isolate-specific
+roots, backed by four new isolation tests. That new test path accounts for the
+current 1,165 Flutter paths. Re-running the exact final suffix at concurrency 1
+is an operational native-assets qualification, not a product behavior change.
+
+Track-3/Wave-3 is complete under the user's explicit segmented-resume
+authority. Neither composite may be restated as a fresh unbroken pass.
 
 ## 3B. Introduction notification follow-up (2026-07-10)
 
@@ -265,12 +352,38 @@ accepted and the plan is refreshed/reviewed.
 | [253-external-share-immediate-media-progress-tdd-plan.md](253-external-share-immediate-media-progress-tdd-plan.md) | Accepted (`c9b1ce6cb`, blocker/test isolation `f029d131f`): causal/focused tests, 1,672-test `1to1`, analyzer parity, physical image+video DP-01, independent QA, and all 731 `feature-host-all` commands are green. | External phone-share media publishes a renderable attachment on the first outgoing event, reuses the in-app byte-progress banner with upload/sending phases, and removes composer-covering share SnackBars in favor of inline actionable feedback; no native intake, DB, transport, or crypto change. |
 | [254-group-media-share-liveness-first-frame-tdd-plan.md](254-group-media-share-liveness-first-frame-tdd-plan.md) | Accepted (`f243b2788`, acceptance hardening `de0aabfd5`): nine causal tests green, all 11 mutation cycles causally re-red, `groups` passed 1,926 Flutter tests plus Go, `feature-host-all` passed 731/731, analyzer improved 1,628→1,627, and independent QA accepted. | A group-targeted media share surfaces live with its thumbnail in an already-open group conversation, renders media on the first frame of a fresh mount mid-send, and a terminally-failed media send keeps its attachments and stays retryable; in-app optimistic display, status-in-place updates, queuedOffline UX, and all validation/reconciliation contracts unchanged. |
 
+## 3D. Voice-message first-frame trust follow-up (2026-07-11)
+
+| Plan | Status | Owns / boundary |
+|---|---|---|
+| [255-voice-duration-visible-before-audio-load-tdd-plan.md](255-voice-duration-visible-before-audio-load-tdd-plan.md) | Execution-ready | Available local voice/audio bubbles show a positive known duration on the first frame without claiming playback readiness; player-duration authority, pending/not-local placeholders, terminal media states, persistence, transport, and native audio remain unchanged. |
+
+## 3E. 1:1 reaction notification follow-up (2026-07-11)
+
+| Plan | Status | Owns / boundary |
+|---|---|---|
+| [256-1to1-reaction-notification-context-tdd-plan.md](256-1to1-reaction-notification-context-tdd-plan.md) | Evidence-gated | Preserve the landed live/local sender + emoji copy while adding a privacy-safe typed reaction push, actor/event context, route/thread/staging/dedupe parity, and automated Android plus physical-iOS notification proof; keep the green avatar orbit strictly message-unread (foreground message lights it, dismissal does not clear it, successful notification-open/read does), and prove reactions never inflate it; first attribute the reported generic card because current HEAD would suppress the remote reaction push rather than label it `New Message`. |
+
+## 3F. Group and announcement reaction notification follow-up (2026-07-11)
+
+| Plan | Status | Owns / boundary |
+|---|---|---|
+| [257-group-announcement-reaction-notification-context-tdd-plan.md](257-group-announcement-reaction-notification-context-tdd-plan.md) | Execution-ready | Preserve the landed live group reaction copy while adding one shared discussion/announcement typed reaction pipeline: author-only ADD notification, full-member reaction convergence, silent REMOVE/bystander paths, encrypted group/actor/emoji context, target-route/event-dedupe parity, message-only unread semantics, group read-event Orbit clearing, and automated Android plus physical-iOS proof. |
+
 #### Wave 0 closure audit (2026-07-11)
 
 - **Engineering closeout complete:** Plans 241, 253, and 254 are accepted; Plan 239 remains implemented with no additional work; Plan 248 is implemented and host-complete but is not visually accepted.
 - **Aggregate host proof complete:** the current 1,078-item `host-all` inventory is green. Items 1–1,046 passed in the initial run; a stale relay-down call-count oracle was aligned with the already-locked concurrent-inbox contract and passed 5/5; items 1,048–1,070 passed on resume; the Go tail passed after commit `0f6ac03d5` pinned the two remaining unpinned commands to the module's declared Go 1.25.0 instead of the host's incompatible Go 1.26.4.
 - **Ordinary received-media capability:** eligible, integrity-verified local image/video supports download/retry/local-copy state, Photos/Gallery and Files export, external OS Share, and Shared Media batch Save up to 10 across direct, discussion, and announcement lanes. Current-row/state/tombstone/path/owner checks fail closed.
-- **Not a full Wave 0 product decision closure:** Plan 248 still needs 23 states at two font scales (46 fresh redacted Pixel captures plus human sign-off). Plans 234, 238, and 242 still lack an approved private-media lifecycle; Plan 243 lacks a native PiP ownership decision; Plans 244–246 lack a production moderation authority/contract; Plans 249–251 lack common batch-forward semantics; and Plan 247 lacks approved private-reply routing policy. Until 234/238/242 are approved and implemented, expired/protected/view-once behavior is not a shipped cross-lane guarantee.
+- **Later progress / current boundary (updated 2026-07-14):** Plans 234 and 238
+  are accepted and closed for device/install-local private media at DB `v100`
+  and `v101`, respectively. Plan 242 is also accepted and closed as a
+  migration-free announcement adapter over Plan 238's lifecycle. Plan 243 is
+  accepted and physically proven for Android-only Path 3; its two segmented
+  aggregate host-coverage records are frozen under explicit user resume
+  semantics. No iOS/cross-platform, cross-lane,
+  relay-authoritative, or account-wide-consume guarantee is implied. The
+  current per-plan rows above are authoritative for all other later work.
 
 ---
 
@@ -329,6 +442,7 @@ accepted and the plan is refreshed/reviewed.
 | Report | Focus |
 |--------|-------|
 | [14-regression-test-strategy.md](14-regression-test-strategy.md) | Practical regression model: baseline gate, subsystem gates, missing regressions to add, and run rules for new work |
+| [258-sims-major-update-gate-and-build-reuse-tdd-plan.md](258-sims-major-update-gate-and-build-reuse-tdd-plan.md) | Awaiting-review TDD plan for a truthful `$sims major` umbrella: critical-feature manifest, capability deduplication, fail-closed typed verdicts, availability-bounded Android/iOS proofs, checkpointed fix-as-you-go, one content-attested build per compatible profile, and bounded resource-aware `--simultaneous` scheduling with serial-equivalent verdicts. Future Voice/Video Call 1:1 capabilities remain inactive until that feature is implemented. |
 
 **Top finding:** The repo already has most of the needed tests. The missing piece is a clear run strategy: small baseline on every PR, change-based subsystem gates for risky shared code, explicit file lists per gate, a bulk-classification policy for non-gate tests, and one permanent regression test for every escaped bug.
 

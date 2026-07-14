@@ -1,5 +1,12 @@
 .PHONY: build run test test-notifications clean tidy lint
 
+# Pin every relay recipe to the toolchain compatible with the current quic-go
+# dependency. A go.mod `toolchain` directive cannot force a downgrade when the
+# machine default is Go 1.26, whose crypto/tls session-ticket behavior makes
+# quic-go v0.48.2 panic on a server-side QUIC handshake. `:=` overrides an
+# inherited GOTOOLCHAIN; an explicit make command-line assignment still wins.
+export GOTOOLCHAIN := go1.25.0
+
 build:
 	go build -o relay-server .
 

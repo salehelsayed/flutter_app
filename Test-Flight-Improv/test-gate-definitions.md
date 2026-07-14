@@ -38,6 +38,15 @@ If this document and `scripts/run_test_gates.sh` ever disagree, the script wins.
 - `test/features/feed/presentation/screens/feed_wired_test.dart` now carries the Session 2 feed inline 1:1 parity regression and the Session 35 delayed-mutual-acceptance / later-block follow-up regression; it stays outside the frozen named gate lists.
 - `test/features/orbit/presentation/screens/orbit_wired_test.dart` and `test/features/orbit/presentation/screens/orbit_intros_wiring_test.dart` now carry the Session 35 stale-intro-reload and intro follow-up wiring regressions; they stay outside the frozen named gate lists and should be run directly with the Intro / Reintroduction Gate when intro-to-Orbit or intro-to-Feed follow-up wiring changes.
 - `test/features/groups/integration/announcement_happy_path_test.dart` carries the Session 6 announcement create/send/read-only/react regression and stays in the Optional / Manual direct-suite bucket so the frozen named gate lists do not widen.
+- Plan 247 Session 03 registers
+  `announcement_private_reply_routing_test.dart`,
+  `announcement_private_reply_entry_surface_test.dart`, and
+  `announcement_private_reply_no_auto_send_test.dart` in the Group Messaging
+  Gate because they jointly pin the distinct Message sender capability, exact
+  five-owner complete/null opener census, current-item dispatch, and localized
+  fail-closed feedback. The no-auto-send integration is additionally pinned in
+  both 1:1 inventories because it proves the existing direct route opens blank
+  and opening/cancelling performs no delivery or source mutation.
 - `integration_test/group_recovery_e2e_test.dart` now carries the Session 72 device-backed dissolved local-cleanup recovery proof and stays in the Nightly / Release Pool because it remains simulator-bound and should not widen the frozen named gates.
 - `test/features/groups/integration/group_admin_metadata_convergence_test.dart`
   stays in the Group Messaging Gate because its exact Scenario 3 promoted-admin
@@ -125,6 +134,19 @@ If this document and `scripts/run_test_gates.sh` ever disagree, the script wins.
 
 - Named gates use exact file paths only. No folder shorthands.
 - The public gate command is always the script command. Internally, the script may split host-side `test/` files from `integration_test/` files and may fan out integration-backed files into separate `flutter test` invocations when the combined app launch is unreliable.
+- Broad host scopes (`host-all`, `feature-host-all`, `core-host-all`,
+  `performance-host`, and `move-feature`) may use the `--batch-flutter`,
+  `--concurrency <N>`, and `--reporter <NAME>` options to execute the
+  already-expanded exact Dart paths in one Flutter invocation. This is a
+  canonical public script mode, not a folder shorthand: dry-run indices stay
+  per file, non-Dart/Go legs stay separate, and omitting `--batch-flutter`
+  preserves the existing one-command-per-file behavior. Concurrency is bounded
+  to `1..64`; reporters are limited to `compact`, `expanded`, and
+  `failures-only` so orchestration prose remains human-readable. Curated gates
+  such as `1to1` and `groups` reject these host-batch controls instead of
+  silently dropping their full file/relay semantics. Run
+  `bash scripts/test/host_test_gate_batch_contract_test.sh` after changing this
+  orchestration contract.
 - Feature-local tests under `test/features/<feature>/application`, `domain`, `presentation`, `phase*`, `improvement`, and `regression` stay implicitly covered by direct feature-level runs unless they are explicitly named below.
 - High-value integration, cross-feature, service, lifecycle, resilience, and orchestration suites must be classified intentionally, even when they stay outside the named gates.
 - Red tests are not removed from a gate definition to make the gate look green. They stay documented as known failures until fixed.
@@ -272,6 +294,7 @@ Files:
 - `test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart`
 - `test/features/conversation/application/chat_message_listener_test.dart`
 - `test/features/conversation/application/send_chat_message_use_case_test.dart`
+- `test/features/conversation/integration/reaction_notification_pipeline_test.dart`
 - `test/features/conversation/application/retry_unacked_messages_use_case_test.dart`
 - `test/features/conversation/application/recovered_inbox_chat_disposition_test.dart`
 - `test/features/conversation/application/delivered_status_minting_sites_test.dart`
@@ -293,6 +316,103 @@ Files:
 - `test/features/conversation/application/post_restore_stale_key_recovery_test.dart`
 - `test/features/contact_request/application/contact_request_listener_test.dart`
 - `test/features/identity/domain/repositories/identity_repository_impl_test.dart`
+- `test/core/database/helpers/messages_db_helpers_private_media_lifecycle_test.dart`
+- `test/features/conversation/application/consume_private_media_use_case_test.dart`
+- `test/features/conversation/application/private_media_expiry_scheduler_test.dart`
+- `test/features/conversation/integration/private_media_restart_replay_test.dart`
+- `test/features/conversation/application/private_media_cleanup_race_test.dart`
+- `test/core/lifecycle/private_media_lifecycle_recovery_wiring_test.dart`
+- `test/features/conversation/application/private_media_action_eligibility_test.dart`
+- `test/features/conversation/application/direct_private_media_boundary_test.dart`
+- `test/features/conversation/presentation/screens/direct_private_media_viewer_test.dart`
+- `test/core/media/private_media_protection_coordinator_test.dart`
+- `test/integration/direct_private_media_device_local_journey_criteria_test.dart`
+- `test/features/conversation/application/build_direct_media_library_batch_forward_test.dart`
+
+Plan 256 pins `reaction_notification_pipeline_test.dart` in both
+`ONE_TO_ONE_TESTS` and `ONE_TO_ONE_HOST_TESTS`. Its composed host cases prove
+trusted local actor/body copy and deterministic conversation-card identity
+through the notification plugin boundary, while reaction persistence leaves
+the message-only unread count unchanged at zero and with genuine unread rows.
+Plan 256's remaining direct evidence intentionally stays outside the frozen
+Flutter arrays: Android background resolver/staging, deterministic id and
+durable claim/tone tests are AUTO feature/core host suites; the background
+crypto package and Kotlin plugin run by exact commands; relay capability,
+authorization, privacy, rollout and rollback run under pinned Go 1.25; iOS NSE
+projection/decrypt/claim/tone runs in `NotificationPreviewResolverTests`; and
+`test_fixtures/one_to_one_reaction_add.json` is scanned by both Dart and Go
+forbidden-field tests. The registered device runner exposes TC-00/07/13/14/16
+and fails closed without redacted staging/provider capture manifests. The
+durable tone contract uses one shared `flock` file across Dart isolates and the
+Swift NSE. TC-07 validation also rejects an artifact unless synthetic rows,
+card, and claims were acknowledged clean and the installed/local candidate APK
+state was restored.
+
+Plan 234 Session 03 pins these six host-only causal suites in both
+`ONE_TO_ONE_TESTS` and `ONE_TO_ONE_HOST_TESTS`. They cover direct-parent SQL
+CAS/high-water authority, exclusive reveal leases, foreground expiry,
+restart/cleanup convergence, transfer/cleanup races, and local recovery before
+network gating.
+
+Plan 234 Session 04 pins the two action-authority suites in both 1:1 arrays.
+They cover the exhaustive current-parent capability matrix plus stale/missing/
+wrong-owner direct-call denial across egress, Forward, Shared Media/bookmark,
+explicit download, privacy-minimized Reply/Info/Delete, and the typed PiP input.
+
+Plan 234 Session 05 pins the dedicated private-route and Dart native-protection
+coordinator suites in both 1:1 arrays. The shared typed-viewer renderer tests
+remain exact focused commands. Native proofs run exactly as
+`./android/gradlew -p android app:testDebugUnitTest --tests 'com.mknoon.app.PrivateMediaProtectionNativeTest'`
+and, on a freshly available simulator,
+`xcodebuild test -workspace ios/Runner.xcworkspace -scheme Runner -destination 'platform=iOS Simulator,id=<fresh-id>' CODE_SIGNING_ALLOWED=NO -only-testing:RunnerTests/PrivateMediaProtectionCoordinatorTests`.
+The required device proof is
+`integration_test/direct_private_media_platform_protection_proof_test.dart`,
+run directly on each applicable freshly available Android/iOS target; an absent
+platform is recorded only as `N/A (target unavailable by project policy)`.
+
+Plan 234 Session 06 pins
+`test/integration/direct_private_media_device_local_journey_criteria_test.dart`
+in both 1:1 arrays. Its pure evaluator rejects missing/extra/secret-bearing or
+theatrical records, wrong physical/emulator topology, reordered
+persist/policy/preview/download evidence, lifecycle resurrection, ordinary
+regression, consume receipts, and relay/account-wide overclaims. The exact
+availability-bounded command is
+`dart run integration_test/scripts/run_direct_private_media_device_local_journey.dart --sender <physical-android-id> --recipient <android-emulator-id> --artifact-dir <new-evidence-dir>`.
+It launches `integration_test/direct_private_media_device_local_journey_harness.dart`
+on each explicit target and validates the combined redacted artifact through
+`integration_test/scripts/direct_private_media_device_local_journey_criteria.dart`.
+This is deterministic device-local app-layer proof only; it does not claim a
+real relay exchange, account-wide View Once, a consume receipt, or remote
+revocation.
+
+Plan 249 Session 01 pins its hidden direct-library batch-forward builder suite in
+both 1:1 arrays. It covers `1..10` exact direct identities, Plan-234 current-row
+qualification, canonical Shared Media order, independent captions and opaque
+per-attachment tokens, and atomic dispatch-time revalidation. The Session-01
+production action stays absent; delivery, picker UX, and retry remain Session 02.
+
+Plan 249 Session 02 pins these four host causal suites in both 1:1 arrays:
+
+- `test/features/share/application/direct_media_batch_forward_delivery_coordinator_test.dart`
+- `test/features/share/presentation/direct_media_batch_forward_picker_wired_test.dart`
+- `test/features/conversation/presentation/screens/conversation_shared_media_batch_forward_test.dart`
+- `test/features/conversation/application/direct_media_batch_forward_transport_boundary_test.dart`
+
+They cover source-first exact-current revalidation, the source/contact result
+matrix and failed-cell-only retry, the opt-in one-file ordinary delivery seam,
+direct-only picker UX, Shared Media selection truth, and the real composed
+recipient-scoped persistence/encryption boundary. They add no schema, wire,
+group, announcement, relay, native, or device contract.
+
+Plan 249 Session 03 independently accepted the combined five-suite feature and
+the exact `received_media_action_transport_boundary_test.dart` inventory
+sentinel. Nine reversible mutations each produced the intended causal RED,
+restored byte/status-exactly, and reran GREEN. Final proportional evidence is
+curated `1to1` `1,962/1,962`, host inventory `87`, completeness
+`1,174/1,174`, scoped analyzer clean, full analyzer exact parity at `1,626`,
+and independent QA accepted with `fix_passes=0`. Acceptance-only Session 03
+changed no production/test file and ran no Graphify refresh; full `host-all`
+remains Wave-1-owned.
 
 ### 114 LAN Ack-After-Commit Gate Capture
 
@@ -448,6 +568,177 @@ Files:
 - `test/features/groups/integration/invite_round_trip_test.dart`
 - `test/features/groups/integration/group_membership_smoke_test.dart`
 - `test/features/groups/integration/group_startup_rejoin_smoke_test.dart`
+- `test/features/groups/domain/models/group_reaction_payload_test.dart`
+- `test/features/groups/application/send_group_reaction_use_case_test.dart`
+- `test/features/groups/application/remove_group_reaction_use_case_test.dart`
+- `test/features/groups/integration/group_reaction_roundtrip_test.dart`
+- `test/features/groups/integration/group_reaction_notification_pipeline_test.dart`
+- `test/features/orbit/presentation/screens/orbit_group_unread_notification_wired_test.dart`
+- `test/integration/group_reaction_notification_device_criteria_test.dart`
+
+Plan 257 pins compatible group-reaction payload/send/remove/roundtrip,
+contextual notification/unread, and notification-routed Orbit refresh coverage
+in `GROUP_TESTS`. Its five OS-bound rows are listed by
+`run_group_reaction_notification_device.dart` and expanded under group
+reliability discovery. The runner and standalone validator require hashed raw
+app, SQLCipher/local-projection, relay, provider, notification-service, and UI
+automation evidence. The runner now invokes a real capture controller: it
+validates explicit live targets and a redacted staging declaration, verifies
+the live relay revision/digest and `GROUP_REACTION_PUSH_ENABLED`, checks the
+provider configuration, builds and installs the candidate, stages/launches
+roles, drives Android UI/notification actions, and reads final SQLCipher state
+through an in-app observer before binding the standalone validator and named
+proof. Missing configuration or any unavailable lower seam persists a typed
+non-success verdict and exits nonzero; host/native coverage is never reported
+as device proof. The physical-iOS path is repo-owned end to end: the
+manifest-gated controller builds and installs distinct E2E and normal
+candidates with hashed provenance, stages local identity/accepted announcement
+membership through the app data container, drives
+`testCreateAnnouncementReactionFixture`,
+`testAuthorAnnouncementReactionTarget`, `testPrepareWarmNotificationTap`, and
+`testAnnouncementReactionNotificationTap`, and captures bounded
+`idevicesyslog`, relay/APNs, XCUITest, and final local-state evidence. It is not
+missing an automation seam. Physical-device closure is configuration-blocked
+until a valid redacted staging manifest and working relay/provider credentials
+are supplied; no live APNs/NSE artifact is currently accepted.
+
+Accepted Plan 238 pins the complete group-private lifecycle in `GROUP_TESTS`.
+The direct canonical execution ran this curated lane successfully; registration
+also remains authoritative for the later Wave-1 aggregate `host-all` sweep:
+
+- `test/core/database/migrations/101_group_private_media_lifecycle_test.dart`
+- `test/features/groups/domain/models/group_private_media_policy_test.dart`
+- `test/features/groups/integration/group_private_media_payload_roundtrip_test.dart`
+- `test/features/groups/application/group_private_media_safe_disabled_boundary_test.dart`
+- `test/features/groups/application/group_private_media_retry_qualification_test.dart`
+- `test/features/groups/application/group_private_media_preupload_boundary_test.dart`
+- `test/features/groups/application/group_private_media_stale_library_boundary_test.dart`
+- `test/features/groups/integration/group_private_media_transport_boundary_test.dart`
+- `test/features/groups/presentation/group_private_media_announcement_sentinel_test.dart`
+- `test/features/groups/application/group_private_media_lifecycle_test.dart`
+- `test/features/groups/integration/group_private_media_crash_recovery_test.dart`
+- `test/features/groups/application/group_private_media_expiry_test.dart`
+- `test/features/groups/integration/group_private_media_cleanup_replay_test.dart`
+- `test/features/groups/presentation/group_private_media_capabilities_test.dart`
+- `test/features/groups/application/group_private_media_notification_test.dart`
+- `test/features/push/application/push_decrypt_preview_test.dart`
+- `test/features/groups/presentation/group_private_media_viewer_test.dart`
+
+Plan 242 pins exactly eight dedicated announcement-private host suites in
+`GROUP_TESTS`, in the same order as its focused aggregate:
+
+- `test/features/groups/domain/models/announcement_private_media_policy_test.dart`
+- `test/features/groups/application/announcement_private_media_authorization_test.dart`
+- `test/features/groups/application/announcement_incoming_message_authorization_test.dart`
+- `test/features/groups/integration/announcement_private_media_payload_roundtrip_test.dart`
+- `test/features/groups/integration/announcement_private_media_lifecycle_test.dart`
+- `test/features/groups/presentation/announcement_private_media_capabilities_test.dart`
+- `test/features/groups/application/announcement_private_media_notification_test.dart`
+- `test/features/groups/application/announcement_private_media_moderation_test.dart`
+
+Together they pin the accepted Plan-238 lifecycle vocabulary and durable
+consume/expiry authority for announcement media, current-admin send/retry and
+receive authorization, encrypted-inner-only policy transport, fail-closed
+reader capabilities, generic notification privacy, and retained lifecycle/
+terminal metadata without byte resurrection. Existing ordinary-announcement and
+shared-adapter sentinels remain curated separately and are not counted as part
+of this exact eight-file Plan-242 aggregate.
+
+Plans 244 and 245 are accepted/intentionally not applicable: Report is a
+product non-goal rather than an external-provisioning blocker. No user-visible
+Report action, reporting gateway, outbox, receipt, success copy, or moderation
+body exists. Their Track-2/Wave-2 preservation closure adds no test file and
+does not widen a gate. Plan 246 records the same product disposition for its
+owning Track-3/Wave-3 closure.
+
+The canonical plans enumerate the exact focused preservation matrix, which
+passed `19/19` Flutter invocations (`21/21` cases), `2/2` named Go cases, and
+both zero-match production-absence scans. Existing registered lane sentinels
+include:
+
+- `test/features/conversation/presentation/screens/conversation_received_media_actions_test.dart`
+  stays in both 1:1 inventories and proves the direct received-media action set
+  remains available while Report is absent.
+- `test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart`
+  stays in both 1:1 inventories as the ordinary direct encryption/delivery
+  preservation boundary.
+- `test/features/groups/application/group_received_media_action_policy_test.dart`
+  stays in `GROUP_TESTS` and pins the discussion/announcement action matrices
+  without a Report capability.
+- `test/features/groups/presentation/group_conversation_wired_test.dart` stays
+  in `GROUP_TESTS`; its exact GMA-13 case preserves announcement member/admin
+  actions and the QA exclusion.
+
+Do not invent or register report-specific paths under this accepted product
+decision. Those files do not exist and are not a deferred gate. Reopening
+Plans 244-246 requires an explicit product decision authorizing both a real
+reporting organization and user-visible reporting semantics; the availability
+of a service, credential, or fixture alone is not authorization.
+
+Plans 250 and 251 pin one accepted nine-file forwarding aggregate in
+`GROUP_TESTS`. Focused, preservation, and mutation evidence is green. Final
+per-plan closure recorded `groups` at 2171/2171 plus every registered Go leg,
+`core-host-all` at 310/310 files and 2485 tests with 0 skipped, and a
+user-provided external all-green `feature-host-all` run on 2026-07-12 with no
+local count/log. The first five files are the shared Plan-249-derived
+group foundation, followed by the Plan-250 discussion surface and the three
+Plan-251 announcement proofs. This shared execution aggregate does not replace
+the two canonical plans as separate acceptance units:
+
+- `test/features/groups/application/group_media_batch_forward_draft_test.dart`
+- `test/features/groups/application/group_media_batch_forward_preflight_test.dart`
+- `test/features/groups/application/group_media_batch_forward_authorization_test.dart`
+- `test/core/database/helpers/group_forward_authorization_db_helpers_test.dart`
+- `test/features/groups/application/group_media_batch_forward_delivery_test.dart`
+- `test/features/groups/presentation/group_shared_media_batch_forward_test.dart`
+- `test/features/groups/presentation/announcement_media_batch_forward_test.dart`
+- `test/features/share/presentation/announcement_batch_forward_target_policy_test.dart`
+- `test/features/share/application/announcement_batch_forward_provenance_test.dart`
+
+The core helper is deliberately curated beside the authorization suite. Its
+single SQL statement reads the target group, ordered current membership, and
+maximum key generation from one SQLite statement snapshot. Dispatch then
+compares that generation with the hydrated key before any upload. This avoids
+mixing independently timed group/member/key reads without holding a database
+transaction across secure-key hydration or media delivery.
+
+The focused aggregate pins the `2..10` opt-in batch route, owner-scoped source
+order and captions, MIME/size caps, exact current source and target
+revalidation, discussion-versus-announcement target policy, one ordinary
+Plan-236/240 output per item, source-target-cell idempotency, opaque provenance,
+failed-cell-only retry, and byte/status-exact source preservation. The
+final nine-file focused snapshot passed `30/30`, and all three named per-plan
+gates above are green. The proportional cadence remains that focused command,
+the curated `groups` gate, `feature-host-all` for group/share production
+surfaces, and `core-host-all` for the new database helper. Full `host-all` was
+not a per-plan obligation; the single Wave-2 closure sweep completed on
+2026-07-13 with `1151/1151` commands passing across `1143` Flutter files
+(`11502` tests passed, `1` skipped) and `8/8` Go legs. Former failures `#407`
+and `#616` passed in full-suite context; retained log:
+`/tmp/track2_wave2_host_all_rerun2.log`. No new native or device boundary was
+introduced.
+
+Exact preservation companions remain:
+
+- Plan 236:
+  `test/features/groups/application/group_media_forward_policy_test.dart`,
+  `test/features/groups/presentation/group_media_forward_flow_test.dart`, and
+  `test/features/share/application/share_batch_delivery_coordinator_test.dart`.
+- Plan 237:
+  `test/features/groups/presentation/group_shared_media_screen_test.dart`.
+- Plan 240:
+  `test/features/groups/presentation/announcement_received_media_forwarding_test.dart`.
+- Plan 241:
+  `test/features/groups/presentation/announcement_media_library_actions_test.dart`.
+- Plan 249:
+  `test/features/conversation/application/build_direct_media_library_batch_forward_test.dart`,
+  `test/features/share/application/direct_media_batch_forward_delivery_coordinator_test.dart`,
+  `test/features/share/presentation/direct_media_batch_forward_picker_wired_test.dart`,
+  `test/features/conversation/presentation/screens/conversation_shared_media_batch_forward_test.dart`,
+  and
+  `test/features/conversation/application/direct_media_batch_forward_transport_boundary_test.dart`.
+- Plan 241's Go writer sentinels:
+  `(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./node -run 'TestIsAllowedWriter_AnnouncementMemberBlocked|TestGroupTopicValidator_AnnouncementNonAdminRejected' -count=1)`.
 
 Supplemental direct suite when invite or contact-entry flows are touched:
 
@@ -749,6 +1040,11 @@ These are intentionally classified, but not promoted into the frozen named gates
 | `integration_test/identity_progress_performance_test.dart` | Optional / manual direct suite | Performance-only validation |
 | `integration_test/media_message_journey_e2e_test.dart` | Optional / manual direct suite | End-to-end media delivery journey coverage that stays outside the frozen named gates; Report 90 GMAR-005 runs it directly as final media-journey evidence |
 | `integration_test/migration_database_sqlcipher_capability_test.dart` | Optional / manual direct suite; `$run-flutter-reliability-sims move-feature/all` | Move Account MIG-004 plugin-registered SQLCipher export capability probe; classified as a reliability-sim Move Account concrete-target companion, not a group messaging proof |
+| `integration_test/direct_private_media_lifecycle_sqlcipher_proof_test.dart` | Required exact 1:1 device proof; run directly on each available named Android/iOS target | Plan 234 Session 01 real `sqflite_sqlcipher` v99→v100/fresh/reopen/rerun/wrong-password/downgrade proof. Required commands pin Android `21071FDF600CSC` and iOS simulator `674DFFF6-5F38-4235-93F6-AF7FBF86AE65`; relay and unavailable version-specific hardware are N/A by project policy. |
+| `integration_test/direct_private_media_platform_protection_proof_test.dart` | Required exact availability-bounded Android/iOS proof | Plan 234 Session 05 verifies native protection is acknowledged before private render, Android live-window secure ownership/restoration, and iOS capture-cover/dismiss/restoration through the bounded debug-only proof seam. Run on explicit IDs from fresh discovery; an unavailable platform is `N/A (target unavailable by project policy)`. |
+| `integration_test/direct_private_media_device_local_journey_harness.dart` | Required exact role harness; invoked only by the Plan-234 Session-06 runner | Instrumented production-codec/persistence/notification/action/filesystem/lifecycle observations on one explicit Android target; emits one bounded redacted role artifact and performs no user-assisted navigation or real-relay claim. |
+| `integration_test/scripts/direct_private_media_device_local_journey_criteria.dart` | Required pure support module; host-tested in both 1:1 arrays | Strict versioned combined-artifact evaluator for topology, ordering, private/ordinary lifecycle results, redaction, and device-local claim limits. |
+| `integration_test/scripts/run_direct_private_media_device_local_journey.dart` | Required exact availability-bounded 1:1 runner | Discovers and pins one physical Android sender plus one Android emulator recipient, launches both harness children, rejects stale/secret/incomplete evidence, and writes only an atomically validated redacted device-local artifact. |
 | `integration_test/notification_open_ui_smoke_test.dart` | Optional / manual direct suite | Notification-open UI routing smoke without widening the frozen named gates |
 | `scripts/run_ios_notification_tap_ui_smoke.sh` | Optional / manual direct suite | iOS simulator-bound APNs notification tap smoke using `simctl push` plus a real Springboard notification tap; release/nightly confidence only, not a PR gate |
 | `integration_test/orbit_performance_test.dart` | Optional / manual direct suite | Performance-only validation for Orbit surface behavior |

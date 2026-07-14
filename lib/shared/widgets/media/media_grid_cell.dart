@@ -5,7 +5,6 @@ import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
-import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -128,26 +127,10 @@ class MediaGridCell extends StatelessWidget {
   /// path that is never swapped for the durable copy), fall back to the
   /// canonical owned copy `media/<ownedMediaPeerId>/<blobId>.<ext>`. Single
   /// render chokepoint, independent of any upstream path-update timing.
-  String? get _resolvedExistingLocalPath {
-    final localPath = attachment.localPath;
-    if (localPath != null && localPath.isNotEmpty) {
-      final resolved = MediaFileManager.resolveStoredPathSync(localPath);
-      if (File(resolved).existsSync()) return resolved;
-    }
-    final dirId = ownedMediaPeerId;
-    if (dirId != null && dirId.isNotEmpty && attachment.id.isNotEmpty) {
-      final ownedRelative = MediaFilePathConvention.relativePathForAttachment(
-        contactPeerId: dirId,
-        blobId: attachment.id,
-        mime: attachment.mime,
-      );
-      final ownedResolved = MediaFileManager.resolveStoredPathSync(
-        ownedRelative,
-      );
-      if (File(ownedResolved).existsSync()) return ownedResolved;
-    }
-    return null;
-  }
+  String? get _resolvedExistingLocalPath => resolveExistingMediaPathForDisplay(
+    attachment: attachment,
+    ownedMediaPeerId: ownedMediaPeerId,
+  );
 
   bool get _hasExistingLocalFile => _resolvedExistingLocalPath != null;
 

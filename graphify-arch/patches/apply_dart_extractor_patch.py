@@ -336,11 +336,11 @@ DEDUP_EDITS = [
 ]
 
 
-def patch_file(target: Path, marker: str, edits: list[tuple[str, str]]) -> None:
+def patch_file(target: Path, marker: str, edits: list[tuple[str, str]]) -> bool:
     src = target.read_text(encoding="utf-8")
     if marker in src:
         print(f"already patched: {target}")
-        return
+        return False
 
     backup = target.with_suffix(".py.orig")
     if not backup.exists():
@@ -358,12 +358,14 @@ def patch_file(target: Path, marker: str, edits: list[tuple[str, str]]) -> None:
 
     target.write_text(src, encoding="utf-8")
     print(f"patched: {target} ({len(edits)} edits, marker '{marker}')")
+    return True
 
 
 def main() -> None:
     extract_py = find_extract_py()
     src = extract_py.read_text(encoding="utf-8")
     backup = extract_py.with_suffix(".py.orig")
+    changed = False
     if MARKER_V2 in src and MARKER_V2_GO in src:
         print(f"already patched (v2 + go-v2): {extract_py}")
     else:
@@ -376,14 +378,20 @@ def main() -> None:
                     f"reinstall graphifyy, then re-run this script"
                 )
             shutil.copy2(backup, extract_py)
+            changed = True
             print(f"restored pristine extract.py from {backup}")
-        patch_file(extract_py, MARKER_V2, EDITS + EDITS_V2 + EDITS_V2_GO)
-    patch_file(extract_py.parent / "dedup.py", DEDUP_MARKER, DEDUP_EDITS)
-    # clear stale bytecode
+        changed = patch_file(
+            extract_py, MARKER_V2, EDITS + EDITS_V2 + EDITS_V2_GO
+        ) or changed
+    changed = patch_file(
+        extract_py.parent / "dedup.py", DEDUP_MARKER, DEDUP_EDITS
+    ) or changed
+    # Clear stale bytecode only after an actual package-source edit. Routine
+    # incremental refreshes should not churn the installed Python cache.
     pycache = extract_py.parent / "__pycache__"
-    if pycache.exists():
+    if changed and pycache.exists():
         shutil.rmtree(pycache)
-    print("next: rm -rf graphify-out/cache/ast && rebuild both graphs")
+    print("extractor patch current; preserve AST caches for incremental refreshes")
 
 
 if __name__ == "__main__":

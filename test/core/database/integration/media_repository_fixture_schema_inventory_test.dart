@@ -39,6 +39,7 @@ void main() {
       constructors,
       [
         'integration_test/group_multi_device_real_harness.dart',
+        'integration_test/notification_sound_smoke_harness.dart',
         'integration_test/smoke_test.dart',
       ],
       reason:
@@ -47,7 +48,7 @@ void main() {
           'this inventory',
     );
 
-    // 2. Both confirmed fixtures open through the shared registry and no
+    // 2. All confirmed fixtures open through the shared registry and no
     // longer own a hand-maintained versioned schema.
     final harness = File(
       'integration_test/group_multi_device_real_harness.dart',
@@ -58,6 +59,22 @@ void main() {
       RegExp(r'version:\s*(11|44|79)\b').hasMatch(harness),
       isFalse,
       reason: 'the harness may not pin a historical schema version',
+    );
+
+    final notificationSound = File(
+      'integration_test/notification_sound_smoke_harness.dart',
+    ).readAsStringSync();
+    expect(
+      notificationSound,
+      contains("import 'group_multi_device_real_harness.dart';"),
+    );
+    expect(notificationSound, contains('setupGroupMultiDeviceStack('));
+    expect(
+      RegExp(r'version:\s*(11|44|79)\b').hasMatch(notificationSound),
+      isFalse,
+      reason:
+          'the notification sound harness may not pin a historical schema '
+          'version',
     );
 
     final smoke = File('integration_test/smoke_test.dart').readAsStringSync();

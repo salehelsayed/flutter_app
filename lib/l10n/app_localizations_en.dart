@@ -590,6 +590,17 @@ class AppLocalizationsEn extends AppLocalizations {
   String get conversation_context_reply => 'Reply';
 
   @override
+  String get announcement_private_reply_action => 'Message sender';
+
+  @override
+  String get announcement_private_reply_unavailable =>
+      'Message sender is unavailable.';
+
+  @override
+  String get announcement_private_reply_open_failed =>
+      'Couldn’t open the conversation.';
+
+  @override
   String get conversation_context_edit => 'Edit';
 
   @override
@@ -1978,6 +1989,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get media_viewer_action_reply => 'Reply';
 
   @override
+  String get media_viewer_action_picture_in_picture => 'Picture in Picture';
+
+  @override
+  String get media_viewer_picture_in_picture_start_failed =>
+      'Couldn\'t start Picture in Picture';
+
+  @override
   String get media_save_destination_prompt => 'Save to…';
 
   @override
@@ -3037,10 +3055,135 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get contact_profile_message_button => 'Message';
 
+  @override
+  String get private_media_selector_label => 'Private media';
+
+  @override
+  String get private_media_ordinary => 'Ordinary';
+
+  @override
+  String get private_media_protected => 'Protected';
+
+  @override
+  String get private_media_view_once => 'View once';
+
+  @override
+  String get private_media_disappearing_1h => 'Disappears after 1 hour';
+
+  @override
+  String get private_media_disappearing_1d => 'Disappears after 1 day';
+
+  @override
+  String get private_media_disappearing_7d => 'Disappears after 7 days';
+
+  @override
+  String get private_media_invalid_shape =>
+      'Private media needs one photo, GIF, or video with no caption.';
 
   @override
   String get private_media_notification_body => 'Private media';
 
   @override
   String get group_private_media_notification_body => 'New private media';
+
+  @override
+  String get private_media_expiry_device_local =>
+      'The expiry time is calculated on the receiving device.';
+
+  @override
+  String get private_media_view_once_copy =>
+      'Available for one view on this device.';
+
+  @override
+  String get private_media_open => 'Open private media';
+
+  @override
+  String get private_media_opening => 'Opening private media…';
+
+  @override
+  String get private_media_consumed => 'Already viewed on this device';
+
+  @override
+  String get private_media_expired => 'Expired on this device';
+
+  @override
+  String get private_media_unsupported =>
+      'Update Mknoon to view this private media, or delete it';
+
+  @override
+  String get private_media_android_capture_limit =>
+      'Screenshots and screen recording are blocked only while this private route is open';
+
+  @override
+  String get private_media_ios_capture_limit =>
+      'iOS cannot reliably prevent screenshots; capture is detected and private media is covered/dismissed';
+
+  @override
+  String get private_media_general_capture_limit =>
+      'Another device or camera can still photograph the screen';
+
+  @override
+  String get shared_media_action_forward => 'Batch Forward';
+
+  @override
+  String get direct_batch_forward_title => 'Batch Forward';
+
+  @override
+  String direct_batch_forward_item_count(int count) {
+    return '$count selected items';
+  }
+
+  @override
+  String direct_batch_forward_source_label(int index, int count) {
+    return 'Source $index of $count';
+  }
+
+  @override
+  String direct_batch_forward_caption_label(int index, int count) {
+    return 'Caption for source $index of $count';
+  }
+
+  @override
+  String get direct_batch_forward_contacts_title => 'Direct contacts';
+
+  @override
+  String get direct_batch_forward_no_contacts => 'No active direct contacts';
+
+  @override
+  String get direct_batch_forward_send => 'Send';
+
+  @override
+  String get direct_batch_forward_retry_failed => 'Retry failed';
+
+  @override
+  String direct_batch_forward_progress(String phase, int completed, int total) {
+    return '$phase: $completed of $total';
+  }
+
+  @override
+  String get direct_batch_forward_source_unavailable =>
+      'Selected media is no longer available';
+
+  @override
+  String get direct_batch_forward_status_sent => 'Sent';
+
+  @override
+  String get direct_batch_forward_status_queued => 'Queued';
+
+  @override
+  String get direct_batch_forward_status_failed => 'Failed';
+
+  @override
+  String direct_batch_forward_summary(int sent, int queued, int failed) {
+    return 'Sent $sent, queued $queued, failed $failed';
+  }
+
+  @override
+  String get direct_batch_forward_phase_uploading => 'Uploading';
+
+  @override
+  String get direct_batch_forward_phase_sending => 'Sending';
+
+  @override
+  String get direct_batch_forward_close => 'Close';
 }

@@ -23,9 +23,7 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_group_pubsub_network.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/group_test_user.dart';
-
-const _downloadedBytesHash =
-    '9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a';
+import '../../../shared/fixtures/media_bytes.dart';
 
 class _DownloadWritingBridge extends FakeBridge {
   @override
@@ -43,9 +41,14 @@ class _DownloadWritingBridge extends FakeBridge {
       final outputPath = payload['outputPath'] as String;
       final file = File(outputPath);
       await file.parent.create(recursive: true);
-      await file.writeAsBytes(<int>[1, 2, 3, 4]);
+      final bytes = validMediaFixtureBytesForPath(outputPath);
+      await file.writeAsBytes(bytes);
 
-      return jsonEncode({'ok': true, 'id': payload['id'], 'size': 4});
+      return jsonEncode({
+        'ok': true,
+        'id': payload['id'],
+        'size': bytes.length,
+      });
     }
     return super.send(message);
   }
@@ -105,20 +108,20 @@ void main() {
     int? height,
     int? durationMs,
     List<double>? waveform,
-    String contentHash = _downloadedBytesHash,
+    String? contentHash,
   }) {
     return MediaAttachment(
       id: id,
       messageId: '',
       mime: mime,
-      size: size,
+      size: size == 4 ? validMediaFixtureBytesForMime(mime).length : size,
       mediaType: MediaAttachment.mediaTypeFromMime(mime),
       width: width,
       height: height,
       durationMs: durationMs,
       localPath: 'pending_uploads/$id',
       downloadStatus: 'done',
-      contentHash: contentHash,
+      contentHash: contentHash ?? validMediaFixtureHashForMime(mime),
       encryptionKeyBase64: 'key-$id',
       encryptionNonce: 'nonce-$id',
       encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
@@ -202,7 +205,8 @@ void main() {
     expect(received.keyGeneration, keyGeneration, reason: user.username);
 
     final attachments = await user.mediaAttachmentRepo.getAttachmentsForMessage(
-      received.id, owner: MediaOwnerLane.group,
+      received.id,
+      owner: MediaOwnerLane.group,
     );
     expect(attachments, hasLength(1), reason: '${user.username}: $messageText');
 
@@ -361,7 +365,10 @@ void main() {
             (message) => message.text == text,
           );
           final attachments = await bob.mediaAttachmentRepo
-              .getAttachmentsForMessage(message.id, owner: MediaOwnerLane.group);
+              .getAttachmentsForMessage(
+                message.id,
+                owner: MediaOwnerLane.group,
+              );
           expect(attachments, hasLength(1), reason: text);
           return attachments.single;
         }
@@ -700,7 +707,8 @@ void main() {
           ]) {
             expect(
               await recipient.mediaAttachmentRepo.getAttachmentsForMessage(
-                preJoinMessage!.id, owner: MediaOwnerLane.group,
+                preJoinMessage!.id,
+                owner: MediaOwnerLane.group,
               ),
               isEmpty,
               reason: recipient.username,

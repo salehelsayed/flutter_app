@@ -67,6 +67,7 @@ import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
+import '../../../shared/fixtures/media_bytes.dart';
 import '../../../shared/helpers/lifecycle_helpers.dart';
 
 const _validContentHash =
@@ -1300,7 +1301,7 @@ Future<void> _section10WidgetMediaLifecycleProof(
     }
   });
   final attachment = File(p.join(tempDir.path, 'announcement.jpg'))
-    ..writeAsStringSync('image');
+    ..writeAsBytesSync(validJpegFixtureBytes);
   String? uploadedBlobId;
 
   const groupId = 'group-announce-widget-media';
@@ -1409,7 +1410,8 @@ Future<void> _section10WidgetMediaLifecycleProof(
     'bridge:bg:end',
   );
   final senderMedia = await admin.mediaAttachmentRepo.getAttachmentsForMessage(
-    sent.id, owner: MediaOwnerLane.group,
+    sent.id,
+    owner: MediaOwnerLane.group,
   );
   expect(senderMedia, hasLength(1));
   expect(senderMedia.single.id, uploadedBlobId);
@@ -1421,7 +1423,10 @@ Future<void> _section10WidgetMediaLifecycleProof(
   );
   expect(onlineDelivered.keyGeneration, 4);
   final onlineReaderMedia = await onlineReader.mediaAttachmentRepo
-      .getAttachmentsForMessage(onlineDelivered.id, owner: MediaOwnerLane.group);
+      .getAttachmentsForMessage(
+        onlineDelivered.id,
+        owner: MediaOwnerLane.group,
+      );
   expect(onlineReaderMedia, hasLength(1));
   expect(onlineReaderMedia.single.id, uploadedBlobId);
 
@@ -1431,7 +1436,8 @@ Future<void> _section10WidgetMediaLifecycleProof(
   );
   expect(readerDelivered.keyGeneration, 4);
   final readerMedia = await reader.mediaAttachmentRepo.getAttachmentsForMessage(
-    readerDelivered.id, owner: MediaOwnerLane.group,
+    readerDelivered.id,
+    owner: MediaOwnerLane.group,
   );
   expect(readerMedia, hasLength(1));
   expect(readerMedia.single.id, uploadedBlobId);
@@ -1613,7 +1619,10 @@ Future<void> _section10WidgetVoiceLifecycleProof(
     (message) => message.id == sent.id,
   );
   final onlineReaderMedia = await onlineReader.mediaAttachmentRepo
-      .getAttachmentsForMessage(onlineDelivered.id, owner: MediaOwnerLane.group);
+      .getAttachmentsForMessage(
+        onlineDelivered.id,
+        owner: MediaOwnerLane.group,
+      );
   expect(onlineReaderMedia, hasLength(1));
   expect(onlineReaderMedia.single.mediaType, 'audio');
 
@@ -1622,7 +1631,8 @@ Future<void> _section10WidgetVoiceLifecycleProof(
     (message) => message.id == sent.id,
   );
   final readerMedia = await reader.mediaAttachmentRepo.getAttachmentsForMessage(
-    readerDelivered.id, owner: MediaOwnerLane.group,
+    readerDelivered.id,
+    owner: MediaOwnerLane.group,
   );
   expect(readerMedia, hasLength(1));
   expect(readerMedia.single.mediaType, 'audio');
@@ -5435,7 +5445,10 @@ void main() {
         expect(delivered.keyGeneration, 4);
 
         final deliveredMedia = await reader.mediaAttachmentRepo
-            .getAttachmentsForMessage(delivered.id, owner: MediaOwnerLane.group);
+            .getAttachmentsForMessage(
+              delivered.id,
+              owner: MediaOwnerLane.group,
+            );
         expect(deliveredMedia, hasLength(1));
         expect(deliveredMedia.single.id, 'att-proof-1');
         expect(deliveredMedia.single.mediaType, 'image');
@@ -11375,7 +11388,8 @@ void main() {
             hasLength(1),
           );
           final media = await bob.mediaAttachmentRepo.getAttachmentsForMessage(
-            mediaMessageId, owner: MediaOwnerLane.group,
+            mediaMessageId,
+            owner: MediaOwnerLane.group,
           );
           expect(media, hasLength(1));
           expect(media.single.id, 'st013-offline-media-att');

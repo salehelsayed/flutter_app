@@ -84,6 +84,8 @@ import 'package:flutter_app/core/database/migrations/081_group_pending_reactions
 import 'package:flutter_app/core/database/migrations/082_message_reaction_tombstone.dart';
 import 'package:flutter_app/core/database/migrations/083_groups_last_membership_event_id.dart';
 import 'package:flutter_app/core/database/migrations/086_pending_group_broadcasts.dart';
+import 'package:flutter_app/core/database/migrations/100_direct_private_media_lifecycle.dart';
+import 'package:flutter_app/core/database/migrations/101_group_private_media_lifecycle.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
@@ -308,6 +310,11 @@ void main() {
     // source of the actual v97 migration function.
     await productionUpgradeMigrations
         .singleWhere((entry) => entry.version == 97)
+        .run(db);
+    // Plan 234 advances the same hand-driven repository fixture to the v100
+    // direct-parent shape. v98/v99 are group-only and do not gate this model.
+    await productionUpgradeMigrations
+        .singleWhere((entry) => entry.version == 100)
         .run(db);
   }
 
@@ -1451,58 +1458,269 @@ void main() {
   });
 
   group('Production migration registries (TC-228-01)', () {
-    test('production registries contain one ordered direct forwarded v97 entry', () {
-      expect(currentIdentityDatabaseVersion, 99);
-      for (final registry in [
-        productionCreateMigrations,
-        productionUpgradeMigrations,
-      ]) {
-        expect(registry.where((entry) => entry.version == 97), hasLength(1));
-        final index96 = registry.indexWhere((entry) => entry.version == 96);
-        final index97 = registry.indexWhere((entry) => entry.version == 97);
-        expect(index96, greaterThanOrEqualTo(0));
-        expect(index97, index96 + 1);
-        expect(registry[index97].name, '097_direct_message_forwarded');
-      }
-    });
+    test(
+      'production registries contain one ordered direct forwarded v97 entry',
+      () {
+        expect(currentIdentityDatabaseVersion, 101);
+        for (final registry in [
+          productionCreateMigrations,
+          productionUpgradeMigrations,
+        ]) {
+          expect(registry.where((entry) => entry.version == 97), hasLength(1));
+          final index96 = registry.indexWhere((entry) => entry.version == 96);
+          final index97 = registry.indexWhere((entry) => entry.version == 97);
+          expect(index96, greaterThanOrEqualTo(0));
+          expect(index97, index96 + 1);
+          expect(registry[index97].name, '097_direct_message_forwarded');
+        }
+      },
+    );
 
     // 235: DB v98 — group media deletion journal appended exactly once to
     // BOTH production registries, immediately after v97.
-    test('production registries contain one ordered deletion journal v98 entry', () {
-      expect(currentIdentityDatabaseVersion, 99);
-      for (final registry in [
-        productionCreateMigrations,
-        productionUpgradeMigrations,
-      ]) {
-        expect(registry.where((entry) => entry.version == 98), hasLength(1));
-        final index97 = registry.indexWhere((entry) => entry.version == 97);
-        final index98 = registry.indexWhere((entry) => entry.version == 98);
-        expect(index97, greaterThanOrEqualTo(0));
-        expect(index98, index97 + 1);
-        expect(registry[index98].name, '098_group_media_deletion_journal');
-      }
-    });
+    test(
+      'production registries contain one ordered deletion journal v98 entry',
+      () {
+        expect(currentIdentityDatabaseVersion, 101);
+        for (final registry in [
+          productionCreateMigrations,
+          productionUpgradeMigrations,
+        ]) {
+          expect(registry.where((entry) => entry.version == 98), hasLength(1));
+          final index97 = registry.indexWhere((entry) => entry.version == 97);
+          final index98 = registry.indexWhere((entry) => entry.version == 98);
+          expect(index97, greaterThanOrEqualTo(0));
+          expect(index98, index97 + 1);
+          expect(registry[index98].name, '098_group_media_deletion_journal');
+        }
+      },
+    );
+    test(
+      'production registries preserve v100 and end with group private v101',
+      () {
+        expect(currentIdentityDatabaseVersion, 101);
+        for (final registry in [
+          productionCreateMigrations,
+          productionUpgradeMigrations,
+        ]) {
+          final index99 = registry.indexWhere((entry) => entry.version == 99);
+          final index100 = registry.indexWhere((entry) => entry.version == 100);
+          final index101 = registry.indexWhere((entry) => entry.version == 101);
+          expect(registry.where((entry) => entry.version == 100), hasLength(1));
+          expect(registry.where((entry) => entry.version == 101), hasLength(1));
+          expect(index99, greaterThanOrEqualTo(0));
+          expect(index100, index99 + 1);
+          expect(index101, index100 + 1);
+          expect(index101, registry.length - 1);
+          expect(registry[index100].name, '100_direct_private_media_lifecycle');
+          expect(
+            registry[index100].run,
+            same(runDirectPrivateMediaLifecycleMigration),
+          );
+          expect(registry[index101].name, '101_group_private_media_lifecycle');
+          expect(
+            registry[index101].run,
+            same(runGroupPrivateMediaLifecycleMigration),
+          );
+        }
+      },
+    );
 
     // The exact onCreate call order in main.dart through v95. Fresh installs
     // deliberately skip 004 (nullable secrets — 005 already ships nullable +
     // CHECK) and run 005 inline; 042 runs immediately after 010.
     const expectedCreateOrder = <int>[
-      1, 2, 3, 5, 6, 7, 8, 9, 10, 42, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-      21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38,
-      39, 40, 41, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57,
-      58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75,
-      76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93,
-      94, 95,
+      1,
+      2,
+      3,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      42,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60,
+      61,
+      62,
+      63,
+      64,
+      65,
+      66,
+      67,
+      68,
+      69,
+      70,
+      71,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      82,
+      83,
+      84,
+      85,
+      86,
+      87,
+      88,
+      89,
+      90,
+      91,
+      92,
+      93,
+      94,
+      95,
     ];
     // The exact onUpgrade guard order in main.dart through v95. Upgrades run
     // 004 but defer 005 to post-open (main.dart runs it after secrets
     // migration); 042 runs immediately after 010, before 011.
     const expectedUpgradeOrder = <int>[
-      2, 3, 4, 6, 7, 8, 9, 10, 42, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
-      22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
-      40, 41, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
-      59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76,
-      77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94,
+      2,
+      3,
+      4,
+      6,
+      7,
+      8,
+      9,
+      10,
+      42,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60,
+      61,
+      62,
+      63,
+      64,
+      65,
+      66,
+      67,
+      68,
+      69,
+      70,
+      71,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      82,
+      83,
+      84,
+      85,
+      86,
+      87,
+      88,
+      89,
+      90,
+      91,
+      92,
+      93,
+      94,
       95,
     ];
 
@@ -1612,137 +1830,389 @@ void main() {
       },
     );
 
-    test(
-      'production create and v95 upgrade registries include media library '
-      'state v96',
-      () async {
-        // TC-228-13: v96 is the current version and appears exactly once, as
-        // the final entry, in BOTH production registry branches.
-        expect(currentIdentityDatabaseVersion, 99);
-        expect(
-          productionCreateMigrations.where((e) => e.version == 96).length,
-          1,
-        );
-        expect(
-          productionUpgradeMigrations.where((e) => e.version == 96).length,
-          1,
-        );
-        final create96 = productionCreateMigrations.indexWhere(
-          (entry) => entry.version == 96,
-        );
-        final upgrade96 = productionUpgradeMigrations.indexWhere(
-          (entry) => entry.version == 96,
-        );
-        expect(
-          productionCreateMigrations[create96].name,
-          '096_media_library_state',
-        );
-        expect(productionCreateMigrations[create96 + 1].version, 97);
-        expect(productionUpgradeMigrations[upgrade96 + 1].version, 97);
+    test('production create and v95 upgrade registries include media library '
+        'state v96', () async {
+      // TC-228-13: v96 is the current version and appears exactly once, as
+      // the final entry, in BOTH production registry branches.
+      expect(currentIdentityDatabaseVersion, 101);
+      expect(
+        productionCreateMigrations.where((e) => e.version == 96).length,
+        1,
+      );
+      expect(
+        productionUpgradeMigrations.where((e) => e.version == 96).length,
+        1,
+      );
+      final create96 = productionCreateMigrations.indexWhere(
+        (entry) => entry.version == 96,
+      );
+      final upgrade96 = productionUpgradeMigrations.indexWhere(
+        (entry) => entry.version == 96,
+      );
+      expect(
+        productionCreateMigrations[create96].name,
+        '096_media_library_state',
+      );
+      expect(productionCreateMigrations[create96 + 1].version, 97);
+      expect(productionUpgradeMigrations[upgrade96 + 1].version, 97);
 
-        Future<void> expectV96Artifacts(Database db) async {
-          final userVersion = (await db.rawQuery(
-            'PRAGMA user_version',
-          )).first.values.first;
-          expect(userVersion, currentIdentityDatabaseVersion);
-          final cols = (await db.rawQuery(
-            'PRAGMA table_info(media_attachments)',
-          )).map((c) => c['name'] as String).toSet();
-          expect(
-            cols,
-            containsAll([
-              'owner_lane',
-              'is_bookmarked',
-              'last_playback_position_ms',
-            ]),
-          );
-          final indexNames = (await db.rawQuery(
-            "SELECT name FROM sqlite_master WHERE type='index' "
-            "AND tbl_name='media_attachments'",
-          )).map((r) => r['name'] as String).toList();
-          expect(indexNames, contains('idx_media_attachments_owner_message'));
-          expect(
-            indexNames,
-            contains('idx_media_attachments_owner_bookmark_message'),
-          );
-        }
+      Future<void> expectV96Artifacts(Database db) async {
+        final userVersion = (await db.rawQuery(
+          'PRAGMA user_version',
+        )).first.values.first;
+        expect(userVersion, currentIdentityDatabaseVersion);
+        final cols = (await db.rawQuery(
+          'PRAGMA table_info(media_attachments)',
+        )).map((c) => c['name'] as String).toSet();
+        expect(
+          cols,
+          containsAll([
+            'owner_lane',
+            'is_bookmarked',
+            'last_playback_position_ms',
+          ]),
+        );
+        final indexNames = (await db.rawQuery(
+          "SELECT name FROM sqlite_master WHERE type='index' "
+          "AND tbl_name='media_attachments'",
+        )).map((r) => r['name'] as String).toList();
+        expect(indexNames, contains('idx_media_attachments_owner_message'));
+        expect(
+          indexNames,
+          contains('idx_media_attachments_owner_bookmark_message'),
+        );
+      }
 
-        final tempDir = await Directory.systemTemp.createTemp(
-          'registry_v96_inclusion_',
+      final tempDir = await Directory.systemTemp.createTemp(
+        'registry_v96_inclusion_',
+      );
+      try {
+        // Fresh create at the current version reaches v96.
+        final createPath = '${tempDir.path}/create_v96.db';
+        final created = await databaseFactoryFfi.openDatabase(
+          createPath,
+          options: OpenDatabaseOptions(
+            version: currentIdentityDatabaseVersion,
+            onCreate: runProductionOnCreate,
+            onUpgrade: runProductionOnUpgrade,
+          ),
         );
         try {
-          // Fresh create at the current version reaches v96.
-          final createPath = '${tempDir.path}/create_v96.db';
-          final created = await databaseFactoryFfi.openDatabase(
-            createPath,
-            options: OpenDatabaseOptions(
-              version: currentIdentityDatabaseVersion,
-              onCreate: runProductionOnCreate,
-              onUpgrade: runProductionOnUpgrade,
-            ),
-          );
-          try {
-            await expectV96Artifacts(created);
-          } finally {
-            await created.close();
-          }
+          await expectV96Artifacts(created);
+        } finally {
+          await created.close();
+        }
 
-          // Literal v95 database (production create callback), seeded, then
-          // reopened through the production v96 upgrade callback.
-          final upgradePath = '${tempDir.path}/upgrade_v96.db';
-          final v95 = await databaseFactoryFfi.openDatabase(
-            upgradePath,
+        // Literal v95 database (production create callback), seeded, then
+        // reopened through the production v96 upgrade callback.
+        final upgradePath = '${tempDir.path}/upgrade_v96.db';
+        final v95 = await databaseFactoryFfi.openDatabase(
+          upgradePath,
+          options: OpenDatabaseOptions(
+            version: 95,
+            onCreate: runProductionOnCreate,
+            onUpgrade: runProductionOnUpgrade,
+          ),
+        );
+        await v95.insert('messages', {
+          'id': 'msg-v96-upgrade',
+          'contact_peer_id': 'contact-1',
+          'sender_peer_id': 'contact-1',
+          'text': 'pre-upgrade parent',
+          'timestamp': '2026-07-01T00:00:00.000Z',
+          'status': 'delivered',
+          'is_incoming': 1,
+          'created_at': '2026-07-01T00:00:00.000Z',
+        });
+        await v95.insert('media_attachments', {
+          'id': 'att-v96-upgrade',
+          'message_id': 'msg-v96-upgrade',
+          'mime': 'image/jpeg',
+          'size': 42,
+          'media_type': 'image',
+          'download_status': 'done',
+          'created_at': '2026-07-01T00:00:01.000Z',
+        });
+        await v95.close();
+
+        final upgraded = await databaseFactoryFfi.openDatabase(
+          upgradePath,
+          options: OpenDatabaseOptions(
+            version: currentIdentityDatabaseVersion,
+            onCreate: runProductionOnCreate,
+            onUpgrade: runProductionOnUpgrade,
+          ),
+        );
+        try {
+          await expectV96Artifacts(upgraded);
+          final att = await upgraded.query(
+            'media_attachments',
+            where: 'id = ?',
+            whereArgs: ['att-v96-upgrade'],
+          );
+          expect(att, hasLength(1));
+          expect(att.single['owner_lane'], 'direct');
+          expect(att.single['is_bookmarked'], 0);
+          expect(att.single['last_playback_position_ms'], 0);
+        } finally {
+          await upgraded.close();
+        }
+      } finally {
+        await tempDir.delete(recursive: true);
+      }
+    });
+
+    test(
+      'production fresh and 99 to 100 chains reopen rerun and reject downgrade',
+      () async {
+        final tempDir = await Directory.systemTemp.createTemp(
+          'registry_v100_chain_',
+        );
+        final predecessorPath = '${tempDir.path}/predecessor.db';
+        final freshPath = '${tempDir.path}/fresh.db';
+        try {
+          var predecessor = await databaseFactoryFfi.openDatabase(
+            predecessorPath,
             options: OpenDatabaseOptions(
-              version: 95,
+              version: 99,
               onCreate: runProductionOnCreate,
               onUpgrade: runProductionOnUpgrade,
             ),
           );
-          await v95.insert('messages', {
-            'id': 'msg-v96-upgrade',
+          await predecessor.insert('messages', {
+            'id': 'v99-parent',
             'contact_peer_id': 'contact-1',
             'sender_peer_id': 'contact-1',
-            'text': 'pre-upgrade parent',
-            'timestamp': '2026-07-01T00:00:00.000Z',
+            'text': 'predecessor',
+            'timestamp': '2026-07-11T00:00:00.000Z',
             'status': 'delivered',
             'is_incoming': 1,
-            'created_at': '2026-07-01T00:00:00.000Z',
+            'created_at': '2026-07-11T00:00:00.000Z',
+            'is_forwarded': 1,
           });
-          await v95.insert('media_attachments', {
-            'id': 'att-v96-upgrade',
-            'message_id': 'msg-v96-upgrade',
-            'mime': 'image/jpeg',
-            'size': 42,
-            'media_type': 'image',
-            'download_status': 'done',
-            'created_at': '2026-07-01T00:00:01.000Z',
-          });
-          await v95.close();
+          await predecessor.close();
 
-          final upgraded = await databaseFactoryFfi.openDatabase(
-            upgradePath,
+          predecessor = await databaseFactoryFfi.openDatabase(
+            predecessorPath,
             options: OpenDatabaseOptions(
-              version: currentIdentityDatabaseVersion,
+              version: 100,
+              onCreate: runProductionOnCreate,
+              onUpgrade: runProductionOnUpgrade,
+              onDowngrade: onDatabaseVersionChangeError,
+            ),
+          );
+          final entry = productionUpgradeMigrations.singleWhere(
+            (candidate) => candidate.version == 100,
+          );
+          await entry.run(predecessor);
+          await entry.run(predecessor);
+          final upgraded = (await predecessor.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: ['v99-parent'],
+          )).single;
+          expect(upgraded['is_forwarded'], 1);
+          expect(upgraded['private_media_policy_version'], 0);
+          expect(upgraded['private_media_mode'], 'ordinary');
+          expect(upgraded['private_media_state'], 'none');
+          await predecessor.update(
+            'messages',
+            {
+              'private_media_policy_version': 1,
+              'private_media_mode': 'view_once',
+              'private_media_state': 'viewing',
+              'private_media_received_at_ms': 1000,
+              'private_media_revealed_at_ms': 2000,
+              'private_media_clock_high_water_ms': 2000,
+            },
+            where: 'id = ?',
+            whereArgs: ['v99-parent'],
+          );
+          await predecessor.close();
+
+          predecessor = await databaseFactoryFfi.openDatabase(
+            predecessorPath,
+            options: OpenDatabaseOptions(
+              version: 100,
+              onCreate: runProductionOnCreate,
+              onUpgrade: runProductionOnUpgrade,
+              onDowngrade: onDatabaseVersionChangeError,
+            ),
+          );
+          final reopened = (await predecessor.query('messages')).single;
+          expect(reopened['private_media_mode'], 'view_once');
+          expect(reopened['private_media_state'], 'viewing');
+          expect(reopened['private_media_received_at_ms'], 1000);
+          expect(reopened['private_media_revealed_at_ms'], 2000);
+          await predecessor.close();
+
+          await expectLater(
+            databaseFactoryFfi.openDatabase(
+              predecessorPath,
+              options: OpenDatabaseOptions(
+                version: 99,
+                onDowngrade: onDatabaseVersionChangeError,
+              ),
+            ),
+            throwsA(anything),
+          );
+
+          final fresh = await databaseFactoryFfi.openDatabase(
+            freshPath,
+            options: OpenDatabaseOptions(
+              version: 100,
+              onCreate: runProductionOnCreate,
+              onUpgrade: runProductionOnUpgrade,
+              onDowngrade: onDatabaseVersionChangeError,
+            ),
+          );
+          final freshColumns = (await fresh.rawQuery(
+            'PRAGMA table_info(messages)',
+          )).map((row) => row['name'] as String).toSet();
+          expect(
+            freshColumns,
+            containsAll({
+              'private_media_policy_version',
+              'private_media_mode',
+              'private_media_duration_seconds',
+              'private_media_state',
+              'private_media_received_at_ms',
+              'private_media_expires_at_ms',
+              'private_media_revealed_at_ms',
+              'private_media_terminal_at_ms',
+              'private_media_clock_high_water_ms',
+            }),
+          );
+          final indexes = (await fresh.rawQuery(
+            "SELECT name FROM sqlite_master WHERE type='index' "
+            "AND tbl_name='messages'",
+          )).map((row) => row['name']);
+          expect(indexes, contains('idx_messages_private_media_expiry'));
+          await fresh.close();
+        } finally {
+          if (await tempDir.exists()) await tempDir.delete(recursive: true);
+        }
+      },
+    );
+
+    test(
+      'production fresh and 100 to 101 chains preserve v100 and group rows',
+      () async {
+        final tempDir = await Directory.systemTemp.createTemp(
+          'registry_v101_chain_',
+        );
+        final predecessorPath = '${tempDir.path}/predecessor.db';
+        final freshPath = '${tempDir.path}/fresh.db';
+        try {
+          var predecessor = await databaseFactoryFfi.openDatabase(
+            predecessorPath,
+            options: OpenDatabaseOptions(
+              version: 100,
               onCreate: runProductionOnCreate,
               onUpgrade: runProductionOnUpgrade,
             ),
           );
-          try {
-            await expectV96Artifacts(upgraded);
-            final att = await upgraded.query(
-              'media_attachments',
-              where: 'id = ?',
-              whereArgs: ['att-v96-upgrade'],
-            );
-            expect(att, hasLength(1));
-            expect(att.single['owner_lane'], 'direct');
-            expect(att.single['is_bookmarked'], 0);
-            expect(att.single['last_playback_position_ms'], 0);
-          } finally {
-            await upgraded.close();
-          }
+          await predecessor.insert('messages', {
+            'id': 'same-id',
+            'contact_peer_id': 'contact-1',
+            'sender_peer_id': 'contact-1',
+            'text': 'direct predecessor',
+            'timestamp': '2026-07-12T00:00:00.000Z',
+            'status': 'delivered',
+            'is_incoming': 1,
+            'created_at': '2026-07-12T00:00:00.000Z',
+            'private_media_policy_version': 1,
+            'private_media_mode': 'view_once',
+            'private_media_state': 'available',
+          });
+          await predecessor.insert('group_messages', {
+            'id': 'same-id',
+            'group_id': 'group-1',
+            'sender_peer_id': 'peer-1',
+            'sender_username': 'Alice',
+            'text': 'group predecessor',
+            'timestamp': '2026-07-12T00:00:00.000Z',
+            'key_generation': 1,
+            'status': 'delivered',
+            'is_incoming': 1,
+            'created_at': '2026-07-12T00:00:00.000Z',
+          });
+          await predecessor.close();
+
+          predecessor = await databaseFactoryFfi.openDatabase(
+            predecessorPath,
+            options: OpenDatabaseOptions(
+              version: 101,
+              onCreate: runProductionOnCreate,
+              onUpgrade: runProductionOnUpgrade,
+              onDowngrade: onDatabaseVersionChangeError,
+            ),
+          );
+          final entry = productionUpgradeMigrations.singleWhere(
+            (candidate) => candidate.version == 101,
+          );
+          await entry.run(predecessor);
+          await entry.run(predecessor);
+          final direct = (await predecessor.query('messages')).single;
+          final group = (await predecessor.query('group_messages')).single;
+          expect(direct['private_media_mode'], 'view_once');
+          expect(direct['private_media_state'], 'available');
+          expect(group['id'], 'same-id');
+          expect(group['media_policy_version'], 0);
+          expect(group['media_lifecycle'], 'standard');
+          expect(group['media_protected'], 0);
+          expect(group['media_cleanup_pending'], 0);
+          final groupIndexes = (await predecessor.rawQuery(
+            "SELECT name FROM sqlite_master WHERE type='index' "
+            "AND tbl_name='group_messages'",
+          )).map((row) => row['name']);
+          expect(
+            groupIndexes,
+            contains('idx_group_messages_private_media_expiry'),
+          );
+          await predecessor.close();
+
+          await expectLater(
+            databaseFactoryFfi.openDatabase(
+              predecessorPath,
+              options: OpenDatabaseOptions(
+                version: 100,
+                onDowngrade: onDatabaseVersionChangeError,
+              ),
+            ),
+            throwsA(anything),
+          );
+
+          final fresh = await databaseFactoryFfi.openDatabase(
+            freshPath,
+            options: OpenDatabaseOptions(
+              version: 101,
+              onCreate: runProductionOnCreate,
+              onUpgrade: runProductionOnUpgrade,
+              onDowngrade: onDatabaseVersionChangeError,
+            ),
+          );
+          final freshColumns = (await fresh.rawQuery(
+            'PRAGMA table_info(group_messages)',
+          )).map((row) => row['name'] as String).toSet();
+          expect(
+            freshColumns,
+            containsAll({
+              'media_policy_version',
+              'media_lifecycle',
+              'media_duration_seconds',
+              'media_protected',
+              'media_received_at',
+              'media_expires_at',
+              'media_last_checked_at',
+              'media_consumed_at',
+              'media_expired_at',
+              'media_cleanup_pending',
+            }),
+          );
+          await fresh.close();
         } finally {
-          await tempDir.delete(recursive: true);
+          if (await tempDir.exists()) await tempDir.delete(recursive: true);
         }
       },
     );

@@ -1,5 +1,7 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
+import '../db_write_transaction.dart';
+import '../../media/media_file_path_convention.dart';
 import '../../utils/flow_event_emitter.dart';
 
 const _visibleMessageFilter = 'hidden_at IS NULL';
@@ -15,11 +17,71 @@ Future<void> dbInsertMessage(Database db, Map<String, Object?> row) async {
   );
 
   try {
-    await db.insert(
-      'messages',
-      row,
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await dbWriteTransaction(db, (txn) async {
+      final existingRows = await txn.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      final merged = Map<String, Object?>.from(row);
+      if (existingRows.isNotEmpty) {
+        final existing = existingRows.single;
+        final version = (existing['private_media_policy_version'] as num?)
+            ?.toInt();
+        final mode = existing['private_media_mode'] as String?;
+        final existingIsRedacted =
+            version != null &&
+            version > 0 &&
+            const {
+              'protected',
+              'view_once',
+              'disappearing',
+              'unsupported',
+            }.contains(mode);
+        if (existingIsRedacted) {
+          for (final column in const [
+            'private_media_policy_version',
+            'private_media_mode',
+            'private_media_duration_seconds',
+            'private_media_state',
+            'private_media_received_at_ms',
+            'private_media_expires_at_ms',
+            'private_media_revealed_at_ms',
+            'private_media_terminal_at_ms',
+            'hidden_at',
+          ]) {
+            merged[column] = existing[column];
+          }
+          if (existing['deleted_at'] != null) {
+            merged['deleted_at'] = existing['deleted_at'];
+            merged['deleted_by_peer_id'] = existing['deleted_by_peer_id'];
+          }
+          final existingHighWater =
+              (existing['private_media_clock_high_water_ms'] as num?)
+                  ?.toInt() ??
+              0;
+          final incomingHighWater =
+              (merged['private_media_clock_high_water_ms'] as num?)?.toInt() ??
+              0;
+          merged['private_media_clock_high_water_ms'] =
+              existingHighWater > incomingHighWater
+              ? existingHighWater
+              : incomingHighWater;
+          // A hidden/deleted private tombstone has already scrubbed content;
+          // a stale full-row save may never restore it.
+          if (existing['hidden_at'] != null || existing['deleted_at'] != null) {
+            merged['text'] = existing['text'];
+            merged['wire_envelope'] = existing['wire_envelope'];
+          }
+        }
+      }
+      if (existingRows.isEmpty) {
+        await txn.insert('messages', merged);
+      } else {
+        await txn.update('messages', merged, where: 'id = ?', whereArgs: [id]);
+      }
+    });
 
     emitFlowEvent(
       layer: 'DB',
@@ -992,4 +1054,397 @@ Future<void> dbUpdateWireEnvelope(
     );
     rethrow;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Direct private-media lifecycle (Plan 234 / Session 03)
+// ---------------------------------------------------------------------------
+
+/// CAS: only one visible incoming View Once parent may claim `available` as
+/// `opening`. The persisted clock high-water is monotonic even though View Once
+/// itself has no timer.
+Future<int> dbClaimDirectPrivateMediaOpening(
+  Database db,
+  String id, {
+  required int nowMs,
+}) {
+  return db.rawUpdate(
+    "UPDATE messages SET private_media_state = 'opening', "
+    'private_media_clock_high_water_ms = '
+    'MAX(COALESCE(private_media_clock_high_water_ms, 0), ?) '
+    "WHERE id = ? AND is_incoming = 1 AND hidden_at IS NULL "
+    "AND deleted_at IS NULL AND private_media_policy_version = 1 "
+    "AND private_media_mode = 'view_once' "
+    "AND private_media_state = 'available' "
+    'AND private_media_terminal_at_ms IS NULL',
+    [nowMs, id],
+  );
+}
+
+/// CAS: records the first rendered frame exactly once for View Once.
+Future<int> dbMarkDirectPrivateMediaViewing(
+  Database db,
+  String id, {
+  required int nowMs,
+}) {
+  return db.rawUpdate(
+    "UPDATE messages SET private_media_state = 'viewing', "
+    'private_media_revealed_at_ms = '
+    'COALESCE(private_media_revealed_at_ms, ?), '
+    'private_media_clock_high_water_ms = '
+    'MAX(COALESCE(private_media_clock_high_water_ms, 0), ?) '
+    "WHERE id = ? AND is_incoming = 1 AND hidden_at IS NULL "
+    "AND deleted_at IS NULL AND private_media_policy_version = 1 "
+    "AND private_media_mode = 'view_once' "
+    "AND private_media_state = 'opening' "
+    'AND private_media_terminal_at_ms IS NULL',
+    [nowMs, nowMs, id],
+  );
+}
+
+/// CAS used only after the engine proves ownership of the same-process,
+/// pre-first-frame lease. Persisted state alone never grants rollback.
+Future<int> dbRollbackDirectPrivateMediaOpening(Database db, String id) {
+  return db.rawUpdate(
+    "UPDATE messages SET private_media_state = 'available' "
+    "WHERE id = ? AND is_incoming = 1 AND hidden_at IS NULL "
+    "AND deleted_at IS NULL AND private_media_policy_version = 1 "
+    "AND private_media_mode = 'view_once' "
+    "AND private_media_state = 'opening' "
+    'AND private_media_revealed_at_ms IS NULL '
+    'AND private_media_terminal_at_ms IS NULL',
+    [id],
+  );
+}
+
+/// CAS terminal claim for View Once. File/key cleanup must happen only after
+/// this write succeeds (or after a later pass observes the durable terminal).
+Future<int> dbConsumeDirectPrivateMedia(
+  Database db,
+  String id, {
+  required int nowMs,
+}) {
+  return db.rawUpdate(
+    "UPDATE messages SET private_media_state = 'consumed', "
+    'private_media_terminal_at_ms = '
+    'COALESCE(private_media_terminal_at_ms, ?), '
+    'private_media_clock_high_water_ms = '
+    'MAX(COALESCE(private_media_clock_high_water_ms, 0), ?) '
+    "WHERE id = ? AND is_incoming = 1 AND hidden_at IS NULL "
+    "AND deleted_at IS NULL AND private_media_policy_version = 1 "
+    "AND private_media_mode = 'view_once' "
+    "AND private_media_state IN ('opening', 'viewing') "
+    'AND private_media_terminal_at_ms IS NULL',
+    [nowMs, nowMs, id],
+  );
+}
+
+/// Atomically advances receiver-local clock state and expires a disappearing
+/// parent at `effectiveNow >= expiresAt`. Normal rows expire from `available`;
+/// impossible legacy/corrupt opening/viewing rows are terminalized fail closed.
+/// Returns 1 when the addressed visible disappearing row was evaluated.
+Future<int> dbAdvanceDirectPrivateMediaClockWithinTransaction(
+  DatabaseExecutor txn,
+  String id, {
+  required int nowMs,
+}) async {
+  final evaluated = await txn.rawUpdate(
+    'UPDATE messages SET private_media_clock_high_water_ms = '
+    'MAX(COALESCE(private_media_clock_high_water_ms, 0), ?) '
+    "WHERE id = ? AND is_incoming = 1 AND hidden_at IS NULL "
+    "AND deleted_at IS NULL AND private_media_policy_version = 1 "
+    "AND private_media_mode = 'disappearing' "
+    "AND private_media_state IN ('available', 'opening', 'viewing') "
+    'AND private_media_terminal_at_ms IS NULL '
+    'AND private_media_expires_at_ms IS NOT NULL',
+    [nowMs, id],
+  );
+  if (evaluated == 0) return 0;
+  await txn.rawUpdate(
+    "UPDATE messages SET private_media_state = 'expired', "
+    'private_media_terminal_at_ms = '
+    'COALESCE(private_media_terminal_at_ms, '
+    'private_media_clock_high_water_ms) '
+    "WHERE id = ? AND private_media_mode = 'disappearing' "
+    "AND private_media_state IN ('available', 'opening', 'viewing') "
+    'AND private_media_terminal_at_ms IS NULL '
+    'AND private_media_expires_at_ms IS NOT NULL '
+    'AND private_media_clock_high_water_ms >= private_media_expires_at_ms',
+    [id],
+  );
+  return evaluated;
+}
+
+/// Shared write-side qualification for every direct-private attachment
+/// mutation. The monotonic clock/rollback decision and the final active-parent
+/// predicate run in the caller's transaction, so guarded save, local-ready,
+/// failure, and final download commit cannot drift from expiry semantics.
+Future<bool> dbAdvanceAndQualifyDirectPrivateMediaParentWithinTransaction(
+  DatabaseExecutor txn,
+  String id, {
+  required int nowMs,
+}) async {
+  await dbAdvanceDirectPrivateMediaClockWithinTransaction(
+    txn,
+    id,
+    nowMs: nowMs,
+  );
+  final parent = await txn.rawQuery(
+    'SELECT 1 FROM messages WHERE id = ? AND is_incoming = 1 '
+    'AND hidden_at IS NULL AND deleted_at IS NULL '
+    'AND private_media_policy_version = 1 '
+    "AND private_media_mode IN ('protected','view_once','disappearing') "
+    "AND private_media_state = 'available' "
+    'AND private_media_terminal_at_ms IS NULL '
+    "AND (private_media_mode != 'disappearing' OR ("
+    'private_media_expires_at_ms IS NOT NULL AND '
+    'private_media_clock_high_water_ms IS NOT NULL AND '
+    'private_media_clock_high_water_ms < private_media_expires_at_ms)) '
+    'LIMIT 1',
+    [id],
+  );
+  return parent.isNotEmpty;
+}
+
+Future<int> dbAdvanceDirectPrivateMediaClock(
+  Database db,
+  String id, {
+  required int nowMs,
+}) {
+  return dbWriteTransaction(
+    db,
+    (txn) => dbAdvanceDirectPrivateMediaClockWithinTransaction(
+      txn,
+      id,
+      nowMs: nowMs,
+    ),
+  );
+}
+
+/// Impossible/corrupt non-View-Once opening/viewing rows fail closed to the
+/// existing terminal `unsupported` state; they never become a normal mode
+/// transition or regain availability.
+Future<int> dbFailClosedCorruptDirectPrivateMediaState(
+  Database db,
+  String id, {
+  required int nowMs,
+}) {
+  return db.rawUpdate(
+    "UPDATE messages SET private_media_state = 'unsupported', "
+    'private_media_terminal_at_ms = '
+    'COALESCE(private_media_terminal_at_ms, ?), '
+    'private_media_clock_high_water_ms = '
+    'MAX(COALESCE(private_media_clock_high_water_ms, 0), ?) '
+    "WHERE id = ? AND is_incoming = 1 AND hidden_at IS NULL "
+    "AND deleted_at IS NULL AND private_media_policy_version = 1 "
+    "AND private_media_mode IN ('protected', 'disappearing') "
+    "AND private_media_state IN ('opening', 'viewing') "
+    'AND private_media_terminal_at_ms IS NULL',
+    [nowMs, nowMs, id],
+  );
+}
+
+/// Durable local Delete-for-me authority for private/unsupported direct rows.
+/// The existing lifecycle state is intentionally retained: protected and
+/// disappearing content must never be mislabeled consumed/expired.
+Future<int> dbHideDirectPrivateMediaForMe(
+  Database db,
+  String id, {
+  required String hiddenAt,
+  required int nowMs,
+}) {
+  return db.rawUpdate(
+    'UPDATE messages SET hidden_at = ?, text = ?, wire_envelope = NULL, '
+    'private_media_terminal_at_ms = '
+    'COALESCE(private_media_terminal_at_ms, ?), '
+    'private_media_clock_high_water_ms = '
+    'MAX(COALESCE(private_media_clock_high_water_ms, 0), ?) '
+    'WHERE id = ? AND hidden_at IS NULL '
+    "AND private_media_mode IN "
+    "('protected', 'view_once', 'disappearing', 'unsupported')",
+    [hiddenAt, '', nowMs, nowMs, id],
+  );
+}
+
+/// Cross-table final commit for a direct private download.
+///
+/// Parent high-water/expiry evaluation and the exact attachment
+/// `downloading -> done` path commit share one SQLite transaction. A process
+/// lock orders file/key I/O, while this predicate is the durable authority
+/// across processes and crashes.
+Future<int> dbCommitDirectPrivateMediaDownloadIfEligible(
+  Database db, {
+  required String messageId,
+  required String attachmentId,
+  required String localPath,
+  required int nowMs,
+}) {
+  return dbWriteTransaction(db, (txn) async {
+    final identity = await txn.rawQuery(
+      'SELECT parent.contact_peer_id AS contact_peer_id, '
+      'attachment.mime AS mime FROM media_attachments attachment '
+      'JOIN messages parent ON parent.id = attachment.message_id '
+      'WHERE attachment.id = ? AND attachment.message_id = ? '
+      "AND attachment.owner_lane = 'direct' LIMIT 1",
+      [attachmentId, messageId],
+    );
+    if (identity.isEmpty) return 0;
+    final expectedLocalPath = MediaFilePathConvention.relativePathForAttachment(
+      contactPeerId: identity.single['contact_peer_id'] as String,
+      blobId: attachmentId,
+      mime: identity.single['mime'] as String,
+    );
+    if (localPath != expectedLocalPath) return 0;
+    final parentEligible =
+        await dbAdvanceAndQualifyDirectPrivateMediaParentWithinTransaction(
+          txn,
+          messageId,
+          nowMs: nowMs,
+        );
+    if (!parentEligible) return 0;
+    return txn.rawUpdate(
+      'UPDATE media_attachments SET local_path = ?, download_status = ?, '
+      'download_retry_count = 0 '
+      'WHERE id = ? AND message_id = ? AND owner_lane = ? '
+      'AND download_status = ? '
+      'AND EXISTS ('
+      'SELECT 1 FROM messages parent '
+      'WHERE parent.id = ? AND parent.is_incoming = 1 '
+      'AND parent.hidden_at IS NULL AND parent.deleted_at IS NULL '
+      'AND parent.private_media_policy_version = 1 '
+      "AND parent.private_media_mode IN "
+      "('protected', 'view_once', 'disappearing') "
+      "AND parent.private_media_state = 'available' "
+      'AND parent.private_media_terminal_at_ms IS NULL '
+      "AND (parent.private_media_mode != 'disappearing' OR ("
+      'parent.private_media_expires_at_ms IS NOT NULL AND '
+      'parent.private_media_clock_high_water_ms < '
+      'parent.private_media_expires_at_ms)))',
+      [
+        localPath,
+        'done',
+        attachmentId,
+        messageId,
+        'direct',
+        'downloading',
+        messageId,
+      ],
+    );
+  });
+}
+
+/// Next visible, available disappearing deadline for the foreground scheduler.
+Future<int?> dbLoadNextDirectPrivateMediaExpiryAtMs(Database db) async {
+  final rows = await db.rawQuery(
+    'SELECT MIN(private_media_expires_at_ms) AS next_expiry '
+    'FROM messages WHERE is_incoming = 1 AND hidden_at IS NULL '
+    "AND deleted_at IS NULL AND private_media_policy_version = 1 "
+    "AND private_media_mode = 'disappearing' "
+    "AND private_media_state = 'available' "
+    'AND private_media_terminal_at_ms IS NULL '
+    'AND private_media_expires_at_ms IS NOT NULL',
+  );
+  return (rows.single['next_expiry'] as num?)?.toInt();
+}
+
+/// Bounded recipient-authored targets mirrored into the shared iOS Keychain
+/// for reaction-notification eligibility. This is a projection query only; it
+/// does not create reaction unread state or alter message rows.
+Future<List<Map<String, Object?>>>
+dbLoadLocallyAuthoredMessagesForReactionProjection(
+  Database db, {
+  int limit = 256,
+}) {
+  return db.query(
+    'messages',
+    where: 'is_incoming = 0 AND hidden_at IS NULL AND deleted_at IS NULL',
+    orderBy: 'timestamp DESC, id ASC',
+    limit: limit,
+  );
+}
+
+Future<List<Map<String, Object?>>> dbLoadActiveDirectPrivateMediaDisappearing(
+  Database db, {
+  int limit = 100,
+}) {
+  return db.query(
+    'messages',
+    where:
+        'is_incoming = 1 AND hidden_at IS NULL AND deleted_at IS NULL '
+        'AND private_media_policy_version = 1 '
+        "AND private_media_mode = 'disappearing' "
+        "AND private_media_state = 'available' "
+        'AND private_media_terminal_at_ms IS NULL '
+        'AND private_media_expires_at_ms IS NOT NULL',
+    orderBy: 'private_media_expires_at_ms ASC, id ASC',
+    limit: limit,
+  );
+}
+
+/// Bounded direct-parent candidates for resume/startup recovery. Hidden
+/// private tombstones and durable consumed/expired rows stay queryable so
+/// cleanup can retry after a file/key failure.
+Future<List<Map<String, Object?>>> dbLoadDirectPrivateMediaRecoveryCandidates(
+  Database db, {
+  int limit = 100,
+}) {
+  return db.query(
+    'messages',
+    where:
+        "private_media_mode IN ('protected','view_once','disappearing','unsupported') "
+        'AND ((is_incoming = 1 AND private_media_policy_version = 1 '
+        "AND private_media_state IN ('opening','viewing')) "
+        'OR (is_incoming = 1 AND hidden_at IS NULL AND deleted_at IS NULL '
+        'AND private_media_policy_version = 1 '
+        "AND private_media_mode IN ('protected','view_once','disappearing') "
+        "AND private_media_state = 'available' "
+        'AND private_media_terminal_at_ms IS NULL '
+        'AND EXISTS (SELECT 1 FROM media_attachments active_download '
+        'WHERE active_download.message_id = messages.id '
+        "AND active_download.owner_lane = 'direct' "
+        "AND active_download.download_status = 'downloading')) "
+        'OR ((private_media_state IN '
+        "('consumed','expired','unsupported') OR hidden_at IS NOT NULL "
+        'OR deleted_at IS NOT NULL) '
+        'AND private_media_policy_version IS NOT NULL '
+        'AND private_media_policy_version > 0 '
+        'AND EXISTS (SELECT 1 FROM media_attachments attachment '
+        "WHERE attachment.message_id = messages.id AND attachment.owner_lane = 'direct'))) ",
+    orderBy: 'COALESCE(private_media_clock_high_water_ms, 0) ASC, id ASC',
+    limit: limit,
+  );
+}
+
+/// Durably rotates one failed recovery candidate to the end of the bounded
+/// queue. Active available rows are deliberately ineligible.
+Future<int> dbRotateDirectPrivateMediaRecoveryCandidate(
+  Database db,
+  String id, {
+  required int nowMs,
+}) {
+  return db.rawUpdate(
+    'UPDATE messages SET private_media_clock_high_water_ms = MAX('
+    'COALESCE(private_media_clock_high_water_ms, 0) + 1, ?) '
+    'WHERE id = ? '
+    "AND private_media_mode IN ('protected','view_once','disappearing','unsupported') "
+    'AND ((is_incoming = 1 AND private_media_policy_version = 1 '
+    "AND private_media_state IN ('opening','viewing')) "
+    'OR (is_incoming = 1 AND hidden_at IS NULL AND deleted_at IS NULL '
+    'AND private_media_policy_version = 1 '
+    "AND private_media_mode IN ('protected','view_once','disappearing') "
+    "AND private_media_state = 'available' "
+    'AND private_media_terminal_at_ms IS NULL '
+    'AND EXISTS (SELECT 1 FROM media_attachments active_download '
+    'WHERE active_download.message_id = messages.id '
+    "AND active_download.owner_lane = 'direct' "
+    "AND active_download.download_status = 'downloading')) "
+    'OR ((private_media_state IN '
+    "('consumed','expired','unsupported') OR hidden_at IS NOT NULL "
+    'OR deleted_at IS NOT NULL) '
+    'AND private_media_policy_version IS NOT NULL '
+    'AND private_media_policy_version > 0 '
+    'AND EXISTS (SELECT 1 FROM media_attachments attachment '
+    "WHERE attachment.message_id = messages.id AND attachment.owner_lane = 'direct'))) ",
+    [nowMs, id],
+  );
 }

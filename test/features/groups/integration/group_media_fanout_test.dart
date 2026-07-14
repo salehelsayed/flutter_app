@@ -18,9 +18,7 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_group_pubsub_network.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/group_test_user.dart';
-
-const _downloadedBytesHash =
-    '9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a';
+import '../../../shared/fixtures/media_bytes.dart';
 
 class _DownloadWritingBridge extends FakeBridge {
   @override
@@ -38,9 +36,14 @@ class _DownloadWritingBridge extends FakeBridge {
       final outputPath = payload['outputPath'] as String;
       final file = File(outputPath);
       await file.parent.create(recursive: true);
-      await file.writeAsBytes(<int>[1, 2, 3, 4]);
+      final bytes = validMediaFixtureBytesForPath(outputPath);
+      await file.writeAsBytes(bytes);
 
-      return jsonEncode({'ok': true, 'id': payload['id'], 'size': 4});
+      return jsonEncode({
+        'ok': true,
+        'id': payload['id'],
+        'size': bytes.length,
+      });
     }
     return super.send(message);
   }
@@ -201,20 +204,20 @@ void main() {
     int? height,
     int? durationMs,
     List<double>? waveform,
-    String contentHash = _downloadedBytesHash,
+    String? contentHash,
   }) {
     return MediaAttachment(
       id: id,
       messageId: '',
       mime: mime,
-      size: size,
+      size: size == 4 ? validMediaFixtureBytesForMime(mime).length : size,
       mediaType: MediaAttachment.mediaTypeFromMime(mime),
       width: width,
       height: height,
       durationMs: durationMs,
       localPath: 'pending_uploads/$id',
       downloadStatus: 'done',
-      contentHash: contentHash,
+      contentHash: contentHash ?? validMediaFixtureHashForMime(mime),
       encryptionKeyBase64: 'key-$id',
       encryptionNonce: 'nonce-$id',
       encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
@@ -261,7 +264,10 @@ void main() {
         }
 
         final attachments = await user.mediaAttachmentRepo
-            .getAttachmentsForMessage(matches.single.id, owner: MediaOwnerLane.group);
+            .getAttachmentsForMessage(
+              matches.single.id,
+              owner: MediaOwnerLane.group,
+            );
         if (attachments.length != 1 ||
             attachments.single.downloadStatus != 'done' ||
             attachments.single.localPath == null) {
@@ -325,7 +331,8 @@ void main() {
         .where((message) => message.isIncoming && message.text == messageText)
         .single;
     final attachments = await user.mediaAttachmentRepo.getAttachmentsForMessage(
-      received.id, owner: MediaOwnerLane.group,
+      received.id,
+      owner: MediaOwnerLane.group,
     );
     expect(attachments, hasLength(1), reason: '${user.username}: $messageText');
 
@@ -368,7 +375,8 @@ void main() {
     expect(outgoing.status, isNot('failed'));
 
     final attachments = await user.mediaAttachmentRepo.getAttachmentsForMessage(
-      outgoing.id, owner: MediaOwnerLane.group,
+      outgoing.id,
+      owner: MediaOwnerLane.group,
     );
     expect(attachments, hasLength(1), reason: '$messageText outgoing');
 
@@ -762,7 +770,10 @@ void main() {
               .single;
           expect(incoming.id, sentMessage!.id, reason: user.username);
           final attachments = await user.mediaAttachmentRepo
-              .getAttachmentsForMessage(incoming.id, owner: MediaOwnerLane.group);
+              .getAttachmentsForMessage(
+                incoming.id,
+                owner: MediaOwnerLane.group,
+              );
           expect(
             attachments,
             hasLength(variants.length),
@@ -828,7 +839,10 @@ void main() {
                 .toList();
             if (incoming.length == 1) {
               final attachments = await user.mediaAttachmentRepo
-                  .getAttachmentsForMessage(incoming.single.id, owner: MediaOwnerLane.group);
+                  .getAttachmentsForMessage(
+                    incoming.single.id,
+                    owner: MediaOwnerLane.group,
+                  );
               final allDone =
                   attachments.length == variants.length &&
                   attachments.every(
@@ -945,7 +959,9 @@ void main() {
           mediaFileManager: bobMediaFileManager,
           attachment: failedAttachment,
           contactPeerId: groupId,
-          enforceGroupMediaPolicy: true, owner: MediaOwnerLane.group,
+          owner: MediaOwnerLane.group,
+          groupMessageRepo: bob.msgRepo,
+          enforceGroupMediaPolicy: true,
         );
 
         // The retry identifies the under-sized stale partial (< plaintext +
@@ -1421,7 +1437,7 @@ void main() {
         expect(allowedPeers, isNot(contains('peer-dave-never-joined')));
 
         final localMedia = File(p.join(tempDir.path, 'pl005.jpg'));
-        await localMedia.writeAsBytes(<int>[1, 2, 3, 4]);
+        await localMedia.writeAsBytes(validJpegFixtureBytes);
         final uploaded = await uploadMedia(
           bridge: alice.bridge,
           localFilePath: localMedia.path,
@@ -1565,7 +1581,10 @@ void main() {
         // hard-deleted). Charlie is no longer an active member and gets no new
         // keys, but the group row persists — media exclusion is unchanged.
         expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
-        expect(await charlie.groupRepo.getMember(groupId, charlie.peerId), isNull);
+        expect(
+          await charlie.groupRepo.getMember(groupId, charlie.peerId),
+          isNull,
+        );
         expect(await charlie.groupRepo.getKeyByGeneration(groupId, 2), isNull);
         expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
 
@@ -1603,7 +1622,10 @@ void main() {
         expect(bobIncoming.isIncoming, isTrue);
         expect(bobIncoming.keyGeneration, 2);
         final bobAttachments = await bob.mediaAttachmentRepo
-            .getAttachmentsForMessage(bobIncoming.id, owner: MediaOwnerLane.group);
+            .getAttachmentsForMessage(
+              bobIncoming.id,
+              owner: MediaOwnerLane.group,
+            );
         expect(bobAttachments, hasLength(1));
         expect(bobAttachments.single.id, image.id);
         expect(
@@ -1625,7 +1647,8 @@ void main() {
         );
         expect(
           await charlie.mediaAttachmentRepo.getAttachmentsForMessage(
-            sentMessage.id, owner: MediaOwnerLane.group,
+            sentMessage.id,
+            owner: MediaOwnerLane.group,
           ),
           isEmpty,
         );
@@ -1727,7 +1750,10 @@ void main() {
       // hard-deleted). Charlie is no longer an active member and has no new
       // keys, but the group row persists so a later re-add can re-activate it.
       expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
-      expect(await charlie.groupRepo.getMember(groupId, charlie.peerId), isNull);
+      expect(
+        await charlie.groupRepo.getMember(groupId, charlie.peerId),
+        isNull,
+      );
       expect(await charlie.groupRepo.getKeyByGeneration(groupId, 2), isNull);
       expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
 
@@ -1783,7 +1809,8 @@ void main() {
       );
       expect(
         await charlie.mediaAttachmentRepo.getAttachmentsForMessage(
-          removedSent.id, owner: MediaOwnerLane.group,
+          removedSent.id,
+          owner: MediaOwnerLane.group,
         ),
         isEmpty,
       );
@@ -1892,7 +1919,8 @@ void main() {
       );
       expect(
         await charlie.mediaAttachmentRepo.getAttachmentsForMessage(
-          removedSent.id, owner: MediaOwnerLane.group,
+          removedSent.id,
+          owner: MediaOwnerLane.group,
         ),
         isEmpty,
       );

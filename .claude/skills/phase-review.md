@@ -1,6 +1,7 @@
 ---
 description: Review a completed phase implementation against the TDD plan and identify gaps
 user-invocable: true
+disable-model-invocation: true
 ---
 
 # Phase Review Agent

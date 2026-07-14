@@ -41,6 +41,63 @@ final class NotificationPreviewResolverTests: XCTestCase {
     XCTAssertEqual(previewEvents[0].details, ["kind": "chat"])
   }
 
+  func testPrivateMediaPreviewIsGenericForSupportedLocalesAndMalformedPolicy() throws {
+    let routeData: [String: Any] = [
+      "type": "new_message",
+      "sender_id": "peer-alice",
+      "message_id": "private-message",
+      "kem": "kem",
+      "ciphertext": "ciphertext",
+      "nonce": "nonce",
+    ]
+    let cases: [(locale: String, expected: String, policy: Any)] = [
+      ("en-US", "Private media", ["version": 1, "mode": "protected"]),
+      ("de-DE", "Private Medien", ["version": 1, "mode": "view_once"]),
+      ("ar", "وسائط خاصة", ["version": 1, "mode": "disappearing"]),
+      ("en-GB", "Private media", ["version": 99, "mode": "future"]),
+      ("en-US", "Private media", "malformed"),
+      ("en-US", "Private media", NSNull()),
+    ]
+
+    for item in cases {
+      let plaintextData = try JSONSerialization.data(withJSONObject: [
+        "id": "private-message",
+        "senderPeerId": "peer-alice",
+        "senderUsername": "Alice",
+        "text": "do not reveal this secret",
+        "caption": "do not reveal this caption",
+        "media": [[
+          "mediaType": "image",
+          "fileName": "secret-photo.jpg",
+        ]],
+        "privateMedia": item.policy,
+      ])
+      let plaintext = try XCTUnwrap(
+        String(data: plaintextData, encoding: .utf8)
+      )
+      let resolver = NotificationPreviewResolver(
+        keyReader: MemoryPushKeyReader([
+          PushSharedKeyNames.identityMlKemSecretKey: "chat-secret",
+        ]),
+        decryptor: MemoryPushDecryptor(chatPlaintext: plaintext),
+        dedupeStore: MemoryPushDedupeStore(),
+        localeIdentifierProvider: { item.locale }
+      )
+
+      let result = resolver.resolve(
+        userInfo: routeData,
+        fallbackTitle: "New Message",
+        fallbackBody: "You have a new message"
+      )
+
+      XCTAssertTrue(result.didDecrypt, "locale=\(item.locale)")
+      XCTAssertEqual(result.reason, "chat", "locale=\(item.locale)")
+      XCTAssertEqual(result.title, "Alice", "locale=\(item.locale)")
+      XCTAssertEqual(result.body, item.expected, "locale=\(item.locale)")
+      XCTAssertFalse(result.body.contains("secret"), "locale=\(item.locale)")
+      XCTAssertFalse(result.body.contains("Photo"), "locale=\(item.locale)")
+    }
+  }
 
   func testDecryptsGroupFixturePreview() throws {
     let fixture = try loadFixture("group_text")
@@ -79,6 +136,103 @@ final class NotificationPreviewResolverTests: XCTestCase {
     XCTAssertEqual(previewEvents[0].details, ["kind": "group"])
   }
 
+  func testGroupPrivateMediaPreviewIsGenericForAnnouncementsAndMalformedPolicy()
+    throws
+  {
+    let cases: [(locale: String, expected: String, fields: [String: Any])] = [
+      (
+        "en-US",
+        "New private media",
+        [
+          "mediaPolicyVersion": 1,
+          "mediaLifecycle": "viewOnce",
+          "mediaDurationSeconds": NSNull(),
+          "mediaProtected": true,
+        ]
+      ),
+      (
+        "de-DE",
+        "Neue private Medien",
+        [
+          "extra": [
+            "groupName": "SECRET announcement title",
+            "mediaPolicyVersion": 1,
+            "mediaLifecycle": "disappearing",
+            "mediaDurationSeconds": 3600,
+            "mediaProtected": true,
+          ],
+        ]
+      ),
+      (
+        "ar",
+        "وسائط خاصة جديدة",
+        ["mediaPolicyVersion": 1]
+      ),
+      (
+        "en-GB",
+        "New private media",
+        [
+          "mediaPolicyVersion": "future",
+          "mediaLifecycle": "futureMode",
+          "mediaDurationSeconds": "SECRET duration",
+          "mediaProtected": "true",
+        ]
+      ),
+    ]
+
+    for (index, item) in cases.enumerated() {
+      var payload: [String: Any] = [
+        "groupId": "group-team",
+        "messageId": "private-announcement-\(index)",
+        "senderPeerId": "peer-alice",
+        "groupName": "SECRET announcement title",
+        "senderUsername": "SECRET admin name",
+        "text": "SECRET private announcement caption",
+        "media": [[
+          "mediaType": "video",
+          "fileName": "SECRET-private-announcement.mp4",
+        ]],
+      ]
+      for (key, value) in item.fields {
+        payload[key] = value
+      }
+      let plaintext = try jsonString(payload)
+      let resolver = NotificationPreviewResolver(
+        keyReader: MemoryPushKeyReader([
+          PushSharedKeyNames.groupKey(groupId: "group-team", keyEpoch: 7):
+            "group-secret",
+        ]),
+        decryptor: MemoryPushDecryptor(groupPlaintext: plaintext),
+        dedupeStore: MemoryPushDedupeStore(),
+        localeIdentifierProvider: { item.locale }
+      )
+
+      let result = resolver.resolve(
+        userInfo: [
+          "type": "group_message",
+          "groupId": "group-team",
+          "sender_transport_peer_id": "transport-alice",
+          "message_id": "private-announcement-\(index)",
+          "keyEpoch": "7",
+          "ciphertext": "ciphertext",
+          "nonce": "nonce-\(index)",
+        ],
+        fallbackTitle: "New Message",
+        fallbackBody: "You have a new message"
+      )
+
+      XCTAssertTrue(result.didDecrypt, "locale=\(item.locale)")
+      XCTAssertEqual(result.reason, "group", "locale=\(item.locale)")
+      XCTAssertEqual(result.title, "Mknoon", "locale=\(item.locale)")
+      XCTAssertEqual(result.body, item.expected, "locale=\(item.locale)")
+      XCTAssertEqual(result.threadIdentifier, "group-team")
+      let visible = "\(result.title)|\(result.body)"
+      XCTAssertFalse(visible.contains("SECRET"), "locale=\(item.locale)")
+      XCTAssertFalse(visible.contains("viewOnce"), "locale=\(item.locale)")
+      XCTAssertFalse(visible.contains("futureMode"), "locale=\(item.locale)")
+      XCTAssertFalse(visible.contains("video"), "locale=\(item.locale)")
+    }
+  }
 
   // 04-P0 SI-1 NSE — a muted group is suppressed BEFORE decryption: even with a
   // valid group key seeded (decryption would otherwise succeed), the mute

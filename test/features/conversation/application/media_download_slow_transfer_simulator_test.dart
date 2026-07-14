@@ -8,8 +8,11 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+
+import '../../../shared/fakes/in_memory_message_repository.dart';
 
 /// Simulates the new transfer policy end-to-end in fast test time:
 /// a slow-but-moving transfer (progress events keep arriving) survives a
@@ -149,6 +152,7 @@ void main() {
   late Directory tempDir;
   late _RecorderRepo repo;
   late _TempMediaFileManager fileManager;
+  late InMemoryMessageRepository messageRepo;
   final flowEvents = <Map<String, dynamic>>[];
 
   const attachment = MediaAttachment(
@@ -165,6 +169,20 @@ void main() {
     tempDir = await Directory.systemTemp.createTemp('slow_transfer_sim_');
     repo = _RecorderRepo();
     fileManager = _TempMediaFileManager(tempDir.path);
+    messageRepo = InMemoryMessageRepository();
+    const now = '2026-06-12T10:00:00.000Z';
+    await messageRepo.saveMessage(
+      const ConversationMessage(
+        id: 'msg-sim-001',
+        contactPeerId: 'contact-sim',
+        senderPeerId: 'contact-sim',
+        text: '',
+        timestamp: now,
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: now,
+      ),
+    );
     flowEvents.clear();
     debugSetFlowEventSink(
       (payload) => flowEvents.add(Map<String, dynamic>.from(payload)),
@@ -202,6 +220,7 @@ void main() {
         mediaFileManager: fileManager,
         attachment: attachment,
         contactPeerId: 'contact-sim',
+        messageRepo: messageRepo,
         transferStallTimeout: const Duration(milliseconds: 150),
         transferMaxTimeout: const Duration(seconds: 10),
       );
@@ -224,6 +243,7 @@ void main() {
       mediaFileManager: fileManager,
       attachment: attachment.copyWith(id: 'blob-stalled-001'),
       contactPeerId: 'contact-sim',
+      messageRepo: messageRepo,
       transferStallTimeout: const Duration(milliseconds: 120),
       transferMaxTimeout: const Duration(seconds: 10),
     );

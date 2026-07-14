@@ -127,6 +127,10 @@ class GroupMediaMimePolicy {
     final normalizedMime = normalizeMime(mime)!;
     final detected = _detectKnownSignature(bytes);
     if (detected == _DetectedSignature.unknown) {
+      final declaredMediaType = allowedMimeToMediaType[normalizedMime];
+      if (declaredMediaType == 'image' || declaredMediaType == 'video') {
+        return const GroupMediaValidationResult.invalid('unknown_signature');
+      }
       return const GroupMediaValidationResult.valid();
     }
     if (detected == _DetectedSignature.html ||

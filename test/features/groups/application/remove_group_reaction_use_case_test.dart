@@ -289,42 +289,39 @@ void main() {
     },
   );
 
-  test(
-    'INV-R1 publish failure queues remove for retry with custody',
-    () async {
-      bridge.responses['group:publishReaction'] = {
-        'ok': false,
-        'errorCode': 'GROUP_ERROR',
-      };
+  test('INV-R1 publish failure queues remove for retry with custody', () async {
+    bridge.responses['group:publishReaction'] = {
+      'ok': false,
+      'errorCode': 'GROUP_ERROR',
+    };
 
-      final result = await removeGroupReaction(
-        bridge: bridge,
-        groupRepo: groupRepo,
-        reactionRepo: reactionRepo,
-        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
-        groupId: 'group-1',
-        messageId: 'msg-1',
-        emoji: '👍',
-        senderPeerId: 'peer-1',
-        senderPublicKey: 'pk-1',
-        senderPrivateKey: 'sk-1',
-      );
+    final result = await removeGroupReaction(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      reactionRepo: reactionRepo,
+      reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+      groupId: 'group-1',
+      messageId: 'msg-1',
+      emoji: '👍',
+      senderPeerId: 'peer-1',
+      senderPublicKey: 'pk-1',
+      senderPrivateKey: 'sk-1',
+    );
 
-      // No longer a hard drop: queued for retry.
-      expect(result, RemoveGroupReactionResult.queuedForRetry);
+    // No longer a hard drop: queued for retry.
+    expect(result, RemoveGroupReactionResult.queuedForRetry);
 
-      // INV-R1(b): the optimistic local delete is applied despite the failure.
-      expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
-      expect(reactionRepo.removeReactionCallCount, 1);
+    // INV-R1(b): the optimistic local delete is applied despite the failure.
+    expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+    expect(reactionRepo.removeReactionCallCount, 1);
 
-      // INV-R1(a): a durable custody row exists for the remove.
-      await pumpEventQueue();
-      final entry = reactionReplayOutboxRepo.entries.single;
-      expect(entry.messageId, 'msg-1');
-      expect(entry.senderPeerId, 'peer-1');
-      expect(entry.action, 'remove');
-    },
-  );
+    // INV-R1(a): a durable custody row exists for the remove.
+    await pumpEventQueue();
+    final entry = reactionReplayOutboxRepo.entries.single;
+    expect(entry.messageId, 'msg-1');
+    expect(entry.senderPeerId, 'peer-1');
+    expect(entry.action, 'remove');
+  });
 
   test(
     'INV-R1 thrown publish error queues remove for retry with custody',
@@ -388,6 +385,71 @@ void main() {
       await pumpEventQueue();
       // Before OQ-2 the remove minted a fresh uuid PK per call → two rows.
       expect(reactionReplayOutboxRepo.entries, hasLength(1));
+    },
+  );
+
+  test(
+    'sibling-device ADD prevents reuse of this device old REMOVE transition',
+    () async {
+      final first = await removeGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        transitionIdFactory: () => 'transition-remove-before-sibling-add',
+      );
+      await pumpEventQueue();
+
+      // Simulate the same account re-adding on another active device. That
+      // converged active state is authoritative even though this device's
+      // latest outbox row is still the earlier REMOVE.
+      await reactionRepo.saveReaction(
+        MessageReaction(
+          id: 'sibling-add-state-id',
+          messageId: 'msg-1',
+          emoji: '👍',
+          senderPeerId: 'peer-1',
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+
+      final second = await removeGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        transitionIdFactory: () => 'transition-remove-after-sibling-add',
+      );
+      await pumpEventQueue();
+
+      expect(first, RemoveGroupReactionResult.success);
+      expect(second, RemoveGroupReactionResult.success);
+      expect(
+        reactionReplayOutboxRepo.entries.map((entry) => entry.reactionId),
+        <String>[
+          'transition-remove-before-sibling-add',
+          'transition-remove-after-sibling-add',
+        ],
+      );
+      final replay = _replayEnvelopeFromRetryPayload(
+        reactionReplayOutboxRepo.entries.last.inboxRetryPayload,
+      );
+      final plaintext =
+          jsonDecode(replay['ciphertext'] as String) as Map<String, dynamic>;
+      expect(plaintext['eventId'], 'transition-remove-after-sibling-add');
     },
   );
 

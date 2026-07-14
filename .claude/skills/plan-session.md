@@ -1,6 +1,7 @@
 ---
 description: Plan a session task using sequential Evidence Collector, Planner, Reviewer, and Arbiter agents
 user-invocable: true
+disable-model-invocation: true
 ---
 
 # Session Planning Skill

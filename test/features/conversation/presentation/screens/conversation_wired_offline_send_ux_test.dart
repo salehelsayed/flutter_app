@@ -16,6 +16,7 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -247,30 +248,32 @@ class _GatedSendRecorder {
     _completers.last.complete((result, message));
   }
 
-  SendChatMessageFn get fn => ({
-    required P2PService p2pService,
-    required MessageRepository messageRepo,
-    required String targetPeerId,
-    required String text,
-    required String senderPeerId,
-    required String senderUsername,
-    String? messageId,
-    String? timestamp,
-    dynamic bridge,
-    String? recipientMlKemPublicKey,
-    String? quotedMessageId,
-    List<MediaAttachment>? mediaAttachments,
-    MediaAttachmentRepository? mediaAttachmentRepo,
-    TransportMetrics? transportMetrics,
-  }) {
-    callCount++;
-    sentTexts.add(text);
-    messageIds.add(messageId);
-    final completer =
-        Completer<(SendChatMessageResult, ConversationMessage?)>();
-    _completers.add(completer);
-    return completer.future;
-  };
+  SendChatMessageFn get fn =>
+      ({
+        required P2PService p2pService,
+        required MessageRepository messageRepo,
+        required String targetPeerId,
+        required String text,
+        required String senderPeerId,
+        required String senderUsername,
+        String? messageId,
+        String? timestamp,
+        dynamic bridge,
+        String? recipientMlKemPublicKey,
+        String? quotedMessageId,
+        List<MediaAttachment>? mediaAttachments,
+        MediaAttachmentRepository? mediaAttachmentRepo,
+        TransportMetrics? transportMetrics,
+        PrivateMediaPolicy? privateMediaPolicy,
+      }) {
+        callCount++;
+        sentTexts.add(text);
+        messageIds.add(messageId);
+        final completer =
+            Completer<(SendChatMessageResult, ConversationMessage?)>();
+        _completers.add(completer);
+        return completer.future;
+      };
 }
 
 const _contactPeerId = 'peer-bob';
@@ -445,7 +448,8 @@ void main() {
         expect(
           snackBar.margin,
           isNotNull,
-          reason: 'the failure SnackBar must have a margin clearing the Send '
+          reason:
+              'the failure SnackBar must have a margin clearing the Send '
               'button',
         );
         final margin = snackBar.margin! as EdgeInsets;
@@ -462,7 +466,8 @@ void main() {
         expect(
           visibleBarBottom,
           lessThanOrEqualTo(composeRect.top),
-          reason: 'the failure SnackBar, lifted by its bottom margin, must sit '
+          reason:
+              'the failure SnackBar, lifted by its bottom margin, must sit '
               'entirely above the composer / Send button',
         );
         final contentRect = tester.getRect(find.text(offlineSnackText));
@@ -665,7 +670,8 @@ void main() {
             status: 'failed',
             isIncoming: false,
             createdAt: '2026-07-01T10:00:00.000Z',
-            wireEnvelope: '{"type":"chat_message","version":"2","encrypted":{}}',
+            wireEnvelope:
+                '{"type":"chat_message","version":"2","encrypted":{}}',
           );
           await messageRepo.saveMessage(failedMessage);
           recorder.completeLastWithMessage(result, failedMessage);
@@ -748,9 +754,18 @@ void main() {
     // reason 'direct_skipped_keepalive_drop' maps to sendFailed).
     const senderOfflineCopy = "Will send when you're back online";
     for (final c in const [
-      (SendChatMessageResult.peerNotFound, 'Contact appears offline. Message saved.'),
-      (SendChatMessageResult.dialFailed, 'Could not connect to contact. Message saved.'),
-      (SendChatMessageResult.sendFailed, 'Failed to send message. Message saved.'),
+      (
+        SendChatMessageResult.peerNotFound,
+        'Contact appears offline. Message saved.',
+      ),
+      (
+        SendChatMessageResult.dialFailed,
+        'Could not connect to contact. Message saved.',
+      ),
+      (
+        SendChatMessageResult.sendFailed,
+        'Failed to send message. Message saved.',
+      ),
     ]) {
       testWidgets(
         'TC-185-20 offline failure snackbar names the sender connection '
@@ -820,36 +835,35 @@ void main() {
         },
       );
 
-      testWidgets(
-        'TC-185-21 online ${c.$1.name} '
-        'snackbar keeps its non-offline copy (no over-correction)',
-        (tester) async {
-          final messageRepo = _FakeMessageRepository();
-          final recorder = _GatedSendRecorder();
+      testWidgets('TC-185-21 online ${c.$1.name} '
+          'snackbar keeps its non-offline copy (no over-correction)', (
+        tester,
+      ) async {
+        final messageRepo = _FakeMessageRepository();
+        final recorder = _GatedSendRecorder();
 
-          await tester.pumpWidget(
-            _buildTestWidget(
-              messageRepo: messageRepo,
-              sendChatMessageFn: recorder.fn,
-              p2pService: FakeP2PService(initialState: _onlineState),
-            ),
-          );
-          await _settleStartup(tester);
+        await tester.pumpWidget(
+          _buildTestWidget(
+            messageRepo: messageRepo,
+            sendChatMessageFn: recorder.fn,
+            p2pService: FakeP2PService(initialState: _onlineState),
+          ),
+        );
+        await _settleStartup(tester);
 
-          await _typeAndSend(tester, 'online snack');
-          recorder.completeLast(c.$1);
-          await tester.pump();
-          await tester.pump(const Duration(milliseconds: 800));
+        await _typeAndSend(tester, 'online snack');
+        recorder.completeLast(c.$1);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 800));
 
-          expect(find.text(c.$2), findsOneWidget);
-          expect(find.text(senderOfflineCopy), findsNothing);
-          // 185: a genuine online failure keeps the error-red.
-          expect(
-            tester.widget<SnackBar>(find.byType(SnackBar)).backgroundColor,
-            Colors.red[700],
-          );
-        },
-      );
+        expect(find.text(c.$2), findsOneWidget);
+        expect(find.text(senderOfflineCopy), findsNothing);
+        // 185: a genuine online failure keeps the error-red.
+        expect(
+          tester.widget<SnackBar>(find.byType(SnackBar)).backgroundColor,
+          Colors.red[700],
+        );
+      });
     }
   });
 
@@ -872,74 +886,71 @@ void main() {
       SendChatMessageResult.dialFailed,
       SendChatMessageResult.sendFailed,
     ]) {
-      testWidgets(
-        'TC-192-01 ONLINE send returning a NON-NULL failedMessage '
-        '(${result.name}, stale-relayReady shape) stays retriable — no Retry '
-        'flash',
-        (tester) async {
-          final messageRepo = _FakeMessageRepository();
-          final recorder = _GatedSendRecorder();
+      testWidgets('TC-192-01 ONLINE send returning a NON-NULL failedMessage '
+          '(${result.name}, stale-relayReady shape) stays retriable — no Retry '
+          'flash', (tester) async {
+        final messageRepo = _FakeMessageRepository();
+        final recorder = _GatedSendRecorder();
 
-          await tester.pumpWidget(
-            _buildTestWidget(
-              messageRepo: messageRepo,
-              sendChatMessageFn: recorder.fn,
-              p2pService: FakeP2PService(initialState: _onlineState),
-            ),
-          );
-          await _settleStartup(tester);
+        await tester.pumpWidget(
+          _buildTestWidget(
+            messageRepo: messageRepo,
+            sendChatMessageFn: recorder.fn,
+            p2pService: FakeP2PService(initialState: _onlineState),
+          ),
+        );
+        await _settleStartup(tester);
 
-          await _typeAndSend(tester, 'online glitch');
-          expect(recorder.callCount, 1);
+        await _typeAndSend(tester, 'online glitch');
+        expect(recorder.callCount, 1);
 
-          // The terminal-rung production shape: failedMessage persisted WITH
-          // the wire envelope (send_chat_message_use_case.dart:1324-1332) —
-          // reachable with relayReady true only when both inbox custody
-          // attempts failed on the wire (stale relay state).
-          final sentId = recorder.messageIds.last!;
-          final failedMessage = ConversationMessage(
-            id: sentId,
-            contactPeerId: _contactPeerId,
-            senderPeerId: _identity.peerId,
-            text: 'online glitch',
-            timestamp: '2026-07-02T10:00:00.000Z',
-            status: 'failed',
-            isIncoming: false,
-            createdAt: '2026-07-02T10:00:00.000Z',
-            wireEnvelope: '{"type":"chat_message","version":"2","encrypted":{}}',
-          );
-          await messageRepo.saveMessage(failedMessage);
-          recorder.completeLastWithMessage(result, failedMessage);
-          await tester.pump();
-          await tester.pump(const Duration(milliseconds: 50));
-          await tester.pump();
+        // The terminal-rung production shape: failedMessage persisted WITH
+        // the wire envelope (send_chat_message_use_case.dart:1324-1332) —
+        // reachable with relayReady true only when both inbox custody
+        // attempts failed on the wire (stale relay state).
+        final sentId = recorder.messageIds.last!;
+        final failedMessage = ConversationMessage(
+          id: sentId,
+          contactPeerId: _contactPeerId,
+          senderPeerId: _identity.peerId,
+          text: 'online glitch',
+          timestamp: '2026-07-02T10:00:00.000Z',
+          status: 'failed',
+          isIncoming: false,
+          createdAt: '2026-07-02T10:00:00.000Z',
+          wireEnvelope: '{"type":"chat_message","version":"2","encrypted":{}}',
+        );
+        await messageRepo.saveMessage(failedMessage);
+        recorder.completeLastWithMessage(result, failedMessage);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+        await tester.pump();
 
-          final stored = messageRepo.store[sentId]!;
-          expect(
-            stored.status,
-            'sent',
-            reason:
-                'an envelope-preserved connectivity failure must stay in the '
-                'self-healing lane even when relayReady reads (stale) true '
-                "(RED on HEAD: online -> terminal 'failed' + Retry flash)",
-          );
-          expect(stored.wireEnvelope, isNotNull);
-          final lane = await messageRepo.getUnackedOutgoingMessages(
-            olderThan: Duration.zero,
-          );
-          expect(
-            lane.any((m) => m.id == sentId),
-            isTrue,
-            reason: 'the kept-sent row must be retryUnacked-eligible',
-          );
-          expect(
-            find.byKey(ValueKey('failed-message-retry-$sentId')),
-            findsNothing,
-            reason: 'no transient Retry flash during the self-heal window',
-          );
-          expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
-        },
-      );
+        final stored = messageRepo.store[sentId]!;
+        expect(
+          stored.status,
+          'sent',
+          reason:
+              'an envelope-preserved connectivity failure must stay in the '
+              'self-healing lane even when relayReady reads (stale) true '
+              "(RED on HEAD: online -> terminal 'failed' + Retry flash)",
+        );
+        expect(stored.wireEnvelope, isNotNull);
+        final lane = await messageRepo.getUnackedOutgoingMessages(
+          olderThan: Duration.zero,
+        );
+        expect(
+          lane.any((m) => m.id == sentId),
+          isTrue,
+          reason: 'the kept-sent row must be retryUnacked-eligible',
+        );
+        expect(
+          find.byKey(ValueKey('failed-message-retry-$sentId')),
+          findsNothing,
+          reason: 'no transient Retry flash during the self-heal window',
+        );
+        expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+      });
     }
 
     testWidgets(
@@ -983,7 +994,10 @@ void main() {
         // The phone believes it is online — the wifi-off "back online" promise
         // would be dishonest here; so would the contact-blaming/generic red.
         expect(find.text("Will send when you're back online"), findsNothing);
-        expect(find.text('Failed to send message. Message saved.'), findsNothing);
+        expect(
+          find.text('Failed to send message. Message saved.'),
+          findsNothing,
+        );
         expect(
           tester.widget<SnackBar>(find.byType(SnackBar)).backgroundColor,
           Colors.blueGrey[700],
@@ -1005,7 +1019,10 @@ void main() {
         // The lane must NOT restore the composer draft (that writer re-stamps
         // 'failed' and resurrects the Retry).
         expect(
-          tester.widget<TextField>(find.byType(TextField).first).controller?.text,
+          tester
+              .widget<TextField>(find.byType(TextField).first)
+              .controller
+              ?.text,
           '',
         );
       },

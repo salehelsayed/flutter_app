@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
+import 'package:flutter_app/features/conversation/domain/models/reaction_payload.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/push/application/ingest_staged_push_envelopes_use_case.dart';
 import 'package:flutter_app/features/push/application/push_envelope_staging.dart';
@@ -47,6 +48,26 @@ StagedPushEnvelope _envelope({
   );
 }
 
+StagedPushEnvelope _reactionEnvelope({
+  String nonce = 'reaction-nonce-1',
+  String eventId = 'reaction-event-1',
+  String action = ReactionPayload.addAction,
+  String targetMessageId = 'target-message-1',
+}) {
+  return StagedPushEnvelope(
+    kind: 'reaction',
+    kem: 'reaction-kem',
+    ciphertext: 'reaction-ciphertext',
+    nonce: nonce,
+    senderPeerId: 'peer-alice',
+    messageId: eventId,
+    eventId: eventId,
+    action: action,
+    targetMessageId: targetMessageId,
+    receivedAtMs: 2,
+  );
+}
+
 RecoveredInboxReplayOutcome _committed() => (
   disposition: RecoveredInboxChatDisposition.committed,
   reasonCode: 'stored',
@@ -67,6 +88,48 @@ RecoveredInboxReplayOutcome _rejected(String reasonCode) => (
 
 void main() {
   group('IngestStagedPushEnvelopesUseCase', () {
+    test('staged reaction dispatches to reaction replay', () async {
+      final store = _MemoryPushEnvelopeStore();
+      await store.stage(_reactionEnvelope());
+      final replayedReactions = <ChatMessage>[];
+      final stagedIds = <String?>[];
+
+      final useCase = IngestStagedPushEnvelopesUseCase(
+        store: store,
+        localPeerIdProvider: () async => 'local-peer',
+        replayChatMessage:
+            (
+              message, {
+              required suppressNotification,
+              String? stagedEntryId,
+            }) async {
+              fail('a staged reaction must never enter replayChatMessage');
+            },
+        replayReactionMessage: (message, {String? stagedEntryId}) async {
+          replayedReactions.add(message);
+          stagedIds.add(stagedEntryId);
+          return _committed();
+        },
+      );
+
+      final result = await useCase();
+
+      expect(result.attempted, 1);
+      expect(result.committed, 1);
+      expect(store.entries, isEmpty);
+      expect(stagedIds, ['reaction-nonce-1']);
+      expect(replayedReactions, hasLength(1));
+      final message = replayedReactions.single;
+      expect(message.from, 'peer-alice');
+      expect(message.to, 'local-peer');
+      expect(message.transport, 'push');
+      final envelope = ReactionPayload.parseEncryptedEnvelope(message.content);
+      expect(envelope, isNotNull);
+      expect(envelope!['eventId'], 'reaction-event-1');
+      expect(envelope['action'], ReactionPayload.addAction);
+      expect(envelope['targetMessageId'], 'target-message-1');
+    });
+
     test(
       'staged envelope decrypts through the standard incoming pipeline, fills local to, and clears only committed entries',
       () async {
@@ -125,8 +188,8 @@ void main() {
                 required suppressNotification,
                 String? stagedEntryId,
               }) async => stagedEntryId == 'nonce-dup'
-                  ? _rejected('duplicate_confirmed_visible')
-                  : _rejected('unknown_sender_stranger'),
+              ? _rejected('duplicate_confirmed_visible')
+              : _rejected('unknown_sender_stranger'),
         );
 
         final result = await useCase();

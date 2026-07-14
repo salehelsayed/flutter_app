@@ -70,7 +70,8 @@ void main() {
         expect(
           _capabilities(),
           GroupReceivedMediaAction.values.toSet(),
-          reason: 'verified incoming discussion image with write access '
+          reason:
+              'verified incoming discussion image with write access '
               'exposes all actions',
         );
 
@@ -103,7 +104,8 @@ void main() {
               GroupReceivedMediaAction.info,
               GroupReceivedMediaAction.reply,
             },
-            reason: '${entry.key}: unverified media must never expose '
+            reason:
+                '${entry.key}: unverified media must never expose '
                 'Save/Share but keeps Info, Delete for me, and Reply',
           );
         }
@@ -124,10 +126,7 @@ void main() {
             canWrite: false,
             attachment: _attachment(downloadStatus: 'pending'),
           ),
-          {
-            GroupReceivedMediaAction.deleteForMe,
-            GroupReceivedMediaAction.info,
-          },
+          {GroupReceivedMediaAction.deleteForMe, GroupReceivedMediaAction.info},
           reason: 'unverified + read-only leaves only Info and Delete for me',
         );
 
@@ -204,7 +203,8 @@ void main() {
               canWrite: canWrite,
             ),
             coreActions,
-            reason: 'verified incoming announcement image exposes exactly '
+            reason:
+                'verified incoming announcement image exposes exactly '
                 'Save/Share/Info/Delete for me (canWrite=$canWrite)',
           );
           expect(
@@ -218,7 +218,8 @@ void main() {
               ),
             ),
             coreActions,
-            reason: 'verified incoming announcement video exposes exactly '
+            reason:
+                'verified incoming announcement video exposes exactly '
                 'Save/Share/Info/Delete for me (canWrite=$canWrite)',
           );
 
@@ -233,7 +234,8 @@ void main() {
               GroupReceivedMediaAction.deleteForMe,
               GroupReceivedMediaAction.info,
             },
-            reason: 'unverified announcement media keeps only Info and '
+            reason:
+                'unverified announcement media keeps only Info and '
                 'Delete for me (canWrite=$canWrite)',
           );
         }

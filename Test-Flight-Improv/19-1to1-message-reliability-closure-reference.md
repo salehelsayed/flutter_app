@@ -273,6 +273,80 @@ Those may be useful product features, but their absence does not mean 1:1 messag
   during a network switch. That is now a covered recovery seam, not evidence
   that 1:1 reliability is open again.
 
+### Plan 249 direct Shared Media batch-forward maintenance boundary
+
+- A single explicit action accepts `1..10` distinct exact direct visual
+  `(messageId, attachmentId)` sources from one contact scope. The whole set is
+  freshly qualified through the Plan-234 current-row authority before target,
+  file-processing, picker, or ordinary-delivery work.
+- Sources retain the Shared Media canonical newest-first keyset order. Same-
+  parent siblings remain distinct, and each source owns its independent edited
+  or cleared caption plus opaque operation token.
+- Destinations are current active direct contacts only. Each eligible
+  source/contact pair composes one ordinary recipient-scoped Plan-232 send; no
+  batch/album envelope, shared caption, provenance array, receiver badge,
+  schema, or wire field exists.
+- The picker owns a truthful source/contact `sent` / `queued` / `failed`
+  matrix. In-route retry revalidates and retries failed cells only; sent and
+  queued cells never replay. Once an ordinary row exists, the existing
+  persisted same-identity retry machinery remains authoritative.
+- Private, unsupported, terminal, stale, corrupt, wrong-owner, unresolved,
+  missing, outgoing, deleted-parent, group-owned, or otherwise unavailable
+  sources fail closed. Groups and announcements remain Plans 250/251.
+- Maintenance proof is the five registered Plan-249 suites, the exact received-
+  transport inventory sentinel, Plan-232/233/234 preservation, and the curated
+  `1to1` gate. Reopen Plan 249 only for a causal regression in those boundaries.
+
+### Plan 234 direct private-media maintenance boundary
+
+- Plan 234 is accepted for a device/install-local direct-chat contract at DB
+  v100. Missing policy remains ordinary; valid version-1 `protected`,
+  `view_once`, and `disappearing` policy exists only inside encrypted v2 inner
+  JSON; malformed, unknown, or ineligible policy fails closed as
+  `unsupported`. Plan 238 exclusively retains sequential DB v101.
+- The receiver commits the current direct parent policy before preview or
+  download decisions. Foreground, Dart push, and iOS NSE private previews use
+  only the localized meaning `Private media`. Caption, media detail, lifecycle
+  policy, paths, keys, and nonces do not enter private preview or Info copy.
+- Private media never auto-downloads. A still-available parent may use only the
+  guarded manual in-app download into canonical app-owned storage. View Once
+  uses transactional open/view/terminal state, Disappearing uses immutable
+  deadlines plus persisted clock high-water, and restart/cleanup cannot
+  resurrect terminal authority or bytes.
+- One freshly loaded exact direct parent/attachment decision governs
+  Save/Files/Share, Forward, bookmark, Shared Media and batch egress, explicit
+  download, ordinary viewer entry, and typed PiP eligibility. Private,
+  unsupported, terminal, corrupt, stale, wrong-owner, group-owned, and
+  unresolved rows fail closed before work or paging `LIMIT`. Same-ID group and
+  unresolved siblings remain unchanged.
+- Private quotes are exactly generic `Private media`; private Info exposes no
+  MIME, media kind, path, size, dimensions, duration, caption, key, or nonce.
+  Generic terminal Info remains available after attachment cleanup. Ordinary
+  direct and group behavior remains under its existing owners.
+- Android uses route-scoped `FLAG_SECURE` and restores it on exit/error. iOS
+  detects and obscures capture/app-switcher exposure but does not claim
+  screenshot prevention. Every private mode publishes typed PiP denial; Plan
+  234 implements no actual PiP.
+- Final Session-06 proof is deliberately bounded. Criteria pass `84/84`; the
+  deterministic physical-Android plus Android-emulator artifact SHA-256 is
+  `85423546027053fe3d44da0f2cb46660ef997fc02ceda76fa3f9fd6a8dfb6233`;
+  protected manifests are byte-identical at
+  `9fa73691afcc5772d083423a46a7def50d1742cf097cce11877f1c7641208a13`
+  (`2,069,571` bytes; `cmp=0`); independent QA accepted after
+  `fix_passes=2`. The external `1to1` success is user-attested, was not observed
+  by that QA, and has no available exact count/log; no result is invented.
+- That Android pair is device/install-local app-layer proof: sender v2
+  envelope projection is not live relay transport; protected evidence is two
+  central open decisions rather than two rendered sessions; zero auto-download
+  covers the driven sequence; consume count is bridge-command-name based; and
+  egress/viewer/PiP fields are eligibility decisions. It proves no
+  account-wide/global consume, remote revocation, cross-install convergence,
+  actual PiP, or screenshot-proof iOS behavior.
+- Session 06 added no production/native/schema/v101/transport/group/
+  announcement/actual-PiP delta, so it correctly ran no Graphify refresh.
+  Full `host-all` and the final Graphify refresh remain final included-Wave-1
+  work after Plan 238.
+
 ---
 
 ## When To Reopen 1:1 Reliability
@@ -311,7 +385,12 @@ Reopen this area only if one of these happens:
 13. direct Go/libp2p 1:1 chat ACK can again happen before the receiver reaches
     a terminal nonce-confirmed disposition, or an unacked direct send stops
     truthfully handing off to inbox-backed delivery when that fallback is
-    available.
+    available,
+14. direct private-media policy can leak outside encrypted inner content,
+    preview/download can run before policy persistence, terminal bytes or
+    authority can resurrect, any egress/library/viewer/PiP seam bypasses the
+    fresh exact-parent decision, platform copy overclaims protection, or DB
+    v100 stops upgrading/reopening idempotently while preserving earlier data.
 
 Do **not** reopen 1:1 reliability just because a missing product feature was noticed.
 

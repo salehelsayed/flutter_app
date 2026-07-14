@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
+import 'package:flutter_app/core/media/app_owned_media_path_authority.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/picture_in_picture_gateway.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/group_shared_media_library_controller.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_policy.dart';
@@ -12,6 +15,9 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_shared_media_library_screen.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
+import 'package:flutter_app/shared/widgets/media/media_picture_in_picture_controller.dart';
+import 'package:flutter_app/shared/widgets/media/media_video_resume_controller.dart';
+import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
@@ -109,6 +115,94 @@ void main() {
     expect(viewer.items[50].messageId, 'm50');
     expect(repository.requests, hasLength(2));
   });
+
+  testWidgets(
+    'GML-PIP ordinary received video forwards exact PiP composition',
+    (tester) async {
+      final temp = Directory.systemTemp.createTempSync('group-pip-route-');
+      addTearDown(() => temp.deleteSync(recursive: true));
+      final video = File('${temp.path}/received.mp4')
+        ..writeAsBytesSync(const <int>[1, 2, 3]);
+      final repository = StrictGroupMediaLibraryRepository(
+        expectedGroupId: 'group-a',
+        entries: [
+          groupMediaEntry(
+            'group-pip-video',
+            messageId: 'group-pip-message',
+            mediaType: 'video',
+            downloadStatus: 'done',
+            localPath: video.path,
+          ),
+        ],
+      );
+      final gateway = _GroupRoutePictureInPictureGateway();
+      final resume = _GroupRouteResumeStore();
+      final authorized = <MediaViewerItem>[];
+
+      await tester.pumpWidget(
+        _app(
+          repository,
+          capabilitiesForEntry: (_) => const {
+            GroupSharedMediaAction.save,
+            GroupSharedMediaAction.share,
+            GroupSharedMediaAction.bookmark,
+            GroupSharedMediaAction.goToMessage,
+            GroupSharedMediaAction.pictureInPicture,
+          },
+          pictureInPictureControllerFactory:
+              ({required reloadCurrent, required restorePlayback}) =>
+                  MediaPictureInPictureController(
+                    gateway: gateway,
+                    pathAuthority: _GroupRoutePathAuthority(),
+                    reloadCurrent: reloadCurrent,
+                    resumeStore: resume,
+                    restorePlayback: restorePlayback,
+                    pollTicks: const Stream<void>.empty(),
+                  ),
+          loadPictureInPictureAuthorization: (item) async {
+            authorized.add(item);
+            return MediaPictureInPictureAuthorization(
+              item: item,
+              generation: 1,
+              policyState: MediaPictureInPicturePolicyState.ordinary,
+              isIncoming: true,
+              isTransferComplete: true,
+              routeActive: true,
+            );
+          },
+          mediaViewerResumeStore: resume,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(
+        find.byKey(const ValueKey('group-shared-media-filter-videos')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(
+          const ValueKey('media-grid-cell-group-pip-message-group-pip-video'),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      final viewer = tester.widget<FullScreenTypedMediaViewer>(
+        find.byType(FullScreenTypedMediaViewer),
+      );
+      expect(viewer.items.single.owner, MediaOwnerLane.group);
+      expect(viewer.items.single.messageId, 'group-pip-message');
+      expect(viewer.items.single.canEnterPictureInPicture, isTrue);
+      expect(viewer.pictureInPictureControllerFactory, isNotNull);
+      expect(viewer.loadPictureInPictureAuthorization, isNotNull);
+      expect(
+        find.byKey(const ValueKey('media_action_picture_in_picture')),
+        findsOneWidget,
+      );
+      expect(authorized.last.attachmentId, 'group-pip-video');
+      expect(gateway.capabilityCalls, greaterThanOrEqualTo(1));
+      expect(gateway.startCalls, 0);
+    },
+  );
 
   testWidgets(
     'GML-06F selected item reaches committed group forward adapter exactly once',
@@ -257,6 +351,10 @@ void main() {
 Widget _app(
   StrictGroupMediaLibraryRepository repository, {
   GroupSharedMediaForwardDispatch? dispatchForward,
+  GroupSharedMediaCapabilityResolver? capabilitiesForEntry,
+  MediaPictureInPictureControllerFactory? pictureInPictureControllerFactory,
+  MediaPictureInPictureAuthorizationLoader? loadPictureInPictureAuthorization,
+  MediaViewerResumeStore? mediaViewerResumeStore,
 }) {
   return MaterialApp(
     locale: const Locale('en'),
@@ -267,15 +365,73 @@ Widget _app(
       libraryRepository: repository,
       stateRepository: repository,
       dispatchForward: dispatchForward,
-      capabilitiesForEntry: dispatchForward == null
-          ? null
-          : (_) => const {
-              GroupSharedMediaAction.bookmark,
-              GroupSharedMediaAction.forward,
-              GroupSharedMediaAction.goToMessage,
-            },
+      capabilitiesForEntry:
+          capabilitiesForEntry ??
+          (dispatchForward == null
+              ? null
+              : (_) => const {
+                  GroupSharedMediaAction.bookmark,
+                  GroupSharedMediaAction.forward,
+                  GroupSharedMediaAction.goToMessage,
+                }),
+      pictureInPictureControllerFactory: pictureInPictureControllerFactory,
+      loadPictureInPictureAuthorization: loadPictureInPictureAuthorization,
+      mediaViewerResumeStore: mediaViewerResumeStore,
     ),
   );
+}
+
+class _GroupRoutePathAuthority implements AppOwnedMediaPathAuthority {
+  @override
+  Future<String?> authorize(String? candidatePath) async => candidatePath;
+}
+
+class _GroupRouteResumeStore implements MediaViewerResumeStore {
+  @override
+  Future<int?> readResumePosition(MediaViewerItem item) async => null;
+
+  @override
+  Future<void> writeResumePosition(
+    MediaViewerItem item,
+    int positionMs,
+  ) async {}
+}
+
+class _GroupRoutePictureInPictureGateway implements PictureInPictureGateway {
+  int capabilityCalls = 0;
+  int startCalls = 0;
+
+  @override
+  Stream<PictureInPictureEvent> get events => const Stream.empty();
+
+  @override
+  Future<PictureInPictureCapability> capability() async {
+    capabilityCalls++;
+    return const PictureInPictureCapability.androidSupported();
+  }
+
+  @override
+  Future<PictureInPictureStartOutcome> start(
+    PictureInPictureRequest request,
+  ) async {
+    startCalls++;
+    return PictureInPictureStartOutcome.platformFailure;
+  }
+
+  @override
+  Future<PictureInPictureCommandResult> activate(
+    String session,
+    String attachment,
+  ) async => const PictureInPictureCommandResult.success();
+
+  @override
+  Future<PictureInPictureCommandResult> stop(
+    String session,
+    String attachment,
+  ) async => const PictureInPictureCommandResult.success();
+
+  @override
+  Future<void> dispose() async {}
 }
 
 const _tinyPng = <int>[

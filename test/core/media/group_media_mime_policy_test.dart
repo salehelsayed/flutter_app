@@ -126,7 +126,7 @@ void main() {
     });
 
     test(
-      'accepts unknown local signatures only for explicitly allowed MIME values',
+      'rejects unknown visual signatures while preserving allowed audio fallback',
       () async {
         final dir = await Directory.systemTemp.createTemp(
           'group_mime_unknown_',
@@ -141,14 +141,16 @@ void main() {
           ..writeAsStringSync('plain bytes with no known media signature');
         final unknownOctet = File('${dir.path}/unknown.bin')
           ..writeAsStringSync('plain bytes with no known media signature');
+        final unknownAudio = File('${dir.path}/unknown.m4a')
+          ..writeAsStringSync('plain bytes with no known audio signature');
 
         expect(
           (await GroupMediaMimePolicy.validateFile(
             path: unknownJpeg.path,
             mime: 'image/jpeg',
             mediaType: 'image',
-          )).isValid,
-          isTrue,
+          )).reason,
+          'unknown_signature',
         );
         expect(
           (await GroupMediaMimePolicy.validateFile(
@@ -157,6 +159,14 @@ void main() {
             mediaType: 'file',
           )).reason,
           'disallowed_mime',
+        );
+        expect(
+          (await GroupMediaMimePolicy.validateFile(
+            path: unknownAudio.path,
+            mime: 'audio/mp4',
+            mediaType: 'audio',
+          )).isValid,
+          isTrue,
         );
       },
     );

@@ -56,130 +56,140 @@ void main() {
       )
       .toList();
 
-  test(
-    'received media egress call sites and wired transport baseline are exact',
-    () {
-      // ── 1. The controller is the single egress call site. ──────────────
-      final controllerSrc = read(controllerPath);
-      expect(
-        count(controllerSrc, '.perform('),
-        1,
-        reason:
-            'exactly one ReceivedMediaEgressService.perform call site may '
-            'exist, inside the controller',
-      );
+  test('received media egress call sites and wired transport baseline are exact', () {
+    // ── 1. The controller is the single egress call site. ──────────────
+    final controllerSrc = read(controllerPath);
+    expect(
+      count(controllerSrc, '.perform('),
+      1,
+      reason:
+          'exactly one ReceivedMediaEgressService.perform call site may '
+          'exist, inside the controller',
+    );
 
-      const controllerImportAllowlist = <String>{
-        'dart:io',
-        'package:uuid/uuid.dart',
-        'package:flutter_app/core/media/group_media_integrity_policy.dart',
-        'package:flutter_app/core/media/media_file_manager.dart',
-        'package:flutter_app/core/media/media_owner_lane.dart',
-        'package:flutter_app/core/media/received_media_egress.dart',
-        'package:flutter_app/core/media/received_media_egress_service.dart',
-        'package:flutter_app/features/conversation/domain/models/conversation_message.dart',
-        'package:flutter_app/features/conversation/domain/models/media_attachment.dart',
-        'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart',
-      };
-      final controllerImports = importTargets(controllerSrc).toSet();
-      expect(
-        controllerImports.difference(controllerImportAllowlist),
-        isEmpty,
-        reason:
-            'controller gained an import outside its allowlist — no bridge, '
-            'P2P, send/delete use case, share picker, or raw gateway',
-      );
+    const controllerImportAllowlist = <String>{
+      'dart:io',
+      'package:uuid/uuid.dart',
+      'package:flutter_app/core/media/group_media_integrity_policy.dart',
+      'package:flutter_app/core/media/media_file_manager.dart',
+      'package:flutter_app/core/media/media_owner_lane.dart',
+      'package:flutter_app/core/media/received_media_egress.dart',
+      'package:flutter_app/core/media/received_media_egress_service.dart',
+      'package:flutter_app/features/conversation/domain/models/conversation_message.dart',
+      'package:flutter_app/features/conversation/domain/models/media_attachment.dart',
+      'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart',
+      'private_media_action_eligibility.dart',
+    };
+    final controllerImports = importTargets(controllerSrc).toSet();
+    expect(
+      controllerImports.difference(controllerImportAllowlist),
+      isEmpty,
+      reason:
+          'controller gained an import outside its allowlist — no bridge, '
+          'P2P, send/delete use case, share picker, or raw gateway',
+    );
 
-      // The controller never bypasses the service for the raw gateway.
+    // The controller never bypasses the service for the raw gateway.
+    for (final forbidden in const [
+      'ReceivedMediaEgressGateway',
+      'ReceivedMediaEgressChannel',
+      'MethodChannel(',
+      'ShareTargetPicker',
+      'ShareBatch',
+    ]) {
+      expect(
+        controllerSrc.contains(forbidden),
+        isFalse,
+        reason: 'controller must not reference $forbidden',
+      );
+    }
+
+    // ── 2. Media-action UI files invoke callbacks/controller only. ─────
+    for (final path in mediaActionUiFiles) {
+      final source = read(path);
       for (final forbidden in const [
+        'ReceivedMediaEgressService',
         'ReceivedMediaEgressGateway',
         'ReceivedMediaEgressChannel',
+        '.perform(',
         'MethodChannel(',
         'ShareTargetPicker',
         'ShareBatch',
       ]) {
         expect(
-          controllerSrc.contains(forbidden),
+          source.contains(forbidden),
           isFalse,
-          reason: 'controller must not reference $forbidden',
+          reason: '$path must not reference $forbidden',
         );
       }
+    }
 
-      // ── 2. Media-action UI files invoke callbacks/controller only. ─────
-      for (final path in mediaActionUiFiles) {
-        final source = read(path);
-        for (final forbidden in const [
-          'ReceivedMediaEgressService',
-          'ReceivedMediaEgressGateway',
-          'ReceivedMediaEgressChannel',
-          '.perform(',
-          'MethodChannel(',
-          'ShareTargetPicker',
-          'ShareBatch',
-        ]) {
-          expect(
-            source.contains(forbidden),
-            isFalse,
-            reason: '$path must not reference $forbidden',
-          );
-        }
-      }
-
-      // ── 3. Frozen wired transport call-site inventory. ──────────────────
-      // Plan 232 adds one reviewed forwarding route. It passes the existing
-      // P2P service to the existing share picker, while Save/Share/Info remain
-      // local-only Plan 231 actions. These exact counts keep that exception
-      // bounded and prevent another media-action delivery seam from appearing.
-      const wiredTransportBaseline = <String, int>{
-        'widget.p2pService': 17,
-        'widget.bridge': 27,
-        'widget.sendChatMessageFn(': 1,
-        'widget.editChatMessageFn(': 1,
-        'widget.deleteMessageForMeFn(': 1,
-        'widget.deleteMessageForEveryoneFn(': 1,
-        'widget.sendVoiceMessageFn(': 1,
-        'widget.uploadMediaFn(': 1,
-        'widget.downloadMediaFn(': 2,
-        'prepareEncryptedMediaArtifactFn': 4,
-        '.sendMessageWithReply(': 0,
-        '.storeInInbox(': 0,
-        'ShareTargetPicker': 1,
-        'ShareBatch': 0,
-      };
-      final wiredSrc = read(wiredPath);
-      for (final entry in wiredTransportBaseline.entries) {
-        expect(
-          count(wiredSrc, entry.key),
-          entry.value,
-          reason:
-              'conversation_wired.dart transport call-site inventory drifted '
-              'for "${entry.key}" — media actions must not add or reuse a '
-              'delivery seam outside the reviewed Plan 232 forwarding route',
-        );
-      }
-
-      // The wired layer routes media actions through the controller and
-      // never calls the egress service or raw gateway itself.
+    // ── 3. Frozen wired transport call-site inventory. ──────────────────
+    // Plan 232 adds one reviewed forwarding route. Plan 249 adds one
+    // separately reviewed direct-only Batch Forward route that composes the
+    // existing ordinary coordinator after atomic source qualification.
+    // Save/Share/Info remain local-only Plan 231 actions. These exact counts
+    // keep both exceptions bounded and prevent an unreviewed delivery seam.
+    const wiredTransportBaseline = <String, int>{
+      'widget.p2pService': 18,
+      'widget.bridge': 29,
+      'widget.sendChatMessageFn(': 1,
+      'widget.editChatMessageFn(': 1,
+      'widget.deleteMessageForMeFn(': 1,
+      'widget.deleteMessageForEveryoneFn(': 1,
+      'widget.sendVoiceMessageFn(': 1,
+      'widget.uploadMediaFn(': 1,
+      'widget.downloadMediaFn(': 2,
+      'prepareEncryptedMediaArtifactFn': 4,
+      '.sendMessageWithReply(': 0,
+      '.storeInInbox(': 0,
+      'ShareTargetPicker': 1,
+      'ShareBatch': 1,
+    };
+    final wiredSrc = read(wiredPath);
+    for (final entry in wiredTransportBaseline.entries) {
       expect(
-        wiredSrc.contains('ReceivedMediaActionController'),
-        isTrue,
-        reason: 'wired layer must construct/inject the 231 controller',
+        count(wiredSrc, entry.key),
+        entry.value,
+        reason:
+            'conversation_wired.dart transport call-site inventory drifted '
+            'for "${entry.key}" — media actions must not add or reuse a '
+            'delivery seam outside the reviewed Plan 232 / Plan 249 routes',
       );
+    }
+
+    expect(
+      count(wiredSrc, 'DefaultShareBatchDeliveryCoordinator('),
+      1,
+      reason: 'Plan 249 owns exactly one concrete ordinary coordinator',
+    );
+    expect(
+      count(wiredSrc, 'DirectMediaBatchForwardDeliveryCoordinator('),
+      1,
+      reason: 'Plan 249 owns exactly one direct matrix coordinator',
+    );
+
+    // The wired layer routes media actions through the controller and
+    // never calls the egress service or raw gateway itself.
+    expect(
+      wiredSrc.contains('ReceivedMediaActionController'),
+      isTrue,
+      reason: 'wired layer must construct/inject the 231 controller',
+    );
+    expect(
+      count(wiredSrc, '.perform('),
+      0,
+      reason: 'wired layer must not call the egress service directly',
+    );
+    for (final forbidden in const [
+      'ReceivedMediaEgressGateway',
+      'ReceivedMediaEgressChannel',
+    ]) {
       expect(
-        count(wiredSrc, '.perform('),
-        0,
-        reason: 'wired layer must not call the egress service directly',
+        wiredSrc.contains(forbidden),
+        isFalse,
+        reason: 'wired layer must not reference $forbidden',
       );
-      for (final forbidden in const [
-        'ReceivedMediaEgressGateway',
-        'ReceivedMediaEgressChannel',
-      ]) {
-        expect(
-          wiredSrc.contains(forbidden),
-          isFalse,
-          reason: 'wired layer must not reference $forbidden',
-        );
-      }
-    },
-  );
+    }
+  });
 }

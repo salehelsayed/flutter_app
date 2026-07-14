@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -130,6 +131,29 @@ void main() {
       expect(p2pService.sendMessageCallCount, 1);
     });
 
+    test('ADD envelope carries minimal notification metadata', () async {
+      final (result, reaction) = await sendReaction(
+        p2pService: p2pService,
+        bridge: bridge,
+        reactionRepo: reactionRepo,
+        targetPeerId: 'peer-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'my-peer',
+        recipientMlKemPublicKey: 'key-1',
+      );
+
+      expect(result, SendReactionResult.success);
+      final outer =
+          jsonDecode(p2pService.lastSendMessageContent!)
+              as Map<String, dynamic>;
+      expect(outer['eventId'], reaction!.id);
+      expect(outer['action'], 'add');
+      expect(outer['targetMessageId'], 'msg-1');
+      expect(outer.containsKey('emoji'), isFalse);
+      expect(outer.containsKey('senderUsername'), isFalse);
+    });
+
     test('falls back to inbox when direct send fails', () async {
       p2pService.sendMessageResult = false;
 
@@ -211,39 +235,36 @@ void main() {
 
     // ---- FDC-18: concurrent durable inbox (mirror FDC-03 onto sendReaction) ----
 
-    test(
-      'FDC-18-01 unknown-presence reaction whose live send fails takes '
-      'concurrent-inbox custody',
-      () async {
-        // Unknown presence (isConnectedToPeerResult: false by default); the live
-        // send fails, the concurrent inbox deposit succeeds.
-        p2pService.sendMessageResult = false;
-        p2pService.storeInInboxResult = true;
+    test('FDC-18-01 unknown-presence reaction whose live send fails takes '
+        'concurrent-inbox custody', () async {
+      // Unknown presence (isConnectedToPeerResult: false by default); the live
+      // send fails, the concurrent inbox deposit succeeds.
+      p2pService.sendMessageResult = false;
+      p2pService.storeInInboxResult = true;
 
-        late SendReactionResult result;
-        final events = await _captureFlowEvents(() async {
-          final (r, _) = await sendReaction(
-            p2pService: p2pService,
-            bridge: bridge,
-            reactionRepo: reactionRepo,
-            targetPeerId: 'peer-1',
-            messageId: 'msg-1',
-            emoji: '👍',
-            senderPeerId: 'my-peer',
-            recipientMlKemPublicKey: 'key-1',
-          );
-          result = r;
-        });
-
-        expect(result, SendReactionResult.success);
-        expect(p2pService.storeInInboxCallCount, 1);
-        expect(
-          events.map((e) => e['event']),
-          contains('REACTION_SEND_CONCURRENT_INBOX_BEGIN'),
+      late SendReactionResult result;
+      final events = await _captureFlowEvents(() async {
+        final (r, _) = await sendReaction(
+          p2pService: p2pService,
+          bridge: bridge,
+          reactionRepo: reactionRepo,
+          targetPeerId: 'peer-1',
+          messageId: 'msg-1',
+          emoji: '👍',
+          senderPeerId: 'my-peer',
+          recipientMlKemPublicKey: 'key-1',
         );
-        expect(reactionRepo.saveReactionCallCount, 1);
-      },
-    );
+        result = r;
+      });
+
+      expect(result, SendReactionResult.success);
+      expect(p2pService.storeInInboxCallCount, 1);
+      expect(
+        events.map((e) => e['event']),
+        contains('REACTION_SEND_CONCURRENT_INBOX_BEGIN'),
+      );
+      expect(reactionRepo.saveReactionCallCount, 1);
+    });
 
     test(
       'FDC-18-02 unknown-presence reaction whose live send WINS still deposits '

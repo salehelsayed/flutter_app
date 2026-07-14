@@ -2,6 +2,7 @@ import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 
 /// 235: a received-media action a discussion-group member may take on one
 /// incoming image/video attachment. The UI surfaces exactly what
@@ -33,11 +34,14 @@ class GroupReceivedMediaActionPolicy {
     required bool isIncoming,
     required MediaAttachment attachment,
     required bool canWrite,
+    GroupPrivateMediaPolicy mediaPolicy =
+        const GroupPrivateMediaPolicy.ordinary(),
   }) {
     if (groupType != GroupType.chat && groupType != GroupType.announcement) {
       return const {};
     }
     if (!isIncoming) return const {};
+    if (mediaPolicy.requiresRedaction) return const {};
     final mediaType = attachment.mediaType;
     if (mediaType != 'image' && mediaType != 'video') return const {};
     if (attachment.ownerLane != MediaOwnerLane.group) return const {};

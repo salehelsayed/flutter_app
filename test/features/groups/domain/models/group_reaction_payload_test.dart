@@ -10,6 +10,7 @@ void main() {
       action: 'add',
       senderPeerId: 'peer-1',
       timestamp: '2026-03-08T00:00:00.000Z',
+      eventId: 'transition-1',
     );
 
     final json = payload.toInnerJson();
@@ -22,6 +23,7 @@ void main() {
     expect(parsed.action, 'add');
     expect(parsed.senderPeerId, 'peer-1');
     expect(parsed.timestamp, '2026-03-08T00:00:00.000Z');
+    expect(parsed.eventId, 'transition-1');
   });
 
   test('round-trips remove reaction', () {
@@ -40,6 +42,7 @@ void main() {
     expect(parsed, isNotNull);
     expect(parsed!.action, 'remove');
     expect(parsed.emoji, '❤️');
+    expect(parsed.eventId, isNull);
   });
 
   test('preserves multi-codepoint emoji 👨‍👩‍👧‍👦', () {

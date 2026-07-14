@@ -10,6 +10,9 @@ dry_run=0
 continue_on_failure=0
 start_at=1
 only_selector=""
+batch_flutter=0
+flutter_concurrency=""
+flutter_reporter=""
 
 readonly ONE_TO_ONE_HOST_TESTS=(
   "test/features/conversation/integration/two_user_message_exchange_test.dart"
@@ -30,6 +33,8 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart"
   "test/features/conversation/application/chat_message_listener_test.dart"
   "test/features/conversation/application/send_chat_message_use_case_test.dart"
+  # Plan 256: composed direct-reaction notification + unread-message boundary.
+  "test/features/conversation/integration/reaction_notification_pipeline_test.dart"
   "test/features/conversation/application/retry_unacked_messages_use_case_test.dart"
   "test/features/conversation/application/recovered_inbox_chat_disposition_test.dart"
   "test/features/conversation/application/delivered_status_minting_sites_test.dart"
@@ -86,7 +91,46 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/features/share/application/share_batch_delivery_coordinator_test.dart"
   "test/features/share/presentation/share_target_picker_wired_test.dart"
   "test/features/share/integration/external_share_media_ux_test.dart"
+  "test/features/share/integration/outgoing_share_media_owner_viewer_test.dart"
+  "test/features/share/integration/direct_received_media_to_group_preservation_test.dart"
   "test/features/conversation/domain/models/message_payload_test.dart"
+  # 234 Session 01: typed encrypted-inner policy plus direct-parent v100
+  # durability. Dedicated host proofs are pinned in both 1:1 inventories.
+  "test/features/conversation/domain/models/private_media_policy_test.dart"
+  "test/features/conversation/domain/models/conversation_message_test.dart"
+  "test/core/database/helpers/messages_db_helpers_test.dart"
+  "test/core/database/migrations/100_direct_private_media_lifecycle_test.dart"
+  "test/core/database/integration/full_migration_chain_test.dart"
+  # 234 Session 03: direct private-media SQL/CAS, reveal lease, monotonic
+  # expiry scheduler, restart/cleanup convergence, and resume ordering.
+  "test/core/database/helpers/messages_db_helpers_private_media_lifecycle_test.dart"
+  "test/features/conversation/application/consume_private_media_use_case_test.dart"
+  "test/features/conversation/application/private_media_expiry_scheduler_test.dart"
+  "test/features/conversation/integration/private_media_restart_replay_test.dart"
+  "test/features/conversation/application/private_media_cleanup_race_test.dart"
+  "test/core/lifecycle/private_media_lifecycle_recovery_wiring_test.dart"
+  # 234 Session 04: central current-parent direct-media capability matrix and
+  # stale/direct-call action boundary (egress, Forward, library, download, PiP).
+  "test/features/conversation/application/private_media_action_eligibility_test.dart"
+  "test/features/conversation/application/direct_private_media_boundary_test.dart"
+  # 234 Session 05: direct private viewer/lifecycle protection host contracts.
+  "test/features/conversation/presentation/screens/direct_private_media_viewer_test.dart"
+  "test/core/media/private_media_protection_coordinator_test.dart"
+  # 234 Session 06: strict fail-closed evaluator for the fully automated,
+  # availability-bounded physical-Android + emulator device-local artifact.
+  "test/integration/direct_private_media_device_local_journey_criteria_test.dart"
+  # 249 Session 01: hidden direct-library batch-forward source qualification,
+  # canonical order, independent captions/tokens, and atomic revalidation.
+  "test/features/conversation/application/build_direct_media_library_batch_forward_test.dart"
+  # 249 Session 02: direct-only source/contact delivery matrix, strict ordinary
+  # transport boundary, dedicated picker state, and Shared Media reconciliation.
+  "test/features/share/application/direct_media_batch_forward_delivery_coordinator_test.dart"
+  "test/features/share/presentation/direct_media_batch_forward_picker_wired_test.dart"
+  "test/features/conversation/presentation/screens/conversation_shared_media_batch_forward_test.dart"
+  "test/features/conversation/application/direct_media_batch_forward_transport_boundary_test.dart"
+  # 247 Session 03: announcement Message sender opens a blank real 1:1 route
+  # and opening/cancelling remains delivery-free.
+  "test/features/groups/integration/announcement_private_reply_no_auto_send_test.dart"
   "test/features/conversation/presentation/widgets/letter_card_test.dart"
   "test/features/conversation/presentation/screens/conversation_screen_test.dart"
   # 233: 1:1 shared media library — strict direct-scoped paging/filters/
@@ -143,6 +187,10 @@ readonly GO_NODE_LIBP2P_REFACTOR_TEST="go-mknoon/node/libp2p_refactor_contract_t
 readonly GO_NODE_LIBP2P_REFACTOR_RUN='TestGoLibp2pProductionShapeBudget|TestStartDoesNotHoldNodeLockAcrossHostCreation|TestStartRejectsConcurrentStartWhileHostCreationInProgress|TestStartHostCreationFailureRollsBackPublishedState|TestStartHostCreationPanicClearsInProgressAndAllowsRetry|TestStopDuringStartInProgressIsExplicitAndNonMutating|TestReconnectRelaysDuringStartInProgressFailsFast|TestGroupDialKnownMembersRunsBoundedParallel|TestDiscoverAndConnectGroupPeersRunsBoundedParallel|TestRunGroupDiscoveryCycleBoundsGlobalGroupDialConcurrency|TestRelaySelectorFanOutRunsDistinctRelaysInParallel|TestRelaySelectorFanOutAllFailPreservesAggregateError'
 readonly GO_BRIDGE_ENTRYPOINT_REFACTOR_TEST="go-mknoon/bridge/bridge_entrypoint_contract_test.go"
 readonly GO_BRIDGE_ENTRYPOINT_REFACTOR_RUN='TestBridgeExportedHandlersUseSharedEntrypoint|TestBridgeGroupPublishContractsPreservedAfterHelperExtraction'
+# Exact Android build-boundary proof. Keep it as one synthetic core-host item:
+# the auto-discovered Dart contract stays fast, while this leg performs the
+# profile/release manifest preparation only once per core-host-all invocation.
+readonly ANDROID_RENDERER_MANIFEST_CONTRACT="scripts/check_android_renderer_manifest_contract.sh"
 
 usage() {
   cat <<'EOF'
@@ -151,6 +199,14 @@ Usage:
 
 Options:
   --list, --dry-run          Discover host tests and print the command plan only.
+  --batch-flutter            Run the selected Dart paths in one exact-path
+                             Flutter invocation; Go legs remain separate.
+  --concurrency <N>          Flutter batch process count from 1 through 64
+                             (default: 1).
+                             Requires --batch-flutter.
+  --reporter <NAME>          Human-readable Flutter batch reporter: compact,
+                             expanded, or failures-only.
+                             Requires --batch-flutter.
   --continue-on-failure      Run the remaining commands after a failure.
   --start-at <N>             Run the planned command list starting at item N.
   --only <N|path>            Run only planned item N or the exact planned path.
@@ -162,7 +218,8 @@ Scopes:
   host-all                   All test/**/*_test.dart except test/performance/**,
                              plus host-side Go bridge reliability contracts.
   feature-host-all           All test/features/**/*_test.dart.
-  core-host-all              All test/core/**/*_test.dart.
+  core-host-all              All test/core/**/*_test.dart plus the Android
+                             renderer merged-manifest contract.
   performance-host           All test/performance/**/*_test.dart.
   move-feature               Move Account dedicated host tests plus shared
                              lifecycle/push/discovery/startup/P2P move guards.
@@ -199,6 +256,38 @@ while (($# > 0)); do
       dry_run=1
       shift
       ;;
+    --batch-flutter)
+      batch_flutter=1
+      shift
+      ;;
+    --concurrency)
+      if (($# < 2)); then
+        printf 'Missing value for --concurrency.\n' >&2
+        exit 2
+      fi
+      flutter_concurrency="$2"
+      if ! [[ "$flutter_concurrency" =~ ^([1-9]|[1-5][0-9]|6[0-4])$ ]]; then
+        printf 'Invalid --concurrency value: %s\n' "$flutter_concurrency" >&2
+        exit 2
+      fi
+      shift 2
+      ;;
+    --reporter)
+      if (($# < 2)); then
+        printf 'Missing value for --reporter.\n' >&2
+        exit 2
+      fi
+      flutter_reporter="$2"
+      case "$flutter_reporter" in
+        compact|expanded|failures-only)
+          ;;
+        *)
+          printf 'Invalid --reporter value: %s\n' "$flutter_reporter" >&2
+          exit 2
+          ;;
+      esac
+      shift 2
+      ;;
     --continue-on-failure)
       continue_on_failure=1
       shift
@@ -225,6 +314,29 @@ while (($# > 0)); do
       ;;
   esac
 done
+
+if [ "$batch_flutter" -ne 1 ] && {
+  [ -n "$flutter_concurrency" ] || [ -n "$flutter_reporter" ];
+}; then
+  printf '%s\n' \
+    'Using --concurrency or --reporter requires --batch-flutter.' >&2
+  exit 2
+fi
+
+if [ "$batch_flutter" -eq 1 ]; then
+  case "$scope" in
+    host-all|feature-host-all|core-host-all|performance-host|move-feature)
+      ;;
+    *)
+      printf 'Batch mode is not supported for host scope: %s\n' "$scope" >&2
+      exit 2
+      ;;
+  esac
+fi
+
+if [ "$batch_flutter" -eq 1 ] && [ -z "$flutter_concurrency" ]; then
+  flutter_concurrency=1
+fi
 
 if ! command -v rg >/dev/null 2>&1; then
   printf 'ripgrep (rg) is required for host test discovery.\n' >&2
@@ -258,7 +370,10 @@ case "$scope" in
     rg --files test/features -g '*_test.dart' | sort >"$plan_file"
     ;;
   core-host-all)
-    rg --files test/core -g '*_test.dart' | sort >"$plan_file"
+    {
+      rg --files test/core -g '*_test.dart'
+      printf '%s\n' "$ANDROID_RENDERER_MANIFEST_CONTRACT"
+    } | sort -u >"$plan_file"
     ;;
   performance-host)
     rg --files test/performance -g '*_test.dart' | sort >"$plan_file"
@@ -350,6 +465,10 @@ is_go_bridge_entrypoint_refactor_test() {
   [ "$1" = "$GO_BRIDGE_ENTRYPOINT_REFACTOR_TEST" ]
 }
 
+is_android_renderer_manifest_contract() {
+  [ "$1" = "$ANDROID_RENDERER_MANIFEST_CONTRACT" ]
+}
+
 readonly GO_NODE_ADDR_VISIBILITY_RUN='AnnouncedAddrsSurvive|SignedPeerRecord|IdentifyLearnedAddr|InterfaceChangeUpdates|Fdc11PortMining|NoEnumerationErrorSpam|NotSuppressed|HolePunchInputAddrs|DoesNotLeakNonRoutable'
 
 print_command_for_path() {
@@ -384,6 +503,10 @@ print_command_for_path() {
   fi
   if is_go_bridge_entrypoint_refactor_test "$path"; then
     printf "(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge -run '%s' -count=1)" "$GO_BRIDGE_ENTRYPOINT_REFACTOR_RUN"
+    return
+  fi
+  if is_android_renderer_manifest_contract "$path"; then
+    printf './%s' "$ANDROID_RENDERER_MANIFEST_CONTRACT"
     return
   fi
   printf 'flutter test %s' "$(quote_for_display "$path")"
@@ -423,10 +546,18 @@ run_path() {
     (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge -run "$GO_BRIDGE_ENTRYPOINT_REFACTOR_RUN" -count=1)
     return
   fi
+  if is_android_renderer_manifest_contract "$path"; then
+    "./$ANDROID_RENDERER_MANIFEST_CONTRACT"
+    return
+  fi
   flutter test "$path"
 }
 
-printf '\nHost test command plan: %s\n' "$scope"
+if [ "$batch_flutter" -eq 1 ]; then
+  printf '\nHost test planned-item inventory: %s\n' "$scope"
+else
+  printf '\nHost test command plan: %s\n' "$scope"
+fi
 if [ "$start_at" -ne 1 ]; then
   printf 'Resume filter: starting at planned item #%s\n' "$start_at"
 fi
@@ -435,37 +566,127 @@ if [ -n "$only_selector" ]; then
 fi
 
 command_count=0
+batch_plan_dart_count=0
+batch_plan_other_count=0
 while IFS=$'\t' read -r index path; do
   [ -n "$path" ] || continue
   command_count=$((command_count + 1))
   printf '  %3d. ' "$index"
-  print_command_for_path "$path"
+  if [ "$batch_flutter" -eq 1 ] && [[ "$path" == test/*_test.dart ]]; then
+    batch_plan_dart_count=$((batch_plan_dart_count + 1))
+    printf 'Flutter batch path %s' "$(quote_for_display "$path")"
+  else
+    if [ "$batch_flutter" -eq 1 ]; then
+      batch_plan_other_count=$((batch_plan_other_count + 1))
+    fi
+    print_command_for_path "$path"
+  fi
   printf '\n'
 done <"$active_plan_file"
+
+if [ "$batch_flutter" -eq 1 ]; then
+  batch_plan_flutter_invocations=0
+  if [ "$batch_plan_dart_count" -gt 0 ]; then
+    batch_plan_flutter_invocations=1
+  fi
+  printf '\nBatch execution shape: %s Flutter invocation for %s exact Dart path(s)' \
+    "$batch_plan_flutter_invocations" "$batch_plan_dart_count"
+  printf ', concurrency=%s' "$flutter_concurrency"
+  if [ -n "$flutter_reporter" ]; then
+    printf ', reporter=%s' "$flutter_reporter"
+  fi
+  printf '; %s separate non-Flutter invocation(s).\n' \
+    "$batch_plan_other_count"
+  printf 'Indexed rows above are planned items, not serial execution commands.\n'
+fi
 
 if [ "$dry_run" -eq 1 ]; then
   printf '\nDry run only. Host test discovery passed and no commands were executed.\n'
   exit 0
 fi
 
-printf '\nRunning %s host test command(s)...\n' "$command_count"
-while IFS=$'\t' read -r index path; do
-  [ -n "$path" ] || continue
-  printf '\n==> #%s ' "$index"
-  print_command_for_path "$path"
-  printf '\n'
+if [ "$batch_flutter" -eq 1 ]; then
+  printf '\nRunning %s planned item(s) using the batch execution shape...\n' \
+    "$command_count"
+  batch_dart_paths=()
+  batch_other_indices=()
+  batch_other_paths=()
 
-  if run_path "$path"; then
-    printf 'PASS: #%s %s\n' "$index" "$path"
-  else
-    status=$?
-    printf 'FAIL: #%s %s exited with %s\n' "$index" "$path" "$status" >&2
-    printf '%s\t%s\t%s\n' "$index" "$path" "$status" >>"$failures_file"
-    if [ "$continue_on_failure" -ne 1 ]; then
-      exit "$status"
+  while IFS=$'\t' read -r index path; do
+    [ -n "$path" ] || continue
+    if [[ "$path" == test/*_test.dart ]]; then
+      batch_dart_paths+=("$path")
+    else
+      batch_other_indices+=("$index")
+      batch_other_paths+=("$path")
+    fi
+  done <"$active_plan_file"
+
+  if ((${#batch_dart_paths[@]} > 0)); then
+    batch_flutter_args=("--concurrency=$flutter_concurrency")
+    if [ -n "$flutter_reporter" ]; then
+      batch_flutter_args+=("--reporter=$flutter_reporter")
+    fi
+    batch_flutter_args+=("${batch_dart_paths[@]}")
+
+    printf '\n==> Flutter batch: %s exact planned test path(s), concurrency=%s' \
+      "${#batch_dart_paths[@]}" "$flutter_concurrency"
+    if [ -n "$flutter_reporter" ]; then
+      printf ', reporter=%s' "$flutter_reporter"
+    fi
+    printf '\n'
+
+    if flutter test "${batch_flutter_args[@]}"; then
+      printf 'PASS: Flutter batch (%s test paths)\n' "${#batch_dart_paths[@]}"
+    else
+      status=$?
+      printf 'FAIL: Flutter batch exited with %s\n' "$status" >&2
+      printf '%s\t%s\t%s\n' \
+        batch 'Flutter batch' "$status" >>"$failures_file"
+      if [ "$continue_on_failure" -ne 1 ]; then
+        exit "$status"
+      fi
     fi
   fi
-done <"$active_plan_file"
+
+  for ((i = 0; i < ${#batch_other_paths[@]}; i++)); do
+    index="${batch_other_indices[$i]}"
+    path="${batch_other_paths[$i]}"
+    printf '\n==> #%s ' "$index"
+    print_command_for_path "$path"
+    printf '\n'
+
+    if run_path "$path"; then
+      printf 'PASS: #%s %s\n' "$index" "$path"
+    else
+      status=$?
+      printf 'FAIL: #%s %s exited with %s\n' "$index" "$path" "$status" >&2
+      printf '%s\t%s\t%s\n' "$index" "$path" "$status" >>"$failures_file"
+      if [ "$continue_on_failure" -ne 1 ]; then
+        exit "$status"
+      fi
+    fi
+  done
+else
+  printf '\nRunning %s host test command(s)...\n' "$command_count"
+  while IFS=$'\t' read -r index path; do
+    [ -n "$path" ] || continue
+    printf '\n==> #%s ' "$index"
+    print_command_for_path "$path"
+    printf '\n'
+
+    if run_path "$path"; then
+      printf 'PASS: #%s %s\n' "$index" "$path"
+    else
+      status=$?
+      printf 'FAIL: #%s %s exited with %s\n' "$index" "$path" "$status" >&2
+      printf '%s\t%s\t%s\n' "$index" "$path" "$status" >>"$failures_file"
+      if [ "$continue_on_failure" -ne 1 ]; then
+        exit "$status"
+      fi
+    fi
+  done <"$active_plan_file"
+fi
 
 failure_count="$(awk 'END { print NR + 0 }' "$failures_file")"
 if [ "$failure_count" -gt 0 ]; then

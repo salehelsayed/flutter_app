@@ -50,7 +50,8 @@ Future<List<OrbitGroup>> loadOrbitGroups({
         .map(
           (group) => _buildOrbitGroup(
             group: group,
-            summary: summaries[group.id] ?? GroupThreadSummary(groupId: group.id),
+            summary:
+                summaries[group.id] ?? GroupThreadSummary(groupId: group.id),
             descriptors: descriptors,
           ),
         )
@@ -136,14 +137,17 @@ OrbitGroup _buildOrbitGroup({
       const <String, MediaPreviewDescriptor>{},
 }) {
   final latestMessage = summary.latestMessage;
+  final mayExposeLatest =
+      latestMessage != null &&
+      !latestMessage.privateMediaPolicy.requiresRedaction;
   return OrbitGroup(
     group: group,
     latestMessageSenderUsername: latestMessage?.senderUsername,
-    latestMessageText: latestMessage?.text,
-    latestMessage: latestMessage?.text,
+    latestMessageText: mayExposeLatest ? latestMessage.text : null,
+    latestMessage: mayExposeLatest ? latestMessage.text : null,
     unreadCount: summary.unreadCount,
     lastActivityTimestamp: latestMessage?.timestamp ?? group.createdAt,
-    latestMedia: latestMessage == null ? null : descriptors[latestMessage.id],
+    latestMedia: mayExposeLatest ? descriptors[latestMessage.id] : null,
   );
 }
 
@@ -153,7 +157,9 @@ List<String> _latestMessageIds(Iterable<GroupThreadSummary> summaries) {
   final ids = <String>[];
   for (final summary in summaries) {
     final latest = summary.latestMessage;
-    if (latest != null) ids.add(latest.id);
+    if (latest != null && !latest.privateMediaPolicy.requiresRedaction) {
+      ids.add(latest.id);
+    }
   }
   return ids;
 }

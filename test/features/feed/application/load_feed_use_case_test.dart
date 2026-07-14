@@ -25,6 +25,7 @@ import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
+import '../../../shared/fixtures/media_bytes.dart';
 
 // -- Fake Contact Repository --
 class FakeContactRepository implements ContactRepository {
@@ -135,9 +136,7 @@ class FakeMessageRepository
     Iterable<String> contactPeerIds,
   ) async {
     getConversationThreadSummariesCallCount++;
-    return {
-      for (final id in contactPeerIds.toSet()) id: _summaryFor(id),
-    };
+    return {for (final id in contactPeerIds.toSet()) id: _summaryFor(id)};
   }
 
   @override
@@ -513,7 +512,9 @@ void main() {
             contactPeerId: peerId,
             senderPeerId: 'my-peer',
             text: 'my reply',
-            timestamp: base.subtract(const Duration(minutes: 1)).toIso8601String(),
+            timestamp: base
+                .subtract(const Duration(minutes: 1))
+                .toIso8601String(),
             isIncoming: false,
           ),
         );
@@ -521,38 +522,35 @@ void main() {
       return msgs;
     }
 
-    test(
-      'TC-160-01: contact feed preview uses batched summary, never the '
-      'unbounded per-contact loop',
-      () async {
-        final contacts = [
-          _makeContact('peer-A', 'Alice', '2026-02-09T10:00:00.000Z'),
-          _makeContact('peer-B', 'Bob', '2026-02-09T11:00:00.000Z'),
-          _makeContact('peer-C', 'Carol', '2026-02-09T12:00:00.000Z'),
-        ];
-        // Each thread is deep (40) and pending (has unread) so all 3 load a
-        // window.
-        final repo = FakeMessageRepository(
-          messagesByContact: {
-            'peer-A': seed_('peer-A', 40, unread: 5),
-            'peer-B': seed_('peer-B', 40, unread: 5),
-            'peer-C': seed_('peer-C', 40, unread: 5),
-          },
-        );
+    test('TC-160-01: contact feed preview uses batched summary, never the '
+        'unbounded per-contact loop', () async {
+      final contacts = [
+        _makeContact('peer-A', 'Alice', '2026-02-09T10:00:00.000Z'),
+        _makeContact('peer-B', 'Bob', '2026-02-09T11:00:00.000Z'),
+        _makeContact('peer-C', 'Carol', '2026-02-09T12:00:00.000Z'),
+      ];
+      // Each thread is deep (40) and pending (has unread) so all 3 load a
+      // window.
+      final repo = FakeMessageRepository(
+        messagesByContact: {
+          'peer-A': seed_('peer-A', 40, unread: 5),
+          'peer-B': seed_('peer-B', 40, unread: 5),
+          'peer-C': seed_('peer-C', 40, unread: 5),
+        },
+      );
 
-        await loadContactFeedItems(
-          contactRepo: FakeContactRepository(contacts: contacts),
-          messageRepo: repo,
-        );
+      await loadContactFeedItems(
+        contactRepo: FakeContactRepository(contacts: contacts),
+        messageRepo: repo,
+      );
 
-        expect(repo.getMessagesForContactCallCount, 0);
-        expect(repo.getConversationThreadSummariesCallCount, 1);
-        expect(repo.getMessagesPageCalls, hasLength(3));
-        for (final call in repo.getMessagesPageCalls) {
-          expect(call.$2, greaterThan(1)); // never limit-1, never unbounded/null
-        }
-      },
-    );
+      expect(repo.getMessagesForContactCallCount, 0);
+      expect(repo.getConversationThreadSummariesCallCount, 1);
+      expect(repo.getMessagesPageCalls, hasLength(3));
+      for (final call in repo.getMessagesPageCalls) {
+        expect(call.$2, greaterThan(1)); // never limit-1, never unbounded/null
+      }
+    });
 
     test(
       'TC-160-02: preview-row correctness preserved under the summary path',
@@ -586,38 +584,35 @@ void main() {
       },
     );
 
-    test(
-      'TC-160-14: an all-read contact (summary unreadCount==0) loads ZERO '
-      'messages on mount',
-      () async {
-        final contacts = [
-          _makeContact('peer-pending', 'Pat', '2026-02-09T10:00:00.000Z'),
-          _makeContact('peer-allread', 'Reed', '2026-02-09T11:00:00.000Z'),
-        ];
-        final repo = FakeMessageRepository(
-          messagesByContact: {
-            'peer-pending': seed_('peer-pending', 12, unread: 3),
-            // Fully read deep history.
-            'peer-allread': seed_('peer-allread', 25, unread: 0),
-          },
-        );
+    test('TC-160-14: an all-read contact (summary unreadCount==0) loads ZERO '
+        'messages on mount', () async {
+      final contacts = [
+        _makeContact('peer-pending', 'Pat', '2026-02-09T10:00:00.000Z'),
+        _makeContact('peer-allread', 'Reed', '2026-02-09T11:00:00.000Z'),
+      ];
+      final repo = FakeMessageRepository(
+        messagesByContact: {
+          'peer-pending': seed_('peer-pending', 12, unread: 3),
+          // Fully read deep history.
+          'peer-allread': seed_('peer-allread', 25, unread: 0),
+        },
+      );
 
-        await loadContactFeedItems(
-          contactRepo: FakeContactRepository(contacts: contacts),
-          messageRepo: repo,
-        );
+      await loadContactFeedItems(
+        contactRepo: FakeContactRepository(contacts: contacts),
+        messageRepo: repo,
+      );
 
-        final pendingCalls = repo.getMessagesPageCalls
-            .where((c) => c.$1 == 'peer-pending')
-            .length;
-        final allReadCalls = repo.getMessagesPageCalls
-            .where((c) => c.$1 == 'peer-allread')
-            .length;
-        expect(allReadCalls, 0); // all-read → zero message reads
-        expect(pendingCalls, 1); // pending → exactly one bounded page
-        expect(repo.getMessagesForContactCallCount, 0);
-      },
-    );
+      final pendingCalls = repo.getMessagesPageCalls
+          .where((c) => c.$1 == 'peer-pending')
+          .length;
+      final allReadCalls = repo.getMessagesPageCalls
+          .where((c) => c.$1 == 'peer-allread')
+          .length;
+      expect(allReadCalls, 0); // all-read → zero message reads
+      expect(pendingCalls, 1); // pending → exactly one bounded page
+      expect(repo.getMessagesForContactCallCount, 0);
+    });
 
     test(
       'TC-160-16: card unreadCount comes from summary.unreadCount, not a window '
@@ -722,12 +717,27 @@ void main() {
         final groupRepo = InMemoryGroupRepository();
         final groupMsgRepo = InMemoryGroupMessageRepository();
         // 3 deep pending groups (unread > 0, history >> window).
-        await seedGroup(groupRepo, groupMsgRepo, 'g1',
-            readIncoming: 35, unreadIncoming: 5);
-        await seedGroup(groupRepo, groupMsgRepo, 'g2',
-            readIncoming: 35, unreadIncoming: 5);
-        await seedGroup(groupRepo, groupMsgRepo, 'g3',
-            readIncoming: 35, unreadIncoming: 5);
+        await seedGroup(
+          groupRepo,
+          groupMsgRepo,
+          'g1',
+          readIncoming: 35,
+          unreadIncoming: 5,
+        );
+        await seedGroup(
+          groupRepo,
+          groupMsgRepo,
+          'g2',
+          readIncoming: 35,
+          unreadIncoming: 5,
+        );
+        await seedGroup(
+          groupRepo,
+          groupMsgRepo,
+          'g3',
+          readIncoming: 35,
+          unreadIncoming: 5,
+        );
 
         final items = await loadGroupFeedItems(
           groupRepo: groupRepo,
@@ -756,11 +766,22 @@ void main() {
         // g-active: deep read history + an OLD outgoing reply at the oldest slot
         // (OUTSIDE the newest unread-run window) + a newest unread run → active
         // ONLY if hasSent is sourced from the summary, not the window.
-        await seedGroup(groupRepo, groupMsgRepo, 'g-active',
-            readIncoming: 30, unreadIncoming: 4, oldOutgoingReply: true);
+        await seedGroup(
+          groupRepo,
+          groupMsgRepo,
+          'g-active',
+          readIncoming: 30,
+          unreadIncoming: 4,
+          oldOutgoingReply: true,
+        );
         // g-unread: deep history, unread only, no outgoing → unread.
-        await seedGroup(groupRepo, groupMsgRepo, 'g-unread',
-            readIncoming: 30, unreadIncoming: 6);
+        await seedGroup(
+          groupRepo,
+          groupMsgRepo,
+          'g-unread',
+          readIncoming: 30,
+          unreadIncoming: 6,
+        );
 
         final items = await loadGroupFeedItems(
           groupRepo: groupRepo,
@@ -772,40 +793,48 @@ void main() {
         expect(
           byId['g-active']!.conversationState,
           ConversationState.active,
-          reason: 'old outgoing reply is off-window; state must use the summary',
+          reason:
+              'old outgoing reply is off-window; state must use the summary',
         );
         expect(byId['g-unread']!.unreadCount, 6);
         expect(byId['g-unread']!.conversationState, ConversationState.unread);
       },
     );
 
-    test(
-      'TC-161-11: an all-read group loads ZERO windowed messages (pending '
-      'filter); only the pending group loads a bounded window',
-      () async {
-        final groupRepo = InMemoryGroupRepository();
-        final groupMsgRepo = InMemoryGroupMessageRepository();
-        await seedGroup(groupRepo, groupMsgRepo, 'g-pending',
-            readIncoming: 8, unreadIncoming: 3);
-        // Fully-read deep history, no unread.
-        await seedGroup(groupRepo, groupMsgRepo, 'g-allread',
-            readIncoming: 20, unreadIncoming: 0);
+    test('TC-161-11: an all-read group loads ZERO windowed messages (pending '
+        'filter); only the pending group loads a bounded window', () async {
+      final groupRepo = InMemoryGroupRepository();
+      final groupMsgRepo = InMemoryGroupMessageRepository();
+      await seedGroup(
+        groupRepo,
+        groupMsgRepo,
+        'g-pending',
+        readIncoming: 8,
+        unreadIncoming: 3,
+      );
+      // Fully-read deep history, no unread.
+      await seedGroup(
+        groupRepo,
+        groupMsgRepo,
+        'g-allread',
+        readIncoming: 20,
+        unreadIncoming: 0,
+      );
 
-        await loadGroupFeedItems(
-          groupRepo: groupRepo,
-          groupMsgRepo: groupMsgRepo,
-        );
+      await loadGroupFeedItems(
+        groupRepo: groupRepo,
+        groupMsgRepo: groupMsgRepo,
+      );
 
-        final pendingCalls = groupMsgRepo.getMessagesPageCallLog
-            .where((c) => c.$1 == 'g-pending')
-            .length;
-        final allReadCalls = groupMsgRepo.getMessagesPageCallLog
-            .where((c) => c.$1 == 'g-allread')
-            .length;
-        expect(allReadCalls, 0); // all-read → zero message reads
-        expect(pendingCalls, 1); // pending → exactly one bounded page
-      },
-    );
+      final pendingCalls = groupMsgRepo.getMessagesPageCallLog
+          .where((c) => c.$1 == 'g-pending')
+          .length;
+      final allReadCalls = groupMsgRepo.getMessagesPageCallLog
+          .where((c) => c.$1 == 'g-allread')
+          .length;
+      expect(allReadCalls, 0); // all-read → zero message reads
+      expect(pendingCalls, 1); // pending → exactly one bounded page
+    });
 
     test(
       'TC-161-10: a group with > maxPreview unread loads its full unread run '
@@ -813,8 +842,13 @@ void main() {
       () async {
         final groupRepo = InMemoryGroupRepository();
         final groupMsgRepo = InMemoryGroupMessageRepository();
-        await seedGroup(groupRepo, groupMsgRepo, 'g-many',
-            readIncoming: 0, unreadIncoming: 20);
+        await seedGroup(
+          groupRepo,
+          groupMsgRepo,
+          'g-many',
+          readIncoming: 0,
+          unreadIncoming: 20,
+        );
 
         final items = await loadGroupFeedItems(
           groupRepo: groupRepo,
@@ -1136,7 +1170,7 @@ void main() {
           relativePath,
         );
         final file = File(absolutePath)..createSync(recursive: true);
-        file.writeAsBytesSync(utf8.encode('plaintext group media bytes'));
+        file.writeAsBytesSync(validJpegFixtureBytes);
         final relayBlobHash = sha256
             .convert(utf8.encode('encrypted relay blob bytes'))
             .toString();
@@ -1404,77 +1438,74 @@ void main() {
   });
 
   group('162 media-resolve sync swap', () {
-    test(
-      'TC-162-02: loadContactFeedItems (1:1) materializes media via sync '
-      'resolution, zero awaited resolves',
-      () async {
-        final contacts = [
-          _makeContact('peer-A', 'Alice', '2026-02-09T10:00:00.000Z'),
-        ];
-        // One PENDING (unread) incoming message so the bounded window loads and
-        // its attachments are resolved through `loadConversationPage` →
-        // `_attachMedia` (the 160 path the 1:1 feed resolve now flows through).
-        final repo = FakeMessageRepository(
-          messagesByContact: {
-            'peer-A': [
-              _makeMessage(
-                id: 'm1',
-                contactPeerId: 'peer-A',
-                senderPeerId: 'peer-A',
-                text: 'Two photos',
-                timestamp: '2026-03-01T08:00:00.000Z',
-                isIncoming: true,
-              ),
-            ],
-          },
-        );
-        final mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
-        await mediaAttachmentRepo.saveAttachment(
-          const MediaAttachment(
-            id: 'a1',
-            messageId: 'm1',
-            mime: 'image/jpeg',
-            size: 2048,
-            mediaType: 'image',
-            localPath: 'media/peer-A/a1.jpg',
-            downloadStatus: 'done',
-            createdAt: '2026-03-01T08:00:00.000Z',
-          ),
-          owner: MediaOwnerLane.direct,
-        );
-        await mediaAttachmentRepo.saveAttachment(
-          const MediaAttachment(
-            id: 'a2',
-            messageId: 'm1',
-            mime: 'image/jpeg',
-            size: 4096,
-            mediaType: 'image',
-            localPath: 'media/peer-A/a2.jpg',
-            downloadStatus: 'done',
-            createdAt: '2026-03-01T08:00:00.000Z',
-          ),
-          owner: MediaOwnerLane.direct,
-        );
-        final mediaFileManager = FakeMediaFileManager();
+    test('TC-162-02: loadContactFeedItems (1:1) materializes media via sync '
+        'resolution, zero awaited resolves', () async {
+      final contacts = [
+        _makeContact('peer-A', 'Alice', '2026-02-09T10:00:00.000Z'),
+      ];
+      // One PENDING (unread) incoming message so the bounded window loads and
+      // its attachments are resolved through `loadConversationPage` →
+      // `_attachMedia` (the 160 path the 1:1 feed resolve now flows through).
+      final repo = FakeMessageRepository(
+        messagesByContact: {
+          'peer-A': [
+            _makeMessage(
+              id: 'm1',
+              contactPeerId: 'peer-A',
+              senderPeerId: 'peer-A',
+              text: 'Two photos',
+              timestamp: '2026-03-01T08:00:00.000Z',
+              isIncoming: true,
+            ),
+          ],
+        },
+      );
+      final mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
+      await mediaAttachmentRepo.saveAttachment(
+        const MediaAttachment(
+          id: 'a1',
+          messageId: 'm1',
+          mime: 'image/jpeg',
+          size: 2048,
+          mediaType: 'image',
+          localPath: 'media/peer-A/a1.jpg',
+          downloadStatus: 'done',
+          createdAt: '2026-03-01T08:00:00.000Z',
+        ),
+        owner: MediaOwnerLane.direct,
+      );
+      await mediaAttachmentRepo.saveAttachment(
+        const MediaAttachment(
+          id: 'a2',
+          messageId: 'm1',
+          mime: 'image/jpeg',
+          size: 4096,
+          mediaType: 'image',
+          localPath: 'media/peer-A/a2.jpg',
+          downloadStatus: 'done',
+          createdAt: '2026-03-01T08:00:00.000Z',
+        ),
+        owner: MediaOwnerLane.direct,
+      );
+      final mediaFileManager = FakeMediaFileManager();
 
-        final items = await loadContactFeedItems(
-          contactRepo: FakeContactRepository(contacts: contacts),
-          messageRepo: repo,
-          mediaAttachmentRepo: mediaAttachmentRepo,
-          mediaFileManager: mediaFileManager,
-        );
+      final items = await loadContactFeedItems(
+        contactRepo: FakeContactRepository(contacts: contacts),
+        messageRepo: repo,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        mediaFileManager: mediaFileManager,
+      );
 
-        // (a) zero awaited async resolves — the loop uses the static sync twin.
-        expect(mediaFileManager.resolveStoredPathCount, 0);
-        // (b) each attachment resolved exactly as the static twin would.
-        final thread = items.whereType<ThreadFeedItem>().single;
-        final withMedia = thread.messages.firstWhere((m) => m.media.isNotEmpty);
-        expect(withMedia.media.map((m) => m.localPath).toList(), [
-          MediaFileManager.resolveStoredPathSync('media/peer-A/a1.jpg'),
-          MediaFileManager.resolveStoredPathSync('media/peer-A/a2.jpg'),
-        ]);
-      },
-    );
+      // (a) zero awaited async resolves — the loop uses the static sync twin.
+      expect(mediaFileManager.resolveStoredPathCount, 0);
+      // (b) each attachment resolved exactly as the static twin would.
+      final thread = items.whereType<ThreadFeedItem>().single;
+      final withMedia = thread.messages.firstWhere((m) => m.media.isNotEmpty);
+      expect(withMedia.media.map((m) => m.localPath).toList(), [
+        MediaFileManager.resolveStoredPathSync('media/peer-A/a1.jpg'),
+        MediaFileManager.resolveStoredPathSync('media/peer-A/a2.jpg'),
+      ]);
+    });
 
     test(
       'TC-162-03: loadGroupFeedItems resolves via the sync twin AND preserves '
@@ -1528,7 +1559,7 @@ void main() {
           validRelative,
         );
         final validFile = File(validAbsolute)..createSync(recursive: true);
-        validFile.writeAsBytesSync(utf8.encode('group media plaintext'));
+        validFile.writeAsBytesSync(validJpegFixtureBytes);
         final relayBlobHash = sha256
             .convert(utf8.encode('encrypted relay blob bytes'))
             .toString();
@@ -1585,11 +1616,7 @@ void main() {
         expect(mediaFileManager.resolveStoredPathCount, 0);
 
         // (b) the valid attachment resolved to the sync-twin absolute path.
-        final allMedia = items
-            .single
-            .messages
-            .expand((m) => m.media)
-            .toList();
+        final allMedia = items.single.messages.expand((m) => m.media).toList();
         final valid = allMedia.singleWhere((m) => m.id == 'att-valid');
         final missing = allMedia.singleWhere((m) => m.id == 'att-missing');
         expect(valid.localPath, validAbsolute);

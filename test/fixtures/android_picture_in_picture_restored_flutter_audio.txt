@@ -1,0 +1,4 @@
+AudioService Dumpsys
+players:
+  AudioPlaybackConfiguration piid:4167 deviceIds:[3] type:android.media.AudioTrack u/pid:10466/19489 state:started attr:AudioAttributes: usage=USAGE_MEDIA content=CONTENT_TYPE_MOVIE
+  AudioPlaybackConfiguration piid:4151 deviceIds:[] type:android.media.MediaPlayer u/pid:10466/19489 state:released attr:AudioAttributes: usage=USAGE_MEDIA content=CONTENT_TYPE_MOVIE

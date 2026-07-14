@@ -220,6 +220,10 @@ class GroupSharedMediaBatchActionsCoordinator {
     if (writer == null) {
       throw StateError('bookmark state repository is unavailable');
     }
+    if (writer is! GroupMediaLibraryStateRepository) {
+      throw StateError('atomic group bookmark repository is unavailable');
+    }
+    final groupWriter = writer as GroupMediaLibraryStateRepository;
     final outcomes = <GroupSharedMediaLocalItemOutcome>[];
     for (final identity in unique) {
       final current = await _qualifyLocalIdentity(identity);
@@ -234,14 +238,17 @@ class GroupSharedMediaBatchActionsCoordinator {
         continue;
       }
       try {
-        await writer.setBookmarked(
-          identity.attachmentId,
+        final changed = await groupWriter.setGroupBookmarkedIfOrdinary(
+          groupId: identity.groupId,
+          messageId: identity.messageId,
+          attachmentId: identity.attachmentId,
           bookmarked: bookmarked,
         );
         outcomes.add(
           GroupSharedMediaLocalItemOutcome(
             attachmentId: identity.attachmentId,
-            succeeded: true,
+            succeeded: changed,
+            reason: changed ? null : 'lifecycle_restricted',
           ),
         );
       } catch (_) {
@@ -345,6 +352,9 @@ class GroupSharedMediaBatchActionsCoordinator {
     }
     if (!parent.isIncoming) {
       return (attachment: null, reason: 'not_incoming');
+    }
+    if (parent.privateMediaPolicy.requiresRedaction) {
+      return (attachment: null, reason: 'lifecycle_restricted');
     }
     final rows = await mediaAttachmentRepository.getAttachmentsForMessage(
       identity.messageId,
@@ -471,7 +481,8 @@ Future<GroupSharedMediaBatchDeleteOutcome> deleteGroupSharedMediaSelection({
     if (groupId == null ||
         before == null ||
         before.groupId != groupId ||
-        !before.isIncoming) {
+        !before.isIncoming ||
+        before.privateMediaPolicy.requiresRedaction) {
       failedMessages.add(entry.key);
       failedAttachments.addAll(
         identitiesForParent.map((item) => item.attachmentId),

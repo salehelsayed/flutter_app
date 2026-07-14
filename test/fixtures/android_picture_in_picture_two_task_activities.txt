@@ -1,0 +1,10 @@
+ACTIVITY MANAGER ACTIVITIES (dumpsys activity activities)
+Display #0 (activities from top to bottom):
+  * Task{feed001 #835 type=standard A=10460:com.mknoon.app.pipproof U=0 visible=true visibleRequested=true mode=pinned translucent=false sz=1}
+    * Hist  #0: ActivityRecord{abc u0 com.mknoon.app.pipproof/com.mknoon.app.ReceivedVideoPictureInPictureActivity t835}
+      mActivityComponent=com.mknoon.app.pipproof/com.mknoon.app.ReceivedVideoPictureInPictureActivity
+  * Task{feed002 #834 type=standard I=com.mknoon.app.pipproof/com.mknoon.app.MainActivity U=0 visible=true visibleRequested=true mode=fullscreen translucent=false sz=1}
+    * Hist  #0: ActivityRecord{def u0 com.mknoon.app.pipproof/com.mknoon.app.MainActivity t834}
+      mActivityComponent=com.mknoon.app.pipproof/com.mknoon.app.MainActivity
+  * Task{feed003 #1 type=home U=0 visible=false mode=fullscreen sz=1}
+    * Hist #0: ActivityRecord{ghi u0 com.google.android.apps.nexuslauncher/.NexusLauncherActivity t1}

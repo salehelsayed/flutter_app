@@ -109,6 +109,15 @@ classify_path() {
   esac
 
   case "$path" in
+    integration_test/scripts/select_android_picture_in_picture_pixel6_api36_geometry.dart|\
+    integration_test/scripts/select_android_picture_in_picture_system_ui_control.dart)
+      record "support" "$path" "support" "243 Android received-video PiP SystemUI control selector"
+      return
+      ;;
+    integration_test/received_video_picture_in_picture_proof_test.dart)
+      record "ignored" "$path" "ignored" "manual Android received-video Picture-in-Picture proof outside default reliability-sim"
+      return
+      ;;
     integration_test/received_media_native_egress_proof_test.dart)
       record "ignored" "$path" "ignored" "manual Android/iOS received-media native egress proof outside default reliability-sim"
       return
@@ -127,6 +136,35 @@ classify_path() {
       ;;
     integration_test/group_forwarded_marker_db_proof_test.dart)
       record "group" "$path" "test" "236 group forwarded-marker v99 SQLCipher migration proof (upgrade/wrong-password/downgrade/reopen)"
+      return
+      ;;
+    integration_test/android_background_crypto_preflight_app.dart)
+      record "support" "$path" "support" "256 TC-07 real-FCM headless crypto preflight app target"
+      return
+      ;;
+    integration_test/scripts/capture_1to1_reaction_head_provenance.dart|\
+    integration_test/scripts/capture_android_background_crypto_preflight.dart|\
+    integration_test/scripts/capture_1to1_reaction_notification_closure.dart)
+      record "support" "$path" "support" "256 bounded reaction-notification device proof capture driver"
+      return
+      ;;
+    integration_test/scripts/capture_android_push_relay_registration.dart)
+      record "support" "$path" "support" "256 Android production push-relay registration capture driver"
+      return
+      ;;
+    integration_test/scripts/reaction_notification_proof_support.dart)
+      record "support" "$path" "support" "256 reaction-notification proof parsing and attribution helper"
+      return
+      ;;
+    integration_test/scripts/group_reaction_notification_device_criteria.dart|\
+    integration_test/scripts/capture_group_reaction_notification_device.dart|\
+    integration_test/group_reaction_notification_sqlcipher_probe_test.dart)
+      record "support" "$path" "support" "257 staged group/announcement reaction-notification capture, SQLCipher observer, and strict evidence criteria"
+      return
+      ;;
+    integration_test/scripts/direct_private_media_device_local_journey_criteria.dart|\
+    integration_test/direct_private_media_device_local_journey_harness.dart)
+      record "support" "$path" "support" "234 deterministic device-local private-media proof support"
       return
       ;;
     integration_test/scripts/_android_app_package.dart|\
@@ -219,6 +257,30 @@ classify_path() {
       record "1to1" "$path" "runner" "225 notification-tap device/relay proof campaign orchestrator (--list-scenarios)"
       return
       ;;
+    integration_test/scripts/run_1to1_reaction_notification_device.dart)
+      record "1to1" "$path" "runner" "256 reaction-notification device/relay proof campaign orchestrator (--list-scenarios)"
+      return
+      ;;
+    integration_test/scripts/run_direct_private_media_device_local_journey.dart)
+      record "1to1" "$path" "runner" "234 fully automated physical-Android plus emulator device-local private-media proof"
+      return
+      ;;
+    integration_test/one_to_one_reaction_notification_proof_test.dart)
+      record "1to1" "$path" "test" "256 TC-00/07/13/14/16 reaction-notification device proof artifact validation"
+      return
+      ;;
+    integration_test/scripts/run_group_reaction_notification_device.dart)
+      record "group" "$path" "runner" "257 config-gated automated group/announcement reaction-notification device campaign"
+      return
+      ;;
+    integration_test/scripts/validate_group_reaction_notification_artifacts.dart)
+      record "group" "$path" "runner" "257 standalone authoritative device-artifact validator (--list-scenarios)"
+      return
+      ;;
+    integration_test/group_announcement_reaction_notification_proof_test.dart)
+      record "group" "$path" "test" "257 TC-13/14/15/16 group/announcement notification proof binding"
+      return
+      ;;
     integration_test/scripts/run_intro_accept_notification_android.dart)
       record "intro" "$path" "runner" "252 intro-accept notification copy/tap three-party Android device proof campaign orchestrator (--list-scenarios)"
       return
@@ -306,6 +368,26 @@ classify_path() {
     integration_test/sender_media_unavailable_fallback_proof_test.dart)
       record "1to1" "$path" "test" "sender media-unavailable render fallback proof (1:1)"
       record "group" "$path" "test" "sender media-unavailable render fallback proof (group)"
+      return
+      ;;
+    integration_test/direct_private_media_lifecycle_sqlcipher_proof_test.dart)
+      record "1to1" "$path" "test" "234 TC-234-03 direct private-media v100 SQLCipher lifecycle migration device proof"
+      return
+      ;;
+    integration_test/direct_private_media_platform_protection_proof_test.dart)
+      record "1to1" "$path" "test" "234 TC-234-11 direct private-media platform-protection device proof"
+      return
+      ;;
+    integration_test/group_private_media_lifecycle_db_proof_test.dart)
+      record "group" "$path" "test" "238 GPL-01D group private-media v101 SQLCipher lifecycle migration device proof"
+      return
+      ;;
+    integration_test/group_private_media_platform_proof_test.dart)
+      record "ignored" "$path" "ignored" "238 GPL-11 manual Android/iOS native group private-media capture proof outside reliability-sim"
+      return
+      ;;
+    integration_test/announcement_private_media_platform_proof_test.dart)
+      record "ignored" "$path" "ignored" "242 APL-08 manual Android wired announcement private-media capture proof outside reliability-sim"
       return
       ;;
     integration_test/transport_e2e_test.dart|\
@@ -662,39 +744,24 @@ expand_push_decrypt() {
 expand_ios_notification_tap() {
   local category="$1"
   local path="$2"
-  local fixture mode label lower
+  local mode case_id lower
   local count=0
 
-  while IFS='|' read -r fixture mode label; do
-    [ -n "$fixture" ] || continue
-    lower="$(lowercase "$fixture $label")"
+  while IFS=':' read -r mode case_id; do
+    [ -n "$mode" ] && [ -n "$case_id" ] || continue
+    lower="$(lowercase "$case_id")"
     case "$category" in
       1to1)
-        case "$lower" in *one_to_one*) ;; *) continue ;; esac
+        case "$lower" in direct_*) ;; *) continue ;; esac
         ;;
       group)
-        case "$lower" in *group*) ;; *) continue ;; esac
+        case "$lower" in group_*|announcement_*) ;; *) continue ;; esac
         ;;
     esac
-    record_check "$category" "$path" "$label" "notification tap fixture=$fixture mode=$mode"
+    record_check "$category" "$path" "$mode:$case_id" "notification tap case=$case_id mode=$mode"
     count=$((count + 1))
   done < <(
-    awk '
-      /run_scenario / {
-        line = $0
-        a = ""; b = ""; c = ""
-        while (match(line, /"[^"]*"/)) {
-          token = substr(line, RSTART + 1, RLENGTH - 2)
-          a = b
-          b = c
-          c = token
-          line = substr(line, RSTART + RLENGTH)
-        }
-        if (a != "" && b != "" && c != "") {
-          print a "|" b "|" c
-        }
-      }
-    ' "$path"
+    "$path" --selection-only 2>/dev/null
   )
 
   if [ "$count" -eq 0 ]; then
@@ -792,6 +859,27 @@ expand_1to1_device_real() {
   fi
 }
 
+expand_group_reaction_notification_device() {
+  local category="$1"
+  local path="$2"
+  local note="$3"
+  local scenario
+  local count=0
+
+  while IFS= read -r scenario; do
+    [ -n "$scenario" ] || continue
+    record_check "$category" "$path" "$scenario" "$note; scenario=$scenario"
+    count=$((count + 1))
+  done < <(
+    dart "$path" --scenario all --list-scenarios 2>/dev/null |
+      awk '/^[[:alnum:]_]+$/ { print }'
+  )
+
+  if [ "$count" -eq 0 ]; then
+    record_expansion_error "$path" "could not list Plan 257 group reaction-notification scenarios"
+  fi
+}
+
 expand_record_to_checks() {
   local category="$1"
   local kind="$2"
@@ -840,6 +928,15 @@ expand_record_to_checks() {
       ;;
     integration_test/scripts/run_notification_tap_device_real.dart)
       expand_1to1_device_real "$category" "$path" "$note"
+      return
+      ;;
+    integration_test/scripts/run_1to1_reaction_notification_device.dart)
+      expand_1to1_device_real "$category" "$path" "$note"
+      return
+      ;;
+    integration_test/scripts/run_group_reaction_notification_device.dart|\
+    integration_test/scripts/validate_group_reaction_notification_artifacts.dart)
+      expand_group_reaction_notification_device "$category" "$path" "$note"
       return
       ;;
     integration_test/scripts/run_intro_accept_notification_android.dart)

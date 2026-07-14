@@ -113,13 +113,18 @@ class DirectMediaLibraryBatchActionsCoordinator {
     required List<DirectReceivedMediaActionIdentity> identities,
     required MediaEgressDestination destination,
   }) async {
-    // Dedupe by attachment id preserving dispatch order; refuse an empty or
-    // over-cap batch BEFORE any reload or native call — the selection
-    // controller already enforces the ceiling, so reaching the service's
-    // blanket over-cap rejection (with its empty per-item list) is a bug.
-    final unique = <String, DirectReceivedMediaActionIdentity>{};
+    // Dedupe by the complete stable identity while preserving dispatch order.
+    // An attachment-id collision from another parent must still be evaluated
+    // and fail its exact-row check; it may not be silently collapsed into the
+    // first identity. Refuse an empty or over-cap batch before any reload or
+    // native call.
+    final unique =
+        <
+          DirectReceivedMediaActionIdentity,
+          DirectReceivedMediaActionIdentity
+        >{};
     for (final identity in identities) {
-      unique.putIfAbsent(identity.attachmentId, () => identity);
+      unique.putIfAbsent(identity, () => identity);
     }
     if (unique.isEmpty || unique.length > kMaxMediaEgressItems) {
       throw ArgumentError.value(
@@ -129,7 +134,8 @@ class DirectMediaLibraryBatchActionsCoordinator {
       );
     }
 
-    final decisions = <String, DirectMediaCurrentRowDecision>{};
+    final decisions =
+        <DirectReceivedMediaActionIdentity, DirectMediaCurrentRowDecision>{};
     final candidates = <ReceivedMediaEgressCandidate>[];
     for (final identity in unique.values) {
       final decision = await qualifyCurrentDirectMediaRow(
@@ -140,7 +146,7 @@ class DirectMediaLibraryBatchActionsCoordinator {
         resolveStoredPath: _resolveStoredPath,
         fileExists: _fileExists,
       );
-      decisions[identity.attachmentId] = decision;
+      decisions[identity] = decision;
       if (decision.isQualified) candidates.add(decision.candidate);
     }
 
@@ -164,7 +170,7 @@ class DirectMediaLibraryBatchActionsCoordinator {
 
     final items = <DirectMediaLibraryBatchItemOutcome>[];
     for (final identity in unique.values) {
-      final decision = decisions[identity.attachmentId]!;
+      final decision = decisions[identity]!;
       if (!decision.isQualified) {
         items.add(
           DirectMediaLibraryBatchItemOutcome(

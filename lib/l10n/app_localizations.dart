@@ -1042,6 +1042,24 @@ abstract class AppLocalizations {
   /// **'Reply'**
   String get conversation_context_reply;
 
+  /// No description provided for @announcement_private_reply_action.
+  ///
+  /// In en, this message translates to:
+  /// **'Message sender'**
+  String get announcement_private_reply_action;
+
+  /// No description provided for @announcement_private_reply_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Message sender is unavailable.'**
+  String get announcement_private_reply_unavailable;
+
+  /// No description provided for @announcement_private_reply_open_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t open the conversation.'**
+  String get announcement_private_reply_open_failed;
+
   /// No description provided for @conversation_context_edit.
   ///
   /// In en, this message translates to:
@@ -3386,6 +3404,18 @@ abstract class AppLocalizations {
   /// **'Reply'**
   String get media_viewer_action_reply;
 
+  /// No description provided for @media_viewer_action_picture_in_picture.
+  ///
+  /// In en, this message translates to:
+  /// **'Picture in Picture'**
+  String get media_viewer_action_picture_in_picture;
+
+  /// No description provided for @media_viewer_picture_in_picture_start_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t start Picture in Picture'**
+  String get media_viewer_picture_in_picture_start_failed;
+
   /// No description provided for @media_save_destination_prompt.
   ///
   /// In en, this message translates to:
@@ -5096,12 +5126,233 @@ abstract class AppLocalizations {
   /// **'Message'**
   String get contact_profile_message_button;
 
-  /// Generic body for a one-to-one private-media notification.
+  /// No description provided for @private_media_selector_label.
+  ///
+  /// In en, this message translates to:
+  /// **'Private media'**
+  String get private_media_selector_label;
+
+  /// No description provided for @private_media_ordinary.
+  ///
+  /// In en, this message translates to:
+  /// **'Ordinary'**
+  String get private_media_ordinary;
+
+  /// No description provided for @private_media_protected.
+  ///
+  /// In en, this message translates to:
+  /// **'Protected'**
+  String get private_media_protected;
+
+  /// No description provided for @private_media_view_once.
+  ///
+  /// In en, this message translates to:
+  /// **'View once'**
+  String get private_media_view_once;
+
+  /// No description provided for @private_media_disappearing_1h.
+  ///
+  /// In en, this message translates to:
+  /// **'Disappears after 1 hour'**
+  String get private_media_disappearing_1h;
+
+  /// No description provided for @private_media_disappearing_1d.
+  ///
+  /// In en, this message translates to:
+  /// **'Disappears after 1 day'**
+  String get private_media_disappearing_1d;
+
+  /// No description provided for @private_media_disappearing_7d.
+  ///
+  /// In en, this message translates to:
+  /// **'Disappears after 7 days'**
+  String get private_media_disappearing_7d;
+
+  /// No description provided for @private_media_invalid_shape.
+  ///
+  /// In en, this message translates to:
+  /// **'Private media needs one photo, GIF, or video with no caption.'**
+  String get private_media_invalid_shape;
+
+  /// No description provided for @private_media_notification_body.
+  ///
+  /// In en, this message translates to:
+  /// **'Private media'**
   String get private_media_notification_body;
 
-  /// Generic body for a group private-media notification.
+  /// No description provided for @group_private_media_notification_body.
+  ///
+  /// In en, this message translates to:
+  /// **'New private media'**
   String get group_private_media_notification_body;
 
+  /// No description provided for @private_media_expiry_device_local.
+  ///
+  /// In en, this message translates to:
+  /// **'The expiry time is calculated on the receiving device.'**
+  String get private_media_expiry_device_local;
+
+  /// No description provided for @private_media_view_once_copy.
+  ///
+  /// In en, this message translates to:
+  /// **'Available for one view on this device.'**
+  String get private_media_view_once_copy;
+
+  /// No description provided for @private_media_open.
+  ///
+  /// In en, this message translates to:
+  /// **'Open private media'**
+  String get private_media_open;
+
+  /// No description provided for @private_media_opening.
+  ///
+  /// In en, this message translates to:
+  /// **'Opening private media…'**
+  String get private_media_opening;
+
+  /// No description provided for @private_media_consumed.
+  ///
+  /// In en, this message translates to:
+  /// **'Already viewed on this device'**
+  String get private_media_consumed;
+
+  /// No description provided for @private_media_expired.
+  ///
+  /// In en, this message translates to:
+  /// **'Expired on this device'**
+  String get private_media_expired;
+
+  /// No description provided for @private_media_unsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'Update Mknoon to view this private media, or delete it'**
+  String get private_media_unsupported;
+
+  /// No description provided for @private_media_android_capture_limit.
+  ///
+  /// In en, this message translates to:
+  /// **'Screenshots and screen recording are blocked only while this private route is open'**
+  String get private_media_android_capture_limit;
+
+  /// No description provided for @private_media_ios_capture_limit.
+  ///
+  /// In en, this message translates to:
+  /// **'iOS cannot reliably prevent screenshots; capture is detected and private media is covered/dismissed'**
+  String get private_media_ios_capture_limit;
+
+  /// No description provided for @private_media_general_capture_limit.
+  ///
+  /// In en, this message translates to:
+  /// **'Another device or camera can still photograph the screen'**
+  String get private_media_general_capture_limit;
+
+  /// No description provided for @shared_media_action_forward.
+  ///
+  /// In en, this message translates to:
+  /// **'Batch Forward'**
+  String get shared_media_action_forward;
+
+  /// No description provided for @direct_batch_forward_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Batch Forward'**
+  String get direct_batch_forward_title;
+
+  /// No description provided for @direct_batch_forward_item_count.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} selected items'**
+  String direct_batch_forward_item_count(int count);
+
+  /// No description provided for @direct_batch_forward_source_label.
+  ///
+  /// In en, this message translates to:
+  /// **'Source {index} of {count}'**
+  String direct_batch_forward_source_label(int index, int count);
+
+  /// No description provided for @direct_batch_forward_caption_label.
+  ///
+  /// In en, this message translates to:
+  /// **'Caption for source {index} of {count}'**
+  String direct_batch_forward_caption_label(int index, int count);
+
+  /// No description provided for @direct_batch_forward_contacts_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct contacts'**
+  String get direct_batch_forward_contacts_title;
+
+  /// No description provided for @direct_batch_forward_no_contacts.
+  ///
+  /// In en, this message translates to:
+  /// **'No active direct contacts'**
+  String get direct_batch_forward_no_contacts;
+
+  /// No description provided for @direct_batch_forward_send.
+  ///
+  /// In en, this message translates to:
+  /// **'Send'**
+  String get direct_batch_forward_send;
+
+  /// No description provided for @direct_batch_forward_retry_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry failed'**
+  String get direct_batch_forward_retry_failed;
+
+  /// No description provided for @direct_batch_forward_progress.
+  ///
+  /// In en, this message translates to:
+  /// **'{phase}: {completed} of {total}'**
+  String direct_batch_forward_progress(String phase, int completed, int total);
+
+  /// No description provided for @direct_batch_forward_source_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Selected media is no longer available'**
+  String get direct_batch_forward_source_unavailable;
+
+  /// No description provided for @direct_batch_forward_status_sent.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent'**
+  String get direct_batch_forward_status_sent;
+
+  /// No description provided for @direct_batch_forward_status_queued.
+  ///
+  /// In en, this message translates to:
+  /// **'Queued'**
+  String get direct_batch_forward_status_queued;
+
+  /// No description provided for @direct_batch_forward_status_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed'**
+  String get direct_batch_forward_status_failed;
+
+  /// No description provided for @direct_batch_forward_summary.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent {sent}, queued {queued}, failed {failed}'**
+  String direct_batch_forward_summary(int sent, int queued, int failed);
+
+  /// No description provided for @direct_batch_forward_phase_uploading.
+  ///
+  /// In en, this message translates to:
+  /// **'Uploading'**
+  String get direct_batch_forward_phase_uploading;
+
+  /// No description provided for @direct_batch_forward_phase_sending.
+  ///
+  /// In en, this message translates to:
+  /// **'Sending'**
+  String get direct_batch_forward_phase_sending;
+
+  /// No description provided for @direct_batch_forward_close.
+  ///
+  /// In en, this message translates to:
+  /// **'Close'**
+  String get direct_batch_forward_close;
 }
 
 class _AppLocalizationsDelegate

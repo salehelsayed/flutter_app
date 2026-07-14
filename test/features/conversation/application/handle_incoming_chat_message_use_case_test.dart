@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -101,6 +102,7 @@ class FakeContactRepository implements ContactRepository {
 // -- Fake Message Repository --
 class FakeMessageRepository implements MessageRepository {
   final List<ConversationMessage> saved = [];
+  VoidCallback? onSave;
   final Set<String> _existingIds;
   final Map<String, ConversationMessage> _existingMessages;
 
@@ -114,6 +116,7 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<void> saveMessage(ConversationMessage message) async {
+    onSave?.call();
     saved.add(message);
     _existingMessages[message.id] = message;
   }
@@ -248,8 +251,16 @@ class FakeMessageRepository implements MessageRepository {
 }
 
 // -- Fake Media Attachment Repository --
-class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
+class FakeMediaAttachmentRepository
+    implements
+        MediaAttachmentRepository,
+        DirectPrivateMediaAttachmentSaveRepository {
+  FakeMediaAttachmentRepository({this.loadPrivateParent});
+
   final List<MediaAttachment> saved = [];
+  VoidCallback? onSave;
+  final Future<ConversationMessage?> Function(String messageId)?
+  loadPrivateParent;
 
   /// 228: lanes passed to [saveAttachment], in call order.
   final savedOwnerLanes = <MediaOwnerLane>[];
@@ -259,6 +270,7 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
     MediaAttachment attachment, {
     required MediaOwnerLane owner,
   }) async {
+    onSave?.call();
     savedOwnerLanes.add(owner);
     final index = saved.indexWhere((saved) => saved.id == attachment.id);
     if (index == -1) {
@@ -266,6 +278,36 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
     } else {
       saved[index] = attachment;
     }
+  }
+
+  @override
+  Future<bool> saveDirectPrivateAttachmentGuarded(
+    MediaAttachment attachment, {
+    required String messageId,
+    required int nowMs,
+  }) async {
+    if (attachment.messageId != messageId) return false;
+    final loadParent = loadPrivateParent;
+    if (loadParent == null) return false;
+    final parent = await loadParent(messageId);
+    if (parent == null ||
+        !parent.isIncoming ||
+        parent.hiddenAt != null ||
+        parent.deletedAt != null ||
+        parent.privateMediaPolicy.version != 1 ||
+        parent.privateMediaPolicy.isUnsupported ||
+        parent.privateMediaState != PrivateMediaLifecycleState.available ||
+        parent.privateMediaTerminalAtMs != null) {
+      return false;
+    }
+    if (parent.privateMediaPolicy.mode == PrivateMediaMode.disappearing) {
+      final expiresAt = parent.privateMediaExpiresAtMs;
+      final highWater = parent.privateMediaClockHighWaterMs ?? 0;
+      final effectiveNow = nowMs > highWater ? nowMs : highWater;
+      if (expiresAt == null || effectiveNow >= expiresAt) return false;
+    }
+    await saveAttachment(attachment, owner: MediaOwnerLane.direct);
+    return true;
   }
 
   @override
@@ -493,6 +535,384 @@ void main() {
   });
 
   group('handleIncomingChatMessage', () {
+    test(
+      'private receive durably saves policy and available state before attachment work',
+      () async {
+        final mediaRepo = FakeMediaAttachmentRepository(
+          loadPrivateParent: messageRepo.getMessage,
+        );
+        final order = <String>[];
+        messageRepo.onSave = () => order.add('parent');
+        mediaRepo.onSave = () => order.add('attachment');
+        final before = DateTime.now().millisecondsSinceEpoch;
+
+        final (result, stored, _) = await handleIncomingChatMessage(
+          message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          predecryptedText: jsonEncode({
+            'id': 'private-receive-1',
+            'text': '',
+            'senderPeerId': senderPeerId,
+            'senderUsername': 'Alice',
+            'timestamp': '2026-07-11T09:00:00.000Z',
+            'media': [
+              {
+                'id': 'private-blob-1',
+                'mime': 'image/jpeg',
+                'size': 1024,
+                'mediaType': 'image',
+              },
+            ],
+            'privateMedia': {'version': 1, 'mode': 'protected'},
+          }),
+          mediaAttachmentRepo: mediaRepo,
+        );
+        final after = DateTime.now().millisecondsSinceEpoch;
+
+        expect(result, HandleChatMessageResult.chatMessage);
+        expect(order, ['parent', 'attachment']);
+        expect(messageRepo.saved, hasLength(1));
+        final durable = messageRepo.saved.single;
+        expect(durable.privateMediaPolicy.mode, PrivateMediaMode.protected);
+        expect(durable.privateMediaState, PrivateMediaLifecycleState.available);
+        expect(
+          durable.privateMediaReceivedAtMs,
+          inInclusiveRange(before, after),
+        );
+        expect(
+          durable.privateMediaClockHighWaterMs,
+          durable.privateMediaReceivedAtMs,
+        );
+        expect(durable.privateMediaExpiresAtMs, isNull);
+        expect(stored?.privateMediaPolicy, durable.privateMediaPolicy);
+        expect(stored?.privateMediaState, PrivateMediaLifecycleState.available);
+      },
+    );
+
+    test('unknown private shape persists unsupported and redacted', () async {
+      final mediaRepo = FakeMediaAttachmentRepository();
+
+      final (result, stored, _) = await handleIncomingChatMessage(
+        message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+        predecryptedText: jsonEncode({
+          'id': 'private-unsupported-1',
+          'text': 'caption-must-not-survive',
+          'senderPeerId': senderPeerId,
+          'senderUsername': 'Alice',
+          'timestamp': '2026-07-11T09:00:00.000Z',
+          'media': [
+            {
+              'id': 'private-unsupported-blob',
+              'mime': 'image/jpeg',
+              'size': 1024,
+              'mediaType': 'image',
+            },
+          ],
+          'privateMedia': {'version': 9, 'mode': 'future-mode'},
+        }),
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result, HandleChatMessageResult.chatMessage);
+      expect(messageRepo.saved, hasLength(1));
+      final durable = messageRepo.saved.single;
+      expect(durable.text, isEmpty);
+      expect(durable.privateMediaPolicy.isUnsupported, isTrue);
+      expect(durable.privateMediaPolicy.version, 9);
+      expect(durable.privateMediaState, PrivateMediaLifecycleState.unsupported);
+      expect(durable.privateMediaReceivedAtMs, isNotNull);
+      expect(
+        durable.privateMediaClockHighWaterMs,
+        durable.privateMediaReceivedAtMs,
+      );
+      expect(stored?.text, isEmpty);
+      expect(stored?.privateMediaPolicy.isUnsupported, isTrue);
+    });
+
+    test(
+      'duplicate private replay cannot reopen terminal or unsupported parent',
+      () async {
+        final cases =
+            <
+              ({
+                String id,
+                PrivateMediaPolicy policy,
+                PrivateMediaLifecycleState state,
+              })
+            >[
+              (
+                id: 'private-terminal-consumed',
+                policy: const PrivateMediaPolicy.viewOnce(),
+                state: PrivateMediaLifecycleState.consumed,
+              ),
+              (
+                id: 'private-terminal-unsupported',
+                policy: const PrivateMediaPolicy.unsupported(sourceVersion: 9),
+                state: PrivateMediaLifecycleState.unsupported,
+              ),
+            ];
+
+        for (final testCase in cases) {
+          final existing = ConversationMessage(
+            id: testCase.id,
+            contactPeerId: senderPeerId,
+            senderPeerId: senderPeerId,
+            text: '',
+            timestamp: '2026-07-11T09:00:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-07-11T09:00:00.000Z',
+            privateMediaPolicy: testCase.policy,
+            privateMediaState: testCase.state,
+            privateMediaReceivedAtMs: 1000,
+            privateMediaTerminalAtMs: 2000,
+            privateMediaClockHighWaterMs: 2000,
+          );
+          final replayRepo = FakeMessageRepository(
+            existingMessages: {testCase.id: existing},
+          );
+          final mediaRepo = FakeMediaAttachmentRepository(
+            loadPrivateParent: replayRepo.getMessage,
+          );
+
+          final (result, stored, _) = await handleIncomingChatMessage(
+            message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+            messageRepo: replayRepo,
+            contactRepo: contactRepo,
+            predecryptedText: jsonEncode({
+              'id': testCase.id,
+              'text': '',
+              'senderPeerId': senderPeerId,
+              'senderUsername': 'Alice',
+              'timestamp': '2026-07-11T09:00:00.000Z',
+              'media': [
+                {
+                  'id': '${testCase.id}-blob',
+                  'mime': 'image/jpeg',
+                  'size': 1024,
+                  'mediaType': 'image',
+                },
+              ],
+              'privateMedia': {'version': 1, 'mode': 'protected'},
+            }),
+            mediaAttachmentRepo: mediaRepo,
+          );
+
+          expect(
+            result,
+            HandleChatMessageResult.duplicate,
+            reason: testCase.id,
+          );
+          expect(stored, isNull, reason: testCase.id);
+          expect(replayRepo.saved, isEmpty, reason: testCase.id);
+          expect(mediaRepo.saved, isEmpty, reason: testCase.id);
+          final after = await replayRepo.getMessage(testCase.id);
+          expect(
+            after?.privateMediaPolicy,
+            testCase.policy,
+            reason: testCase.id,
+          );
+          expect(after?.privateMediaState, testCase.state, reason: testCase.id);
+          expect(after?.privateMediaTerminalAtMs, 2000, reason: testCase.id);
+          expect(
+            after?.privateMediaClockHighWaterMs,
+            2000,
+            reason: testCase.id,
+          );
+        }
+      },
+    );
+
+    test(
+      'same-id private edits preserve opening viewing terminal and unsupported checkpoints',
+      () async {
+        final cases =
+            <
+              ({
+                String id,
+                PrivateMediaPolicy policy,
+                PrivateMediaLifecycleState state,
+              })
+            >[
+              (
+                id: 'private-edit-opening',
+                policy: const PrivateMediaPolicy.viewOnce(),
+                state: PrivateMediaLifecycleState.opening,
+              ),
+              (
+                id: 'private-edit-viewing',
+                policy: const PrivateMediaPolicy.viewOnce(),
+                state: PrivateMediaLifecycleState.viewing,
+              ),
+              (
+                id: 'private-edit-consumed',
+                policy: const PrivateMediaPolicy.viewOnce(),
+                state: PrivateMediaLifecycleState.consumed,
+              ),
+              (
+                id: 'private-edit-unsupported',
+                policy: const PrivateMediaPolicy.unsupported(sourceVersion: 9),
+                state: PrivateMediaLifecycleState.unsupported,
+              ),
+            ];
+
+        for (final testCase in cases) {
+          final terminal = testCase.state.isTerminal;
+          final existing = ConversationMessage(
+            id: testCase.id,
+            contactPeerId: senderPeerId,
+            senderPeerId: senderPeerId,
+            text: '',
+            timestamp: '2026-07-11T09:00:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-07-11T09:00:00.000Z',
+            privateMediaPolicy: testCase.policy,
+            privateMediaState: testCase.state,
+            privateMediaReceivedAtMs: 1000,
+            privateMediaRevealedAtMs:
+                testCase.state == PrivateMediaLifecycleState.viewing
+                ? 1500
+                : null,
+            privateMediaTerminalAtMs: terminal ? 2000 : null,
+            privateMediaClockHighWaterMs: terminal ? 2000 : 1500,
+          );
+          final editRepo = FakeMessageRepository(
+            existingMessages: {testCase.id: existing},
+          );
+
+          final (result, _, _) = await handleIncomingChatMessage(
+            message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+            messageRepo: editRepo,
+            contactRepo: contactRepo,
+            predecryptedText: jsonEncode({
+              'id': testCase.id,
+              'text': 'must remain redacted',
+              'senderPeerId': senderPeerId,
+              'senderUsername': 'Alice',
+              'timestamp': '2026-07-11T09:00:00.000Z',
+              'action': 'edit',
+              'editedAt': '2026-07-11T09:01:00.000Z',
+              'media': [
+                {
+                  'id': '${testCase.id}-blob',
+                  'mime': 'image/jpeg',
+                  'size': 1024,
+                  'mediaType': 'image',
+                },
+              ],
+              'privateMedia': {'version': 1, 'mode': 'protected'},
+            }),
+            mediaAttachmentRepo: FakeMediaAttachmentRepository(),
+          );
+
+          expect(result, HandleChatMessageResult.chatMessage);
+          final after = await editRepo.getMessage(testCase.id);
+          expect(after!.text, isEmpty, reason: testCase.id);
+          expect(
+            after.privateMediaPolicy,
+            testCase.policy,
+            reason: testCase.id,
+          );
+          expect(after.privateMediaState, testCase.state, reason: testCase.id);
+          expect(after.privateMediaReceivedAtMs, 1000, reason: testCase.id);
+          expect(
+            after.privateMediaRevealedAtMs,
+            existing.privateMediaRevealedAtMs,
+            reason: testCase.id,
+          );
+          expect(
+            after.privateMediaTerminalAtMs,
+            existing.privateMediaTerminalAtMs,
+            reason: testCase.id,
+          );
+          expect(
+            after.privateMediaClockHighWaterMs,
+            existing.privateMediaClockHighWaterMs,
+            reason: testCase.id,
+          );
+        }
+      },
+    );
+
+    test(
+      'duplicate and edit replay cannot resurrect hidden private attachment state',
+      () async {
+        for (final isEdit in [false, true]) {
+          final id = isEdit
+              ? 'private-hidden-edit-replay'
+              : 'private-hidden-duplicate-replay';
+          final hidden = ConversationMessage(
+            id: id,
+            contactPeerId: senderPeerId,
+            senderPeerId: senderPeerId,
+            text: '',
+            timestamp: '2026-07-11T09:00:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-07-11T09:00:00.000Z',
+            editedAt: isEdit ? '2026-07-11T09:00:30.000Z' : null,
+            hiddenAt: '2026-07-11T09:01:00.000Z',
+            privateMediaPolicy: const PrivateMediaPolicy.protected(),
+            privateMediaState: PrivateMediaLifecycleState.available,
+            privateMediaReceivedAtMs: 1000,
+            privateMediaTerminalAtMs: 2000,
+            privateMediaClockHighWaterMs: 2000,
+          );
+          final replayRepo = FakeMessageRepository(
+            existingMessages: {id: hidden},
+          );
+          final mediaRepo = FakeMediaAttachmentRepository();
+
+          final (result, _, _) = await handleIncomingChatMessage(
+            message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+            messageRepo: replayRepo,
+            contactRepo: contactRepo,
+            predecryptedText: jsonEncode({
+              'id': id,
+              'text': '',
+              'senderPeerId': senderPeerId,
+              'senderUsername': 'Alice',
+              'timestamp': '2026-07-11T09:00:00.000Z',
+              if (isEdit) 'action': 'edit',
+              if (isEdit) 'editedAt': '2026-07-11T09:02:00.000Z',
+              'media': [
+                {
+                  'id': '$id-blob',
+                  'mime': 'image/jpeg',
+                  'size': 1024,
+                  'mediaType': 'image',
+                  'encryptionKeyBase64': 'must-not-be-written',
+                  'encryptionNonce': 'nonce',
+                },
+              ],
+              'privateMedia': {'version': 1, 'mode': 'protected'},
+            }),
+            mediaAttachmentRepo: mediaRepo,
+          );
+
+          expect(
+            result,
+            isEdit
+                ? HandleChatMessageResult.chatMessage
+                : HandleChatMessageResult.duplicate,
+          );
+          expect(mediaRepo.saved, isEmpty, reason: id);
+          final after = await replayRepo.getMessage(id);
+          expect(after!.hiddenAt, hidden.hiddenAt, reason: id);
+          expect(
+            after.privateMediaState,
+            PrivateMediaLifecycleState.available,
+            reason: id,
+          );
+          expect(after.privateMediaTerminalAtMs, 2000, reason: id);
+        }
+      },
+    );
+
     test('returns notChatMessage for non-JSON content', () async {
       final message = buildP2PMessage('not json at all');
 

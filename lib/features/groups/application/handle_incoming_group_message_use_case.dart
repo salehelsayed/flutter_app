@@ -9,6 +9,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/groups/application/group_private_media_lifecycle.dart';
 import 'package:flutter_app/features/groups/application/group_sender_display_name.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -773,6 +774,10 @@ Future<GroupMessage?> handleIncomingGroupMessage({
 
   // 6. Save to repo
   await msgRepo.saveMessage(message);
+  if (message.mediaExpiresAt != null) {
+    signalGroupPrivateMediaExpiryChanged();
+  }
+
   // 7. Save media attachments (pending for relay download). 235: the final
   // attachment write re-verifies the exact (group_id, message_id) parent and
   // the deletion journal INSIDE its own transaction — a parent silently

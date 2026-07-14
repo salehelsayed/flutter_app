@@ -167,10 +167,7 @@ void main() {
       final before = await fixture.repo.getMediaLibraryPage(
         scope: const MediaLibraryScope.group('group-1'),
       );
-      expect(
-        before.entries.map((e) => e.attachment.id),
-        ['att-g2', 'att-g1'],
-      );
+      expect(before.entries.map((e) => e.attachment.id), ['att-g2', 'att-g1']);
 
       // Real deletion workflow: records a durable tombstone AND deletes the
       // parent row.
@@ -178,10 +175,7 @@ void main() {
       final afterDelete = await fixture.repo.getMediaLibraryPage(
         scope: const MediaLibraryScope.group('group-1'),
       );
-      expect(
-        afterDelete.entries.map((e) => e.attachment.id),
-        ['att-g1'],
-      );
+      expect(afterDelete.entries.map((e) => e.attachment.id), ['att-g1']);
 
       // A replayed/reinserted parent stays invisible: the tombstone anti-join
       // outlives the parent row.
@@ -192,10 +186,7 @@ void main() {
       final afterReinsert = await fixture.repo.getMediaLibraryPage(
         scope: const MediaLibraryScope.group('group-1'),
       );
-      expect(
-        afterReinsert.entries.map((e) => e.attachment.id),
-        ['att-g1'],
-      );
+      expect(afterReinsert.entries.map((e) => e.attachment.id), ['att-g1']);
     },
   );
 
@@ -275,10 +266,7 @@ void main() {
         scope: scope,
         filter: const MediaLibraryFilter(bookmarkedOnly: true),
       );
-      expect(
-        bookmarked.entries.map((e) => e.attachment.id),
-        ['att-msg-b-a'],
-      );
+      expect(bookmarked.entries.map((e) => e.attachment.id), ['att-msg-b-a']);
 
       // Cursor is bound to scope AND filter signature: reuse elsewhere fails
       // with a typed argument error BEFORE any SQL runs.
@@ -312,7 +300,10 @@ void main() {
 
       // Limit contract: 1 and 100 work; 0 and 101 fail before SQL.
       expect(kMediaLibraryMaxPageSize, 100);
-      final one = await fixture.repo.getMediaLibraryPage(scope: scope, limit: 1);
+      final one = await fixture.repo.getMediaLibraryPage(
+        scope: scope,
+        limit: 1,
+      );
       expect(one.entries, hasLength(1));
       final hundred = await fixture.repo.getMediaLibraryPage(
         scope: scope,
@@ -327,6 +318,128 @@ void main() {
         () => fixture.repo.getMediaLibraryPage(scope: scope, limit: 101),
         throwsA(isA<ArgumentError>()),
       );
+    },
+  );
+
+  test(
+    'direct SQL excludes private and corrupt parents before keyset LIMIT',
+    () async {
+      const timestamps = <String, String>{
+        'msg-ordinary-new': '2026-07-01T15:00:00.000Z',
+        'msg-private': '2026-07-01T14:00:00.000Z',
+        'msg-unsupported': '2026-07-01T13:00:00.000Z',
+        'msg-terminal': '2026-07-01T12:30:00.000Z',
+        'msg-corrupt': '2026-07-01T12:00:00.000Z',
+        'msg-corrupt-lifecycle': '2026-07-01T11:30:00.000Z',
+        'msg-ordinary-old': '2026-07-01T11:00:00.000Z',
+      };
+      for (final entry in timestamps.entries) {
+        await fixture.seedDirectParent(entry.key, timestamp: entry.value);
+        await saveVisual(
+          id: 'att-${entry.key}',
+          messageId: entry.key,
+          owner: MediaOwnerLane.direct,
+        );
+      }
+      await fixture.db.update(
+        'messages',
+        {
+          'private_media_policy_version': 1,
+          'private_media_mode': 'view_once',
+          'private_media_state': 'available',
+        },
+        where: 'id = ?',
+        whereArgs: ['msg-private'],
+      );
+      await fixture.db.update(
+        'messages',
+        {
+          'private_media_policy_version': 77,
+          'private_media_mode': 'unsupported',
+          'private_media_state': 'unsupported',
+        },
+        where: 'id = ?',
+        whereArgs: ['msg-unsupported'],
+      );
+      await fixture.db.update(
+        'messages',
+        {
+          'private_media_policy_version': 1,
+          'private_media_mode': 'view_once',
+          'private_media_state': 'consumed',
+          'private_media_terminal_at_ms': 1_800_000_000_000,
+        },
+        where: 'id = ?',
+        whereArgs: ['msg-terminal'],
+      );
+      // A non-canonical ordinary row is corrupt and must fail closed too.
+      await fixture.db.update(
+        'messages',
+        {'private_media_policy_version': 1},
+        where: 'id = ?',
+        whereArgs: ['msg-corrupt'],
+      );
+      await fixture.db.update(
+        'messages',
+        {'private_media_expires_at_ms': 1_800_000_000_000},
+        where: 'id = ?',
+        whereArgs: ['msg-corrupt-lifecycle'],
+      );
+      await fixture.repo.setBookmarked('att-msg-private', bookmarked: true);
+      await saveVisual(
+        id: 'att-unresolved-sibling',
+        messageId: 'msg-ordinary-new',
+        owner: MediaOwnerLane.direct,
+      );
+      await fixture.db.update(
+        'media_attachments',
+        {'owner_lane': 'unresolved'},
+        where: 'id = ?',
+        whereArgs: ['att-unresolved-sibling'],
+      );
+
+      const scope = MediaLibraryScope.direct('contact-1');
+      final first = await fixture.repo.getMediaLibraryPage(
+        scope: scope,
+        limit: 2,
+      );
+      expect(first.entries.map((entry) => entry.attachment.id), [
+        'att-msg-ordinary-new',
+        'att-msg-ordinary-old',
+      ]);
+      expect(
+        first.entries.every(
+          (entry) => entry.attachment.ownerLane == MediaOwnerLane.direct,
+        ),
+        isTrue,
+      );
+      final bookmarked = await fixture.repo.getMediaLibraryPage(
+        scope: scope,
+        filter: const MediaLibraryFilter(bookmarkedOnly: true),
+      );
+      expect(bookmarked.entries, isEmpty);
+
+      // A same-ID group parent/row is governed only by the group predicate.
+      await fixture.seedGroupParent('msg-private');
+      await saveVisual(
+        id: 'att-group-private-id-sibling',
+        messageId: 'msg-private',
+        owner: MediaOwnerLane.group,
+      );
+      final group = await fixture.repo.getMediaLibraryPage(
+        scope: const MediaLibraryScope.group('group-1'),
+      );
+      expect(
+        group.entries.map((entry) => entry.attachment.id),
+        contains('att-group-private-id-sibling'),
+      );
+      final unresolved = await fixture.db.query(
+        'media_attachments',
+        columns: const ['owner_lane'],
+        where: 'id = ?',
+        whereArgs: ['att-unresolved-sibling'],
+      );
+      expect(unresolved.single['owner_lane'], 'unresolved');
     },
   );
 }

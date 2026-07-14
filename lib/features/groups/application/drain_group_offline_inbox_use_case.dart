@@ -18,6 +18,7 @@ import 'package:flutter_app/features/groups/domain/models/group_key_retention_po
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message_receipt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
@@ -28,6 +29,18 @@ const groupUndecryptablePlaceholderText = 'Message could not be decrypted.';
 const defaultGroupInboxDrainMaxPages = 100;
 const defaultMaxConcurrentGroupInboxDrains = 4;
 const groupInboxSyntheticSinceCursorPrefix = 'mknoon-since-ms:';
+
+Map<String, Object?> _presentGroupPrivateMediaPolicyFields(
+  Map<String, dynamic> payload,
+) {
+  final present = <String, Object?>{};
+  for (final key in GroupPrivateMediaPolicy.wireKeys) {
+    if (payload.containsKey(key)) {
+      present[key] = payload[key];
+    }
+  }
+  return present;
+}
 
 class GroupOfflineInboxDrainResult {
   const GroupOfflineInboxDrainResult({
@@ -692,6 +705,7 @@ Future<void> _drainGroupInbox({
           if (payload['quotedMessageId'] is String)
             'quotedMessageId': payload['quotedMessageId'],
           if (payload['isForwarded'] == true) 'isForwarded': true,
+          ..._presentGroupPrivateMediaPolicyFields(payload),
           'media': ?media,
         }, rethrowOnError: true);
 
@@ -774,6 +788,7 @@ Future<void> _drainGroupInbox({
           if (payload['quotedMessageId'] is String)
             'quotedMessageId': payload['quotedMessageId'],
           if (payload['isForwarded'] == true) 'isForwarded': true,
+          ..._presentGroupPrivateMediaPolicyFields(payload),
           'media': ?media,
         }, rethrowOnError: true);
         GroupMessage? messageForLocalReceipts;
@@ -824,6 +839,7 @@ Future<void> _drainGroupInbox({
         logicalDeliveryId: payload['logicalDeliveryId'] as String?,
         quotedMessageId: payload['quotedMessageId'] as String?,
         isForwarded: payload['isForwarded'] == true,
+        privateMediaPolicyFields: Map<String, Object?>.from(payload),
         media: media,
         mediaAttachmentRepo: mediaAttachmentRepo,
         enforceSelfJoinedAtLowerBound: true,
@@ -1498,6 +1514,7 @@ Future<List<String>> _applyRepairedHistoryMessages({
         if (payload['quotedMessageId'] is String)
           'quotedMessageId': payload['quotedMessageId'],
         if (payload['isForwarded'] == true) 'isForwarded': true,
+        ..._presentGroupPrivateMediaPolicyFields(payload),
         'media': ?media,
       }, msgRepoOverride: msgRepo);
     } else {
@@ -1519,6 +1536,7 @@ Future<List<String>> _applyRepairedHistoryMessages({
         logicalDeliveryId: payload['logicalDeliveryId'] as String?,
         quotedMessageId: payload['quotedMessageId'] as String?,
         isForwarded: payload['isForwarded'] == true,
+        privateMediaPolicyFields: Map<String, Object?>.from(payload),
         media: media,
         mediaAttachmentRepo: mediaAttachmentRepo,
         enforceSelfJoinedAtLowerBound: true,

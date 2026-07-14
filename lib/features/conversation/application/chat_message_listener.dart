@@ -255,6 +255,7 @@ class ChatMessageListener {
             attachment: attachment,
             contactPeerId: message.contactPeerId,
             owner: MediaOwnerLane.direct,
+            messageRepo: messageRepo,
           );
           if (result != null) {
             downloadedMedia.add(result);

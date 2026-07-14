@@ -22,7 +22,16 @@ enum MediaViewerKind { image, gif, video }
 /// exact current item. Concrete per-lane policies live in plans 231-242.
 /// 235 adds [info] (privacy-minimized metadata sheet) and [reply] (existing
 /// quote-composer reuse); both stay callback-only like every other action.
-enum MediaViewerAction { save, share, forward, delete, bookmark, info, reply }
+enum MediaViewerAction {
+  save,
+  share,
+  forward,
+  delete,
+  bookmark,
+  info,
+  reply,
+  messageSender,
+}
 
 /// The settled outcome of an awaited [MediaViewerActionCallback].
 enum MediaViewerActionStatus { success, cancelled, failure }
@@ -117,6 +126,7 @@ class MediaViewerItem {
     this.caption,
     this.senderLabel,
     this.timestamp,
+    this.canEnterPictureInPicture = false,
     this.protection = const MediaViewerProtection(),
     this.capabilities = MediaViewerActionCapabilities.none,
   });
@@ -143,6 +153,10 @@ class MediaViewerItem {
   final String? caption;
   final String? senderLabel;
   final DateTime? timestamp;
+
+  /// Typed lane-owner input for downstream PiP work. The shared viewer never
+  /// infers this from video MIME/path and does not implement PiP itself.
+  final bool canEnterPictureInPicture;
   final MediaViewerProtection protection;
   final MediaViewerActionCapabilities capabilities;
 

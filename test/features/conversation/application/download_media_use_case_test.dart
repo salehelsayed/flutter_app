@@ -5,22 +5,87 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
+import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
 import 'package:flutter_app/core/media/media_storage_manager.dart';
+import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
-import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
+import 'package:flutter_app/features/conversation/application/download_media_use_case.dart'
+    hide downloadMedia;
+import 'package:flutter_app/features/conversation/application/download_media_use_case.dart'
+    as download_use_case
+    show downloadMedia;
+import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_library.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 
 import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
+import '../../../shared/fakes/in_memory_message_repository.dart';
+
+late MessageRepository _defaultDirectMessageRepo;
+
+class _OrdinaryParentMessageRepository extends InMemoryMessageRepository {
+  @override
+  Future<ConversationMessage?> getMessage(String id) async {
+    return await super.getMessage(id) ??
+        ConversationMessage(
+          id: id,
+          contactPeerId: 'contact-A',
+          senderPeerId: 'sender-A',
+          text: '',
+          timestamp: '2026-02-20T10:00:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-20T10:00:00.000Z',
+        );
+  }
+}
+
+Future<MediaAttachment?> downloadMedia({
+  required Bridge bridge,
+  required MediaAttachmentRepository mediaAttachmentRepo,
+  required MediaFileManager mediaFileManager,
+  required MediaAttachment attachment,
+  required String contactPeerId,
+  required MediaOwnerLane owner,
+  MessageRepository? messageRepo,
+  MediaDownloadIntent? intent,
+  bool enforceGroupMediaPolicy = false,
+  Duration? transferStallTimeout,
+  Duration? transferMaxTimeout,
+  Duration? latePrivateTransferScrubDelay,
+  int Function()? nowMs,
+}) {
+  return download_use_case.downloadMedia(
+    bridge: bridge,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+    mediaFileManager: mediaFileManager,
+    attachment: attachment,
+    contactPeerId: contactPeerId,
+    owner: owner,
+    messageRepo:
+        messageRepo ??
+        (owner == MediaOwnerLane.direct ? _defaultDirectMessageRepo : null),
+    intent: intent,
+    enforceGroupMediaPolicy: enforceGroupMediaPolicy,
+    transferStallTimeout: transferStallTimeout,
+    transferMaxTimeout: transferMaxTimeout,
+    latePrivateTransferScrubDelay: latePrivateTransferScrubDelay,
+    nowMs: nowMs,
+  );
+}
 
 const _jpegBytes = <int>[0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10];
 const _jpegHash =
@@ -204,6 +269,7 @@ class _TimeoutAfterWriteBridge extends _FakeBridge {
       final file = File(outputPath);
       await file.parent.create(recursive: true);
       await file.writeAsBytes(downloadedBytes, flush: true);
+      await beforeDownloadResponse?.call(parsed);
       throw TimeoutException('media:download stalled_no_progress after 0s');
     }
     return super.send(message);
@@ -237,10 +303,20 @@ class _FailOncePartialDownloadBridge extends _FakeBridge {
 }
 
 /// Fake media attachment repository that tracks calls.
-class _FakeMediaAttachmentRepo implements MediaAttachmentRepository {
+class _FakeMediaAttachmentRepo
+    implements
+        MediaAttachmentRepository,
+        DirectPrivateMediaDownloadStateRepository,
+        DirectPrivateMediaCleanupRuntime {
   final List<(String, String)> downloadStatusUpdates = [];
   final List<(String, String)> localPathUpdates = [];
   final Map<String, List<MediaAttachment>> _attachmentsByMessage = {};
+  final MediaAttachmentLifecycleLock _lifecycleLock =
+      MediaAttachmentLifecycleLock();
+
+  @override
+  MediaAttachmentLifecycleLock get directPrivateMediaLifecycleLock =>
+      _lifecycleLock;
 
   @override
   Future<void> saveAttachment(
@@ -316,12 +392,15 @@ class _FakeMediaAttachmentRepo implements MediaAttachmentRepository {
   }) async => [];
 
   void seedAttachment(MediaAttachment attachment) {
+    final stored = attachment.ownerLane == null
+        ? attachment.copyWith(ownerLane: MediaOwnerLane.direct)
+        : attachment;
     final attachments = _attachmentsByMessage.putIfAbsent(
-      attachment.messageId,
+      stored.messageId,
       () => <MediaAttachment>[],
     );
-    attachments.removeWhere((stored) => stored.id == attachment.id);
-    attachments.add(attachment);
+    attachments.removeWhere((candidate) => candidate.id == stored.id);
+    attachments.add(stored);
   }
 
   void _updateAttachment(
@@ -336,6 +415,187 @@ class _FakeMediaAttachmentRepo implements MediaAttachmentRepository {
       entry.value[index] = update(entry.value[index]);
       return;
     }
+  }
+
+  MediaAttachment? _findAttachment(String id) {
+    for (final attachments in _attachmentsByMessage.values) {
+      for (final attachment in attachments) {
+        if (attachment.id == id) return attachment;
+      }
+    }
+    return null;
+  }
+
+  @override
+  Future<bool> beginDirectPrivateMediaDownload(
+    String id, {
+    required String messageId,
+    required int nowMs,
+  }) => _lifecycleLock.synchronized(
+    id,
+    () => beginDirectPrivateMediaDownloadWithinLock(
+      id,
+      messageId: messageId,
+      nowMs: nowMs,
+    ),
+  );
+
+  @override
+  Future<bool> beginDirectPrivateMediaDownloadWithinLock(
+    String id, {
+    required String messageId,
+    required int nowMs,
+  }) async {
+    final current = _findAttachment(id);
+    if (current == null ||
+        current.messageId != messageId ||
+        current.downloadStatus == kMediaDownloadStatusDownloading) {
+      return false;
+    }
+    _updateAttachment(
+      id,
+      (item) => item.copyWith(downloadStatus: kMediaDownloadStatusDownloading),
+    );
+    return true;
+  }
+
+  @override
+  Future<bool> qualifyDirectPrivateMediaLocalReady(
+    String id, {
+    required String messageId,
+    required String expectedLocalPath,
+    required int nowMs,
+  }) => _lifecycleLock.synchronized(
+    id,
+    () => qualifyDirectPrivateMediaLocalReadyWithinLock(
+      id,
+      messageId: messageId,
+      expectedLocalPath: expectedLocalPath,
+      nowMs: nowMs,
+    ),
+  );
+
+  @override
+  Future<bool> qualifyDirectPrivateMediaLocalReadyWithinLock(
+    String id, {
+    required String messageId,
+    required String expectedLocalPath,
+    required int nowMs,
+  }) async {
+    final current = _findAttachment(id);
+    return current?.messageId == messageId &&
+        current?.downloadStatus == kMediaDownloadStatusDone &&
+        current?.localPath == expectedLocalPath;
+  }
+
+  @override
+  Future<bool> qualifyDirectPrivateMediaDownloadClaimWithinLock(
+    String id, {
+    required String messageId,
+    required int nowMs,
+  }) async {
+    final current = _findAttachment(id);
+    return current?.messageId == messageId &&
+        current?.downloadStatus == kMediaDownloadStatusDownloading;
+  }
+
+  @override
+  Future<bool> recordDirectPrivateMediaDownloadFailure(
+    String id, {
+    required String messageId,
+    required int nowMs,
+    required bool incrementRetryCount,
+    required String failureStatus,
+    required String expectedDownloadStatus,
+    String? expectedLocalPath,
+    bool clearLocalPath = false,
+  }) => _lifecycleLock.synchronized(
+    id,
+    () => recordDirectPrivateMediaDownloadFailureWithinLock(
+      id,
+      messageId: messageId,
+      nowMs: nowMs,
+      incrementRetryCount: incrementRetryCount,
+      failureStatus: failureStatus,
+      expectedDownloadStatus: expectedDownloadStatus,
+      expectedLocalPath: expectedLocalPath,
+      clearLocalPath: clearLocalPath,
+    ),
+  );
+
+  @override
+  Future<bool> recordDirectPrivateMediaDownloadFailureWithinLock(
+    String id, {
+    required String messageId,
+    required int nowMs,
+    required bool incrementRetryCount,
+    required String failureStatus,
+    required String expectedDownloadStatus,
+    String? expectedLocalPath,
+    bool clearLocalPath = false,
+  }) async {
+    final current = _findAttachment(id);
+    if (current == null ||
+        current.messageId != messageId ||
+        current.downloadStatus != expectedDownloadStatus ||
+        (expectedLocalPath != null && current.localPath != expectedLocalPath)) {
+      return false;
+    }
+    final nextRetry = (current.downloadRetryCount ?? 0) + 1;
+    _updateAttachment(
+      id,
+      (item) => item.copyWith(
+        downloadStatus: incrementRetryCount && nextRetry >= kMaxDownloadRetries
+            ? kMediaDownloadStatusDownloadFailed
+            : failureStatus,
+        downloadRetryCount: incrementRetryCount
+            ? nextRetry
+            : current.downloadRetryCount,
+        clearLocalPath: clearLocalPath,
+      ),
+    );
+    return true;
+  }
+
+  @override
+  Future<bool> commitDirectPrivateMediaDownloadLocalPath(
+    String id, {
+    required String messageId,
+    required String localPath,
+    required int nowMs,
+  }) => _lifecycleLock.synchronized(
+    id,
+    () => commitDirectPrivateMediaDownloadLocalPathWithinLock(
+      id,
+      messageId: messageId,
+      localPath: localPath,
+      nowMs: nowMs,
+    ),
+  );
+
+  @override
+  Future<bool> commitDirectPrivateMediaDownloadLocalPathWithinLock(
+    String id, {
+    required String messageId,
+    required String localPath,
+    required int nowMs,
+  }) async {
+    final current = _findAttachment(id);
+    if (current == null ||
+        current.messageId != messageId ||
+        current.downloadStatus != kMediaDownloadStatusDownloading) {
+      return false;
+    }
+    localPathUpdates.add((id, localPath));
+    _updateAttachment(
+      id,
+      (item) => item.copyWith(
+        localPath: localPath,
+        downloadStatus: kMediaDownloadStatusDone,
+        downloadRetryCount: 0,
+      ),
+    );
+    return true;
   }
 }
 
@@ -376,6 +636,7 @@ class _FakeMediaFileManager extends MediaFileManager {
     String reason = 'media_file_delete',
     String? storedPath,
     Map<String, Object?> details = const {},
+    bool redactTelemetry = false,
   }) async {
     final file = File(localPath);
     if (await file.exists()) {
@@ -475,6 +736,7 @@ void main() {
     mediaRepo = _FakeMediaAttachmentRepo();
     tempDir = await Directory.systemTemp.createTemp('download_test_');
     fileManager = _FakeMediaFileManager(tempDir.path);
+    _defaultDirectMessageRepo = _OrdinaryParentMessageRepository();
   });
 
   tearDown(() async {
@@ -488,6 +750,312 @@ void main() {
   });
 
   group('downloadMedia', () {
+    test(
+      'direct download with a missing current parent fails closed',
+      () async {
+        final result = await download_use_case.downloadMedia(
+          owner: MediaOwnerLane.direct,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: testAttachment,
+          contactPeerId: 'contact-A',
+          messageRepo: InMemoryMessageRepository(),
+          intent: MediaDownloadIntent.explicitUser,
+        );
+
+        expect(result, isNull);
+        expect(bridge.commandLog, isEmpty);
+        expect(mediaRepo.downloadStatusUpdates, isEmpty);
+        expect(mediaRepo.localPathUpdates, isEmpty);
+      },
+    );
+
+    test('production direct download call sites carry parent qualification', () {
+      final sources = [
+        File(
+          'lib/features/conversation/application/chat_message_listener.dart',
+        ).readAsStringSync(),
+        File(
+          'lib/features/conversation/presentation/screens/conversation_wired.dart',
+        ).readAsStringSync(),
+      ];
+      final directCalls = RegExp(
+        r'(?:downloadMedia|downloadMediaFn)\([\s\S]{0,900}?owner:\s*MediaOwnerLane\.direct,[\s\S]{0,300}?\)',
+      );
+
+      final matches = sources.expand(directCalls.allMatches).toList();
+      expect(matches, isNotEmpty);
+      for (final match in matches) {
+        final call = match.group(0)!;
+        expect(call, contains('messageRepo:'));
+      }
+    });
+
+    test(
+      'explicit available private parent reaches canonical durable storage',
+      () async {
+        final messageRepo = InMemoryMessageRepository();
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: testAttachment.messageId,
+            contactPeerId: 'contact-A',
+            senderPeerId: 'sender-A',
+            text: '',
+            timestamp: '2026-07-11T09:00:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-07-11T09:00:00.000Z',
+            privateMediaPolicy: const PrivateMediaPolicy.protected(),
+            privateMediaState: PrivateMediaLifecycleState.available,
+          ),
+        );
+        mediaRepo.seedAttachment(testAttachment);
+
+        final result = await download_use_case.downloadMedia(
+          owner: MediaOwnerLane.direct,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: testAttachment,
+          contactPeerId: 'contact-A',
+          messageRepo: messageRepo,
+          intent: MediaDownloadIntent.explicitUser,
+        );
+
+        expect(result, isNotNull);
+        expect(result!.downloadStatus, 'done');
+        expect(result.localPath, isNotNull);
+        expect(File(result.localPath!).existsSync(), isTrue);
+        expect(bridge.commandLog, contains('media:download'));
+        expect(mediaRepo.localPathUpdates, isNotEmpty);
+      },
+    );
+
+    test(
+      'unsupported parent denies explicit download before mutation',
+      () async {
+        final messageRepo = InMemoryMessageRepository();
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: testAttachment.messageId,
+            contactPeerId: 'contact-A',
+            senderPeerId: 'sender-A',
+            text: '',
+            timestamp: '2026-07-11T09:00:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-07-11T09:00:00.000Z',
+            privateMediaPolicy: const PrivateMediaPolicy.unsupported(
+              sourceVersion: 9,
+            ),
+            privateMediaState: PrivateMediaLifecycleState.unsupported,
+          ),
+        );
+
+        final result = await download_use_case.downloadMedia(
+          owner: MediaOwnerLane.direct,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: testAttachment,
+          contactPeerId: 'contact-A',
+          messageRepo: messageRepo,
+          intent: MediaDownloadIntent.explicitUser,
+        );
+
+        expect(result, isNull);
+        expect(bridge.commandLog, isEmpty);
+        expect(mediaRepo.downloadStatusUpdates, isEmpty);
+        expect(mediaRepo.localPathUpdates, isEmpty);
+      },
+    );
+
+    test(
+      'terminal private parent denies before bridge or row mutation',
+      () async {
+        final messageRepo = InMemoryMessageRepository();
+        final policy = PrivateMediaPolicy.fromJson(const {
+          'version': 1,
+          'mode': 'view_once',
+        });
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: testAttachment.messageId,
+            contactPeerId: 'contact-A',
+            senderPeerId: 'sender-A',
+            text: '',
+            timestamp: '2026-07-11T09:00:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-07-11T09:00:00.000Z',
+            privateMediaPolicy: policy,
+            privateMediaState: PrivateMediaLifecycleState.consumed,
+          ),
+        );
+
+        final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: testAttachment,
+          contactPeerId: 'contact-A',
+          messageRepo: messageRepo,
+          intent: MediaDownloadIntent.explicitUser,
+        );
+
+        expect(result, isNull);
+        expect(bridge.sendCallCount, 0);
+        expect(bridge.commandLog, isEmpty);
+        expect(mediaRepo.downloadStatusUpdates, isEmpty);
+        expect(mediaRepo.localPathUpdates, isEmpty);
+      },
+    );
+
+    test(
+      'hidden deleted and corrupt parents deny before bridge or row mutation',
+      () async {
+        final parents = <ConversationMessage>[
+          ConversationMessage(
+            id: testAttachment.messageId,
+            contactPeerId: 'contact-A',
+            senderPeerId: 'sender-A',
+            text: '',
+            timestamp: '2026-07-11T09:00:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-07-11T09:00:00.000Z',
+            hiddenAt: '2026-07-11T09:01:00.000Z',
+          ),
+          ConversationMessage(
+            id: testAttachment.messageId,
+            contactPeerId: 'contact-A',
+            senderPeerId: 'sender-A',
+            text: '',
+            timestamp: '2026-07-11T09:00:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-07-11T09:00:00.000Z',
+            deletedAt: '2026-07-11T09:01:00.000Z',
+          ),
+          ConversationMessage(
+            id: testAttachment.messageId,
+            contactPeerId: 'contact-A',
+            senderPeerId: 'sender-A',
+            text: '',
+            timestamp: '2026-07-11T09:00:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-07-11T09:00:00.000Z',
+            privateMediaPolicy: const PrivateMediaPolicy.protected(),
+            privateMediaState: PrivateMediaLifecycleState.none,
+          ),
+        ];
+
+        for (final currentParent in parents) {
+          final messageRepo = InMemoryMessageRepository();
+          await messageRepo.saveMessage(currentParent);
+          final result = await downloadMedia(
+            owner: MediaOwnerLane.direct,
+            bridge: bridge,
+            mediaAttachmentRepo: mediaRepo,
+            mediaFileManager: fileManager,
+            attachment: testAttachment,
+            contactPeerId: 'contact-A',
+            messageRepo: messageRepo,
+            intent: MediaDownloadIntent.explicitUser,
+          );
+          expect(result, isNull);
+        }
+        expect(bridge.sendCallCount, 0);
+        expect(bridge.commandLog, isEmpty);
+        expect(mediaRepo.downloadStatusUpdates, isEmpty);
+        expect(mediaRepo.localPathUpdates, isEmpty);
+      },
+    );
+
+    test(
+      'private explicit download never joins or races an ordinary unguarded future',
+      () async {
+        final delayedBridge = _DelayedBridge();
+        final messageRepo = InMemoryMessageRepository();
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: testAttachment.messageId,
+            contactPeerId: 'contact-A',
+            senderPeerId: 'sender-A',
+            text: '',
+            timestamp: '2026-07-11T09:00:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-07-11T09:00:00.000Z',
+          ),
+        );
+        mediaRepo.seedAttachment(testAttachment);
+        final ordinaryFuture = downloadMedia(
+          owner: MediaOwnerLane.direct,
+          bridge: delayedBridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: testAttachment,
+          contactPeerId: 'contact-A',
+          messageRepo: messageRepo,
+          intent: MediaDownloadIntent.explicitUser,
+        );
+        for (
+          var attempt = 0;
+          attempt < 100 && delayedBridge.sendCallCount < 1;
+          attempt++
+        ) {
+          await Future<void>.delayed(const Duration(milliseconds: 1));
+        }
+        expect(delayedBridge.sendCallCount, 1);
+
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: testAttachment.messageId,
+            contactPeerId: 'contact-A',
+            senderPeerId: 'sender-A',
+            text: '',
+            timestamp: '2026-07-11T09:00:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-07-11T09:00:00.000Z',
+            privateMediaPolicy: const PrivateMediaPolicy.protected(),
+            privateMediaState: PrivateMediaLifecycleState.available,
+          ),
+        );
+        // Simulate a replay/transition restoring the exact current row while
+        // the earlier ordinary transfer is still pending.
+        mediaRepo.seedAttachment(testAttachment);
+        final privateFuture = downloadMedia(
+          owner: MediaOwnerLane.direct,
+          bridge: delayedBridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: testAttachment,
+          contactPeerId: 'contact-A',
+          messageRepo: messageRepo,
+          intent: MediaDownloadIntent.explicitUser,
+        );
+        for (
+          var attempt = 0;
+          attempt < 100 && delayedBridge.sendCallCount < 2;
+          attempt++
+        ) {
+          await Future<void>.delayed(const Duration(milliseconds: 1));
+        }
+
+        final callCountBeforeRelease = delayedBridge.sendCallCount;
+        delayedBridge.gate.complete();
+        final outcomes = await Future.wait([ordinaryFuture, privateFuture]);
+        expect(callCountBeforeRelease, 1);
+        expect(outcomes.first, isNotNull);
+        expect(outcomes.last, isNull);
+      },
+    );
+
     test('returns updated attachment on success', () async {
       final result = await downloadMedia(
         owner: MediaOwnerLane.direct,
@@ -2492,8 +3060,507 @@ void main() {
   });
 
   group('229 download/eviction CAS', () {
+    Future<void> seedProtectedParent(
+      MediaRepositoryRealDbFixture fixture,
+      String messageId, {
+      String contactId = 'contact-private',
+    }) async {
+      await fixture.seedDirectParent(messageId, contactPeerId: contactId);
+      await fixture.db.update(
+        'messages',
+        {
+          'private_media_policy_version': 1,
+          'private_media_mode': 'protected',
+          'private_media_state': 'available',
+          'private_media_received_at_ms': 1000,
+          'private_media_clock_high_water_ms': 1000,
+        },
+        where: 'id = ?',
+        whereArgs: [messageId],
+      );
+    }
+
     test(
-        'download and eviction compare and set prevents local copy '
+      'private entry rejects wrong contact before bridge or mutation',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        const messageId = 'private-wrong-contact';
+        const attachment = MediaAttachment(
+          id: 'private-wrong-contact-att',
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 3,
+          mediaType: 'image',
+          downloadStatus: 'pending',
+          createdAt: '2026-07-11T00:00:00.000Z',
+        );
+        await seedProtectedParent(
+          fixture,
+          messageId,
+          contactId: 'contact-authoritative',
+        );
+        await fixture.repo.saveAttachment(
+          attachment,
+          owner: MediaOwnerLane.direct,
+        );
+
+        expect(
+          await downloadMedia(
+            bridge: bridge,
+            mediaAttachmentRepo: fixture.repo,
+            mediaFileManager: _CanonicalPathFakeMediaFileManager(tempDir.path),
+            attachment: attachment,
+            contactPeerId: 'contact-wrong',
+            owner: MediaOwnerLane.direct,
+            messageRepo: fixture.messageRepo,
+            intent: MediaDownloadIntent.explicitUser,
+            nowMs: () => 1100,
+          ),
+          isNull,
+        );
+        expect(bridge.commandLog, isEmpty);
+        expect(
+          (await fixture.rawAttachmentRow(attachment.id))!['download_status'],
+          'pending',
+        );
+      },
+    );
+
+    test(
+      'private entry rejects traversal and input-only attachment identities',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        const messageId = 'private-unsafe-entry';
+        await seedProtectedParent(fixture, messageId);
+        const traversal = MediaAttachment(
+          id: '../outside-private',
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 3,
+          mediaType: 'image',
+          downloadStatus: 'pending',
+          createdAt: '2026-07-11T00:00:00.000Z',
+        );
+        await fixture.repo.saveAttachment(
+          traversal,
+          owner: MediaOwnerLane.direct,
+        );
+        final manager = _CanonicalPathFakeMediaFileManager(tempDir.path);
+
+        expect(
+          await downloadMedia(
+            bridge: bridge,
+            mediaAttachmentRepo: fixture.repo,
+            mediaFileManager: manager,
+            attachment: traversal,
+            contactPeerId: 'contact-private',
+            owner: MediaOwnerLane.direct,
+            messageRepo: fixture.messageRepo,
+            intent: MediaDownloadIntent.explicitUser,
+          ),
+          isNull,
+        );
+        const inputOnly = MediaAttachment(
+          id: 'input-only-private',
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 3,
+          mediaType: 'image',
+          downloadStatus: 'pending',
+          createdAt: '2026-07-11T00:00:00.000Z',
+        );
+        expect(
+          await downloadMedia(
+            bridge: bridge,
+            mediaAttachmentRepo: fixture.repo,
+            mediaFileManager: manager,
+            attachment: inputOnly,
+            contactPeerId: 'contact-private',
+            owner: MediaOwnerLane.direct,
+            messageRepo: fixture.messageRepo,
+            intent: MediaDownloadIntent.explicitUser,
+          ),
+          isNull,
+        );
+        expect(bridge.commandLog, isEmpty);
+        expect(
+          (await fixture.rawAttachmentRow(traversal.id))!['download_status'],
+          'pending',
+        );
+      },
+    );
+
+    test(
+      'private local-ready rejects zero truncated and symlink files',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        const messageId = 'private-local-ready-size';
+        const attachmentId = 'private-local-ready-size-att';
+        const relativePath =
+            'media/contact-private/private-local-ready-size-att.jpg';
+        const attachment = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 3,
+          mediaType: 'image',
+          localPath: relativePath,
+          downloadStatus: 'done',
+          createdAt: '2026-07-11T00:00:00.000Z',
+        );
+        await seedProtectedParent(fixture, messageId);
+        await fixture.repo.saveAttachment(
+          attachment,
+          owner: MediaOwnerLane.direct,
+        );
+        final manager = _CanonicalPathFakeMediaFileManager(tempDir.path);
+        final canonical = File('${tempDir.path}/$relativePath')
+          ..createSync(recursive: true);
+
+        for (final bytes in const <List<int>>[
+          [],
+          [1, 2],
+        ]) {
+          canonical.writeAsBytesSync(bytes);
+          expect(
+            await downloadMedia(
+              bridge: bridge,
+              mediaAttachmentRepo: fixture.repo,
+              mediaFileManager: manager,
+              attachment: attachment,
+              contactPeerId: 'contact-private',
+              owner: MediaOwnerLane.direct,
+              messageRepo: fixture.messageRepo,
+              intent: MediaDownloadIntent.explicitUser,
+              nowMs: () => 1100,
+            ),
+            isNull,
+          );
+        }
+
+        final external = File('${tempDir.path}/external-private.jpg')
+          ..writeAsBytesSync(const [1, 2, 3]);
+        canonical.deleteSync();
+        Link(canonical.path).createSync(external.path);
+        expect(
+          await downloadMedia(
+            bridge: bridge,
+            mediaAttachmentRepo: fixture.repo,
+            mediaFileManager: manager,
+            attachment: attachment,
+            contactPeerId: 'contact-private',
+            owner: MediaOwnerLane.direct,
+            messageRepo: fixture.messageRepo,
+            intent: MediaDownloadIntent.explicitUser,
+            nowMs: () => 1100,
+          ),
+          isNull,
+        );
+        expect(bridge.commandLog, isEmpty);
+        expect(external.readAsBytesSync(), const [1, 2, 3]);
+        expect(
+          (await fixture.rawAttachmentRow(attachmentId))!['download_status'],
+          'done',
+        );
+      },
+    );
+
+    test(
+      'private download losing to expiry cannot commit or retain promoted bytes',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        const contactId = 'contact-private-cas';
+        const messageId = 'msg-private-cas';
+        const attachmentId = 'blob-private-cas';
+        await fixture.seedDirectParent(messageId, contactPeerId: contactId);
+        await fixture.db.update(
+          'messages',
+          {
+            'private_media_policy_version': 1,
+            'private_media_mode': 'disappearing',
+            'private_media_duration_seconds': 3600,
+            'private_media_state': 'available',
+            'private_media_received_at_ms': 1000,
+            'private_media_expires_at_ms': 1500,
+            'private_media_clock_high_water_ms': 1000,
+          },
+          where: 'id = ?',
+          whereArgs: [messageId],
+        );
+
+        const attachment = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 3,
+          mediaType: 'image',
+          downloadStatus: 'pending',
+          createdAt: '2026-07-10T09:00:00.000Z',
+        );
+        await fixture.repo.saveAttachment(
+          attachment,
+          owner: MediaOwnerLane.direct,
+        );
+        final canonicalFileManager = _CanonicalPathFakeMediaFileManager(
+          tempDir.path,
+        );
+        final canonicalPath =
+            '${tempDir.path}/media/$contactId/$attachmentId.jpg';
+        final stagedPath = '$canonicalPath.part';
+        var clockMs = 1000;
+        final engine = PrivateMediaLifecycleEngine(
+          adapter: DirectPrivateMediaLifecycle(
+            messageRepository: fixture.messageRepo,
+            mediaAttachmentRepository: fixture.repo,
+            mediaFileManager: canonicalFileManager,
+          ),
+          lifecycleLock: fixture.repo.lifecycleLock,
+          nowMs: () => clockMs,
+        );
+
+        bridge.beforeDownloadResponse = (request) async {
+          final claimed = await fixture.rawAttachmentRow(attachmentId);
+          expect(
+            claimed!['download_status'],
+            kMediaDownloadStatusDownloading,
+            reason:
+                'the earlier parent read and attachment claim precede transfer',
+          );
+          expect(
+            await fixture.messageRepo.advancePrivateMediaClock(
+              messageId,
+              nowMs: 1500,
+            ),
+            isTrue,
+            reason: 'expiry wins while transfer is paused before final commit',
+          );
+          clockMs = 1500;
+          final duringTransfer = await engine.reconcileLocalLifecycle();
+          expect(duringTransfer.retainedAfterError, greaterThanOrEqualTo(1));
+          expect(await fixture.rawAttachmentRow(attachmentId), isNotNull);
+        };
+
+        final result = await downloadMedia(
+          bridge: bridge,
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: canonicalFileManager,
+          attachment: attachment,
+          contactPeerId: contactId,
+          owner: MediaOwnerLane.direct,
+          messageRepo: fixture.messageRepo,
+          intent: MediaDownloadIntent.explicitUser,
+          nowMs: () => clockMs,
+        );
+
+        expect(result, isNull);
+        final parent = await fixture.messageRepo.getMessage(messageId);
+        expect(parent!.privateMediaState, PrivateMediaLifecycleState.expired);
+        final afterTransfer = await engine.reconcileLocalLifecycle();
+        expect(afterTransfer.cleanupCompleted, greaterThanOrEqualTo(1));
+        expect(await fixture.rawAttachmentRow(attachmentId), isNull);
+        expect(
+          File(canonicalPath).existsSync(),
+          isFalse,
+          reason: 'the losing late completion removes only its promoted bytes',
+        );
+        expect(File(stagedPath).existsSync(), isFalse);
+      },
+    );
+
+    test(
+      'private relay failure branches converge without row or path resurrection',
+      () async {
+        for (final failure in const [
+          'forced transient transport failure',
+          'Blob not found',
+        ]) {
+          final fixture = await MediaRepositoryRealDbFixture.create();
+          try {
+            final suffix = failure.startsWith('Blob')
+                ? 'unavailable'
+                : 'transient';
+            final messageId = 'private-failure-$suffix';
+            final attachmentId = 'private-failure-$suffix-att';
+            await seedProtectedParent(fixture, messageId);
+            final attachment = MediaAttachment(
+              id: attachmentId,
+              messageId: messageId,
+              mime: 'image/jpeg',
+              size: 3,
+              mediaType: 'image',
+              downloadStatus: 'pending',
+              createdAt: '2026-07-11T00:00:00.000Z',
+            );
+            await fixture.repo.saveAttachment(
+              attachment,
+              owner: MediaOwnerLane.direct,
+            );
+            final manager = _CanonicalPathFakeMediaFileManager(tempDir.path);
+            final localBridge = _FakeBridge()
+              ..downloadResponse = {'ok': false, 'errorMessage': failure};
+            final engine = PrivateMediaLifecycleEngine(
+              adapter: DirectPrivateMediaLifecycle(
+                messageRepository: fixture.messageRepo,
+                mediaAttachmentRepository: fixture.repo,
+                mediaFileManager: manager,
+              ),
+              lifecycleLock: fixture.repo.lifecycleLock,
+              nowMs: () => 1200,
+            );
+            String? stagedPath;
+            localBridge.beforeDownloadResponse = (request) async {
+              stagedPath =
+                  (request['payload'] as Map<String, dynamic>)['outputPath']
+                      as String;
+              File(stagedPath!)
+                ..createSync(recursive: true)
+                ..writeAsBytesSync(const [7, 8]);
+              expect(
+                await fixture.messageRepo.hidePrivateMediaForMe(
+                  messageId,
+                  hiddenAt: '2026-07-11T00:00:01.200Z',
+                  nowMs: 1200,
+                ),
+                isTrue,
+              );
+              expect(
+                (await engine.reconcileLocalLifecycle()).retainedAfterError,
+                greaterThanOrEqualTo(1),
+              );
+            };
+
+            expect(
+              await downloadMedia(
+                bridge: localBridge,
+                mediaAttachmentRepo: fixture.repo,
+                mediaFileManager: manager,
+                attachment: attachment,
+                contactPeerId: 'contact-private',
+                owner: MediaOwnerLane.direct,
+                messageRepo: fixture.messageRepo,
+                intent: MediaDownloadIntent.explicitUser,
+                nowMs: () => 1200,
+              ),
+              isNull,
+            );
+            expect(
+              (await engine.reconcileLocalLifecycle()).cleanupCompleted,
+              greaterThanOrEqualTo(1),
+            );
+            expect(await fixture.rawAttachmentRow(attachmentId), isNull);
+            expect(File(stagedPath!).existsSync(), isFalse);
+            expect(
+              File(
+                '${tempDir.path}/media/contact-private/$attachmentId.jpg',
+              ).existsSync(),
+              isFalse,
+            );
+          } finally {
+            await fixture.dispose();
+          }
+        }
+      },
+    );
+
+    test(
+      'private timeout late-write authority scrubs then releases cleanup',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        const messageId = 'private-timeout-cleanup';
+        const attachmentId = 'private-timeout-cleanup-att';
+        await seedProtectedParent(fixture, messageId);
+        const attachment = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 3,
+          mediaType: 'image',
+          downloadStatus: 'pending',
+          createdAt: '2026-07-11T00:00:00.000Z',
+        );
+        await fixture.repo.saveAttachment(
+          attachment,
+          owner: MediaOwnerLane.direct,
+        );
+        final manager = _CanonicalPathFakeMediaFileManager(tempDir.path);
+        final timeoutBridge = _TimeoutAfterWriteBridge()
+          ..downloadedBytes = const [1, 2, 3];
+        final engine = PrivateMediaLifecycleEngine(
+          adapter: DirectPrivateMediaLifecycle(
+            messageRepository: fixture.messageRepo,
+            mediaAttachmentRepository: fixture.repo,
+            mediaFileManager: manager,
+          ),
+          lifecycleLock: fixture.repo.lifecycleLock,
+          nowMs: () => 1200,
+        );
+        String? stagedPath;
+        timeoutBridge.beforeDownloadResponse = (request) async {
+          stagedPath =
+              (request['payload'] as Map<String, dynamic>)['outputPath']
+                  as String;
+          expect(
+            await fixture.messageRepo.hidePrivateMediaForMe(
+              messageId,
+              hiddenAt: '2026-07-11T00:00:01.200Z',
+              nowMs: 1200,
+            ),
+            isTrue,
+          );
+          expect(
+            (await engine.reconcileLocalLifecycle()).retainedAfterError,
+            greaterThanOrEqualTo(1),
+          );
+        };
+
+        expect(
+          await downloadMedia(
+            bridge: timeoutBridge,
+            mediaAttachmentRepo: fixture.repo,
+            mediaFileManager: manager,
+            attachment: attachment,
+            contactPeerId: 'contact-private',
+            owner: MediaOwnerLane.direct,
+            messageRepo: fixture.messageRepo,
+            intent: MediaDownloadIntent.explicitUser,
+            latePrivateTransferScrubDelay: Duration.zero,
+            nowMs: () => 1200,
+          ),
+          isNull,
+        );
+        for (
+          var attempt = 0;
+          attempt < 100 &&
+              directPrivateMediaTransferRegistry.isActive(attachmentId);
+          attempt += 1
+        ) {
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        expect(
+          directPrivateMediaTransferRegistry.isActive(attachmentId),
+          isFalse,
+        );
+        expect(
+          (await engine.reconcileLocalLifecycle()).cleanupCompleted,
+          greaterThanOrEqualTo(1),
+        );
+        expect(await fixture.rawAttachmentRow(attachmentId), isNull);
+        expect(File(stagedPath!).existsSync(), isFalse);
+        expect(
+          File(
+            '${tempDir.path}/media/contact-private/$attachmentId.jpg',
+          ).existsSync(),
+          isFalse,
+        );
+      },
+    );
+
+    test('download and eviction compare and set prevents local copy '
         'resurrection', () async {
       final fixture = await MediaRepositoryRealDbFixture.create();
       addTearDown(fixture.dispose);
@@ -2502,8 +3569,9 @@ void main() {
       await fixture.seedDirectParent('msg-cas', contactPeerId: contactId);
       await fixture.seedGroupParent('msg-cas', groupId: groupId);
 
-      final canonicalFileManager =
-          _CanonicalPathFakeMediaFileManager(tempDir.path);
+      final canonicalFileManager = _CanonicalPathFakeMediaFileManager(
+        tempDir.path,
+      );
       final directScope = MediaLibraryScope.direct(contactId);
       final manager = MediaStorageManager(
         repository: fixture.repo,
@@ -2551,8 +3619,11 @@ void main() {
       MediaClearLocalCopyResult? midTransferClear;
       bridge.beforeDownloadResponse = (request) async {
         final row = await fixture.rawAttachmentRow('blob-cas-1');
-        expect(row!['download_status'], kMediaDownloadStatusDownloading,
-            reason: 'the CAS begin claim must precede the transfer');
+        expect(
+          row!['download_status'],
+          kMediaDownloadStatusDownloading,
+          reason: 'the CAS begin claim must precede the transfer',
+        );
         midTransferClear = await manager.clearLocalCopy(
           scope: directScope,
           attachmentId: 'blob-cas-1',
@@ -2614,14 +3685,21 @@ void main() {
         contactPeerId: contactId,
         owner: MediaOwnerLane.direct,
       );
-      expect(lateCompletion, isNull,
-          reason: 'a lost claim must fail closed, never resurrect the copy');
+      expect(
+        lateCompletion,
+        isNull,
+        reason: 'a lost claim must fail closed, never resurrect the copy',
+      );
       final afterLate = await fixture.rawAttachmentRow('blob-cas-1');
       expect(afterLate!['download_status'], kMediaDownloadStatusEvicted);
       expect(afterLate['local_path'], isNull);
-      expect(File(canonicalAbsolute).existsSync(), isFalse,
-          reason: 'the late completion removes exactly the artifact it '
-              'promoted');
+      expect(
+        File(canonicalAbsolute).existsSync(),
+        isFalse,
+        reason:
+            'the late completion removes exactly the artifact it '
+            'promoted',
+      );
       // The sibling lane row and file are untouched by the whole journey.
       final sibling = await fixture.rawAttachmentRow('blob-cas-g');
       expect(sibling!['download_status'], kMediaDownloadStatusDone);

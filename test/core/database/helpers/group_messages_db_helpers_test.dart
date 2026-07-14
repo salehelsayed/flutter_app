@@ -3,6 +3,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
 import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
 import 'package:flutter_app/core/database/migrations/061_group_message_transport_peer_id.dart';
+import 'package:flutter_app/core/database/migrations/101_group_private_media_lifecycle.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 
 void main() {
@@ -18,6 +19,7 @@ void main() {
     await runGroupMessagesTablesMigration(db);
     await runGroupQuotedMessageIdMigration(db);
     await runGroupMessageTransportPeerIdMigration(db);
+    await runGroupPrivateMediaLifecycleMigration(db);
   });
 
   tearDown(() async {
@@ -38,6 +40,7 @@ void main() {
     int isIncoming = 1,
     String? readAt,
     String createdAt = '2026-01-15T12:00:00.000Z',
+    Map<String, Object?> privateMedia = const {},
   }) {
     return {
       'id': id,
@@ -53,6 +56,7 @@ void main() {
       'is_incoming': isIncoming,
       'read_at': readAt,
       'created_at': createdAt,
+      ...privateMedia,
     };
   }
 
@@ -244,6 +248,39 @@ void main() {
   });
 
   group('dbLoadGroupThreadSummaries', () {
+    test('GPL-01B projects the complete v101 latest-parent tuple', () async {
+      await dbInsertGroupMessage(
+        db,
+        makeMessageRow(
+          id: 'private-latest',
+          privateMedia: const {
+            'media_policy_version': 1,
+            'media_lifecycle': 'disappearing',
+            'media_duration_seconds': 3600,
+            'media_protected': 1,
+            'media_received_at': 1000,
+            'media_expires_at': 3601000,
+            'media_last_checked_at': 2000,
+            'media_consumed_at': null,
+            'media_expired_at': null,
+            'media_cleanup_pending': 0,
+          },
+        ),
+      );
+
+      final row = (await dbLoadGroupThreadSummaries(db, ['group-1'])).single;
+      expect(row, containsPair('latest_media_policy_version', 1));
+      expect(row, containsPair('latest_media_lifecycle', 'disappearing'));
+      expect(row, containsPair('latest_media_duration_seconds', 3600));
+      expect(row, containsPair('latest_media_protected', 1));
+      expect(row, containsPair('latest_media_received_at', 1000));
+      expect(row, containsPair('latest_media_expires_at', 3601000));
+      expect(row, containsPair('latest_media_last_checked_at', 2000));
+      expect(row, containsPair('latest_media_consumed_at', isNull));
+      expect(row, containsPair('latest_media_expired_at', isNull));
+      expect(row, containsPair('latest_media_cleanup_pending', 0));
+    });
+
     test(
       'uses message id as latest tie-breaker for equal timestamps',
       () async {
@@ -282,122 +319,154 @@ void main() {
   // load_feed_use_case) — these locks cover the AGGREGATE against the real
   // engine (counts + last_outgoing_at + latest row + cutoff exclusion).
   group('dbLoadGroupThreadPreviews (161)', () {
-    test(
-      'TC-161-01: returns message_count + unread_count + last_outgoing_at + '
-      'latest row, with sys-member_removed_cutoff EXCLUDED',
-      () async {
-        const base = '2026-01-15T12:0';
-        // 6 read incoming (12:00..12:05)
-        for (var i = 0; i < 6; i++) {
-          await dbInsertGroupMessage(
-            db,
-            makeMessageRow(
-              id: 'm0$i',
-              timestamp: '$base$i:00.000Z',
-              isIncoming: 1,
-              readAt: '$base$i:30.000Z',
-            ),
-          );
-        }
-        // 2 outgoing (12:06, 12:07) — 12:07 is the latest outgoing
+    test('GPL-01C projects the complete v101 latest-parent tuple', () async {
+      await dbInsertGroupMessage(
+        db,
+        makeMessageRow(
+          id: 'private-preview-latest',
+          privateMedia: const {
+            'media_policy_version': 1,
+            'media_lifecycle': 'view_once',
+            'media_duration_seconds': null,
+            'media_protected': 1,
+            'media_received_at': 3000,
+            'media_expires_at': null,
+            'media_last_checked_at': 4000,
+            'media_consumed_at': 5000,
+            'media_expired_at': null,
+            'media_cleanup_pending': 1,
+          },
+        ),
+      );
+
+      final row = (await dbLoadGroupThreadPreviews(db, ['group-1'])).single;
+      expect(row, containsPair('latest_media_policy_version', 1));
+      expect(row, containsPair('latest_media_lifecycle', 'view_once'));
+      expect(row, containsPair('latest_media_duration_seconds', isNull));
+      expect(row, containsPair('latest_media_protected', 1));
+      expect(row, containsPair('latest_media_received_at', 3000));
+      expect(row, containsPair('latest_media_expires_at', isNull));
+      expect(row, containsPair('latest_media_last_checked_at', 4000));
+      expect(row, containsPair('latest_media_consumed_at', 5000));
+      expect(row, containsPair('latest_media_expired_at', isNull));
+      expect(row, containsPair('latest_media_cleanup_pending', 1));
+    });
+
+    test('TC-161-01: returns message_count + unread_count + last_outgoing_at + '
+        'latest row, with sys-member_removed_cutoff EXCLUDED', () async {
+      const base = '2026-01-15T12:0';
+      // 6 read incoming (12:00..12:05)
+      for (var i = 0; i < 6; i++) {
         await dbInsertGroupMessage(
           db,
           makeMessageRow(
-            id: 'm06',
-            timestamp: '${base}6:00.000Z',
-            isIncoming: 0,
-            status: 'sent',
+            id: 'm0$i',
+            timestamp: '$base$i:00.000Z',
+            isIncoming: 1,
+            readAt: '$base$i:30.000Z',
           ),
         );
+      }
+      // 2 outgoing (12:06, 12:07) — 12:07 is the latest outgoing
+      await dbInsertGroupMessage(
+        db,
+        makeMessageRow(
+          id: 'm06',
+          timestamp: '${base}6:00.000Z',
+          isIncoming: 0,
+          status: 'sent',
+        ),
+      );
+      await dbInsertGroupMessage(
+        db,
+        makeMessageRow(
+          id: 'm07',
+          timestamp: '${base}7:00.000Z',
+          isIncoming: 0,
+          status: 'sent',
+        ),
+      );
+      // 4 unread incoming (12:08..12:11) — m11 is the newest non-cutoff row
+      for (var i = 8; i <= 11; i++) {
         await dbInsertGroupMessage(
           db,
           makeMessageRow(
-            id: 'm07',
-            timestamp: '${base}7:00.000Z',
-            isIncoming: 0,
-            status: 'sent',
-          ),
-        );
-        // 4 unread incoming (12:08..12:11) — m11 is the newest non-cutoff row
-        for (var i = 8; i <= 11; i++) {
-          await dbInsertGroupMessage(
-            db,
-            makeMessageRow(
-              id: 'm$i',
-              timestamp: i < 10 ? '$base$i:00.000Z' : '2026-01-15T12:$i:00.000Z',
-              isIncoming: 1,
-            ),
-          );
-        }
-        // Removal-cutoff sentinel (newest overall, but MUST be excluded)
-        await dbInsertGroupMessage(
-          db,
-          makeMessageRow(
-            id: 'sys-member_removed_cutoff:group-1:peerX:1',
-            timestamp: '2026-01-15T12:20:00.000Z',
+            id: 'm$i',
+            timestamp: i < 10 ? '$base$i:00.000Z' : '2026-01-15T12:$i:00.000Z',
             isIncoming: 1,
           ),
         );
+      }
+      // Removal-cutoff sentinel (newest overall, but MUST be excluded)
+      await dbInsertGroupMessage(
+        db,
+        makeMessageRow(
+          id: 'sys-member_removed_cutoff:group-1:peerX:1',
+          timestamp: '2026-01-15T12:20:00.000Z',
+          isIncoming: 1,
+        ),
+      );
 
-        final rows = await dbLoadGroupThreadPreviews(db, ['group-1']);
-        expect(rows, hasLength(1));
-        final row = rows.single;
-        expect(row['group_id'], 'group-1');
-        expect(row['message_count'], 12, reason: 'cutoff row excluded from total');
-        expect(row['unread_count'], 4);
-        expect(row['last_outgoing_at'], '${base}7:00.000Z');
-        // latest = newest non-cutoff row (m11), NEVER the cutoff sentinel.
-        expect(row['latest_id'], 'm11');
-        expect(row['latest_is_incoming'], 1);
-      },
-    );
+      final rows = await dbLoadGroupThreadPreviews(db, ['group-1']);
+      expect(rows, hasLength(1));
+      final row = rows.single;
+      expect(row['group_id'], 'group-1');
+      expect(
+        row['message_count'],
+        12,
+        reason: 'cutoff row excluded from total',
+      );
+      expect(row['unread_count'], 4);
+      expect(row['last_outgoing_at'], '${base}7:00.000Z');
+      // latest = newest non-cutoff row (m11), NEVER the cutoff sentinel.
+      expect(row['latest_id'], 'm11');
+      expect(row['latest_is_incoming'], 1);
+    });
 
-    test(
-      'TC-161-02: ONE batched query returns a preview row per group '
-      '(no per-group round-trip)',
-      () async {
-        for (final groupId in ['group-1', 'group-2', 'group-3']) {
-          await dbInsertGroupMessage(
-            db,
-            makeMessageRow(
-              id: '$groupId-a',
-              groupId: groupId,
-              timestamp: '2026-01-15T12:00:00.000Z',
-              isIncoming: 1,
-            ),
-          );
-          await dbInsertGroupMessage(
-            db,
-            makeMessageRow(
-              id: '$groupId-b',
-              groupId: groupId,
-              timestamp: '2026-01-15T12:01:00.000Z',
-              isIncoming: 0,
-            ),
-          );
-        }
-
-        final counter = _QueryCountingExecutor(db);
-        final rows = await dbLoadGroupThreadPreviews(counter, [
-          'group-1',
-          'group-2',
-          'group-3',
-        ]);
-
-        expect(rows, hasLength(3));
-        expect(
-          rows.map((r) => r['group_id']).toSet(),
-          {'group-1', 'group-2', 'group-3'},
+    test('TC-161-02: ONE batched query returns a preview row per group '
+        '(no per-group round-trip)', () async {
+      for (final groupId in ['group-1', 'group-2', 'group-3']) {
+        await dbInsertGroupMessage(
+          db,
+          makeMessageRow(
+            id: '$groupId-a',
+            groupId: groupId,
+            timestamp: '2026-01-15T12:00:00.000Z',
+            isIncoming: 1,
+          ),
         );
-        for (final r in rows) {
-          expect(r['message_count'], 2);
-          expect(r['unread_count'], 1);
-        }
-        // Batched aggregate: a single rawQuery for all 3 groups (a per-group
-        // loop would scale the count with group count).
-        expect(counter.rawQueryCount, 1);
-      },
-    );
+        await dbInsertGroupMessage(
+          db,
+          makeMessageRow(
+            id: '$groupId-b',
+            groupId: groupId,
+            timestamp: '2026-01-15T12:01:00.000Z',
+            isIncoming: 0,
+          ),
+        );
+      }
+
+      final counter = _QueryCountingExecutor(db);
+      final rows = await dbLoadGroupThreadPreviews(counter, [
+        'group-1',
+        'group-2',
+        'group-3',
+      ]);
+
+      expect(rows, hasLength(3));
+      expect(rows.map((r) => r['group_id']).toSet(), {
+        'group-1',
+        'group-2',
+        'group-3',
+      });
+      for (final r in rows) {
+        expect(r['message_count'], 2);
+        expect(r['unread_count'], 1);
+      }
+      // Batched aggregate: a single rawQuery for all 3 groups (a per-group
+      // loop would scale the count with group count).
+      expect(counter.rawQueryCount, 1);
+    });
 
     test(
       'TC-161-12: last_outgoing_at is the newest outgoing timestamp even when '
@@ -431,21 +500,23 @@ void main() {
       },
     );
 
-    test('TC-161-01b: latest tie-breaker uses id DESC for equal timestamps',
-        () async {
-      const sharedTimestamp = '2026-01-02T00:00:00.000Z';
-      await dbInsertGroupMessage(
-        db,
-        makeMessageRow(id: 'tie-c', timestamp: sharedTimestamp),
-      );
-      await dbInsertGroupMessage(
-        db,
-        makeMessageRow(id: 'tie-a', timestamp: sharedTimestamp),
-      );
+    test(
+      'TC-161-01b: latest tie-breaker uses id DESC for equal timestamps',
+      () async {
+        const sharedTimestamp = '2026-01-02T00:00:00.000Z';
+        await dbInsertGroupMessage(
+          db,
+          makeMessageRow(id: 'tie-c', timestamp: sharedTimestamp),
+        );
+        await dbInsertGroupMessage(
+          db,
+          makeMessageRow(id: 'tie-a', timestamp: sharedTimestamp),
+        );
 
-      final rows = await dbLoadGroupThreadPreviews(db, ['group-1']);
-      expect(rows.single['latest_id'], 'tie-c');
-    });
+        final rows = await dbLoadGroupThreadPreviews(db, ['group-1']);
+        expect(rows.single['latest_id'], 'tie-c');
+      },
+    );
   });
 
   group('dbLoadGroupMessage', () {
@@ -640,8 +711,7 @@ class _QueryCountingExecutor implements DatabaseExecutor {
   }
 
   @override
-  dynamic noSuchMethod(Invocation invocation) =>
-      throw UnimplementedError(
-        'unexpected ${invocation.memberName} on counting executor',
-      );
+  dynamic noSuchMethod(Invocation invocation) => throw UnimplementedError(
+    'unexpected ${invocation.memberName} on counting executor',
+  );
 }

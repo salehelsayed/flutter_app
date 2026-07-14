@@ -569,6 +569,31 @@ void main() {
     expect(manifest['containsSecrets'], isFalse);
   });
 
+  test(
+    'reliability discovery classifies harness as support exactly once',
+    () async {
+      const path =
+          'integration_test/scripts/capture_android_push_relay_registration.dart';
+      const expected =
+          'support\tsupport\t$path\t'
+          '256 Android production push-relay registration capture driver';
+      final result = await Process.run('bash', <String>[
+        'scripts/check_reliability_simulation_discovery.sh',
+        '--records-tsv',
+      ]);
+
+      expect(result.exitCode, 0, reason: result.stderr.toString());
+      final records = const LineSplitter()
+          .convert(result.stdout.toString())
+          .where((line) {
+            final columns = line.split('\t');
+            return columns.length >= 3 && columns[2] == path;
+          })
+          .toList(growable: false);
+      expect(records, <String>[expected]);
+    },
+  );
+
   test('source pins dormant production path and checked restoration', () {
     final harness = File(
       'integration_test/scripts/capture_android_push_relay_registration.dart',

@@ -25,11 +25,13 @@
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
 		A1B2C3D400000000GOBRIDGE /* GoBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D400000001GOBRIDGE /* GoBridge.swift */; };
 		A9E1F9A8B9EA89AF4D091A90 /* Pods_NotificationService.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D7511F7CC6C3F71F16E8DD52 /* Pods_NotificationService.framework */; };
+		D23405010000000000000001 /* PrivateMediaProtectionCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D23405010000000000000002 /* PrivateMediaProtectionCoordinatorTests.swift */; };
+		D23405010000000000000011 /* PrivateMediaProtectionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D23405010000000000000012 /* PrivateMediaProtectionCoordinator.swift */; };
+		E227A00173A0000000000001 /* ReceivedMediaEgressCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E227A00173A0000000000002 /* ReceivedMediaEgressCoordinator.swift */; };
+		E227B00173A0000000000001 /* ReceivedMediaEgressCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E227B00173A0000000000002 /* ReceivedMediaEgressCoordinatorTests.swift */; };
 		F10C6A2E0B4C44E2A0C0A001 /* GoBridgeCriticalTaskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10C6A2E0B4C44E2A0C0A002 /* GoBridgeCriticalTaskTests.swift */; };
 		F191A00173A0000000000001 /* ForegroundPushForwardPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F191A00173A0000000000002 /* ForegroundPushForwardPolicy.swift */; };
 		F191B00173A0000000000001 /* ForegroundPushForwardPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F191B00173A0000000000002 /* ForegroundPushForwardPolicyTests.swift */; };
-		E227A00173A0000000000001 /* ReceivedMediaEgressCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E227A00173A0000000000002 /* ReceivedMediaEgressCoordinator.swift */; };
-		E227B00173A0000000000001 /* ReceivedMediaEgressCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E227B00173A0000000000002 /* ReceivedMediaEgressCoordinatorTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -125,13 +127,15 @@
 		A6F5A2268673135A7EB8756C /* Pods-NotificationService.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-NotificationService.profile.xcconfig"; path = "Target Support Files/Pods-NotificationService/Pods-NotificationService.profile.xcconfig"; sourceTree = "<group>"; };
 		B17D000173A2000000000001 /* BuildMetadata.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = BuildMetadata.xcconfig; path = Flutter/BuildMetadata.xcconfig; sourceTree = "<group>"; };
 		A738F5EA98B49F043A6EBC7C /* Pods-RunnerTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug.xcconfig"; sourceTree = "<group>"; };
+		D23405010000000000000002 /* PrivateMediaProtectionCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateMediaProtectionCoordinatorTests.swift; sourceTree = "<group>"; };
+		D23405010000000000000012 /* PrivateMediaProtectionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateMediaProtectionCoordinator.swift; sourceTree = "<group>"; };
 		D7511F7CC6C3F71F16E8DD52 /* Pods_NotificationService.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_NotificationService.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		D99E1571747EBA531C83D687 /* Pods-RunnerTests.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.profile.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.profile.xcconfig"; sourceTree = "<group>"; };
+		E227A00173A0000000000002 /* ReceivedMediaEgressCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceivedMediaEgressCoordinator.swift; sourceTree = "<group>"; };
+		E227B00173A0000000000002 /* ReceivedMediaEgressCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceivedMediaEgressCoordinatorTests.swift; sourceTree = "<group>"; };
 		F10C6A2E0B4C44E2A0C0A002 /* GoBridgeCriticalTaskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoBridgeCriticalTaskTests.swift; sourceTree = "<group>"; };
 		F191A00173A0000000000002 /* ForegroundPushForwardPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForegroundPushForwardPolicy.swift; sourceTree = "<group>"; };
 		F191B00173A0000000000002 /* ForegroundPushForwardPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForegroundPushForwardPolicyTests.swift; sourceTree = "<group>"; };
-		E227A00173A0000000000002 /* ReceivedMediaEgressCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceivedMediaEgressCoordinator.swift; sourceTree = "<group>"; };
-		E227B00173A0000000000002 /* ReceivedMediaEgressCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceivedMediaEgressCoordinatorTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -223,6 +227,7 @@
 		331C8082294A63A400263BE5 /* RunnerTests */ = {
 			isa = PBXGroup;
 			children = (
+				D23405010000000000000002 /* PrivateMediaProtectionCoordinatorTests.swift */,
 				E227B00173A0000000000002 /* ReceivedMediaEgressCoordinatorTests.swift */,
 				6F73C00273A0000000000002 /* NotificationPreviewResolver.swift */,
 				6F73C00173A0000000000002 /* NotificationPreviewResolverTests.swift */,
@@ -300,6 +305,7 @@
 		97C146F01CF9000F007C117D /* Runner */ = {
 			isa = PBXGroup;
 			children = (
+				D23405010000000000000012 /* PrivateMediaProtectionCoordinator.swift */,
 				E227A00173A0000000000002 /* ReceivedMediaEgressCoordinator.swift */,
 				6990BBC32F6AFE8D00B1FF97 /* GoogleService-Info.plist */,
 				698216E42F5E3D0700B87A6B /* Runner.entitlements */,
@@ -668,6 +674,8 @@
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/group.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/group_inbox.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/group_inbox_test.go",
+				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/group_private_media_policy_test.go",
+				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/group_reaction_signed_set_test.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/group_security_harness_test.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/group_validation_feedback.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/holepunch_feasibility_test.go",
@@ -677,6 +685,7 @@
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/inbox.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/inbox_parse_test.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/inbox_presence_test.go",
+				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/inbox_push_capability_test.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/inbox_wake_token_test.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/lan_dial.go",
 				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/lan_dial_test.go",
@@ -924,6 +933,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D23405010000000000000001 /* PrivateMediaProtectionCoordinatorTests.swift in Sources */,
 				E227B00173A0000000000001 /* ReceivedMediaEgressCoordinatorTests.swift in Sources */,
 				F10C6A2E0B4C44E2A0C0A001 /* GoBridgeCriticalTaskTests.swift in Sources */,
 				F191B00173A0000000000001 /* ForegroundPushForwardPolicyTests.swift in Sources */,
@@ -960,6 +970,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D23405010000000000000011 /* PrivateMediaProtectionCoordinator.swift in Sources */,
 				E227A00173A0000000000001 /* ReceivedMediaEgressCoordinator.swift in Sources */,
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				F191A00173A0000000000001 /* ForegroundPushForwardPolicy.swift in Sources */,

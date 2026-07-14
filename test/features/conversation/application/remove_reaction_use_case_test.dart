@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -127,6 +128,29 @@ void main() {
       // Verify local reaction deleted
       final remaining = await reactionRepo.getReactionsForMessage('msg-1');
       expect(remaining, isEmpty);
+    });
+
+    test('REMOVE envelope carries minimal notification metadata', () async {
+      final result = await removeReaction(
+        p2pService: p2pService,
+        bridge: bridge,
+        reactionRepo: reactionRepo,
+        targetPeerId: 'peer-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'my-peer',
+        recipientMlKemPublicKey: 'key-1',
+      );
+
+      expect(result, RemoveReactionResult.success);
+      final outer =
+          jsonDecode(p2pService.lastSendMessageContent!)
+              as Map<String, dynamic>;
+      expect(outer['eventId'], isA<String>());
+      expect(outer['action'], 'remove');
+      expect(outer['targetMessageId'], 'msg-1');
+      expect(outer.containsKey('emoji'), isFalse);
+      expect(outer.containsKey('senderUsername'), isFalse);
     });
 
     test('falls back to inbox when direct send fails', () async {
@@ -345,16 +369,13 @@ void main() {
     // FDC-18-P2b source-pin (mirror of the add file's 116-P1.2 pin): now that
     // FDC-18 edits the remove file, lock that it stays off the failed-message
     // retry pipeline — no MessageRepository, no saveMessage.
-    test(
-      'remove-reaction failure never writes a failed messages row '
-      '(retry-pipeline non-involvement)',
-      () {
-        final source = File(
-          'lib/features/conversation/application/remove_reaction_use_case.dart',
-        ).readAsStringSync();
-        expect(source, isNot(contains('MessageRepository')));
-        expect(source, isNot(contains('saveMessage')));
-      },
-    );
+    test('remove-reaction failure never writes a failed messages row '
+        '(retry-pipeline non-involvement)', () {
+      final source = File(
+        'lib/features/conversation/application/remove_reaction_use_case.dart',
+      ).readAsStringSync();
+      expect(source, isNot(contains('MessageRepository')));
+      expect(source, isNot(contains('saveMessage')));
+    });
   });
 }

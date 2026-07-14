@@ -1,9 +1,12 @@
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+
+import '../../shared/fakes/fake_media_file_manager.dart';
 
 void main() {
   const validHash =
@@ -109,6 +112,253 @@ void main() {
       );
     },
   );
+
+  group('canonical local plaintext authority', () {
+    const jpegBytes = <int>[
+      0xff,
+      0xd8,
+      0xff,
+      0xe0,
+      0x00,
+      0x10,
+      0x4a,
+      0x46,
+      0x49,
+      0x46,
+    ];
+    late FakeMediaFileManager fileManager;
+    late Set<String> ownedFiles;
+
+    setUp(() {
+      fileManager = FakeMediaFileManager();
+      ownedFiles = <String>{};
+    });
+
+    tearDown(() {
+      for (final path in ownedFiles) {
+        final file = File(path);
+        if (file.existsSync()) file.deleteSync();
+      }
+    });
+
+    Future<MediaAttachment> seed({
+      required String ownerScopeId,
+      required String attachmentId,
+      String? storedPath,
+      List<int> bytes = jpegBytes,
+    }) async {
+      final absolute = await fileManager.localPathForAttachment(
+        contactPeerId: ownerScopeId,
+        blobId: attachmentId,
+        mime: 'image/jpeg',
+      );
+      File(absolute).writeAsBytesSync(bytes);
+      ownedFiles.add(absolute);
+      return MediaAttachment(
+        id: attachmentId,
+        messageId: 'message-$attachmentId',
+        mime: 'image/jpeg',
+        size: bytes.length,
+        mediaType: 'image',
+        localPath: storedPath ?? 'media/$ownerScopeId/$attachmentId.jpg',
+        downloadStatus: kMediaDownloadStatusDone,
+        createdAt: '2026-07-14T00:00:00.000Z',
+        contentHash: validHash,
+        encryptionKeyBase64: 'relay-key',
+        encryptionNonce: 'relay-nonce',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      );
+    }
+
+    test(
+      'accepts exact relative current absolute and stale iOS canonical paths',
+      () async {
+        final relative = await seed(
+          ownerScopeId: 'authority-relative',
+          attachmentId: 'attachment-relative',
+        );
+        final absolute = await seed(
+          ownerScopeId: 'authority-absolute',
+          attachmentId: 'attachment-absolute',
+        );
+        final absolutePath = await fileManager.localPathForAttachment(
+          contactPeerId: 'authority-absolute',
+          blobId: 'attachment-absolute',
+          mime: 'image/jpeg',
+        );
+        final legacy = await seed(
+          ownerScopeId: 'authority-legacy',
+          attachmentId: 'attachment-legacy',
+          storedPath:
+              '/var/mobile/Containers/Data/Application/OLD/Documents/media/'
+              'authority-legacy/attachment-legacy.jpg',
+        );
+
+        expect(
+          (await GroupMediaIntegrityPolicy.validateCanonicalLocalPlaintext(
+            attachment: relative,
+            ownerScopeId: 'authority-relative',
+            mediaFileManager: fileManager,
+          )).isValid,
+          isTrue,
+        );
+        expect(
+          (await GroupMediaIntegrityPolicy.validateCanonicalLocalPlaintext(
+            attachment: absolute.copyWith(localPath: absolutePath),
+            ownerScopeId: 'authority-absolute',
+            mediaFileManager: fileManager,
+          )).isValid,
+          isTrue,
+        );
+        final legacyResult =
+            await GroupMediaIntegrityPolicy.validateCanonicalLocalPlaintext(
+              attachment: legacy,
+              ownerScopeId: 'authority-legacy',
+              mediaFileManager: fileManager,
+            );
+        expect(legacyResult.isValid, isTrue);
+        expect(
+          legacyResult.resolvedPath,
+          await fileManager.localPathForAttachment(
+            contactPeerId: 'authority-legacy',
+            blobId: 'attachment-legacy',
+            mime: 'image/jpeg',
+          ),
+        );
+      },
+    );
+
+    test('rejects unsafe identifiers before constructing any path', () async {
+      final base = MediaAttachment(
+        id: 'attachment-safe',
+        messageId: 'message-safe',
+        mime: 'image/jpeg',
+        size: jpegBytes.length,
+        mediaType: 'image',
+        localPath: 'media/safe-owner/attachment-safe.jpg',
+        downloadStatus: kMediaDownloadStatusDone,
+        createdAt: '2026-07-14T00:00:00.000Z',
+        contentHash: validHash,
+        encryptionKeyBase64: 'relay-key',
+        encryptionNonce: 'relay-nonce',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      );
+
+      expect(
+        (await GroupMediaIntegrityPolicy.validateCanonicalLocalPlaintext(
+          attachment: base,
+          ownerScopeId: '../escape',
+          mediaFileManager: fileManager,
+        )).reason,
+        'unsafe_owner_scope_id',
+      );
+      expect(
+        (await GroupMediaIntegrityPolicy.validateCanonicalLocalPlaintext(
+          attachment: base.copyWith(id: '/absolute'),
+          ownerScopeId: 'safe-owner',
+          mediaFileManager: fileManager,
+        )).reason,
+        'unsafe_attachment_id',
+      );
+    });
+
+    test(
+      'rejects traversal arbitrary absolute and resolver-derived authority',
+      () async {
+        final traversal = await seed(
+          ownerScopeId: 'authority-traversal',
+          attachmentId: 'attachment-traversal',
+          storedPath:
+              'media/authority-traversal/../authority-traversal/'
+              'attachment-traversal.jpg',
+        );
+        expect(
+          (await GroupMediaIntegrityPolicy.validateCanonicalLocalPlaintext(
+            attachment: traversal,
+            ownerScopeId: 'authority-traversal',
+            mediaFileManager: fileManager,
+          )).reason,
+          'noncanonical_local_path',
+        );
+
+        final arbitrary = await seed(
+          ownerScopeId: 'authority-arbitrary',
+          attachmentId: 'attachment-arbitrary',
+          storedPath: '/tmp/foreign/attachment-arbitrary.jpg',
+        );
+        expect(
+          (await GroupMediaIntegrityPolicy.validateCanonicalLocalPlaintext(
+            attachment: arbitrary,
+            ownerScopeId: 'authority-arbitrary',
+            mediaFileManager: fileManager,
+          )).reason,
+          'noncanonical_local_path',
+        );
+
+        final poisoned = await seed(
+          ownerScopeId: 'authority-poisoned',
+          attachmentId: 'attachment-poisoned',
+          storedPath:
+              '/old/Documents/media/authority-poisoned/'
+              'attachment-poisoned.jpg',
+        );
+        fileManager.resolveResult = '/tmp/attacker-controlled/source.jpg';
+        expect(
+          (await GroupMediaIntegrityPolicy.validateCanonicalLocalPlaintext(
+            attachment: poisoned,
+            ownerScopeId: 'authority-poisoned',
+            mediaFileManager: fileManager,
+          )).reason,
+          'noncanonical_local_path',
+        );
+      },
+    );
+
+    test('rejects a symlinked owner directory that escapes the root', () async {
+      const owner = 'authority-symlink';
+      const attachmentId = 'attachment-symlink';
+      final mediaRoot = await fileManager.trustedMediaRootPath();
+      Directory(mediaRoot).createSync(recursive: true);
+      final ownerPath = p.join(mediaRoot, owner);
+      final existingOwner = Directory(ownerPath);
+      if (existingOwner.existsSync()) existingOwner.deleteSync(recursive: true);
+      final outside = Directory.systemTemp.createTempSync(
+        'group_integrity_escape_',
+      );
+      addTearDown(() {
+        final link = Link(ownerPath);
+        if (link.existsSync()) link.deleteSync();
+        if (outside.existsSync()) outside.deleteSync(recursive: true);
+      });
+      File(
+        p.join(outside.path, '$attachmentId.jpg'),
+      ).writeAsBytesSync(jpegBytes);
+      Link(ownerPath).createSync(outside.path);
+      final attachment = MediaAttachment(
+        id: attachmentId,
+        messageId: 'message-symlink',
+        mime: 'image/jpeg',
+        size: jpegBytes.length,
+        mediaType: 'image',
+        localPath: 'media/$owner/$attachmentId.jpg',
+        downloadStatus: kMediaDownloadStatusDone,
+        createdAt: '2026-07-14T00:00:00.000Z',
+        contentHash: validHash,
+        encryptionKeyBase64: 'relay-key',
+        encryptionNonce: 'relay-nonce',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      );
+
+      expect(
+        (await GroupMediaIntegrityPolicy.validateCanonicalLocalPlaintext(
+          attachment: attachment,
+          ownerScopeId: owner,
+          mediaFileManager: fileManager,
+        )).reason,
+        'unsafe_or_missing_local_file',
+      );
+    });
+  });
 
   test('thumbnail hash is optional unless a remote thumbnail exists', () {
     expect(
@@ -288,25 +538,27 @@ void main() {
       createdAt: '2026-06-17T12:00:00.000Z',
     );
 
-    test('failed is retryable only while under the retry ceiling (INV-DL-1)',
-        () {
-      expect(
-        GroupMediaIntegrityPolicy.isRetryableDownloadFailure(base),
-        isTrue, // count null -> treated as 0 < ceiling
-      );
-      expect(
-        GroupMediaIntegrityPolicy.isRetryableDownloadFailure(
-          base.copyWith(downloadRetryCount: kMaxDownloadRetries - 1),
-        ),
-        isTrue,
-      );
-      expect(
-        GroupMediaIntegrityPolicy.isRetryableDownloadFailure(
-          base.copyWith(downloadRetryCount: kMaxDownloadRetries),
-        ),
-        isFalse,
-      );
-    });
+    test(
+      'failed is retryable only while under the retry ceiling (INV-DL-1)',
+      () {
+        expect(
+          GroupMediaIntegrityPolicy.isRetryableDownloadFailure(base),
+          isTrue, // count null -> treated as 0 < ceiling
+        );
+        expect(
+          GroupMediaIntegrityPolicy.isRetryableDownloadFailure(
+            base.copyWith(downloadRetryCount: kMaxDownloadRetries - 1),
+          ),
+          isTrue,
+        );
+        expect(
+          GroupMediaIntegrityPolicy.isRetryableDownloadFailure(
+            base.copyWith(downloadRetryCount: kMaxDownloadRetries),
+          ),
+          isFalse,
+        );
+      },
+    );
 
     test('download_failed is terminal: not retryable, and unavailable', () {
       final terminal = base.copyWith(
@@ -317,10 +569,7 @@ void main() {
         GroupMediaIntegrityPolicy.isRetryableDownloadFailure(terminal),
         isFalse,
       );
-      expect(
-        GroupMediaIntegrityPolicy.isUnavailableMedia(terminal),
-        isTrue,
-      );
+      expect(GroupMediaIntegrityPolicy.isUnavailableMedia(terminal), isTrue);
     });
   });
 }

@@ -119,6 +119,32 @@ void main() {
     );
 
     test(
+      'publishes an already-persisted replay change without persisting again',
+      () async {
+        final reactions = <MessageReaction>[];
+        final changes = <ReactionChange>[];
+        listener.incomingReactionStream.listen(reactions.add);
+        listener.incomingReactionChangeStream.listen(changes.add);
+
+        const reaction = MessageReaction(
+          id: 'replayed-r1',
+          messageId: 'msg-1',
+          emoji: '👍',
+          senderPeerId: _senderPeerId,
+          timestamp: '2026-02-27T10:00:00.000Z',
+          createdAt: '2026-02-27T10:00:01.000Z',
+        );
+        listener.publishPersistedChange(ReactionChange.upsert(reaction));
+        await Future<void>.delayed(Duration.zero);
+
+        expect(reactions, [reaction]);
+        expect(changes, hasLength(1));
+        expect(changes.single.reaction, reaction);
+        expect(reactionRepo.saveReactionCallCount, 0);
+      },
+    );
+
+    test(
       'processes remove reaction and broadcasts a removal change event',
       () async {
         // Pre-populate

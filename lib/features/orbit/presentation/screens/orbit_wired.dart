@@ -302,6 +302,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   // 194: read-marking events (peerId) from the message repo — clears a lit
   // unread node even when the read happened on a surface with no orbit nav hook.
   StreamSubscription<String>? _readSubscription;
+  StreamSubscription<String>? _groupReadSubscription;
   ImageQualityPreference _qualityPreference = ImageQualityPreference.compressed;
   ImageQualityPreference _videoQualityPreference =
       ImageQualityPreference.compressed;
@@ -495,12 +496,18 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       duration: const Duration(milliseconds: 340),
       value: 1.0, // starts visible
     );
-    _collapseAnimation =
-        CurvedAnimation(parent: _collapseController, curve: _animCurve);
-    _searchDockAnimation =
-        CurvedAnimation(parent: _searchDockController, curve: _animCurve);
-    _searchTriggerAnimation =
-        CurvedAnimation(parent: _searchTriggerController, curve: Curves.ease);
+    _collapseAnimation = CurvedAnimation(
+      parent: _collapseController,
+      curve: _animCurve,
+    );
+    _searchDockAnimation = CurvedAnimation(
+      parent: _searchDockController,
+      curve: _animCurve,
+    );
+    _searchTriggerAnimation = CurvedAnimation(
+      parent: _searchTriggerController,
+      curve: Curves.ease,
+    );
 
     _loadIdentity();
     _loadQualityPreference();
@@ -513,6 +520,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _startListeningForChatMessages();
     _startListeningForContactUpdates();
     _startListeningForReadEvents();
+    _startListeningForGroupReadEvents();
     _startListeningForContactRequests();
     _startListeningForGroupMessages();
     _startListeningForPendingGroupInvites();
@@ -569,8 +577,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   final Set<String> _pendingFriendRefreshPeerIds = {};
   final Set<String> _pendingGroupRefreshGroupIds = {};
   Timer? _orbitRefreshCoalesceTimer;
-  static const Duration _orbitRefreshCoalesceWindow =
-      Duration(milliseconds: 32);
+  static const Duration _orbitRefreshCoalesceWindow = Duration(
+    milliseconds: 32,
+  );
 
   bool _introsDirty = false;
   bool _invitesDirty = false;
@@ -697,20 +706,21 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               // 229: storage management for the Media & storage sheet —
               // injected by hosts/tests, else built over this orbit's own
               // repositories.
-              mediaStorageManager: widget.mediaStorageManager ??
+              mediaStorageManager:
+                  widget.mediaStorageManager ??
                   MediaStorageManager(
                     repository: widget.mediaAttachmentRepo,
                     documentsDirectoryProvider: () async =>
                         (await getApplicationDocumentsDirectory()).path,
                   ),
-              mediaStorageScopesProvider: widget.mediaStorageScopesProvider ??
-                  _loadMediaStorageScopes,
+              mediaStorageScopesProvider:
+                  widget.mediaStorageScopesProvider ?? _loadMediaStorageScopes,
             ),
           ),
         )
         .whenComplete(() {
-      _settingsRouteActive = false;
-    });
+          _settingsRouteActive = false;
+        });
   }
 
   /// 229: the scopes the Media & storage sheet can measure/clear — one per
@@ -973,14 +983,18 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   // replay funnel through here so a same-key burst costs one snapshot load.
   void _enqueueOrbitFriendRefresh(String peerId) {
     _pendingFriendRefreshPeerIds.add(peerId);
-    _orbitRefreshCoalesceTimer ??=
-        Timer(_orbitRefreshCoalesceWindow, _flushOrbitRefreshes);
+    _orbitRefreshCoalesceTimer ??= Timer(
+      _orbitRefreshCoalesceWindow,
+      _flushOrbitRefreshes,
+    );
   }
 
   void _enqueueOrbitGroupRefresh(String groupId) {
     _pendingGroupRefreshGroupIds.add(groupId);
-    _orbitRefreshCoalesceTimer ??=
-        Timer(_orbitRefreshCoalesceWindow, _flushOrbitRefreshes);
+    _orbitRefreshCoalesceTimer ??= Timer(
+      _orbitRefreshCoalesceWindow,
+      _flushOrbitRefreshes,
+    );
   }
 
   void _flushOrbitRefreshes() {
@@ -1974,6 +1988,46 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     );
   }
 
+  /// Refreshes one group node after a real conversation read commit, including
+  /// notification-owned routes that bypass Orbit's group navigation callback.
+  /// Off-screen events reuse the existing dirty-group replay on the next Orbit
+  /// rising edge so background tabs do not rebuild eagerly.
+  void _startListeningForGroupReadEvents() {
+    final repo = widget.groupMessageRepository;
+    if (repo is! GroupConversationReadEventSource) {
+      return;
+    }
+    final readSource = repo as GroupConversationReadEventSource;
+    _groupReadSubscription = readSource.groupConversationReadStream.listen(
+      (groupId) {
+        if (!_isOrbitActive) {
+          _dirtyGroupIds.add(groupId);
+          return;
+        }
+        unawaited(_refreshOrbitGroup(groupId));
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'ORBIT_FL_GROUP_READ_REFRESH',
+          details: {'groupId': groupId},
+        );
+      },
+      onError: (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'ORBIT_GROUP_READ_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
+      },
+      onDone: () {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'ORBIT_GROUP_READ_STREAM_DONE',
+          details: {},
+        );
+      },
+    );
+  }
+
   void _startListeningForContactUpdates() {
     _contactUpdateSubscription = widget.chatMessageListener.contactUpdatedStream
         .listen(
@@ -2067,7 +2121,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           await widget.contactRepo.getContact(request.peerId) ??
           request.toContactModel();
       if (!mounted) return;
-      _openConversationForContact(contact);
+      unawaited(_openConversationForContact(contact));
     }
   }
 
@@ -2143,11 +2197,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       _viewMode = OrbitViewMode.allChats;
     });
     _onFilterChanged('intros');
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'ORBIT_INTRO_DOCK_TAP',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'ORBIT_INTRO_DOCK_TAP', details: {});
   }
 
   Future<void> _onIntroDockDismissed() async {
@@ -2290,20 +2340,19 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   }
 
   void _onFriendTap(OrbitFriend friend) {
-    _openConversationForContact(friend.contact);
+    unawaited(_openConversationForContact(friend.contact));
   }
 
   /// Opens the 1:1 [ConversationWired] for [contact], guarded against a
   /// double-push and restoring the post-close refresh on pop. Shared by the
   /// friend-row tap and the contact-request accept flow (215) so the deps
   /// block lives in exactly one place.
-  void _openConversationForContact(ContactModel contact) {
+  Future<void> _openConversationForContact(ContactModel contact) async {
     if (!mounted) return;
     if (!_openingFriendPeerIds.add(contact.peerId)) return;
 
-    late final Future<Object?> pushedRoute;
     try {
-      pushedRoute = Navigator.of(context).push(
+      final pushedRoute = Navigator.of(context).push(
         buildConversationRoute(
           builder: (_) => ConversationWired(
             contact: contact,
@@ -2334,21 +2383,17 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           ),
         ),
       );
-    } catch (_) {
+      // Push first, then let the conversation route perform its own initial
+      // read-marking without blocking the transition.
+      unawaited(_markConversationReadInBackground(contact.peerId));
+      await pushedRoute;
+    } finally {
       _openingFriendPeerIds.remove(contact.peerId);
-      rethrow;
+      if (mounted) {
+        _markContactChanged(contact.peerId);
+        unawaited(_refreshOrbitFriend(contact.peerId));
+      }
     }
-
-    pushedRoute.whenComplete(() {
-      _openingFriendPeerIds.remove(contact.peerId);
-      if (!mounted) return;
-      _markContactChanged(contact.peerId);
-      unawaited(_refreshOrbitFriend(contact.peerId));
-    });
-
-    // Push first, then let the conversation route perform its own initial
-    // read-marking without blocking the transition.
-    unawaited(_markConversationReadInBackground(contact.peerId));
   }
 
   /// Opens the contact profile for [friend]; "Message" jumps into the chat.
@@ -2563,6 +2608,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _introReceivedSubscription?.cancel();
     _introStatusSubscription?.cancel();
     _readSubscription?.cancel();
+    _groupReadSubscription?.cancel();
     // 153: never commit a deferred decline after unmount (safe-failure = the
     // invite is kept; a re-mount re-surfaces it = implicit undo).
     for (final timer in _declineCommitTimers.values) {
@@ -2807,6 +2853,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               groupRepo: groupRepository,
               msgRepo: groupMessageRepository,
               groupMessageListener: groupMessageListener,
+              openAnnouncementSenderConversation: _openConversationForContact,
               inviteDeliveryAttemptRepo:
                   widget.groupInviteDeliveryAttemptRepository,
               bridge: widget.bridge,
@@ -2858,6 +2905,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               groupRepo: groupRepository,
               msgRepo: groupMessageRepository,
               groupMessageListener: groupMessageListener,
+              openAnnouncementSenderConversation: _openConversationForContact,
               inviteDeliveryAttemptRepo:
                   widget.groupInviteDeliveryAttemptRepository,
               contactRepo: widget.contactRepo,

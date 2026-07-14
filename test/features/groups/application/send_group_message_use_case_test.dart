@@ -5227,7 +5227,8 @@ void main() {
             encryptionKeyBase64: 'key-fixture',
             encryptionNonce: 'nonce-fixture',
             encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
 
         final (result, _) = await sendGroupMessage(
@@ -5253,7 +5254,8 @@ void main() {
         expect(result, SendGroupMessageResult.success);
 
         final savedAttachments = await mediaRepo.getAttachmentsForMessage(
-          messageId, owner: MediaOwnerLane.group,
+          messageId,
+          owner: MediaOwnerLane.group,
         );
         expect(savedAttachments, hasLength(1));
         expect(savedAttachments.single.id, 'final-attachment');
@@ -5741,7 +5743,8 @@ void main() {
 
         expect(mediaRepo.count, 1);
         final savedAttachments = await mediaRepo.getAttachmentsForMessage(
-          messageId, owner: MediaOwnerLane.group,
+          messageId,
+          owner: MediaOwnerLane.group,
         );
         expect(savedAttachments, hasLength(1));
       },
@@ -5866,7 +5869,8 @@ void main() {
         expect(replayPayload['media'], expectedMedia);
 
         final savedAttachments = await mediaRepo.getAttachmentsForMessage(
-          messageId, owner: MediaOwnerLane.group,
+          messageId,
+          owner: MediaOwnerLane.group,
         );
         expect(savedAttachments, hasLength(variants.length));
         expect(savedAttachments.map((a) => a.toJson()).toList(), expectedMedia);
@@ -6799,10 +6803,7 @@ void main() {
         expect(retryRotation.rotated, isTrue);
         expect(retryRotation.key, isNotNull);
         expect(retryRotation.key!.keyGeneration, 3);
-        expect(
-          retryRotation.key!.encryptedKey,
-          'st007-key-generation-redraft',
-        );
+        expect(retryRotation.key!.encryptedKey, 'st007-key-generation-redraft');
         expect(retryRotation.distributedDeviceCount, 2);
         expect(retryRotation.deferredPeerIds, isEmpty);
         expect(retryRotation.fullyDistributed, isTrue);

@@ -301,6 +301,7 @@ class _GroupListWiredState extends State<GroupListWired>
               groupRepo: widget.groupRepo,
               msgRepo: widget.msgRepo,
               groupMessageListener: widget.groupMessageListener,
+              openAnnouncementSenderConversation: null,
               inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
               bridge: widget.bridge,
               identityRepo: widget.identityRepo,
@@ -391,18 +392,12 @@ class _GroupListWiredState extends State<GroupListWired>
           } else {
             // Shape-a: keep-pending retryable. The live card stays — surface
             // an inline Retry that re-runs accept through the guard.
-            _setInviteRowOutcome(
-              invite,
-              PendingInviteRowState.retryable,
-            );
+            _setInviteRowOutcome(invite, PendingInviteRowState.retryable);
           }
           break;
         case AcceptPendingGroupInviteResult.repairPending:
           // Invite KEPT → live card shows the "Waiting for key" inline state.
-          _setInviteRowOutcome(
-            invite,
-            PendingInviteRowState.waitingForKey,
-          );
+          _setInviteRowOutcome(invite, PendingInviteRowState.waitingForKey);
           break;
         case AcceptPendingGroupInviteResult.notFound:
           _setTerminalOutcome(invite, l10n.group_invite_no_longer_available);
@@ -551,11 +546,13 @@ class _GroupListWiredState extends State<GroupListWired>
     }
 
     var outcome = await attempt();
-    for (var retry = 0;
-        outcome.$1 == AcceptPendingGroupInviteResult.bridgeError &&
-            outcome.$2 == null &&
-            retry < _acceptRecoveryRetryCount;
-        retry++) {
+    for (
+      var retry = 0;
+      outcome.$1 == AcceptPendingGroupInviteResult.bridgeError &&
+          outcome.$2 == null &&
+          retry < _acceptRecoveryRetryCount;
+      retry++
+    ) {
       if (await inviteListener.pendingInviteRepo.getPendingInvite(
             invite.groupId,
           ) ==
@@ -613,9 +610,7 @@ class _GroupListWiredState extends State<GroupListWired>
       _processingInviteIds.add(invite.groupId);
       _optimisticallyDeclinedInviteIds.add(invite.groupId);
       _pendingInvites = _pendingInvites
-          .where(
-            (i) => !_optimisticallyDeclinedInviteIds.contains(i.groupId),
-          )
+          .where((i) => !_optimisticallyDeclinedInviteIds.contains(i.groupId))
           .toList();
     });
 

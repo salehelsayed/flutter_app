@@ -5,6 +5,7 @@ import 'package:intl/intl.dart' as intl;
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_list_screen.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
@@ -129,24 +130,27 @@ void main() {
       },
     );
 
-    testWidgets('tapping "Retry now" invokes onRetryStuckRejoin with the group', (
-      tester,
-    ) async {
-      GroupModel? retried;
-      await tester.pumpWidget(
-        buildTestWidget(
-          groups: [testGroups.first],
-          rejoinAttempts: const {'group-1': 10},
-          onRetryStuckRejoin: (g) => retried = g,
-          onLeaveStuckGroup: (_) {},
-        ),
-      );
+    testWidgets(
+      'tapping "Retry now" invokes onRetryStuckRejoin with the group',
+      (tester) async {
+        GroupModel? retried;
+        await tester.pumpWidget(
+          buildTestWidget(
+            groups: [testGroups.first],
+            rejoinAttempts: const {'group-1': 10},
+            onRetryStuckRejoin: (g) => retried = g,
+            onLeaveStuckGroup: (_) {},
+          ),
+        );
 
-      await tester.tap(find.byKey(const ValueKey('group-stuck-retry-group-1')));
-      await tester.pump();
+        await tester.tap(
+          find.byKey(const ValueKey('group-stuck-retry-group-1')),
+        );
+        await tester.pump();
 
-      expect(retried?.id, 'group-1');
-    });
+        expect(retried?.id, 'group-1');
+      },
+    );
 
     testWidgets('tapping "Leave" invokes onLeaveStuckGroup with the group', (
       tester,
@@ -316,6 +320,76 @@ void main() {
       expect(find.text('Older backlog expired after 7 days'), findsOneWidget);
       expect(find.text('Alice'), findsOneWidget);
       expect(find.text('Recent backlog survived'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'GPL-15F Group List latest body is generic for private and unsupported '
+    'parents while ordinary text remains unchanged',
+    (tester) async {
+      GroupMessage latest({
+        required String id,
+        required String text,
+        required GroupPrivateMediaPolicy policy,
+      }) => GroupMessage(
+        id: id,
+        groupId: testGroups.first.id,
+        senderPeerId: 'peer-2',
+        senderUsername: 'Alice',
+        text: text,
+        timestamp: DateTime.utc(2026, 4, 6, 12, 30),
+        createdAt: DateTime.utc(2026, 4, 6, 12, 30),
+        isIncoming: true,
+        privateMediaPolicy: policy,
+      );
+
+      for (final testCase
+          in <({String id, String text, GroupPrivateMediaPolicy policy})>[
+            (
+              id: 'private-latest',
+              text: 'private list caption',
+              policy: const GroupPrivateMediaPolicy.viewOnce(),
+            ),
+            (
+              id: 'unsupported-latest',
+              text: 'future list caption',
+              policy: const GroupPrivateMediaPolicy.unsupported(
+                sourceVersion: 9,
+              ),
+            ),
+          ]) {
+        await tester.pumpWidget(
+          buildTestWidget(
+            groups: [testGroups.first],
+            latestMessages: {
+              testGroups.first.id: latest(
+                id: testCase.id,
+                text: testCase.text,
+                policy: testCase.policy,
+              ),
+            },
+          ),
+        );
+
+        expect(find.text('Media unavailable'), findsOneWidget);
+        expect(find.text(testCase.text), findsNothing);
+      }
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          groups: [testGroups.first],
+          latestMessages: {
+            testGroups.first.id: latest(
+              id: 'ordinary-latest',
+              text: 'ordinary list caption',
+              policy: const GroupPrivateMediaPolicy.ordinary(),
+            ),
+          },
+        ),
+      );
+
+      expect(find.text('ordinary list caption'), findsOneWidget);
+      expect(find.text('Media unavailable'), findsNothing);
     },
   );
 

@@ -78,40 +78,45 @@ void main() {
   // TC-09-15 (NET-REL-07) — an old relay that rejects the registration degrades
   // gracefully: the minted tokens are still persisted client-side, the call
   // returns false (does not throw / retry), and emits the unsupported event.
-  test('TC-09-15: old relay rejects registration → graceful degrade, no throw', () async {
-    final store = _InMemoryWakeTokenStore();
-    Future<bool> oldRelayRegistrar(List<String> t) async => false;
+  test(
+    'TC-09-15: old relay rejects registration → graceful degrade, no throw',
+    () async {
+      final store = _InMemoryWakeTokenStore();
+      Future<bool> oldRelayRegistrar(List<String> t) async => false;
 
-    final useCase = IssueWakeTokensUseCase(
-      wakeTokenStore: store,
-      registerWakeTokens: oldRelayRegistrar,
-      mintToken: () => 'tok-x',
-    );
+      final useCase = IssueWakeTokensUseCase(
+        wakeTokenStore: store,
+        registerWakeTokens: oldRelayRegistrar,
+        mintToken: () => 'tok-x',
+      );
 
-    final ok = await useCase.issueForContacts(['c1']);
+      final ok = await useCase.issueForContacts(['c1']);
 
-    expect(ok, isFalse); // unsupported / failed
-    expect(store.tokens['c1'], 'tok-x'); // minted + persisted regardless
-    expect(eventsNamed('WAKE_TOKEN_REGISTER_UNSUPPORTED'), hasLength(1));
-  });
+      expect(ok, isFalse); // unsupported / failed
+      expect(store.tokens['c1'], 'tok-x'); // minted + persisted regardless
+      expect(eventsNamed('WAKE_TOKEN_REGISTER_UNSUPPORTED'), hasLength(1));
+    },
+  );
 
-  // Empty contact list is a no-op that still "succeeds" (nothing to register).
-  test('no contacts → no mint, no register failure', () async {
-    final store = _InMemoryWakeTokenStore();
-    var registrarCalls = 0;
-    final useCase = IssueWakeTokensUseCase(
-      wakeTokenStore: store,
-      registerWakeTokens: (t) async {
-        registrarCalls++;
-        return true;
-      },
-    );
+  test(
+    'no contacts registers an empty set to revoke stale relay auth',
+    () async {
+      final store = _InMemoryWakeTokenStore();
+      var registrarCalls = 0;
+      final useCase = IssueWakeTokensUseCase(
+        wakeTokenStore: store,
+        registerWakeTokens: (t) async {
+          registrarCalls++;
+          return true;
+        },
+      );
 
-    final ok = await useCase.issueForContacts([]);
+      final ok = await useCase.issueForContacts([]);
 
-    expect(ok, isTrue);
-    expect(store.tokens, isEmpty);
-    expect(registrarCalls, 0);
-    expect(eventsNamed('WAKE_TOKEN_ISSUED'), isEmpty);
-  });
+      expect(ok, isTrue);
+      expect(store.tokens, isEmpty);
+      expect(registrarCalls, 1);
+      expect(eventsNamed('WAKE_TOKEN_ISSUED'), isEmpty);
+    },
+  );
 }

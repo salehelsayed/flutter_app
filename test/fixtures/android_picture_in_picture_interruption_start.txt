@@ -1,0 +1,7 @@
+Starting: Intent { cmp=com.mknoon.app.pipproof.test/com.mknoon.app.pipproof.PictureInPictureAudioFocusInterruptionProofActivity (has extras) }
+Status: ok
+LaunchState: COLD
+Activity: com.mknoon.app.pipproof.test/com.mknoon.app.pipproof.PictureInPictureAudioFocusInterruptionProofActivity
+TotalTime: 124
+WaitTime: 130
+Complete

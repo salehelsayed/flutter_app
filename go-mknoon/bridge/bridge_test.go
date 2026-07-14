@@ -5291,3 +5291,61 @@ func TestGMF11ForwardedMarkerMapsToPublishOptions(t *testing.T) {
 		t.Fatalf("a string isForwarded must fail the typed decode")
 	}
 }
+
+func TestGK030GroupPrivateMediaPolicyPreservesExplicitNullAndRejectsMalformed(t *testing.T) {
+	base := `{
+		"groupId": "group-1",
+		"text": "",
+		"senderPeerId": "peer-1",
+		"senderPublicKey": "pk-1",
+		"senderPrivateKey": "sk-1",
+		"media": [{"id":"blob-1","mime":"image/jpeg","size":42}]`
+
+	params, errorJSON := decodeGroupBridgeMessageParams(base + `,
+		"mediaPolicyVersion": 1,
+		"mediaLifecycle": "viewOnce",
+		"mediaDurationSeconds": null,
+		"mediaProtected": true}`)
+	if errorJSON != "" {
+		t.Fatalf("valid private policy decode failed: %s", errorJSON)
+	}
+	for _, includeRecipients := range []bool{false, true} {
+		opts := buildGroupBridgeMessageOpts(params, includeRecipients)
+		if opts["mediaPolicyVersion"] != 1 {
+			t.Fatalf("mediaPolicyVersion = %#v", opts["mediaPolicyVersion"])
+		}
+		if opts["mediaLifecycle"] != "viewOnce" {
+			t.Fatalf("mediaLifecycle = %#v", opts["mediaLifecycle"])
+		}
+		value, present := opts["mediaDurationSeconds"]
+		if !present || value != nil {
+			t.Fatalf("explicit null duration lost: present=%v value=%#v", present, value)
+		}
+		if opts["mediaProtected"] != true {
+			t.Fatalf("mediaProtected = %#v", opts["mediaProtected"])
+		}
+	}
+
+	absent, errorJSON := decodeGroupBridgeMessageParams(base + `}`)
+	if errorJSON != "" {
+		t.Fatalf("legacy decode failed: %s", errorJSON)
+	}
+	for _, key := range []string{"mediaPolicyVersion", "mediaLifecycle", "mediaDurationSeconds", "mediaProtected"} {
+		if _, present := buildGroupBridgeMessageOpts(absent, false)[key]; present {
+			t.Fatalf("legacy payload unexpectedly emitted %s", key)
+		}
+	}
+
+	invalid := []string{
+		base + `, "mediaPolicyVersion":1}`,
+		base + `, "mediaPolicyVersion":1, "mediaLifecycle":"viewOnce", "mediaProtected":true}`,
+		base + `, "mediaPolicyVersion":1.0, "mediaLifecycle":"viewOnce", "mediaDurationSeconds":null, "mediaProtected":true}`,
+		base + `, "mediaPolicyVersion":1, "mediaLifecycle":"viewOnce", "mediaDurationSeconds":null, "mediaProtected":1}`,
+		base + `, "mediaPolicyVersion":1, "mediaLifecycle":"disappearing", "mediaDurationSeconds":60, "mediaProtected":true}`,
+	}
+	for _, raw := range invalid {
+		if _, errorJSON := decodeGroupBridgeMessageParams(raw); errorJSON == "" {
+			t.Fatalf("malformed private policy accepted: %s", raw)
+		}
+	}
+}

@@ -1,0 +1,7 @@
+AudioPlaybackConfigurations dump time: 07-13 23:03:09:986
+## MediaFocusControl
+Audio Focus stack entries (last is top of stack):
+  source:android.os.BinderProxy@helper -- pack: com.mknoon.app.pipproof.test -- client: android.media.AudioManager@helpercom.mknoon.app.pipproof.PictureInPictureAudioFocusInterruptionProofActivity@listener -- gain: GAIN -- flags:  -- loss: none -- notified: true -- limbofalse -- uid: 10472 -- attr: AudioAttributes: usage=USAGE_MEDIA content=CONTENT_TYPE_MOVIE -- sdk:36
+No external focus policy
+focus commands as seen by MediaFocusControl
+07-13 23:03:08:300 requestAudioFocus() from uid/pid 10472/24555 AA=USAGE_MEDIA/CONTENT_TYPE_MOVIE clientId=android.media.AudioManager@helpercom.mknoon.app.pipproof.PictureInPictureAudioFocusInterruptionProofActivity@listener callingPack=com.mknoon.app.pipproof.test req=1 flags=0x0 sdk=36

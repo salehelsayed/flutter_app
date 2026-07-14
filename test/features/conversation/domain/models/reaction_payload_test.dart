@@ -1,7 +1,10 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_payload.dart';
+
+import 'fixtures/frozen_pre256_reaction_v2_reader.dart';
 
 void main() {
   const testPayload = ReactionPayload(
@@ -45,10 +48,7 @@ void main() {
       });
 
       test('returns null for missing payload', () {
-        final json = jsonEncode({
-          'type': 'message_reaction',
-          'version': '1',
-        });
+        final json = jsonEncode({'type': 'message_reaction', 'version': '1'});
         expect(ReactionPayload.fromJson(json), isNull);
       });
 
@@ -141,26 +141,126 @@ void main() {
         final jsonString = jsonEncode({
           'type': 'chat_message',
           'version': '2',
-          'encrypted': {
-            'kem': 'k',
-            'ciphertext': 'c',
-            'nonce': 'n',
-          },
+          'encrypted': {'kem': 'k', 'ciphertext': 'c', 'nonce': 'n'},
         });
         expect(ReactionPayload.parseEncryptedEnvelope(jsonString), isNull);
       });
 
-      test('parseEncryptedEnvelope returns null for missing encrypted fields',
-          () {
-        final jsonString = jsonEncode({
-          'type': 'message_reaction',
-          'version': '2',
-          'encrypted': {
-            'kem': 'k',
-            // missing ciphertext and nonce
-          },
+      test(
+        'parseEncryptedEnvelope returns null for missing encrypted fields',
+        () {
+          final jsonString = jsonEncode({
+            'type': 'message_reaction',
+            'version': '2',
+            'encrypted': {
+              'kem': 'k',
+              // missing ciphertext and nonce
+            },
+          });
+          expect(ReactionPayload.parseEncryptedEnvelope(jsonString), isNull);
+        },
+      );
+
+      test('v2 notification metadata is minimal and legacy readable', () {
+        final fixture =
+            jsonDecode(
+                  File(
+                    'test_fixtures/one_to_one_reaction_add.json',
+                  ).readAsStringSync(),
+                )
+                as Map<String, dynamic>;
+        final envelope = fixture['encryptedEnvelope'] as Map<String, dynamic>;
+        final jsonString = jsonEncode(envelope);
+
+        expect(envelope.keys, <String>{
+          'type',
+          'version',
+          'senderPeerId',
+          'eventId',
+          'action',
+          'targetMessageId',
+          'encrypted',
         });
-        expect(ReactionPayload.parseEncryptedEnvelope(jsonString), isNull);
+        expect(envelope['eventId'], 'reaction-privacy-1');
+        expect(envelope['action'], 'add');
+        expect(envelope['targetMessageId'], 'target-privacy-1');
+        expect(jsonString, isNot(contains('emoji')));
+        expect(jsonString, isNot(contains('username')));
+
+        // Run the new additive envelope through a real frozen copy of the
+        // pre-256 reader. It knows nothing about event/action/target metadata.
+        final frozenOldReader = parseFrozenPre256ReactionV2Envelope(jsonString);
+        expect(frozenOldReader, isNotNull);
+        expect(frozenOldReader!['senderPeerId'], 'peer-alice');
+        expect(frozenOldReader['encrypted'], {
+          'kem': 'fixture-kem-reaction-1',
+          'ciphertext': 'fixture-ciphertext-reaction-1',
+          'nonce': 'fixture-nonce-reaction-1',
+        });
+        expect(
+          parseFrozenPre256ReactionV2Envelope(
+            jsonEncode({
+              'type': 'message_reaction',
+              'version': '2',
+              'encrypted': {'kem': '', 'ciphertext': '', 'nonce': ''},
+            }),
+          ),
+          isNotNull,
+          reason: 'the frozen parser must remain byte-for-byte permissive',
+        );
+        expect(ReactionPayload.parseEncryptedEnvelope(jsonString), isNotNull);
+
+        // A new reader consumes a committed exact pre-256 wire fixture.
+        final legacyFixture =
+            jsonDecode(
+                  File(
+                    'test_fixtures/one_to_one_reaction_legacy_v2.json',
+                  ).readAsStringSync(),
+                )
+                as Map<String, dynamic>;
+        final legacyEnvelope = jsonEncode(legacyFixture['encryptedEnvelope']);
+        final parsedLegacy = ReactionPayload.parseEncryptedEnvelope(
+          legacyEnvelope,
+        );
+        expect(parsedLegacy, isNotNull);
+        expect(parsedLegacy!['senderPeerId'], 'peer-alice');
+        expect(parsedLegacy['eventId'], isNull);
+        expect(parsedLegacy['action'], isNull);
+        expect(parsedLegacy['targetMessageId'], isNull);
+        expect(parsedLegacy['encrypted'], {
+          'kem': 'fixture-kem-reaction-legacy-1',
+          'ciphertext': 'fixture-ciphertext-reaction-legacy-1',
+          'nonce': 'fixture-nonce-reaction-legacy-1',
+        });
+      });
+
+      test('unknown action is rejected even when outer and inner match', () {
+        expect(
+          () => ReactionPayload.buildEncryptedEnvelope(
+            senderPeerId: 'sender-1',
+            eventId: 'reaction-1',
+            action: 'dance',
+            targetMessageId: 'message-1',
+            kem: 'kem-data',
+            ciphertext: 'cipher-data',
+            nonce: 'nonce-data',
+          ),
+          throwsArgumentError,
+        );
+
+        expect(
+          ReactionPayload.fromDecryptedJson(
+            jsonEncode({
+              'id': 'reaction-1',
+              'messageId': 'message-1',
+              'emoji': '👍',
+              'action': 'dance',
+              'senderPeerId': 'sender-1',
+              'timestamp': '2026-02-27T10:00:00.000Z',
+            }),
+          ),
+          isNull,
+        );
       });
     });
 

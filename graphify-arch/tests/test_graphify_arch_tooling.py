@@ -1,0 +1,237 @@
+#!/usr/bin/env python3
+"""Focused regression tests for compact Graphify/TDD integration."""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+TOOL = ROOT / "graphify-arch" / "tdd_context.py"
+SPEC = importlib.util.spec_from_file_location("graphify_tdd_context", TOOL)
+assert SPEC and SPEC.loader
+CONTEXT = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(CONTEXT)
+
+GRAPHIFY_PYTHON = Path.home() / ".local/share/uv/tools/graphifyy/bin/python"
+
+
+class GraphifyArchToolingTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        os.environ["GRAPHIFY_CONTEXT_LOG"] = "0"
+        cls.graph = CONTEXT._load_graph()
+        cls.overlay = CONTEXT.load_overlay()
+
+    def _ranked_tests(self, question: str, profile: str = "tdd"):
+        seeds, _, terms = self.graph.seeds(question, profile)
+        files, _ = self.graph.context_files(seeds, terms)
+        primary = [
+            source
+            for nid in seeds
+            if (source := CONTEXT._source_file(self.graph.nodes[nid]))
+            and CONTEXT._category(source)
+            not in {"test", "integration_test", "scripts", "unknown"}
+        ]
+        production = [
+            path
+            for path in files
+            if CONTEXT._category(path)
+            not in {"test", "integration_test", "scripts", "unknown"}
+        ]
+        return CONTEXT._tests_for_files(
+            self.overlay, primary, production[:10], files, terms
+        )
+
+    def test_overlay_models_named_tests_and_gate_membership(self):
+        self.assertEqual(self.overlay["version"], CONTEXT.OVERLAY_VERSION)
+        record = self.overlay["test_files"][
+            "test/features/conversation/application/delete_message_use_case_test.dart"
+        ]
+        self.assertGreater(len(record["tests"]), 0)
+        self.assertIn(
+            "lib/features/conversation/application/delete_message_use_case.dart",
+            record["imports"],
+        )
+        self.assertIn("ONE_TO_ONE_TESTS", {gate["name"] for gate in record["gates"]})
+        self.assertIn(
+            "ONE_TO_ONE_HOST_TESTS", {gate["name"] for gate in record["gates"]}
+        )
+
+    def test_direct_production_test_outranks_shared_model_tests(self):
+        ranked = self._ranked_tests("deleteMessageForMe cleanup attachments")
+        self.assertEqual(
+            ranked[0]["path"],
+            "test/features/conversation/application/delete_message_use_case_test.dart",
+        )
+        ranked = self._ranked_tests(
+            "GroupMediaIntegrityPolicy group media delete", profile="review"
+        )
+        self.assertEqual(
+            ranked[0]["path"], "test/core/media/group_media_integrity_policy_test.dart"
+        )
+
+    def test_compact_tdd_output_contains_direct_proof_and_gate(self):
+        lines, meta = CONTEXT._compact_lines(
+            self.graph,
+            self.overlay,
+            "deleteMessageForMe cleanup attachments",
+            "tdd",
+        )
+        output = CONTEXT._bounded(lines, 900)
+        self.assertEqual(meta["confidence"], "anchored")
+        self.assertIn("delete_message_use_case_test.dart", output)
+        self.assertIn("ONE_TO_ONE_TESTS", output)
+        self.assertLessEqual(len(output), 900 * 3 + 120)
+
+    def test_review_budget_keeps_counterexample_section(self):
+        lines, _ = CONTEXT._compact_lines(
+            self.graph,
+            self.overlay,
+            "GroupMediaIntegrityPolicy group media delete",
+            "review",
+        )
+        output = CONTEXT._bounded(lines, 800)
+        self.assertIn("Caller/bypass candidates:", output)
+        self.assertIn("group_media_integrity_policy_test.dart", output)
+
+    def test_affected_adds_direct_tests(self):
+        tests = self.overlay["production_to_tests"][
+            "lib/features/conversation/application/delete_message_use_case.dart"
+        ]
+        self.assertIn(
+            "test/features/conversation/application/delete_message_use_case_test.dart",
+            tests,
+        )
+
+    def test_query_stats_report_budget_utilization_without_question_text(self):
+        lines = CONTEXT._stats_summary(
+            [
+                {
+                    "profile": "tdd",
+                    "question_sha256": "abc",
+                    "budget": 700,
+                    "result_chars": 1400,
+                    "confidence": "anchored",
+                },
+                {
+                    "profile": "review",
+                    "question_sha256": "def",
+                    "budget": 800,
+                    "result_chars": 1600,
+                    "confidence": "broad",
+                },
+            ]
+        )
+        output = "\n".join(lines)
+        self.assertIn("avg 375 estimated tokens", output)
+        self.assertIn("anchored: 1/2", output)
+        self.assertNotIn("abc", output)
+
+    def test_refresh_contract_is_incremental_by_default(self):
+        text = (ROOT / "graphify-arch" / "refresh_arch_graph.sh").read_text()
+        self.assertIn("refresh_graph.py", text)
+        self.assertIn("tdd_context.py build", text)
+        self.assertNotIn("rm -rf", text)
+        self.assertNotIn("graphify extract", text)
+        self.assertIn("--incremental|--full|--rebuild", text)
+
+        merger = (ROOT / "graphify-arch" / "refresh_graph.py").read_text()
+        self.assertIn("detect_incremental", merger)
+        self.assertIn("_load_existing_without", merger)
+        self.assertIn("os.replace", merger)
+
+    def test_incremental_merger_replaces_complete_changed_source(self):
+        script = """
+import json, sys
+sys.path.insert(0, 'graphify-arch')
+from refresh_graph import _without_sources
+data = {
+  'nodes': [
+    {'id': 'keep', 'source_file': 'lib/keep.dart'},
+    {'id': 'old', 'source_file': 'lib/changed.dart'},
+  ],
+  'links': [
+    {'source': 'keep', 'target': 'old', 'source_file': 'lib/keep.dart'},
+    {'source': 'keep', 'target': 'keep', 'source_file': 'lib/changed.dart'},
+  ],
+  'hyperedges': [],
+}
+print(json.dumps(_without_sources(data, {'lib/changed.dart'})))
+"""
+        proc = subprocess.run(
+            [str(GRAPHIFY_PYTHON), "-c", script],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+        result = json.loads(proc.stdout)
+        self.assertEqual([node["id"] for node in result["nodes"]], ["keep"])
+        self.assertEqual(result["edges"], [])
+
+    def test_fast_path_skill_is_compact_and_uses_context_tool(self):
+        skill = ROOT / ".agents" / "skills" / "graphify" / "SKILL.md"
+        text = skill.read_text()
+        self.assertLess(len(text), 10_000)
+        self.assertIn("tdd_context.py query", text)
+        self.assertNotIn("close_agent", text)
+
+    def test_tdd_skills_share_compact_profiles(self):
+        home = Path.home() / ".codex" / "skills"
+        plan = (home / "tdd-plan" / "SKILL.md").read_text()
+        review = (home / "tdd-review" / "SKILL.md").read_text()
+        execution = (
+            home / "implementation-execution-qa-orchestrator" / "SKILL.md"
+        ).read_text()
+        self.assertIn("--profile tdd --budget 700", plan)
+        self.assertIn("Graph Grounding Snapshot", plan)
+        self.assertIn("--profile review --budget 800", review)
+        self.assertIn("tdd_context.py affected", execution)
+
+    def test_local_hook_configuration_is_permissive(self):
+        codex = json.loads((ROOT / ".codex" / "hooks.json").read_text())
+        self.assertEqual(codex, {"hooks": {}})
+        claude = json.loads((ROOT / ".claude" / "settings.json").read_text())
+        self.assertNotIn("permissions", claude)
+        commands = [
+            hook["command"]
+            for entry in claude["hooks"]["PreToolUse"]
+            for hook in entry["hooks"]
+        ]
+        self.assertTrue(
+            all("GRAPHIFY_LOCAL_DEV_BYPASS=1" in command for command in commands)
+        )
+
+        payloads = [
+            {
+                "tool_name": "Bash",
+                "tool_input": {"command": 'graphify query "unbudgeted local query"'},
+            },
+            {
+                "tool_name": "Read",
+                "tool_input": {"file_path": str(ROOT / "lib" / "main.dart")},
+            },
+        ]
+        for payload in payloads:
+            proc = subprocess.run(
+                ["python3", str(ROOT / ".claude" / "hooks" / "graphify_grep_gate.py")],
+                input=json.dumps(payload),
+                capture_output=True,
+                text=True,
+                env={**os.environ, "GRAPHIFY_LOCAL_DEV_BYPASS": "1"},
+                timeout=30,
+            )
+            self.assertEqual(proc.returncode, 0)
+            self.assertEqual(proc.stdout.strip(), "")
+
+
+if __name__ == "__main__":
+    unittest.main()

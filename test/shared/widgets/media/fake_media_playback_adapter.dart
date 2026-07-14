@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/shared/widgets/media/media_playback_adapter.dart';
@@ -15,6 +17,9 @@ class FakeMediaPlaybackAdapter extends MediaPlaybackAdapter {
     Duration duration = const Duration(minutes: 1),
     Duration position = Duration.zero,
     this.failInitialize = false,
+    this.throwOnBuildSurface = false,
+    this.failSurfaceBeforeRaster = false,
+    this.initializeGate,
     double aspectRatio = 1.0,
   }) : _duration = duration,
        _position = position,
@@ -24,6 +29,9 @@ class FakeMediaPlaybackAdapter extends MediaPlaybackAdapter {
   Duration _position;
   double _aspectRatio;
   bool failInitialize;
+  final bool throwOnBuildSurface;
+  final bool failSurfaceBeforeRaster;
+  final Completer<void>? initializeGate;
 
   final List<VoidCallback> _listeners = <VoidCallback>[];
 
@@ -39,6 +47,7 @@ class FakeMediaPlaybackAdapter extends MediaPlaybackAdapter {
   int playCount = 0;
   int pauseCount = 0;
   int disposeCount = 0;
+  int buildSurfaceCount = 0;
   final List<Duration> seekTargets = <Duration>[];
   final List<double> setSpeedCalls = <double>[];
   final List<bool> setMutedCalls = <bool>[];
@@ -60,6 +69,7 @@ class FakeMediaPlaybackAdapter extends MediaPlaybackAdapter {
   @override
   Future<void> initialize() async {
     initializeCount++;
+    await initializeGate?.future;
     if (failInitialize) {
       _initError = StateError('fake init failure');
       throw _initError!;
@@ -131,8 +141,17 @@ class FakeMediaPlaybackAdapter extends MediaPlaybackAdapter {
   void removeListener(VoidCallback listener) => _listeners.remove(listener);
 
   @override
-  Widget buildSurface() =>
-      const SizedBox(key: ValueKey('fake-video-surface'));
+  Widget buildSurface() {
+    buildSurfaceCount++;
+    if (throwOnBuildSurface) {
+      throw StateError('fake surface build failure');
+    }
+    if (failSurfaceBeforeRaster && _initError == null) {
+      _initError = StateError('fake surface runtime failure');
+      scheduleMicrotask(notify);
+    }
+    return const SizedBox(key: ValueKey('fake-video-surface'));
+  }
 
   @override
   Future<void> dispose() async {

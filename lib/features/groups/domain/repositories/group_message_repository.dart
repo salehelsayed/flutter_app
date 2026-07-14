@@ -219,6 +219,43 @@ abstract class GroupMessageRepository {
   }
 }
 
+/// Narrow durable authority for device-local group private-media lifecycle.
+///
+/// Kept separate from the broad repository surface so lightweight group fakes
+/// remain source-compatible. Privacy-sensitive callers require this capability
+/// explicitly and fail closed when it is unavailable.
+abstract class GroupPrivateMediaLifecycleRepository {
+  Future<GroupMessage?> loadGroupPrivateMediaMessage(String messageId);
+
+  Future<bool> anchorOutgoingGroupPrivateMediaCustody(
+    String messageId, {
+    required int nowMs,
+  });
+
+  Future<bool> consumeGroupPrivateMedia(String messageId, {required int nowMs});
+
+  Future<bool> advanceGroupPrivateMediaClock(
+    String messageId, {
+    required int nowMs,
+  });
+
+  Future<int?> loadNextGroupPrivateMediaExpiryAtMs();
+
+  Future<List<GroupMessage>> loadActiveGroupPrivateMediaDisappearing({
+    int limit = 100,
+  });
+
+  Future<List<GroupMessage>> loadGroupPrivateMediaRecoveryCandidates({
+    int limit = 100,
+  });
+
+  Future<bool> rotateGroupPrivateMediaRecoveryCandidate(
+    String messageId, {
+    required int nowMs,
+  });
+
+  Future<bool> completeGroupPrivateMediaCleanup(String messageId);
+}
 
 /// Authoritative local-deletion qualification for privacy-sensitive readers.
 ///
@@ -319,6 +356,29 @@ class GroupOutgoingLocalMessageChange {
 /// expose a stream.
 abstract class GroupOutgoingLocalMessageChangeSource {
   Stream<GroupOutgoingLocalMessageChange> get outgoingLocalMessageChanges;
+}
+
+enum GroupMessageAuthorizationMutation { removed, privateLifecycle }
+
+/// Exact post-commit group-parent mutation that can revoke current media
+/// authority. A null [messageId] applies to every parent in [groupId].
+class GroupMessageAuthorizationChange {
+  const GroupMessageAuthorizationChange({
+    required this.groupId,
+    required this.messageId,
+    required this.kind,
+  });
+
+  final String groupId;
+  final String? messageId;
+  final GroupMessageAuthorizationMutation kind;
+}
+
+/// Optional repository capability kept separate from outgoing UI status
+/// events: incoming/private lifecycle and physical removals are authorization
+/// changes, not synthetic message upserts.
+abstract class GroupMessageAuthorizationChangeSource {
+  Stream<GroupMessageAuthorizationChange> get authorizationChanges;
 }
 
 /// Optional repository capability for internal membership-window repair.

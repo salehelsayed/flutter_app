@@ -1218,6 +1218,7 @@ class _NestedRouteMediaRepository extends InMemoryMediaAttachmentRepository
     implements
         MediaLibraryRepository,
         MediaLibraryStateRepository,
+        GroupMediaLibraryStateRepository,
         MediaDownloadStateRepository {
   _NestedRouteMediaRepository(this.library);
 
@@ -1239,6 +1240,19 @@ class _NestedRouteMediaRepository extends InMemoryMediaAttachmentRepository
   @override
   Future<void> setBookmarked(String id, {required bool bookmarked}) =>
       library.setBookmarked(id, bookmarked: bookmarked);
+
+  @override
+  Future<bool> setGroupBookmarkedIfOrdinary({
+    required String groupId,
+    required String messageId,
+    required String attachmentId,
+    required bool bookmarked,
+  }) => library.setGroupBookmarkedIfOrdinary(
+    groupId: groupId,
+    messageId: messageId,
+    attachmentId: attachmentId,
+    bookmarked: bookmarked,
+  );
 
   @override
   Future<void> updatePlaybackPosition(String id, int positionMs) =>

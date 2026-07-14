@@ -25,6 +25,7 @@ import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../shared/fakes/in_memory_message_repository.dart';
+import '../../../shared/fixtures/media_bytes.dart';
 import '../../contacts/domain/repositories/fake_contact_repository.dart';
 
 ContactModel _contact({
@@ -735,7 +736,7 @@ void main() {
           relativePath,
         );
         final file = File(absolutePath)..createSync(recursive: true);
-        file.writeAsBytesSync(utf8.encode('plaintext snapshot bytes'));
+        file.writeAsBytesSync(validJpegFixtureBytes);
         final relayBlobHash = sha256
             .convert(utf8.encode('encrypted snapshot relay bytes'))
             .toString();

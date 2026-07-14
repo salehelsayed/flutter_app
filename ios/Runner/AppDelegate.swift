@@ -77,6 +77,7 @@ struct NotificationResponseDiagnostic: Equatable {
   private let appGroupPathChannelName = "mknoon/app_group_path"
   private var appGroupPathChannel: FlutterMethodChannel?
   private var receivedMediaEgressCoordinator: ReceivedMediaEgressCoordinator?
+  private var privateMediaProtectionCoordinator: PrivateMediaProtectionCoordinator?
 
   // 191 (Fix N1): the FCM plugin's published UNUserNotificationCenterDelegate,
   // captured at plugin-registration time (scene-connect). Under UIScene the
@@ -254,6 +255,7 @@ struct NotificationResponseDiagnostic: Equatable {
     setupDiskSpaceBridge(messenger: messenger)
     setupAppGroupPathBridge(messenger: messenger)
     receivedMediaEgressCoordinator = ReceivedMediaEgressCoordinator(messenger: messenger)
+    setupPrivateMediaProtectionBridge(messenger: messenger)
 
 #if canImport(GoMknoon)
     goBridge = GoBridge(messenger: messenger)
@@ -403,6 +405,12 @@ struct NotificationResponseDiagnostic: Equatable {
     setupMigrationKeepAliveBridge(messenger: controller.binaryMessenger)
     setupDiskSpaceBridge(messenger: controller.binaryMessenger)
     setupAppGroupPathBridge(messenger: controller.binaryMessenger)
+    setupPrivateMediaProtectionBridge(messenger: controller.binaryMessenger)
+  }
+
+  private func setupPrivateMediaProtectionBridge(messenger: FlutterBinaryMessenger) {
+    guard privateMediaProtectionCoordinator == nil else { return }
+    privateMediaProtectionCoordinator = PrivateMediaProtectionCoordinator(messenger: messenger)
   }
 
   private func setupDiskSpaceBridge(messenger: FlutterBinaryMessenger) {

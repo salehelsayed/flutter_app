@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -49,6 +50,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _unusedSendFn({
   String? recipientMlKemPublicKey,
   String? quotedMessageId,
   List<MediaAttachment>? mediaAttachments,
+  PrivateMediaPolicy? privateMediaPolicy,
   MediaAttachmentRepository? mediaAttachmentRepo,
   TransportMetrics? transportMetrics,
 }) async {

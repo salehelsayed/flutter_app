@@ -27,6 +27,7 @@ class GroupListScreen extends StatelessWidget {
   /// topic-join has not yet succeeded (derived from the 088 group_rejoin_state
   /// table). Drives the "Joining…" / "Couldn't join" badge.
   final Map<String, int> rejoinAttempts;
+
   /// Per-row accept outcome state keyed by invite id (plan 150). KEPT-invite
   /// outcomes (waitingForKey / retryable) render inline on the live card;
   /// terminal outcomes (whose invite was DELETED, so the id is no longer in
@@ -216,8 +217,9 @@ class GroupListScreen extends StatelessWidget {
   /// row even though no live invite / group remains to render.
   bool get _hasGhostOutcomes {
     if (inviteRowOutcomes.isEmpty) return false;
-    final pendingInviteIds =
-        pendingInvites.map((invite) => invite.groupId).toSet();
+    final pendingInviteIds = pendingInvites
+        .map((invite) => invite.groupId)
+        .toSet();
     return inviteRowOutcomes.keys.any((id) => !pendingInviteIds.contains(id));
   }
 
@@ -240,11 +242,7 @@ class GroupListScreen extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
-            Icons.info_outline,
-            size: 18,
-            color: readableColors.textMuted,
-          ),
+          Icon(Icons.info_outline, size: 18, color: readableColors.textMuted),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -281,8 +279,9 @@ class GroupListScreen extends StatelessWidget {
     // Ghost rows: terminal outcomes whose invite was deleted by the use-case
     // (so the id is no longer a live pending invite). They keep the "which
     // invite failed & why" feedback after the live card is gone (plan 150 C1).
-    final pendingInviteIds =
-        pendingInvites.map((invite) => invite.groupId).toSet();
+    final pendingInviteIds = pendingInvites
+        .map((invite) => invite.groupId)
+        .toSet();
     final ghostOutcomes = inviteRowOutcomes.entries
         .where((entry) => !pendingInviteIds.contains(entry.key))
         .toList();
@@ -295,28 +294,26 @@ class GroupListScreen extends StatelessWidget {
         if (hasPendingSection) ...[
           _buildSectionLabel(context, l10n.groups_pending_invites),
           const SizedBox(height: 12),
-          ...pendingInvites.map(
-            (invite) {
-              final outcome = inviteRowOutcomes[invite.groupId];
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: PendingGroupInviteCard(
-                  invite: invite,
-                  isProcessing: processingInviteIds.contains(invite.groupId),
-                  rowState: outcome?.state ?? PendingInviteRowState.idle,
-                  onAccept: onAcceptPendingInvite != null
-                      ? () => onAcceptPendingInvite!(invite)
-                      : null,
-                  onDecline: onDeclinePendingInvite != null
-                      ? () => onDeclinePendingInvite!(invite)
-                      : null,
-                  onRetry: onRetryPendingInvite != null
-                      ? () => onRetryPendingInvite!(invite)
-                      : null,
-                ),
-              );
-            },
-          ),
+          ...pendingInvites.map((invite) {
+            final outcome = inviteRowOutcomes[invite.groupId];
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: PendingGroupInviteCard(
+                invite: invite,
+                isProcessing: processingInviteIds.contains(invite.groupId),
+                rowState: outcome?.state ?? PendingInviteRowState.idle,
+                onAccept: onAcceptPendingInvite != null
+                    ? () => onAcceptPendingInvite!(invite)
+                    : null,
+                onDecline: onDeclinePendingInvite != null
+                    ? () => onDeclinePendingInvite!(invite)
+                    : null,
+                onRetry: onRetryPendingInvite != null
+                    ? () => onRetryPendingInvite!(invite)
+                    : null,
+              ),
+            );
+          }),
           ...ghostOutcomes.map(
             (entry) => Padding(
               padding: const EdgeInsets.only(bottom: 12),
@@ -372,7 +369,11 @@ class GroupListScreen extends StatelessWidget {
       lastMessageSender: lastMsg != null
           ? lastMsg.senderUsername ?? l10n.groups_unknown_sender
           : null,
-      lastMessageBody: lastMsg?.text,
+      lastMessageBody: lastMsg == null
+          ? null
+          : lastMsg.privateMediaPolicy.requiresRedaction
+          ? l10n.media_unavailable
+          : lastMsg.text,
       lastMessageTime: lastMsg != null
           ? _formatTime(context, lastMsg.timestamp)
           : null,
@@ -385,10 +386,7 @@ class GroupListScreen extends StatelessWidget {
     if (isStuck && (onRetryStuckRejoin != null || onLeaveStuckGroup != null)) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          card,
-          _buildStuckGroupActions(context, group),
-        ],
+        children: [card, _buildStuckGroupActions(context, group)],
       );
     }
 

@@ -305,6 +305,12 @@ class ConversationMessage {
 
   bool get isHidden => hiddenAt != null;
 
+  /// Whether transient attachment rows must be suppressed at every projection
+  /// boundary. Active private-media states keep attachment identity so their
+  /// guarded placeholder/open flow can function; terminal states do not.
+  bool get mustClearTransientMedia =>
+      isDeleted || isHidden || privateMediaState.isTerminal;
+
   /// The [timestamp] parsed to a [DateTime], or null when the stored string is
   /// not valid ISO-8601 (fail-safe, matching the run-grouping/sort fallbacks at
   /// conversation_screen.dart and conversation_wired.dart).

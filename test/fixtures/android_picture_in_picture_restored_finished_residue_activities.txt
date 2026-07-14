@@ -1,0 +1,24 @@
+ACTIVITY MANAGER ACTIVITIES (dumpsys activity activities)
+Display #0 (activities from top to bottom):
+  * Task{flutter-task #845 type=standard I=com.mknoon.app.pipproof/com.mknoon.app.MainActivity U=0 visible=true visibleRequested=true mode=fullscreen translucent=false sz=2}
+    mLastPausedActivity: ActivityRecord{native-record u0 com.mknoon.app.pipproof/com.mknoon.app.ReceivedVideoPictureInPictureActivity t845 f}}
+    topResumedActivity=ActivityRecord{flutter-record u0 com.mknoon.app.pipproof/com.mknoon.app.MainActivity t845}
+    * Hist  #1: ActivityRecord{native-record u0 com.mknoon.app.pipproof/com.mknoon.app.ReceivedVideoPictureInPictureActivity t845 f}}
+      mActivityComponent=com.mknoon.app.pipproof/com.mknoon.app.ReceivedVideoPictureInPictureActivity
+      state=STOPPING finishing=true
+      windows=[Window{native-window u0 com.mknoon.app.pipproof/com.mknoon.app.ReceivedVideoPictureInPictureActivity}]
+      mVisibleRequested=false mVisible=true mClientVisible=true reportedVisible=true
+      nowVisible=true
+    * Hist  #0: ActivityRecord{flutter-record u0 com.mknoon.app.pipproof/com.mknoon.app.MainActivity t845}
+      mActivityComponent=com.mknoon.app.pipproof/com.mknoon.app.MainActivity
+      state=RESUMED finishing=false
+      windows=[Window{flutter-window u0 com.mknoon.app.pipproof/com.mknoon.app.MainActivity}]
+      mVisibleRequested=true mVisible=true mClientVisible=true reportedVisible=true
+  ResumedActivity: ActivityRecord{flutter-record u0 com.mknoon.app.pipproof/com.mknoon.app.MainActivity t845}
+  topDisplayFocusedRootTask=Task{flutter-task #845 type=standard I=com.mknoon.app.pipproof/com.mknoon.app.MainActivity mode=fullscreen}
+  mCurrentFocus=Window{flutter-window u0 com.mknoon.app.pipproof/com.mknoon.app.MainActivity}
+  mFocusedApp=ActivityRecord{flutter-record u0 com.mknoon.app.pipproof/com.mknoon.app.MainActivity t845}
+  mTopFullscreenOpaqueWindowState=Window{native-window u0 com.mknoon.app.pipproof/com.mknoon.app.ReceivedVideoPictureInPictureActivity}
+  mImeLayeringTarget=Window{native-window u0 com.mknoon.app.pipproof/com.mknoon.app.ReceivedVideoPictureInPictureActivity}
+  mImeInputTarget=Window{flutter-window u0 com.mknoon.app.pipproof/com.mknoon.app.MainActivity}
+  mImeParent=ActivityRecord{native-record u0 com.mknoon.app.pipproof/com.mknoon.app.ReceivedVideoPictureInPictureActivity t845 f}}

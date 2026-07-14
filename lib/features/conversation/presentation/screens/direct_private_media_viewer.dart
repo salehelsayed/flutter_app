@@ -1,0 +1,498 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/core/media/private_media_protection_coordinator.dart';
+import 'package:flutter_app/features/conversation/application/direct_private_media_viewer_controller.dart';
+import 'package:flutter_app/features/conversation/application/private_media_action_eligibility.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
+import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
+
+typedef DirectPrivateMediaSafeActionHandler =
+    Future<void> Function(DirectPrivateMediaAction action);
+
+class DirectPrivateMediaViewer extends StatefulWidget {
+  const DirectPrivateMediaViewer({
+    super.key,
+    required this.grant,
+    required this.controller,
+    this.onSafeAction,
+    this.capturePlatformOverride,
+  });
+
+  final DirectPrivateMediaViewerGrant grant;
+  final DirectPrivateMediaViewerController controller;
+  final DirectPrivateMediaSafeActionHandler? onSafeAction;
+  final TargetPlatform? capturePlatformOverride;
+
+  @override
+  State<DirectPrivateMediaViewer> createState() =>
+      _DirectPrivateMediaViewerState();
+}
+
+class _DirectPrivateMediaViewerState extends State<DirectPrivateMediaViewer>
+    with WidgetsBindingObserver {
+  StreamSubscription<PrivateMediaProtectionEvent>? _eventSubscription;
+  late final bool _failClosedBeforeFirstBuild;
+  bool _covered = false;
+  bool _closing = false;
+  bool _allowPop = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _eventSubscription = widget.controller.protectionEvents.listen(
+      _onProtectionEvent,
+      onError: (_, _) => _coverAndClose(DirectPrivateMediaExitReason.capture),
+      onDone: () => _coverAndClose(DirectPrivateMediaExitReason.capture),
+    );
+    final latched = widget.controller.latchedProtectionEvent;
+    _failClosedBeforeFirstBuild = latched != null;
+    if (latched != null) {
+      // A critical incident that predates route subscription must never allow
+      // the local path to reach a byte-bearing viewer, even under an opaque
+      // overlay. Render only the fail-closed surface until dismissal.
+      _covered = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _onProtectionEvent(latched);
+      });
+    }
+    widget.controller.armDisappearingDeadline(
+      widget.grant,
+      () => _close(DirectPrivateMediaExitReason.expiry),
+    );
+  }
+
+  void _onProtectionEvent(PrivateMediaProtectionEvent event) {
+    switch (event) {
+      case PrivateMediaProtectionEvent.captureStopped:
+      case PrivateMediaProtectionEvent.foreground:
+        return;
+      case PrivateMediaProtectionEvent.screenshot:
+      case PrivateMediaProtectionEvent.captureStarted:
+      case PrivateMediaProtectionEvent.inactive:
+      case PrivateMediaProtectionEvent.background:
+      case PrivateMediaProtectionEvent.channelFailure:
+        _coverAndClose(DirectPrivateMediaExitReason.capture);
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.resumed:
+        return;
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.detached:
+        _coverAndClose(DirectPrivateMediaExitReason.background);
+    }
+  }
+
+  void _coverAndClose(DirectPrivateMediaExitReason reason) {
+    if (_closing) return;
+    if (mounted) setState(() => _covered = true);
+    unawaited(_close(reason));
+  }
+
+  Future<void> _close(DirectPrivateMediaExitReason reason) async {
+    if (_closing) return;
+    _closing = true;
+    if (mounted && !_covered) setState(() => _covered = true);
+    if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+      await WidgetsBinding.instance.endOfFrame;
+    }
+    try {
+      if (reason == DirectPrivateMediaExitReason.background ||
+          reason == DirectPrivateMediaExitReason.capture) {
+        await widget.controller.revalidateForLifecycleEvent(widget.grant);
+      }
+    } catch (_) {
+      // Protection incidents remain fail-closed even when persistence cannot
+      // be re-read. The covered route must still be removed before native
+      // protection ownership is released.
+    }
+    try {
+      await widget.controller.settle(
+        widget.grant,
+        reason,
+        releaseProtection: false,
+      );
+    } catch (_) {
+      // Best-effort lifecycle settlement must not strand a byte-bearing route.
+    }
+
+    final route = mounted ? ModalRoute.of(context) : null;
+    try {
+      if (mounted && route != null) {
+        final navigator = Navigator.of(context);
+        setState(() => _allowPop = true);
+        // Publish the updated PopScope while the black cover is still native-
+        // protected. Calling maybePop in the same build would observe the old
+        // canPop value and could strand the grant.
+        await WidgetsBinding.instance.endOfFrame;
+
+        final routesAbove = <TransitionRoute<dynamic>>{};
+        navigator.popUntil((candidate) {
+          if (identical(candidate, route)) return true;
+          if (candidate is TransitionRoute<dynamic>) routesAbove.add(candidate);
+          return false;
+        });
+        for (final coveringRoute in routesAbove) {
+          await coveringRoute.completed;
+        }
+
+        if (route.isActive) {
+          final routeCompleted = route.completed;
+          navigator.removeRoute(route);
+          await routeCompleted;
+        }
+      }
+    } catch (_) {
+      // Never trade an uncertain still-mounted private route for early native
+      // release. A later route disposal performs the final balanced release.
+    } finally {
+      if (!mounted || route == null || !route.isActive) {
+        await widget.controller.releaseProtectionOwner(widget.grant);
+      }
+    }
+  }
+
+  Future<void> _dispatchSafe(DirectPrivateMediaAction action) async {
+    final callback = widget.onSafeAction;
+    if (callback == null || _closing) return;
+    if (action == DirectPrivateMediaAction.deleteForMe && mounted) {
+      setState(() => _covered = true);
+    }
+    final dispatched = await widget.controller.dispatchSafeAction(
+      widget.grant,
+      action,
+      () => callback(action),
+    );
+    if (action == DirectPrivateMediaAction.deleteForMe) {
+      if (dispatched) {
+        await _close(DirectPrivateMediaExitReason.close);
+      } else if (mounted) {
+        setState(() => _covered = false);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _eventSubscription?.cancel();
+    if (!widget.grant.protectionReleased) {
+      unawaited(_settleAfterRouteDisposal());
+    }
+    super.dispose();
+  }
+
+  Future<void> _settleAfterRouteDisposal() async {
+    try {
+      await widget.controller.settle(
+        widget.grant,
+        DirectPrivateMediaExitReason.dispose,
+        releaseProtection: false,
+      );
+    } catch (_) {
+      // The route is already gone, so native ownership must still be balanced.
+    } finally {
+      await widget.controller.releaseProtectionOwner(widget.grant);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_failClosedBeforeFirstBuild) {
+      return PopScope(
+        canPop: _allowPop,
+        onPopInvokedWithResult: (didPop, result) {
+          if (!didPop) _coverAndClose(DirectPrivateMediaExitReason.close);
+        },
+        child: const ColoredBox(
+          key: ValueKey('private-media-cover'),
+          color: Colors.black,
+        ),
+      );
+    }
+
+    final l10n = AppLocalizations.of(context)!;
+    final grant = widget.grant;
+    final item = MediaViewerItem(
+      attachmentId: grant.identity.attachmentId,
+      messageId: grant.identity.messageId,
+      kind: grant.kind,
+      mime: 'application/octet-stream',
+      owner: MediaOwnerLane.direct,
+      localPath: grant.localPath,
+      canEnterPictureInPicture: false,
+      protection: const MediaViewerProtection(isProtected: true),
+    );
+
+    return PopScope(
+      canPop: _allowPop,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) _coverAndClose(DirectPrivateMediaExitReason.close);
+      },
+      child: Stack(
+        key: const ValueKey('direct-private-media-viewer'),
+        children: [
+          FullScreenTypedMediaViewer(
+            items: [item],
+            privacyMinimized: true,
+            onFirstRenderedFrame: () async {
+              final accepted = await widget.controller.markFirstFrame(grant);
+              if (!accepted) {
+                _coverAndClose(DirectPrivateMediaExitReason.postFrameFailure);
+              }
+              return accepted;
+            },
+            onPreFrameFailure: () => _coverAndClose(
+              DirectPrivateMediaExitReason.preFrameDecodeFailure,
+            ),
+          ),
+          Positioned(
+            left: 12,
+            right: 12,
+            bottom: 12,
+            child: SafeArea(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    l10n.private_media_notification_body,
+                    key: const ValueKey('private-media-generic-copy'),
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    (widget.capturePlatformOverride == TargetPlatform.iOS ||
+                            (widget.capturePlatformOverride == null &&
+                                Platform.isIOS))
+                        ? l10n.private_media_ios_capture_limit
+                        : l10n.private_media_android_capture_limit,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white54, fontSize: 11),
+                  ),
+                  Text(
+                    l10n.private_media_general_capture_limit,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white54, fontSize: 11),
+                  ),
+                  if (widget.onSafeAction != null)
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        _PrivateActionButton(
+                          action: DirectPrivateMediaAction.reply,
+                          icon: Icons.reply_rounded,
+                          tooltip: l10n.media_viewer_action_reply,
+                          onPressed: _dispatchSafe,
+                        ),
+                        _PrivateActionButton(
+                          action: DirectPrivateMediaAction.info,
+                          icon: Icons.info_outline_rounded,
+                          tooltip: l10n.media_viewer_action_info,
+                          onPressed: _dispatchSafe,
+                        ),
+                        _PrivateActionButton(
+                          action: DirectPrivateMediaAction.deleteForMe,
+                          icon: Icons.delete_outline_rounded,
+                          tooltip: l10n.media_viewer_action_delete,
+                          onPressed: _dispatchSafe,
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+          ),
+          if (_covered)
+            const Positioned.fill(
+              child: ColoredBox(
+                key: ValueKey('private-media-cover'),
+                color: Colors.black,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PrivateActionButton extends StatelessWidget {
+  const _PrivateActionButton({
+    required this.action,
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final DirectPrivateMediaAction action;
+  final IconData icon;
+  final String tooltip;
+  final Future<void> Function(DirectPrivateMediaAction action) onPressed;
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    key: ValueKey('private-action-${action.name}'),
+    icon: Icon(icon, color: Colors.white),
+    tooltip: tooltip,
+    onPressed: () => onPressed(action),
+  );
+}
+
+class DirectPrivateMediaTerminalPlaceholder extends StatelessWidget {
+  const DirectPrivateMediaTerminalPlaceholder({
+    super.key,
+    required this.state,
+    this.onReply,
+    this.onInfo,
+    this.onDelete,
+  });
+
+  final PrivateMediaLifecycleState state;
+  final VoidCallback? onReply;
+  final VoidCallback? onInfo;
+  final VoidCallback? onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final copy = state == PrivateMediaLifecycleState.consumed
+        ? l10n.private_media_consumed
+        : l10n.private_media_expired;
+    return Semantics(
+      label: copy,
+      child: Container(
+        key: ValueKey('private-terminal-${state.name}'),
+        constraints: const BoxConstraints(minWidth: 180, maxWidth: 280),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.visibility_off_outlined),
+            const SizedBox(height: 6),
+            Text(copy, textAlign: TextAlign.center),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                IconButton(
+                  key: const ValueKey('private-action-reply'),
+                  tooltip: l10n.media_viewer_action_reply,
+                  onPressed: onReply,
+                  icon: const Icon(Icons.reply_rounded),
+                ),
+                IconButton(
+                  key: const ValueKey('private-action-info'),
+                  tooltip: l10n.media_viewer_action_info,
+                  onPressed: onInfo ?? () {},
+                  icon: const Icon(Icons.info_outline_rounded),
+                ),
+                IconButton(
+                  key: const ValueKey('private-action-deleteForMe'),
+                  tooltip: l10n.media_viewer_action_delete,
+                  onPressed: onDelete,
+                  icon: const Icon(Icons.delete_outline_rounded),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class DirectPrivateMediaOpenPlaceholder extends StatelessWidget {
+  const DirectPrivateMediaOpenPlaceholder({
+    super.key,
+    required this.onOpen,
+    this.opening = false,
+  });
+
+  final VoidCallback? onOpen;
+  final bool opening;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return FilledButton.tonalIcon(
+      key: const ValueKey('private-media-open'),
+      onPressed: opening ? null : onOpen,
+      icon: opening
+          ? const SizedBox.square(
+              dimension: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.lock_outline_rounded),
+      label: Text(
+        opening ? l10n.private_media_opening : l10n.private_media_open,
+      ),
+    );
+  }
+}
+
+class DirectPrivateMediaUnsupportedPlaceholder extends StatelessWidget {
+  const DirectPrivateMediaUnsupportedPlaceholder({
+    super.key,
+    this.onReply,
+    this.onInfo,
+    this.onDelete,
+  });
+
+  final VoidCallback? onReply;
+  final VoidCallback? onInfo;
+  final VoidCallback? onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return Container(
+      key: const ValueKey('private-media-unsupported'),
+      constraints: const BoxConstraints(minWidth: 180, maxWidth: 300),
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.system_update_alt_rounded),
+          const SizedBox(height: 6),
+          Text(l10n.private_media_unsupported, textAlign: TextAlign.center),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              IconButton(
+                key: const ValueKey('private-action-reply'),
+                tooltip: l10n.media_viewer_action_reply,
+                onPressed: onReply,
+                icon: const Icon(Icons.reply_rounded),
+              ),
+              IconButton(
+                key: const ValueKey('private-action-info'),
+                tooltip: l10n.media_viewer_action_info,
+                onPressed: onInfo ?? () {},
+                icon: const Icon(Icons.info_outline_rounded),
+              ),
+              IconButton(
+                key: const ValueKey('private-action-deleteForMe'),
+                tooltip: l10n.media_viewer_action_delete,
+                onPressed: onDelete,
+                icon: const Icon(Icons.delete_outline_rounded),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}

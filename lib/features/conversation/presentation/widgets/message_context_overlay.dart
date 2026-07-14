@@ -14,6 +14,9 @@ class MessageContextOverlay extends StatefulWidget {
   );
   static const menuKey = ValueKey('message-context-menu');
   static const replyActionKey = ValueKey('message-context-reply-action');
+  static const messageSenderActionKey = ValueKey(
+    'message-context-message-sender-action',
+  );
   static const editActionKey = ValueKey('message-context-edit-action');
   static const copyActionKey = ValueKey('message-context-copy-action');
   static const deleteActionKey = ValueKey('message-context-delete-action');
@@ -33,6 +36,7 @@ class MessageContextOverlay extends StatefulWidget {
   final String? currentEmoji;
   final bool showReactionBar;
   final bool showReplyAction;
+  final bool showMessageSenderAction;
   final bool showEditAction;
   final bool showCopyAction;
   final bool showSaveAction;
@@ -44,6 +48,7 @@ class MessageContextOverlay extends StatefulWidget {
   final void Function(String emoji)? onReactionSelected;
   final VoidCallback? onPlusTap;
   final VoidCallback? onReplyTap;
+  final VoidCallback? onMessageSenderTap;
   final VoidCallback? onEditTap;
   final VoidCallback? onCopyTap;
   final VoidCallback? onSaveTap;
@@ -59,6 +64,7 @@ class MessageContextOverlay extends StatefulWidget {
     this.currentEmoji,
     this.showReactionBar = true,
     this.showReplyAction = true,
+    this.showMessageSenderAction = false,
     this.showEditAction = false,
     this.showCopyAction = false,
     this.showSaveAction = false,
@@ -70,6 +76,7 @@ class MessageContextOverlay extends StatefulWidget {
     this.onReactionSelected,
     this.onPlusTap,
     this.onReplyTap,
+    this.onMessageSenderTap,
     this.onEditTap,
     this.onCopyTap,
     this.onSaveTap,
@@ -101,6 +108,7 @@ class _MessageContextOverlayState extends State<MessageContextOverlay> {
     final bottomPadding = mediaQuery.viewPadding.bottom + 8;
     final actionCount =
         (widget.showReplyAction ? 1 : 0) +
+        (widget.showMessageSenderAction ? 1 : 0) +
         (widget.showEditAction ? 1 : 0) +
         (widget.showCopyAction ? 1 : 0) +
         (widget.showSaveAction ? 1 : 0) +
@@ -178,12 +186,11 @@ class _MessageContextOverlayState extends State<MessageContextOverlay> {
                     MessageContextOverlay._verticalGap
               : _clampToViewport(
                   widget.anchorRect.bottom + MessageContextOverlay._verticalGap,
-                  min:
-                      (reactionBarTop != null
-                          ? reactionBarTop +
-                                MessageContextOverlay._reactionBarHeight +
-                                MessageContextOverlay._verticalGap
-                          : topPadding),
+                  min: (reactionBarTop != null
+                      ? reactionBarTop +
+                            MessageContextOverlay._reactionBarHeight +
+                            MessageContextOverlay._verticalGap
+                      : topPadding),
                   max: size.height - menuHeight - bottomPadding,
                 ))
         : null;
@@ -262,6 +269,7 @@ class _MessageContextOverlayState extends State<MessageContextOverlay> {
                   child: _ContextMenuCard(
                     key: MessageContextOverlay.menuKey,
                     showReplyAction: widget.showReplyAction,
+                    showMessageSenderAction: widget.showMessageSenderAction,
                     showEditAction: widget.showEditAction,
                     showCopyAction: widget.showCopyAction,
                     showSaveAction: widget.showSaveAction,
@@ -271,6 +279,9 @@ class _MessageContextOverlayState extends State<MessageContextOverlay> {
                     showDeleteAction: widget.showDeleteAction,
                     onReplyTap: widget.onReplyTap != null
                         ? () => _handleOnce(widget.onReplyTap!)
+                        : null,
+                    onMessageSenderTap: widget.onMessageSenderTap != null
+                        ? () => _handleOnce(widget.onMessageSenderTap!)
                         : null,
                     onEditTap: widget.onEditTap != null
                         ? () => _handleOnce(widget.onEditTap!)
@@ -314,6 +325,7 @@ class _MessageContextOverlayState extends State<MessageContextOverlay> {
 
 class _ContextMenuCard extends StatelessWidget {
   final bool showReplyAction;
+  final bool showMessageSenderAction;
   final bool showEditAction;
   final bool showCopyAction;
   final bool showSaveAction;
@@ -322,6 +334,7 @@ class _ContextMenuCard extends StatelessWidget {
   final bool showInfoAction;
   final bool showDeleteAction;
   final VoidCallback? onReplyTap;
+  final VoidCallback? onMessageSenderTap;
   final VoidCallback? onEditTap;
   final VoidCallback? onCopyTap;
   final VoidCallback? onSaveTap;
@@ -333,6 +346,7 @@ class _ContextMenuCard extends StatelessWidget {
   const _ContextMenuCard({
     super.key,
     required this.showReplyAction,
+    required this.showMessageSenderAction,
     required this.showEditAction,
     required this.showCopyAction,
     required this.showSaveAction,
@@ -341,6 +355,7 @@ class _ContextMenuCard extends StatelessWidget {
     required this.showInfoAction,
     required this.showDeleteAction,
     this.onReplyTap,
+    this.onMessageSenderTap,
     this.onEditTap,
     this.onCopyTap,
     this.onSaveTap,
@@ -364,6 +379,13 @@ class _ContextMenuCard extends StatelessWidget {
           icon: Icons.reply_rounded,
           label: l10n.conversation_context_reply,
           onTap: onReplyTap,
+        ),
+      if (showMessageSenderAction)
+        _ContextMenuAction(
+          key: MessageContextOverlay.messageSenderActionKey,
+          icon: Icons.chat_bubble_outline_rounded,
+          label: l10n.announcement_private_reply_action,
+          onTap: onMessageSenderTap,
         ),
       if (showEditAction)
         _ContextMenuAction(
@@ -423,11 +445,7 @@ class _ContextMenuCard extends StatelessWidget {
     for (var i = 0; i < actions.length; i++) {
       if (i > 0) {
         children.add(
-          Divider(
-            height: 1,
-            thickness: 1,
-            color: readableColors.divider,
-          ),
+          Divider(height: 1, thickness: 1, color: readableColors.divider),
         );
       }
       children.add(actions[i]);

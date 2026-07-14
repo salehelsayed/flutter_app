@@ -1,0 +1,6 @@
+AudioPlaybackConfigurations dump time: 07-13 23:03:07:986
+  AudioPlaybackConfiguration piid:4359 deviceIds:[3] type:android.media.MediaPlayer u/pid:10471/24452 state:started attr:AudioAttributes: usage=USAGE_MEDIA content=CONTENT_TYPE_MOVIE
+## MediaFocusControl
+Audio Focus stack entries (last is top of stack):
+  source:android.os.BinderProxy@native -- pack: com.mknoon.app.pipproof -- client: android.media.AudioManager@nativecom.mknoon.app.ReceivedVideoPictureInPictureActivity$$ExternalSyntheticLambda7@listener -- gain: GAIN -- flags:  -- loss: none -- notified: true -- limbofalse -- uid: 10471 -- attr: AudioAttributes: usage=USAGE_MEDIA content=CONTENT_TYPE_MOVIE -- sdk:36
+No external focus policy

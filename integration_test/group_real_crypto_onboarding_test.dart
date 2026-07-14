@@ -19,6 +19,7 @@ import 'package:flutter_app/features/groups/application/send_group_invite_use_ca
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
@@ -321,8 +322,8 @@ void main() {
           preserveRecipientPeerIds: true,
         );
         final forwardedPayload = await decryptedPayloadOf(forwardedResult);
-        final forwardedExtra =
-            (forwardedPayload['extra'] as Map?)?.cast<String, dynamic>();
+        final forwardedExtra = (forwardedPayload['extra'] as Map?)
+            ?.cast<String, dynamic>();
         expect(forwardedExtra, isNotNull);
         expect(forwardedExtra!['isForwarded'], isTrue);
         // The node's received-event mapping merges extras verbatim, so the
@@ -345,14 +346,216 @@ void main() {
           preserveRecipientPeerIds: true,
         );
         final legacyPayload = await decryptedPayloadOf(legacyResult);
-        final legacyExtra =
-            (legacyPayload['extra'] as Map?)?.cast<String, dynamic>();
+        final legacyExtra = (legacyPayload['extra'] as Map?)
+            ?.cast<String, dynamic>();
         expect(
           legacyExtra == null || !legacyExtra.containsKey('isForwarded'),
           isTrue,
           reason: 'legacy sends must not carry the marker key',
         );
         expect(legacyExtra?['isForwarded'] == true, isFalse);
+      },
+    );
+
+    testWidgets(
+      'GPL-12 private media policy survives real Go bridge encrypted group payload',
+      (tester) async {
+        final alice = await _generateIdentity(
+          bridge: bridge,
+          username: 'Alice',
+        );
+        final nodeService = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: InMemoryInboxStagingRepository(),
+        );
+        addTearDown(() async {
+          await nodeService.stopNode();
+          nodeService.dispose();
+        });
+        expect(
+          await nodeService.startNodeCore(alice.privateKey, alice.peerId),
+          isTrue,
+        );
+
+        final groupRepo = InMemoryGroupRepository();
+        final group = await createGroup(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          name: 'Real Crypto Private Media',
+          type: GroupType.chat,
+          creatorPeerId: alice.peerId,
+          creatorPublicKey: alice.publicKey,
+          creatorMlKemPublicKey: alice.mlKemPublicKey!,
+          creatorUsername: alice.username,
+        );
+        final groupKey = await groupRepo.getLatestKey(group.id);
+        expect(groupKey, isNotNull);
+
+        Future<Map<String, dynamic>> decryptedPayloadOf(
+          Map<String, dynamic> sendResult,
+        ) async {
+          expect(sendResult['ok'], isTrue, reason: '$sendResult');
+          final envelope =
+              jsonDecode(sendResult['envelope'] as String)
+                  as Map<String, dynamic>;
+          for (final key in GroupPrivateMediaPolicy.wireKeys) {
+            expect(
+              envelope.containsKey(key),
+              isFalse,
+              reason: '$key must stay inside the encrypted payload extras',
+            );
+          }
+          final plaintext = await _groupDecrypt(
+            bridge: bridge,
+            groupKey: groupKey!.encryptedKey,
+            ciphertext: (envelope['encrypted'] as Map).cast<String, dynamic>(),
+          );
+          return jsonDecode(plaintext) as Map<String, dynamic>;
+        }
+
+        final privateResult = await callGroupSendReliable(
+          bridge,
+          groupId: group.id,
+          text: '',
+          senderPeerId: alice.peerId,
+          senderPublicKey: alice.publicKey,
+          senderPrivateKey: alice.privateKey,
+          senderUsername: alice.username,
+          messageId: 'gpl12-private',
+          media: const [
+            {'id': 'gpl12-blob', 'mime': 'image/png', 'size': 42},
+          ],
+          privateMediaPolicy: const GroupPrivateMediaPolicy.viewOnce()
+              .toWireExtras(),
+          recipientPeerIds: const [],
+          preserveRecipientPeerIds: true,
+        );
+        final privatePayload = await decryptedPayloadOf(privateResult);
+        final privateExtra = (privatePayload['extra'] as Map?)
+            ?.cast<String, dynamic>();
+        expect(privateExtra, isNotNull);
+        expect(privateExtra!['mediaPolicyVersion'], 1);
+        expect(privateExtra['mediaLifecycle'], 'viewOnce');
+        expect(privateExtra.containsKey('mediaDurationSeconds'), isTrue);
+        expect(privateExtra['mediaDurationSeconds'], isNull);
+        expect(privateExtra['mediaProtected'], isTrue);
+        expect(
+          GroupPrivateMediaPolicy.fromWireExtras(privateExtra),
+          const GroupPrivateMediaPolicy.viewOnce(),
+        );
+
+        final legacyResult = await callGroupSendReliable(
+          bridge,
+          groupId: group.id,
+          text: '',
+          senderPeerId: alice.peerId,
+          senderPublicKey: alice.publicKey,
+          senderPrivateKey: alice.privateKey,
+          senderUsername: alice.username,
+          messageId: 'gpl12-legacy',
+          media: const [
+            {'id': 'gpl12-legacy-blob', 'mime': 'image/png', 'size': 42},
+          ],
+          recipientPeerIds: const [],
+          preserveRecipientPeerIds: true,
+        );
+        final legacyPayload = await decryptedPayloadOf(legacyResult);
+        final legacyExtra = (legacyPayload['extra'] as Map?)
+            ?.cast<String, dynamic>();
+        for (final key in GroupPrivateMediaPolicy.wireKeys) {
+          expect(legacyExtra?.containsKey(key) ?? false, isFalse);
+        }
+        expect(
+          GroupPrivateMediaPolicy.fromWireExtras(
+            legacyExtra?.cast<String, Object?>() ?? const <String, Object?>{},
+          ),
+          const GroupPrivateMediaPolicy.ordinary(),
+        );
+      },
+    );
+
+    testWidgets(
+      'APL-03D private announcement policy survives the real Go bridge encrypted payload',
+      (tester) async {
+        final admin = await _generateIdentity(
+          bridge: bridge,
+          username: 'Announcement admin',
+        );
+        final nodeService = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: InMemoryInboxStagingRepository(),
+        );
+        addTearDown(() async {
+          await nodeService.stopNode();
+          nodeService.dispose();
+        });
+        expect(
+          await nodeService.startNodeCore(admin.privateKey, admin.peerId),
+          isTrue,
+        );
+
+        final groupRepo = InMemoryGroupRepository();
+        final announcement = await createGroup(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          name: 'Real Crypto Private Announcement',
+          type: GroupType.announcement,
+          creatorPeerId: admin.peerId,
+          creatorPublicKey: admin.publicKey,
+          creatorMlKemPublicKey: admin.mlKemPublicKey!,
+          creatorUsername: admin.username,
+        );
+        final groupKey = await groupRepo.getLatestKey(announcement.id);
+        expect(groupKey, isNotNull);
+
+        final result = await callGroupSendReliable(
+          bridge,
+          groupId: announcement.id,
+          text: '',
+          senderPeerId: admin.peerId,
+          senderPublicKey: admin.publicKey,
+          senderPrivateKey: admin.privateKey,
+          senderUsername: admin.username,
+          messageId: 'apl03d-private-announcement',
+          media: const <Map<String, dynamic>>[
+            <String, dynamic>{
+              'id': 'apl03d-private-blob',
+              'mime': 'image/png',
+              'size': 42,
+            },
+          ],
+          privateMediaPolicy: const GroupPrivateMediaPolicy.viewOnce()
+              .toWireExtras(),
+          recipientPeerIds: const <String>[],
+          preserveRecipientPeerIds: true,
+        );
+        expect(result['ok'], isTrue, reason: '$result');
+        final envelope =
+            jsonDecode(result['envelope'] as String) as Map<String, dynamic>;
+        for (final key in GroupPrivateMediaPolicy.wireKeys) {
+          expect(
+            envelope.containsKey(key),
+            isFalse,
+            reason: '$key must remain encrypted-inner for announcements',
+          );
+        }
+        final plaintext = await _groupDecrypt(
+          bridge: bridge,
+          groupKey: groupKey!.encryptedKey,
+          ciphertext: (envelope['encrypted'] as Map).cast<String, dynamic>(),
+        );
+        final payload = jsonDecode(plaintext) as Map<String, dynamic>;
+        final extra = (payload['extra'] as Map).cast<String, dynamic>();
+        expect(
+          GroupPrivateMediaPolicy.fromWireExtras(extra),
+          const GroupPrivateMediaPolicy.viewOnce(),
+        );
+        expect(
+          extra.keys.toSet().containsAll(GroupPrivateMediaPolicy.wireKeys),
+          isTrue,
+        );
+        expect(extra.containsKey('mediaConsumedAt'), isFalse);
+        expect(extra.containsKey('media_received_at'), isFalse);
       },
     );
   });

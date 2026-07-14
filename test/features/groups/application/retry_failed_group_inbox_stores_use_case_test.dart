@@ -328,7 +328,10 @@ void main() {
   // repush payload armed) is picked up by the same repush pass and settles to
   // 'sent' — this is the live-app clock→tick transition on reconnect.
   test('retries queued_offline messages and promotes them to sent', () async {
-    final msg = _makeRetryEligible('msg-queued-offline', status: 'queued_offline');
+    final msg = _makeRetryEligible(
+      'msg-queued-offline',
+      status: 'queued_offline',
+    );
     await msgRepo.saveMessage(msg);
 
     final retried = await retryFailedGroupInboxStores(

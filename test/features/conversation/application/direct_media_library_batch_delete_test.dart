@@ -18,7 +18,8 @@ import '../domain/repositories/strict_direct_media_library_repository.dart';
 const String kContactPeerId = '12D3KooWDeleteContactPeer';
 
 /// Records every [MessageRepository.getMessage] materialization so the test
-/// can prove one lookup per UNIQUE parent — never per attachment.
+/// can distinguish the batch's one lookup per unique parent from the delete
+/// use case's mandatory current-authority re-read.
 class _RecordingMessageRepository extends InMemoryMessageRepository {
   final List<String> getMessageCalls = [];
 
@@ -81,10 +82,7 @@ void main() {
   }
 
   DirectReceivedMediaActionIdentity identity(String messageId, String id) =>
-      DirectReceivedMediaActionIdentity(
-        messageId: messageId,
-        attachmentId: id,
-      );
+      DirectReceivedMediaActionIdentity(messageId: messageId, attachmentId: id);
 
   testWidgets(
     'confirmed batch delete materializes unique direct parents and preserves partial failures',
@@ -149,9 +147,11 @@ void main() {
         deleteMessageForMe: recordingDelete,
       );
 
-      // One materialization per UNIQUE parent (A's two attachments cause ONE
-      // lookup) and exactly one delete for the resolved parent.
-      expect(messageRepo.getMessageCalls, ['msg-a', 'msg-b']);
+      // The batch materializes each UNIQUE parent once (A's two attachments do
+      // not add lookups). The resolved parent is then re-read exactly once by
+      // deleteMessageForMe so a stale ordinary snapshot cannot physically
+      // delete a row that became private before the deletion claim.
+      expect(messageRepo.getMessageCalls, ['msg-a', 'msg-a', 'msg-b']);
       expect(deleteCalls, ['msg-a']);
 
       // Typed outcome: B is a per-message failure whose attachment stays
@@ -256,23 +256,30 @@ void main() {
 
       // Cancel: the explicit confirmation names the UNIQUE parent count and
       // cancelling performs zero lookups/deletes.
-      await tester.tap(find.byKey(const ValueKey('shared-media-action-delete')));
+      await tester.tap(
+        find.byKey(const ValueKey('shared-media-action-delete')),
+      );
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.text('Delete 2 messages?'), findsOneWidget);
       expect(
         find.textContaining('entire message'),
         findsOneWidget,
-        reason: 'the copy must state whole messages and all attachments are '
+        reason:
+            'the copy must state whole messages and all attachments are '
             'removed locally',
       );
-      await tester.tap(find.byKey(const ValueKey('shared-media-delete-cancel')));
+      await tester.tap(
+        find.byKey(const ValueKey('shared-media-delete-cancel')),
+      );
       await tester.pump(const Duration(milliseconds: 300));
       expect(dispatches, isEmpty);
       expect(find.text('3 selected'), findsOneWidget);
 
       // Confirm: exactly one dispatch with the full selection; deleted
       // parents leave the grid, the failed attachment stays selected.
-      await tester.tap(find.byKey(const ValueKey('shared-media-action-delete')));
+      await tester.tap(
+        find.byKey(const ValueKey('shared-media-action-delete')),
+      );
       await tester.pump(const Duration(milliseconds: 300));
       await tester.tap(
         find.byKey(const ValueKey('shared-media-delete-confirm')),
@@ -280,16 +287,26 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(dispatches, hasLength(1));
-      expect(
-        dispatches.single.map((i) => i.attachmentId).toSet(),
-        {'att-a1', 'att-a2', 'att-b1'},
-      );
+      expect(dispatches.single.map((i) => i.attachmentId).toSet(), {
+        'att-a1',
+        'att-a2',
+        'att-b1',
+      });
       expect(deletedNotifications, [
         {'msg-a'},
       ]);
-      expect(find.byKey(const ValueKey('shared-media-tile-att-a1')), findsNothing);
-      expect(find.byKey(const ValueKey('shared-media-tile-att-a2')), findsNothing);
-      expect(find.byKey(const ValueKey('shared-media-tile-att-b1')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('shared-media-tile-att-a1')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('shared-media-tile-att-a2')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('shared-media-tile-att-b1')),
+        findsOneWidget,
+      );
       expect(
         find.byKey(const ValueKey('shared-media-selected-att-b1')),
         findsOneWidget,

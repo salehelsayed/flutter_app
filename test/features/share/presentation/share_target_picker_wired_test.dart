@@ -210,6 +210,105 @@ void main() {
   );
 
   testWidgets(
+    'internal direct forward hides blocked contacts while external share preserves its picker semantics',
+    (tester) async {
+      final harness = _buildHarness();
+      final blockedContact = _makeContact(
+        'peer-blocked-direct-forward',
+        'Blocked Forward Target',
+      ).copyWith(isBlocked: true);
+      harness.contactRepository.addTestContact(blockedContact);
+
+      await pumpPicker(
+        tester,
+        contactRepository: harness.contactRepository,
+        groupRepository: harness.groupRepository,
+        messageRepository: harness.messageRepository,
+        mediaAttachmentRepository: harness.mediaAttachmentRepository,
+        identityRepository: harness.identityRepository,
+        chatMessageListener: harness.chatMessageListener,
+        groupMessageRepository: harness.groupMessageRepository,
+        groupMessageListener: harness.groupMessageListener,
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: ['/tmp/internal-forward.jpg'],
+          forwardProvenance: ForwardProvenance(
+            operationDedupKey: 'internal-forward-picker-filter',
+          ),
+        ),
+      );
+
+      expect(find.text('Blocked Forward Target'), findsNothing);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await pumpPicker(
+        tester,
+        contactRepository: harness.contactRepository,
+        groupRepository: harness.groupRepository,
+        messageRepository: harness.messageRepository,
+        mediaAttachmentRepository: harness.mediaAttachmentRepository,
+        identityRepository: harness.identityRepository,
+        chatMessageListener: harness.chatMessageListener,
+        groupMessageRepository: harness.groupMessageRepository,
+        groupMessageListener: harness.groupMessageListener,
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: ['/tmp/external-share.jpg'],
+        ),
+      );
+
+      expect(find.text('Blocked Forward Target'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'internal direct forward rechecks a selected contact after readiness drift',
+    (tester) async {
+      final harness = _buildHarness();
+      final target = _makeContact(
+        'peer-direct-forward-drift',
+        'Forward Drift Target',
+      );
+      harness.contactRepository.addTestContact(target);
+      final coordinator = _RecordingBatchCoordinator(
+        result: const ShareBatchDeliveryResult(results: []),
+      );
+
+      await pumpPicker(
+        tester,
+        contactRepository: harness.contactRepository,
+        groupRepository: harness.groupRepository,
+        messageRepository: harness.messageRepository,
+        mediaAttachmentRepository: harness.mediaAttachmentRepository,
+        identityRepository: harness.identityRepository,
+        chatMessageListener: harness.chatMessageListener,
+        groupMessageRepository: harness.groupMessageRepository,
+        groupMessageListener: harness.groupMessageListener,
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: ['/tmp/internal-forward.jpg'],
+          forwardProvenance: ForwardProvenance(
+            operationDedupKey: 'internal-forward-readiness-drift',
+          ),
+        ),
+        batchShareCoordinator: coordinator,
+        preSendReady: () =>
+            harness.contactRepository.blockContact(target.peerId),
+      );
+
+      await tester.tap(find.byKey(ValueKey('share-contact-${target.peerId}')));
+      await tester.pump();
+      await tester.tap(find.text('Send'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(coordinator.deliverCallCount, 0);
+      expect(find.text('Share with...'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'UP-014 filters removed pending and dissolved groups from share targets',
     (tester) async {
       final harness = _buildHarness();

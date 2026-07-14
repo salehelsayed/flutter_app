@@ -18,6 +18,7 @@ import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+import 'package:path/path.dart' as p;
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
@@ -54,7 +55,7 @@ const _retryMp4Bytes = <int>[
 
 String _retryFixturePath(String localPath) {
   if (localPath.startsWith('/')) return localPath;
-  return '${Directory.systemTemp.path}/test_docs/$localPath';
+  return p.join(FakeMediaFileManager.testRootPath, localPath);
 }
 
 List<int> _retryFixtureBytesForMime(String mime) {

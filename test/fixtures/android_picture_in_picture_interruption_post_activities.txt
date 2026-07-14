@@ -1,0 +1,14 @@
+ACTIVITY MANAGER ACTIVITIES (dumpsys activity activities)
+  * Task{helper #858 type=standard I=com.mknoon.app.pipproof.test/com.mknoon.app.pipproof.PictureInPictureAudioFocusInterruptionProofActivity U=0 visible=true visibleRequested=true mode=fullscreen translucent=false sz=1}
+    topResumedActivity=ActivityRecord{helperRecord u0 com.mknoon.app.pipproof.test/com.mknoon.app.pipproof.PictureInPictureAudioFocusInterruptionProofActivity t858}
+    * Hist  #0: ActivityRecord{helperRecord u0 com.mknoon.app.pipproof.test/com.mknoon.app.pipproof.PictureInPictureAudioFocusInterruptionProofActivity t858}
+      state=RESUMED mVisibleRequested=true nowVisible=true
+      windows=[Window{helperWindow u0 com.mknoon.app.pipproof.test/com.mknoon.app.pipproof.PictureInPictureAudioFocusInterruptionProofActivity}]
+  * Task{flutter #856 type=standard I=com.mknoon.app.pipproof/com.mknoon.app.MainActivity U=0 visible=false visibleRequested=false mode=fullscreen translucent=false sz=1}
+    * Hist  #0: ActivityRecord{flutterRecord u0 com.mknoon.app.pipproof/com.mknoon.app.MainActivity t856}
+      state=STOPPED mVisibleRequested=false nowVisible=false
+      windows=[Window{flutterWindow u0 com.mknoon.app.pipproof/com.mknoon.app.MainActivity}]
+  ResumedActivity: ActivityRecord{helperRecord u0 com.mknoon.app.pipproof.test/com.mknoon.app.pipproof.PictureInPictureAudioFocusInterruptionProofActivity t858}
+  topDisplayFocusedRootTask=Task{helper #858 type=standard I=com.mknoon.app.pipproof.test/com.mknoon.app.pipproof.PictureInPictureAudioFocusInterruptionProofActivity}
+  mCurrentFocus=Window{helperWindow u0 com.mknoon.app.pipproof.test/com.mknoon.app.pipproof.PictureInPictureAudioFocusInterruptionProofActivity}
+  mFocusedApp=ActivityRecord{helperRecord u0 com.mknoon.app.pipproof.test/com.mknoon.app.pipproof.PictureInPictureAudioFocusInterruptionProofActivity t858}

@@ -293,12 +293,24 @@ class _RecordingEgress extends ReceivedMediaEgressService {
   }
 }
 
-class _RecordingStateRepository implements MediaLibraryStateRepository {
+class _RecordingStateRepository
+    implements MediaLibraryStateRepository, GroupMediaLibraryStateRepository {
   final List<(String, bool)> bookmarkWrites = [];
 
   @override
   Future<void> setBookmarked(String id, {required bool bookmarked}) async {
     bookmarkWrites.add((id, bookmarked));
+  }
+
+  @override
+  Future<bool> setGroupBookmarkedIfOrdinary({
+    required String groupId,
+    required String messageId,
+    required String attachmentId,
+    required bool bookmarked,
+  }) async {
+    bookmarkWrites.add((attachmentId, bookmarked));
+    return true;
   }
 
   @override

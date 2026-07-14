@@ -33,6 +33,35 @@ const List<String> _attachmentColumns = [
 String _attachmentSelectList() =>
     _attachmentColumns.map((c) => 'm.$c AS att_$c').join(', ');
 
+/// Canonical durable ordinary state for a direct parent. Keeping this in the
+/// SQL predicate (before keyset/LIMIT) prevents private, unsupported, and
+/// internally inconsistent rows from consuming Shared Media page slots.
+const String _directOrdinaryMediaParentPredicate =
+    'p.private_media_policy_version = 0 '
+    "AND p.private_media_mode = 'ordinary' "
+    'AND p.private_media_duration_seconds IS NULL '
+    "AND p.private_media_state = 'none' "
+    'AND p.private_media_received_at_ms IS NULL '
+    'AND p.private_media_expires_at_ms IS NULL '
+    'AND p.private_media_revealed_at_ms IS NULL '
+    'AND p.private_media_terminal_at_ms IS NULL '
+    'AND p.private_media_clock_high_water_ms IS NULL';
+
+/// Canonical durable ordinary state for a group parent. This predicate is
+/// applied before keyset filtering and LIMIT so private, unsupported, and
+/// internally inconsistent parents cannot consume Shared Media page slots.
+const String _groupOrdinaryMediaParentPredicate =
+    'p.media_policy_version = 0 '
+    "AND p.media_lifecycle = 'standard' "
+    'AND p.media_duration_seconds IS NULL '
+    'AND p.media_protected = 0 '
+    'AND p.media_received_at IS NULL '
+    'AND p.media_expires_at IS NULL '
+    'AND p.media_last_checked_at IS NULL '
+    'AND p.media_consumed_at IS NULL '
+    'AND p.media_expired_at IS NULL '
+    'AND p.media_cleanup_pending = 0';
+
 /// Strips the `att_` alias prefix back into plain attachment column names so
 /// `MediaAttachment.fromMap` (and secure-store hydration) can consume the row.
 Map<String, Object?> mediaLibraryRowToAttachmentMap(Map<String, Object?> row) {
@@ -103,12 +132,14 @@ Future<List<Map<String, Object?>>> dbLoadMediaLibraryPage(
       parentJoin = 'JOIN messages p ON p.id = m.message_id';
       parentPredicate =
           "m.owner_lane = 'direct' AND p.contact_peer_id = ? "
-          'AND p.hidden_at IS NULL AND p.deleted_at IS NULL';
+          'AND p.hidden_at IS NULL AND p.deleted_at IS NULL '
+          'AND $_directOrdinaryMediaParentPredicate';
       senderSelect = 'p.sender_peer_id AS parent_sender_peer_id';
     } else {
       parentJoin = 'JOIN group_messages p ON p.id = m.message_id';
       parentPredicate =
           "m.owner_lane = 'group' AND p.group_id = ? "
+          'AND $_groupOrdinaryMediaParentPredicate '
           'AND NOT EXISTS (SELECT 1 FROM group_message_local_deletions t '
           'WHERE t.message_id = p.id)';
       senderSelect = 'p.sender_peer_id AS parent_sender_peer_id';
@@ -207,11 +238,7 @@ Future<List<Map<String, Object?>>> dbLoadMediaStoragePage(
   emitFlowEvent(
     layer: 'DB',
     event: 'MEDIA_STORAGE_DB_PAGE_START',
-    details: {
-      'scopeKind': scopeKind,
-      'mediaTypes': mediaTypes,
-      'limit': limit,
-    },
+    details: {'scopeKind': scopeKind, 'mediaTypes': mediaTypes, 'limit': limit},
   );
 
   try {

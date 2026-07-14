@@ -1,6 +1,9 @@
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -335,6 +338,118 @@ void main() {
       expect(loaded!.editedAt, '2026-02-09T10:05:00.000Z');
     });
 
+    test(
+      'saveMessage emits validated transient image/video once without caching it',
+      () async {
+        const messageId = 'forward-media-projection';
+        const media = <MediaAttachment>[
+          MediaAttachment(
+            id: 'forward-image',
+            messageId: messageId,
+            mime: 'image/png',
+            size: 3,
+            mediaType: 'image',
+            localPath: '/tmp/forward-image.png',
+            downloadStatus: 'done',
+            createdAt: '2026-02-09T10:00:01.000Z',
+            ownerLane: MediaOwnerLane.direct,
+          ),
+          MediaAttachment(
+            id: 'forward-video',
+            messageId: messageId,
+            mime: 'video/mp4',
+            size: 4,
+            mediaType: 'video',
+            localPath: '/tmp/forward-video.mp4',
+            downloadStatus: 'done',
+            createdAt: '2026-02-09T10:00:02.000Z',
+            ownerLane: MediaOwnerLane.direct,
+          ),
+        ];
+        final outgoing = makeMessage(
+          id: messageId,
+          text: 'Forwarded media',
+          status: 'sent',
+        ).copyWith(media: media);
+        final emitted = <ConversationMessage>[];
+        final sub = repo.messageChanges.listen(emitted.add);
+        addTearDown(sub.cancel);
+
+        await repo.saveMessage(outgoing);
+        await Future<void>.delayed(Duration.zero);
+
+        expect(store[messageId], isNot(contains('media')));
+        expect(emitted, hasLength(1));
+        expectMessageShape(emitted.single, outgoing);
+        expect(
+          emitted.single.media.map((attachment) => attachment.id),
+          <String>['forward-image', 'forward-video'],
+        );
+        expect(
+          (await repo.getMessage(messageId))!.media,
+          isEmpty,
+          reason: 'row reads must never recover transient paths from cache',
+        );
+
+        await repo.updateMessageStatus(messageId, 'delivered');
+        await Future<void>.delayed(Duration.zero);
+
+        expect(emitted, hasLength(2));
+        expect(emitted.last.status, 'delivered');
+        expect(
+          emitted.last.media,
+          isEmpty,
+          reason: 'status events are canonical row projections only',
+        );
+      },
+    );
+
+    test(
+      'deleted or explicitly empty saves never resurrect transient media',
+      () async {
+        const messageId = 'deleted-media-projection';
+        const media = <MediaAttachment>[
+          MediaAttachment(
+            id: 'deleted-image',
+            messageId: messageId,
+            mime: 'image/png',
+            size: 3,
+            mediaType: 'image',
+            localPath: '/tmp/deleted-image.png',
+            downloadStatus: 'done',
+            createdAt: '2026-02-09T10:00:01.000Z',
+            ownerLane: MediaOwnerLane.direct,
+          ),
+        ];
+        final outgoing = makeMessage(id: messageId).copyWith(media: media);
+        final emitted = <ConversationMessage>[];
+        final sub = repo.messageChanges.listen(emitted.add);
+        addTearDown(sub.cancel);
+
+        await repo.saveMessage(outgoing);
+        await Future<void>.delayed(Duration.zero);
+        expect(emitted.single.media, media);
+
+        final deleted = outgoing.copyWith(
+          text: '',
+          deletedAt: '2026-02-09T10:05:00.000Z',
+          hiddenAt: '2026-02-09T10:05:00.000Z',
+          media: media,
+        );
+        await repo.saveMessage(deleted);
+        await Future<void>.delayed(Duration.zero);
+
+        expect(emitted.last.isDeleted, isTrue);
+        expect(emitted.last.media, isEmpty);
+        expect((await repo.getMessage(messageId))!.media, isEmpty);
+
+        await repo.saveMessage(deleted.copyWith(media: const []));
+        await repo.updateMessageStatus(messageId, 'delivered');
+        await Future<void>.delayed(Duration.zero);
+        expect(emitted.last.media, isEmpty);
+      },
+    );
+
     test('getMessagesForContact returns empty list when no messages', () async {
       final result = await repo.getMessagesForContact('nonexistent');
       expect(result, isEmpty);
@@ -493,6 +608,32 @@ void main() {
       expect(store.containsKey('msg-2'), isFalse);
       expect(store.containsKey('msg-3'), isTrue);
     });
+
+    test(
+      'physical delete emits exact removal only after the durable row is gone',
+      () async {
+        await repo.saveMessage(
+          makeMessage(id: 'pip-parent', contactPeerId: 'peer-pip'),
+        );
+        final removals = <DirectMessageRemoval>[];
+        var rowWasAbsentAtEmission = false;
+        final subscription = repo.messageRemovals.listen((removal) {
+          removals.add(removal);
+          rowWasAbsentAtEmission = !store.containsKey('pip-parent');
+        });
+        addTearDown(subscription.cancel);
+
+        expect(await repo.deleteMessage('pip-parent'), 1);
+
+        expect(rowWasAbsentAtEmission, isTrue);
+        expect(removals, hasLength(1));
+        expect(removals.single.contactPeerId, 'peer-pip');
+        expect(removals.single.messageId, 'pip-parent');
+
+        expect(await repo.deleteMessage('pip-parent'), 0);
+        expect(removals, hasLength(1), reason: 'a no-op delete stays silent');
+      },
+    );
 
     test(
       'updateMessageStatus emits updated message exactly once without reloading cached row',

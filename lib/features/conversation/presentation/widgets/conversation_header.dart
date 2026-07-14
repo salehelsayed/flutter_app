@@ -27,112 +27,122 @@ class ConversationHeader extends StatelessWidget {
     this.onAvatarTap,
   });
 
+  /// Stable route-level accessibility marker consumed by the iOS notification
+  /// tap proof. Unlike matching an arbitrary descendant named after the actor,
+  /// this identifier exists only while that conversation header is rendered.
+  static String accessibilityIdentifierFor(String contactUsername) =>
+      'mknoon.conversation.$contactUsername';
+
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
 
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-        child: Container(
-          padding: EdgeInsets.only(
-            top: MediaQuery.of(context).padding.top + 8,
-            left: 12,
-            right: 12,
-            bottom: 12,
-          ),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                readableColors.glassSurface,
-                readableColors.glassSurface.withValues(alpha: 0.85),
-                readableColors.glassSurface.withValues(alpha: 0),
-              ],
-              stops: [0.0, 0.8, 1.0],
+    return Semantics(
+      container: true,
+      identifier: accessibilityIdentifierFor(contactUsername),
+      child: ClipRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: Container(
+            padding: EdgeInsets.only(
+              top: MediaQuery.of(context).padding.top + 8,
+              left: 12,
+              right: 12,
+              bottom: 12,
             ),
-          ),
-          child: Row(
-            children: [
-              // Back button
-              GestureDetector(
-                onTap: onBack,
-                behavior: HitTestBehavior.opaque,
-                child: SizedBox(
-                  width: 44,
-                  height: 44,
-                  child: Center(
-                    child: Icon(
-                      Icons.chevron_left,
-                      size: 24,
-                      color: readableColors.iconSecondary,
-                    ),
-                  ),
-                ),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  readableColors.glassSurface,
+                  readableColors.glassSurface.withValues(alpha: 0.85),
+                  readableColors.glassSurface.withValues(alpha: 0),
+                ],
+                stops: [0.0, 0.8, 1.0],
               ),
-              const SizedBox(width: 6),
-              // Avatar + name (tappable → contact profile)
-              Expanded(
-                child: GestureDetector(
-                  onTap: onAvatarTap,
+            ),
+            child: Row(
+              children: [
+                // Back button
+                GestureDetector(
+                  onTap: onBack,
                   behavior: HitTestBehavior.opaque,
-                  child: Row(
-                    children: [
-                      UserAvatar(peerId: contactPeerId, size: 36),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              contactUsername,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                                color: readableColors.textPrimary,
-                              ),
-                            ),
-                            const SizedBox(height: 1),
-                            Text(
-                              AppLocalizations.of(
-                                context,
-                              )!.connected_date(connectionDate),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w400,
-                                color: readableColors.textMuted,
-                              ),
-                            ),
-                          ],
-                        ),
+                  child: SizedBox(
+                    width: 44,
+                    height: 44,
+                    child: Center(
+                      child: Icon(
+                        Icons.chevron_left,
+                        size: 24,
+                        color: readableColors.iconSecondary,
                       ),
-                    ],
-                  ),
-                ),
-              ),
-              // Overflow button
-              GestureDetector(
-                onTap: onOverflow,
-                behavior: HitTestBehavior.opaque,
-                child: SizedBox(
-                  width: 44,
-                  height: 44,
-                  child: Center(
-                    child: Icon(
-                      Icons.more_vert,
-                      size: 20,
-                      color: readableColors.iconMuted,
                     ),
                   ),
                 ),
-              ),
-            ],
+                const SizedBox(width: 6),
+                // Avatar + name (tappable → contact profile)
+                Expanded(
+                  child: GestureDetector(
+                    onTap: onAvatarTap,
+                    behavior: HitTestBehavior.opaque,
+                    child: Row(
+                      children: [
+                        UserAvatar(peerId: contactPeerId, size: 36),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                contactUsername,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  color: readableColors.textPrimary,
+                                ),
+                              ),
+                              const SizedBox(height: 1),
+                              Text(
+                                AppLocalizations.of(
+                                  context,
+                                )!.connected_date(connectionDate),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w400,
+                                  color: readableColors.textMuted,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                // Overflow button
+                GestureDetector(
+                  onTap: onOverflow,
+                  behavior: HitTestBehavior.opaque,
+                  child: SizedBox(
+                    width: 44,
+                    height: 44,
+                    child: Center(
+                      child: Icon(
+                        Icons.more_vert,
+                        size: 20,
+                        color: readableColors.iconMuted,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

@@ -46,6 +46,27 @@ Announcements are a `GroupType.announcement` where only admins can send, while a
 
 ---
 
+## Explicit Message Sender Navigation
+
+Plan 247 adds **Message sender** as reader-initiated cross-lane navigation,
+not an announcement send, same-thread Reply, Forward, contact introduction, or
+transport capability. The action is available only for an exact current
+incoming announcement visual-media parent whose sender resolves through the
+fresh fail-closed resolver to an existing active, unblocked contact. Bubble and
+viewer dispatch re-check the current message, sender, group-owned attachment,
+local-deletion authority, membership, and opener; stale or corrupt ownership
+opens nothing.
+
+The accepted destination is the existing fully wired 1:1 route with a blank composer.
+The zero-send proof traverses the real action and records no
+direct/group send, upload, Forward, P2P/Bridge, persistence, or source mutation before,
+during, and after cancellation. No caption, media, quote, group context, path,
+key, nonce, or other source field crosses lanes. Announcement read-only compose
+and reactions remain unchanged, and normal discussion-group Reply remains on
+its existing path.
+
+---
+
 ## Role Management
 
 | # | Use Case | File | Test | Quality | Notes |

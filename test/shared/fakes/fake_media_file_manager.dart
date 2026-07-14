@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:path/path.dart' as p;
@@ -9,10 +10,11 @@ import 'package:path/path.dart' as p;
 class FakeMediaFileManager extends MediaFileManager {
   static final String _testRootPath = p.join(
     Directory.systemTemp.path,
+    'mknoon_fake_media_${pid}_${identityHashCode(Isolate.current)}',
     'test_docs',
   );
 
-  /// The deterministic test documents root this fake resolves against.
+  /// The test-isolate-local documents root this fake resolves against.
   ///
   /// 162: after the loaders swap the async [resolveStoredPath] for the static
   /// [MediaFileManager.resolveStoredPathSync], a test that still wants the same
@@ -31,6 +33,7 @@ class FakeMediaFileManager extends MediaFileManager {
   /// swap to the synchronous twin this MUST stay 0 (the static twin never routes
   /// through this instance) — the RED-on-HEAD lever for TC-162-02/03.
   int resolveStoredPathCount = 0;
+  int trustedMediaRootPathCount = 0;
 
   /// Override file existence for testing.
   bool? fileExistsOverride;
@@ -96,8 +99,25 @@ class FakeMediaFileManager extends MediaFileManager {
         storedPath.startsWith('post_media\\')) {
       return p.join(_testRootPath, storedPath);
     }
+    final normalized = storedPath.replaceAll('\\', '/');
+    final mediaIndex = normalized.indexOf('/media/');
+    if (mediaIndex != -1) {
+      return p.join(_testRootPath, normalized.substring(mediaIndex + 1));
+    }
     return storedPath;
   }
+
+  @override
+  Future<String> trustedMediaRootPath() async {
+    trustedMediaRootPathCount++;
+    return p.join(_testRootPath, 'media');
+  }
+
+  @override
+  Future<String> groupForwardSnapshotRootPath() async => p.join(
+    _testRootPath,
+    MediaFileManager.groupForwardSnapshotRootDirectoryName,
+  );
 
   @override
   Future<String> localPathForPostAttachment({
@@ -144,6 +164,7 @@ class FakeMediaFileManager extends MediaFileManager {
     String reason = 'media_file_delete',
     String? storedPath,
     Map<String, Object?> details = const {},
+    bool redactTelemetry = false,
   }) async {
     deletedFilePaths.add(localPath);
     // 229: mirror the real manager's observable behavior — production code

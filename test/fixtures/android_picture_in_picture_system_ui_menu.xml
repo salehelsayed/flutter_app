@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<hierarchy rotation="0">
+  <node index="0" package="com.android.systemui" class="android.widget.FrameLayout" enabled="true" clickable="false" visible-to-user="true" bounds="[389,1570][910,1863]">
+    <node index="0" text="" resource-id="com.android.systemui:id/expand_button" class="android.widget.ImageButton" package="com.android.systemui" content-desc="Full screen" clickable="true" enabled="true" visible-to-user="true" bounds="[405,1586][517,1698]" />
+    <node index="1" text="" resource-id="com.android.systemui:id/dismiss" class="android.widget.ImageButton" package="com.android.systemui" content-desc="Close" clickable="true" enabled="true" visible-to-user="true" bounds="[782,1586][894,1698]" />
+  </node>
+  <node index="1" text="" resource-id="com.android.systemui:id/expand_button" class="android.widget.ImageButton" package="com.android.systemui" content-desc="Expand notification" clickable="true" enabled="true" visible-to-user="true" bounds="[950,100][1050,200]" />
+</hierarchy>

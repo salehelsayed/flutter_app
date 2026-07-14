@@ -20,8 +20,10 @@ import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/date_separator.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
@@ -29,14 +31,18 @@ import 'package:flutter_app/features/conversation/presentation/widgets/attachmen
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
+import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -48,12 +54,12 @@ import 'package:flutter_app/features/groups/presentation/screens/group_info_scre
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/settings/application/media_download_policy.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/media_download_preferences.dart';
 import 'package:flutter_app/core/media/received_media_egress.dart';
 import 'package:flutter_app/core/media/received_media_egress_service.dart';
-import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/groups/application/group_media_delete_for_me_coordinator.dart';
 import 'package:flutter_app/features/groups/application/group_received_media_actions.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_media_info_sheet.dart';
@@ -61,6 +67,7 @@ import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
+import 'package:flutter_app/features/share/presentation/screens/share_target_picker_wired.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
@@ -77,6 +84,8 @@ import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
+import '../../../shared/fakes/in_memory_message_repository.dart';
+import '../../../shared/fixtures/media_bytes.dart';
 import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 
 const _tinyPngBytes = <int>[
@@ -504,6 +513,13 @@ class _DelayedNotFoundGroupRepository extends InMemoryGroupRepository {
   }
 }
 
+class _ThrowingMembersGroupRepository extends InMemoryGroupRepository {
+  @override
+  Future<List<GroupMember>> getMembers(String groupId) async {
+    throw StateError('simulated roster load failure');
+  }
+}
+
 class CountingGroupMessageRepository extends InMemoryGroupMessageRepository {
   int getMessagesPageCalls = 0;
   int getMessageCalls = 0;
@@ -529,6 +545,56 @@ class CountingGroupMessageRepository extends InMemoryGroupMessageRepository {
   Future<void> markAsRead(String groupId) async {
     markAsReadCalls++;
     return super.markAsRead(groupId);
+  }
+}
+
+class _RevokeWriterOnPrivateParentSaveRepository
+    extends CountingGroupMessageRepository {
+  _RevokeWriterOnPrivateParentSaveRepository({
+    required this.groupRepo,
+    required this.senderPeerId,
+  });
+
+  final InMemoryGroupRepository groupRepo;
+  final String senderPeerId;
+  bool sawPrivateParentSave = false;
+  int reloadsAfterPrivateParentSave = 0;
+
+  @override
+  Future<void> saveMessage(GroupMessage message) async {
+    await super.saveMessage(message);
+    if (sawPrivateParentSave || !message.privateMediaPolicy.isPrivate) return;
+    sawPrivateParentSave = true;
+    final member = await groupRepo.getMember(message.groupId, senderPeerId);
+    if (member != null) {
+      await groupRepo.saveMember(member.copyWith(role: MemberRole.reader));
+    }
+  }
+
+  @override
+  Future<GroupMessage?> getMessage(String id) async {
+    if (sawPrivateParentSave) reloadsAfterPrivateParentSave++;
+    return super.getMessage(id);
+  }
+}
+
+class _RemoveRecipientOnPrivateParentSaveRepository
+    extends CountingGroupMessageRepository {
+  _RemoveRecipientOnPrivateParentSaveRepository({
+    required this.groupRepo,
+    required this.recipientPeerId,
+  });
+
+  final InMemoryGroupRepository groupRepo;
+  final String recipientPeerId;
+  bool sawPrivateParentSave = false;
+
+  @override
+  Future<void> saveMessage(GroupMessage message) async {
+    await super.saveMessage(message);
+    if (sawPrivateParentSave || !message.privateMediaPolicy.isPrivate) return;
+    sawPrivateParentSave = true;
+    await groupRepo.removeMember(message.groupId, recipientPeerId);
   }
 }
 
@@ -626,6 +692,89 @@ class CountingMediaAttachmentRepository
   }
 }
 
+class GateNthExactMediaReadRepository
+    extends CountingMediaAttachmentRepository {
+  int exactReadCalls = 0;
+  int? _gateAtCall;
+  Completer<void>? _captured;
+  Completer<void>? _release;
+
+  void gateAfterExactReads(int additionalReads) {
+    if (additionalReads <= 0 || _gateAtCall != null) {
+      throw StateError('invalid or already-armed exact-read gate');
+    }
+    _gateAtCall = exactReadCalls + additionalReads;
+    _captured = Completer<void>();
+    _release = Completer<void>();
+  }
+
+  Future<void> get captured => _captured!.future;
+  bool get hasCaptured => _captured?.isCompleted ?? false;
+
+  void release() {
+    final completer = _release;
+    if (completer == null || completer.isCompleted) return;
+    completer.complete();
+  }
+
+  @override
+  Future<MediaAttachment?> getAttachmentById(String id) async {
+    exactReadCalls++;
+    if (exactReadCalls == _gateAtCall) {
+      _captured!.complete();
+      await _release!.future;
+      _gateAtCall = null;
+    }
+    return super.getAttachmentById(id);
+  }
+}
+
+class KnownClearGroupMessageRepository extends CountingGroupMessageRepository
+    implements GroupMessageLocalDeletionAuthority {
+  @override
+  Future<GroupMessageLocalDeletionState> getGroupMessageLocalDeletionState(
+    String messageId,
+  ) async => GroupMessageLocalDeletionState.knownClear;
+}
+
+/// Deliberately returns a mixed/corrupt result for an owner-scoped group read.
+/// The viewer boundary must still qualify each current item instead of
+/// laundering every sibling through one parent-wide eligible decision.
+class MixedViewerMediaAttachmentRepository
+    extends CountingMediaAttachmentRepository {
+  MixedViewerMediaAttachmentRepository({
+    required this.parentMessageId,
+    required this.rows,
+  });
+
+  final String parentMessageId;
+  final List<MediaAttachment> rows;
+
+  @override
+  Future<List<MediaAttachment>> getAttachmentsForMessage(
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async {
+    getAttachmentsForMessageCalls++;
+    return messageId == parentMessageId
+        ? List<MediaAttachment>.of(rows)
+        : const <MediaAttachment>[];
+  }
+
+  @override
+  Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
+    List<String> messageIds, {
+    required MediaOwnerLane owner,
+  }) async {
+    getAttachmentsForMessagesCalls++;
+    return messageIds.contains(parentMessageId)
+        ? <String, List<MediaAttachment>>{
+            parentMessageId: List<MediaAttachment>.of(rows),
+          }
+        : const <String, List<MediaAttachment>>{};
+  }
+}
+
 class GateFirstSingleMediaReadRepository
     extends CountingMediaAttachmentRepository {
   final Completer<void> firstReadCaptured = Completer<void>();
@@ -648,6 +797,61 @@ class GateFirstSingleMediaReadRepository
       await releaseFirstRead.future;
     }
     return snapshot;
+  }
+}
+
+class _GateForwardCanonicalValidatorFileManager extends FakeMediaFileManager {
+  final Completer<void> captured = Completer<void>();
+  final Completer<void> release = Completer<void>();
+  bool armed = false;
+  bool _gated = false;
+
+  @override
+  Future<String> trustedMediaRootPath() async {
+    final root = await super.trustedMediaRootPath();
+    if (armed && !_gated) {
+      _gated = true;
+      captured.complete();
+      await release.future;
+    }
+    return root;
+  }
+}
+
+/// Holds exactly one explicitly armed current-contact read. Plan 247 uses this
+/// to prove that the bubble has already left the route before the fresh
+/// dispatch decision can show feedback or invoke the direct-route opener.
+class GateNextContactReadRepository extends InMemoryContactRepository {
+  Completer<void>? _captured;
+  Completer<void>? _release;
+  bool _gateNext = false;
+
+  void gateNextRead() {
+    if (_gateNext) throw StateError('a contact-read gate is already armed');
+    _gateNext = true;
+    _captured = Completer<void>();
+    _release = Completer<void>();
+  }
+
+  bool get hasCapturedNextRead => _captured?.isCompleted ?? false;
+
+  void releaseNextRead() {
+    final release = _release;
+    if (release == null || release.isCompleted) {
+      throw StateError('no pending contact-read gate');
+    }
+    release.complete();
+  }
+
+  @override
+  Future<ContactModel?> getContact(String peerId) async {
+    final current = await super.getContact(peerId);
+    if (_gateNext) {
+      _gateNext = false;
+      _captured!.complete();
+      await _release!.future;
+    }
+    return current;
   }
 }
 
@@ -894,6 +1098,8 @@ GroupMessage makeMessage({
   String? quotedMessageId,
   String status = 'sent',
   List<MediaAttachment> media = const [],
+  GroupPrivateMediaPolicy privateMediaPolicy =
+      const GroupPrivateMediaPolicy.ordinary(),
   String? wireEnvelope,
   String? inboxRetryPayload,
   DateTime? timestamp,
@@ -909,6 +1115,7 @@ GroupMessage makeMessage({
   isIncoming: isIncoming,
   createdAt: timestamp ?? DateTime.now().toUtc(),
   media: media,
+  privateMediaPolicy: privateMediaPolicy,
   wireEnvelope: wireEnvelope,
   inboxRetryPayload: inboxRetryPayload,
 );
@@ -942,6 +1149,21 @@ Future<void> pumpUntilAsync(
 }) async {
   var pumps = 0;
   while (!(await condition()) && pumps < maxPumps) {
+    await tester.pump(const Duration(milliseconds: 50));
+    pumps++;
+  }
+}
+
+Future<void> pumpUntilAsyncWorkSettles(
+  WidgetTester tester,
+  bool Function() condition, {
+  int maxPumps = 200,
+}) async {
+  var pumps = 0;
+  while (!condition() && pumps < maxPumps) {
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    });
     await tester.pump(const Duration(milliseconds: 50));
     pumps++;
   }
@@ -1001,7 +1223,7 @@ String groupTextRetryPayload({
       'text': text,
       'timestamp': timestamp,
       'messageId': messageId,
-      if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
+      'quotedMessageId': ?quotedMessageId,
       'media': const <Object>[],
     }),
   });
@@ -1121,6 +1343,15 @@ void main() {
       MediaAutoDownloadDecider? autoDownloadDecider,
       GroupReceivedMediaActionsController? mediaActionsController,
       GroupMediaDeleteForMeCoordinator? mediaDeleteForMeCoordinator,
+      Future<void> Function(BuildContext, GroupMediaForwardRequest)?
+      groupMediaForwardLauncher,
+      MessageRepository? forwardMessageRepository,
+      ChatMessageListener? forwardChatMessageListener,
+      OpenAnnouncementSenderConversation? openAnnouncementSenderConversation,
+      GroupPrivateMediaPolicy privateMediaPolicy =
+          const GroupPrivateMediaPolicy.ordinary(),
+      GroupPrivateMediaAvailability privateMediaAvailability =
+          productionGroupPrivateMediaAvailability,
     }) {
       final g = group ?? makeChatGroup();
       final effectiveMsgRepo = messageRepo ?? msgRepo;
@@ -1151,6 +1382,8 @@ void main() {
           qualityPreference: qualityPreference,
           videoQualityPreference: videoQualityPreference,
           uploadMediaFn: uploadMediaFn ?? uploadMedia,
+          privateMediaPolicy: privateMediaPolicy,
+          privateMediaAvailability: privateMediaAvailability,
           initialAttachments: initialAttachments,
           initialPendingMedia: initialPendingMedia,
           initialText: initialText,
@@ -1163,6 +1396,11 @@ void main() {
           autoDownloadDecider: autoDownloadDecider,
           mediaActionsController: mediaActionsController,
           mediaDeleteForMeCoordinator: mediaDeleteForMeCoordinator,
+          groupMediaForwardLauncher: groupMediaForwardLauncher,
+          forwardMessageRepository: forwardMessageRepository,
+          forwardChatMessageListener: forwardChatMessageListener,
+          openAnnouncementSenderConversation:
+              openAnnouncementSenderConversation,
         ),
       );
     }
@@ -1214,7 +1452,10 @@ void main() {
           await pumpFrames(tester, count: 20);
 
           // Informational snackbar — mirrors 1:1 exactly.
-          expect(find.text("Will send when you're back online"), findsOneWidget);
+          expect(
+            find.text("Will send when you're back online"),
+            findsOneWidget,
+          );
           expect(
             find.descendant(
               of: find.byType(SnackBar),
@@ -1352,7 +1593,10 @@ void main() {
           });
           await pumpFrames(tester, count: 20);
 
-          expect(find.text("Will send when you're back online"), findsOneWidget);
+          expect(
+            find.text("Will send when you're back online"),
+            findsOneWidget,
+          );
           expect(
             find.descendant(
               of: find.byType(SnackBar),
@@ -1377,28 +1621,27 @@ void main() {
 
       // TC #6 (guard, GREEN on HEAD): an ONLINE success shows a tick and NO
       // offline snackbar — the branch must not fire when relayReady is true.
-      testWidgets(
-        'online success shows a tick and NO offline snackbar (guard)',
-        (tester) async {
-          final group = makeChatGroup();
-          await groupRepo.saveGroup(group);
-          await saveActiveGroupMembers(groupRepo, group);
-          // p2pService stays the setUp ONLINE default; setUp bridge = publish ok.
+      testWidgets('online success shows a tick and NO offline snackbar (guard)', (
+        tester,
+      ) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        // p2pService stays the setUp ONLINE default; setUp bridge = publish ok.
 
-          await tester.pumpWidget(buildWidget(group: group));
-          await pumpFrames(tester);
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester);
 
-          await tester.enterText(find.byType(TextField), 'Online ok');
-          await pumpFrames(tester);
-          await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-          await pumpFrames(tester, count: 20);
+        await tester.enterText(find.byType(TextField), 'Online ok');
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 20);
 
-          expect(find.text('Online ok'), findsOneWidget);
-          expect(find.byIcon(Icons.done_rounded), findsOneWidget);
-          expect(find.byIcon(Icons.schedule_rounded), findsNothing);
-          expect(find.text("Will send when you're back online"), findsNothing);
-        },
-      );
+        expect(find.text('Online ok'), findsOneWidget);
+        expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.schedule_rounded), findsNothing);
+        expect(find.text("Will send when you're back online"), findsNothing);
+      });
 
       // TC #7 (ordering guard, GREEN on HEAD): a TERMINAL group failure while
       // offline still shows the error glyph + read-only banner and NO offline
@@ -1543,7 +1786,10 @@ void main() {
           await pumpFrames(tester, count: 20);
 
           // Honest offline snackbar — mirrors 1:1 exactly.
-          expect(find.text("Will send when you're back online"), findsOneWidget);
+          expect(
+            find.text("Will send when you're back online"),
+            findsOneWidget,
+          );
           expect(
             find.descendant(
               of: find.byType(SnackBar),
@@ -1720,7 +1966,10 @@ void main() {
           });
           await pumpFrames(tester, count: 20);
 
-          expect(find.text("Will send when you're back online"), findsOneWidget);
+          expect(
+            find.text("Will send when you're back online"),
+            findsOneWidget,
+          );
           expect(
             find.descendant(
               of: find.byType(SnackBar),
@@ -2166,7 +2415,9 @@ void main() {
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
-        final tempDir = Directory.systemTemp.createTempSync('group_total_over_');
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group_total_over_',
+        );
         addTearDown(() {
           if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
         });
@@ -2181,18 +2432,36 @@ void main() {
             initialPendingMedia: [
               // Each 200 MB < the 250 MB video cap (individually valid), but the
               // 600 MB total exceeds the 500 MB group message cap.
-              PendingComposerMedia(file: vid('v1'), budgetBytes: 200 * 1024 * 1024),
-              PendingComposerMedia(file: vid('v2'), budgetBytes: 200 * 1024 * 1024),
-              PendingComposerMedia(file: vid('v3'), budgetBytes: 200 * 1024 * 1024),
+              PendingComposerMedia(
+                file: vid('v1'),
+                budgetBytes: 200 * 1024 * 1024,
+              ),
+              PendingComposerMedia(
+                file: vid('v2'),
+                budgetBytes: 200 * 1024 * 1024,
+              ),
+              PendingComposerMedia(
+                file: vid('v3'),
+                budgetBytes: 200 * 1024 * 1024,
+              ),
             ],
           ),
         );
         await pumpFrames(tester, count: 20);
 
         // No per-attachment chip — each item is individually within its cap.
-        expect(find.byKey(const ValueKey('attachment-invalid-0')), findsNothing);
-        expect(find.byKey(const ValueKey('attachment-invalid-1')), findsNothing);
-        expect(find.byKey(const ValueKey('attachment-invalid-2')), findsNothing);
+        expect(
+          find.byKey(const ValueKey('attachment-invalid-0')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('attachment-invalid-1')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('attachment-invalid-2')),
+          findsNothing,
+        );
         // The whole-message overflow surfaces as a strip-level note.
         expect(
           find.byKey(const ValueKey('attachment-total-overflow')),
@@ -2219,42 +2488,39 @@ void main() {
     // removed from the wired source, while the text-retry snackbar (the SOLE
     // feedback for a failed text-message retry, no inline tile) is KEPT.
     // The behavioral inline-present half is locked by the GIRD-002 test.
-    test(
-      'the 3 redundant media snackbars are dropped from source; the '
-      'text-retry snackbar is kept',
-      () {
-        final src = File(
-          'lib/features/groups/presentation/screens/'
-          'group_conversation_wired.dart',
-        ).readAsStringSync();
+    test('the 3 redundant media snackbars are dropped from source; the '
+        'text-retry snackbar is kept', () {
+      final src = File(
+        'lib/features/groups/presentation/screens/'
+        'group_conversation_wired.dart',
+      ).readAsStringSync();
 
-        // Dropped — the MediaGridCell upload-pending / unavailable placeholders
-        // already convey this state inline.
-        expect(
-          src.contains('.media_still_unavailable'),
-          isFalse,
-          reason: 'media_still_unavailable snackbar must be dropped (inline)',
-        );
-        expect(
-          src.contains('.failed_media_upload_pending_retry'),
-          isFalse,
-          reason: 'upload-pending snackbar must be dropped (inline placeholder)',
-        );
-        expect(
-          src.contains('.failed_media_retry_failed'),
-          isFalse,
-          reason: 'failed-media-retry snackbar must be dropped (inline)',
-        );
+      // Dropped — the MediaGridCell upload-pending / unavailable placeholders
+      // already convey this state inline.
+      expect(
+        src.contains('.media_still_unavailable'),
+        isFalse,
+        reason: 'media_still_unavailable snackbar must be dropped (inline)',
+      );
+      expect(
+        src.contains('.failed_media_upload_pending_retry'),
+        isFalse,
+        reason: 'upload-pending snackbar must be dropped (inline placeholder)',
+      );
+      expect(
+        src.contains('.failed_media_retry_failed'),
+        isFalse,
+        reason: 'failed-media-retry snackbar must be dropped (inline)',
+      );
 
-        // KEPT — a failed TEXT retry renders no MediaGridCell, so this snackbar
-        // is the only feedback. Dropping it would lose all feedback.
-        expect(
-          src.contains('.failed_message_retry_failed'),
-          isTrue,
-          reason: 'failed_message_retry_failed must stay (text-retry path)',
-        );
-      },
-    );
+      // KEPT — a failed TEXT retry renders no MediaGridCell, so this snackbar
+      // is the only feedback. Dropping it would lose all feedback.
+      expect(
+        src.contains('.failed_message_retry_failed'),
+        isTrue,
+        reason: 'failed_message_retry_failed must stay (text-retry path)',
+      );
+    });
 
     testWidgets(
       'oversized gallery attachment compresses under budget and stages the processed file',
@@ -2384,10 +2650,7 @@ void main() {
             group: group,
             mediaRepo: mediaAttachmentRepo,
             initialPendingMedia: [
-              PendingComposerMedia(
-                file: video,
-                budgetBytes: 300 * 1024 * 1024,
-              ),
+              PendingComposerMedia(file: video, budgetBytes: 300 * 1024 * 1024),
             ],
           ),
         );
@@ -2586,65 +2849,64 @@ void main() {
       expect(find.text('How are you?'), findsOneWidget);
     });
 
-    testWidgets(
-      'interleaves WhatsApp-style date separators across days',
-      (tester) async {
-        // Tall surface so the reversed lazy ListView builds every row
-        // (the oldest message/separator would otherwise be off-screen).
-        tester.view.physicalSize = const Size(1200, 4000);
-        tester.view.devicePixelRatio = 1.0;
-        addTearDown(tester.view.resetPhysicalSize);
-        addTearDown(tester.view.resetDevicePixelRatio);
+    testWidgets('interleaves WhatsApp-style date separators across days', (
+      tester,
+    ) async {
+      // Tall surface so the reversed lazy ListView builds every row
+      // (the oldest message/separator would otherwise be off-screen).
+      tester.view.physicalSize = const Size(1200, 4000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
 
-        final group = makeChatGroup();
-        await groupRepo.saveGroup(group);
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
 
-        final now = DateTime.now();
-        // Saved oldest -> newest; the timeline renders ascending regardless.
-        await msgRepo.saveMessage(
-          makeMessage(
-            id: 'm-old',
-            text: 'Old day message',
-            timestamp: now.subtract(const Duration(days: 5)),
-          ),
-        );
-        await msgRepo.saveMessage(
-          makeMessage(
-            id: 'm-yest',
-            text: 'Yesterday message',
-            timestamp: now.subtract(const Duration(days: 1)),
-          ),
-        );
-        await msgRepo.saveMessage(
-          makeMessage(id: 'm-today', text: 'Today message', timestamp: now),
-        );
+      final now = DateTime.now();
+      // Saved oldest -> newest; the timeline renders ascending regardless.
+      await msgRepo.saveMessage(
+        makeMessage(
+          id: 'm-old',
+          text: 'Old day message',
+          timestamp: now.subtract(const Duration(days: 5)),
+        ),
+      );
+      await msgRepo.saveMessage(
+        makeMessage(
+          id: 'm-yest',
+          text: 'Yesterday message',
+          timestamp: now.subtract(const Duration(days: 1)),
+        ),
+      );
+      await msgRepo.saveMessage(
+        makeMessage(id: 'm-today', text: 'Today message', timestamp: now),
+      );
 
-        await tester.pumpWidget(buildWidget(group: group));
-        await pumpFrames(tester);
+      await tester.pumpWidget(buildWidget(group: group));
+      await pumpFrames(tester);
 
-        final separators = tester
-            .widgetList<DateSeparator>(find.byType(DateSeparator))
-            .toList();
-        final labels = separators.map((s) => s.label).toList();
+      final separators = tester
+          .widgetList<DateSeparator>(find.byType(DateSeparator))
+          .toList();
+      final labels = separators.map((s) => s.label).toList();
 
-        // Exactly one separator per distinct calendar day.
-        expect(separators, hasLength(3));
-        expect(labels, contains('Today'));
-        expect(labels, contains('Yesterday'));
-        // The older day uses the "Wed 9. Jun" weekday + day. month format.
-        expect(
-          labels.any(
-            (l) => RegExp(r'^[A-Za-z]{3} \d{1,2}\. [A-Za-z]{3}$').hasMatch(l),
-          ),
-          isTrue,
-        );
+      // Exactly one separator per distinct calendar day.
+      expect(separators, hasLength(3));
+      expect(labels, contains('Today'));
+      expect(labels, contains('Yesterday'));
+      // The older day uses the "Wed 9. Jun" weekday + day. month format.
+      expect(
+        labels.any(
+          (l) => RegExp(r'^[A-Za-z]{3} \d{1,2}\. [A-Za-z]{3}$').hasMatch(l),
+        ),
+        isTrue,
+      );
 
-        // Messages still render alongside the separators.
-        expect(find.text('Today message'), findsOneWidget);
-        expect(find.text('Yesterday message'), findsOneWidget);
-        expect(find.text('Old day message'), findsOneWidget);
-      },
-    );
+      // Messages still render alongside the separators.
+      expect(find.text('Today message'), findsOneWidget);
+      expect(find.text('Yesterday message'), findsOneWidget);
+      expect(find.text('Old day message'), findsOneWidget);
+    });
 
     testWidgets(
       'renders a single date separator when all messages share a day',
@@ -2986,9 +3248,12 @@ void main() {
           }
         });
         final files = [
-          File('${tempDir.path}/one.jpg')..writeAsStringSync('one'),
-          File('${tempDir.path}/two.jpg')..writeAsStringSync('two'),
-          File('${tempDir.path}/three.jpg')..writeAsStringSync('three'),
+          File('${tempDir.path}/one.jpg')
+            ..writeAsBytesSync(validJpegFixtureBytes),
+          File('${tempDir.path}/two.jpg')
+            ..writeAsBytesSync(validJpegFixtureBytes),
+          File('${tempDir.path}/three.jpg')
+            ..writeAsBytesSync(validJpegFixtureBytes),
         ];
 
         final testMediaFileManager = FakeMediaFileManager();
@@ -3066,7 +3331,7 @@ void main() {
         await pumpFrames(tester, count: 20);
 
         final sendFuture = await startScreenSend(tester, 'Durable media');
-        await pumpUntil(tester, () => uploadStarts.length == 3, maxPumps: 40);
+        await pumpUntilAsyncWorkSettles(tester, () => uploadStarts.length == 3);
 
         expect(uploadStarts, hasLength(3));
         expect(
@@ -3133,7 +3398,7 @@ void main() {
           }
         });
         final file = File('${tempDir.path}/pl005.jpg')
-          ..writeAsStringSync('pl005');
+          ..writeAsBytesSync(validJpegFixtureBytes);
         final capturedAllowedPeers = <List<String>>[];
 
         await tester.pumpWidget(
@@ -3207,7 +3472,8 @@ void main() {
             tempDir.deleteSync(recursive: true);
           }
         });
-        final file = File('${tempDir.path}/one.jpg')..writeAsStringSync('one');
+        final file = File('${tempDir.path}/one.jpg')
+          ..writeAsBytesSync(validJpegFixtureBytes);
         final testMediaFileManager = FakeMediaFileManager();
         final deletedDirs = <String>[];
         testMediaFileManager.onDeletePendingUploadDir = deletedDirs.add;
@@ -3278,7 +3544,9 @@ void main() {
         await pumpUntil(tester, () => uploadStarted.isCompleted);
         await pumpFrames(tester, count: 5);
 
-        final pending = await mediaAttachmentRepo.getUploadPendingAttachments(owner: MediaOwnerLane.group);
+        final pending = await mediaAttachmentRepo.getUploadPendingAttachments(
+          owner: MediaOwnerLane.group,
+        );
         expect(pending, hasLength(1));
         final messageId = pending.single.messageId;
         expect(pending.single.id, receivedBlobId);
@@ -3300,7 +3568,9 @@ void main() {
         expect(persistedAfterSend, isNotNull);
         expect(persistedAfterSend!.status, 'sent');
         expect(
-          await mediaAttachmentRepo.getUploadPendingAttachments(owner: MediaOwnerLane.group),
+          await mediaAttachmentRepo.getUploadPendingAttachments(
+            owner: MediaOwnerLane.group,
+          ),
           isEmpty,
         );
         final savedAttachments = await mediaAttachmentRepo
@@ -3309,6 +3579,512 @@ void main() {
         expect(savedAttachments.single.id, receivedBlobId);
         expect(savedAttachments.single.downloadStatus, 'done');
         expect(deletedDirs, contains(messageId));
+      },
+    );
+
+    testWidgets(
+      'GPL-03A-S private selection fails closed for missing identity empty or failed roster and reader role',
+      (tester) async {
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-private-selection-boundary-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final file = File('${tempDir.path}/private.png')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final pending = PendingComposerMedia(
+          file: file,
+          budgetBytes: file.lengthSync(),
+        );
+
+        Future<void> seedCurrentKey(InMemoryGroupRepository repository) {
+          return repository.saveKey(
+            GroupKeyInfo(
+              groupId: 'group-1',
+              keyGeneration: 1,
+              encryptedKey: 'selection-test-key',
+              createdAt: DateTime.utc(2026, 7, 12),
+            ),
+          );
+        }
+
+        Future<void> expectSelectionDenied({
+          required String scenario,
+          required InMemoryGroupRepository repository,
+          required FakeIdentityRepository identities,
+          MemberRole? selfRole,
+        }) async {
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+          groupRepo = repository;
+          identityRepo = identities;
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await seedCurrentKey(groupRepo);
+          if (selfRole != null) {
+            await groupRepo.saveMember(
+              GroupMember(
+                groupId: group.id,
+                peerId: testIdentity.peerId,
+                username: testIdentity.username,
+                role: selfRole,
+                publicKey: testIdentity.publicKey,
+                mlKemPublicKey: testIdentity.mlKemPublicKey,
+                joinedAt: DateTime.utc(2026, 7, 12, 9),
+              ),
+            );
+            await groupRepo.saveMember(
+              GroupMember(
+                groupId: group.id,
+                peerId: 'peer-bob',
+                username: 'Bob',
+                role: MemberRole.writer,
+                publicKey: 'pk-bob',
+                joinedAt: DateTime.utc(2026, 7, 12, 9, 1),
+              ),
+            );
+          }
+
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: FakeMediaFileManager(),
+              initialPendingMedia: <PendingComposerMedia>[pending],
+              privateMediaAvailability:
+                  const GroupPrivateMediaAvailability.enabledForTesting(),
+            ),
+          );
+          await pumpFrames(tester, count: 20);
+
+          var screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          expect(
+            screen.privateMediaComposerEligible,
+            isFalse,
+            reason: scenario,
+          );
+          expect(
+            find.byKey(const ValueKey('group-private-media-selector')),
+            findsNothing,
+            reason: scenario,
+          );
+          expect(screen.onPrivateMediaPolicyChanged, isNotNull);
+          screen.onPrivateMediaPolicyChanged!(
+            const GroupPrivateMediaPolicy.viewOnce(),
+          );
+          await tester.pump();
+          screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          expect(
+            screen.privateMediaPolicy,
+            const GroupPrivateMediaPolicy.ordinary(),
+            reason: '$scenario must reject a stale selection callback',
+          );
+        }
+
+        final missingIdentityRepo = InMemoryGroupRepository();
+        await expectSelectionDenied(
+          scenario: 'missing own peer',
+          repository: missingIdentityRepo,
+          identities: FakeIdentityRepository(),
+          selfRole: MemberRole.writer,
+        );
+        await expectSelectionDenied(
+          scenario: 'empty roster',
+          repository: InMemoryGroupRepository(),
+          identities: FakeIdentityRepository(identity: testIdentity),
+        );
+        await expectSelectionDenied(
+          scenario: 'reader role',
+          repository: InMemoryGroupRepository(),
+          identities: FakeIdentityRepository(identity: testIdentity),
+          selfRole: MemberRole.reader,
+        );
+        await expectSelectionDenied(
+          scenario: 'failed roster load',
+          repository: _ThrowingMembersGroupRepository(),
+          identities: FakeIdentityRepository(identity: testIdentity),
+        );
+      },
+    );
+
+    testWidgets(
+      'APL-02W announcement private composer requires matching current admin roles',
+      (tester) async {
+        final tempDir = Directory.systemTemp.createTempSync(
+          'announcement-private-selection-boundary-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final file = File('${tempDir.path}/private.png')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final pending = PendingComposerMedia(
+          file: file,
+          budgetBytes: file.lengthSync(),
+        );
+
+        Future<void> expectEligibility({
+          required String scenario,
+          required GroupRole localRole,
+          required MemberRole memberRole,
+          required bool expected,
+        }) async {
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+          groupRepo = InMemoryGroupRepository();
+          identityRepo = FakeIdentityRepository(identity: testIdentity);
+          final group = makeAnnouncementGroup(role: localRole);
+          await groupRepo.saveGroup(group);
+          await groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: group.id,
+              keyGeneration: 1,
+              encryptedKey: 'announcement-private-key',
+              createdAt: DateTime.utc(2026, 7, 12),
+            ),
+          );
+          await groupRepo.saveMember(
+            GroupMember(
+              groupId: group.id,
+              peerId: testIdentity.peerId,
+              username: testIdentity.username,
+              role: memberRole,
+              publicKey: testIdentity.publicKey,
+              mlKemPublicKey: testIdentity.mlKemPublicKey,
+              joinedAt: DateTime.utc(2026, 7, 12, 9),
+            ),
+          );
+          await groupRepo.saveMember(
+            GroupMember(
+              groupId: group.id,
+              peerId: 'peer-reader',
+              username: 'Reader',
+              role: MemberRole.reader,
+              publicKey: 'pk-reader',
+              joinedAt: DateTime.utc(2026, 7, 12, 9, 1),
+            ),
+          );
+
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: FakeMediaFileManager(),
+              initialPendingMedia: <PendingComposerMedia>[pending],
+              privateMediaAvailability:
+                  const GroupPrivateMediaAvailability.enabledForTesting(),
+            ),
+          );
+          await pumpFrames(tester, count: 20);
+
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          expect(
+            screen.privateMediaComposerEligible,
+            expected,
+            reason: scenario,
+          );
+          expect(
+            find.byKey(const ValueKey('group-private-media-selector')),
+            expected ? findsOneWidget : findsNothing,
+            reason: scenario,
+          );
+        }
+
+        await expectEligibility(
+          scenario: 'current admin group row and roster role',
+          localRole: GroupRole.admin,
+          memberRole: MemberRole.admin,
+          expected: true,
+        );
+        await expectEligibility(
+          scenario: 'stale admin group row with writer roster role',
+          localRole: GroupRole.admin,
+          memberRole: MemberRole.writer,
+          expected: false,
+        );
+        await expectEligibility(
+          scenario: 'reader group row cannot borrow an admin roster role',
+          localRole: GroupRole.member,
+          memberRole: MemberRole.admin,
+          expected: false,
+        );
+      },
+    );
+
+    test(
+      'GPL-11V private viewer controller lifetime is screen-owned and independent of recorder auto-stop',
+      () {
+        final source = File(
+          'lib/features/groups/presentation/screens/group_conversation_wired.dart',
+        ).readAsStringSync();
+        final autoStop = source.substring(
+          source.indexOf('void _onRecorderAutoStopped('),
+          source.indexOf('void _forceCancelActiveRecording('),
+        );
+        final dispose = source.substring(
+          source.indexOf('void dispose() {'),
+          source.indexOf('String get _activeGroupConversationKey'),
+        );
+        expect(autoStop, isNot(contains('_lazyPrivateMediaViewerController')));
+        expect(autoStop, isNot(contains('privateController.dispose()')));
+        expect(dispose, contains('_lazyPrivateMediaViewerController'));
+        expect(dispose, contains('unawaited(privateController.dispose())'));
+      },
+    );
+
+    testWidgets(
+      'GPL-03A-W wired initial private upload reloads its durable parent and requalifies immediately before callback',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        final privateMsgRepo = _RevokeWriterOnPrivateParentSaveRepository(
+          groupRepo: groupRepo,
+          senderPeerId: testIdentity.peerId,
+        );
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-private-initial-boundary-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final file = File('${tempDir.path}/private.png')
+          ..writeAsBytesSync(_tinyPngBytes);
+        var uploadCalls = 0;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            messageRepo: privateMsgRepo,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: FakeMediaFileManager(),
+            initialAttachments: [file],
+            privateMediaPolicy: const GroupPrivateMediaPolicy.viewOnce(),
+            privateMediaAvailability:
+                const GroupPrivateMediaAvailability.enabledForTesting(),
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
+                }) async {
+                  uploadCalls++;
+                  return null;
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final send = screen.onSend as Future<void> Function(String);
+        await tester.runAsync(() => send(''));
+        await pumpFrames(tester, count: 5);
+
+        expect(privateMsgRepo.sawPrivateParentSave, isTrue);
+        expect(privateMsgRepo.reloadsAfterPrivateParentSave, greaterThan(0));
+        expect(uploadCalls, 0);
+        expect(bridge.commandLog, isNot(contains('group:sendReliable')));
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(
+          (await groupRepo.getMember(group.id, testIdentity.peerId))!.role,
+          MemberRole.reader,
+        );
+      },
+    );
+
+    testWidgets(
+      'GPL-03A-R wired initial private upload rejects a stale recipient ACL after parent persistence',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        final privateMsgRepo = _RemoveRecipientOnPrivateParentSaveRepository(
+          groupRepo: groupRepo,
+          recipientPeerId: 'peer-bob',
+        );
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-private-initial-recipient-boundary-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final file = File('${tempDir.path}/private.png')
+          ..writeAsBytesSync(_tinyPngBytes);
+        var uploadCalls = 0;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            messageRepo: privateMsgRepo,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: FakeMediaFileManager(),
+            initialAttachments: [file],
+            privateMediaPolicy: const GroupPrivateMediaPolicy.viewOnce(),
+            privateMediaAvailability:
+                const GroupPrivateMediaAvailability.enabledForTesting(),
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
+                }) async {
+                  uploadCalls++;
+                  return null;
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final send = screen.onSend as Future<void> Function(String);
+        await tester.runAsync(() => send(''));
+        await pumpFrames(tester, count: 5);
+
+        expect(privateMsgRepo.sawPrivateParentSave, isTrue);
+        expect(await groupRepo.getMember(group.id, 'peer-bob'), isNull);
+        expect(uploadCalls, 0);
+        expect(bridge.commandLog, isNot(contains('group:sendReliable')));
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+      },
+    );
+
+    testWidgets(
+      'GPL-03H wired private upload cannot replace a parent drifted while upload is in flight',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group-private-upload-parent-drift-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final file = File('${tempDir.path}/private.png')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final uploadStarted = Completer<void>();
+        final uploadGate = Completer<void>();
+        addTearDown(() {
+          if (!uploadGate.isCompleted) uploadGate.complete();
+        });
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: FakeMediaFileManager(),
+            initialAttachments: [file],
+            privateMediaPolicy: const GroupPrivateMediaPolicy.viewOnce(),
+            privateMediaAvailability:
+                const GroupPrivateMediaAvailability.enabledForTesting(),
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
+                }) async {
+                  if (!uploadStarted.isCompleted) uploadStarted.complete();
+                  await uploadGate.future;
+                  return MediaAttachment(
+                    id: blobId!,
+                    messageId: '',
+                    mime: mime,
+                    size: 1,
+                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                    localPath: localFilePath,
+                    downloadStatus: 'done',
+                    contentHash: _validContentHash,
+                    encryptionKeyBase64: 'key-fixture',
+                    encryptionNonce: 'nonce-fixture',
+                    encryptionScheme:
+                        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                    createdAt: DateTime.now().toUtc().toIso8601String(),
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final send = screen.onSend as Future<void> Function(String);
+        late Future<void> sendFuture;
+        await tester.runAsync(() async {
+          sendFuture = send('');
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+        });
+        await pumpUntil(tester, () => uploadStarted.isCompleted, maxPumps: 240);
+        expect(uploadStarted.isCompleted, isTrue);
+
+        final pending = await mediaAttachmentRepo.getUploadPendingAttachments(
+          owner: MediaOwnerLane.group,
+        );
+        expect(pending, hasLength(1));
+        final messageId = pending.single.messageId;
+        final durableBeforeDrift = await msgRepo.getMessage(messageId);
+        expect(durableBeforeDrift, isNotNull);
+        expect(durableBeforeDrift!.privateMediaPolicy.isPrivate, isTrue);
+        await msgRepo.saveMessage(
+          durableBeforeDrift.copyWith(senderUsername: 'Drifted sender'),
+        );
+
+        await tester.runAsync(() async {
+          uploadGate.complete();
+          await sendFuture;
+        });
+        await pumpFrames(tester, count: 10);
+
+        expect(bridge.commandLog, isNot(contains('group:sendReliable')));
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+        final durableAfterSend = await msgRepo.getMessage(messageId);
+        expect(durableAfterSend, isNotNull);
+        expect(durableAfterSend!.senderUsername, 'Drifted sender');
+        final rows = await msgRepo.getMessagesPage(group.id);
+        expect(rows, hasLength(1));
+        expect(rows.single.id, messageId);
       },
     );
 
@@ -3327,9 +4103,12 @@ void main() {
           }
         });
         final files = [
-          File('${tempDir.path}/one.jpg')..writeAsStringSync('one'),
-          File('${tempDir.path}/two.jpg')..writeAsStringSync('two'),
-          File('${tempDir.path}/three.jpg')..writeAsStringSync('three'),
+          File('${tempDir.path}/one.jpg')
+            ..writeAsBytesSync(validJpegFixtureBytes),
+          File('${tempDir.path}/two.jpg')
+            ..writeAsBytesSync(validJpegFixtureBytes),
+          File('${tempDir.path}/three.jpg')
+            ..writeAsBytesSync(validJpegFixtureBytes),
         ];
 
         final testMediaFileManager = FakeMediaFileManager();
@@ -3391,7 +4170,9 @@ void main() {
         expect(bridge.commandLog, isNot(contains('group:publish')));
 
         expect(
-          await mediaAttachmentRepo.getUploadPendingAttachments(owner: MediaOwnerLane.group),
+          await mediaAttachmentRepo.getUploadPendingAttachments(
+            owner: MediaOwnerLane.group,
+          ),
           isEmpty,
         );
         final failedMessage = (await msgRepo.getMessagesPage(
@@ -3399,7 +4180,8 @@ void main() {
         )).singleWhere((message) => message.text == 'Fail media');
         expect(failedMessage.status, 'failed');
         final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
-          failedMessage.id, owner: MediaOwnerLane.group,
+          failedMessage.id,
+          owner: MediaOwnerLane.group,
         );
         expect(attachments, hasLength(3));
         expect(
@@ -3439,7 +4221,8 @@ void main() {
             tempDir.deleteSync(recursive: true);
           }
         });
-        final file = File('${tempDir.path}/one.jpg')..writeAsStringSync('one');
+        final file = File('${tempDir.path}/one.jpg')
+          ..writeAsBytesSync(validJpegFixtureBytes);
         final mediaFileManager = FakeMediaFileManager();
         final uploadStarted = Completer<void>();
         final uploadGate = Completer<void>();
@@ -3708,98 +4491,98 @@ void main() {
       },
     );
 
-    testWidgets(
-      'voice terminal send keeps failed bubble instead of deleting',
-      (tester) async {
-        final tempDir = Directory.systemTemp.createTempSync(
-          'group-voice-terminal-',
-        );
-        addTearDown(() {
-          if (tempDir.existsSync()) {
-            tempDir.deleteSync(recursive: true);
-          }
-        });
-        final recorder = FakeAudioRecorderService()..fakeDurationMs = 1500;
-        final voiceFile = File(p.join(tempDir.path, 'voice.m4a'))
-          ..writeAsStringSync('voice');
-        recorder.fakeOutputPath = voiceFile.path;
-        final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
+    testWidgets('voice terminal send keeps failed bubble instead of deleting', (
+      tester,
+    ) async {
+      final tempDir = Directory.systemTemp.createTempSync(
+        'group-voice-terminal-',
+      );
+      addTearDown(() {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      });
+      final recorder = FakeAudioRecorderService()..fakeDurationMs = 1500;
+      final voiceFile = File(p.join(tempDir.path, 'voice.m4a'))
+        ..writeAsStringSync('voice');
+      recorder.fakeOutputPath = voiceFile.path;
+      final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
 
-        // Empty-membership chat group → use case returns groupDissolved on send.
-        final group = makeChatGroup();
-        await groupRepo.saveGroup(group);
+      // Empty-membership chat group → use case returns groupDissolved on send.
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
 
-        await tester.pumpWidget(
-          buildWidget(
-            group: group,
-            mediaRepo: mediaAttachmentRepo,
-            mediaFileManager: mediaFileManager,
-            audioRecorderService: recorder,
-          ),
-        );
-        await pumpFrames(tester, count: 20);
+      await tester.pumpWidget(
+        buildWidget(
+          group: group,
+          mediaRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+          audioRecorderService: recorder,
+        ),
+      );
+      await pumpFrames(tester, count: 20);
 
-        final screen = tester.widget<GroupConversationScreen>(
-          find.byType(GroupConversationScreen),
-        );
-        final startRecording = screen.onRecordStart! as Future<void> Function();
-        await startRecording();
-        await pumpUntil(
-          tester,
-          () =>
-              tester
-                  .widget<GroupConversationScreen>(
-                    find.byType(GroupConversationScreen),
-                  )
-                  .recordingState ==
-              VoiceRecordingState.recording,
-        );
+      final screen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      final startRecording = screen.onRecordStart! as Future<void> Function();
+      await startRecording();
+      await pumpUntil(
+        tester,
+        () =>
+            tester
+                .widget<GroupConversationScreen>(
+                  find.byType(GroupConversationScreen),
+                )
+                .recordingState ==
+            VoiceRecordingState.recording,
+      );
 
-        final recordingScreen = tester.widget<GroupConversationScreen>(
-          find.byType(GroupConversationScreen),
-        );
-        final stopRecording =
-            recordingScreen.onRecordStop! as Future<void> Function();
-        await tester.runAsync(() async {
-          await stopRecording();
-        });
-        await pumpFrames(tester, count: 20);
+      final recordingScreen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      final stopRecording =
+          recordingScreen.onRecordStop! as Future<void> Function();
+      await tester.runAsync(() async {
+        await stopRecording();
+      });
+      await pumpFrames(tester, count: 20);
 
-        final after = tester.widget<GroupConversationScreen>(
-          find.byType(GroupConversationScreen),
-        );
-        final voiceRows = after.messages
-            .where(
-              (message) =>
-                  !message.isIncoming &&
-                  message.status == GroupMessage.statusSendFailed,
-            )
-            .toList();
-        expect(voiceRows, hasLength(1));
-        // The recorded audio attachment is retained (not deleted).
-        final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
-          voiceRows.single.id, owner: MediaOwnerLane.group,
-        );
-        expect(attachments, isNotEmpty);
-        expect(after.canWrite, isFalse);
-        expect(
-          find.byKey(const ValueKey('group-read-only-banner')),
-          findsOneWidget,
-        );
-        expect(
-          find.byKey(ValueKey('failed-message-retry-${voiceRows.single.id}')),
-          findsNothing,
-        );
-        expect(
-          find.byKey(ValueKey('failed-message-delete-${voiceRows.single.id}')),
-          findsOneWidget,
-        );
-        expect(
-          find.widgetWithText(SnackBar, 'This group has been dissolved'),
-          findsNothing,
-        );
-      },
-    );
+      final after = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      final voiceRows = after.messages
+          .where(
+            (message) =>
+                !message.isIncoming &&
+                message.status == GroupMessage.statusSendFailed,
+          )
+          .toList();
+      expect(voiceRows, hasLength(1));
+      // The recorded audio attachment is retained (not deleted).
+      final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+        voiceRows.single.id,
+        owner: MediaOwnerLane.group,
+      );
+      expect(attachments, isNotEmpty);
+      expect(after.canWrite, isFalse);
+      expect(
+        find.byKey(const ValueKey('group-read-only-banner')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(ValueKey('failed-message-retry-${voiceRows.single.id}')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(ValueKey('failed-message-delete-${voiceRows.single.id}')),
+        findsOneWidget,
+      );
+      expect(
+        find.widgetWithText(SnackBar, 'This group has been dissolved'),
+        findsNothing,
+      );
+    });
 
     testWidgets(
       'retry-exhausted send_failed in a writable group shows no terminal reason',
@@ -4022,7 +4805,7 @@ void main() {
           }
         });
         final source = File('${tempDir.path}/photo.jpg')
-          ..writeAsStringSync('photo');
+          ..writeAsBytesSync(validJpegFixtureBytes);
         final mediaFileManager = TrackingDurableMediaFileManager(tempDir);
 
         await tester.pumpWidget(
@@ -4099,7 +4882,8 @@ void main() {
         expect(retained.single.status, GroupMessage.statusSendFailed);
 
         final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
-          retained.single.id, owner: MediaOwnerLane.group,
+          retained.single.id,
+          owner: MediaOwnerLane.group,
         );
         expect(attachments, isNotEmpty);
         final localPath = attachments.first.localPath;
@@ -4116,9 +4900,7 @@ void main() {
         // Tap the terminal Delete affordance (reachable while read-only).
         await tester.runAsync(() async {
           await tester.tap(
-            find.byKey(
-              ValueKey('failed-message-delete-${retained.single.id}'),
-            ),
+            find.byKey(ValueKey('failed-message-delete-${retained.single.id}')),
           );
           await Future<void>.delayed(const Duration(milliseconds: 200));
         });
@@ -4142,7 +4924,8 @@ void main() {
             tempDir.deleteSync(recursive: true);
           }
         });
-        final file = File('${tempDir.path}/one.jpg')..writeAsStringSync('one');
+        final file = File('${tempDir.path}/one.jpg')
+          ..writeAsBytesSync(validJpegFixtureBytes);
         final mediaFileManager = FakeMediaFileManager();
         final deletedDirs = <String>[];
         mediaFileManager.onDeletePendingUploadDir = deletedDirs.add;
@@ -4236,7 +5019,8 @@ void main() {
             tempDir.deleteSync(recursive: true);
           }
         });
-        final file = File('${tempDir.path}/one.jpg')..writeAsStringSync('one');
+        final file = File('${tempDir.path}/one.jpg')
+          ..writeAsBytesSync(validJpegFixtureBytes);
         final mediaFileManager = FakeMediaFileManager();
         final deletedDirs = <String>[];
         mediaFileManager.onDeletePendingUploadDir = deletedDirs.add;
@@ -4384,7 +5168,10 @@ void main() {
         final savedMessage = await msgRepo.getLatestMessage(group.id);
         expect(savedMessage, isNotNull);
         final savedAttachments = await mediaAttachmentRepo
-            .getAttachmentsForMessage(savedMessage!.id, owner: MediaOwnerLane.group);
+            .getAttachmentsForMessage(
+              savedMessage!.id,
+              owner: MediaOwnerLane.group,
+            );
         expect(savedAttachments, hasLength(1));
         expect(savedAttachments.single.id, receivedBlobId);
         expect(savedAttachments.single.downloadStatus, 'done');
@@ -5179,7 +5966,9 @@ void main() {
         );
 
         // Resume — exactly what a notification tap does to a backgrounded app.
-        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
 
         await pumpUntil(
           tester,
@@ -5362,7 +6151,8 @@ void main() {
             encryptionNonce: 'nonce-fixture',
             encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             createdAt: '2026-05-02T09:00:00.000Z',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         await mediaAttachmentRepo.saveAttachment(
           const MediaAttachment(
@@ -5380,7 +6170,8 @@ void main() {
             encryptionNonce: 'nonce-fixture',
             encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             createdAt: '2026-05-02T09:00:01.000Z',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         await mediaAttachmentRepo.saveAttachment(
           const MediaAttachment(
@@ -5398,7 +6189,8 @@ void main() {
             encryptionNonce: 'nonce-fixture',
             encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             createdAt: '2026-05-02T09:00:02.000Z',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         await mediaAttachmentRepo.saveAttachment(
           const MediaAttachment(
@@ -5415,7 +6207,8 @@ void main() {
             encryptionNonce: 'nonce-fixture',
             encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             createdAt: '2026-05-02T09:00:03.000Z',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
 
         await tester.pumpWidget(
@@ -5614,7 +6407,10 @@ void main() {
             .length;
 
         await msgRepo.saveMessage(incomingMessage);
-        await mediaAttachmentRepo.saveAttachment(pendingImageAttachment, owner: MediaOwnerLane.group);
+        await mediaAttachmentRepo.saveAttachment(
+          pendingImageAttachment,
+          owner: MediaOwnerLane.group,
+        );
         await tester.runAsync(() async {
           messageStreamController.add(incomingMessage);
           await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -5653,7 +6449,8 @@ void main() {
           pendingImageAttachment.copyWith(
             localPath: relativePath,
             downloadStatus: kMediaDownloadStatusDone,
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         await tester.runAsync(() async {
           messageStreamController.add(incomingMessage);
@@ -5768,7 +6565,8 @@ void main() {
             downloadStatus: kMediaDownloadStatusDone,
             contentHash: contentHash,
             createdAt: DateTime.now().toUtc().toIso8601String(),
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         await mediaAttachmentRepo.saveAttachment(
           MediaAttachment(
@@ -5781,7 +6579,8 @@ void main() {
             downloadStatus: kMediaDownloadStatusDone,
             contentHash: contentHash,
             createdAt: DateTime.now().toUtc().toIso8601String(),
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
 
         await tester.pumpWidget(
@@ -5887,7 +6686,10 @@ void main() {
         );
         await pumpFrames(tester, count: 20);
         await msgRepo.saveMessage(incomingMessage);
-        await mediaAttachmentRepo.saveAttachment(failedAttachment, owner: MediaOwnerLane.group);
+        await mediaAttachmentRepo.saveAttachment(
+          failedAttachment,
+          owner: MediaOwnerLane.group,
+        );
         await tester.runAsync(() async {
           messageStreamController.add(incomingMessage);
           await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -5957,7 +6759,8 @@ void main() {
           failedAttachment.copyWith(
             localPath: failedRelativePath,
             downloadStatus: kMediaDownloadStatusDone,
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         await tester.runAsync(() async {
           messageStreamController.add(incomingMessage);
@@ -5980,7 +6783,10 @@ void main() {
           find.byType(GroupConversationScreen),
         );
         final persistedAfterFailedRecovery = await mediaAttachmentRepo
-            .getAttachmentsForMessage('msg-gird005-failed-recovery', owner: MediaOwnerLane.group);
+            .getAttachmentsForMessage(
+              'msg-gird005-failed-recovery',
+              owner: MediaOwnerLane.group,
+            );
         expect(
           resolvedScreen
               .mediaMap['msg-gird005-failed-recovery']!
@@ -6055,7 +6861,10 @@ void main() {
         );
         await pumpFrames(tester, count: 20);
         await msgRepo.saveMessage(incomingMessage);
-        await mediaAttachmentRepo.saveAttachment(doneAttachment, owner: MediaOwnerLane.group);
+        await mediaAttachmentRepo.saveAttachment(
+          doneAttachment,
+          owner: MediaOwnerLane.group,
+        );
         await tester.runAsync(() async {
           messageStreamController.add(incomingMessage);
           await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -6125,7 +6934,8 @@ void main() {
           doneAttachment.copyWith(
             localPath: doneRelativePath,
             downloadStatus: kMediaDownloadStatusDone,
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         await tester.runAsync(() async {
           messageStreamController.add(incomingMessage);
@@ -6148,7 +6958,10 @@ void main() {
           find.byType(GroupConversationScreen),
         );
         final persistedAfterDoneRecovery = await mediaAttachmentRepo
-            .getAttachmentsForMessage('msg-gird005-done-no-path', owner: MediaOwnerLane.group);
+            .getAttachmentsForMessage(
+              'msg-gird005-done-no-path',
+              owner: MediaOwnerLane.group,
+            );
         expect(
           resolvedScreen.mediaMap['msg-gird005-done-no-path']!.single.localPath,
           allOf(isNotNull, contains('att-gird005-done-no-path.png')),
@@ -7503,8 +8316,9 @@ void main() {
           find.byType(GroupConversationScreen),
         );
         expect(screen.canWrite, isFalse);
-        final stuckRow = screen.messages
-            .firstWhere((message) => message.text == 'Stale unauthorized');
+        final stuckRow = screen.messages.firstWhere(
+          (message) => message.text == 'Stale unauthorized',
+        );
         expect(stuckRow.status, GroupMessage.statusSendFailed);
 
         // A real re-add + resume releases the read-only latch in place.
@@ -8511,7 +9325,8 @@ void main() {
             encryptionNonce: 'nonce-fixture',
             encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             createdAt: DateTime.now().toUtc().toIso8601String(),
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
 
         await tester.pumpWidget(
@@ -9442,7 +10257,9 @@ void main() {
 
         expect(uploadCalled, isFalse);
         expect(
-          await mediaAttachmentRepo.getUploadPendingAttachments(owner: MediaOwnerLane.group),
+          await mediaAttachmentRepo.getUploadPendingAttachments(
+            owner: MediaOwnerLane.group,
+          ),
           isEmpty,
         );
         expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
@@ -9532,7 +10349,9 @@ void main() {
 
         expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
         expect(
-          await mediaAttachmentRepo.getUploadPendingAttachments(owner: MediaOwnerLane.group),
+          await mediaAttachmentRepo.getUploadPendingAttachments(
+            owner: MediaOwnerLane.group,
+          ),
           isEmpty,
         );
         final failedMessage = (await msgRepo.getMessagesPage(
@@ -9540,7 +10359,10 @@ void main() {
         )).singleWhere((message) => message.text == 'Partial upload');
         expect(failedMessage.status, 'failed');
         final savedAttachments = await mediaAttachmentRepo
-            .getAttachmentsForMessage(failedMessage.id, owner: MediaOwnerLane.group);
+            .getAttachmentsForMessage(
+              failedMessage.id,
+              owner: MediaOwnerLane.group,
+            );
         expect(
           savedAttachments.where(
             (attachment) => attachment.downloadStatus == 'done',
@@ -9708,9 +10530,9 @@ void main() {
           }
         });
         final attachmentA = File('${tempDir.path}/cancel-a.jpg')
-          ..writeAsStringSync('0123456789');
+          ..writeAsBytesSync(validJpegFixtureBytes);
         final attachmentB = File('${tempDir.path}/cancel-b.jpg')
-          ..writeAsStringSync('abcdefghij');
+          ..writeAsBytesSync(validJpegFixtureBytes);
         final testMediaFileManager = FakeMediaFileManager();
 
         final uploadGate = Completer<void>();
@@ -9804,7 +10626,10 @@ void main() {
         expect(storedMessages, hasLength(1));
         final failedMessage = storedMessages.single;
         final storedAttachments = await mediaAttachmentRepo
-            .getAttachmentsForMessage(failedMessage.id, owner: MediaOwnerLane.group);
+            .getAttachmentsForMessage(
+              failedMessage.id,
+              owner: MediaOwnerLane.group,
+            );
 
         expect(uploadCompleted, hasLength(2));
         expect(failedMessage.status, 'failed');
@@ -9850,7 +10675,7 @@ void main() {
           }
         });
         final attachment = File('${tempDir.path}/collide.jpg')
-          ..writeAsStringSync('0123456789');
+          ..writeAsBytesSync(validJpegFixtureBytes);
         final testMediaFileManager = FakeMediaFileManager();
 
         final uploadGate = Completer<void>();
@@ -10382,7 +11207,8 @@ void main() {
             encryptionNonce: 'nonce-fixture',
             encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             createdAt: '2026-01-15T12:00:00.000Z',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         await mediaAttachmentRepo.saveAttachment(
           const MediaAttachment(
@@ -10398,7 +11224,8 @@ void main() {
             encryptionNonce: 'nonce-fixture',
             encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             createdAt: '2026-01-15T12:01:00.000Z',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
 
         await tester.pumpWidget(
@@ -10764,7 +11591,8 @@ void main() {
             durationMs: 4100,
             waveform: [0.1, 0.6, 0.2],
             createdAt: '2026-01-15T12:03:04.000Z',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         await mediaAttachmentRepo.saveAttachment(
           const MediaAttachment(
@@ -10776,7 +11604,8 @@ void main() {
             localPath: 'pending_uploads/msg-unrelated-pending-image/image.jpg',
             downloadStatus: 'upload_pending',
             createdAt: '2026-01-15T12:04:00.000Z',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
 
         var uploadCallCount = 0;
@@ -10878,7 +11707,8 @@ void main() {
         expect(saved!.status, 'sent');
         expect(saved.timestamp, timestamp);
         final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
-          'msg-voice-upload-pending', owner: MediaOwnerLane.group,
+          'msg-voice-upload-pending',
+          owner: MediaOwnerLane.group,
         );
         expect(attachments, hasLength(1));
         expect(attachments.single.id, 'att-voice-upload-pending');
@@ -10887,7 +11717,8 @@ void main() {
         expect(attachments.single.waveform, [0.1, 0.6, 0.2]);
         expect(
           (await mediaAttachmentRepo.getAttachmentsForMessage(
-            'msg-unrelated-pending-image', owner: MediaOwnerLane.group,
+            'msg-unrelated-pending-image',
+            owner: MediaOwnerLane.group,
           )).single.downloadStatus,
           'upload_pending',
         );
@@ -10927,7 +11758,8 @@ void main() {
                 'pending_uploads/msg-gird002-upload-pending/att-gird002.jpg',
             downloadStatus: 'upload_pending',
             createdAt: '2026-05-31T12:00:00.000Z',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
 
         await tester.pumpWidget(
@@ -10960,7 +11792,8 @@ void main() {
         );
         expect(
           (await mediaAttachmentRepo.getAttachmentsForMessage(
-            'msg-gird002-upload-pending', owner: MediaOwnerLane.group,
+            'msg-gird002-upload-pending',
+            owner: MediaOwnerLane.group,
           )).single.downloadStatus,
           'upload_pending',
         );
@@ -11004,7 +11837,8 @@ void main() {
             localPath: 'pending_uploads/msg-gird002-refresh/att.jpg',
             downloadStatus: 'upload_failed',
             createdAt: '2026-05-31T12:01:00.000Z',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
 
         await tester.pumpWidget(
@@ -11055,7 +11889,8 @@ void main() {
             encryptionNonce: 'nonce-fixture',
             encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             createdAt: '2026-05-31T12:02:00.000Z',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
 
         await tester.runAsync(() async {
@@ -11138,7 +11973,8 @@ void main() {
             encryptionNonce: _md012MediaNonce,
             encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             createdAt: '2026-04-29T12:00:00.000Z',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         await mediaAttachmentRepo.saveAttachment(
           const MediaAttachment(
@@ -11154,7 +11990,8 @@ void main() {
             encryptionNonce: 'nonce-sibling',
             encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             createdAt: '2026-04-29T12:00:00.000Z',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
 
         await tester.pumpWidget(
@@ -11186,7 +12023,10 @@ void main() {
         await tester.pump();
         await pumpUntilAsync(tester, () async {
           final attachments = await mediaAttachmentRepo
-              .getAttachmentsForMessage('msg-md012-repair', owner: MediaOwnerLane.group);
+              .getAttachmentsForMessage(
+                'msg-md012-repair',
+                owner: MediaOwnerLane.group,
+              );
           return attachments
                   .where((attachment) => attachment.id == 'att-md012-target')
                   .single
@@ -11195,7 +12035,8 @@ void main() {
         }, maxPumps: 80);
 
         final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
-          'msg-md012-repair', owner: MediaOwnerLane.group,
+          'msg-md012-repair',
+          owner: MediaOwnerLane.group,
         );
         final target = attachments
             .where((attachment) => attachment.id == 'att-md012-target')
@@ -11269,7 +12110,8 @@ void main() {
             encryptionNonce: _md012MediaNonce,
             encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             createdAt: '2026-04-29T12:00:00.000Z',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
 
         await tester.pumpWidget(
@@ -11302,13 +12144,17 @@ void main() {
         await pumpUntilAsync(tester, () async {
           if (!bridge.commandLog.contains('media:download')) return false;
           final attachments = await mediaAttachmentRepo
-              .getAttachmentsForMessage('msg-md012-fail', owner: MediaOwnerLane.group);
+              .getAttachmentsForMessage(
+                'msg-md012-fail',
+                owner: MediaOwnerLane.group,
+              );
           return attachments.single.downloadStatus ==
               kMediaDownloadStatusIntegrityFailed;
         }, maxPumps: 80);
 
         final attachment = (await mediaAttachmentRepo.getAttachmentsForMessage(
-          'msg-md012-fail', owner: MediaOwnerLane.group,
+          'msg-md012-fail',
+          owner: MediaOwnerLane.group,
         )).single;
         expect(attachment.downloadStatus, kMediaDownloadStatusIntegrityFailed);
         expect(attachment.localPath, isNull);
@@ -11388,7 +12234,8 @@ void main() {
                 'pending_uploads/msg-delete-target/att-delete-target.jpg',
             downloadStatus: 'upload_pending',
             createdAt: '2026-01-15T12:02:00.000Z',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         await mediaAttachmentRepo.saveAttachment(
           const MediaAttachment(
@@ -11401,7 +12248,8 @@ void main() {
                 'pending_uploads/msg-delete-untouched/att-delete-untouched.jpg',
             downloadStatus: 'upload_pending',
             createdAt: '2026-01-15T12:03:00.000Z',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
 
         await tester.pumpWidget(
@@ -11433,13 +12281,15 @@ void main() {
         expect(await msgRepo.getMessage('msg-delete-untouched'), isNotNull);
         expect(
           await mediaAttachmentRepo.getAttachmentsForMessage(
-            'msg-delete-target', owner: MediaOwnerLane.group,
+            'msg-delete-target',
+            owner: MediaOwnerLane.group,
           ),
           isEmpty,
         );
         expect(
           await mediaAttachmentRepo.getAttachmentsForMessage(
-            'msg-delete-untouched', owner: MediaOwnerLane.group,
+            'msg-delete-untouched',
+            owner: MediaOwnerLane.group,
           ),
           hasLength(1),
         );
@@ -11857,7 +12707,9 @@ void main() {
           startsWith(p.join(tempDir.path, 'pending_uploads')),
         );
 
-        final pending = await mediaAttachmentRepo.getUploadPendingAttachments(owner: MediaOwnerLane.group);
+        final pending = await mediaAttachmentRepo.getUploadPendingAttachments(
+          owner: MediaOwnerLane.group,
+        );
         expect(pending, hasLength(1));
         expect(pending.single.id, receivedBlobId);
         expect(pending.single.downloadStatus, 'upload_pending');
@@ -12104,7 +12956,9 @@ void main() {
           'msg-parent-voice-prep',
         ]);
         expect(
-          await mediaAttachmentRepo.getUploadPendingAttachments(owner: MediaOwnerLane.group),
+          await mediaAttachmentRepo.getUploadPendingAttachments(
+            owner: MediaOwnerLane.group,
+          ),
           isEmpty,
         );
         expect(mediaAttachmentRepo.count, 0);
@@ -12354,7 +13208,10 @@ void main() {
         final failedRow = failedRows.single;
         expect(failedRow.status, 'failed');
         final failedAttachments = await mediaAttachmentRepo
-            .getAttachmentsForMessage(failedRow.id, owner: MediaOwnerLane.group);
+            .getAttachmentsForMessage(
+              failedRow.id,
+              owner: MediaOwnerLane.group,
+            );
         expect(failedAttachments, hasLength(1));
         expect(failedAttachments.single.downloadStatus, 'done');
         final firstBlobId = failedAttachments.single.id;
@@ -12372,7 +13229,8 @@ void main() {
         expect(storedRow.status, 'sent');
 
         final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
-          failedRow.id, owner: MediaOwnerLane.group,
+          failedRow.id,
+          owner: MediaOwnerLane.group,
         );
         expect(attachments, hasLength(1));
         expect(attachments.single.id, uploadedBlobIds.last);
@@ -12516,7 +13374,9 @@ void main() {
           startsWith(p.join(tempDir.path, 'pending_uploads')),
         );
 
-        final pending = await mediaAttachmentRepo.getUploadPendingAttachments(owner: MediaOwnerLane.group);
+        final pending = await mediaAttachmentRepo.getUploadPendingAttachments(
+          owner: MediaOwnerLane.group,
+        );
         expect(pending, hasLength(1));
         expect(pending.single.id, receivedBlobId);
         expect(pending.single.localPath, startsWith('pending_uploads/'));
@@ -12548,13 +13408,18 @@ void main() {
           contains(savedMessage!.id),
         );
         final savedAttachments = await mediaAttachmentRepo
-            .getAttachmentsForMessage(savedMessage.id, owner: MediaOwnerLane.group);
+            .getAttachmentsForMessage(
+              savedMessage.id,
+              owner: MediaOwnerLane.group,
+            );
         expect(savedAttachments, hasLength(1));
         expect(savedAttachments.single.id, receivedBlobId);
         expect(savedAttachments.single.downloadStatus, 'done');
         expect(savedAttachments.single.localPath, startsWith('media/'));
         expect(
-          await mediaAttachmentRepo.getUploadPendingAttachments(owner: MediaOwnerLane.group),
+          await mediaAttachmentRepo.getUploadPendingAttachments(
+            owner: MediaOwnerLane.group,
+          ),
           isEmpty,
         );
       },
@@ -12886,7 +13751,8 @@ void main() {
         expect(voiceRows.single.status, GroupMessage.statusSendFailed);
         expect(
           await mediaAttachmentRepo.getAttachmentsForMessage(
-            voiceRows.single.id, owner: MediaOwnerLane.group,
+            voiceRows.single.id,
+            owner: MediaOwnerLane.group,
           ),
           isNotEmpty,
         );
@@ -13034,7 +13900,10 @@ void main() {
           isNot(contains(messageId)),
         );
         expect(
-          await mediaAttachmentRepo.getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group),
+          await mediaAttachmentRepo.getAttachmentsForMessage(
+            messageId,
+            owner: MediaOwnerLane.group,
+          ),
           isNotEmpty,
         );
         final persisted = await msgRepo.getMessage(messageId);
@@ -13323,6 +14192,187 @@ void main() {
 
         // The reaction emoji should be visible in the UI
         expect(find.text('\u{1F44D}'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'GPL-04E explicitly disabled resume hides durable private reactions while ordinary remains',
+      (tester) async {
+        tester.view.physicalSize = const Size(1200, 3000);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-private-reaction',
+            text: 'PRIVATE BODY MUST STAY HIDDEN',
+            privateMediaPolicy: const GroupPrivateMediaPolicy.viewOnce(),
+            timestamp: DateTime.utc(2026, 7, 12, 10),
+          ),
+        );
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-unsupported-reaction',
+            text: 'UNSUPPORTED BODY MUST STAY HIDDEN',
+            privateMediaPolicy: const GroupPrivateMediaPolicy.unsupported(
+              sourceVersion: 9,
+            ),
+            timestamp: DateTime.utc(2026, 7, 12, 10, 1),
+          ),
+        );
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-ordinary-reaction',
+            text: 'ordinary reaction control',
+            timestamp: DateTime.utc(2026, 7, 12, 10, 2),
+          ),
+        );
+
+        final reactionRepo = FakeReactionRepository();
+        Future<void> persistReaction({
+          required String id,
+          required String messageId,
+          required String emoji,
+          required String senderPeerId,
+          required DateTime timestamp,
+        }) => reactionRepo.saveReaction(
+          MessageReaction(
+            id: id,
+            messageId: messageId,
+            emoji: emoji,
+            senderPeerId: senderPeerId,
+            timestamp: timestamp.toIso8601String(),
+            createdAt: timestamp.toIso8601String(),
+          ),
+        );
+
+        await persistReaction(
+          id: 'rxn-private-durable-1',
+          messageId: 'msg-private-reaction',
+          emoji: '🔒',
+          senderPeerId: 'peer-bob',
+          timestamp: DateTime.utc(2026, 7, 12, 10, 3),
+        );
+        await persistReaction(
+          id: 'rxn-unsupported-durable-1',
+          messageId: 'msg-unsupported-reaction',
+          emoji: '🚫',
+          senderPeerId: 'peer-bob',
+          timestamp: DateTime.utc(2026, 7, 12, 10, 4),
+        );
+        await persistReaction(
+          id: 'rxn-ordinary-durable-1',
+          messageId: 'msg-ordinary-reaction',
+          emoji: '👍',
+          senderPeerId: 'peer-bob',
+          timestamp: DateTime.utc(2026, 7, 12, 10, 5),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            reactionRepo: reactionRepo,
+            privateMediaAvailability:
+                const GroupPrivateMediaAvailability.disabled(),
+          ),
+        );
+        await pumpUntil(tester, () {
+          if (find.byType(GroupConversationScreen).evaluate().isEmpty) {
+            return false;
+          }
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.initialLoadDone &&
+              screen.reactions['msg-ordinary-reaction']?.length == 1;
+        });
+
+        void expectPrivacySafeProjection({required int ordinaryCount}) {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          expect(screen.reactions['msg-private-reaction'], isNull);
+          expect(screen.reactions['msg-unsupported-reaction'], isNull);
+          expect(
+            screen.reactions['msg-ordinary-reaction'],
+            hasLength(ordinaryCount),
+          );
+
+          final cards = tester
+              .widgetList<LetterCard>(find.byType(LetterCard))
+              .toList(growable: false);
+          final unavailableCards = cards
+              .where((card) => card.text == 'Media unavailable')
+              .toList(growable: false);
+          expect(unavailableCards, hasLength(2));
+          for (final card in unavailableCards) {
+            expect(card.reactions, isEmpty);
+            expect(card.onReactionTap, isNull);
+          }
+          final ordinaryCard = cards.singleWhere(
+            (card) => card.text == 'ordinary reaction control',
+          );
+          expect(ordinaryCard.reactions, hasLength(ordinaryCount));
+          expect(ordinaryCard.onReactionTap, isNotNull);
+
+          expect(find.text('🔒'), findsNothing);
+          expect(find.text('🔒 2'), findsNothing);
+          expect(find.text('🚫'), findsNothing);
+          expect(find.text('🚫 2'), findsNothing);
+          expect(
+            find.text(ordinaryCount == 1 ? '👍' : '👍 $ordinaryCount'),
+            findsOneWidget,
+          );
+        }
+
+        expectPrivacySafeProjection(ordinaryCount: 1);
+
+        await persistReaction(
+          id: 'rxn-private-durable-2',
+          messageId: 'msg-private-reaction',
+          emoji: '🔒',
+          senderPeerId: 'peer-alice',
+          timestamp: DateTime.utc(2026, 7, 12, 10, 6),
+        );
+        await persistReaction(
+          id: 'rxn-unsupported-durable-2',
+          messageId: 'msg-unsupported-reaction',
+          emoji: '🚫',
+          senderPeerId: 'peer-alice',
+          timestamp: DateTime.utc(2026, 7, 12, 10, 7),
+        );
+        await persistReaction(
+          id: 'rxn-ordinary-durable-2',
+          messageId: 'msg-ordinary-reaction',
+          emoji: '👍',
+          senderPeerId: 'peer-alice',
+          timestamp: DateTime.utc(2026, 7, 12, 10, 8),
+        );
+
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.reactions['msg-ordinary-reaction']?.length == 2;
+        });
+
+        expectPrivacySafeProjection(ordinaryCount: 2);
       },
     );
 
@@ -13869,9 +14919,11 @@ void main() {
           await tester.tap(find.byKey(const ValueKey('mic-perm-not-now')));
           // Assert the LIVE rendered composer (internal ValueListenableBuilder),
           // not the stale `recordingState` widget prop.
-          for (var i = 0;
-              i < 12 && find.byIcon(Icons.mic_rounded).evaluate().isEmpty;
-              i++) {
+          for (
+            var i = 0;
+            i < 12 && find.byIcon(Icons.mic_rounded).evaluate().isEmpty;
+            i++
+          ) {
             await tester.pump(const Duration(milliseconds: 50));
           }
           await pending;
@@ -13943,499 +14995,452 @@ void main() {
     // 159 sub-change 3 + 4 + folded media gate — group coalesce, scroll/read
     // side-effect preservation, and the media-resolve gate.
     group('159 group coalesce + media gate', () {
-    // TC-159-08 — a burst of M group stream events applies ONE batched reorder
-    // and all M messages (including the trailing one) render.
-    testWidgets(
-      'TC-159-08 group M-event burst → ONE batched reorder, all ids incl trailing',
-      (tester) async {
-        final group = makeChatGroup();
-        await groupRepo.saveGroup(group);
-        await msgRepo.saveMessage(makeMessage(id: 'seed', text: 'Seed'));
+      // TC-159-08 — a burst of M group stream events applies ONE batched reorder
+      // and all M messages (including the trailing one) render.
+      testWidgets(
+        'TC-159-08 group M-event burst → ONE batched reorder, all ids incl trailing',
+        (tester) async {
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await msgRepo.saveMessage(makeMessage(id: 'seed', text: 'Seed'));
 
-        await tester.pumpWidget(buildWidget(group: group));
-        await pumpFrames(tester);
-        expect(find.text('Seed'), findsOneWidget);
+          await tester.pumpWidget(buildWidget(group: group));
+          await pumpFrames(tester);
+          expect(find.text('Seed'), findsOneWidget);
 
-        const burst = 8;
-        GroupConversationWired.debugReorderInvocationCount = 0;
-        for (var i = 0; i < burst; i++) {
-          final msg = makeMessage(
-            id: 'burst-$i',
-            text: 'burst-$i',
-            timestamp: DateTime.utc(2026, 2, 9, 15, 40 + i),
+          const burst = 8;
+          GroupConversationWired.debugReorderInvocationCount = 0;
+          for (var i = 0; i < burst; i++) {
+            final msg = makeMessage(
+              id: 'burst-$i',
+              text: 'burst-$i',
+              timestamp: DateTime.utc(2026, 2, 9, 15, 40 + i),
+            );
+            await msgRepo.saveMessage(msg);
+            messageStreamController.add(msg);
+          }
+          await pumpFrames(tester, count: 20);
+
+          expect(
+            GroupConversationWired.debugReorderInvocationCount,
+            1,
+            reason: 'the burst must collapse into ONE batched reorder',
           );
-          await msgRepo.saveMessage(msg);
-          messageStreamController.add(msg);
-        }
-        await pumpFrames(tester, count: 20);
+          for (var i = 0; i < burst; i++) {
+            expect(find.text('burst-$i'), findsOneWidget);
+          }
+          // Trailing-edge flush: the last message of the burst is present.
+          expect(find.text('burst-${burst - 1}'), findsOneWidget);
+        },
+      );
 
-        expect(
-          GroupConversationWired.debugReorderInvocationCount,
-          1,
-          reason: 'the burst must collapse into ONE batched reorder',
-        );
-        for (var i = 0; i < burst; i++) {
-          expect(find.text('burst-$i'), findsOneWidget);
-        }
-        // Trailing-edge flush: the last message of the burst is present.
-        expect(find.text('burst-${burst - 1}'), findsOneWidget);
-      },
-    );
+      // TC-159-08b — a coalesced group burst preserves a scrolled-up offset (one
+      // capture before / one restore after) and marks read once-per-flush.
+      testWidgets(
+        'TC-159-08b coalesced group burst restores scroll offset once + marks read',
+        (tester) async {
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          for (var i = 0; i < 30; i++) {
+            await msgRepo.saveMessage(
+              makeMessage(
+                id: 'hist-$i',
+                text: 'history message number $i',
+                timestamp: DateTime.utc(2026, 2, 9, 10, i),
+              ),
+            );
+          }
 
-    // TC-159-08b — a coalesced group burst preserves a scrolled-up offset (one
-    // capture before / one restore after) and marks read once-per-flush.
-    testWidgets(
-      'TC-159-08b coalesced group burst restores scroll offset once + marks read',
-      (tester) async {
-        final group = makeChatGroup();
-        await groupRepo.saveGroup(group);
-        for (var i = 0; i < 30; i++) {
+          await tester.pumpWidget(buildWidget(group: group));
+          await pumpFrames(tester);
+
+          final controller = tester
+              .widget<GroupConversationScreen>(
+                find.byType(GroupConversationScreen),
+              )
+              .scrollController!;
+          // Scroll up (away from the live edge) so preserve-offset is active.
+          controller.jumpTo(120);
+          await tester.pump();
+          expect(controller.position.pixels, 120);
+
+          final readBefore = msgRepo.markAsReadCalls;
+
+          for (var i = 0; i < 6; i++) {
+            final msg = makeMessage(
+              id: 'late-$i',
+              text: 'late arrival $i',
+              timestamp: DateTime.utc(2026, 2, 9, 16, i),
+            );
+            await msgRepo.saveMessage(msg);
+            messageStreamController.add(msg);
+          }
+          await pumpFrames(tester, count: 20);
+
+          // The scrolled-up offset is preserved across the whole batch (not yanked
+          // to the live edge, not drifted by M partial restores).
+          expect(controller.position.pixels, 120);
+          // markAsRead fired exactly once for the whole batch (not N times).
+          expect(
+            msgRepo.markAsReadCalls - readBefore,
+            1,
+            reason:
+                'markAsRead runs once-per-flush against the post-batch state',
+          );
+        },
+      );
+
+      // TC-159-11 — the media-resolve gate skips the per-message DB attachment read
+      // for an already-shown text/status update, and opens for a new message.
+      testWidgets(
+        'TC-159-11 media-resolve gate skips DB read on an already-shown status update',
+        (tester) async {
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
           await msgRepo.saveMessage(
-            makeMessage(
-              id: 'hist-$i',
-              text: 'history message number $i',
-              timestamp: DateTime.utc(2026, 2, 9, 10, i),
+            makeMessage(id: 'shown', text: 'Already shown', status: 'sent'),
+          );
+
+          await tester.pumpWidget(
+            buildWidget(group: group, mediaRepo: mediaAttachmentRepo),
+          );
+          await pumpFrames(tester);
+          expect(find.text('Already shown'), findsOneWidget);
+
+          final resolveBefore =
+              mediaAttachmentRepo.getAttachmentsForMessageCalls;
+
+          // A pure status update to the already-shown message (no new attachment).
+          final updated = makeMessage(
+            id: 'shown',
+            text: 'Already shown',
+            status: 'delivered',
+          );
+          await msgRepo.saveMessage(updated);
+          messageStreamController.add(updated);
+          await pumpFrames(tester, count: 20);
+
+          expect(
+            mediaAttachmentRepo.getAttachmentsForMessageCalls,
+            resolveBefore,
+            reason:
+                'gate must skip the per-message attachment read on a status '
+                'update to an already-shown message',
+          );
+
+          // A NEW message opens the gate (resolve IS called).
+          final fresh = makeMessage(
+            id: 'fresh',
+            text: 'Fresh message',
+            timestamp: DateTime.utc(2026, 2, 9, 16, 0),
+          );
+          await msgRepo.saveMessage(fresh);
+          messageStreamController.add(fresh);
+          await pumpFrames(tester, count: 20);
+
+          expect(
+            mediaAttachmentRepo.getAttachmentsForMessageCalls,
+            resolveBefore + 1,
+            reason: 'gate must OPEN (resolve once) for a genuinely new message',
+          );
+          expect(find.text('Fresh message'), findsOneWidget);
+        },
+      );
+    });
+
+    group('229 download policy separates discussion announcement and manual '
+        'retry', () {
+      MediaAttachment makePolicyAttachment(
+        String id,
+        String messageId, {
+        String status = kMediaDownloadStatusPending,
+        String mime = 'image/png',
+        String mediaType = 'image',
+      }) {
+        return MediaAttachment(
+          id: id,
+          messageId: messageId,
+          mime: mime,
+          size: 2048,
+          mediaType: mediaType,
+          downloadStatus: status,
+          downloadRetryCount: 0,
+          contentHash: _validContentHash,
+          encryptionKeyBase64: 'key-fixture',
+          encryptionNonce: 'nonce-fixture',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          createdAt: '2026-07-10T09:00:00.000Z',
+        );
+      }
+
+      int downloadCommandCount() => bridge.commandLog
+          .where((command) => command == 'media:download')
+          .length;
+
+      testWidgets(
+        'discussion denial makes zero transfers and consults the discussion '
+        'lane',
+        (tester) async {
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          await msgRepo.saveMessage(
+            makeMessage(id: 'msg-229-disc', text: 'discussion media letter'),
+          );
+          await mediaAttachmentRepo.saveAttachment(
+            makePolicyAttachment('att-229-disc', 'msg-229-disc'),
+            owner: MediaOwnerLane.group,
+          );
+
+          final denying = RecordingMediaAutoDownloadDecider(allow: false);
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: FakeMediaFileManager(),
+              autoDownloadDecider: denying,
             ),
           );
-        }
+          await pumpFrames(tester, count: 20);
+          await pumpUntil(tester, () => denying.requests.isNotEmpty);
 
-        await tester.pumpWidget(buildWidget(group: group));
-        await pumpFrames(tester);
-
-        final controller = tester
-            .widget<GroupConversationScreen>(
-              find.byType(GroupConversationScreen),
-            )
-            .scrollController!;
-        // Scroll up (away from the live edge) so preserve-offset is active.
-        controller.jumpTo(120);
-        await tester.pump();
-        expect(controller.position.pixels, 120);
-
-        final readBefore = msgRepo.markAsReadCalls;
-
-        for (var i = 0; i < 6; i++) {
-          final msg = makeMessage(
-            id: 'late-$i',
-            text: 'late arrival $i',
-            timestamp: DateTime.utc(2026, 2, 9, 16, i),
-          );
-          await msgRepo.saveMessage(msg);
-          messageStreamController.add(msg);
-        }
-        await pumpFrames(tester, count: 20);
-
-        // The scrolled-up offset is preserved across the whole batch (not yanked
-        // to the live edge, not drifted by M partial restores).
-        expect(controller.position.pixels, 120);
-        // markAsRead fired exactly once for the whole batch (not N times).
-        expect(
-          msgRepo.markAsReadCalls - readBefore,
-          1,
-          reason: 'markAsRead runs once-per-flush against the post-batch state',
-        );
-      },
-    );
-
-    // TC-159-11 — the media-resolve gate skips the per-message DB attachment read
-    // for an already-shown text/status update, and opens for a new message.
-    testWidgets(
-      'TC-159-11 media-resolve gate skips DB read on an already-shown status update',
-      (tester) async {
-        final group = makeChatGroup();
-        await groupRepo.saveGroup(group);
-        await msgRepo.saveMessage(
-          makeMessage(id: 'shown', text: 'Already shown', status: 'sent'),
-        );
-
-        await tester.pumpWidget(
-          buildWidget(group: group, mediaRepo: mediaAttachmentRepo),
-        );
-        await pumpFrames(tester);
-        expect(find.text('Already shown'), findsOneWidget);
-
-        final resolveBefore =
-            mediaAttachmentRepo.getAttachmentsForMessageCalls;
-
-        // A pure status update to the already-shown message (no new attachment).
-        final updated = makeMessage(
-          id: 'shown',
-          text: 'Already shown',
-          status: 'delivered',
-        );
-        await msgRepo.saveMessage(updated);
-        messageStreamController.add(updated);
-        await pumpFrames(tester, count: 20);
-
-        expect(
-          mediaAttachmentRepo.getAttachmentsForMessageCalls,
-          resolveBefore,
-          reason: 'gate must skip the per-message attachment read on a status '
-              'update to an already-shown message',
-        );
-
-        // A NEW message opens the gate (resolve IS called).
-        final fresh = makeMessage(
-          id: 'fresh',
-          text: 'Fresh message',
-          timestamp: DateTime.utc(2026, 2, 9, 16, 0),
-        );
-        await msgRepo.saveMessage(fresh);
-        messageStreamController.add(fresh);
-        await pumpFrames(tester, count: 20);
-
-        expect(
-          mediaAttachmentRepo.getAttachmentsForMessageCalls,
-          resolveBefore + 1,
-          reason: 'gate must OPEN (resolve once) for a genuinely new message',
-        );
-        expect(find.text('Fresh message'), findsOneWidget);
-      },
-    );
-  });
-
-  group('229 download policy separates discussion announcement and manual '
-      'retry', () {
-    MediaAttachment makePolicyAttachment(
-      String id,
-      String messageId, {
-      String status = kMediaDownloadStatusPending,
-      String mime = 'image/png',
-      String mediaType = 'image',
-    }) {
-      return MediaAttachment(
-        id: id,
-        messageId: messageId,
-        mime: mime,
-        size: 2048,
-        mediaType: mediaType,
-        downloadStatus: status,
-        downloadRetryCount: 0,
-        contentHash: _validContentHash,
-        encryptionKeyBase64: 'key-fixture',
-        encryptionNonce: 'nonce-fixture',
-        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-        createdAt: '2026-07-10T09:00:00.000Z',
-      );
-    }
-
-    int downloadCommandCount() => bridge.commandLog
-        .where((command) => command == 'media:download')
-        .length;
-
-    testWidgets(
-      'discussion denial makes zero transfers and consults the discussion '
-      'lane',
-      (tester) async {
-        final group = makeChatGroup();
-        await groupRepo.saveGroup(group);
-        await saveActiveGroupMembers(groupRepo, group);
-        await msgRepo.saveMessage(
-          makeMessage(id: 'msg-229-disc', text: 'discussion media letter'),
-        );
-        await mediaAttachmentRepo.saveAttachment(
-          makePolicyAttachment('att-229-disc', 'msg-229-disc'),
-          owner: MediaOwnerLane.group,
-        );
-
-        final denying = RecordingMediaAutoDownloadDecider(allow: false);
-        await tester.pumpWidget(
-          buildWidget(
-            group: group,
-            mediaRepo: mediaAttachmentRepo,
-            mediaFileManager: FakeMediaFileManager(),
-            autoDownloadDecider: denying,
-          ),
-        );
-        await pumpFrames(tester, count: 20);
-        await pumpUntil(tester, () => denying.requests.isNotEmpty);
-
-        expect(
-          downloadCommandCount(),
-          0,
-          reason: 'a denied policy decision must run BEFORE any transfer',
-        );
-        for (final request in denying.requests) {
-          expect(request.conversationKind, MediaConversationKind.discussion);
-          expect(request.storageOwner, MediaOwnerLane.group);
-          expect(request.userInitiated, isFalse);
-        }
-        // Denial keeps the persisted row untouched (no optimistic
-        // downloading flip, no failure downgrade).
-        final rows = await mediaAttachmentRepo.getAttachmentsForMessage(
-          'msg-229-disc',
-          owner: MediaOwnerLane.group,
-        );
-        expect(rows.single.downloadStatus, kMediaDownloadStatusPending);
-      },
-    );
-
-    testWidgets(
-      'announcement denial consults the announcement lane and an explicit '
-      'retry still transfers once with the group owner',
-      (tester) async {
-        // A read-only announcement member: no compose permission, yet media
-        // retry stays reachable.
-        final group = makeAnnouncementGroup(role: GroupRole.member);
-        await groupRepo.saveGroup(group);
-        await saveActiveGroupMembers(groupRepo, group);
-        await msgRepo.saveMessage(
-          makeMessage(id: 'msg-229-ann', text: 'announcement media letter'),
-        );
-        await mediaAttachmentRepo.saveAttachment(
-          makePolicyAttachment(
-            'att-229-ann',
-            'msg-229-ann',
-            status: kMediaDownloadStatusFailed,
-          ),
-          owner: MediaOwnerLane.group,
-        );
-
-        final denying = RecordingMediaAutoDownloadDecider(allow: false);
-        await tester.pumpWidget(
-          buildWidget(
-            group: group,
-            mediaRepo: mediaAttachmentRepo,
-            mediaFileManager: FakeMediaFileManager(),
-            autoDownloadDecider: denying,
-          ),
-        );
-        await pumpFrames(tester, count: 20);
-        await pumpUntil(tester, () => denying.requests.isNotEmpty);
-
-        expect(downloadCommandCount(), 0,
-            reason: 'the retryable-failed row must not auto-recover under a '
-                'denied announcement lane');
-        for (final request in denying.requests) {
           expect(
-            request.conversationKind,
-            MediaConversationKind.announcement,
-            reason: 'announcement groups decide on their own product lane',
+            downloadCommandCount(),
+            0,
+            reason: 'a denied policy decision must run BEFORE any transfer',
           );
-          expect(request.storageOwner, MediaOwnerLane.group,
-              reason: 'announcement is never a third storage owner');
-        }
-        final consultsBeforeRetry = denying.requests.length;
+          for (final request in denying.requests) {
+            expect(request.conversationKind, MediaConversationKind.discussion);
+            expect(request.storageOwner, MediaOwnerLane.group);
+            expect(request.userInitiated, isFalse);
+          }
+          // Denial keeps the persisted row untouched (no optimistic
+          // downloading flip, no failure downgrade).
+          final rows = await mediaAttachmentRepo.getAttachmentsForMessage(
+            'msg-229-disc',
+            owner: MediaOwnerLane.group,
+          );
+          expect(rows.single.downloadStatus, kMediaDownloadStatusPending);
+        },
+      );
 
-        // Explicit user retry bypasses the denied auto preference.
-        final screen = tester.widget<GroupConversationScreen>(
-          find.byType(GroupConversationScreen),
-        );
-        expect(screen.onRetryUnavailableMedia, isNotNull,
-            reason: 'read-only announcement members keep the retry '
-                'affordance');
-        screen.onRetryUnavailableMedia!('msg-229-ann', 'att-229-ann');
-        // The retry path does real file I/O before and after the bridge
-        // call; give it real-async windows until the transfer lands.
-        for (var i = 0; i < 40 && downloadCommandCount() < 1; i++) {
+      testWidgets(
+        'announcement denial consults the announcement lane and an explicit '
+        'retry still transfers once with the group owner',
+        (tester) async {
+          // A read-only announcement member: no compose permission, yet media
+          // retry stays reachable.
+          final group = makeAnnouncementGroup(role: GroupRole.member);
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          await msgRepo.saveMessage(
+            makeMessage(id: 'msg-229-ann', text: 'announcement media letter'),
+          );
+          await mediaAttachmentRepo.saveAttachment(
+            makePolicyAttachment(
+              'att-229-ann',
+              'msg-229-ann',
+              status: kMediaDownloadStatusFailed,
+            ),
+            owner: MediaOwnerLane.group,
+          );
+
+          final denying = RecordingMediaAutoDownloadDecider(allow: false);
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: FakeMediaFileManager(),
+              autoDownloadDecider: denying,
+            ),
+          );
+          await pumpFrames(tester, count: 20);
+          await pumpUntil(tester, () => denying.requests.isNotEmpty);
+
+          expect(
+            downloadCommandCount(),
+            0,
+            reason:
+                'the retryable-failed row must not auto-recover under a '
+                'denied announcement lane',
+          );
+          for (final request in denying.requests) {
+            expect(
+              request.conversationKind,
+              MediaConversationKind.announcement,
+              reason: 'announcement groups decide on their own product lane',
+            );
+            expect(
+              request.storageOwner,
+              MediaOwnerLane.group,
+              reason: 'announcement is never a third storage owner',
+            );
+          }
+          final consultsBeforeRetry = denying.requests.length;
+
+          // Explicit user retry bypasses the denied auto preference.
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          expect(
+            screen.onRetryUnavailableMedia,
+            isNotNull,
+            reason:
+                'read-only announcement members keep the retry '
+                'affordance',
+          );
+          screen.onRetryUnavailableMedia!('msg-229-ann', 'att-229-ann');
+          // The retry path does real file I/O before and after the bridge
+          // call; give it real-async windows until the transfer lands.
+          for (var i = 0; i < 40 && downloadCommandCount() < 1; i++) {
+            await tester.runAsync(
+              () => Future<void>.delayed(const Duration(milliseconds: 25)),
+            );
+            await tester.pump(const Duration(milliseconds: 25));
+          }
           await tester.runAsync(
-            () => Future<void>.delayed(const Duration(milliseconds: 25)),
+            () => Future<void>.delayed(const Duration(milliseconds: 100)),
           );
-          await tester.pump(const Duration(milliseconds: 25));
-        }
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 100)),
-        );
-        await pumpFrames(tester, count: 10);
+          await pumpFrames(tester, count: 10);
 
-        expect(
-          downloadCommandCount(),
-          1,
-          reason: 'the explicit retry transfers exactly once despite the '
-              'denied auto preference',
-        );
-        expect(
-          denying.requests.length,
-          consultsBeforeRetry,
-          reason: 'the user-authoritative retry is never policy-gated',
-        );
-        // The integrity-checked download path stayed engaged: the fake
-        // bridge produced no verifiable bytes, so the row settles in a
-        // truthful non-done state instead of a phantom success.
-        final rows = await mediaAttachmentRepo.getAttachmentsForMessage(
-          'msg-229-ann',
-          owner: MediaOwnerLane.group,
-        );
-        expect(rows.single.downloadStatus, isNot(kMediaDownloadStatusDone));
-      },
-    );
+          expect(
+            downloadCommandCount(),
+            1,
+            reason:
+                'the explicit retry transfers exactly once despite the '
+                'denied auto preference',
+          );
+          expect(
+            denying.requests.length,
+            consultsBeforeRetry,
+            reason: 'the user-authoritative retry is never policy-gated',
+          );
+          // The integrity-checked download path stayed engaged: the fake
+          // bridge produced no verifiable bytes, so the row settles in a
+          // truthful non-done state instead of a phantom success.
+          final rows = await mediaAttachmentRepo.getAttachmentsForMessage(
+            'msg-229-ann',
+            owner: MediaOwnerLane.group,
+          );
+          expect(rows.single.downloadStatus, isNot(kMediaDownloadStatusDone));
+        },
+      );
 
-    testWidgets(
-      'group backed evicted media retries only after visible action',
-      (tester) async {
-        final group = makeChatGroup();
-        await groupRepo.saveGroup(group);
-        await saveActiveGroupMembers(groupRepo, group);
-        await msgRepo.saveMessage(
-          makeMessage(id: 'msg-229-evict', text: 'evicted media letter'),
-        );
-        await mediaAttachmentRepo.saveAttachment(
-          makePolicyAttachment(
-            'att-229-evict',
+      testWidgets(
+        'group backed evicted media retries only after visible action',
+        (tester) async {
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          await msgRepo.saveMessage(
+            makeMessage(id: 'msg-229-evict', text: 'evicted media letter'),
+          );
+          await mediaAttachmentRepo.saveAttachment(
+            makePolicyAttachment(
+              'att-229-evict',
+              'msg-229-evict',
+              status: kMediaDownloadStatusEvicted,
+            ),
+            owner: MediaOwnerLane.group,
+          );
+
+          // Fully-permissive policy: evicted still never auto-transfers.
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: FakeMediaFileManager(),
+              autoDownloadDecider: RecordingMediaAutoDownloadDecider(),
+            ),
+          );
+          await pumpFrames(tester, count: 20);
+
+          expect(
+            downloadCommandCount(),
+            0,
+            reason: 'mount must make zero transfers for an evicted row',
+          );
+
+          const retryKey = ValueKey(
+            'evicted-media-retry-msg-229-evict-att-229-evict',
+          );
+          expect(find.text('Local copy removed'), findsOneWidget);
+          expect(find.byKey(retryKey), findsOneWidget);
+
+          await tester.tap(find.byKey(retryKey));
+          for (var i = 0; i < 40 && downloadCommandCount() < 1; i++) {
+            await tester.runAsync(
+              () => Future<void>.delayed(const Duration(milliseconds: 25)),
+            );
+            await tester.pump(const Duration(milliseconds: 25));
+          }
+
+          expect(
+            downloadCommandCount(),
+            1,
+            reason:
+                'one visible action performs exactly one owner-aware '
+                'retry',
+          );
+          // The retry went through the owner-aware group lane (the
+          // owner-enforcing repo would throw on a cross-lane write) and the
+          // fake bridge produced no verifiable bytes, so the row settles
+          // truthfully non-done.
+          final rows = await mediaAttachmentRepo.getAttachmentsForMessage(
             'msg-229-evict',
-            status: kMediaDownloadStatusEvicted,
-          ),
-          owner: MediaOwnerLane.group,
-        );
-
-        // Fully-permissive policy: evicted still never auto-transfers.
-        await tester.pumpWidget(
-          buildWidget(
-            group: group,
-            mediaRepo: mediaAttachmentRepo,
-            mediaFileManager: FakeMediaFileManager(),
-            autoDownloadDecider: RecordingMediaAutoDownloadDecider(),
-          ),
-        );
-        await pumpFrames(tester, count: 20);
-
-        expect(downloadCommandCount(), 0,
-            reason: 'mount must make zero transfers for an evicted row');
-
-        const retryKey = ValueKey(
-          'evicted-media-retry-msg-229-evict-att-229-evict',
-        );
-        expect(find.text('Local copy removed'), findsOneWidget);
-        expect(find.byKey(retryKey), findsOneWidget);
-
-        await tester.tap(find.byKey(retryKey));
-        for (var i = 0; i < 40 && downloadCommandCount() < 1; i++) {
-          await tester.runAsync(
-            () => Future<void>.delayed(const Duration(milliseconds: 25)),
+            owner: MediaOwnerLane.group,
           );
-          await tester.pump(const Duration(milliseconds: 25));
-        }
-
-        expect(downloadCommandCount(), 1,
-            reason: 'one visible action performs exactly one owner-aware '
-                'retry');
-        // The retry went through the owner-aware group lane (the
-        // owner-enforcing repo would throw on a cross-lane write) and the
-        // fake bridge produced no verifiable bytes, so the row settles
-        // truthfully non-done.
-        final rows = await mediaAttachmentRepo.getAttachmentsForMessage(
-          'msg-229-evict',
-          owner: MediaOwnerLane.group,
-        );
-        expect(rows.single.downloadStatus, isNot(kMediaDownloadStatusDone));
-      },
-    );
-  });
-
-  // -------------------------------------------------------------------------
-  // 235: received-media core actions (typed viewer + injected coordinators)
-  // -------------------------------------------------------------------------
-  group('235 received media actions', () {
-    late FakeMediaFileManager mediaFileManager;
-
-    setUp(() {
-      mediaFileManager = FakeMediaFileManager();
+          expect(rows.single.downloadStatus, isNot(kMediaDownloadStatusDone));
+        },
+      );
     });
 
-    tearDown(() {
-      final root = Directory(FakeMediaFileManager.testRootPath);
-      if (root.existsSync()) root.deleteSync(recursive: true);
-    });
+    // -------------------------------------------------------------------------
+    // 235: received-media core actions (typed viewer + injected coordinators)
+    // -------------------------------------------------------------------------
+    group('235 received media actions', () {
+      late FakeMediaFileManager mediaFileManager;
 
-    /// Seeds an incoming persisted message with one DONE, verified image
-    /// attachment backed by a real decodable file, and returns the absolute
-    /// stored path.
-    Future<String> seedIncomingDoneImage({
-      required String messageId,
-      required String attachmentId,
-      String caption = 'photo caption',
-      String senderPeerId = 'peer-alice',
-    }) async {
-      await msgRepo.saveMessage(
-        makeMessage(
-          id: messageId,
-          text: caption,
-          senderPeerId: senderPeerId,
-        ),
-      );
-      final relativePath = mediaFileManager.relativePathForAttachment(
-        contactPeerId: 'group-1',
-        blobId: attachmentId,
-        mime: 'image/png',
-      );
-      final absolutePath = await mediaFileManager.resolveStoredPath(
-        relativePath,
-      );
-      final mediaFile = File(absolutePath);
-      mediaFile.parent.createSync(recursive: true);
-      mediaFile.writeAsBytesSync(_tinyPngBytes, flush: true);
-      await mediaAttachmentRepo.saveAttachment(
-        MediaAttachment(
-          id: attachmentId,
-          messageId: messageId,
-          mime: 'image/png',
-          size: _tinyPngBytes.length,
-          mediaType: 'image',
-          localPath: absolutePath,
-          downloadStatus: kMediaDownloadStatusDone,
-          createdAt: DateTime.now().toUtc().toIso8601String(),
-          contentHash: _validContentHash,
-          encryptionKeyBase64: 'a2V5',
-          encryptionNonce: 'bm9uY2U=',
-          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-        ),
-        owner: MediaOwnerLane.group,
-      );
-      return absolutePath;
-    }
+      setUp(() {
+        mediaFileManager = FakeMediaFileManager();
+      });
 
-    // The initial load performs REAL file I/O (path resolve + existence
-    // checks), which only completes inside tester.runAsync — fake-async
-    // pumps alone would hang it forever.
-    Future<void> pumpUntilMediaLoaded(
-      WidgetTester tester,
-      String messageId, {
-      int expectedCount = 1,
-    }) async {
-      for (var i = 0; i < 40; i++) {
-        await tester.runAsync(() async {
-          await Future<void>.delayed(const Duration(milliseconds: 25));
-        });
-        await tester.pump();
-        final screen = tester.widget<GroupConversationScreen>(
-          find.byType(GroupConversationScreen),
+      tearDown(() {
+        final root = Directory(FakeMediaFileManager.testRootPath);
+        if (root.existsSync()) root.deleteSync(recursive: true);
+      });
+
+      /// Seeds an incoming persisted message with one DONE, verified image
+      /// attachment backed by a real decodable file, and returns the absolute
+      /// stored path.
+      Future<String> seedIncomingDoneImage({
+        required String messageId,
+        required String attachmentId,
+        String caption = 'photo caption',
+        String senderPeerId = 'peer-alice',
+      }) async {
+        await msgRepo.saveMessage(
+          makeMessage(id: messageId, text: caption, senderPeerId: senderPeerId),
         );
-        if ((screen.mediaMap[messageId]?.length ?? 0) >= expectedCount) {
-          return;
-        }
-      }
-      fail('media for $messageId did not load');
-    }
-
-    testWidgets(
-      'GMA-03 viewer selection and reopen preserve exact attachment identity',
-      (tester) async {
-        tester.view.physicalSize = const Size(1200, 4000);
-        tester.view.devicePixelRatio = 1.0;
-        addTearDown(tester.view.resetPhysicalSize);
-        addTearDown(tester.view.resetDevicePixelRatio);
-        final group = makeChatGroup();
-        await groupRepo.saveGroup(group);
-        await saveActiveGroupMembers(groupRepo, group);
-        await seedIncomingDoneImage(messageId: 'msg-a', attachmentId: 'att-a');
-        // Second attachment on the SAME parent.
-        final relativeB = mediaFileManager.relativePathForAttachment(
+        final relativePath = mediaFileManager.relativePathForAttachment(
           contactPeerId: 'group-1',
-          blobId: 'att-b',
+          blobId: attachmentId,
           mime: 'image/png',
         );
-        final absoluteB = await mediaFileManager.resolveStoredPath(relativeB);
-        File(absoluteB)
-          ..parent.createSync(recursive: true)
-          ..writeAsBytesSync(_tinyPngBytes, flush: true);
+        final absolutePath = await mediaFileManager.resolveStoredPath(
+          relativePath,
+        );
+        final mediaFile = File(absolutePath);
+        mediaFile.parent.createSync(recursive: true);
+        mediaFile.writeAsBytesSync(_tinyPngBytes, flush: true);
         await mediaAttachmentRepo.saveAttachment(
           MediaAttachment(
-            id: 'att-b',
-            messageId: 'msg-a',
+            id: attachmentId,
+            messageId: messageId,
             mime: 'image/png',
             size: _tinyPngBytes.length,
             mediaType: 'image',
-            localPath: absoluteB,
+            localPath: absolutePath,
             downloadStatus: kMediaDownloadStatusDone,
             createdAt: DateTime.now().toUtc().toIso8601String(),
             contentHash: _validContentHash,
@@ -14445,167 +15450,629 @@ void main() {
           ),
           owner: MediaOwnerLane.group,
         );
-        // A DIFFERENT parent with its own attachment.
-        await seedIncomingDoneImage(messageId: 'msg-b', attachmentId: 'att-c');
-
-        final controller = RecordingGroupMediaActionsController(
-          messageRepository: msgRepo,
-          mediaAttachmentRepository: mediaAttachmentRepo,
-        );
-        await tester.pumpWidget(
-          buildWidget(
-            group: group,
-            mediaRepo: mediaAttachmentRepo,
-            mediaFileManager: mediaFileManager,
-            mediaActionsController: controller,
-          ),
-        );
-        await pumpUntilMediaLoaded(tester, 'msg-a', expectedCount: 2);
-        await pumpUntilMediaLoaded(tester, 'msg-b');
-
-        // Open the viewer on the SECOND attachment of msg-a.
-        await tester.tap(
-          find.byKey(const ValueKey('media-grid-cell-msg-a-att-b')),
-        );
-        await pumpFrames(tester, count: 4);
-        expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
-        var viewer = tester.widget<FullScreenTypedMediaViewer>(
-          find.byType(FullScreenTypedMediaViewer),
-        );
-        expect(
-          viewer.items.map((item) => item.attachmentId).toList(),
-          ['att-a', 'att-b'],
-          reason: 'viewer pages are ONLY this parent\'s attachments — '
-              'no conversation-wide swipe navigation',
-        );
-        expect(viewer.initialIndex, 1);
-        expect(viewer.items[1].messageId, 'msg-a');
-
-        // The dispatched action carries the exact selected item.
-        await tester.tap(find.byKey(const ValueKey('media_action_save')));
-        await pumpFrames(tester, count: 4);
-        expect(controller.saves, ['group-1/msg-a/att-b']);
-
-        // Reopen from a different parent: identity follows the new parent.
-        await tester.tap(find.byIcon(Icons.arrow_back));
-        await pumpFrames(tester, count: 10);
-        expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
-        await tester.tap(
-          find.byKey(const ValueKey('media-grid-cell-msg-b-att-c')),
-        );
-        await pumpFrames(tester, count: 4);
-        viewer = tester.widget<FullScreenTypedMediaViewer>(
-          find.byType(FullScreenTypedMediaViewer),
-        );
-        expect(
-          viewer.items.map((item) => item.attachmentId).toList(),
-          ['att-c'],
-        );
-        expect(viewer.initialIndex, 0);
-        await tester.tap(find.byKey(const ValueKey('media_action_save')));
-        await pumpFrames(tester, count: 4);
-        expect(controller.saves, [
-          'group-1/msg-a/att-b',
-          'group-1/msg-b/att-c',
-        ]);
-      },
-    );
-
-    testWidgets('GMA-05 media reply reuses existing group quote flow', (
-      tester,
-    ) async {
-      tester.view.physicalSize = const Size(1200, 4000);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      final group = makeChatGroup();
-      await groupRepo.saveGroup(group);
-      await saveActiveGroupMembers(groupRepo, group);
-      await seedIncomingDoneImage(
-        messageId: 'msg-m',
-        attachmentId: 'att-1',
-        caption: 'reply to this photo',
-      );
-      await tester.pumpWidget(
-        buildWidget(
-          group: group,
-          mediaRepo: mediaAttachmentRepo,
-          mediaFileManager: mediaFileManager,
-          mediaActionsController: RecordingGroupMediaActionsController(
-            messageRepository: msgRepo,
-            mediaAttachmentRepository: mediaAttachmentRepo,
-          ),
-        ),
-      );
-      await pumpUntilMediaLoaded(tester, 'msg-m');
-
-      // Viewer Reply pops the viewer and arms the existing quote composer.
-      await tester.tap(
-        find.byKey(const ValueKey('media-grid-cell-msg-m-att-1')),
-      );
-      await pumpFrames(tester, count: 4);
-      expect(find.byKey(const ValueKey('media_action_reply')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('media_action_reply')));
-      await pumpFrames(tester, count: 10);
-      expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
-      final screen = tester.widget<GroupConversationScreen>(
-        find.byType(GroupConversationScreen),
-      );
-      expect(screen.activeQuoteText, 'reply to this photo');
-
-      // canWrite == false (no current send key): the viewer offers no Reply
-      // slot at all. Empty membership is deliberately ambiguous (startup
-      // window) and never infers removal, so the missing-key gate is the
-      // deterministic read-only lever here.
-      final readOnlyGroup = makeChatGroup(role: GroupRole.member);
-      groupRepo = InMemoryGroupRepository();
-      await groupRepo.saveGroup(readOnlyGroup);
-      await saveActiveGroupMembers(groupRepo, readOnlyGroup);
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pumpWidget(
-        buildWidget(
-          group: readOnlyGroup,
-          mediaRepo: mediaAttachmentRepo,
-          mediaFileManager: mediaFileManager,
-          mediaActionsController: RecordingGroupMediaActionsController(
-            messageRepository: msgRepo,
-            mediaAttachmentRepository: mediaAttachmentRepo,
-          ),
-        ),
-      );
-      await pumpUntilMediaLoaded(tester, 'msg-m');
-      // Wait for the security-status load to settle the write gate.
-      for (var i = 0; i < 40; i++) {
-        final screen = tester.widget<GroupConversationScreen>(
-          find.byType(GroupConversationScreen),
-        );
-        if (!screen.canWrite) break;
-        await tester.runAsync(() async {
-          await Future<void>.delayed(const Duration(milliseconds: 25));
-        });
-        await tester.pump();
+        return absolutePath;
       }
-      expect(
-        tester
-            .widget<GroupConversationScreen>(
-              find.byType(GroupConversationScreen),
-            )
-            .canWrite,
-        isFalse,
-        reason: 'self is not an active member -> read-only',
-      );
-      await tester.tap(
-        find.byKey(const ValueKey('media-grid-cell-msg-m-att-1')),
-      );
-      await pumpFrames(tester, count: 4);
-      expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
-      expect(find.byKey(const ValueKey('media_action_reply')), findsNothing);
-      expect(find.byKey(const ValueKey('media_action_save')), findsOneWidget);
-    });
 
-    testWidgets(
-      'GMA-11 wired media actions reach only injected coordinators',
-      (tester) async {
+      // The initial load performs REAL file I/O (path resolve + existence
+      // checks), which only completes inside tester.runAsync — fake-async
+      // pumps alone would hang it forever.
+      Future<void> pumpUntilMediaLoaded(
+        WidgetTester tester,
+        String messageId, {
+        int expectedCount = 1,
+      }) async {
+        for (var i = 0; i < 40; i++) {
+          await tester.runAsync(() async {
+            await Future<void>.delayed(const Duration(milliseconds: 25));
+          });
+          await tester.pump();
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          if ((screen.mediaMap[messageId]?.length ?? 0) >= expectedCount) {
+            return;
+          }
+        }
+        fail('media for $messageId did not load');
+      }
+
+      ContactModel plan247SenderContact() => ContactModel(
+        peerId: 'peer-bob',
+        publicKey: 'pk-peer-bob',
+        rendezvous: '/ip4/127.0.0.1/tcp/4001',
+        username: 'Bob',
+        signature: 'sig-peer-bob',
+        scannedAt: DateTime.utc(2026, 7, 11).toIso8601String(),
+      );
+
+      Future<(GroupModel, KnownClearGroupMessageRepository)>
+      seedPlan247EligibleSource({
+        required String messageId,
+        required String attachmentId,
+      }) async {
+        final group = makeAnnouncementGroup(role: GroupRole.member);
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        final currentMessages = KnownClearGroupMessageRepository();
+        msgRepo = currentMessages;
+        await seedIncomingDoneImage(
+          messageId: messageId,
+          attachmentId: attachmentId,
+          caption: 'eligible announcement visual',
+          senderPeerId: 'peer-bob',
+        );
+        await contactRepo.addContact(plan247SenderContact());
+        return (group, currentMessages);
+      }
+
+      testWidgets(
+        'GMA-03 viewer selection and reopen preserve exact attachment identity',
+        (tester) async {
+          tester.view.physicalSize = const Size(1200, 4000);
+          tester.view.devicePixelRatio = 1.0;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          await seedIncomingDoneImage(
+            messageId: 'msg-a',
+            attachmentId: 'att-a',
+          );
+          // Second attachment on the SAME parent.
+          final relativeB = mediaFileManager.relativePathForAttachment(
+            contactPeerId: 'group-1',
+            blobId: 'att-b',
+            mime: 'image/png',
+          );
+          final absoluteB = await mediaFileManager.resolveStoredPath(relativeB);
+          File(absoluteB)
+            ..parent.createSync(recursive: true)
+            ..writeAsBytesSync(_tinyPngBytes, flush: true);
+          await mediaAttachmentRepo.saveAttachment(
+            MediaAttachment(
+              id: 'att-b',
+              messageId: 'msg-a',
+              mime: 'image/png',
+              size: _tinyPngBytes.length,
+              mediaType: 'image',
+              localPath: absoluteB,
+              downloadStatus: kMediaDownloadStatusDone,
+              createdAt: DateTime.now().toUtc().toIso8601String(),
+              contentHash: _validContentHash,
+              encryptionKeyBase64: 'a2V5',
+              encryptionNonce: 'bm9uY2U=',
+              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            ),
+            owner: MediaOwnerLane.group,
+          );
+          // A DIFFERENT parent with its own attachment.
+          await seedIncomingDoneImage(
+            messageId: 'msg-b',
+            attachmentId: 'att-c',
+          );
+
+          final controller = RecordingGroupMediaActionsController(
+            messageRepository: msgRepo,
+            mediaAttachmentRepository: mediaAttachmentRepo,
+          );
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: mediaFileManager,
+              mediaActionsController: controller,
+            ),
+          );
+          await pumpUntilMediaLoaded(tester, 'msg-a', expectedCount: 2);
+          await pumpUntilMediaLoaded(tester, 'msg-b');
+
+          // Open the viewer on the SECOND attachment of msg-a.
+          await tester.tap(
+            find.byKey(const ValueKey('media-grid-cell-msg-a-att-b')),
+          );
+          await pumpFrames(tester, count: 4);
+          expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+          var viewer = tester.widget<FullScreenTypedMediaViewer>(
+            find.byType(FullScreenTypedMediaViewer),
+          );
+          expect(
+            viewer.items.map((item) => item.attachmentId).toList(),
+            ['att-a', 'att-b'],
+            reason:
+                'viewer pages are ONLY this parent\'s attachments — '
+                'no conversation-wide swipe navigation',
+          );
+          expect(viewer.initialIndex, 1);
+          expect(viewer.items[1].messageId, 'msg-a');
+
+          // The dispatched action carries the exact selected item.
+          await tester.tap(find.byKey(const ValueKey('media_action_save')));
+          await pumpFrames(tester, count: 4);
+          expect(controller.saves, ['group-1/msg-a/att-b']);
+
+          // Reopen from a different parent: identity follows the new parent.
+          await tester.tap(find.byIcon(Icons.arrow_back));
+          await pumpFrames(tester, count: 10);
+          expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
+          await tester.tap(
+            find.byKey(const ValueKey('media-grid-cell-msg-b-att-c')),
+          );
+          await pumpFrames(tester, count: 4);
+          viewer = tester.widget<FullScreenTypedMediaViewer>(
+            find.byType(FullScreenTypedMediaViewer),
+          );
+          expect(viewer.items.map((item) => item.attachmentId).toList(), [
+            'att-c',
+          ]);
+          expect(viewer.initialIndex, 0);
+          await tester.tap(find.byKey(const ValueKey('media_action_save')));
+          await pumpFrames(tester, count: 4);
+          expect(controller.saves, [
+            'group-1/msg-a/att-b',
+            'group-1/msg-b/att-c',
+          ]);
+        },
+      );
+
+      testWidgets(
+        'GPL-04F injected Forward launcher requalifies after attachment await before picker',
+        (tester) async {
+          tester.view.physicalSize = const Size(1200, 4000);
+          tester.view.devicePixelRatio = 1.0;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          final gatedMedia = GateFirstSingleMediaReadRepository();
+          mediaAttachmentRepo = gatedMedia;
+          const messageId = 'gpl-04f-injected-message';
+          const attachmentId = 'gpl-04f-injected-attachment';
+          await seedIncomingDoneImage(
+            messageId: messageId,
+            attachmentId: attachmentId,
+          );
+          var launcherCalls = 0;
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaRepo: gatedMedia,
+              mediaFileManager: mediaFileManager,
+              groupMediaForwardLauncher: (_, _) async {
+                launcherCalls++;
+              },
+            ),
+          );
+          await pumpUntilMediaLoaded(tester, messageId);
+          final cellKey = ValueKey('media-grid-cell-$messageId-$attachmentId');
+          await tester.tap(find.byKey(cellKey));
+          await pumpFrames(tester, count: 4);
+          expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+          expect(
+            find.byKey(const ValueKey('media_action_forward')),
+            findsOneWidget,
+          );
+
+          gatedMedia.armed = true;
+          final pathResolvesBeforeForward =
+              mediaFileManager.resolveStoredPathCount;
+          await tester.tap(find.byKey(const ValueKey('media_action_forward')));
+          await tester.runAsync(
+            () => gatedMedia.firstReadCaptured.future.timeout(
+              const Duration(seconds: 2),
+            ),
+          );
+          await msgRepo.saveMessage(
+            makeMessage(
+              id: messageId,
+              text: 'PRIVATE CAPTION MUST NOT REACH PICKER',
+              privateMediaPolicy: const GroupPrivateMediaPolicy.viewOnce(),
+            ),
+          );
+          gatedMedia.releaseFirstRead.complete();
+          await pumpFrames(tester, count: 10);
+
+          expect(launcherCalls, 0);
+          expect(
+            mediaFileManager.resolveStoredPathCount,
+            pathResolvesBeforeForward,
+          );
+          expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+        },
+      );
+
+      testWidgets(
+        'GPL-04P denied canonical preview never opens picker or exposes its file path',
+        (tester) async {
+          tester.view.physicalSize = const Size(1200, 4000);
+          tester.view.devicePixelRatio = 1.0;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          const messageId = 'gpl-04p-message';
+          const attachmentId = 'gpl-04p-attachment';
+          await seedIncomingDoneImage(
+            messageId: messageId,
+            attachmentId: attachmentId,
+          );
+
+          final outsideDirectory = Directory.systemTemp.createTempSync(
+            'gpl_04p_noncanonical_',
+          );
+          addTearDown(() {
+            if (outsideDirectory.existsSync()) {
+              outsideDirectory.deleteSync(recursive: true);
+            }
+          });
+          final outsideFile = File(p.join(outsideDirectory.path, 'source.png'))
+            ..writeAsBytesSync(_tinyPngBytes);
+          final seededRows = await mediaAttachmentRepo.getAttachmentsForMessage(
+            messageId,
+            owner: MediaOwnerLane.group,
+          );
+          await mediaAttachmentRepo.saveAttachment(
+            seededRows.single.copyWith(localPath: outsideFile.path),
+            owner: MediaOwnerLane.group,
+          );
+
+          final directMessages = InMemoryMessageRepository();
+          final directListener = ChatMessageListener(
+            chatMessageStream: const Stream<ChatMessage>.empty(),
+            messageRepo: directMessages,
+            contactRepo: contactRepo,
+          );
+          addTearDown(directListener.dispose);
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: mediaFileManager,
+              imageProcessor: ImageProcessor(),
+              forwardMessageRepository: directMessages,
+              forwardChatMessageListener: directListener,
+            ),
+          );
+          await pumpUntilMediaLoaded(tester, messageId);
+          await tester.tap(
+            find.byKey(
+              const ValueKey(
+                'media-grid-cell-gpl-04p-message-gpl-04p-attachment',
+              ),
+            ),
+          );
+          await pumpFrames(tester, count: 4);
+          expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+          expect(
+            find.byKey(const ValueKey('media_action_forward')),
+            findsOneWidget,
+          );
+
+          await tester.tap(find.byKey(const ValueKey('media_action_forward')));
+          await pumpFrames(tester, count: 10);
+
+          expect(find.byType(ShareTargetPickerWired), findsNothing);
+          expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+        },
+      );
+
+      testWidgets(
+        'GPL-04S final-validator attachment drift keeps picker closed and exposes no path',
+        (tester) async {
+          tester.view.physicalSize = const Size(1200, 4000);
+          tester.view.devicePixelRatio = 1.0;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          const messageId = 'gpl-04s-message';
+          const attachmentId = 'gpl-04s-attachment';
+          final gatedFiles = _GateForwardCanonicalValidatorFileManager();
+          mediaFileManager = gatedFiles;
+          addTearDown(() {
+            if (!gatedFiles.release.isCompleted) {
+              gatedFiles.release.complete();
+            }
+          });
+          await seedIncomingDoneImage(
+            messageId: messageId,
+            attachmentId: attachmentId,
+          );
+
+          final directMessages = InMemoryMessageRepository();
+          final directListener = ChatMessageListener(
+            chatMessageStream: const Stream<ChatMessage>.empty(),
+            messageRepo: directMessages,
+            contactRepo: contactRepo,
+          );
+          addTearDown(directListener.dispose);
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: gatedFiles,
+              imageProcessor: ImageProcessor(),
+              forwardMessageRepository: directMessages,
+              forwardChatMessageListener: directListener,
+            ),
+          );
+          await pumpUntilMediaLoaded(tester, messageId);
+          await tester.tap(
+            find.byKey(
+              const ValueKey(
+                'media-grid-cell-gpl-04s-message-gpl-04s-attachment',
+              ),
+            ),
+          );
+          await pumpFrames(tester, count: 4);
+          expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+          expect(
+            find.byKey(const ValueKey('media_action_forward')),
+            findsOneWidget,
+          );
+
+          gatedFiles.armed = true;
+          await tester.tap(find.byKey(const ValueKey('media_action_forward')));
+          await tester.runAsync(
+            () =>
+                gatedFiles.captured.future.timeout(const Duration(seconds: 2)),
+          );
+          await mediaAttachmentRepo.updateDownloadStatus(
+            attachmentId,
+            'evicted',
+          );
+          gatedFiles.release.complete();
+          await pumpFrames(tester, count: 10);
+
+          expect(find.byType(ShareTargetPickerWired), findsNothing);
+          expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+        },
+      );
+
+      testWidgets(
+        'GPL-04O final parent drift during exact-row await keeps picker closed',
+        (tester) async {
+          tester.view.physicalSize = const Size(1200, 4000);
+          tester.view.devicePixelRatio = 1.0;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          final exactRowAwait = GateNthExactMediaReadRepository();
+          mediaAttachmentRepo = exactRowAwait;
+          addTearDown(exactRowAwait.release);
+          const messageId = 'gpl-04o-message';
+          const attachmentId = 'gpl-04o-attachment';
+          await seedIncomingDoneImage(
+            messageId: messageId,
+            attachmentId: attachmentId,
+          );
+
+          final directMessages = InMemoryMessageRepository();
+          final directListener = ChatMessageListener(
+            chatMessageStream: const Stream<ChatMessage>.empty(),
+            messageRepo: directMessages,
+            contactRepo: contactRepo,
+          );
+          addTearDown(directListener.dispose);
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaRepo: exactRowAwait,
+              mediaFileManager: mediaFileManager,
+              imageProcessor: ImageProcessor(),
+              forwardMessageRepository: directMessages,
+              forwardChatMessageListener: directListener,
+            ),
+          );
+          await pumpUntilMediaLoaded(tester, messageId);
+          await tester.tap(
+            find.byKey(
+              const ValueKey(
+                'media-grid-cell-gpl-04o-message-gpl-04o-attachment',
+              ),
+            ),
+          );
+          await pumpFrames(tester, count: 4);
+          expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+          expect(
+            find.byKey(const ValueKey('media_action_forward')),
+            findsOneWidget,
+          );
+
+          exactRowAwait.gateAfterExactReads(2);
+          await tester.tap(find.byKey(const ValueKey('media_action_forward')));
+          for (var i = 0; i < 40 && !exactRowAwait.hasCaptured; i++) {
+            await tester.runAsync(
+              () => Future<void>.delayed(const Duration(milliseconds: 25)),
+            );
+            await tester.pump();
+          }
+          expect(
+            exactRowAwait.hasCaptured,
+            isTrue,
+            reason:
+                'forward preview made ${exactRowAwait.exactReadCalls} exact reads',
+          );
+          await msgRepo.saveMessage(
+            makeMessage(
+              id: messageId,
+              text: 'PRIVATE CAPTION MUST NOT REACH PICKER',
+              privateMediaPolicy: const GroupPrivateMediaPolicy.viewOnce(),
+            ),
+          );
+          exactRowAwait.release();
+          await pumpFrames(tester, count: 10);
+
+          expect(find.byType(ShareTargetPickerWired), findsNothing);
+          expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+        },
+      );
+
+      testWidgets(
+        'GPL-09I stale viewer and bubble Info reload parent before metadata exposure',
+        (tester) async {
+          tester.view.physicalSize = const Size(1200, 4000);
+          tester.view.devicePixelRatio = 1.0;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          const messageId = 'gpl-09i-message';
+          const attachmentId = 'gpl-09i-attachment';
+          await seedIncomingDoneImage(
+            messageId: messageId,
+            attachmentId: attachmentId,
+            caption: 'ordinary caption',
+          );
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: mediaFileManager,
+              mediaActionsController: RecordingGroupMediaActionsController(
+                messageRepository: msgRepo,
+                mediaAttachmentRepository: mediaAttachmentRepo,
+              ),
+            ),
+          );
+          await pumpUntilMediaLoaded(tester, messageId);
+          const cellKey = ValueKey(
+            'media-grid-cell-gpl-09i-message-gpl-09i-attachment',
+          );
+
+          await tester.tap(find.byKey(cellKey));
+          await pumpFrames(tester, count: 4);
+          expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+          await msgRepo.saveMessage(
+            makeMessage(
+              id: messageId,
+              text: 'PRIVATE CAPTION MUST NOT ENTER INFO',
+              privateMediaPolicy: const GroupPrivateMediaPolicy.viewOnce(),
+            ),
+          );
+          final viewer = tester.widget<FullScreenTypedMediaViewer>(
+            find.byType(FullScreenTypedMediaViewer),
+          );
+          final infoResult = await viewer.onAction!(
+            viewer.items.single,
+            MediaViewerAction.info,
+          );
+          expect(infoResult, MediaViewerActionResult.failure);
+          await pumpFrames(tester, count: 10);
+          expect(find.byKey(GroupMediaInfoSheet.sheetKey), findsNothing);
+          await tester.tap(find.byIcon(Icons.arrow_back));
+          await pumpFrames(tester, count: 10);
+
+          await msgRepo.saveMessage(
+            makeMessage(id: messageId, text: 'ordinary caption'),
+          );
+          await tester.longPress(find.byKey(cellKey));
+          await pumpFrames(tester, count: 4);
+          expect(
+            find.byKey(MessageContextOverlay.infoActionKey),
+            findsOneWidget,
+          );
+          await msgRepo.saveMessage(
+            makeMessage(
+              id: messageId,
+              text: 'PRIVATE CAPTION MUST NOT ENTER INFO',
+              privateMediaPolicy: const GroupPrivateMediaPolicy.unsupported(
+                sourceVersion: 9,
+              ),
+            ),
+          );
+          await tester.tap(find.byKey(MessageContextOverlay.infoActionKey));
+          await pumpFrames(tester, count: 10);
+          expect(find.byKey(GroupMediaInfoSheet.sheetKey), findsNothing);
+          expect(find.text('image/png'), findsNothing);
+          expect(
+            find.text('PRIVATE CAPTION MUST NOT ENTER INFO'),
+            findsNothing,
+          );
+        },
+      );
+
+      testWidgets(
+        'GPL-09J Info reloads a parent that drifts private during attachment lookup before metadata',
+        (tester) async {
+          tester.view.physicalSize = const Size(1200, 4000);
+          tester.view.devicePixelRatio = 1.0;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          final gatedMedia = GateFirstSingleMediaReadRepository();
+          mediaAttachmentRepo = gatedMedia;
+          const messageId = 'gpl-09j-message';
+          const attachmentId = 'gpl-09j-attachment';
+          await seedIncomingDoneImage(
+            messageId: messageId,
+            attachmentId: attachmentId,
+            caption: 'ordinary caption before awaited drift',
+          );
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaRepo: gatedMedia,
+              mediaFileManager: mediaFileManager,
+              mediaActionsController: RecordingGroupMediaActionsController(
+                messageRepository: msgRepo,
+                mediaAttachmentRepository: gatedMedia,
+              ),
+            ),
+          );
+          await pumpUntilMediaLoaded(tester, messageId);
+          await tester.tap(
+            find.byKey(
+              const ValueKey(
+                'media-grid-cell-gpl-09j-message-gpl-09j-attachment',
+              ),
+            ),
+          );
+          await pumpFrames(tester, count: 4);
+          final viewer = tester.widget<FullScreenTypedMediaViewer>(
+            find.byType(FullScreenTypedMediaViewer),
+          );
+
+          gatedMedia.armed = true;
+          final infoFuture = viewer.onAction!(
+            viewer.items.single,
+            MediaViewerAction.info,
+          );
+          await tester.runAsync(
+            () => gatedMedia.firstReadCaptured.future.timeout(
+              const Duration(seconds: 2),
+            ),
+          );
+          await msgRepo.saveMessage(
+            makeMessage(
+              id: messageId,
+              text: 'PRIVATE CAPTION MUST NOT ENTER INFO AFTER AWAIT',
+              privateMediaPolicy: const GroupPrivateMediaPolicy.viewOnce(),
+            ),
+          );
+          gatedMedia.releaseFirstRead.complete();
+          await pumpFrames(tester, count: 10);
+
+          expect(find.byKey(GroupMediaInfoSheet.sheetKey), findsNothing);
+          expect(
+            find.text('PRIVATE CAPTION MUST NOT ENTER INFO AFTER AWAIT'),
+            findsNothing,
+          );
+          expect(await infoFuture, MediaViewerActionResult.failure);
+        },
+      );
+
+      testWidgets('GMA-05 media reply reuses existing group quote flow', (
+        tester,
+      ) async {
         tester.view.physicalSize = const Size(1200, 4000);
         tester.view.devicePixelRatio = 1.0;
         addTearDown(tester.view.resetPhysicalSize);
@@ -14613,139 +16080,110 @@ void main() {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
         await saveActiveGroupMembers(groupRepo, group);
-        await seedIncomingDoneImage(messageId: 'msg-m', attachmentId: 'att-1');
-        final controller = RecordingGroupMediaActionsController(
-          messageRepository: msgRepo,
-          mediaAttachmentRepository: mediaAttachmentRepo,
+        await seedIncomingDoneImage(
+          messageId: 'msg-m',
+          attachmentId: 'att-1',
+          caption: 'reply to this photo',
         );
-        final deleteCoordinator = RecordingGroupMediaDeleteForMeCoordinator();
         await tester.pumpWidget(
           buildWidget(
             group: group,
             mediaRepo: mediaAttachmentRepo,
             mediaFileManager: mediaFileManager,
-            mediaActionsController: controller,
-            mediaDeleteForMeCoordinator: deleteCoordinator,
+            mediaActionsController: RecordingGroupMediaActionsController(
+              messageRepository: msgRepo,
+              mediaAttachmentRepository: mediaAttachmentRepo,
+            ),
           ),
         );
         await pumpUntilMediaLoaded(tester, 'msg-m');
-        final commandsBefore = bridge.commandLog.length;
 
-        // Bubble long-press → Save reaches ONLY the injected controller.
-        await tester.longPress(
-          find.byKey(const ValueKey('media-grid-cell-msg-m-att-1')),
-        );
-        await pumpFrames(tester, count: 4);
-        await tester.tap(find.byKey(MessageContextOverlay.saveActionKey));
-        await pumpFrames(tester, count: 10);
-        expect(controller.saves, ['group-1/msg-m/att-1']);
-        expect(controller.egressServiceTouched, isFalse);
-
-        // Viewer Share reaches ONLY the injected controller.
+        // Viewer Reply pops the viewer and arms the existing quote composer.
         await tester.tap(
           find.byKey(const ValueKey('media-grid-cell-msg-m-att-1')),
         );
         await pumpFrames(tester, count: 4);
-        await tester.tap(find.byKey(const ValueKey('media_action_share')));
-        await pumpFrames(tester, count: 4);
-        expect(controller.shares, ['group-1/msg-m/att-1']);
-        await tester.tap(find.byIcon(Icons.arrow_back));
-        await pumpFrames(tester, count: 10);
-
-        // Delete: cancel is a zero-op.
-        await tester.longPress(
-          find.byKey(const ValueKey('media-grid-cell-msg-m-att-1')),
-        );
-        await pumpFrames(tester, count: 4);
-        await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
-        await pumpFrames(tester, count: 10);
         expect(
-          find.byKey(const ValueKey('group-media-delete-confirm')),
+          find.byKey(const ValueKey('media_action_reply')),
           findsOneWidget,
         );
-        await tester.tap(
-          find.byKey(const ValueKey('group-media-delete-cancel')),
-        );
+        await tester.tap(find.byKey(const ValueKey('media_action_reply')));
         await pumpFrames(tester, count: 10);
-        expect(deleteCoordinator.calls, isEmpty);
+        expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.activeQuoteText, 'reply to this photo');
 
-        // One confirm yields exactly one coordinator operation.
-        await tester.longPress(
+        // canWrite == false (no current send key): the viewer offers no Reply
+        // slot at all. Empty membership is deliberately ambiguous (startup
+        // window) and never infers removal, so the missing-key gate is the
+        // deterministic read-only lever here.
+        final readOnlyGroup = makeChatGroup(role: GroupRole.member);
+        groupRepo = InMemoryGroupRepository();
+        await groupRepo.saveGroup(readOnlyGroup);
+        await saveActiveGroupMembers(groupRepo, readOnlyGroup);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpWidget(
+          buildWidget(
+            group: readOnlyGroup,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            mediaActionsController: RecordingGroupMediaActionsController(
+              messageRepository: msgRepo,
+              mediaAttachmentRepository: mediaAttachmentRepo,
+            ),
+          ),
+        );
+        await pumpUntilMediaLoaded(tester, 'msg-m');
+        // Wait for the security-status load to settle the write gate.
+        for (var i = 0; i < 40; i++) {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          if (!screen.canWrite) break;
+          await tester.runAsync(() async {
+            await Future<void>.delayed(const Duration(milliseconds: 25));
+          });
+          await tester.pump();
+        }
+        expect(
+          tester
+              .widget<GroupConversationScreen>(
+                find.byType(GroupConversationScreen),
+              )
+              .canWrite,
+          isFalse,
+          reason: 'self is not an active member -> read-only',
+        );
+        await tester.tap(
           find.byKey(const ValueKey('media-grid-cell-msg-m-att-1')),
         );
         await pumpFrames(tester, count: 4);
-        await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
-        await pumpFrames(tester, count: 10);
-        await tester.tap(
-          find.byKey(const ValueKey('group-media-delete-confirm')),
-        );
-        await pumpFrames(tester, count: 10);
-        expect(deleteCoordinator.calls, ['group-1/msg-m']);
+        expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+        expect(find.byKey(const ValueKey('media_action_reply')), findsNothing);
+        expect(find.byKey(const ValueKey('media_action_save')), findsOneWidget);
+      });
 
-        // No send/publish/batch-delivery seam was touched by any action.
-        expect(
-          bridge.commandLog.skip(commandsBefore).where(
-            (raw) =>
-                raw.contains('group:publish') ||
-                raw.contains('group:sendReliable') ||
-                raw.contains('group:inboxStore'),
-          ),
-          isEmpty,
-        );
-      },
-    );
-
-    testWidgets(
-      'GMA-13 announcement member and admin expose core media actions without reply while qa stays excluded',
-      (tester) async {
-        tester.view.physicalSize = const Size(1200, 4000);
-        tester.view.devicePixelRatio = 1.0;
-        addTearDown(tester.view.resetPhysicalSize);
-        addTearDown(tester.view.resetDevicePixelRatio);
-
-        Future<void> settleCanWrite(bool expected) async {
-          for (var i = 0; i < 40; i++) {
-            final screen = tester.widget<GroupConversationScreen>(
-              find.byType(GroupConversationScreen),
-            );
-            if (screen.canWrite == expected) break;
-            await tester.runAsync(() async {
-              await Future<void>.delayed(const Duration(milliseconds: 25));
-            });
-            await tester.pump();
-          }
-          expect(
-            tester
-                .widget<GroupConversationScreen>(
-                  find.byType(GroupConversationScreen),
-                )
-                .canWrite,
-            expected,
-          );
-        }
-
-        final commandsBefore = bridge.commandLog.length;
-
-        // 239: member (canWrite=false) and admin (canWrite=true) get the SAME
-        // received-media actions. The admin case is causal for the overlay
-        // change — raw canWrite would leak Reply onto announcement media.
-        for (final role in [GroupRole.member, GroupRole.admin]) {
-          final group = makeAnnouncementGroup(role: role);
+      testWidgets(
+        'GMA-11 wired media actions reach only injected coordinators',
+        (tester) async {
+          tester.view.physicalSize = const Size(1200, 4000);
+          tester.view.devicePixelRatio = 1.0;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final group = makeChatGroup();
           await groupRepo.saveGroup(group);
           await saveActiveGroupMembers(groupRepo, group);
-          final messageId = 'msg-${role.name}';
-          final attachmentId = 'att-${role.name}';
           await seedIncomingDoneImage(
-            messageId: messageId,
-            attachmentId: attachmentId,
+            messageId: 'msg-m',
+            attachmentId: 'att-1',
           );
           final controller = RecordingGroupMediaActionsController(
             messageRepository: msgRepo,
             mediaAttachmentRepository: mediaAttachmentRepo,
           );
-          final deleteCoordinator =
-              RecordingGroupMediaDeleteForMeCoordinator();
-          await tester.pumpWidget(const SizedBox.shrink());
+          final deleteCoordinator = RecordingGroupMediaDeleteForMeCoordinator();
           await tester.pumpWidget(
             buildWidget(
               group: group,
@@ -14755,98 +16193,51 @@ void main() {
               mediaDeleteForMeCoordinator: deleteCoordinator,
             ),
           );
-          await pumpUntilMediaLoaded(tester, messageId);
-          await settleCanWrite(role == GroupRole.admin);
-          final cellKey = ValueKey('media-grid-cell-$messageId-$attachmentId');
+          await pumpUntilMediaLoaded(tester, 'msg-m');
+          final commandsBefore = bridge.commandLog.length;
 
-          // Tile long-press offers exactly the four received-media entries —
-          // and never Reply, even for the writable admin.
-          await tester.longPress(find.byKey(cellKey));
+          // Bubble long-press → Save reaches ONLY the injected controller.
+          await tester.longPress(
+            find.byKey(const ValueKey('media-grid-cell-msg-m-att-1')),
+          );
           await pumpFrames(tester, count: 4);
-          expect(
-            find.byKey(MessageContextOverlay.saveActionKey),
-            findsOneWidget,
-            reason: '$role announcement media must offer Save',
-          );
-          expect(
-            find.byKey(MessageContextOverlay.shareActionKey),
-            findsOneWidget,
-          );
-          expect(
-            find.byKey(MessageContextOverlay.infoActionKey),
-            findsOneWidget,
-          );
-          expect(
-            find.byKey(MessageContextOverlay.deleteActionKey),
-            findsOneWidget,
-          );
-          expect(
-            find.byKey(MessageContextOverlay.replyActionKey),
-            findsNothing,
-            reason: '$role must never see Reply on announcement media',
-          );
-
-          // Save reaches ONLY the injected controller with exact identity.
           await tester.tap(find.byKey(MessageContextOverlay.saveActionKey));
           await pumpFrames(tester, count: 10);
-          expect(controller.saves, ['group-1/$messageId/$attachmentId']);
+          expect(controller.saves, ['group-1/msg-m/att-1']);
           expect(controller.egressServiceTouched, isFalse);
 
-          // Info opens the existing sheet.
-          await tester.longPress(find.byKey(cellKey));
+          // Viewer Share reaches ONLY the injected controller.
+          await tester.tap(
+            find.byKey(const ValueKey('media-grid-cell-msg-m-att-1')),
+          );
           await pumpFrames(tester, count: 4);
-          await tester.tap(find.byKey(MessageContextOverlay.infoActionKey));
-          await pumpFrames(tester, count: 10);
-          expect(find.byKey(GroupMediaInfoSheet.sheetKey), findsOneWidget);
-          await tester.tapAt(const Offset(5, 5));
-          await pumpFrames(tester, count: 10);
-
-          // Viewer carries the same four actions and never Reply.
-          await tester.tap(find.byKey(cellKey));
-          await pumpFrames(tester, count: 4);
-          expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
-          for (final action in [
-            MediaViewerAction.save,
-            MediaViewerAction.share,
-            MediaViewerAction.info,
-            MediaViewerAction.delete,
-          ]) {
-            expect(
-              find.byKey(ValueKey('media_action_${action.name}')),
-              findsOneWidget,
-              reason: '$role announcement viewer must offer ${action.name}',
-            );
-          }
-          for (final action in [
-            MediaViewerAction.reply,
-            MediaViewerAction.forward,
-            MediaViewerAction.bookmark,
-          ]) {
-            expect(
-              find.byKey(ValueKey('media_action_${action.name}')),
-              findsNothing,
-              reason: '$role announcement viewer must not offer '
-                  '${action.name}',
-            );
-          }
           await tester.tap(find.byKey(const ValueKey('media_action_share')));
           await pumpFrames(tester, count: 4);
-          expect(controller.shares, ['group-1/$messageId/$attachmentId']);
+          expect(controller.shares, ['group-1/msg-m/att-1']);
           await tester.tap(find.byIcon(Icons.arrow_back));
           await pumpFrames(tester, count: 10);
 
-          // Delete: cancel is a zero-op; one confirm dispatches exactly one
-          // existing delete-coordinator operation.
-          await tester.longPress(find.byKey(cellKey));
+          // Delete: cancel is a zero-op.
+          await tester.longPress(
+            find.byKey(const ValueKey('media-grid-cell-msg-m-att-1')),
+          );
           await pumpFrames(tester, count: 4);
           await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
           await pumpFrames(tester, count: 10);
+          expect(
+            find.byKey(const ValueKey('group-media-delete-confirm')),
+            findsOneWidget,
+          );
           await tester.tap(
             find.byKey(const ValueKey('group-media-delete-cancel')),
           );
           await pumpFrames(tester, count: 10);
           expect(deleteCoordinator.calls, isEmpty);
-          await tester.longPress(find.byKey(cellKey));
+
+          // One confirm yields exactly one coordinator operation.
+          await tester.longPress(
+            find.byKey(const ValueKey('media-grid-cell-msg-m-att-1')),
+          );
           await pumpFrames(tester, count: 4);
           await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
           await pumpFrames(tester, count: 10);
@@ -14854,91 +16245,676 @@ void main() {
             find.byKey(const ValueKey('group-media-delete-confirm')),
           );
           await pumpFrames(tester, count: 10);
-          expect(deleteCoordinator.calls, ['group-1/$messageId']);
-        }
+          expect(deleteCoordinator.calls, ['group-1/msg-m']);
 
-        // No send/publish/batch-delivery seam was touched by any action.
-        expect(
-          bridge.commandLog.skip(commandsBefore).where(
-            (raw) =>
-                raw.contains('group:publish') ||
-                raw.contains('group:sendReliable') ||
-                raw.contains('group:inboxStore'),
-          ),
-          isEmpty,
-        );
-
-        // QA stays excluded wholesale (plans beyond 242 own its actions).
-        final qaGroup = GroupModel(
-          id: 'group-1',
-          name: 'QA Group',
-          type: GroupType.qa,
-          topicName: 'topic-1',
-          description: 'QA',
-          createdAt: DateTime.now().toUtc(),
-          createdBy: 'peer-admin',
-          myRole: GroupRole.member,
-        );
-        await groupRepo.saveGroup(qaGroup);
-        await saveActiveGroupMembers(groupRepo, qaGroup);
-        await seedIncomingDoneImage(messageId: 'msg-qa', attachmentId: 'att-qa');
-        final qaController = RecordingGroupMediaActionsController(
-          messageRepository: msgRepo,
-          mediaAttachmentRepository: mediaAttachmentRepo,
-        );
-        final qaDeleteCoordinator = RecordingGroupMediaDeleteForMeCoordinator();
-        await tester.pumpWidget(const SizedBox.shrink());
-        await tester.pumpWidget(
-          buildWidget(
-            group: qaGroup,
-            mediaRepo: mediaAttachmentRepo,
-            mediaFileManager: mediaFileManager,
-            mediaActionsController: qaController,
-            mediaDeleteForMeCoordinator: qaDeleteCoordinator,
-          ),
-        );
-        await pumpUntilMediaLoaded(tester, 'msg-qa');
-
-        // Tile long-press never offers the received-media entries.
-        await tester.longPress(
-          find.byKey(const ValueKey('media-grid-cell-msg-qa-att-qa')),
-        );
-        await pumpFrames(tester, count: 4);
-        expect(
-          find.byKey(MessageContextOverlay.saveActionKey),
-          findsNothing,
-          reason: 'QA must not offer Save',
-        );
-        expect(find.byKey(MessageContextOverlay.shareActionKey), findsNothing);
-        expect(find.byKey(MessageContextOverlay.infoActionKey), findsNothing);
-        expect(find.byKey(MessageContextOverlay.deleteActionKey), findsNothing);
-        // Dismiss whatever overlay (if any) is open.
-        if (tester.any(find.byKey(MessageContextOverlay.backdropKey))) {
-          await tester.tapAt(const Offset(5, 5));
-          await pumpFrames(tester, count: 10);
-        }
-
-        // Viewing stays available, but the viewer carries no action slot.
-        await tester.tap(
-          find.byKey(const ValueKey('media-grid-cell-msg-qa-att-qa')),
-        );
-        await pumpFrames(tester, count: 4);
-        expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
-        for (final action in MediaViewerAction.values) {
+          // No send/publish/batch-delivery seam was touched by any action.
           expect(
-            find.byKey(ValueKey('media_action_${action.name}')),
-            findsNothing,
-            reason: 'QA viewer must not offer ${action.name}',
+            bridge.commandLog
+                .skip(commandsBefore)
+                .where(
+                  (raw) =>
+                      raw.contains('group:publish') ||
+                      raw.contains('group:sendReliable') ||
+                      raw.contains('group:inboxStore'),
+                ),
+            isEmpty,
           );
-        }
-        expect(qaController.saves, isEmpty);
-        expect(qaController.shares, isEmpty);
-        expect(qaDeleteCoordinator.calls, isEmpty);
-        await tester.tap(find.byIcon(Icons.arrow_back));
-        await pumpFrames(tester, count: 10);
-      },
-    );
-  });
+        },
+      );
+
+      testWidgets(
+        'GMA-13 announcement member and admin expose core media actions without reply while qa stays excluded',
+        (tester) async {
+          tester.view.physicalSize = const Size(1200, 4000);
+          tester.view.devicePixelRatio = 1.0;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+
+          Future<void> settleCanWrite(bool expected) async {
+            for (var i = 0; i < 40; i++) {
+              final screen = tester.widget<GroupConversationScreen>(
+                find.byType(GroupConversationScreen),
+              );
+              if (screen.canWrite == expected) break;
+              await tester.runAsync(() async {
+                await Future<void>.delayed(const Duration(milliseconds: 25));
+              });
+              await tester.pump();
+            }
+            expect(
+              tester
+                  .widget<GroupConversationScreen>(
+                    find.byType(GroupConversationScreen),
+                  )
+                  .canWrite,
+              expected,
+            );
+          }
+
+          final commandsBefore = bridge.commandLog.length;
+
+          // 239: member (canWrite=false) and admin (canWrite=true) get the SAME
+          // received-media actions. The admin case is causal for the overlay
+          // change — raw canWrite would leak Reply onto announcement media.
+          for (final role in [GroupRole.member, GroupRole.admin]) {
+            final group = makeAnnouncementGroup(role: role);
+            await groupRepo.saveGroup(group);
+            await saveActiveGroupMembers(groupRepo, group);
+            final messageId = 'msg-${role.name}';
+            final attachmentId = 'att-${role.name}';
+            await seedIncomingDoneImage(
+              messageId: messageId,
+              attachmentId: attachmentId,
+            );
+            final controller = RecordingGroupMediaActionsController(
+              messageRepository: msgRepo,
+              mediaAttachmentRepository: mediaAttachmentRepo,
+            );
+            final deleteCoordinator =
+                RecordingGroupMediaDeleteForMeCoordinator();
+            await tester.pumpWidget(const SizedBox.shrink());
+            await tester.pumpWidget(
+              buildWidget(
+                group: group,
+                mediaRepo: mediaAttachmentRepo,
+                mediaFileManager: mediaFileManager,
+                mediaActionsController: controller,
+                mediaDeleteForMeCoordinator: deleteCoordinator,
+              ),
+            );
+            await pumpUntilMediaLoaded(tester, messageId);
+            await settleCanWrite(role == GroupRole.admin);
+            final cellKey = ValueKey(
+              'media-grid-cell-$messageId-$attachmentId',
+            );
+
+            // Tile long-press offers exactly the four received-media entries —
+            // and never Reply, even for the writable admin.
+            await tester.longPress(find.byKey(cellKey));
+            await pumpFrames(tester, count: 4);
+            expect(
+              find.byKey(MessageContextOverlay.saveActionKey),
+              findsOneWidget,
+              reason: '$role announcement media must offer Save',
+            );
+            expect(
+              find.byKey(MessageContextOverlay.shareActionKey),
+              findsOneWidget,
+            );
+            expect(
+              find.byKey(MessageContextOverlay.infoActionKey),
+              findsOneWidget,
+            );
+            expect(
+              find.byKey(MessageContextOverlay.deleteActionKey),
+              findsOneWidget,
+            );
+            expect(
+              find.byKey(MessageContextOverlay.replyActionKey),
+              findsNothing,
+              reason: '$role must never see Reply on announcement media',
+            );
+
+            // Save reaches ONLY the injected controller with exact identity.
+            await tester.tap(find.byKey(MessageContextOverlay.saveActionKey));
+            await pumpFrames(tester, count: 10);
+            expect(controller.saves, ['group-1/$messageId/$attachmentId']);
+            expect(controller.egressServiceTouched, isFalse);
+
+            // Info opens the existing sheet.
+            await tester.longPress(find.byKey(cellKey));
+            await pumpFrames(tester, count: 4);
+            await tester.tap(find.byKey(MessageContextOverlay.infoActionKey));
+            await pumpFrames(tester, count: 10);
+            expect(find.byKey(GroupMediaInfoSheet.sheetKey), findsOneWidget);
+            await tester.tapAt(const Offset(5, 5));
+            await pumpFrames(tester, count: 10);
+
+            // Viewer carries the same four actions and never Reply.
+            await tester.tap(find.byKey(cellKey));
+            await pumpFrames(tester, count: 4);
+            expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+            for (final action in [
+              MediaViewerAction.save,
+              MediaViewerAction.share,
+              MediaViewerAction.info,
+              MediaViewerAction.delete,
+            ]) {
+              expect(
+                find.byKey(ValueKey('media_action_${action.name}')),
+                findsOneWidget,
+                reason: '$role announcement viewer must offer ${action.name}',
+              );
+            }
+            for (final action in [
+              MediaViewerAction.reply,
+              MediaViewerAction.forward,
+              MediaViewerAction.bookmark,
+            ]) {
+              expect(
+                find.byKey(ValueKey('media_action_${action.name}')),
+                findsNothing,
+                reason:
+                    '$role announcement viewer must not offer '
+                    '${action.name}',
+              );
+            }
+            await tester.tap(find.byKey(const ValueKey('media_action_share')));
+            await pumpFrames(tester, count: 4);
+            expect(controller.shares, ['group-1/$messageId/$attachmentId']);
+            await tester.tap(find.byIcon(Icons.arrow_back));
+            await pumpFrames(tester, count: 10);
+
+            // Delete: cancel is a zero-op; one confirm dispatches exactly one
+            // existing delete-coordinator operation.
+            await tester.longPress(find.byKey(cellKey));
+            await pumpFrames(tester, count: 4);
+            await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
+            await pumpFrames(tester, count: 10);
+            await tester.tap(
+              find.byKey(const ValueKey('group-media-delete-cancel')),
+            );
+            await pumpFrames(tester, count: 10);
+            expect(deleteCoordinator.calls, isEmpty);
+            await tester.longPress(find.byKey(cellKey));
+            await pumpFrames(tester, count: 4);
+            await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
+            await pumpFrames(tester, count: 10);
+            await tester.tap(
+              find.byKey(const ValueKey('group-media-delete-confirm')),
+            );
+            await pumpFrames(tester, count: 10);
+            expect(deleteCoordinator.calls, ['group-1/$messageId']);
+          }
+
+          // No send/publish/batch-delivery seam was touched by any action.
+          expect(
+            bridge.commandLog
+                .skip(commandsBefore)
+                .where(
+                  (raw) =>
+                      raw.contains('group:publish') ||
+                      raw.contains('group:sendReliable') ||
+                      raw.contains('group:inboxStore'),
+                ),
+            isEmpty,
+          );
+
+          // QA stays excluded wholesale (plans beyond 242 own its actions).
+          final qaGroup = GroupModel(
+            id: 'group-1',
+            name: 'QA Group',
+            type: GroupType.qa,
+            topicName: 'topic-1',
+            description: 'QA',
+            createdAt: DateTime.now().toUtc(),
+            createdBy: 'peer-admin',
+            myRole: GroupRole.member,
+          );
+          await groupRepo.saveGroup(qaGroup);
+          await saveActiveGroupMembers(groupRepo, qaGroup);
+          await seedIncomingDoneImage(
+            messageId: 'msg-qa',
+            attachmentId: 'att-qa',
+          );
+          final qaController = RecordingGroupMediaActionsController(
+            messageRepository: msgRepo,
+            mediaAttachmentRepository: mediaAttachmentRepo,
+          );
+          final qaDeleteCoordinator =
+              RecordingGroupMediaDeleteForMeCoordinator();
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pumpWidget(
+            buildWidget(
+              group: qaGroup,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: mediaFileManager,
+              mediaActionsController: qaController,
+              mediaDeleteForMeCoordinator: qaDeleteCoordinator,
+            ),
+          );
+          await pumpUntilMediaLoaded(tester, 'msg-qa');
+
+          // Tile long-press never offers the received-media entries.
+          await tester.longPress(
+            find.byKey(const ValueKey('media-grid-cell-msg-qa-att-qa')),
+          );
+          await pumpFrames(tester, count: 4);
+          expect(
+            find.byKey(MessageContextOverlay.saveActionKey),
+            findsNothing,
+            reason: 'QA must not offer Save',
+          );
+          expect(
+            find.byKey(MessageContextOverlay.shareActionKey),
+            findsNothing,
+          );
+          expect(find.byKey(MessageContextOverlay.infoActionKey), findsNothing);
+          expect(
+            find.byKey(MessageContextOverlay.deleteActionKey),
+            findsNothing,
+          );
+          // Dismiss whatever overlay (if any) is open.
+          if (tester.any(find.byKey(MessageContextOverlay.backdropKey))) {
+            await tester.tapAt(const Offset(5, 5));
+            await pumpFrames(tester, count: 10);
+          }
+
+          // Viewing stays available, but the viewer carries no action slot.
+          await tester.tap(
+            find.byKey(const ValueKey('media-grid-cell-msg-qa-att-qa')),
+          );
+          await pumpFrames(tester, count: 4);
+          expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+          for (final action in MediaViewerAction.values) {
+            expect(
+              find.byKey(ValueKey('media_action_${action.name}')),
+              findsNothing,
+              reason: 'QA viewer must not offer ${action.name}',
+            );
+          }
+          expect(qaController.saves, isEmpty);
+          expect(qaController.shares, isEmpty);
+          expect(qaDeleteCoordinator.calls, isEmpty);
+          await tester.tap(find.byIcon(Icons.arrow_back));
+          await pumpFrames(tester, count: 10);
+        },
+      );
+
+      testWidgets(
+        'Plan 247 stale blocked bubble dismisses before unavailable feedback and opens nothing',
+        (tester) async {
+          tester.view.physicalSize = const Size(1200, 4000);
+          tester.view.devicePixelRatio = 1.0;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+
+          const messageId = 'plan-247-stale-blocked';
+          const attachmentId = 'plan-247-stale-blocked-attachment';
+          final gatedContacts = GateNextContactReadRepository();
+          contactRepo = gatedContacts;
+          final (group, _) = await seedPlan247EligibleSource(
+            messageId: messageId,
+            attachmentId: attachmentId,
+          );
+          var openerCalls = 0;
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              messageRepo: msgRepo,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: mediaFileManager,
+              openAnnouncementSenderConversation: (_) async {
+                openerCalls++;
+              },
+            ),
+          );
+          await pumpUntilMediaLoaded(tester, messageId);
+
+          final cell = find.byKey(
+            const ValueKey('media-grid-cell-$messageId-$attachmentId'),
+          );
+          await tester.longPress(cell);
+          await pumpFrames(tester, count: 10);
+          expect(
+            find.byKey(MessageContextOverlay.messageSenderActionKey),
+            findsOneWidget,
+            reason: 'the initial current-parent decision is eligible',
+          );
+
+          await gatedContacts.blockContact('peer-bob');
+          gatedContacts.gateNextRead();
+          await tester.tap(
+            find.byKey(MessageContextOverlay.messageSenderActionKey),
+          );
+          await pumpUntil(tester, () => gatedContacts.hasCapturedNextRead);
+          await pumpFrames(tester, count: 8);
+
+          expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
+          expect(find.text('Message sender is unavailable.'), findsNothing);
+          expect(openerCalls, 0);
+
+          gatedContacts.releaseNextRead();
+          await pumpFrames(tester, count: 10);
+          expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
+          expect(find.text('Message sender is unavailable.'), findsOneWidget);
+          expect(find.text('Couldn’t open the conversation.'), findsNothing);
+          expect(openerCalls, 0);
+        },
+      );
+
+      testWidgets(
+        'Plan 247 sender drift after eligible render revalidates the selection-time sender',
+        (tester) async {
+          tester.view.physicalSize = const Size(1200, 4000);
+          tester.view.devicePixelRatio = 1.0;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+
+          const messageId = 'plan-247-stale-sender';
+          const attachmentId = 'plan-247-stale-sender-attachment';
+          final (group, currentMessages) = await seedPlan247EligibleSource(
+            messageId: messageId,
+            attachmentId: attachmentId,
+          );
+          var openerCalls = 0;
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              messageRepo: currentMessages,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: mediaFileManager,
+              openAnnouncementSenderConversation: (_) async {
+                openerCalls++;
+              },
+            ),
+          );
+          await pumpUntilMediaLoaded(tester, messageId);
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          expect(
+            await screen.isMessageSenderEligible!(messageId, 'peer-bob'),
+            isTrue,
+          );
+
+          await currentMessages.saveMessage(
+            makeMessage(
+              id: messageId,
+              text: 'sender changed after capability render',
+              senderPeerId: 'peer-alice',
+            ),
+          );
+          await screen.onMessageSenderTap!(messageId, 'peer-bob');
+          await tester.pump();
+
+          expect(find.text('Message sender is unavailable.'), findsOneWidget);
+          expect(find.text('Couldn’t open the conversation.'), findsNothing);
+          expect(openerCalls, 0);
+        },
+      );
+
+      testWidgets(
+        'Plan 247 throwing opener dismisses before exact open-failure feedback',
+        (tester) async {
+          tester.view.physicalSize = const Size(1200, 4000);
+          tester.view.devicePixelRatio = 1.0;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+
+          const messageId = 'plan-247-opener-failure';
+          const attachmentId = 'plan-247-opener-failure-attachment';
+          final gatedContacts = GateNextContactReadRepository();
+          contactRepo = gatedContacts;
+          final (group, _) = await seedPlan247EligibleSource(
+            messageId: messageId,
+            attachmentId: attachmentId,
+          );
+          var openerCalls = 0;
+          bool? overlayPresentAtOpen;
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              messageRepo: msgRepo,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: mediaFileManager,
+              openAnnouncementSenderConversation: (_) async {
+                openerCalls++;
+                overlayPresentAtOpen = tester.any(
+                  find.byKey(MessageContextOverlay.overlayKey),
+                );
+                throw StateError('simulated direct-route failure');
+              },
+            ),
+          );
+          await pumpUntilMediaLoaded(tester, messageId);
+
+          await tester.longPress(
+            find.byKey(
+              const ValueKey('media-grid-cell-$messageId-$attachmentId'),
+            ),
+          );
+          await pumpFrames(tester, count: 10);
+          expect(
+            find.byKey(MessageContextOverlay.messageSenderActionKey),
+            findsOneWidget,
+          );
+          gatedContacts.gateNextRead();
+          await tester.tap(
+            find.byKey(MessageContextOverlay.messageSenderActionKey),
+          );
+          await pumpUntil(tester, () => gatedContacts.hasCapturedNextRead);
+          await pumpFrames(tester, count: 8);
+          expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
+          expect(find.text('Couldn’t open the conversation.'), findsNothing);
+
+          gatedContacts.releaseNextRead();
+          await pumpFrames(tester, count: 10);
+          expect(openerCalls, 1);
+          expect(overlayPresentAtOpen, isFalse);
+          expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
+          expect(find.text('Couldn’t open the conversation.'), findsOneWidget);
+          expect(find.text('Message sender is unavailable.'), findsNothing);
+        },
+      );
+
+      testWidgets(
+        'Plan 247 wired latch coalesces while resolver and opener are pending',
+        (tester) async {
+          tester.view.physicalSize = const Size(1200, 4000);
+          tester.view.devicePixelRatio = 1.0;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+
+          const messageId = 'plan-247-coalesced';
+          const attachmentId = 'plan-247-coalesced-attachment';
+          final gatedContacts = GateNextContactReadRepository();
+          contactRepo = gatedContacts;
+          final (group, _) = await seedPlan247EligibleSource(
+            messageId: messageId,
+            attachmentId: attachmentId,
+          );
+          final openerGate = Completer<void>();
+          var openerCalls = 0;
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              messageRepo: msgRepo,
+              mediaRepo: mediaAttachmentRepo,
+              mediaFileManager: mediaFileManager,
+              openAnnouncementSenderConversation: (_) async {
+                openerCalls++;
+                await openerGate.future;
+              },
+            ),
+          );
+          await pumpUntilMediaLoaded(tester, messageId);
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          expect(
+            await screen.isMessageSenderEligible!(messageId, 'peer-bob'),
+            isTrue,
+          );
+
+          gatedContacts.gateNextRead();
+          final first = screen.onMessageSenderTap!(messageId, 'peer-bob');
+          await pumpUntil(tester, () => gatedContacts.hasCapturedNextRead);
+          await screen.onMessageSenderTap!(messageId, 'peer-bob');
+          expect(openerCalls, 0, reason: 'the first resolver is still gated');
+
+          gatedContacts.releaseNextRead();
+          await pumpUntil(tester, () => openerCalls == 1);
+          await screen.onMessageSenderTap!(messageId, 'peer-bob');
+          expect(
+            openerCalls,
+            1,
+            reason: 'the same wired latch also covers the awaited opener',
+          );
+
+          openerGate.complete();
+          await first;
+          await tester.pump();
+          expect(openerCalls, 1);
+          expect(find.text('Message sender is unavailable.'), findsNothing);
+          expect(find.text('Couldn’t open the conversation.'), findsNothing);
+        },
+      );
+
+      testWidgets(
+        'Plan 247 mismatched viewer attachments never receive Message sender or open',
+        (tester) async {
+          tester.view.physicalSize = const Size(1200, 4000);
+          tester.view.devicePixelRatio = 1.0;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+
+          const parentMessageId = 'announcement-private-reply-parent';
+          const validAttachmentId = 'valid-group-current-parent';
+          const mismatchedAttachmentIds = <String>[
+            'direct-owner-current-page',
+            'unresolved-owner-current-page',
+            'wrong-parent-current-page',
+          ];
+          final group = makeAnnouncementGroup(role: GroupRole.member);
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+
+          final currentMessages = KnownClearGroupMessageRepository();
+          await currentMessages.saveMessage(
+            makeMessage(
+              id: parentMessageId,
+              text: 'eligible announcement visual',
+              senderPeerId: 'peer-bob',
+            ),
+          );
+          await contactRepo.addContact(
+            ContactModel(
+              peerId: 'peer-bob',
+              publicKey: 'pk-peer-bob',
+              rendezvous: '/ip4/127.0.0.1/tcp/4001',
+              username: 'Bob',
+              signature: 'sig-peer-bob',
+              scannedAt: DateTime.utc(2026, 7, 11).toIso8601String(),
+            ),
+          );
+
+          final relativePath = mediaFileManager.relativePathForAttachment(
+            contactPeerId: group.id,
+            blobId: 'plan-247-mixed-viewer',
+            mime: 'image/png',
+          );
+          final absolutePath = await mediaFileManager.resolveStoredPath(
+            relativePath,
+          );
+          File(absolutePath)
+            ..parent.createSync(recursive: true)
+            ..writeAsBytesSync(_tinyPngBytes, flush: true);
+
+          MediaAttachment row({
+            required String id,
+            required String messageId,
+            required MediaOwnerLane? owner,
+          }) => MediaAttachment(
+            id: id,
+            messageId: messageId,
+            mime: 'image/png',
+            size: _tinyPngBytes.length,
+            mediaType: 'image',
+            localPath: absolutePath,
+            downloadStatus: kMediaDownloadStatusDone,
+            createdAt: DateTime.utc(2026, 7, 11).toIso8601String(),
+            contentHash: _validContentHash,
+            encryptionKeyBase64: 'a2V5',
+            encryptionNonce: 'bm9uY2U=',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            ownerLane: owner,
+          );
+
+          final mixedMedia = MixedViewerMediaAttachmentRepository(
+            parentMessageId: parentMessageId,
+            rows: <MediaAttachment>[
+              row(
+                id: validAttachmentId,
+                messageId: parentMessageId,
+                owner: MediaOwnerLane.group,
+              ),
+              row(
+                id: mismatchedAttachmentIds[0],
+                messageId: parentMessageId,
+                owner: MediaOwnerLane.direct,
+              ),
+              row(
+                id: mismatchedAttachmentIds[1],
+                messageId: parentMessageId,
+                owner: null,
+              ),
+              row(
+                id: mismatchedAttachmentIds[2],
+                messageId: 'different-parent',
+                owner: MediaOwnerLane.group,
+              ),
+            ],
+          );
+          var openerCalls = 0;
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              messageRepo: currentMessages,
+              mediaRepo: mixedMedia,
+              mediaFileManager: mediaFileManager,
+              openAnnouncementSenderConversation: (contact) async {
+                openerCalls++;
+              },
+            ),
+          );
+          await pumpUntilMediaLoaded(tester, parentMessageId, expectedCount: 4);
+
+          final validCell = find.byKey(
+            const ValueKey(
+              'media-grid-cell-$parentMessageId-$validAttachmentId',
+            ),
+          );
+          await tester.tap(validCell);
+          await pumpFrames(tester, count: 8);
+          expect(
+            find.byKey(const ValueKey('media_action_messageSender')),
+            findsOneWidget,
+            reason: 'the valid group/current-parent sibling proves eligibility',
+          );
+          final viewer = tester.widget<FullScreenTypedMediaViewer>(
+            find.byType(FullScreenTypedMediaViewer),
+          );
+          final publishedByAttachment = <String, bool>{
+            for (final attachmentId in mismatchedAttachmentIds)
+              attachmentId: viewer.items
+                  .singleWhere((item) => item.attachmentId == attachmentId)
+                  .capabilities
+                  .allows(MediaViewerAction.messageSender),
+          };
+
+          // Move the real typed viewer from the valid sibling to the direct
+          // owner page, then invoke only if production incorrectly published
+          // the capability. A fixed build leaves the action absent and opens
+          // nothing; HEAD publishes it and reaches the real wired opener.
+          await tester.drag(find.byType(PageView), const Offset(-700, 0));
+          await pumpFrames(tester, count: 8);
+          final currentMismatchAction = find.byKey(
+            const ValueKey('media_action_messageSender'),
+          );
+          if (tester.any(currentMismatchAction)) {
+            await tester.tap(currentMismatchAction);
+            await pumpFrames(tester, count: 8);
+          }
+
+          expect(publishedByAttachment, <String, bool>{
+            for (final attachmentId in mismatchedAttachmentIds)
+              attachmentId: false,
+          });
+          expect(openerCalls, 0);
+        },
+      );
+    });
   });
 }
 

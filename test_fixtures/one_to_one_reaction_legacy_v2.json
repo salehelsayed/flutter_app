@@ -1,0 +1,14 @@
+{
+  "fixtureVersion": 1,
+  "kind": "one_to_one_reaction_legacy_v2",
+  "encryptedEnvelope": {
+    "type": "message_reaction",
+    "version": "2",
+    "senderPeerId": "peer-alice",
+    "encrypted": {
+      "kem": "fixture-kem-reaction-legacy-1",
+      "ciphertext": "fixture-ciphertext-reaction-legacy-1",
+      "nonce": "fixture-nonce-reaction-legacy-1"
+    }
+  }
+}

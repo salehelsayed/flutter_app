@@ -1,6 +1,7 @@
 ---
 name: spec-doc
 description: Generate a specification document for a bug, feature improvement, or new feature — problem statement, impact, current state, scope, and test cases only (no solution)
+disable-model-invocation: true
 argument-hint: "[description of bug, improvement, or new feature]"
 ---
 

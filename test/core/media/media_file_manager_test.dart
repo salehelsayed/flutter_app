@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
@@ -21,6 +23,29 @@ class _FakePathProvider extends Fake
   Future<String?> getApplicationDocumentsPath() async => docsPath;
 }
 
+class _SnapshotTestMediaFileManager extends MediaFileManager {
+  _SnapshotTestMediaFileManager(this.snapshotRootPath);
+
+  final String snapshotRootPath;
+  int remainingDeleteFailures = 0;
+  int physicalDeleteAttempts = 0;
+
+  @override
+  Future<String> groupForwardSnapshotRootPath() async => snapshotRootPath;
+
+  @override
+  Future<void> deleteGroupForwardSnapshotDirectoryOnce(
+    Directory directory,
+  ) async {
+    physicalDeleteAttempts++;
+    if (remainingDeleteFailures > 0) {
+      remainingDeleteFailures--;
+      throw const FileSystemException('simulated snapshot delete failure');
+    }
+    await super.deleteGroupForwardSnapshotDirectoryOnce(directory);
+  }
+}
+
 void main() {
   late MediaFileManager fileManager;
   late Directory tempDir;
@@ -39,6 +64,165 @@ void main() {
   });
 
   group('MediaFileManager', () {
+    group('group forward snapshot ownership and recovery', () {
+      test('delete retries and remains idempotent after success', () async {
+        final manager = _SnapshotTestMediaFileManager(
+          p.join(
+            tempDir.path,
+            MediaFileManager.groupForwardSnapshotRootDirectoryName,
+          ),
+        );
+        final snapshot = await manager.createGroupForwardSnapshotDirectory();
+        await File(
+          p.join(snapshot.path, 'source.jpg'),
+        ).writeAsBytes(const [0xff, 0xd8, 0xff, 0xe0]);
+        manager.remainingDeleteFailures = 2;
+
+        expect(
+          await manager.deleteGroupForwardSnapshotDirectory(snapshot.path),
+          isTrue,
+        );
+        expect(manager.physicalDeleteAttempts, 3);
+        expect(await snapshot.exists(), isFalse);
+
+        expect(
+          await manager.deleteGroupForwardSnapshotDirectory(snapshot.path),
+          isTrue,
+        );
+        expect(manager.physicalDeleteAttempts, 3);
+      });
+
+      test(
+        'failed delete is reclaimed by the next scavenger operation',
+        () async {
+          final manager = _SnapshotTestMediaFileManager(
+            p.join(
+              tempDir.path,
+              MediaFileManager.groupForwardSnapshotRootDirectoryName,
+            ),
+          );
+          final snapshot = await manager.createGroupForwardSnapshotDirectory();
+          await File(
+            p.join(snapshot.path, 'source.jpg'),
+          ).writeAsBytes(const [0xff, 0xd8, 0xff, 0xe0]);
+          manager.remainingDeleteFailures = 3;
+
+          expect(
+            await manager.deleteGroupForwardSnapshotDirectory(snapshot.path),
+            isFalse,
+          );
+          expect(manager.physicalDeleteAttempts, 3);
+          expect(await snapshot.exists(), isTrue);
+
+          expect(await manager.scavengeGroupForwardSnapshotOrphans(), 1);
+          expect(manager.physicalDeleteAttempts, 4);
+          expect(await snapshot.exists(), isFalse);
+        },
+      );
+
+      test(
+        'scavenger deletes only stale owned children and startup reclaims fresh orphans',
+        () async {
+          final root = Directory(
+            p.join(
+              tempDir.path,
+              MediaFileManager.groupForwardSnapshotRootDirectoryName,
+            ),
+          );
+          final manager = _SnapshotTestMediaFileManager(root.path);
+          final active = await manager.createGroupForwardSnapshotDirectory();
+          final stale = Directory(p.join(root.path, 'snapshot_stale_case'));
+          final fresh = Directory(p.join(root.path, 'snapshot_fresh_case'));
+          final future = Directory(p.join(root.path, 'snapshot_future_case'));
+          final unrelatedChild = Directory(p.join(root.path, 'other_case'));
+          final unrelatedSibling = Directory(
+            p.join(tempDir.path, 'unrelated_temp_neighbor'),
+          );
+          for (final directory in <Directory>[
+            stale,
+            fresh,
+            future,
+            unrelatedChild,
+            unrelatedSibling,
+          ]) {
+            await directory.create(recursive: true);
+          }
+          final matchingFile = File(p.join(root.path, 'snapshot_regular_file'));
+          await matchingFile.writeAsBytes(const [1]);
+          final outsideTarget = Directory(p.join(tempDir.path, 'outside'));
+          await outsideTarget.create();
+          final link = Link(p.join(root.path, 'snapshot_link_case'));
+          await link.create(outsideTarget.path);
+          final touched = await Process.run('touch', [
+            '-t',
+            '202001010000',
+            stale.path,
+          ]);
+          expect(touched.exitCode, 0);
+
+          expect(
+            await manager.scavengeGroupForwardSnapshotOrphans(
+              now: DateTime.utc(2026, 7, 14),
+            ),
+            1,
+          );
+          expect(await stale.exists(), isFalse);
+          expect(await fresh.exists(), isTrue);
+          expect(await future.exists(), isTrue);
+          expect(await active.exists(), isTrue);
+          expect(await unrelatedChild.exists(), isTrue);
+          expect(await unrelatedSibling.exists(), isTrue);
+          expect(await matchingFile.exists(), isTrue);
+          expect(await link.exists(), isTrue);
+          expect(await outsideTarget.exists(), isTrue);
+
+          expect(
+            await manager.scavengeGroupForwardSnapshotOrphans(
+              deleteFreshOrphans: true,
+            ),
+            2,
+          );
+          expect(await fresh.exists(), isFalse);
+          expect(await future.exists(), isFalse);
+          expect(await active.exists(), isTrue);
+          expect(await unrelatedChild.exists(), isTrue);
+          expect(await unrelatedSibling.exists(), isTrue);
+          expect(await matchingFile.exists(), isTrue);
+          expect(await link.exists(), isTrue);
+          expect(await outsideTarget.exists(), isTrue);
+
+          expect(
+            await manager.deleteGroupForwardSnapshotDirectory(active.path),
+            isTrue,
+          );
+        },
+      );
+
+      test('scavenger work is bounded per pass', () async {
+        final root = Directory(
+          p.join(
+            tempDir.path,
+            MediaFileManager.groupForwardSnapshotRootDirectoryName,
+          ),
+        );
+        final manager = _SnapshotTestMediaFileManager(root.path);
+        await root.create(recursive: true);
+        for (var index = 0; index < 80; index++) {
+          await Directory(
+            p.join(root.path, 'snapshot_bounded_$index'),
+          ).create();
+        }
+
+        expect(
+          await manager.scavengeGroupForwardSnapshotOrphans(
+            now: DateTime.now().add(const Duration(hours: 7)),
+          ),
+          16,
+        );
+        expect(await root.list().length, 64);
+      });
+    });
+
     group('localPathForAttachment', () {
       test('returns path with correct structure', () async {
         final path = await fileManager.localPathForAttachment(
@@ -408,6 +592,130 @@ void main() {
     });
 
     group('deleteFile', () {
+      test(
+        'private cleanup telemetry redacts paths and ids on start success and error',
+        () async {
+          const messageId = 'private-message-id-must-never-appear';
+          const attachmentId = 'private-attachment-id-must-never-appear';
+          const storedPath = 'media/private-contact/$attachmentId.jpg';
+          final events = <Map<String, dynamic>>[];
+          debugSetFlowEventSink(events.add);
+
+          final successPath =
+              '${tempDir.path}/private/$messageId/$attachmentId.jpg';
+          final successFile = File(successPath);
+          await successFile.parent.create(recursive: true);
+          await successFile.writeAsBytes(const [1, 2, 3]);
+          await fileManager.deleteFile(
+            successPath,
+            caller: 'DirectPrivateMediaLifecycle.cleanupTerminalWithinLock',
+            reason: 'direct_private_media_terminal_cleanup',
+            storedPath: storedPath,
+            details: const {
+              'messageId': messageId,
+              'attachmentId': attachmentId,
+            },
+            redactTelemetry: true,
+          );
+
+          final deniedDirectory = Directory(
+            '${tempDir.path}/private-error/$messageId',
+          );
+          await deniedDirectory.create(recursive: true);
+          final errorPath = '${deniedDirectory.path}/$attachmentId.jpg';
+          await File(errorPath).writeAsBytes(const [4, 5, 6]);
+          final chmodDenied = await Process.run('chmod', [
+            '500',
+            deniedDirectory.path,
+          ]);
+          expect(chmodDenied.exitCode, 0);
+          try {
+            await expectLater(
+              fileManager.deleteFile(
+                errorPath,
+                caller: 'DirectPrivateMediaLifecycle.cleanupTerminalWithinLock',
+                reason: 'direct_private_media_terminal_cleanup',
+                storedPath: storedPath,
+                details: const {
+                  'messageId': messageId,
+                  'attachmentId': attachmentId,
+                },
+                redactTelemetry: true,
+              ),
+              throwsA(isA<FileSystemException>()),
+            );
+          } finally {
+            await Process.run('chmod', ['700', deniedDirectory.path]);
+          }
+
+          final privateEvents = events
+              .where(
+                (event) =>
+                    (event['details'] as Map?)?['reason'] ==
+                    'direct_private_media_terminal_cleanup',
+              )
+              .toList(growable: false);
+          expect(
+            privateEvents
+                .where(
+                  (event) => event['event'] == 'APP_OWNED_MEDIA_DELETE_START',
+                )
+                .length,
+            2,
+          );
+          expect(
+            privateEvents.any(
+              (event) => event['event'] == 'APP_OWNED_MEDIA_DELETE_SUCCESS',
+            ),
+            isTrue,
+          );
+          expect(
+            privateEvents.any(
+              (event) => event['event'] == 'APP_OWNED_MEDIA_DELETE_ERROR',
+            ),
+            isTrue,
+          );
+          for (final event in privateEvents) {
+            final details = event['details'] as Map<String, dynamic>;
+            expect(details['path'], '[redacted]');
+            expect(details['pathKind'], '[redacted]');
+            expect(details['storedPath'], '[redacted]');
+            expect(details['storedPathKind'], '[redacted]');
+            expect(details, isNot(contains('messageId')));
+            expect(details, isNot(contains('attachmentId')));
+          }
+          final errorEvent = privateEvents.singleWhere(
+            (event) => event['event'] == 'APP_OWNED_MEDIA_DELETE_ERROR',
+          );
+          final redactedError =
+              (errorEvent['details'] as Map<String, dynamic>)['error']
+                  as String;
+          expect(redactedError, matches(RegExp(r'^[A-Za-z]+Exception$')));
+          expect(redactedError, isNot(contains(errorPath)));
+          final encoded = jsonEncode(privateEvents);
+          for (final secret in [
+            successPath,
+            errorPath,
+            storedPath,
+            messageId,
+            attachmentId,
+          ]) {
+            expect(encoded, isNot(contains(secret)), reason: secret);
+          }
+
+          final adapterSource = File(
+            'lib/features/conversation/application/'
+            'direct_private_media_lifecycle.dart',
+          ).readAsStringSync();
+          expect(adapterSource, contains('redactTelemetry: true'));
+          expect(adapterSource, isNot(contains("'messageId': parent.id")));
+          expect(
+            adapterSource,
+            isNot(contains("'attachmentId': attachment.id")),
+          );
+        },
+      );
+
       test('deletes an existing file', () async {
         final path = await fileManager.localPathForAttachment(
           contactPeerId: 'c',

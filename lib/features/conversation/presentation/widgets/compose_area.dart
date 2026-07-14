@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
@@ -49,6 +50,9 @@ class ComposeArea extends StatefulWidget {
   final bool isQuoteUnavailable;
   final VoidCallback? onClearQuote;
   final bool shouldRequestFocus;
+  final PrivateMediaEligibility privateMediaEligibility;
+  final PrivateMediaPolicy privateMediaPolicy;
+  final ValueChanged<PrivateMediaPolicy>? onPrivateMediaPolicyChanged;
 
   const ComposeArea({
     super.key,
@@ -73,6 +77,12 @@ class ComposeArea extends StatefulWidget {
     this.isQuoteUnavailable = false,
     this.onClearQuote,
     this.shouldRequestFocus = false,
+    this.privateMediaEligibility = const PrivateMediaEligibility(
+      attachmentCount: 0,
+      attachmentKind: PrivateMediaAttachmentKind.unknown,
+    ),
+    this.privateMediaPolicy = const PrivateMediaPolicy.ordinary(),
+    this.onPrivateMediaPolicyChanged,
   });
 
   @override
@@ -132,6 +142,11 @@ class _ComposeAreaState extends State<ComposeArea>
       _updateSendButton();
     }
     widget.onDraftChanged?.call(_controller.text);
+    if (hasText && widget.privateMediaPolicy.isPrivate) {
+      widget.onPrivateMediaPolicyChanged?.call(
+        const PrivateMediaPolicy.ordinary(),
+      );
+    }
   }
 
   void _updateSendButton() {
@@ -312,6 +327,104 @@ class _ComposeAreaState extends State<ComposeArea>
 
   bool get _shouldShowMicButton => !_shouldShowSendButton && _canRecordVoice;
 
+  Widget _privateMediaMenuLabel(
+    BuildContext context, {
+    required String label,
+    required String detail,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label),
+        const SizedBox(height: 2),
+        Text(detail, style: Theme.of(context).textTheme.bodySmall),
+      ],
+    );
+  }
+
+  Widget _buildPrivateMediaSelector(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final policy = widget.privateMediaPolicy;
+    final label = switch (policy.mode) {
+      PrivateMediaMode.protected => l10n.private_media_protected,
+      PrivateMediaMode.viewOnce => l10n.private_media_view_once,
+      PrivateMediaMode.disappearing when policy.durationSeconds == 3600 =>
+        l10n.private_media_disappearing_1h,
+      PrivateMediaMode.disappearing when policy.durationSeconds == 86400 =>
+        l10n.private_media_disappearing_1d,
+      PrivateMediaMode.disappearing => l10n.private_media_disappearing_7d,
+      _ => l10n.private_media_ordinary,
+    };
+    return Align(
+      alignment: AlignmentDirectional.centerStart,
+      child: PopupMenuButton<PrivateMediaPolicy>(
+        key: const ValueKey('private-media-selector'),
+        tooltip: l10n.private_media_selector_label,
+        onSelected: widget.onPrivateMediaPolicyChanged,
+        itemBuilder: (context) => [
+          PopupMenuItem(
+            key: const ValueKey('private-media-option-ordinary'),
+            value: const PrivateMediaPolicy.ordinary(),
+            child: Text(l10n.private_media_ordinary),
+          ),
+          PopupMenuItem(
+            key: const ValueKey('private-media-option-protected'),
+            value: const PrivateMediaPolicy.protected(),
+            child: Text(l10n.private_media_protected),
+          ),
+          PopupMenuItem(
+            key: const ValueKey('private-media-option-view-once'),
+            value: const PrivateMediaPolicy.viewOnce(),
+            height: 72,
+            child: _privateMediaMenuLabel(
+              context,
+              label: l10n.private_media_view_once,
+              detail: l10n.private_media_view_once_copy,
+            ),
+          ),
+          PopupMenuItem(
+            key: const ValueKey('private-media-option-disappearing-1h'),
+            value: PrivateMediaPolicy.disappearing(3600),
+            height: 72,
+            child: _privateMediaMenuLabel(
+              context,
+              label: l10n.private_media_disappearing_1h,
+              detail: l10n.private_media_expiry_device_local,
+            ),
+          ),
+          PopupMenuItem(
+            key: const ValueKey('private-media-option-disappearing-1d'),
+            value: PrivateMediaPolicy.disappearing(86400),
+            height: 72,
+            child: _privateMediaMenuLabel(
+              context,
+              label: l10n.private_media_disappearing_1d,
+              detail: l10n.private_media_expiry_device_local,
+            ),
+          ),
+          PopupMenuItem(
+            key: const ValueKey('private-media-option-disappearing-7d'),
+            value: PrivateMediaPolicy.disappearing(604800),
+            height: 72,
+            child: _privateMediaMenuLabel(
+              context,
+              label: l10n.private_media_disappearing_7d,
+              detail: l10n.private_media_expiry_device_local,
+            ),
+          ),
+        ],
+        child: Padding(
+          padding: const EdgeInsetsDirectional.only(start: 56, bottom: 4),
+          child: Chip(
+            avatar: const Icon(Icons.lock_outline_rounded, size: 16),
+            label: Text(label),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
@@ -339,6 +452,9 @@ class _ComposeAreaState extends State<ComposeArea>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (widget.privateMediaEligibility.allowsPrivateMedia &&
+                  widget.onPrivateMediaPolicyChanged != null)
+                _buildPrivateMediaSelector(context),
               if (showQuotePreview)
                 QuotePreviewBar(
                   text: quotePreviewText!,

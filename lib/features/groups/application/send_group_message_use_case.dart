@@ -14,12 +14,16 @@ import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
+import 'package:flutter_app/features/groups/application/group_private_media_lifecycle.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -28,6 +32,31 @@ typedef GroupMessageIdFactory = String Function();
 
 String _diagnosticPrefix(String value) =>
     value.length > 8 ? value.substring(0, 8) : value;
+
+GroupMessage _withPrivateMediaCustodyAnchor(
+  GroupMessage message, {
+  required bool hasCustody,
+  required int anchoredAt,
+}) {
+  final policy = message.privateMediaPolicy;
+  if (!hasCustody || !policy.isPrivate || message.mediaReceivedAt != null) {
+    return message;
+  }
+  final expiresAt = policy.lifecycle == GroupMediaLifecycle.disappearing
+      ? anchoredAt + (policy.durationSeconds! * 1000)
+      : null;
+  return message.copyWith(
+    mediaReceivedAt: anchoredAt,
+    mediaExpiresAt: expiresAt,
+    mediaLastCheckedAt: expiresAt == null ? null : anchoredAt,
+  );
+}
+
+void _signalPrivateMediaAnchor(GroupMessage before, GroupMessage after) {
+  if (before.mediaExpiresAt == null && after.mediaExpiresAt != null) {
+    signalGroupPrivateMediaExpiryChanged();
+  }
+}
 
 /// Result of sending a group message.
 enum SendGroupMessageResult {
@@ -67,7 +96,6 @@ _loadGroupSendMembership({
   DateTime? membershipCutoff,
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
 }) async {
-  final members = await groupRepo.getMembers(groupId);
   final inviteStatuses = inviteDeliveryAttemptRepo == null
       ? const <String, GroupInviteDeliveryStatus>{}
       : await inviteDeliveryAttemptRepo.getStatusesForGroupMembers(groupId);
@@ -102,6 +130,10 @@ _loadGroupSendMembership({
       },
     );
   }
+  // Keep the live roster read last. Private-media callers use this helper as
+  // their final async authority snapshot; reading members before invite/timeline
+  // awaits would let a demotion race through with a stale writer/admin role.
+  final members = await groupRepo.getMembers(groupId);
   final normalizedCutoff = membershipCutoff?.toUtc();
   final normalizedSenderPeerId = senderPeerId.trim();
   final normalizedCreatorPeerId = creatorPeerId?.trim();
@@ -158,6 +190,32 @@ List<String> _durableGroupRecipientPeerIds({
   }
 
   return recipients;
+}
+
+/// Exact set equality for a private-media relay recipient snapshot.
+///
+/// Empty/duplicate entries fail closed so a malformed persisted re-drive list
+/// cannot compare equal after lossy normalization.
+bool sameGroupPrivateMediaRecipientPeerIds(
+  Iterable<String> left,
+  Iterable<String> right,
+) {
+  Set<String>? normalized(Iterable<String> values) {
+    final source = values.toList(growable: false);
+    final result = <String>{};
+    for (final value in source) {
+      final peerId = value.trim();
+      if (peerId.isEmpty || !result.add(peerId)) return null;
+    }
+    return result;
+  }
+
+  final normalizedLeft = normalized(left);
+  final normalizedRight = normalized(right);
+  return normalizedLeft != null &&
+      normalizedRight != null &&
+      normalizedLeft.length == normalizedRight.length &&
+      normalizedLeft.containsAll(normalizedRight);
 }
 
 Future<Set<String>> _loadMemberJoinedTimelinePeerIds({
@@ -416,6 +474,7 @@ bool _canReuseOutgoingMessageId({
   required DateTime timestamp,
   String? quotedMessageId,
   String? logicalDeliveryId,
+  required GroupPrivateMediaPolicy privateMediaPolicy,
 }) {
   if (existing.isIncoming) return false;
   // 210: 'queued_offline' is a live re-usable optimistic row too — the
@@ -432,6 +491,7 @@ bool _canReuseOutgoingMessageId({
     return false;
   }
   if (existing.text != text) return false;
+  if (existing.privateMediaPolicy != privateMediaPolicy) return false;
   if (!_sameOptionalString(existing.quotedMessageId, quotedMessageId)) {
     return false;
   }
@@ -459,6 +519,7 @@ Future<String?> _resolveOutgoingMessageId({
   String? requestedMessageId,
   String? quotedMessageId,
   String? logicalDeliveryId,
+  required GroupPrivateMediaPolicy privateMediaPolicy,
 }) async {
   String nextCandidate() => messageIdFactory().trim();
   var candidate = requestedMessageId?.trim().isNotEmpty == true
@@ -482,6 +543,7 @@ Future<String?> _resolveOutgoingMessageId({
       timestamp: timestamp,
       quotedMessageId: quotedMessageId,
       logicalDeliveryId: logicalDeliveryId,
+      privateMediaPolicy: privateMediaPolicy,
     )) {
       return candidate;
     }
@@ -615,6 +677,13 @@ bool _isExpectedDurablePrePersistMessage(
     durable.logicalDeliveryId == expected.logicalDeliveryId &&
     durable.keyGeneration == expected.keyGeneration &&
     durable.isForwarded == expected.isForwarded &&
+    durable.privateMediaPolicy == expected.privateMediaPolicy &&
+    durable.mediaReceivedAt == expected.mediaReceivedAt &&
+    durable.mediaExpiresAt == expected.mediaExpiresAt &&
+    durable.mediaLastCheckedAt == expected.mediaLastCheckedAt &&
+    durable.mediaConsumedAt == expected.mediaConsumedAt &&
+    durable.mediaExpiredAt == expected.mediaExpiredAt &&
+    durable.mediaCleanupPending == expected.mediaCleanupPending &&
     durable.createdAt.toUtc() == expected.createdAt.toUtc() &&
     durable.wireEnvelope == expected.wireEnvelope &&
     !durable.inboxStored &&
@@ -688,6 +757,7 @@ bool _isSameOutgoingPrePersistAttempt(
     durable.id == expected.id &&
     durable.groupId == expected.groupId &&
     durable.senderPeerId == expected.senderPeerId &&
+    durable.privateMediaPolicy == expected.privateMediaPolicy &&
     !durable.isIncoming &&
     durable.lastSendAttemptAt?.toUtc() == expected.lastSendAttemptAt?.toUtc();
 
@@ -805,6 +875,256 @@ List<MediaAttachment>? _sanitizeGroupMediaAttachments(
   return sanitized;
 }
 
+GroupPrivateMediaAttachmentKind _groupPrivateAttachmentKind(
+  MediaAttachment attachment,
+) {
+  final mime = attachment.mime.trim().toLowerCase();
+  if (mime == 'image/gif') return GroupPrivateMediaAttachmentKind.gif;
+  if (mime.startsWith('image/')) return GroupPrivateMediaAttachmentKind.image;
+  if (mime.startsWith('video/')) return GroupPrivateMediaAttachmentKind.video;
+  if (mime.startsWith('audio/')) return GroupPrivateMediaAttachmentKind.audio;
+  return GroupPrivateMediaAttachmentKind.file;
+}
+
+bool _isEligiblePrivateGroupMessageShape({
+  required GroupPrivateMediaPolicy policy,
+  required String text,
+  required String? quotedMessageId,
+  required bool isForwarded,
+  required List<MediaAttachment> attachments,
+}) {
+  if (!policy.isPrivate) return false;
+  final kind = attachments.length == 1
+      ? _groupPrivateAttachmentKind(attachments.single)
+      : GroupPrivateMediaAttachmentKind.unknown;
+  return policy
+      .validatedFor(
+        GroupPrivateMediaEligibility(
+          attachmentCount: attachments.length,
+          attachmentKind: kind,
+          hasTextOrCaption: text.trim().isNotEmpty,
+          hasQuote: quotedMessageId?.trim().isNotEmpty == true,
+          isForward: isForwarded,
+        ),
+      )
+      .isPrivate;
+}
+
+bool _matchesExpectedPrivateGroupMediaRequest({
+  required GroupMessage expected,
+  required String? requestedMessageId,
+  required String groupId,
+  required String senderPeerId,
+  required String text,
+  required DateTime timestamp,
+  required String? quotedMessageId,
+  required bool isForwarded,
+  required GroupPrivateMediaPolicy privateMediaPolicy,
+}) =>
+    expected.id == requestedMessageId?.trim() &&
+    expected.groupId == groupId &&
+    expected.senderPeerId == senderPeerId &&
+    expected.text == text &&
+    expected.timestamp.toUtc() == timestamp.toUtc() &&
+    _sameOptionalString(expected.quotedMessageId, quotedMessageId) &&
+    expected.isForwarded == isForwarded &&
+    expected.privateMediaPolicy == privateMediaPolicy &&
+    !expected.isIncoming;
+
+class GroupPrivateMediaSendQualification {
+  GroupPrivateMediaSendQualification({
+    required Iterable<GroupMember> members,
+    required Iterable<String> recipientPeerIds,
+  }) : members = List<GroupMember>.unmodifiable(members),
+       recipientPeerIds = List<String>.unmodifiable(recipientPeerIds);
+
+  final List<GroupMember> members;
+  final List<String> recipientPeerIds;
+}
+
+bool sameExactGroupPrivateMediaDispatchParent(
+  GroupMessage durable,
+  GroupMessage expected,
+) =>
+    durable.id == expected.id &&
+    durable.groupId == expected.groupId &&
+    durable.senderPeerId == expected.senderPeerId &&
+    durable.transportPeerId == expected.transportPeerId &&
+    durable.senderUsername == expected.senderUsername &&
+    durable.text == expected.text &&
+    durable.timestamp.toUtc() == expected.timestamp.toUtc() &&
+    durable.lastSendAttemptAt?.toUtc() == expected.lastSendAttemptAt?.toUtc() &&
+    durable.quotedMessageId == expected.quotedMessageId &&
+    durable.logicalDeliveryId == expected.logicalDeliveryId &&
+    durable.keyGeneration == expected.keyGeneration &&
+    durable.status == expected.status &&
+    durable.isIncoming == expected.isIncoming &&
+    durable.isForwarded == expected.isForwarded &&
+    durable.privateMediaPolicy == expected.privateMediaPolicy &&
+    durable.mediaReceivedAt == expected.mediaReceivedAt &&
+    durable.mediaExpiresAt == expected.mediaExpiresAt &&
+    durable.mediaLastCheckedAt == expected.mediaLastCheckedAt &&
+    durable.mediaConsumedAt == expected.mediaConsumedAt &&
+    durable.mediaExpiredAt == expected.mediaExpiredAt &&
+    durable.mediaCleanupPending == expected.mediaCleanupPending &&
+    durable.createdAt.toUtc() == expected.createdAt.toUtc() &&
+    durable.wireEnvelope == expected.wireEnvelope &&
+    durable.inboxStored == expected.inboxStored &&
+    durable.inboxRetryPayload == expected.inboxRetryPayload;
+
+/// Reloads and fail-closed qualifies the exact current private parent while
+/// returning the current roster-derived fanout snapshot.
+Future<GroupPrivateMediaSendQualification?>
+qualifyCurrentPrivateGroupMediaSend({
+  required GroupRepository groupRepo,
+  required GroupMessageRepository msgRepo,
+  required GroupMessage expectedParent,
+  required String senderPeerId,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
+  bool includeSenderPeerIdInDurableRecipients = false,
+}) async {
+  final policy = expectedParent.privateMediaPolicy;
+  if (!policy.isPrivate ||
+      senderPeerId.trim().isEmpty ||
+      expectedParent.senderPeerId != senderPeerId) {
+    return null;
+  }
+  try {
+    final durable = await msgRepo.getMessage(expectedParent.id);
+    if (durable == null ||
+        !sameExactGroupPrivateMediaDispatchParent(durable, expectedParent) ||
+        durable.isIncoming) {
+      return null;
+    }
+    final group = await groupRepo.getGroup(expectedParent.groupId);
+    if (group == null ||
+        group.isDissolved ||
+        (group.type != GroupType.chat &&
+            group.type != GroupType.announcement)) {
+      return null;
+    }
+    final latestKey = await groupRepo.getLatestKey(expectedParent.groupId);
+    if (latestKey == null ||
+        latestKey.keyGeneration != expectedParent.keyGeneration) {
+      return null;
+    }
+
+    // Key lookup is an async race boundary. Reload both local group authority
+    // and the current roster after it; `_loadGroupSendMembership` deliberately
+    // performs its roster read last so no later await can launder a demotion
+    // into upload, retry, reliable-send, fallback, or inbox-store work.
+    final currentGroup = await groupRepo.getGroup(expectedParent.groupId);
+    if (currentGroup == null ||
+        currentGroup.isDissolved ||
+        (currentGroup.type != GroupType.chat &&
+            currentGroup.type != GroupType.announcement)) {
+      return null;
+    }
+    final membershipCutoff =
+        !expectedParent.timestamp.toUtc().isBefore(
+          currentGroup.createdAt.toUtc(),
+        )
+        ? expectedParent.timestamp
+        : null;
+    final membership = await _loadGroupSendMembership(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: expectedParent.groupId,
+      senderPeerId: senderPeerId,
+      creatorPeerId: currentGroup.createdBy,
+      senderRole: currentGroup.myRole,
+      membershipCutoff: membershipCutoff,
+      inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+    );
+    if (membership.members.isEmpty) return null;
+    GroupMember? sender;
+    for (final member in membership.members) {
+      if (member.peerId == senderPeerId) {
+        sender = member;
+        break;
+      }
+    }
+    if (sender == null ||
+        !GroupPrivateMediaAvailability.hasEligibleCurrentAuthorRole(
+          groupType: currentGroup.type,
+          localRole: currentGroup.myRole,
+          memberRole: sender.role,
+        )) {
+      return null;
+    }
+    return GroupPrivateMediaSendQualification(
+      members: membership.members,
+      recipientPeerIds: _durableGroupRecipientPeerIds(
+        remoteRecipientPeerIds: membership.recipientPeerIds,
+        senderPeerId: senderPeerId,
+        includeSenderPeerId: includeSenderPeerIdInDurableRecipients,
+      ),
+    );
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Reloads and fail-closed qualifies the exact current private parent.
+///
+/// Ordinary rows retain their existing permissive send behavior. Unsupported
+/// rows and private rows whose group, roster, writer role, key, or exact parent
+/// changed are denied before upload, publication, or inbox-store work.
+Future<bool> requalifyCurrentPrivateGroupMediaSend({
+  required GroupRepository groupRepo,
+  required GroupMessageRepository msgRepo,
+  required GroupMessage expectedParent,
+  required String senderPeerId,
+}) async {
+  final policy = expectedParent.privateMediaPolicy;
+  if (policy.isOrdinary) return true;
+  return await qualifyCurrentPrivateGroupMediaSend(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        expectedParent: expectedParent,
+        senderPeerId: senderPeerId,
+      ) !=
+      null;
+}
+
+/// Runs the initial private-media upload only after the exact optimistic
+/// policy-bearing parent has been durably reloaded and current discussion
+/// authorization has been requalified.
+///
+/// Ordinary uploads preserve their existing path. Unsupported or unavailable
+/// private policy fails closed without invoking [upload].
+Future<T?> runQualifiedPrivateGroupMediaInitialUpload<T>({
+  required GroupRepository groupRepo,
+  required GroupMessageRepository msgRepo,
+  required GroupMessage expectedParent,
+  required String senderPeerId,
+  required GroupPrivateMediaAvailability privateMediaAvailability,
+  List<String>? expectedAllowedPeerIds,
+  required Future<T?> Function() upload,
+}) async {
+  final policy = expectedParent.privateMediaPolicy;
+  if (policy.isOrdinary) return upload();
+  if (policy.isUnsupported || !privateMediaAvailability.isEnabled) {
+    return null;
+  }
+  final qualification = await qualifyCurrentPrivateGroupMediaSend(
+    groupRepo: groupRepo,
+    msgRepo: msgRepo,
+    expectedParent: expectedParent,
+    senderPeerId: senderPeerId,
+  );
+  if (qualification == null) return null;
+  final expectedAcl = expectedAllowedPeerIds;
+  if (expectedAcl != null &&
+      !sameGroupPrivateMediaRecipientPeerIds(
+        expectedAcl,
+        groupMediaAllowedPeersForMembers(qualification.members),
+      )) {
+    return null;
+  }
+  return upload();
+}
+
 void _finalizeSuccessfulPublishInboxStoreInBackground({
   required Future<bool> inboxFuture,
   required GroupMessageRepository msgRepo,
@@ -875,12 +1195,26 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   // 236: explicit internal Forward marker. Rides the encrypted payload extras
   // plus every durable retry/replay map; never any outer routing field.
   bool isForwarded = false,
+  GroupPrivateMediaPolicy privateMediaPolicy =
+      const GroupPrivateMediaPolicy.ordinary(),
+  GroupPrivateMediaAvailability privateMediaAvailability =
+      productionGroupPrivateMediaAvailability,
+
+  /// The exact private parent qualified by a caller before an awaited upload
+  /// or retry-preparation gap. When supplied, dispatch must still target this
+  /// same durable row; deletion or drift may not recreate it or mint a sibling.
+  GroupMessage? expectedPrivateParentBeforeDispatch,
   List<MediaAttachment>? mediaAttachments,
   MediaAttachmentRepository? mediaAttachmentRepo,
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
   bool emitTimingEvent = true,
   bool includeSenderPeerIdInDurableRecipients = false,
+  int Function()? privateMediaNowMs,
 }) async {
+  int currentPrivateMediaNowMs() =>
+      privateMediaNowMs?.call() ??
+      DateTime.now().toUtc().millisecondsSinceEpoch;
+
   final sendStopwatch = Stopwatch()..start();
   final sanitizedText = sanitizeMessageText(text);
   final hasMedia = mediaAttachments != null && mediaAttachments.isNotEmpty;
@@ -943,6 +1277,15 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     return (SendGroupMessageResult.groupDissolved, null);
   }
 
+  if (privateMediaPolicy.isPrivate &&
+      !privateMediaAvailability.canAuthorPrivateMedia(group.type)) {
+    emitGroupSendTiming(
+      outcome: 'unauthorized',
+      details: {'reason': 'private_media_unavailable'},
+    );
+    return (SendGroupMessageResult.unauthorized, null);
+  }
+
   if (group.type == GroupType.announcement && isGroupRecoveryInProgress()) {
     emitFlowEvent(
       layer: 'FL',
@@ -991,6 +1334,26 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     emitGroupSendTiming(outcome: 'invalid_media');
     return (SendGroupMessageResult.error, null);
   }
+  if (privateMediaPolicy.isUnsupported ||
+      (privateMediaPolicy.isPrivate &&
+          !_isEligiblePrivateGroupMessageShape(
+            policy: privateMediaPolicy,
+            text: sanitizedText,
+            quotedMessageId: quotedMessageId,
+            isForwarded: isForwarded,
+            attachments: groupMediaAttachments ?? const <MediaAttachment>[],
+          ))) {
+    emitGroupSendTiming(outcome: 'invalid_private_media_policy');
+    return (SendGroupMessageResult.error, null);
+  }
+  if (privateMediaPolicy.isPrivate &&
+      ((group.type != GroupType.chat && group.type != GroupType.announcement) ||
+          senderPeerId.trim().isEmpty ||
+          senderPublicKey.trim().isEmpty ||
+          senderPrivateKey.trim().isEmpty)) {
+    emitGroupSendTiming(outcome: 'unauthorized');
+    return (SendGroupMessageResult.unauthorized, null);
+  }
 
   // 3. Prepare all parameters
   final prepareStopwatch = Stopwatch()..start();
@@ -1011,11 +1374,44 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     membershipCutoff: membershipCutoff,
     inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
   );
-  final sendMembership = await sendMembershipFuture;
+  late final ({List<GroupMember> members, List<String> recipientPeerIds})
+  sendMembership;
+  try {
+    sendMembership = await sendMembershipFuture;
+  } catch (_) {
+    if (privateMediaPolicy.isPrivate) {
+      emitGroupSendTiming(
+        outcome: 'unauthorized',
+        details: {'reason': 'roster_unavailable'},
+      );
+      return (SendGroupMessageResult.unauthorized, null);
+    }
+    rethrow;
+  }
   final members = sendMembership.members;
   final senderConfigured = members.any(
     (member) => member.peerId == senderPeerId,
   );
+  GroupMember? currentSenderMember;
+  for (final member in members) {
+    if (member.peerId == senderPeerId) {
+      currentSenderMember = member;
+      break;
+    }
+  }
+  if (privateMediaPolicy.isPrivate &&
+      (currentSenderMember == null ||
+          !privateMediaAvailability.canCurrentMemberAuthorPrivateMedia(
+            groupType: group.type,
+            localRole: group.myRole,
+            memberRole: currentSenderMember.role,
+          ))) {
+    emitGroupSendTiming(
+      outcome: 'unauthorized',
+      details: {'reason': 'private_sender_not_writer'},
+    );
+    return (SendGroupMessageResult.unauthorized, null);
+  }
   if (!senderConfigured &&
       (members.isNotEmpty || group.myRole != GroupRole.admin)) {
     emitFlowEvent(
@@ -1057,6 +1453,13 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     );
     return (SendGroupMessageResult.error, null);
   }
+  if (privateMediaPolicy.isPrivate && members.isEmpty) {
+    emitGroupSendTiming(
+      outcome: 'unauthorized',
+      details: {'reason': 'empty_membership'},
+    );
+    return (SendGroupMessageResult.unauthorized, null);
+  }
   if (group.type == GroupType.chat && members.isEmpty) {
     emitFlowEvent(
       layer: 'FL',
@@ -1071,17 +1474,57 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     );
     return (SendGroupMessageResult.groupDissolved, null);
   }
-  final resolvedMessageId = await _resolveOutgoingMessageId(
-    msgRepo: msgRepo,
-    groupId: groupId,
-    senderPeerId: senderPeerId,
-    text: sanitizedText,
-    timestamp: now,
-    quotedMessageId: quotedMessageId,
-    logicalDeliveryId: logicalDeliveryId,
-    requestedMessageId: messageId,
-    messageIdFactory: messageIdFactory ?? _defaultGroupMessageIdFactory,
-  );
+  final expectedPrivateParent = expectedPrivateParentBeforeDispatch;
+  String? resolvedMessageId;
+  if (privateMediaPolicy.isPrivate && expectedPrivateParent != null) {
+    final qualification = await qualifyCurrentPrivateGroupMediaSend(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      expectedParent: expectedPrivateParent,
+      senderPeerId: senderPeerId,
+      inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+      includeSenderPeerIdInDurableRecipients:
+          includeSenderPeerIdInDurableRecipients,
+    );
+    final currentParent = await msgRepo.getMessage(expectedPrivateParent.id);
+    if (qualification == null ||
+        currentParent == null ||
+        !sameExactGroupPrivateMediaDispatchParent(
+          currentParent,
+          expectedPrivateParent,
+        ) ||
+        !_matchesExpectedPrivateGroupMediaRequest(
+          expected: expectedPrivateParent,
+          requestedMessageId: messageId,
+          groupId: groupId,
+          senderPeerId: senderPeerId,
+          text: sanitizedText,
+          timestamp: now,
+          quotedMessageId: quotedMessageId,
+          isForwarded: isForwarded,
+          privateMediaPolicy: privateMediaPolicy,
+        )) {
+      emitGroupSendTiming(
+        outcome: 'unauthorized',
+        details: {'reason': 'private_expected_parent_drifted'},
+      );
+      return (SendGroupMessageResult.unauthorized, currentParent);
+    }
+    resolvedMessageId = expectedPrivateParent.id;
+  } else {
+    resolvedMessageId = await _resolveOutgoingMessageId(
+      msgRepo: msgRepo,
+      groupId: groupId,
+      senderPeerId: senderPeerId,
+      text: sanitizedText,
+      timestamp: now,
+      quotedMessageId: quotedMessageId,
+      logicalDeliveryId: logicalDeliveryId,
+      privateMediaPolicy: privateMediaPolicy,
+      requestedMessageId: messageId,
+      messageIdFactory: messageIdFactory ?? _defaultGroupMessageIdFactory,
+    );
+  }
   if (resolvedMessageId == null) {
     emitFlowEvent(
       layer: 'FL',
@@ -1096,13 +1539,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   final resolvedLogicalDeliveryId =
       _normalizeLogicalDeliveryId(logicalDeliveryId) ?? resolvedMessageId;
   final keyEpoch = latestKey.keyGeneration;
-  GroupMember? senderMember;
-  for (final member in members) {
-    if (member.peerId == senderPeerId) {
-      senderMember = member;
-      break;
-    }
-  }
+  final senderMember = currentSenderMember;
   final resolvedSenderDevice = _resolveOutgoingSenderDevice(
     senderMember: senderMember,
     senderPublicKey: senderPublicKey,
@@ -1155,6 +1592,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       'quotedMessageId': quotedMessageId,
     if (mediaJson != null && mediaJson.isNotEmpty) 'media': mediaJson,
     if (isForwarded) 'isForwarded': true,
+    ...?privateMediaPolicy.toWireExtras(),
   });
 
   // 3c. Build inboxRetryPayload (exact inputs for callGroupInboxStore)
@@ -1174,6 +1612,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       'quotedMessageId': quotedMessageId,
     if (mediaJson != null && mediaJson.isNotEmpty) 'media': mediaJson,
     if (isForwarded) 'isForwarded': true,
+    ...?privateMediaPolicy.toWireExtras(),
   });
   String? replayEnvelope;
   String? inboxRetryPayload;
@@ -1224,6 +1663,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     logicalDeliveryId: resolvedLogicalDeliveryId,
     keyGeneration: keyEpoch,
     isForwarded: isForwarded,
+    privateMediaPolicy: privateMediaPolicy,
     status: 'sending',
     isIncoming: false,
     createdAt: now,
@@ -1240,6 +1680,18 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
           .toList(growable: false) ??
       const <MediaAttachment>[];
   final preExistingMessage = await msgRepo.getMessage(resolvedMessageId);
+  if (expectedPrivateParent != null &&
+      (preExistingMessage == null ||
+          !sameExactGroupPrivateMediaDispatchParent(
+            preExistingMessage,
+            expectedPrivateParent,
+          ))) {
+    emitGroupSendTiming(
+      outcome: 'unauthorized',
+      details: {'reason': 'private_expected_parent_drifted_before_persist'},
+    );
+    return (SendGroupMessageResult.unauthorized, preExistingMessage);
+  }
   try {
     await _persistOutgoingMedia(
       mediaAttachmentRepo: mediaAttachmentRepo,
@@ -1252,6 +1704,20 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     );
     if (!mediaWereDurableBeforeParent) {
       throw StateError('outgoing group media pre-persist was rejected');
+    }
+    if (expectedPrivateParent != null) {
+      final currentParent = await msgRepo.getMessage(resolvedMessageId);
+      if (currentParent == null ||
+          !sameExactGroupPrivateMediaDispatchParent(
+            currentParent,
+            expectedPrivateParent,
+          )) {
+        emitGroupSendTiming(
+          outcome: 'unauthorized',
+          details: {'reason': 'private_expected_parent_drifted_during_persist'},
+        );
+        return (SendGroupMessageResult.unauthorized, currentParent);
+      }
     }
     await msgRepo.saveMessage(prePersistMessage);
     final durableMessage = await msgRepo.getMessage(resolvedMessageId);
@@ -1318,6 +1784,31 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   prepareStopwatch.stop();
   prepareMs = prepareStopwatch.elapsedMilliseconds;
 
+  if (privateMediaPolicy.isPrivate) {
+    final qualification = await qualifyCurrentPrivateGroupMediaSend(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      expectedParent: prePersistMessage,
+      senderPeerId: senderPeerId,
+      inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+      includeSenderPeerIdInDurableRecipients:
+          includeSenderPeerIdInDurableRecipients,
+    );
+    if (qualification == null ||
+        !sameGroupPrivateMediaRecipientPeerIds(
+          recipientPeerIds,
+          qualification.recipientPeerIds,
+        )) {
+      final failedPrivateMessage = prePersistMessage.copyWith(status: 'failed');
+      await msgRepo.saveMessage(failedPrivateMessage);
+      emitGroupSendTiming(
+        outcome: 'unauthorized',
+        details: {'reason': 'private_requalification_failed'},
+      );
+      return (SendGroupMessageResult.unauthorized, failedPrivateMessage);
+    }
+  }
+
   final reliableStopwatch = Stopwatch()..start();
   Map<String, dynamic> reliableResult;
   try {
@@ -1340,6 +1831,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       quotedMessageId: quotedMessageId,
       media: mediaJson,
       isForwarded: isForwarded,
+      privateMediaPolicy: privateMediaPolicy.toWireExtras(),
       recipientPeerIds: recipientPeerIds,
       preserveRecipientPeerIds: true,
     );
@@ -1396,15 +1888,22 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       // → durable 'queued_offline' (clock + offline snackbar), self-healed by
       // the repush lane on reconnect. The shapes are mutually exclusive
       // (timeout ⇒ ok:false; without-custody ⇒ ok:true).
-      final inDoubtMessage = prePersistMessage.copyWith(
-        status: publishWithoutCustody
-            ? GroupMessage.statusQueuedOffline
-            : 'pending',
-        wireEnvelope: reliableTimedOut ? prePersistMessage.wireEnvelope : null,
-        inboxStored: inboxOk,
-        inboxRetryPayload: retryPayload,
+      final inDoubtMessage = _withPrivateMediaCustodyAnchor(
+        prePersistMessage.copyWith(
+          status: publishWithoutCustody
+              ? GroupMessage.statusQueuedOffline
+              : 'pending',
+          wireEnvelope: reliableTimedOut
+              ? prePersistMessage.wireEnvelope
+              : null,
+          inboxStored: inboxOk,
+          inboxRetryPayload: retryPayload,
+        ),
+        hasCustody: inboxOk,
+        anchoredAt: currentPrivateMediaNowMs(),
       );
       await msgRepo.saveMessage(inDoubtMessage);
+      _signalPrivateMediaAnchor(prePersistMessage, inDoubtMessage);
       await _persistOutgoingMedia(
         mediaAttachmentRepo: mediaAttachmentRepo,
         attachments: groupMediaAttachments
@@ -1455,13 +1954,20 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     }
 
     if (!reliableOk || (!publishSucceeded && !inboxOk)) {
-      await msgRepo.updateMessageStatus(resolvedMessageId, 'failed');
-      await msgRepo.updateInboxStored(resolvedMessageId, stored: inboxOk);
-      final failedMessage = prePersistMessage.copyWith(
-        status: 'failed',
-        inboxStored: inboxOk,
-        inboxRetryPayload: retryPayload,
+      final failedMessage = _withPrivateMediaCustodyAnchor(
+        prePersistMessage.copyWith(
+          status: 'failed',
+          inboxStored: inboxOk,
+          inboxRetryPayload: retryPayload,
+        ),
+        // Relay inbox acceptance is custody even when the paired live publish
+        // reports a definitive error. A disappearing sender copy must start
+        // its one-time local clock at that custody boundary.
+        hasCustody: inboxOk,
+        anchoredAt: currentPrivateMediaNowMs(),
       );
+      await msgRepo.saveMessage(failedMessage);
+      _signalPrivateMediaAnchor(prePersistMessage, failedMessage);
       emitGroupSendTiming(
         outcome: 'reliable_failed',
         details: {
@@ -1498,13 +2004,18 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       return (SendGroupMessageResult.error, failedMessage);
     }
 
-    final finalMessage = prePersistMessage.copyWith(
-      status: canMarkSent ? 'sent' : 'pending',
-      wireEnvelope: null,
-      inboxStored: inboxOk,
-      inboxRetryPayload: retryPayload,
+    final finalMessage = _withPrivateMediaCustodyAnchor(
+      prePersistMessage.copyWith(
+        status: canMarkSent ? 'sent' : 'pending',
+        wireEnvelope: null,
+        inboxStored: inboxOk,
+        inboxRetryPayload: retryPayload,
+      ),
+      hasCustody: canMarkSent,
+      anchoredAt: currentPrivateMediaNowMs(),
     );
     await msgRepo.saveMessage(finalMessage);
+    _signalPrivateMediaAnchor(prePersistMessage, finalMessage);
     await _persistOutgoingMedia(
       mediaAttachmentRepo: mediaAttachmentRepo,
       attachments: groupMediaAttachments
@@ -1550,6 +2061,35 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     );
   }
 
+  // An unavailable reliable command enters a second bridge dispatch path.
+  // Re-run both current authority and exact recipient-set comparison after the
+  // awaited command so a revocation during capability fallback cannot publish
+  // or store the already-built private replay envelope.
+  if (privateMediaPolicy.isPrivate) {
+    final fallbackQualification = await qualifyCurrentPrivateGroupMediaSend(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      expectedParent: prePersistMessage,
+      senderPeerId: senderPeerId,
+      inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+      includeSenderPeerIdInDurableRecipients:
+          includeSenderPeerIdInDurableRecipients,
+    );
+    if (fallbackQualification == null ||
+        !sameGroupPrivateMediaRecipientPeerIds(
+          recipientPeerIds,
+          fallbackQualification.recipientPeerIds,
+        )) {
+      final failedPrivateMessage = prePersistMessage.copyWith(status: 'failed');
+      await msgRepo.saveMessage(failedPrivateMessage);
+      emitGroupSendTiming(
+        outcome: 'unauthorized',
+        details: {'reason': 'private_fallback_requalification_failed'},
+      );
+      return (SendGroupMessageResult.unauthorized, failedPrivateMessage);
+    }
+  }
+
   // 5. Start publish + inbox store concurrently
   final publishStopwatch = Stopwatch()..start();
   final publishFuture = callGroupPublish(
@@ -1571,6 +2111,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     quotedMessageId: quotedMessageId,
     media: mediaJson,
     isForwarded: isForwarded,
+    privateMediaPolicy: privateMediaPolicy.toWireExtras(),
   );
   bool? inboxResult;
   final inboxStopwatch = Stopwatch()..start();
@@ -1633,13 +2174,18 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       // The foreground publish confirmation timed out, but the relay inbox
       // accepted custody for delivery. Surface this as a successful durable
       // send instead of a false failure on the sender.
-      final sentMessage = prePersistMessage.copyWith(
-        status: 'sent',
-        wireEnvelope: null,
-        inboxStored: true,
-        inboxRetryPayload: null,
+      final sentMessage = _withPrivateMediaCustodyAnchor(
+        prePersistMessage.copyWith(
+          status: 'sent',
+          wireEnvelope: null,
+          inboxStored: true,
+          inboxRetryPayload: null,
+        ),
+        hasCustody: true,
+        anchoredAt: currentPrivateMediaNowMs(),
       );
       await msgRepo.saveMessage(sentMessage);
+      _signalPrivateMediaAnchor(prePersistMessage, sentMessage);
 
       await _persistOutgoingMedia(
         mediaAttachmentRepo: mediaAttachmentRepo,
@@ -1671,16 +2217,20 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
 
     // Publish failed — preserve publish retry inputs while persisting the
     // observed inbox outcome from the same in-flight inbox future.
-    final failedMessage = prePersistMessage.copyWith(
-      status: 'failed',
-      inboxStored: inboxOk,
-      inboxRetryPayload: inboxOk ? null : prePersistMessage.inboxRetryPayload,
+    final failedMessage = _withPrivateMediaCustodyAnchor(
+      prePersistMessage.copyWith(
+        status: 'failed',
+        inboxStored: inboxOk,
+        inboxRetryPayload: inboxOk ? null : prePersistMessage.inboxRetryPayload,
+      ),
+      // The fallback inbox future is an independent durable-custody result.
+      // Do not lose its disappearing-media anchor merely because live publish
+      // failed with a non-timeout error.
+      hasCustody: inboxOk,
+      anchoredAt: currentPrivateMediaNowMs(),
     );
-    await msgRepo.updateMessageStatus(resolvedMessageId, 'failed');
-    await msgRepo.updateInboxStored(resolvedMessageId, stored: inboxOk);
-    if (inboxOk) {
-      await msgRepo.updateInboxRetryPayload(resolvedMessageId, null);
-    }
+    await msgRepo.saveMessage(failedMessage);
+    _signalPrivateMediaAnchor(prePersistMessage, failedMessage);
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_SEND_MSG_USE_CASE_PUBLISH_FAILED',
@@ -1710,15 +2260,22 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       await Future<void>.value();
     }
     final resolvedInboxOk = inboxResult;
-    final finalMessage = prePersistMessage.copyWith(
-      status: resolvedInboxOk == true ? 'sent' : 'pending',
-      wireEnvelope: null,
-      inboxStored: resolvedInboxOk == true,
-      inboxRetryPayload: resolvedInboxOk == true
-          ? null
-          : prePersistMessage.inboxRetryPayload,
+    final finalMessage = _withPrivateMediaCustodyAnchor(
+      prePersistMessage.copyWith(
+        status: resolvedInboxOk == true ? 'sent' : 'pending',
+        wireEnvelope: null,
+        inboxStored: resolvedInboxOk == true,
+        inboxRetryPayload: resolvedInboxOk == true
+            ? null
+            : prePersistMessage.inboxRetryPayload,
+      ),
+      // A successful legacy publish is live custody even when the old bridge
+      // omitted its peer-count field.
+      hasCustody: true,
+      anchoredAt: currentPrivateMediaNowMs(),
     );
     await msgRepo.saveMessage(finalMessage);
+    _signalPrivateMediaAnchor(prePersistMessage, finalMessage);
 
     await _persistOutgoingMedia(
       mediaAttachmentRepo: mediaAttachmentRepo,
@@ -1775,15 +2332,20 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       await Future<void>.value();
     }
     final resolvedInboxOk = inboxResult;
-    final finalMessage = prePersistMessage.copyWith(
-      status: 'sent',
-      wireEnvelope: null,
-      inboxStored: resolvedInboxOk == true,
-      inboxRetryPayload: resolvedInboxOk == true
-          ? null
-          : prePersistMessage.inboxRetryPayload,
+    final finalMessage = _withPrivateMediaCustodyAnchor(
+      prePersistMessage.copyWith(
+        status: 'sent',
+        wireEnvelope: null,
+        inboxStored: resolvedInboxOk == true,
+        inboxRetryPayload: resolvedInboxOk == true
+            ? null
+            : prePersistMessage.inboxRetryPayload,
+      ),
+      hasCustody: true,
+      anchoredAt: currentPrivateMediaNowMs(),
     );
     await msgRepo.saveMessage(finalMessage);
+    _signalPrivateMediaAnchor(prePersistMessage, finalMessage);
 
     await _persistOutgoingMedia(
       mediaAttachmentRepo: mediaAttachmentRepo,
@@ -1837,13 +2399,18 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     // 0-peer + inbox OK → successNoPeers, but persist as a successful send.
     // The relay inbox has already accepted durable delivery for offline peers,
     // so a permanent "pending" clock is misleading in the UI.
-    final sentMessage = prePersistMessage.copyWith(
-      status: 'sent',
-      wireEnvelope: null,
-      inboxStored: true,
-      inboxRetryPayload: null,
+    final sentMessage = _withPrivateMediaCustodyAnchor(
+      prePersistMessage.copyWith(
+        status: 'sent',
+        wireEnvelope: null,
+        inboxStored: true,
+        inboxRetryPayload: null,
+      ),
+      hasCustody: true,
+      anchoredAt: currentPrivateMediaNowMs(),
     );
     await msgRepo.saveMessage(sentMessage);
+    _signalPrivateMediaAnchor(prePersistMessage, sentMessage);
 
     // Save media attachments
     if (groupMediaAttachments != null && mediaAttachmentRepo != null) {

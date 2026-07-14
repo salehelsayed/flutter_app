@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/remove_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_reaction_replay_outbox_entry.dart';
@@ -821,7 +822,14 @@ void main() {
       expect(entry, isNotNull);
       expect(entry!.deliveryStatus, GroupReactionReplayOutboxStatus.failed);
       final retryable = await reactionReplayOutboxRepo.loadRetryableEntries();
-      expect(retryable.map((e) => e.reactionId), contains(reaction.id));
+      expect(retryable, hasLength(1));
+      expect(retryable.single.reactionId, startsWith('group-reaction-event-'));
+      expect(
+        _replayEnvelopeFromRetryPayload(
+          retryable.single.inboxRetryPayload,
+        )['messageId'],
+        reaction.id,
+      );
     },
   );
 
@@ -934,6 +942,251 @@ void main() {
       _expectSignedReactionReplayEnvelope(
         _replayEnvelopeFromRetryPayload(entry.inboxRetryPayload),
       );
+    },
+  );
+
+  test(
+    'all-revoked author devices are neither replay nor notification recipients',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-2',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'legacy-author-key-must-not-resurrect',
+          devices: <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'author-revoked-device',
+              transportPeerId: 'transport-author-revoked',
+              deviceSigningPublicKey: 'author-revoked-key',
+              status: GroupMemberDeviceStatus.revoked,
+              revokedAt: DateTime.utc(2026, 7, 12),
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 1, 1),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-bystander',
+          username: 'Charlie',
+          role: MemberRole.writer,
+          devices: <GroupMemberDeviceIdentity>[
+            const GroupMemberDeviceIdentity(
+              deviceId: 'bystander-device',
+              transportPeerId: 'transport-bystander',
+              deviceSigningPublicKey: 'bystander-key',
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 1, 1),
+        ),
+      );
+
+      final result = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        transitionIdFactory: () => 'transition-all-revoked-author',
+      );
+      await pumpEventQueue();
+
+      expect(result.$1, SendGroupReactionResult.success);
+      final envelope = _replayEnvelopeFromRetryPayload(
+        reactionReplayOutboxRepo.entries.single.inboxRetryPayload,
+      );
+      expect(envelope['recipientPeerIds'], <String>['transport-bystander']);
+      final extension =
+          envelope['notificationExtension'] as Map<String, dynamic>;
+      expect(extension['notificationRecipientTransportPeerIds'], isEmpty);
+      expect(jsonEncode(envelope), isNot(contains('transport-author-revoked')));
+      expect(
+        jsonEncode(envelope),
+        isNot(contains('legacy-author-key-must-not-resurrect')),
+      );
+    },
+  );
+
+  test(
+    'ADD remove same ADD persists unique transition ids and exact retry reuses one',
+    () async {
+      final firstAdd = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        transitionIdFactory: () => 'transition-add-1',
+      );
+      await pumpEventQueue();
+
+      final remove = await removeGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        transitionIdFactory: () => 'transition-remove-1',
+      );
+      await pumpEventQueue();
+
+      final secondAdd = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        transitionIdFactory: () => 'transition-add-2',
+      );
+      await pumpEventQueue();
+
+      expect(firstAdd.$1, SendGroupReactionResult.success);
+      expect(remove, RemoveGroupReactionResult.success);
+      expect(secondAdd.$1, SendGroupReactionResult.success);
+      expect(firstAdd.$2!.id, secondAdd.$2!.id);
+      expect(
+        reactionReplayOutboxRepo.entries.map((entry) => entry.reactionId),
+        ['transition-add-1', 'transition-remove-1', 'transition-add-2'],
+      );
+
+      final envelopes = reactionReplayOutboxRepo.entries
+          .map(
+            (entry) => _replayEnvelopeFromRetryPayload(entry.inboxRetryPayload),
+          )
+          .toList(growable: false);
+      expect(envelopes[0]['messageId'], firstAdd.$2!.id);
+      expect(envelopes[2]['messageId'], firstAdd.$2!.id);
+      expect(envelopes[1]['messageId'], isNot(firstAdd.$2!.id));
+      for (var index = 0; index < envelopes.length; index++) {
+        final expectedTransition =
+            reactionReplayOutboxRepo.entries[index].reactionId;
+        final extension =
+            envelopes[index]['notificationExtension'] as Map<String, dynamic>;
+        expect(extension['transitionId'], expectedTransition);
+        final plaintext =
+            jsonDecode(envelopes[index]['ciphertext'] as String)
+                as Map<String, dynamic>;
+        expect(plaintext['eventId'], expectedTransition);
+      }
+
+      final beforeRetryBytes =
+          reactionReplayOutboxRepo.entries.last.inboxRetryPayload;
+      final exactRetry = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        transitionIdFactory: () => throw StateError(
+          'exact retry must reuse the persisted transition id',
+        ),
+      );
+      await pumpEventQueue();
+
+      expect(exactRetry.$1, SendGroupReactionResult.success);
+      expect(reactionReplayOutboxRepo.entries, hasLength(3));
+      expect(
+        reactionReplayOutboxRepo.entries.last.inboxRetryPayload,
+        beforeRetryBytes,
+      );
+      expect(
+        reactionReplayOutboxRepo.entries.last.reactionId,
+        'transition-add-2',
+      );
+    },
+  );
+
+  test(
+    'sibling-device REMOVE prevents reuse of this device old ADD transition',
+    () async {
+      final firstAdd = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        transitionIdFactory: () => 'transition-add-before-sibling-remove',
+      );
+      await pumpEventQueue();
+
+      // The sibling REMOVE converges through ReactionRepository, but it does
+      // not write this device's replay outbox. The next local ADD is therefore
+      // a new transition, not a retry of the old ADD row.
+      await reactionRepo.removeReaction(
+        'msg-1',
+        'peer-1',
+        removedAtTimestamp: DateTime.now().toUtc().toIso8601String(),
+      );
+
+      final reAdd = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        transitionIdFactory: () => 'transition-add-after-sibling-remove',
+      );
+      await pumpEventQueue();
+
+      expect(firstAdd.$1, SendGroupReactionResult.success);
+      expect(reAdd.$1, SendGroupReactionResult.success);
+      expect(
+        reactionReplayOutboxRepo.entries.map((entry) => entry.reactionId),
+        <String>[
+          'transition-add-before-sibling-remove',
+          'transition-add-after-sibling-remove',
+        ],
+      );
+      final replay = _replayEnvelopeFromRetryPayload(
+        reactionReplayOutboxRepo.entries.last.inboxRetryPayload,
+      );
+      final plaintext =
+          jsonDecode(replay['ciphertext'] as String) as Map<String, dynamic>;
+      expect(plaintext['eventId'], 'transition-add-after-sibling-remove');
     },
   );
 

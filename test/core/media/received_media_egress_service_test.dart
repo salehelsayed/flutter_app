@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter_app/core/media/app_owned_media_path_authority.dart';
 import 'package:flutter_app/core/media/received_media_egress.dart';
 import 'package:flutter_app/core/media/received_media_egress_gateway.dart';
 import 'package:flutter_app/core/media/received_media_egress_service.dart';
@@ -277,6 +278,82 @@ void main() {
       MediaEgressItemOutcome.missingFile,
     ]);
   });
+
+  test(
+    'egress delegates canonical ownership to shared path authority',
+    () async {
+      final source = File(p.join(media.path, 'shared.jpg'))
+        ..writeAsBytesSync([1, 2, 3]);
+      final nonCanonical = p.join(media.path, '..', 'peer', 'shared.jpg');
+      final canonical = await source.resolveSymbolicLinks();
+      final authority = _RecordingAuthority(canonical);
+      final delegated = ReceivedMediaEgressService(
+        gateway: gateway,
+        resolveStoredPath: (_) async => nonCanonical,
+        pathAuthority: authority,
+      );
+
+      final result = await delegated.perform(
+        requestId: 'shared_authority',
+        destination: MediaEgressDestination.files,
+        selection: const [
+          ReceivedMediaEgressCandidate(
+            attachmentId: 'shared',
+            storedPath: 'ignored',
+            mime: 'image/jpeg',
+          ),
+        ],
+      );
+
+      expect(result.outcome, MediaEgressOutcome.saved);
+      expect(authority.candidates, [nonCanonical]);
+      expect(gateway.requests.single.items.single.sourcePath, canonical);
+    },
+  );
+
+  test('shared path authority exception fails closed before native', () async {
+    final source = File(p.join(media.path, 'throws.jpg'))
+      ..writeAsBytesSync([9]);
+    final delegated = ReceivedMediaEgressService(
+      gateway: gateway,
+      resolveStoredPath: (_) async => source.path,
+      pathAuthority: _RecordingAuthority(null, throwsError: true),
+    );
+
+    final result = await delegated.perform(
+      requestId: 'authority_throws',
+      destination: MediaEgressDestination.files,
+      selection: const [
+        ReceivedMediaEgressCandidate(
+          attachmentId: 'throws',
+          storedPath: 'ignored',
+          mime: 'image/jpeg',
+        ),
+      ],
+    );
+
+    expect(result.outcome, MediaEgressOutcome.rejected);
+    expect(
+      result.items.single.outcome,
+      MediaEgressItemOutcome.outsideOwnedRoot,
+    );
+    expect(gateway.requests, isEmpty);
+  });
+}
+
+class _RecordingAuthority implements AppOwnedMediaPathAuthority {
+  _RecordingAuthority(this.canonical, {this.throwsError = false});
+
+  final String? canonical;
+  final bool throwsError;
+  final candidates = <String?>[];
+
+  @override
+  Future<String?> authorize(String? candidatePath) async {
+    candidates.add(candidatePath);
+    if (throwsError) throw StateError('authority unavailable');
+    return canonical;
+  }
 }
 
 class _Gateway implements ReceivedMediaEgressGateway {

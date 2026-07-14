@@ -8,9 +8,13 @@ Closure tier: host
 
 ## Planning Progress
 
+The 2026-07-09 entries are retained as historical execution intake. Plan 244
+has since closed Report as an intentional product non-goal; no reporting
+authority or future decision remains pending.
+
 | Time | Role | Files inspected | Decision/blocker | Next action |
 |---|---|---|---|---|
-| 2026-07-09 | Evidence Collector / Planner | `graphify-arch` query; `conversation_screen.dart`; `conversation_wired.dart`; `message_context_overlay.dart`; `full_screen_image_viewer.dart`; delete use case/tests; viewer/action tests; l10n; plans 227/230 contract | Save/Share/Delete/Info/Reply have source-grounded seams and host closure. Reporting has materially different authority/privacy decisions and is isolated in plan 244. | Author the complete RED set before production edits; keep Report absent until plan 244 is decision-ready. |
+| 2026-07-09 | Historical Evidence Collector / Planner | `graphify-arch` query; `conversation_screen.dart`; `conversation_wired.dart`; `message_context_overlay.dart`; `full_screen_image_viewer.dart`; delete use case/tests; viewer/action tests; l10n; plans 227/230 contract | At intake, Save/Share/Delete/Info/Reply had source-grounded seams while the separate reporting disposition was still assigned to Plan 244. That pending wording is superseded by Plan 244's accepted intentional non-goal. | Historical action: author the complete RED set before production edits and keep Report absent. No reporting implementation followed. |
 | 2026-07-10 | Planner | revised plan 228 owner-lane/read-delete contract; `delete_message_use_case.dart` attachment calls; direct action/viewer fixtures | Direct actions must carry `MediaOwnerLane.direct`; whole-message cleanup must call owner-aware attachment APIs and preserve same-message-ID group and unresolved rows/files. | Add owner-recording action fixtures and a real collision deletion case before execution. |
 | 2026-07-10 | Counterexample Reviewer / Planner | implemented plan-227 service API/policy boundary; `LetterCard`/`MediaGrid` gestures; one-message viewer construction; wired transport imports/calls; current owner-aware deletion test/gates | PLAN FIXES REQUIRED: egress API/authority was stale, bubble identity was message-wide, cross-message swipe exceeded this slice, import-only transport proof was vacuous, and deletion owner-scoping was already complete under a differently named sentinel. | Rebase controller, identity, wired bypass, deletion evidence and gate contracts before execution. |
 
@@ -30,7 +34,10 @@ Closure tier: host
 - Missing coverage: no test can fail for attachment-specific bubble identity, same-message viewer identity, different-message reopen identity, current-row egress requalification, viewer/bubble-to-wired controller use, native-egress delegation, media Info, unresolved-row exclusion, or non-default sibling state/file preservation during direct deletion.
 - Refuted findings: "received direct media cannot be deleted" is refuted. Incoming rows already offer Delete for Me through long press (`conversation_wired_test.dart:5839-5883`). The real deletion gaps are discoverability and viewer access, not the underlying local-delete capability.
 - Refuted findings: this work does not require a messaging transport change. Save/Share are owned by the transport-free plan 227 gateway, while Delete for Me and Info are local operations.
-- Unresolved finding (non-blocking for this plan): HEAD has only contact blocking at `conversation_wired.dart:4196-4337`; no report sink or report localization exists under `lib/`. Plan 244 owns report authority, payload/privacy, retention/side effects, and offline/result decisions; this plan neither renders nor fakes Report.
+- Resolved sibling disposition: HEAD has only contact blocking at
+  `conversation_wired.dart:4196-4337`; no report sink or report localization
+  exists under `lib/`. Plan 244 confirms that absence as the accepted product
+  non-goal; this plan neither renders nor fakes Report.
 - Affected production, test, and gate files: plan-230 typed viewer/action APIs; `MediaGrid`/`MediaGridCell`/`LetterCard` attachment-long-press propagation; `conversation_screen.dart`; `conversation_wired.dart`; `message_context_overlay.dart`; a new direct-media action controller/eligibility qualifier; three ARBs/generated l10n; focused controller/screen/wired/delete tests; `ONE_TO_ONE_TESTS` and `ONE_TO_ONE_HOST_TESTS`.
 
 ## Scope Contract And Guard
@@ -56,7 +63,8 @@ Hard `Do not`:
 - Do not implement internal forwarding (plan 232), shared-media library/batch work (plan 233), or private-media lifecycle policy (plan 234) here.
 - Do not add item-only attachment deletion, silently relabel whole-message deletion, or delete a Photos/Gallery/Files copy.
 - Do not call P2P, Bridge, relay, inbox, group publish, announcement, or Go code for these actions.
-- Do not add a Report action or gateway here; plan 244 owns that separately.
+- Do not add a Report action or gateway here; Plan 244 closes reporting as an
+  intentional product non-goal.
 - Do not expose or dispatch Save/Share for pending, downloading, evicted, missing, integrity-failed, expired, protected, deleted-parent, outgoing, wrong-attachment, or unresolved media. The direct controller/lane qualifier is policy authority; plan 227 is only the final structural path/MIME/file authority.
 - Do not infer owner from `message_id`, default an omitted owner to direct, expose `unresolved` items, or call an untyped attachment load/delete/failure seam.
 - Do not use viewer/caption/path metadata as action authority, call `ReceivedMediaEgressGateway` from UI/lane code, invoke ShareTargetPicker/delivery/send from external Share, or broaden the viewer across parent messages.
@@ -64,14 +72,16 @@ Hard `Do not`:
 Deferred / accepted difference:
 - Individual attachment deletion while preserving the parent message -> owner future attachment-deletion product plan; this plan deliberately uses the already-correct whole-message Delete for Me contract.
 - Conversation-wide media navigation and batch selection -> plan 233.
-- Received-media reporting -> plan 244; absence of Report is an accepted staged difference, not a blocker for this action slice.
+- Received-media reporting -> Plan 244; absence of Report is the accepted final
+  product decision, not a staged implementation gap or blocker for this slice.
 - Group and announcement surface parity -> plans 235 and 239.
 
 Dependencies:
 - `Test-Flight-Improv/227-received-media-native-egress-foundation-tdd-plan.md` for `ReceivedMediaEgressService.perform`, `ReceivedMediaEgressCandidate`, destinations and typed results. The raw gateway remains foundation-internal and is not a lane dependency.
 - `Test-Flight-Improv/230-shared-typed-media-viewer-tdd-plan.md` for `MediaViewerItem`, `MediaViewerActionCapabilities`, and the optional current-item action callback.
 - Revised `Test-Flight-Improv/228-shared-media-library-bookmark-persistence-tdd-plan.md` must land first for `MediaOwnerLane.direct`, unresolved-row exclusion, and owner-aware per-message load/delete APIs.
-- `Test-Flight-Improv/244-1to1-received-media-reporting-tdd-plan.md` is a deferred sibling, not an execution dependency.
+- `Test-Flight-Improv/244-1to1-received-media-reporting-tdd-plan.md` is a closed
+  accepted/not-applicable sibling, not an execution dependency.
 
 ## Test Contract
 
@@ -98,12 +108,16 @@ Dependencies:
 - TC-231-03/03N pass only stable IDs into the controller. The recording egress service must receive the path and MIME from the reloaded row, not from the viewer item. “Expired/protected” is supplied by the direct-lane qualifier contract; durable private-media storage/lifecycle remains plan 234.
 - TC-231-05 reuses the already owner-aware whole-message delete contract. Strengthen its existing fixture before using it as evidence: seed non-zero bookmark/playback values on the same-ID group and unresolved rows, give both sibling rows distinct local paths/files, compare raw rows byte-for-byte, and assert neither sibling file path is deleted. The confirmation copy must say that the message and all its attachments are removed from this device.
 - TC-231-09 freezes the pre-change wired transport callsite inventory before production edits. Existing Bridge/P2P/send imports are allowed only at their named baseline methods; they are not blanket permission for media-action handlers. TC-231-09W is the behavioral discriminator that proves the controller is actually wired.
-- TC-231-01 explicitly asserts that Report is absent, preventing this plan from accidentally shipping a no-op, analytics-only, or local-Block substitute before plan 244.
+- TC-231-01 explicitly asserts that Report is absent, preserving Plan 244's
+  accepted non-goal and preventing a no-op, analytics-only, or local-Block
+  substitute.
 
 ## Implementation Steps
 
 1. Snapshot `git status --short`; record unrelated changes and the exact existing `ConversationWired` transport callsite allowlist. Add the new causal rows before production edits; run the existing deletion sentinel first as GREEN under its real test name, then strengthen its fixture without changing production behavior.
-2. Keep Report absent and plan-244-owned while adapting direct messages/attachments to plan 230 `MediaViewerItem` and action capabilities.
+2. Keep Report absent under Plan 244's accepted intentional non-goal while
+   adapting direct messages/attachments to plan 230 `MediaViewerItem` and
+   action capabilities.
 3. Add attachment-specific long-press/index propagation through `MediaGridCell`/`MediaGrid`/`LetterCard`, preserving the existing row-long-press behavior. Build message-bounded typed viewer items and close/reopen identity without conversation-wide navigation.
 4. Add the local controller with stable-ID input, immediate current parent/direct-row reload, fail-closed direct-lane qualification, and the exact `ReceivedMediaEgressService.perform(... selection: [ReceivedMediaEgressCandidate(...)])` call. Route Info to current local metadata, Reply to the quote callback, and Delete to the existing whole-message use case. Do not edit owner scoping inside `delete_message_use_case.dart`; it is already complete. Stop-if any action trusts viewer path/policy, defaults ownership, or requires a delivery/P2P/report dependency.
 5. Wire bubble/viewer callbacks through `ConversationWired` to the controller and prove throwing delivery seams are untouched. Add the exact callsite/allowlist source contract; do not use import-only assertions for the transport-owning wired file.
@@ -120,7 +134,8 @@ Dependencies:
 - Destructive-action side effects: TC-231-05's strengthened existing sentinel asserts direct removals and byte-identical preservation of same-ID group/unresolved rows, non-default viewer state and both files.
 - Invariant re-verification under new transitions: closing viewer/menu before Reply/Delete rechecks `mounted` and current message existence; TC-231-05/07 cover re-entry and exactly-once behavior.
 - Wired-layer bypass through existing transport dependencies -> TC-231-09 pins exact call sites/allowlist and TC-231-09W drives both UI surfaces with throwing delivery seams.
-- Report privacy/authority is not source-resolvable -> plan 244 owns it and TC-231-01 keeps it absent here.
+- Report remains intentionally absent -> Plan 244 closes that product non-goal,
+  and TC-231-01 preserves the absence here.
 
 ## Gate Cadence
 
@@ -169,7 +184,8 @@ git diff --check
 - Expected RED: TC-231-01 fails because media cells lack attachment-specific long press and the overlay/viewer lack the new action/identity contract. The existing deletion command is GREEN baseline evidence, not causal RED.
 - Green sentinel: strengthened incoming direct cleanup, outgoing Delete for Everyone, quote reply, row context and message-bounded viewer swipe tests remain green.
 - Pre-existing dirty tree / known failure: snapshot at execution; do not absorb unrelated changes or pre-existing l10n literal-scan debt into this plan.
-- Environment blocker: none for this host slice; reporting decisions live outside its closure bar.
+- Environment blocker: none for this host slice; Plan 244's reporting non-goal
+  is closed and introduces no dependency or closure blocker.
 - Scope drift: any forwarding, gallery, schema, group/announcement, transport, relay, or Go edit blocks completion.
 
 - [x] Every behavior has a named test and honest RED/sentinel disposition.
@@ -190,7 +206,8 @@ git diff --check
 - Manual registration: add the three new direct-media action files to `scripts/run_test_gates.sh::ONE_TO_ONE_TESTS` for per-plan selection and to `scripts/run_host_test_gates.sh::ONE_TO_ONE_HOST_TESTS` for later wave-level inventory; add existing `conversation_wired_test.dart` to `ONE_TO_ONE_HOST_TESTS` (it is already in `ONE_TO_ONE_TESTS`). Per-plan closure does not run `feature-host-all`.
 - Migration: none.
 - Boundary closure: host-only lane wiring; plan 227 separately owns Android/iOS egress device proof.
-- Unresolved evidence: none for this slice. Reporting decisions are explicitly deferred to evidence-gated plan 244 and do not block implementation.
+- Unresolved evidence: none for this slice. Plan 244 closes Report as an
+  intentional product non-goal and does not block implementation.
 
 ## Reviewer Findings
 

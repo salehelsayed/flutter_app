@@ -36,6 +36,19 @@ void main() {
       expect(find.text('Alice'), findsOneWidget);
     });
 
+    testWidgets('exposes a conversation-specific route marker', (tester) async {
+      await tester.pumpWidget(buildTestWidget());
+
+      final marker = tester.widget<Semantics>(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is Semantics &&
+              widget.properties.identifier == 'mknoon.conversation.Alice',
+        ),
+      );
+      expect(marker.container, isTrue);
+    });
+
     testWidgets('displays connection date', (tester) async {
       await tester.pumpWidget(buildTestWidget());
       expect(find.text('Connected February 9, 2026'), findsOneWidget);

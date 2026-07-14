@@ -1,0 +1,6 @@
+Running build hooks...Running build hooks...selectorSource=pixel6-api36-wmshell-geometry
+resourceId=
+contentDescription=AOSP expand control geometry
+bounds=389 2002 910 2295
+center=649 2148
+geometryEvidence=pixel6-api36-1080x2400-420dpi-rotation0-pip521x293-expand-glyph-v1

@@ -37,6 +37,7 @@ import '../../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../../shared/fakes/in_memory_media_attachment_repository.dart';
+import '../../../../shared/fixtures/media_bytes.dart';
 
 const _tinyMp4Bytes = <int>[
   0x00,
@@ -446,7 +447,7 @@ void main() {
           }
         });
         final attachment = File(p.join(tempDir.path, 'photo.jpg'))
-          ..writeAsStringSync('image');
+          ..writeAsBytesSync(validJpegFixtureBytes, flush: true);
 
         await _pumpGroupConversationWired(
           tester,
@@ -543,7 +544,10 @@ void main() {
       );
 
       await _sendText(tester, 'upload fail');
-      await pumpUntil(tester, () => bridge.commandLog.contains('bg:end'));
+      await pumpUntilAsyncWorkSettles(
+        tester,
+        () => bridge.commandLog.contains('bg:end'),
+      );
 
       expect(bridge.commandLog, contains('bg:begin'));
       expect(bridge.commandLog, contains('bg:end'));
@@ -705,7 +709,7 @@ void main() {
           }
         });
         final attachment = File(p.join(tempDir.path, 'photo.jpg'))
-          ..writeAsStringSync('image');
+          ..writeAsBytesSync(validJpegFixtureBytes, flush: true);
 
         await _pumpGroupConversationWired(
           tester,
@@ -742,8 +746,9 @@ void main() {
         await pumpUntil(tester, () => uploadStarted.isCompleted);
         await pumpFrames(tester, count: 5);
 
-        final messageId =
-            (await mediaRepo.getUploadPendingAttachments(owner: MediaOwnerLane.group)).single.messageId;
+        final messageId = (await mediaRepo.getUploadPendingAttachments(
+          owner: MediaOwnerLane.group,
+        )).single.messageId;
         final persistedBeforeUnmount = await msgRepo.getMessage(messageId);
         expect(persistedBeforeUnmount, isNotNull);
         expect(persistedBeforeUnmount!.status, 'sending');
@@ -876,8 +881,7 @@ void main() {
         final mediaRepo = InMemoryMediaAttachmentRepository();
         final mediaFileManager = FakeMediaFileManager();
         final localPath = p.join(
-          Directory.systemTemp.path,
-          'test_docs',
+          FakeMediaFileManager.testRootPath,
           'pending_uploads',
           'msg-voice-pending-bg',
           'voice.m4a',
@@ -911,7 +915,8 @@ void main() {
             durationMs: 1300,
             waveform: [0.2, 0.7, 0.3],
             createdAt: '2026-01-01T12:00:00.000Z',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
 
         await _pumpGroupConversationWired(
@@ -1463,7 +1468,7 @@ void main() {
           }
         });
         final attachment = File(p.join(tempDir.path, 'announce.jpg'))
-          ..writeAsStringSync('image');
+          ..writeAsBytesSync(validJpegFixtureBytes, flush: true);
 
         await _pumpGroupConversationWired(
           tester,
@@ -1564,7 +1569,8 @@ void main() {
         expect(saved.status, 'sent');
 
         final savedAttachments = await mediaRepo.getAttachmentsForMessage(
-          sentMessageId, owner: MediaOwnerLane.group,
+          sentMessageId,
+          owner: MediaOwnerLane.group,
         );
         expect(
           savedAttachments.any((attachment) => attachment.id == uploadedBlobId),
@@ -1594,7 +1600,7 @@ void main() {
         }
       });
       final attachment = File(p.join(tempDir.path, 'photo.jpg'))
-        ..writeAsStringSync('image');
+        ..writeAsBytesSync(validJpegFixtureBytes, flush: true);
 
       await _pumpGroupConversationWired(
         tester,

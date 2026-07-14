@@ -1102,7 +1102,8 @@ void main() {
             id: 'att-media-done',
             messageId: 'msg-media-done',
             downloadStatus: 'done',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
 
         final count = await retryFailedGroupMessages(
@@ -1120,7 +1121,8 @@ void main() {
         expect(saved.timestamp, DateTime.parse('2026-01-15T12:00:00.000Z'));
         expect(saved.wireEnvelope, isNull);
         final attachments = await mediaRepo.getAttachmentsForMessage(
-          'msg-media-done', owner: MediaOwnerLane.group,
+          'msg-media-done',
+          owner: MediaOwnerLane.group,
         );
         expect(attachments, hasLength(1));
         expect(attachments.single.id, 'att-media-done');
@@ -1161,7 +1163,8 @@ void main() {
             messageId: messageId,
             downloadStatus: 'done',
             mime: 'audio/mp4',
-          ).copyWith(durationMs: 2400, waveform: const [0.1, 0.3, 0.2]), owner: MediaOwnerLane.group,
+          ).copyWith(durationMs: 2400, waveform: const [0.1, 0.3, 0.2]),
+          owner: MediaOwnerLane.group,
         );
 
         final count = await retryFailedGroupMessage(
@@ -1194,7 +1197,10 @@ void main() {
         expect(media.single['durationMs'], 2400);
         expect(media.single['waveform'], [0.1, 0.3, 0.2]);
 
-        final attachments = await mediaRepo.getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group);
+        final attachments = await mediaRepo.getAttachmentsForMessage(
+          messageId,
+          owner: MediaOwnerLane.group,
+        );
         expect(attachments, hasLength(1));
         expect(attachments.single.id, 'att-voice-done');
         expect(attachments.single.downloadStatus, 'done');
@@ -1238,7 +1244,8 @@ void main() {
             messageId: 'msg-gif-done',
             downloadStatus: 'done',
             mime: 'image/gif',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
 
         final count = await retryFailedGroupMessages(
@@ -1298,7 +1305,8 @@ void main() {
             id: 'att-media-middle',
             messageId: 'msg-media-middle',
             downloadStatus: 'done',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
 
         final count = await retryFailedGroupMessages(
@@ -1333,7 +1341,8 @@ void main() {
         expect(quote.quotedMessageId, 'msg-root');
 
         final attachments = await mediaRepo.getAttachmentsForMessage(
-          'msg-media-middle', owner: MediaOwnerLane.group,
+          'msg-media-middle',
+          owner: MediaOwnerLane.group,
         );
         expect(attachments, hasLength(1));
         expect(attachments.single.id, 'att-media-middle');
@@ -1373,7 +1382,8 @@ void main() {
             id: 'att-media-pending',
             messageId: 'msg-media-pending',
             downloadStatus: 'upload_pending',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
 
         late int count;
@@ -1396,7 +1406,8 @@ void main() {
         expect(saved, isNotNull);
         expect(saved!.status, 'failed');
         final attachments = await mediaRepo.getAttachmentsForMessage(
-          'msg-media-pending', owner: MediaOwnerLane.group,
+          'msg-media-pending',
+          owner: MediaOwnerLane.group,
         );
         expect(attachments, hasLength(1));
         expect(attachments.single.downloadStatus, 'upload_pending');
@@ -1550,14 +1561,16 @@ void main() {
             id: 'att-targeted',
             messageId: 'msg-targeted',
             downloadStatus: 'done',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
         await mediaRepo.saveAttachment(
           _makeAttachment(
             id: 'att-untouched',
             messageId: 'msg-untouched',
             downloadStatus: 'done',
-          ), owner: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
         );
 
         final count = await retryFailedGroupMessage(

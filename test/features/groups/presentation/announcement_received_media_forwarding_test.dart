@@ -90,10 +90,14 @@ void main() {
       expect(find.byKey(const ValueKey('media_action_quote')), findsNothing);
 
       await tester.tap(find.byKey(const ValueKey('media_action_forward')));
-      for (var i = 0; i < 16; i++) {
-        await tester.pump(const Duration(milliseconds: 30));
+      final pickerWired = find.byType(ShareTargetPickerWired);
+      for (var i = 0; i < 60 && !tester.any(pickerWired); i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 15)),
+        );
+        await tester.pump();
       }
-      expect(find.byType(ShareTargetPickerWired), findsOneWidget);
+      expect(pickerWired, findsOneWidget);
       final picker = tester.widget<ShareTargetPickerScreen>(
         find.byType(ShareTargetPickerScreen),
       );

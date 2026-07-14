@@ -32,8 +32,10 @@ class GroupMessageRepositoryImpl
         GroupThreadPreviewRepository,
         GroupMembershipRepairDeletionRepository,
         GroupMessageLocalDeletionAuthority,
+        GroupPrivateMediaLifecycleRepository,
         GroupConversationReadEventSource,
-        GroupOutgoingLocalMessageChangeSource {
+        GroupOutgoingLocalMessageChangeSource,
+        GroupMessageAuthorizationChangeSource {
   final Future<void> Function(Map<String, Object?> row) dbInsertGroupMessage;
   final Future<List<Map<String, Object?>>> Function(
     String groupId, {
@@ -106,6 +108,20 @@ class GroupMessageRepositoryImpl
   dbRecordGroupMessageRetryFailureFn;
   final Future<int> Function()? dbClearGroupMessageRetryBackoffFn;
   final Future<void> Function(String id)? dbResetGroupMessageRetryStateFn;
+  final Future<int> Function(String id, {required int nowMs})?
+  dbAnchorOutgoingGroupPrivateMediaCustodyFn;
+  final Future<int> Function(String id, {required int nowMs})?
+  dbConsumeGroupPrivateMediaFn;
+  final Future<int> Function(String id, {required int nowMs})?
+  dbAdvanceGroupPrivateMediaClockFn;
+  final Future<int?> Function()? dbLoadNextGroupPrivateMediaExpiryAtMsFn;
+  final Future<List<Map<String, Object?>>> Function({int limit})?
+  dbLoadActiveGroupPrivateMediaDisappearingFn;
+  final Future<List<Map<String, Object?>>> Function({int limit})?
+  dbLoadGroupPrivateMediaRecoveryCandidatesFn;
+  final Future<int> Function(String id, {required int nowMs})?
+  dbRotateGroupPrivateMediaRecoveryCandidateFn;
+  final Future<int> Function(String id)? dbCompleteGroupPrivateMediaCleanupFn;
 
   /// 235: migration-069 tombstone row loader (`message_id -> row with
   /// group_id`). Optional; null keeps [getLocalDeletionGroupId] conservative.
@@ -130,6 +146,9 @@ class GroupMessageRepositoryImpl
       StreamController<GroupOutgoingLocalMessageChange>.broadcast();
   final StreamController<String> _groupConversationReadController =
       StreamController<String>.broadcast();
+  final StreamController<GroupMessageAuthorizationChange>
+  _authorizationChangesController =
+      StreamController<GroupMessageAuthorizationChange>.broadcast(sync: true);
 
   GroupMessageRepositoryImpl({
     required this.dbInsertGroupMessage,
@@ -160,6 +179,14 @@ class GroupMessageRepositoryImpl
     this.dbRecordGroupMessageRetryFailureFn,
     this.dbClearGroupMessageRetryBackoffFn,
     this.dbResetGroupMessageRetryStateFn,
+    this.dbAnchorOutgoingGroupPrivateMediaCustodyFn,
+    this.dbConsumeGroupPrivateMediaFn,
+    this.dbAdvanceGroupPrivateMediaClockFn,
+    this.dbLoadNextGroupPrivateMediaExpiryAtMsFn,
+    this.dbLoadActiveGroupPrivateMediaDisappearingFn,
+    this.dbLoadGroupPrivateMediaRecoveryCandidatesFn,
+    this.dbRotateGroupPrivateMediaRecoveryCandidateFn,
+    this.dbCompleteGroupPrivateMediaCleanupFn,
     this.dbLoadGroupMessageLocalDeletionFn,
     this.dbLoadGroupInboxCursorFn,
     this.dbLoadGroupMessageReceiptsFn,
@@ -176,6 +203,159 @@ class GroupMessageRepositoryImpl
   Stream<String> get groupConversationReadStream =>
       _groupConversationReadController.stream;
 
+  @override
+  Stream<GroupMessageAuthorizationChange> get authorizationChanges =>
+      _authorizationChangesController.stream;
+
+  void _emitAuthorizationChange({
+    required GroupMessage message,
+    required GroupMessageAuthorizationMutation kind,
+  }) {
+    _authorizationChangesController.add(
+      GroupMessageAuthorizationChange(
+        groupId: message.groupId,
+        messageId: message.id,
+        kind: kind,
+      ),
+    );
+  }
+
+  T _requirePrivateMediaClosure<T>(T? closure, String name) {
+    if (closure == null) {
+      throw StateError('Group private-media lifecycle closure $name is absent');
+    }
+    return closure;
+  }
+
+  @override
+  Future<GroupMessage?> loadGroupPrivateMediaMessage(String messageId) =>
+      getMessage(messageId);
+
+  @override
+  Future<bool> anchorOutgoingGroupPrivateMediaCustody(
+    String messageId, {
+    required int nowMs,
+  }) async {
+    final write = _requirePrivateMediaClosure(
+      dbAnchorOutgoingGroupPrivateMediaCustodyFn,
+      'anchorOutgoingGroupPrivateMediaCustody',
+    );
+    final previous = await getMessage(messageId);
+    final changed = await write(messageId, nowMs: nowMs) == 1;
+    if (changed && previous != null) {
+      _emitAuthorizationChange(
+        message: previous,
+        kind: GroupMessageAuthorizationMutation.privateLifecycle,
+      );
+    }
+    return changed;
+  }
+
+  @override
+  Future<bool> consumeGroupPrivateMedia(
+    String messageId, {
+    required int nowMs,
+  }) async {
+    final write = _requirePrivateMediaClosure(
+      dbConsumeGroupPrivateMediaFn,
+      'consumeGroupPrivateMedia',
+    );
+    final previous = await getMessage(messageId);
+    final changed = await write(messageId, nowMs: nowMs) == 1;
+    if (changed && previous != null) {
+      _emitAuthorizationChange(
+        message: previous,
+        kind: GroupMessageAuthorizationMutation.privateLifecycle,
+      );
+    }
+    return changed;
+  }
+
+  @override
+  Future<bool> advanceGroupPrivateMediaClock(
+    String messageId, {
+    required int nowMs,
+  }) async {
+    final write = _requirePrivateMediaClosure(
+      dbAdvanceGroupPrivateMediaClockFn,
+      'advanceGroupPrivateMediaClock',
+    );
+    final previous = await getMessage(messageId);
+    final changed = await write(messageId, nowMs: nowMs) == 1;
+    if (changed && previous != null) {
+      _emitAuthorizationChange(
+        message: previous,
+        kind: GroupMessageAuthorizationMutation.privateLifecycle,
+      );
+    }
+    return changed;
+  }
+
+  @override
+  Future<int?> loadNextGroupPrivateMediaExpiryAtMs() =>
+      _requirePrivateMediaClosure(
+        dbLoadNextGroupPrivateMediaExpiryAtMsFn,
+        'loadNextGroupPrivateMediaExpiryAtMs',
+      )();
+
+  @override
+  Future<List<GroupMessage>> loadActiveGroupPrivateMediaDisappearing({
+    int limit = 100,
+  }) async {
+    final rows = await _requirePrivateMediaClosure(
+      dbLoadActiveGroupPrivateMediaDisappearingFn,
+      'loadActiveGroupPrivateMediaDisappearing',
+    )(limit: limit);
+    return rows.map(GroupMessage.fromMap).toList(growable: false);
+  }
+
+  @override
+  Future<List<GroupMessage>> loadGroupPrivateMediaRecoveryCandidates({
+    int limit = 100,
+  }) async {
+    final rows = await _requirePrivateMediaClosure(
+      dbLoadGroupPrivateMediaRecoveryCandidatesFn,
+      'loadGroupPrivateMediaRecoveryCandidates',
+    )(limit: limit);
+    return rows.map(GroupMessage.fromMap).toList(growable: false);
+  }
+
+  @override
+  Future<bool> rotateGroupPrivateMediaRecoveryCandidate(
+    String messageId, {
+    required int nowMs,
+  }) async {
+    final write = _requirePrivateMediaClosure(
+      dbRotateGroupPrivateMediaRecoveryCandidateFn,
+      'rotateGroupPrivateMediaRecoveryCandidate',
+    );
+    final previous = await getMessage(messageId);
+    final changed = await write(messageId, nowMs: nowMs) == 1;
+    if (changed && previous != null) {
+      _emitAuthorizationChange(
+        message: previous,
+        kind: GroupMessageAuthorizationMutation.privateLifecycle,
+      );
+    }
+    return changed;
+  }
+
+  @override
+  Future<bool> completeGroupPrivateMediaCleanup(String messageId) async {
+    final write = _requirePrivateMediaClosure(
+      dbCompleteGroupPrivateMediaCleanupFn,
+      'completeGroupPrivateMediaCleanup',
+    );
+    final previous = await getMessage(messageId);
+    final changed = await write(messageId) == 1;
+    if (changed && previous != null) {
+      _emitAuthorizationChange(
+        message: previous,
+        kind: GroupMessageAuthorizationMutation.privateLifecycle,
+      );
+    }
+    return changed;
+  }
 
   void _emitOutgoingStatusChangeIfNeeded({
     required GroupMessage? previous,
@@ -559,7 +739,14 @@ class GroupMessageRepositoryImpl
 
   @override
   Future<void> deleteMessage(String id) async {
+    final previous = await getMessage(id);
     await dbDeleteGroupMessage(id);
+    if (previous != null) {
+      _emitAuthorizationChange(
+        message: previous,
+        kind: GroupMessageAuthorizationMutation.removed,
+      );
+    }
     await groupReactionProjection?.removeAuthoredTarget(id);
   }
 
@@ -592,6 +779,12 @@ class GroupMessageRepositoryImpl
     } else {
       await dbDeleteGroupMessage(id);
     }
+    if (previous != null) {
+      _emitAuthorizationChange(
+        message: GroupMessage.fromMap(previous),
+        kind: GroupMessageAuthorizationMutation.removed,
+      );
+    }
     await groupReactionProjection?.removeAuthoredTarget(id);
     _emitOutgoingRowsChangedIfNeeded(previous == null ? 0 : 1);
   }
@@ -599,6 +792,15 @@ class GroupMessageRepositoryImpl
   @override
   Future<int> deleteMessagesForGroup(String groupId) async {
     final count = await dbDeleteGroupMessagesForGroup(groupId);
+    if (count > 0) {
+      _authorizationChangesController.add(
+        GroupMessageAuthorizationChange(
+          groupId: groupId,
+          messageId: null,
+          kind: GroupMessageAuthorizationMutation.removed,
+        ),
+      );
+    }
     await groupReactionProjection?.removeAuthoredTargetsForGroup(groupId);
     return count;
   }

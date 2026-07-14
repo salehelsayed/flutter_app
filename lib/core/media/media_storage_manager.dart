@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import 'package:flutter_app/core/media/app_owned_media_delete_telemetry.dart';
+import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -144,13 +145,16 @@ class MediaStorageManager {
     required MediaAttachmentRepository repository,
     required Future<String> Function() documentsDirectoryProvider,
     MediaStorageFileGateway fileGateway = const IoMediaStorageFileGateway(),
-  })  : _repository = repository,
-        _documentsDirectoryProvider = documentsDirectoryProvider,
-        _fileGateway = fileGateway;
+    MediaAttachmentLifecycleLock? lifecycleLock,
+  }) : _repository = repository,
+       _documentsDirectoryProvider = documentsDirectoryProvider,
+       _fileGateway = fileGateway,
+       _lifecycleLock = lifecycleLock ?? mediaAttachmentLifecycleLock;
 
   final MediaAttachmentRepository _repository;
   final Future<String> Function() _documentsDirectoryProvider;
   final MediaStorageFileGateway _fileGateway;
+  final MediaAttachmentLifecycleLock _lifecycleLock;
 
   MediaAttachmentByIdLookup get _byIdLookup {
     final repository = _repository;
@@ -192,10 +196,10 @@ class MediaStorageManager {
     required String attachmentId,
     required String mime,
   }) async {
-    final result = await _clearLocalCopy(
-      scope: scope,
-      attachmentId: attachmentId,
-      mime: mime,
+    final result = await _lifecycleLock.synchronized(
+      attachmentId,
+      () =>
+          _clearLocalCopy(scope: scope, attachmentId: attachmentId, mime: mime),
     );
     emitFlowEvent(
       layer: 'FL',
@@ -369,8 +373,9 @@ class MediaStorageManager {
           continue;
         }
         final type = attachment.mediaType;
-        totals[type] = (totals[type] ?? const MediaStorageTypeTotal())
-            .add(length);
+        totals[type] = (totals[type] ?? const MediaStorageTypeTotal()).add(
+          length,
+        );
       }
       cursor = page.nextCursor;
     } while (cursor != null);
@@ -421,12 +426,11 @@ class MediaStorageManager {
     MediaLibraryScope scope,
     String attachmentId,
     String mime,
-  ) =>
-      MediaFilePathConvention.relativePathForAttachment(
-        contactPeerId: scope.id,
-        blobId: attachmentId,
-        mime: mime,
-      );
+  ) => MediaFilePathConvention.relativePathForAttachment(
+    contactPeerId: scope.id,
+    blobId: attachmentId,
+    mime: mime,
+  );
 
   /// The stored column value must be EXACTLY the canonical relative path or
   /// the normalized current-container absolute equivalent. Nothing else —

@@ -15,6 +15,7 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import '../../../../core/bridge/fake_bridge.dart';
@@ -291,6 +292,7 @@ SendChatMessageFn _delayedSuccessSend(Duration delay) {
     String? recipientMlKemPublicKey,
     String? quotedMessageId,
     List<MediaAttachment>? mediaAttachments,
+    PrivateMediaPolicy? privateMediaPolicy,
     MediaAttachmentRepository? mediaAttachmentRepo,
     TransportMetrics? transportMetrics,
   }) async {
@@ -312,6 +314,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _noOpSendChatMessage({
   String? recipientMlKemPublicKey,
   String? quotedMessageId,
   List<MediaAttachment>? mediaAttachments,
+  PrivateMediaPolicy? privateMediaPolicy,
   MediaAttachmentRepository? mediaAttachmentRepo,
   TransportMetrics? transportMetrics,
 }) async {
@@ -546,7 +549,8 @@ void main() {
         expect(
           find.byIcon(Icons.done_all_rounded),
           findsOneWidget,
-          reason: 'custody (inboxed) must render the two-tick on the 1:1 surface',
+          reason:
+              'custody (inboxed) must render the two-tick on the 1:1 surface',
         );
         expect(find.byIcon(Icons.done_rounded), findsNothing);
 

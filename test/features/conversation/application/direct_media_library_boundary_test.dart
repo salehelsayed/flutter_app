@@ -1,6 +1,9 @@
 import 'dart:io';
 
+import 'package:flutter_app/features/conversation/application/direct_media_library_controller.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../domain/repositories/strict_direct_media_library_repository.dart';
 
 /// TC-233-14: the direct shared media library is a local, strictly
 /// direct-scoped composition. None of its production sources may import
@@ -63,4 +66,54 @@ void main() {
       contains('MediaLibraryScope.direct(contactPeerId)'),
     );
   });
+
+  test(
+    'bookmark race loss removes stale parent rows without sibling mutation',
+    () async {
+      final repo =
+          StrictDirectMediaLibraryRepository(expectedContactPeerId: 'contact-1')
+            ..seedPage(
+              entries: [
+                makeDirectLibraryEntry(
+                  'att-a',
+                  contactPeerId: 'contact-1',
+                  messageId: 'message-private-race',
+                ),
+                makeDirectLibraryEntry(
+                  'att-b',
+                  contactPeerId: 'contact-1',
+                  messageId: 'message-private-race',
+                ),
+                makeDirectLibraryEntry(
+                  'att-neighbor',
+                  contactPeerId: 'contact-1',
+                  messageId: 'message-ordinary-neighbor',
+                ),
+              ],
+            );
+      final controller = DirectMediaLibraryController(
+        libraryRepository: repo,
+        stateRepository: repo,
+        contactPeerId: 'contact-1',
+      );
+      await controller.loadNextPage();
+      repo.directBookmarkResult = false;
+
+      expect(await controller.toggleBookmark('att-a'), isFalse);
+      expect(repo.bookmarkCalls, [(id: 'att-a', bookmarked: true)]);
+      expect(repo.directBookmarkCalls, [
+        (
+          messageId: 'message-private-race',
+          attachmentId: 'att-a',
+          bookmarked: true,
+        ),
+      ]);
+      expect(
+        controller.entries.map((entry) => entry.attachment.id),
+        ['att-neighbor'],
+        reason: 'only stale siblings under the raced parent are reconciled',
+      );
+      controller.dispose();
+    },
+  );
 }

@@ -58,6 +58,21 @@ Current closure already includes all three enforcement seams:
 - readers can still react
 - existing integration/resume tests already cover meaningful receive/recovery behavior
 
+### Explicit Message Sender Is Outside Announcement Delivery
+
+Plan 247's **Message sender** action is local, reader-initiated navigation to an
+existing active sender contact's blank 1:1 composer. It changes no announcement writer authorization
+and creates no announcement or direct send merely by
+opening or cancelling the route. It copies no media, caption, quote, group
+context, path, key, nonce, or hidden provenance.
+
+This boundary changes no announcement delivery/retry/status semantics, no
+Go/relay or Bridge/P2P behavior, and no native/device closure claim. Readers
+remain unable to compose in the announcement while reactions remain available.
+A regression reopens Plan 247 only when its local current-eligibility,
+exact-item navigation, blank-composer, or zero-send boundary fails; ordinary
+announcement reliability continues to use the shared group closure contract.
+
 ### 4. Happy-path and sender-parity proof
 
 - `announcement_happy_path_test.dart` gives the repo a concise announcement create → send → read-only/reader → react proof without needing a separate announcement roadmap.

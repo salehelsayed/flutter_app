@@ -9,6 +9,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/local_discovery/lan_ack.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -19,6 +20,7 @@ import 'package:flutter_app/features/conversation/application/send_chat_message_
     as chat_use_case
     show sendChatMessage, editChatMessage;
 import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -31,6 +33,8 @@ import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
+import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
+import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../domain/repositories/fake_media_attachment_repository.dart';
@@ -613,6 +617,18 @@ class FakeMessageRepository implements MessageRepository {
   }) async => 0;
 }
 
+class _StaticIdentityRepository implements IdentityRepository {
+  _StaticIdentityRepository(this.identity);
+
+  final IdentityModel identity;
+
+  @override
+  Future<IdentityModel?> loadIdentity() async => identity;
+
+  @override
+  Future<void> saveIdentity(IdentityModel identity) async {}
+}
+
 Future<List<String>> capturePrintedLines(Future<void> Function() action) async {
   final printed = <String>[];
   final originalDebugPrint = debugPrint;
@@ -715,6 +731,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   String? recipientMlKemPublicKey,
   String? quotedMessageId,
   List<MediaAttachment>? mediaAttachments,
+  PrivateMediaPolicy? privateMediaPolicy,
   MediaAttachmentRepository? mediaAttachmentRepo,
   bool emitTimingEvent = true,
   TransportMetrics? transportMetrics,
@@ -736,6 +753,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         recipientMlKemPublicKey ?? testRecipientMlKemPublicKey,
     quotedMessageId: quotedMessageId,
     mediaAttachments: mediaAttachments,
+    privateMediaPolicy: privateMediaPolicy,
     mediaAttachmentRepo: mediaAttachmentRepo,
     emitTimingEvent: emitTimingEvent,
     transportMetrics: transportMetrics,
@@ -787,6 +805,229 @@ void main() {
   });
 
   group('sendChatMessage', () {
+    test(
+      'valid private policy is encrypted-inner-only and persists on parent',
+      () async {
+        const attachment = MediaAttachment(
+          id: 'private-valid-blob',
+          messageId: '',
+          mime: 'image/jpeg',
+          size: 1024,
+          mediaType: 'image',
+          downloadStatus: 'done',
+          createdAt: '2026-07-11T09:00:00.000Z',
+          contentHash:
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          encryptionKeyBase64: 'private-key',
+          encryptionNonce: 'private-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+        final policy = PrivateMediaPolicy.disappearing(86400);
+        final bridge = FakeBridge(
+          initialResponses: {
+            'message.encrypt': {
+              'ok': true,
+              'kem': 'opaque-kem',
+              'ciphertext': 'opaque-private-ciphertext',
+              'nonce': 'opaque-nonce',
+            },
+          },
+        );
+        late SendChatMessageResult result;
+        ConversationMessage? message;
+
+        final events = await captureFlowEvents(() async {
+          (result, message) = await sendChatMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            text: '',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            bridge: bridge,
+            mediaAttachments: const [attachment],
+            privateMediaPolicy: policy,
+          );
+        });
+
+        expect(result, SendChatMessageResult.success);
+        expect(message?.privateMediaPolicy, policy);
+        expect(
+          message?.privateMediaState,
+          PrivateMediaLifecycleState.available,
+        );
+        expect(messageRepo.saved.single.privateMediaPolicy, policy);
+
+        final encryptCommand = bridge.sentMessages
+            .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+            .singleWhere((command) => command['cmd'] == 'message.encrypt');
+        final plaintext =
+            (encryptCommand['payload'] as Map<String, dynamic>)['plaintext']
+                as String;
+        final inner = jsonDecode(plaintext) as Map<String, dynamic>;
+        expect(inner['privateMedia'], {
+          'version': 1,
+          'mode': 'disappearing',
+          'durationSeconds': 86400,
+        });
+
+        final outer =
+            jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+        expect(outer['version'], '2');
+        expect(outer.containsKey('payload'), isFalse);
+        expect(outer.containsKey('privateMedia'), isFalse);
+        final outerJson = jsonEncode(outer);
+        for (final forbidden in [
+          'privateMedia',
+          'disappearing',
+          'durationSeconds',
+          'private-valid-blob',
+          'image/jpeg',
+          'private-key',
+        ]) {
+          expect(outerJson, isNot(contains(forbidden)));
+          expect(jsonEncode(events), isNot(contains(forbidden)));
+        }
+      },
+    );
+
+    test('failed private retry reuses the exact envelope and policy', () async {
+      const messageId = 'private-retry-1';
+      const attachment = MediaAttachment(
+        id: 'private-retry-blob',
+        messageId: messageId,
+        mime: 'image/jpeg',
+        size: 1024,
+        mediaType: 'image',
+        downloadStatus: 'done',
+        createdAt: '2026-07-11T09:00:00.000Z',
+        contentHash:
+            'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        encryptionKeyBase64: 'retry-key',
+        encryptionNonce: 'retry-nonce',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      );
+      const policy = PrivateMediaPolicy.protected();
+      final failingP2p = FakeP2PService(sendMessageResult: false);
+      final bridge = FakeBridge(
+        initialResponses: {
+          'message.encrypt': {
+            'ok': true,
+            'kem': 'retry-kem',
+            'ciphertext': 'retry-ciphertext',
+            'nonce': 'retry-envelope-nonce',
+          },
+        },
+      );
+
+      final (result, failed) = await sendChatMessage(
+        p2pService: failingP2p,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: '',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+        messageId: messageId,
+        bridge: bridge,
+        mediaAttachments: const [attachment],
+        privateMediaPolicy: policy,
+      );
+
+      expect(result, SendChatMessageResult.sendFailed);
+      expect(failed?.status, 'failed');
+      expect(failed?.privateMediaPolicy, policy);
+      final originalEnvelope = failed!.wireEnvelope;
+      expect(originalEnvelope, isNotNull);
+      messageRepo.existingMessages[messageId] = failed;
+      final encryptCallsBeforeRetry = bridge.commandLog
+          .where((command) => command == 'message.encrypt')
+          .length;
+      failingP2p.storeInInboxResult = true;
+
+      final retried = await retryFailedMessage(
+        messageId: messageId,
+        messageRepo: messageRepo,
+        identityRepo: _StaticIdentityRepository(
+          IdentityModel(
+            peerId: 'my-peer',
+            publicKey: 'public-key',
+            privateKey: 'private-key',
+            mnemonic12:
+                'one two three four five six seven eight nine ten eleven twelve',
+            username: 'Me',
+            createdAt: '2026-07-11T09:00:00.000Z',
+            updatedAt: '2026-07-11T09:00:00.000Z',
+          ),
+        ),
+        contactRepo: InMemoryContactRepository(),
+        p2pService: failingP2p,
+        bridge: bridge,
+      );
+
+      expect(retried, 1);
+      expect(failingP2p.lastInboxMessage, originalEnvelope);
+      expect(
+        bridge.commandLog
+            .where((command) => command == 'message.encrypt')
+            .length,
+        encryptCallsBeforeRetry,
+      );
+      final retriedParent = messageRepo.saved.last;
+      expect(retriedParent.status, 'inboxed');
+      expect(retriedParent.wireEnvelope, originalEnvelope);
+      expect(retriedParent.privateMediaPolicy, policy);
+      expect(
+        retriedParent.privateMediaState,
+        PrivateMediaLifecycleState.available,
+      );
+    });
+
+    test(
+      'private media with text rejects before encryption persistence or transport',
+      () async {
+        const attachment = MediaAttachment(
+          id: 'private-invalid-shape',
+          messageId: '',
+          mime: 'image/jpeg',
+          size: 1024,
+          mediaType: 'image',
+          downloadStatus: 'done',
+          createdAt: '2026-07-11T09:00:00.000Z',
+          contentHash:
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          encryptionKeyBase64: 'private-key',
+          encryptionNonce: 'private-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+        final policy = PrivateMediaPolicy.fromJson(const {
+          'version': 1,
+          'mode': 'protected',
+        });
+        final bridge = FakeBridge();
+
+        final (result, message) = await chat_use_case.sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'must never become a private caption',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          bridge: bridge,
+          recipientMlKemPublicKey: testRecipientMlKemPublicKey,
+          mediaAttachments: const [attachment],
+          privateMediaPolicy: policy,
+        );
+
+        expect(result, SendChatMessageResult.invalidPrivateMedia);
+        expect(message, isNull);
+        expect(bridge.sendCallCount, 0);
+        expect(messageRepo.saved, isEmpty);
+        expect(messageRepo.wireEnvelopeUpdates, isEmpty);
+        expect(p2pService.sendCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+      },
+    );
+
     // --- 112 Phase 2.2: outbound fail-closed media gate (G5) ---
     test(
       'send fails closed when an attachment lacks encryption metadata',
@@ -817,6 +1058,51 @@ void main() {
         expect(messageRepo.saved, isEmpty);
         expect(messageRepo.wireEnvelopeUpdates, isEmpty);
         expect(p2pService.lastSentMessage, isNull);
+      },
+    );
+
+    test(
+      'send rejects a fully encrypted group-owned attachment before every side effect',
+      () async {
+        const groupOwnedAttachment = MediaAttachment(
+          id: 'att-group-owned-direct-boundary',
+          messageId: '',
+          mime: 'video/mp4',
+          size: 4096,
+          mediaType: 'video',
+          downloadStatus: 'done',
+          createdAt: '2026-07-14T12:00:00.000Z',
+          contentHash:
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          encryptionKeyBase64: 'group-owned-key',
+          encryptionNonce: 'group-owned-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ownerLane: MediaOwnerLane.group,
+        );
+        final bridge = FakeBridge();
+        final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+
+        final (result, message) = await chat_use_case.sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: '',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          bridge: bridge,
+          recipientMlKemPublicKey: testRecipientMlKemPublicKey,
+          mediaAttachments: const [groupOwnedAttachment],
+          mediaAttachmentRepo: mediaAttachmentRepo,
+        );
+
+        expect(result, SendChatMessageResult.mediaEncryptionRequired);
+        expect(message, isNull);
+        expect(bridge.sendCallCount, 0, reason: 'must reject before encrypt');
+        expect(p2pService.sendCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(messageRepo.saved, isEmpty);
+        expect(messageRepo.wireEnvelopeUpdates, isEmpty);
+        expect(mediaAttachmentRepo.allSavedAttachments, isEmpty);
       },
     );
 
@@ -1304,6 +1590,12 @@ void main() {
 
       expect(result, SendChatMessageResult.success);
       expect(message, isNotNull);
+      expect(
+        message!.media.single.ownerLane,
+        MediaOwnerLane.direct,
+        reason:
+            'the returned live projection must match the direct-owned DB row',
+      );
       expect(mediaAttachmentRepo.savedOwnerLanes, isNotEmpty);
       expect(
         mediaAttachmentRepo.savedOwnerLanes.toSet(),
@@ -1316,7 +1608,7 @@ void main() {
       // Lane-scoped read-back: the group lane must never see this attachment.
       expect(
         await mediaAttachmentRepo.getAttachmentsForMessage(
-          message!.id,
+          message.id,
           owner: MediaOwnerLane.group,
         ),
         isEmpty,
@@ -1329,6 +1621,77 @@ void main() {
         'direct-owner-attachment',
       );
     });
+
+    test(
+      'normalizes null-owner outgoing image and video in every live projection',
+      () async {
+        final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: '',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          mediaAttachments: const [
+            MediaAttachment(
+              id: 'null-owner-image',
+              messageId: '',
+              mime: 'image/jpeg',
+              size: 2048,
+              mediaType: 'image',
+              localPath: '/tmp/photo.jpg',
+              downloadStatus: 'done',
+              createdAt: '2026-07-14T12:00:00.000Z',
+              contentHash:
+                  'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+              encryptionKeyBase64: 'image-key',
+              encryptionNonce: 'image-nonce',
+              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            ),
+            MediaAttachment(
+              id: 'null-owner-video',
+              messageId: '',
+              mime: 'video/mp4',
+              size: 4096,
+              mediaType: 'video',
+              localPath: '/tmp/video.mp4',
+              downloadStatus: 'done',
+              createdAt: '2026-07-14T12:00:01.000Z',
+              contentHash:
+                  'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+              encryptionKeyBase64: 'video-key',
+              encryptionNonce: 'video-nonce',
+              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            ),
+          ],
+          mediaAttachmentRepo: mediaAttachmentRepo,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.media.map((attachment) => attachment.mediaType), [
+          'image',
+          'video',
+        ]);
+        expect(
+          message.media.map((attachment) => attachment.ownerLane),
+          everyElement(MediaOwnerLane.direct),
+        );
+        expect(
+          messageRepo.saved
+              .expand((saved) => saved.media)
+              .map((attachment) => attachment.ownerLane),
+          everyElement(MediaOwnerLane.direct),
+        );
+        expect(
+          mediaAttachmentRepo.allSavedAttachments.map(
+            (attachment) => attachment.ownerLane,
+          ),
+          everyElement(MediaOwnerLane.direct),
+        );
+      },
+    );
 
     test(
       'sends GIF-only media with image/gif preserved in the wire envelope',

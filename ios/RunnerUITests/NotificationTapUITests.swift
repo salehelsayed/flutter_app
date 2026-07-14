@@ -57,6 +57,264 @@ final class NotificationTapUITests: XCTestCase {
     NSLog("MKNOON_256_REACTION_TAP conversation_rendered=true cold_launch=true")
   }
 
+  /// Plan 257 host-controlled fixture step 1. The capture driver has already
+  /// staged both identities and the Android member in this app's recipient-
+  /// owned contact store. This selector creates the real announcement through
+  /// the shipping UI; it does not seed group/message rows or declare success
+  /// on behalf of the app.
+  func testCreateAnnouncementReactionFixture() throws {
+    let bundleId = ProcessInfo.processInfo.environment["MKNOON_APNS_TAP_APP_BUNDLE_ID"] ?? "com.mknoon.app"
+    guard let expectedGroupName = configuredValue(
+      environmentName: "MKNOON_257_EXPECTED_GROUP_NAME",
+      configKey: "expectedGroupName"
+    ), !expectedGroupName.isEmpty else {
+      XCTFail("Plan 257 fixture creation requires expectedGroupName")
+      return
+    }
+    guard let expectedMemberName = configuredValue(
+      environmentName: "MKNOON_257_EXPECTED_MEMBER_NAME",
+      configKey: "expectedMemberName"
+    ), !expectedMemberName.isEmpty else {
+      XCTFail("Plan 257 fixture creation requires expectedMemberName")
+      return
+    }
+
+    let app = XCUIApplication(bundleIdentifier: bundleId)
+    app.terminate()
+    app.launch()
+    XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30))
+
+    app.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.08)).tap()
+    let announce = element(in: app, containing: "New Announce")
+    XCTAssertTrue(announce.waitForExistence(timeout: 15))
+    announce.tap()
+
+    let member = element(in: app, containing: expectedMemberName)
+    XCTAssertTrue(member.waitForExistence(timeout: 30))
+    member.tap()
+
+    let nameField = app.textFields.matching(
+      NSPredicate(
+        format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@",
+        "Group name",
+        "Group name"
+      )
+    ).firstMatch
+    XCTAssertTrue(nameField.waitForExistence(timeout: 15))
+    nameField.tap()
+    nameField.typeText(expectedGroupName)
+
+    let start = element(in: app, containing: "Start group chat")
+    XCTAssertTrue(start.waitForExistence(timeout: 15))
+    start.tap()
+    let group = element(in: app, containing: expectedGroupName)
+    XCTAssertTrue(group.waitForExistence(timeout: 90))
+    NSLog(
+      "MKNOON_257_ANNOUNCEMENT_FIXTURE_CREATED group=%@ member=%@",
+      expectedGroupName,
+      expectedMemberName
+    )
+  }
+
+  /// Plan 257 host-controlled fixture step 2. The Android member has accepted
+  /// before this selector runs, so the physical iPhone authors the real target
+  /// only after membership has converged.
+  func testAuthorAnnouncementReactionTarget() throws {
+    let bundleId = ProcessInfo.processInfo.environment["MKNOON_APNS_TAP_APP_BUNDLE_ID"] ?? "com.mknoon.app"
+    guard let expectedGroupName = configuredValue(
+      environmentName: "MKNOON_257_EXPECTED_GROUP_NAME",
+      configKey: "expectedGroupName"
+    ), !expectedGroupName.isEmpty else {
+      XCTFail("Plan 257 target authoring requires expectedGroupName")
+      return
+    }
+    guard let expectedTargetText = configuredValue(
+      environmentName: "MKNOON_257_EXPECTED_TARGET_TEXT",
+      configKey: "expectedTargetMessageText"
+    ), !expectedTargetText.isEmpty else {
+      XCTFail("Plan 257 target authoring requires expectedTargetMessageText")
+      return
+    }
+
+    let app = XCUIApplication(bundleIdentifier: bundleId)
+    app.terminate()
+    app.launch()
+    XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30))
+    let group = element(in: app, containing: expectedGroupName)
+    XCTAssertTrue(group.waitForExistence(timeout: 60))
+    group.tap()
+
+    let compose = firstComposeElement(in: app)
+    XCTAssertTrue(compose.waitForExistence(timeout: 30))
+    compose.tap()
+    compose.typeText(expectedTargetText)
+    let send = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+      .withOffset(
+        CGVector(
+          dx: min(compose.frame.maxX + 20, app.frame.maxX - 12),
+          dy: compose.frame.midY
+        )
+      )
+    send.tap()
+    let rendered = element(in: app, containing: expectedTargetText)
+    XCTAssertTrue(rendered.waitForExistence(timeout: 90))
+    NSLog(
+      "MKNOON_257_ANNOUNCEMENT_TARGET_AUTHORED group=%@ target=%@",
+      expectedGroupName,
+      expectedTargetText
+    )
+  }
+
+  /// Plan 257 TC-16: cold-tap a real announcement-reaction card prepared by
+  /// the host capture driver and require both the announcement and reacted-to
+  /// target to render. The staged config is authoritative; this selector never
+  /// falls back to generic notification chrome or a manual tap.
+  func testAnnouncementReactionNotificationTap() throws {
+    let bundleId = ProcessInfo.processInfo.environment["MKNOON_APNS_TAP_APP_BUNDLE_ID"] ?? "com.mknoon.app"
+    guard let expectedGroupName = configuredValue(
+      environmentName: "MKNOON_257_EXPECTED_GROUP_NAME",
+      configKey: "expectedGroupName"
+    ), !expectedGroupName.isEmpty else {
+      XCTFail("Plan 257 announcement reaction tap requires expectedGroupName in the staged tap config")
+      return
+    }
+    guard let expectedTargetText = configuredValue(
+      environmentName: "MKNOON_257_EXPECTED_TARGET_TEXT",
+      configKey: "expectedTargetMessageText"
+    ), !expectedTargetText.isEmpty else {
+      XCTFail("Plan 257 announcement reaction tap requires expectedTargetMessageText in the staged tap config")
+      return
+    }
+    guard let expectedActorName = configuredValue(
+      environmentName: "MKNOON_257_EXPECTED_ACTOR_NAME",
+      configKey: "expectedActorName"
+    ), !expectedActorName.isEmpty else {
+      XCTFail("Plan 257 announcement reaction tap requires expectedActorName")
+      return
+    }
+    let expectedEmoji = configuredValue(
+      environmentName: "MKNOON_257_EXPECTED_REACTION_EMOJI",
+      configKey: "expectedReactionEmoji"
+    ) ?? "👍"
+
+    let app = XCUIApplication(bundleIdentifier: bundleId)
+    app.terminate()
+    try observeAnnouncementReactionNotification(
+      expectedGroupName: expectedGroupName,
+      expectedActorName: expectedActorName,
+      expectedEmoji: expectedEmoji,
+      expectedTargetText: expectedTargetText
+    )
+    try tapExistingNotification(
+      waitForHostPush: false,
+      requireTitleMatchedNotification: true
+    )
+
+    let groupPredicate = NSPredicate(
+      format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@",
+      expectedGroupName,
+      expectedGroupName
+    )
+    let targetPredicate = NSPredicate(
+      format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@",
+      expectedTargetText,
+      expectedTargetText
+    )
+    let group = app.descendants(matching: .any)
+      .matching(groupPredicate)
+      .firstMatch
+    let target = app.descendants(matching: .any)
+      .matching(targetPredicate)
+      .firstMatch
+    XCTAssertTrue(
+      group.waitForExistence(timeout: 20),
+      "Announcement reaction tap did not render group \(expectedGroupName)"
+    )
+    XCTAssertTrue(
+      target.waitForExistence(timeout: 20),
+      "Announcement reaction tap did not render target \(expectedTargetText)"
+    )
+    NSLog(
+      "MKNOON_257_ANNOUNCEMENT_REACTION_TAP group_rendered=true target_message_visible=true manual_taps=0 cold_launch=true"
+    )
+  }
+
+  private func element(
+    in app: XCUIApplication,
+    containing text: String
+  ) -> XCUIElement {
+    app.descendants(matching: .any).matching(
+      NSPredicate(
+        format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@ OR identifier CONTAINS[c] %@",
+        text,
+        text,
+        text
+      )
+    ).firstMatch
+  }
+
+  private func firstComposeElement(in app: XCUIApplication) -> XCUIElement {
+    let textField = app.textFields.firstMatch
+    if textField.exists {
+      return textField
+    }
+    return app.textViews.firstMatch
+  }
+
+  private func observeAnnouncementReactionNotification(
+    expectedGroupName: String,
+    expectedActorName: String,
+    expectedEmoji: String,
+    expectedTargetText: String
+  ) throws {
+    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+    XCUIDevice.shared.press(.home)
+    XCTAssertTrue(springboard.wait(for: .runningForeground, timeout: 10))
+    settleOnSpringboard()
+    openNotificationCenter(from: springboard)
+
+    let expectedBody = "\(expectedActorName) reacted \(expectedEmoji) to your message"
+    let titleMatches = springboard.descendants(matching: .any).matching(
+      NSPredicate(
+        format: "label ==[c] %@ OR value ==[c] %@",
+        expectedGroupName,
+        expectedGroupName
+      )
+    )
+    let bodyMatches = springboard.descendants(matching: .any).matching(
+      NSPredicate(
+        format: "label ==[c] %@ OR value ==[c] %@",
+        expectedBody,
+        expectedBody
+      )
+    )
+    XCTAssertEqual(titleMatches.count, 1, "Expected one matching announcement card title")
+    XCTAssertEqual(bodyMatches.count, 1, "Expected one matching announcement reaction body")
+
+    let observation: [String: Any] = [
+      "schema": "mknoon.plan257.ios-notification-observation.v1",
+      "title": titleMatches.firstMatch.label,
+      "body": bodyMatches.firstMatch.label,
+      "matchingCardCount": titleMatches.count,
+      "containsNewMessageCopy":
+        titleMatches.firstMatch.label.localizedCaseInsensitiveContains("New Message") ||
+        bodyMatches.firstMatch.label.localizedCaseInsensitiveContains("New Message"),
+      "expectedTargetMessageText": expectedTargetText,
+    ]
+    let data = try JSONSerialization.data(
+      withJSONObject: observation,
+      options: [.sortedKeys]
+    )
+    guard let json = String(data: data, encoding: .utf8) else {
+      XCTFail("Plan 257 could not encode the raw notification observation")
+      return
+    }
+    let line = "MKNOON_257_IOS_NOTIFICATION_OBSERVATION \(json)"
+    NSLog("%@", line)
+    fputs("\(line)\n", stdout)
+    fflush(stdout)
+  }
+
   private func performNotificationTap(mode: String) throws {
     switch mode {
     case "cold":

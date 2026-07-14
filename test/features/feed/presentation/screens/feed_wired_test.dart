@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
@@ -15,6 +16,7 @@ import 'package:flutter_app/features/conversation/application/delete_message_use
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart'
@@ -33,6 +35,7 @@ import 'package:flutter_app/features/groups/application/group_message_listener.d
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
@@ -46,6 +49,9 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
+import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
+import 'package:flutter_app/shared/widgets/media/media_grid.dart';
+import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
@@ -294,7 +300,6 @@ void main() {
   Finder orbitScopedText(String text) =>
       find.descendant(of: find.byType(OrbitWired), matching: find.text(text));
 
-
   Future<void> emitInlineOrbitExit(
     WidgetTester tester,
     FeedRouteChanges changes,
@@ -438,9 +443,7 @@ void main() {
 
         expect(find.text('Settings'), findsOneWidget);
         // 209: the background options live behind the row's focused sheet.
-        await tester.tap(
-          find.byKey(const ValueKey('settings-row-background')),
-        );
+        await tester.tap(find.byKey(const ValueKey('settings-row-background')));
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
         await tester.tap(
@@ -473,8 +476,9 @@ void main() {
       },
     );
 
-    testWidgets('TC-206-19 identity change-kind reloads Feed username',
-        (tester) async {
+    testWidgets('TC-206-19 identity change-kind reloads Feed username', (
+      tester,
+    ) async {
       identityRepo.seed(testIdentity);
 
       await tester.pumpWidget(buildFeedWired());
@@ -483,23 +487,26 @@ void main() {
 
       // Change the username in the repo, then fire the identity change-kind —
       // the Feed reloads identity without any Settings-return `.then`.
-      identityRepo.seed(IdentityModel(
-        peerId: testIdentity.peerId,
-        publicKey: testIdentity.publicKey,
-        privateKey: testIdentity.privateKey,
-        mnemonic12: testIdentity.mnemonic12,
-        username: 'Bob',
-        createdAt: testIdentity.createdAt,
-        updatedAt: DateTime.now().toUtc().toIso8601String(),
-      ));
+      identityRepo.seed(
+        IdentityModel(
+          peerId: testIdentity.peerId,
+          publicKey: testIdentity.publicKey,
+          privateKey: testIdentity.privateKey,
+          mnemonic12: testIdentity.mnemonic12,
+          username: 'Bob',
+          createdAt: testIdentity.createdAt,
+          updatedAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
       appShellController.notifyIdentityChanged();
       await pumpFeedFrames(tester, count: 4);
 
       expect(find.text('@Bob'), findsOneWidget);
     });
 
-    testWidgets('TC-206-20 mediaQuality change-kind reloads quality prefs',
-        (tester) async {
+    testWidgets('TC-206-20 mediaQuality change-kind reloads quality prefs', (
+      tester,
+    ) async {
       identityRepo.seed(testIdentity);
       contactRepo.seed([testContact]);
 
@@ -524,8 +531,9 @@ void main() {
       feedScreen.onOpenFullConversation!(testContact.peerId);
       await pumpFeedFrames(tester, count: 6);
 
-      final conversation =
-          tester.widget<ConversationWired>(find.byType(ConversationWired));
+      final conversation = tester.widget<ConversationWired>(
+        find.byType(ConversationWired),
+      );
       expect(conversation.qualityPreference, ImageQualityPreference.original);
       expect(
         conversation.videoQualityPreference,
@@ -1589,31 +1597,29 @@ void main() {
     // becomes the active home (incl. the Android cold-tap path that lands on
     // Feed), it must request ONE opportunistic offline-inbox drain — idempotent
     // (one per mount, not per frame), never zero.
-    testWidgets(
-      'requests an opportunistic inbox drain on first-ready / '
-      'notification-handled',
-      (tester) async {
-        identityRepo.seed(testIdentity);
+    testWidgets('requests an opportunistic inbox drain on first-ready / '
+        'notification-handled', (tester) async {
+      identityRepo.seed(testIdentity);
 
-        await tester.pumpWidget(buildFeedWired());
-        await pumpFeedFrames(tester, count: 8);
+      await tester.pumpWidget(buildFeedWired());
+      await pumpFeedFrames(tester, count: 8);
 
-        expect(
-          p2pService.drainOfflineInboxCallCount,
-          1,
-          reason: 'Feed becoming the active home must request exactly one '
-              'opportunistic offline-inbox drain',
-        );
+      expect(
+        p2pService.drainOfflineInboxCallCount,
+        1,
+        reason:
+            'Feed becoming the active home must request exactly one '
+            'opportunistic offline-inbox drain',
+      );
 
-        // Idempotent: further frames must not re-drain (not per-frame).
-        await pumpFeedFrames(tester, count: 8);
-        expect(
-          p2pService.drainOfflineInboxCallCount,
-          1,
-          reason: 'the opportunistic drain is one-shot, not per-rebuild',
-        );
-      },
-    );
+      // Idempotent: further frames must not re-drain (not per-frame).
+      await pumpFeedFrames(tester, count: 8);
+      expect(
+        p2pService.drainOfflineInboxCallCount,
+        1,
+        reason: 'the opportunistic drain is one-shot, not per-rebuild',
+      );
+    });
 
     // ── 160: feed N+1 → batched-summary preview + bounded per-event refresh ──
 
@@ -1671,7 +1677,10 @@ void main() {
           signature: 'sig',
           scannedAt: DateTime.now().toUtc().toIso8601String(),
         );
-        contactRepo.seed([mk('peer-history', 'Historic'), mk('peer-new', 'Newbie')]);
+        contactRepo.seed([
+          mk('peer-history', 'Historic'),
+          mk('peer-new', 'Newbie'),
+        ]);
         // History contact: a single READ incoming (all-read prior history).
         final ts = DateTime.now().toUtc().toIso8601String();
         await messageRepo.saveMessage(
@@ -1788,8 +1797,9 @@ void main() {
         await messageRepo.saveMessage(outgoing);
         // The just-drained message: the NEWEST incoming, still UNREAD (as a
         // relay-inbox drain persists it), so the thread is pending and renders.
-        final drainedTs =
-            base.add(const Duration(minutes: 100)).toIso8601String();
+        final drainedTs = base
+            .add(const Duration(minutes: 100))
+            .toIso8601String();
         await messageRepo.saveMessage(
           ConversationMessage(
             id: 'drained-newest',
@@ -1813,7 +1823,9 @@ void main() {
         // the window newest-first from the repo.
         messageRepo.resetSpyCounters();
         await messageRepo.saveMessage(
-          outgoing.copyWith(deletedAt: DateTime.utc(2026, 3, 2).toIso8601String()),
+          outgoing.copyWith(
+            deletedAt: DateTime.utc(2026, 3, 2).toIso8601String(),
+          ),
         );
         await pumpFeedFrames(tester);
 
@@ -1846,14 +1858,14 @@ void main() {
 
     group('161 group feed batched windowing', () {
       GroupModel grp(String id, String name) => GroupModel(
-            id: id,
-            name: name,
-            type: GroupType.chat,
-            topicName: '/mknoon/group/$id',
-            createdAt: DateTime(2026, 2, 1),
-            createdBy: 'admin',
-            myRole: GroupRole.member,
-          );
+        id: id,
+        name: name,
+        type: GroupType.chat,
+        topicName: '/mknoon/group/$id',
+        createdAt: DateTime(2026, 2, 1),
+        createdBy: 'admin',
+        myRole: GroupRole.member,
+      );
 
       Future<void> seedDeepGroup(
         InMemoryGroupMessageRepository repo,
@@ -1865,28 +1877,32 @@ void main() {
         var minute = 0;
         for (var i = 0; i < read; i++) {
           final ts = base.add(Duration(minutes: minute++));
-          await repo.saveMessage(GroupMessage(
-            id: '$groupId-r$i',
-            groupId: groupId,
-            senderPeerId: 'p1',
-            text: 'read $i',
-            timestamp: ts,
-            createdAt: ts,
-            isIncoming: true,
-            readAt: ts,
-          ));
+          await repo.saveMessage(
+            GroupMessage(
+              id: '$groupId-r$i',
+              groupId: groupId,
+              senderPeerId: 'p1',
+              text: 'read $i',
+              timestamp: ts,
+              createdAt: ts,
+              isIncoming: true,
+              readAt: ts,
+            ),
+          );
         }
         for (var i = 0; i < unread; i++) {
           final ts = base.add(Duration(minutes: minute++));
-          await repo.saveMessage(GroupMessage(
-            id: '$groupId-u$i',
-            groupId: groupId,
-            senderPeerId: 'p1',
-            text: 'unread $i',
-            timestamp: ts,
-            createdAt: ts,
-            isIncoming: true,
-          ));
+          await repo.saveMessage(
+            GroupMessage(
+              id: '$groupId-u$i',
+              groupId: groupId,
+              senderPeerId: 'p1',
+              text: 'unread $i',
+              timestamp: ts,
+              createdAt: ts,
+              isIncoming: true,
+            ),
+          );
         }
       }
 
@@ -1895,9 +1911,9 @@ void main() {
         // the `feedItems` prop is a stale snapshot from the last FeedWired build).
         final feedScreen = tester.widget<FeedScreen>(find.byType(FeedScreen));
         final items = feedScreen.feedItemsListenable!.value;
-        return items
-            .whereType<GroupThreadFeedItem>()
-            .singleWhere((i) => i.groupId == groupId);
+        return items.whereType<GroupThreadFeedItem>().singleWhere(
+          (i) => i.groupId == groupId,
+        );
       }
 
       testWidgets(
@@ -1905,7 +1921,8 @@ void main() {
         'mount (batched summary, no limit:200 full-page load)',
         (tester) async {
           identityRepo.seed(testIdentity);
-          final groupRepo = InMemoryGroupRepository()..saveGroup(grp('g1', 'Deep Group'));
+          final groupRepo = InMemoryGroupRepository()
+            ..saveGroup(grp('g1', 'Deep Group'));
           final groupMsgRepo = InMemoryGroupMessageRepository();
           await seedDeepGroup(groupMsgRepo, 'g1', read: 30, unread: 5);
 
@@ -1918,8 +1935,10 @@ void main() {
           await pumpFeedFrames(tester);
 
           // Batched preview used; never the unbounded 200-row per-group load.
-          expect(groupMsgRepo.getGroupThreadPreviewsCallCount,
-              greaterThanOrEqualTo(1));
+          expect(
+            groupMsgRepo.getGroupThreadPreviewsCallCount,
+            greaterThanOrEqualTo(1),
+          );
           expect(
             groupMsgRepo.getMessagesPageCallLog.where((c) => c.$2 >= 200),
             isEmpty,
@@ -1942,19 +1961,22 @@ void main() {
           final base = DateTime.utc(2026, 3, 1, 9);
           for (var i = 0; i < 3; i++) {
             final ts = base.add(Duration(minutes: i)).toIso8601String();
-            await messageRepo.saveMessage(ConversationMessage(
-              id: 'cm$i',
-              contactPeerId: 'contact-peer-id',
-              text: 'cm$i',
-              senderPeerId: 'contact-peer-id',
-              timestamp: ts,
-              isIncoming: true,
-              status: 'delivered',
-              createdAt: ts,
-            ));
+            await messageRepo.saveMessage(
+              ConversationMessage(
+                id: 'cm$i',
+                contactPeerId: 'contact-peer-id',
+                text: 'cm$i',
+                senderPeerId: 'contact-peer-id',
+                timestamp: ts,
+                isIncoming: true,
+                status: 'delivered',
+                createdAt: ts,
+              ),
+            );
           }
           final reactionRepo = FakeReactionRepository();
-          final groupRepo = InMemoryGroupRepository()..saveGroup(grp('g1', 'Grp'));
+          final groupRepo = InMemoryGroupRepository()
+            ..saveGroup(grp('g1', 'Grp'));
           final groupMsgRepo = InMemoryGroupMessageRepository();
           await seedDeepGroup(groupMsgRepo, 'g1', read: 0, unread: 4);
 
@@ -1981,7 +2003,8 @@ void main() {
         '(+1 on a new id), no drift to the windowed slice length',
         (tester) async {
           identityRepo.seed(testIdentity);
-          final groupRepo = InMemoryGroupRepository()..saveGroup(grp('g1', 'Live Group'));
+          final groupRepo = InMemoryGroupRepository()
+            ..saveGroup(grp('g1', 'Live Group'));
           final groupMsgRepo = InMemoryGroupMessageRepository();
           await seedDeepGroup(groupMsgRepo, 'g1', read: 30, unread: 5);
           final listener = _FakeGroupMessageListener(
@@ -2025,8 +2048,110 @@ void main() {
           expect(after.hasEarlierHistory, isTrue);
         },
       );
-    });
 
+      testWidgets(
+        'GPL-15F live group stream redacts private and unsupported parents '
+        'before attachment, thumbnail, and ordinary viewer work',
+        (tester) async {
+          identityRepo.seed(testIdentity);
+          final groupRepo = InMemoryGroupRepository()
+            ..saveGroup(grp('g-private-feed', 'Private Feed'));
+          final groupMsgRepo = InMemoryGroupMessageRepository();
+          final recordingMediaRepo = _RecordingFeedMediaAttachmentRepository();
+          final listener = _FakeGroupMessageListener(
+            groupRepo: groupRepo,
+            msgRepo: groupMsgRepo,
+          );
+
+          await tester.pumpWidget(
+            buildFeedWired(
+              groupRepository: groupRepo,
+              groupMessageRepository: groupMsgRepo,
+              groupMessageListener: listener,
+              mediaAttachmentRepository: recordingMediaRepo,
+            ),
+          );
+          await pumpFeedFrames(tester);
+          recordingMediaRepo.resetSpyCounters();
+
+          final privateMessage = GroupMessage(
+            id: 'private-live-parent',
+            groupId: 'g-private-feed',
+            senderPeerId: 'private-sender',
+            senderUsername: 'Private sender',
+            text: 'secret private live caption',
+            timestamp: DateTime.utc(2026, 3, 1, 12),
+            createdAt: DateTime.utc(2026, 3, 1, 12),
+            isIncoming: true,
+            quotedMessageId: 'private-live-quote',
+            privateMediaPolicy: const GroupPrivateMediaPolicy.protected(),
+          );
+          await groupMsgRepo.saveMessage(privateMessage);
+          await recordingMediaRepo.saveAttachment(
+            _feedAttachment(
+              id: 'private-live-attachment',
+              messageId: privateMessage.id,
+              localPath: 'media/g-private-feed/private-secret.jpg',
+            ),
+            owner: MediaOwnerLane.group,
+          );
+          listener.emit(privateMessage);
+          await pumpFeedFrames(tester);
+
+          final unsupportedMessage = GroupMessage(
+            id: 'unsupported-live-parent',
+            groupId: 'g-private-feed',
+            senderPeerId: 'future-sender',
+            senderUsername: 'Future sender',
+            text: 'future private live caption',
+            timestamp: DateTime.utc(2026, 3, 1, 12, 1),
+            createdAt: DateTime.utc(2026, 3, 1, 12, 1),
+            isIncoming: true,
+            quotedMessageId: 'unsupported-live-quote',
+            privateMediaPolicy: const GroupPrivateMediaPolicy.unsupported(
+              sourceVersion: 9,
+            ),
+          );
+          await groupMsgRepo.saveMessage(unsupportedMessage);
+          await recordingMediaRepo.saveAttachment(
+            _feedAttachment(
+              id: 'unsupported-live-attachment',
+              messageId: unsupportedMessage.id,
+              localPath: 'media/g-private-feed/future-secret.jpg',
+            ),
+            owner: MediaOwnerLane.group,
+          );
+          listener.emit(unsupportedMessage);
+          await pumpFeedFrames(tester);
+
+          expect(recordingMediaRepo.requestedMessageIds, isEmpty);
+          expect(mediaFileManager.resolveStoredPathCount, 0);
+
+          final item = groupItemFor(tester, 'g-private-feed');
+          final byId = <String, ThreadMessage>{
+            for (final message in item.messages) message.id: message,
+          };
+          for (final id in const <String>[
+            'private-live-parent',
+            'unsupported-live-parent',
+          ]) {
+            expect(byId[id]!.text, 'Media unavailable');
+            expect(byId[id]!.quotedMessageId, isNull);
+            expect(byId[id]!.media, isEmpty);
+          }
+          expect(find.text('secret private live caption'), findsNothing);
+          expect(find.text('future private live caption'), findsNothing);
+          expect(find.text('Media unavailable'), findsNWidgets(2));
+          expect(find.byType(MediaGrid), findsNothing);
+          expect(find.byType(MediaThumbnailImage), findsNothing);
+          expect(find.byType(FullScreenImageViewer), findsNothing);
+
+          await tester.tap(find.text('Media unavailable').first);
+          await pumpFeedFrames(tester, count: 2);
+          expect(find.byType(FullScreenImageViewer), findsNothing);
+        },
+      );
+    });
   });
 
   // ── 162: feed reload debounce (per-contact coalescer with sticky escalation) ─
@@ -2121,7 +2246,13 @@ void main() {
         contactRepo.resetGetContactCounts();
 
         // 5 rapid same-id outgoing status flips for the SAME contact.
-        for (final status in ['sent', 'delivered', 'sent', 'delivered', 'delivered']) {
+        for (final status in [
+          'sent',
+          'delivered',
+          'sent',
+          'delivered',
+          'delivered',
+        ]) {
           messageRepo.debugEmitMessageChange(
             outgoing('out-1', testContact.peerId, status: status),
           );
@@ -2133,40 +2264,45 @@ void main() {
       },
     );
 
-    testWidgets(
-      'TC-162-05a: debounce flushes once per contact, last-write-wins '
-      '(same-id status flip)',
-      (tester) async {
-        identityRepo.seed(testIdentity);
-        contactRepo.seed([testContact]);
-        // Unread incoming keeps the thread pending so it stays in the projection.
-        await messageRepo.saveMessage(
-          unreadIncoming('in-a', testContact.peerId),
-        );
-        await tester.pumpWidget(buildFeedWired());
-        await pumpFeedFrames(tester);
+    testWidgets('TC-162-05a: debounce flushes once per contact, last-write-wins '
+        '(same-id status flip)', (tester) async {
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+      // Unread incoming keeps the thread pending so it stays in the projection.
+      await messageRepo.saveMessage(unreadIncoming('in-a', testContact.peerId));
+      await tester.pumpWidget(buildFeedWired());
+      await pumpFeedFrames(tester);
 
-        contactRepo.resetGetContactCounts();
+      contactRepo.resetGetContactCounts();
 
-        const lwwTs = '2026-03-01T08:00:00.000Z'; // older than the 09:00 incoming
-        messageRepo.debugEmitMessageChange(
-          outgoing('lww-1', testContact.peerId,
-              status: 'sent', text: 'first', timestamp: lwwTs),
-        );
-        messageRepo.debugEmitMessageChange(
-          outgoing('lww-1', testContact.peerId,
-              status: 'delivered', text: 'latest', timestamp: lwwTs),
-        );
-        await settleCoalesce(tester);
+      const lwwTs = '2026-03-01T08:00:00.000Z'; // older than the 09:00 incoming
+      messageRepo.debugEmitMessageChange(
+        outgoing(
+          'lww-1',
+          testContact.peerId,
+          status: 'sent',
+          text: 'first',
+          timestamp: lwwTs,
+        ),
+      );
+      messageRepo.debugEmitMessageChange(
+        outgoing(
+          'lww-1',
+          testContact.peerId,
+          status: 'delivered',
+          text: 'latest',
+          timestamp: lwwTs,
+        ),
+      );
+      await settleCoalesce(tester);
 
-        expect(contactRepo.getContactCallsByPeerId[testContact.peerId], 1);
-        final thread = threadFor(tester, testContact.peerId);
-        expect(thread, isNotNull);
-        final msg = thread!.messages.singleWhere((m) => m.id == 'lww-1');
-        expect(msg.status, 'delivered'); // latest state wins
-        expect(msg.text, 'latest');
-      },
-    );
+      expect(contactRepo.getContactCallsByPeerId[testContact.peerId], 1);
+      final thread = threadFor(tester, testContact.peerId);
+      expect(thread, isNotNull);
+      final msg = thread!.messages.singleWhere((m) => m.id == 'lww-1');
+      expect(msg.status, 'delivered'); // latest state wins
+      expect(msg.text, 'latest');
+    });
 
     testWidgets(
       'TC-162-05b: delete(X)-then-send(Y) escalates to a full refresh; a HIDDEN '
@@ -2216,7 +2352,9 @@ void main() {
         // The destructive escalation ran the FULL refresh (getMessagesPage),
         // NOT the incremental in-memory apply (which never reads the page).
         expect(
-          messageRepo.getMessagesPageCalls.where((c) => c.$1 == testContact.peerId),
+          messageRepo.getMessagesPageCalls.where(
+            (c) => c.$1 == testContact.peerId,
+          ),
           isNotEmpty,
         );
         // Status-dependent post-state: the HIDDEN tombstone X is dropped; Y stays.
@@ -2272,7 +2410,9 @@ void main() {
         expect(contactRepo.getContactCallsByPeerId[testContact.peerId], 1);
         // The destructive escalation ran the FULL refresh (getMessagesPage).
         expect(
-          messageRepo.getMessagesPageCalls.where((c) => c.$1 == testContact.peerId),
+          messageRepo.getMessagesPageCalls.where(
+            (c) => c.$1 == testContact.peerId,
+          ),
           isNotEmpty,
         );
         final thread = threadFor(tester, testContact.peerId);
@@ -2320,7 +2460,9 @@ void main() {
         // sawDestructive forces the FULL refresh (getMessagesPage). Dropping it
         // would run the incremental apply, which never reads the page → RED.
         expect(
-          messageRepo.getMessagesPageCalls.where((c) => c.$1 == testContact.peerId),
+          messageRepo.getMessagesPageCalls.where(
+            (c) => c.$1 == testContact.peerId,
+          ),
           isNotEmpty,
         );
       },
@@ -2365,8 +2507,20 @@ void main() {
         contactRepo.seed([testContact]);
         final tsX = DateTime.utc(2026, 3, 1, 8, 0).toIso8601String();
         final tsY = DateTime.utc(2026, 3, 1, 8, 1).toIso8601String();
-        final xMsg = outgoing('X', testContact.peerId, status: 'sent', text: 'X', timestamp: tsX);
-        final yMsg = outgoing('Y', testContact.peerId, status: 'sent', text: 'Y', timestamp: tsY);
+        final xMsg = outgoing(
+          'X',
+          testContact.peerId,
+          status: 'sent',
+          text: 'X',
+          timestamp: tsX,
+        );
+        final yMsg = outgoing(
+          'Y',
+          testContact.peerId,
+          status: 'sent',
+          text: 'Y',
+          timestamp: tsY,
+        );
         // Unread incoming keeps the thread pending so it stays projected.
         await messageRepo.saveMessage(
           unreadIncoming('in-d', testContact.peerId),
@@ -2390,7 +2544,9 @@ void main() {
         // `sawDistinctIds` would run the incremental apply(Y) instead — never
         // calling getMessagesPage — and X would silently vanish.
         expect(
-          messageRepo.getMessagesPageCalls.where((c) => c.$1 == testContact.peerId),
+          messageRepo.getMessagesPageCalls.where(
+            (c) => c.$1 == testContact.peerId,
+          ),
           isNotEmpty,
         );
         final thread = threadFor(tester, testContact.peerId);
@@ -2576,7 +2732,9 @@ void main() {
         appShellController.setBackgroundPreference(BackgroundPreference.cosmic);
         await pumpFeedFrames(tester, count: 4);
         expect(
-          tester.widget<FeedScreen>(find.byType(FeedScreen)).backgroundPreference,
+          tester
+              .widget<FeedScreen>(find.byType(FeedScreen))
+              .backgroundPreference,
           BackgroundPreference.cosmic,
         );
         expect(appShellController.activeTab, 'feed');
@@ -2588,7 +2746,9 @@ void main() {
         expect(appShellController.activeTab, 'orbit');
         expect(find.byType(OrbitWired), findsOneWidget);
         expect(
-          tester.widget<FeedScreen>(find.byType(FeedScreen)).backgroundPreference,
+          tester
+              .widget<FeedScreen>(find.byType(FeedScreen))
+              .backgroundPreference,
           BackgroundPreference.cosmic,
         );
       },
@@ -2679,9 +2839,8 @@ void main() {
       },
     );
 
-    bool tickerEnabled(WidgetTester tester, String key) => tester
-        .widget<TickerMode>(find.byKey(ValueKey<String>(key)))
-        .enabled;
+    bool tickerEnabled(WidgetTester tester, String key) =>
+        tester.widget<TickerMode>(find.byKey(ValueKey<String>(key))).enabled;
 
     testWidgets(
       'TC-163-08: the inactive Stack child is ticker-muted at rest, the active '
@@ -2751,9 +2910,7 @@ void main() {
         setPhoneViewport(tester);
         suppressFeedNavErrors();
         identityRepo.seed(testIdentity);
-        appShellController = AppShellController(
-          initialTab: AppShellTab.orbit,
-        );
+        appShellController = AppShellController(initialTab: AppShellTab.orbit);
 
         await tester.pumpWidget(buildFeedWired());
         await pumpFeedFrames(tester, count: 8);
@@ -2765,9 +2922,7 @@ void main() {
       },
     );
 
-    testWidgets('214: initial-orbit mount swipes back to feed', (
-      tester,
-    ) async {
+    testWidgets('214: initial-orbit mount swipes back to feed', (tester) async {
       // The orbit exit action must be registered from an orbit-INITIAL mount
       // so the right swipe works from the first frame.
       setPhoneViewport(tester);
@@ -2920,10 +3075,7 @@ class _InMemoryIntroReviewSeenRepository implements IntroReviewSeenRepository {
 /// Fake [GroupMessageListener] exposing a controllable [groupMessageStream] so
 /// tests can drive the incremental live-message merge (161 TC-161-13).
 class _FakeGroupMessageListener extends GroupMessageListener {
-  _FakeGroupMessageListener({
-    required super.groupRepo,
-    required super.msgRepo,
-  });
+  _FakeGroupMessageListener({required super.groupRepo, required super.msgRepo});
 
   final _messageController = StreamController<GroupMessage>.broadcast();
 
@@ -2932,3 +3084,34 @@ class _FakeGroupMessageListener extends GroupMessageListener {
 
   void emit(GroupMessage message) => _messageController.add(message);
 }
+
+class _RecordingFeedMediaAttachmentRepository
+    extends InMemoryMediaAttachmentRepository {
+  final List<String> requestedMessageIds = <String>[];
+
+  @override
+  Future<List<MediaAttachment>> getAttachmentsForMessage(
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) {
+    requestedMessageIds.add(messageId);
+    return super.getAttachmentsForMessage(messageId, owner: owner);
+  }
+
+  void resetSpyCounters() => requestedMessageIds.clear();
+}
+
+MediaAttachment _feedAttachment({
+  required String id,
+  required String messageId,
+  required String localPath,
+}) => MediaAttachment(
+  id: id,
+  messageId: messageId,
+  mime: 'image/jpeg',
+  size: 37,
+  mediaType: 'image',
+  localPath: localPath,
+  downloadStatus: 'done',
+  createdAt: DateTime.utc(2026, 3, 1).toIso8601String(),
+);

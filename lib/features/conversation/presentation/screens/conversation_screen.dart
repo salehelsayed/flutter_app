@@ -9,10 +9,13 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/received_media_egress.dart';
 import 'package:flutter_app/core/utils/format_day_separator_label.dart';
 import 'package:flutter_app/core/widgets/quiet_confirm.dart';
 import 'package:flutter_app/features/conversation/application/received_media_action_controller.dart';
+import 'package:flutter_app/features/conversation/application/private_media_action_eligibility.dart';
+import 'package:flutter_app/features/conversation/application/direct_private_media_viewer_controller.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/utils/message_run_grouping.dart';
@@ -34,9 +37,12 @@ import 'package:flutter_app/features/settings/domain/models/background_preferenc
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_banner.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_system_message.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/direct_received_media_action_sheet.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/direct_private_media_viewer.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
+import 'package:flutter_app/shared/widgets/media/media_display_helpers.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
+import 'package:flutter_app/shared/widgets/media/media_video_resume_controller.dart';
 import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
 
 typedef ConversationMediaViewerBuilder =
@@ -65,6 +71,11 @@ typedef DirectReceivedMediaInfoLoader =
 typedef DirectReceivedMediaForwardHandler =
     Future<bool> Function(String messageId, {String? currentAttachmentId});
 
+typedef DirectPrivateMediaViewerLauncher =
+    Future<void> Function(DirectPrivateMediaViewerIdentity identity);
+typedef DirectPrivateParentDecisionLoader =
+    Future<DirectPrivateMediaActionDecision> Function(String messageId);
+
 @immutable
 class ConversationComposerViewState {
   final List<File> pendingAttachments;
@@ -88,6 +99,8 @@ class ConversationComposerViewState {
   final VoiceRecordingState recordingState;
   final Duration recordingDuration;
   final List<double> amplitudeValues;
+  final PrivateMediaEligibility privateMediaEligibility;
+  final PrivateMediaPolicy privateMediaPolicy;
 
   const ConversationComposerViewState({
     this.pendingAttachments = const [],
@@ -102,6 +115,11 @@ class ConversationComposerViewState {
     this.recordingState = VoiceRecordingState.idle,
     this.recordingDuration = Duration.zero,
     this.amplitudeValues = const [],
+    this.privateMediaEligibility = const PrivateMediaEligibility(
+      attachmentCount: 0,
+      attachmentKind: PrivateMediaAttachmentKind.unknown,
+    ),
+    this.privateMediaPolicy = const PrivateMediaPolicy.ordinary(),
   });
 
   ConversationComposerViewState copyWith({
@@ -117,6 +135,8 @@ class ConversationComposerViewState {
     VoiceRecordingState? recordingState,
     Duration? recordingDuration,
     List<double>? amplitudeValues,
+    PrivateMediaEligibility? privateMediaEligibility,
+    PrivateMediaPolicy? privateMediaPolicy,
   }) {
     return ConversationComposerViewState(
       pendingAttachments: pendingAttachments ?? this.pendingAttachments,
@@ -133,6 +153,9 @@ class ConversationComposerViewState {
       recordingState: recordingState ?? this.recordingState,
       recordingDuration: recordingDuration ?? this.recordingDuration,
       amplitudeValues: amplitudeValues ?? this.amplitudeValues,
+      privateMediaEligibility:
+          privateMediaEligibility ?? this.privateMediaEligibility,
+      privateMediaPolicy: privateMediaPolicy ?? this.privateMediaPolicy,
     );
   }
 
@@ -215,6 +238,7 @@ class ConversationScreen extends StatefulWidget {
   final VoidCallback? onMaybeLater;
   final String? initialText;
   final ValueChanged<String>? onDraftChanged;
+  final ValueChanged<PrivateMediaPolicy>? onPrivateMediaPolicyChanged;
   final ValueChanged<String>? onQuoteReply;
   final ValueChanged<String>? onRetryFailedMessage;
   final ValueChanged<String>? onRetryFailedMedia;
@@ -241,7 +265,15 @@ class ConversationScreen extends StatefulWidget {
   /// only, row-level long press).
   final DirectReceivedMediaEgressHandler? onMediaEgress;
   final DirectReceivedMediaInfoLoader? onLoadMediaInfo;
+  final DirectPrivateMediaActionDecisionLoader? onLoadMediaActionDecision;
   final DirectReceivedMediaForwardHandler? onForwardMedia;
+  final DirectPrivateMediaViewerLauncher? onOpenPrivateMedia;
+  final DirectPrivateParentDecisionLoader? onLoadPrivateParentDecision;
+  final MediaPictureInPictureControllerFactory?
+  pictureInPictureControllerFactory;
+  final MediaPictureInPictureAuthorizationLoader?
+  loadPictureInPictureAuthorization;
+  final MediaViewerResumeStore? mediaViewerResumeStore;
 
   /// Whole-message Delete for Me initiated from a media surface — the wired
   /// layer labels the confirmation as message+attachments removal.
@@ -297,6 +329,7 @@ class ConversationScreen extends StatefulWidget {
     this.onMaybeLater,
     this.initialText,
     this.onDraftChanged,
+    this.onPrivateMediaPolicyChanged,
     this.onQuoteReply,
     this.onRetryFailedMessage,
     this.onRetryFailedMedia,
@@ -315,7 +348,13 @@ class ConversationScreen extends StatefulWidget {
     this.highlightedMessageId,
     this.onMediaEgress,
     this.onLoadMediaInfo,
+    this.onLoadMediaActionDecision,
     this.onForwardMedia,
+    this.onOpenPrivateMedia,
+    this.onLoadPrivateParentDecision,
+    this.pictureInPictureControllerFactory,
+    this.loadPictureInPictureAuthorization,
+    this.mediaViewerResumeStore,
     this.onDeleteMediaMessage,
   });
 
@@ -326,6 +365,7 @@ class ConversationScreen extends StatefulWidget {
 class _ConversationScreenState extends State<ConversationScreen> {
   bool _wasEmpty = true;
   bool _shouldRequestComposerFocus = false;
+  final Set<DirectPrivateMediaViewerIdentity> _privateOpenInFlight = {};
 
   // 159 (main-isolate-blocking-1): memoize the O(N) two-pass run-grouping so an
   // identical-input rebuild (a status flip elsewhere, a banner toggle, an
@@ -493,6 +533,9 @@ class _ConversationScreenState extends State<ConversationScreen> {
           isQuoteUnavailable: widget.isActiveQuoteUnavailable,
           onClearQuote: widget.onClearQuote,
           shouldRequestFocus: _shouldRequestComposerFocus,
+          privateMediaEligibility: composerState.privateMediaEligibility,
+          privateMediaPolicy: composerState.privateMediaPolicy,
+          onPrivateMediaPolicyChanged: widget.onPrivateMediaPolicyChanged,
         ),
       ],
     );
@@ -599,14 +642,30 @@ class _ConversationScreenState extends State<ConversationScreen> {
             }
 
             final l10n = AppLocalizations.of(context)!;
+            final isPrivatePresentation =
+                !message.isDeleted &&
+                message.privateMediaPolicy.requiresRedaction;
             // Resolve quoted message text
             String? quotedText;
             bool isQuoteUnavailable = false;
             if (!message.isDeleted && message.quotedMessageId != null) {
               final quoted = messagesById[message.quotedMessageId];
               if (quoted != null) {
-                if (quoted.isDeleted ||
-                    (quoted.text.isEmpty && quoted.media.isEmpty)) {
+                final quoteDecision =
+                    DirectPrivateMediaActionEligibility.evaluate(
+                      parent: quoted,
+                      attachment: null,
+                      expectedMessageId: quoted.id,
+                      attachmentRequired: false,
+                    );
+                if (quoted.isDeleted) {
+                  isQuoteUnavailable = true;
+                } else if (quoteDecision.requiresPrivacyMinimizedPresentation &&
+                    quoteDecision.allows(DirectPrivateMediaAction.reply)) {
+                  // Private quote copy remains generic even after terminal
+                  // cleanup removes the attachment row.
+                  quotedText = l10n.private_media_notification_body;
+                } else if (quoted.text.isEmpty && quoted.media.isEmpty) {
                   isQuoteUnavailable = true;
                 } else if (quoted.text.isNotEmpty) {
                   quotedText = quoted.text;
@@ -640,45 +699,32 @@ class _ConversationScreenState extends State<ConversationScreen> {
             final canOpenContextOverlay = !message.isDeleted;
             final displayText = message.isDeleted
                 ? l10n.conversation_message_deleted
+                : isPrivatePresentation
+                ? ''
                 : message.text;
-            final mediaTapHandler = (int index) {
+            void mediaTapHandler(int index) {
               final visual = message.media
                   .where(
-                    (a) => a.mediaType == 'image' || a.mediaType == 'video',
+                    (attachment) =>
+                        attachment.mediaType == 'image' ||
+                        attachment.mediaType == 'video',
                   )
-                  .toList();
-              if (index < visual.length && visual[index].localPath != null) {
-                final mediaViewerBuilder = widget.mediaViewerBuilder;
-                if (mediaViewerBuilder != null) {
-                  // Injected builder (test seam / legacy path-based viewer).
-                  final allPaths = visual
-                      .where(
-                        (a) =>
-                            a.localPath != null && a.downloadStatus == 'done',
-                      )
-                      .map((a) => a.localPath!)
-                      .toList();
-                  final tappedPath = visual[index].localPath!;
-                  final startIndex = allPaths
-                      .indexOf(tappedPath)
-                      .clamp(0, allPaths.length - 1);
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => mediaViewerBuilder(
-                        localPath: tappedPath,
-                        allPaths: allPaths,
-                        initialIndex: startIndex,
-                      ),
-                    ),
-                  );
-                  return;
-                }
-                // 231: message-bounded typed viewer carrying stable
-                // attachment/message identity and the direct-lane action
-                // capabilities (plan 230 surface).
-                _openDirectMediaViewer(message, visual, index);
+                  .toList(growable: false);
+              if (index < 0 || index >= visual.length) return;
+              final attachment = visual[index];
+              final decision = _directViewerDecision(message, attachment);
+              if (decision.isPrivateOrUnsupported) {
+                unawaited(
+                  _openPrivateMediaFromConversation(
+                    message,
+                    attachment,
+                    decision,
+                  ),
+                );
+                return;
               }
-            };
+              unawaited(_openOrdinaryMediaViewer(message, index));
+            }
 
             LetterCard buildLetterCard({
               VoidCallback? onLongPress,
@@ -710,7 +756,9 @@ class _ConversationScreenState extends State<ConversationScreen> {
                 isEdited: message.editedAt != null && !message.isDeleted,
                 isForwarded: message.isForwarded,
                 isDeleted: message.isDeleted,
-                media: message.media,
+                media: message.isDeleted || isPrivatePresentation
+                    ? const []
+                    : message.media,
                 reactions: message.isDeleted ? const [] : messageReactions,
                 ownPeerId: widget.ownPeerId,
                 onLongPress: onLongPress,
@@ -745,7 +793,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
               );
             }
 
-            final letterCard = Builder(
+            Widget letterCard = Builder(
               builder: (cardContext) => buildLetterCard(
                 onLongPress: canOpenContextOverlay
                     ? () => _showMessageContextOverlay(
@@ -768,6 +816,100 @@ class _ConversationScreenState extends State<ConversationScreen> {
                     : null,
               ),
             );
+
+            if (isPrivatePresentation) {
+              final visual = message.media
+                  .where(
+                    (attachment) =>
+                        attachment.mediaType == 'image' ||
+                        attachment.mediaType == 'video',
+                  )
+                  .toList(growable: false);
+              final visualDecision = visual.length == 1
+                  ? _directViewerDecision(message, visual.single)
+                  : null;
+              final state = message.privateMediaState;
+              final Widget privatePlaceholder;
+              if (state == PrivateMediaLifecycleState.consumed ||
+                  state == PrivateMediaLifecycleState.expired) {
+                privatePlaceholder = DirectPrivateMediaTerminalPlaceholder(
+                  state: state,
+                  onReply: widget.onQuoteReply == null
+                      ? null
+                      : () => unawaited(
+                          _dispatchPrivateParentAction(
+                            message.id,
+                            DirectPrivateMediaAction.reply,
+                          ),
+                        ),
+                  onInfo: () => unawaited(
+                    _dispatchPrivateParentAction(
+                      message.id,
+                      DirectPrivateMediaAction.info,
+                    ),
+                  ),
+                  onDelete: widget.onDeleteMessage == null
+                      ? null
+                      : () => unawaited(
+                          _dispatchPrivateParentAction(
+                            message.id,
+                            DirectPrivateMediaAction.deleteForMe,
+                          ),
+                        ),
+                );
+              } else if (message.privateMediaPolicy.isUnsupported ||
+                  state == PrivateMediaLifecycleState.unsupported ||
+                  visualDecision == null ||
+                  !visualDecision.allows(DirectPrivateMediaAction.openInApp)) {
+                privatePlaceholder = DirectPrivateMediaUnsupportedPlaceholder(
+                  onReply: widget.onQuoteReply == null
+                      ? null
+                      : () => unawaited(
+                          _dispatchPrivateParentAction(
+                            message.id,
+                            DirectPrivateMediaAction.reply,
+                          ),
+                        ),
+                  onInfo: () => unawaited(
+                    _dispatchPrivateParentAction(
+                      message.id,
+                      DirectPrivateMediaAction.info,
+                    ),
+                  ),
+                  onDelete: widget.onDeleteMessage == null
+                      ? null
+                      : () => unawaited(
+                          _dispatchPrivateParentAction(
+                            message.id,
+                            DirectPrivateMediaAction.deleteForMe,
+                          ),
+                        ),
+                );
+              } else {
+                final attachment = visual.single;
+                final identity = DirectPrivateMediaViewerIdentity(
+                  messageId: message.id,
+                  attachmentId: attachment.id,
+                );
+                final opening = _privateOpenInFlight.contains(identity);
+                privatePlaceholder = DirectPrivateMediaOpenPlaceholder(
+                  opening: opening,
+                  onOpen: () => unawaited(
+                    _openPrivateMediaFromConversation(
+                      message,
+                      attachment,
+                      visualDecision,
+                    ),
+                  ),
+                );
+              }
+              letterCard = Column(
+                crossAxisAlignment: message.isIncoming
+                    ? CrossAxisAlignment.start
+                    : CrossAxisAlignment.end,
+                children: [letterCard, privatePlaceholder],
+              );
+            }
 
             // 156 QW-11 (lists-scrolling-4): entrance-animate ONLY a genuinely
             // new (appended) message, not every row on the initial paint.
@@ -984,7 +1126,10 @@ class _ConversationScreenState extends State<ConversationScreen> {
         ? reactions.where((r) => r.senderPeerId == widget.ownPeerId).firstOrNull
         : null;
     final hasEditAction = _canEditMessage(message);
-    final hasCopyAction = !message.isDeleted && message.text.trim().isNotEmpty;
+    final hasCopyAction =
+        !message.isDeleted &&
+        !message.privateMediaPolicy.requiresRedaction &&
+        message.text.trim().isNotEmpty;
     final hasDeleteAction = _canDeleteMessage(message);
     // 231: received-media entries for the exact long-pressed eligible
     // attachment. On a media-targeted overlay, Delete routes to the
@@ -995,19 +1140,35 @@ class _ConversationScreenState extends State<ConversationScreen> {
             messageId: message.id,
             attachmentId: mediaTarget.id,
           );
-    final showSaveAction = mediaIdentity != null && widget.onMediaEgress != null;
+    final mediaDecision = mediaTarget == null
+        ? null
+        : _directMediaDecision(message, mediaTarget);
+    final showSaveAction =
+        mediaIdentity != null &&
+        widget.onMediaEgress != null &&
+        _isDirectMediaActionEligible(message, mediaTarget!) &&
+        mediaDecision!.allows(DirectPrivateMediaAction.saveToFiles);
     final showShareAction = showSaveAction;
     final showForwardAction =
         widget.onForwardMedia != null &&
         !message.isDeleted &&
         message.isIncoming &&
         message.media.any(
-          (attachment) => _isDirectMediaActionEligible(message, attachment),
+          (attachment) =>
+              _isDirectMediaActionEligible(message, attachment) &&
+              _directMediaDecision(
+                message,
+                attachment,
+              ).allows(DirectPrivateMediaAction.internalForward),
         );
     final showInfoAction =
-        mediaIdentity != null && widget.onLoadMediaInfo != null;
+        mediaIdentity != null &&
+        widget.onLoadMediaInfo != null &&
+        mediaDecision!.allows(DirectPrivateMediaAction.info);
     final showMediaDeleteAction =
-        mediaIdentity != null && widget.onDeleteMediaMessage != null;
+        mediaIdentity != null &&
+        widget.onDeleteMediaMessage != null &&
+        mediaDecision!.allows(DirectPrivateMediaAction.deleteForMe);
 
     showDialog(
       context: context,
@@ -1071,9 +1232,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
         onForwardTap: showForwardAction
             ? () {
                 Navigator.of(dialogContext).pop();
-                unawaited(
-                  widget.onForwardMedia!(message.id),
-                );
+                unawaited(widget.onForwardMedia!(message.id));
               }
             : null,
         onInfoTap: showInfoAction
@@ -1128,10 +1287,48 @@ class _ConversationScreenState extends State<ConversationScreen> {
       return false;
     }
     if (attachment.downloadStatus != kMediaDownloadStatusDone) return false;
+    if (!_directMediaDecision(
+      message,
+      attachment,
+    ).allows(DirectPrivateMediaAction.saveToFiles)) {
+      return false;
+    }
     final localPath = attachment.localPath;
     if (localPath == null || localPath.isEmpty) return false;
     return File(MediaFileManager.resolveStoredPathSync(localPath)).existsSync();
   }
+
+  bool _isTrustedDirectMediaTarget(
+    ConversationMessage message,
+    MediaAttachment attachment,
+  ) {
+    if (message.isDeleted || !message.isIncoming) return false;
+    if (message.transport == 'system') return false;
+    if (attachment.ownerLane != MediaOwnerLane.direct) return false;
+    if (attachment.messageId != message.id) return false;
+    return attachment.mediaType == 'image' || attachment.mediaType == 'video';
+  }
+
+  DirectPrivateMediaActionDecision _directMediaDecision(
+    ConversationMessage message,
+    MediaAttachment attachment,
+  ) => DirectPrivateMediaActionEligibility.evaluate(
+    parent: message,
+    attachment: attachment,
+    expectedMessageId: message.id,
+    expectedAttachmentId: attachment.id,
+  );
+
+  DirectPrivateMediaActionDecision _directViewerDecision(
+    ConversationMessage message,
+    MediaAttachment attachment,
+  ) => DirectPrivateMediaActionEligibility.evaluate(
+    parent: message,
+    attachment: attachment,
+    expectedMessageId: message.id,
+    expectedAttachmentId: attachment.id,
+    requireIncoming: false,
+  );
 
   void _onMediaCellLongPress(
     ConversationMessage message,
@@ -1148,9 +1345,165 @@ class _ConversationScreenState extends State<ConversationScreen> {
       message,
       cardContext: cardContext,
       selectedMessage: selectedMessage,
-      mediaTarget: _isDirectMediaActionEligible(message, attachment)
+      mediaTarget: _isTrustedDirectMediaTarget(message, attachment)
           ? attachment
           : null,
+    );
+  }
+
+  Future<void> _openPrivateMediaFromConversation(
+    ConversationMessage message,
+    MediaAttachment attachment,
+    DirectPrivateMediaActionDecision decision,
+  ) async {
+    if (!decision.allows(DirectPrivateMediaAction.openInApp) ||
+        message.id != attachment.messageId) {
+      return;
+    }
+    if (attachment.downloadStatus != kMediaDownloadStatusDone ||
+        attachment.localPath == null) {
+      final retry = widget.onRetryUnavailableMedia;
+      if (retry != null &&
+          decision.allows(DirectPrivateMediaAction.explicitDownload)) {
+        await retry(message.id, attachment.id);
+      }
+      return;
+    }
+    final launcher = widget.onOpenPrivateMedia;
+    if (launcher == null) return;
+    final identity = DirectPrivateMediaViewerIdentity(
+      messageId: message.id,
+      attachmentId: attachment.id,
+    );
+    if (!_privateOpenInFlight.add(identity)) return;
+    if (mounted) setState(() {});
+    try {
+      await launcher(identity);
+    } finally {
+      _privateOpenInFlight.remove(identity);
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _dispatchPrivateParentAction(
+    String messageId,
+    DirectPrivateMediaAction action,
+  ) async {
+    final loader = widget.onLoadPrivateParentDecision;
+    if (loader == null) return;
+    final decision = await loader(messageId);
+    if (!mounted || !decision.allows(action)) return;
+    switch (action) {
+      case DirectPrivateMediaAction.reply:
+        widget.onQuoteReply?.call(messageId);
+        return;
+      case DirectPrivateMediaAction.info:
+        final l10n = AppLocalizations.of(context)!;
+        final state = decision.privateLifecycleState;
+        final stateCopy = switch (state) {
+          PrivateMediaLifecycleState.consumed => l10n.private_media_consumed,
+          PrivateMediaLifecycleState.expired => l10n.private_media_expired,
+          PrivateMediaLifecycleState.unsupported =>
+            l10n.private_media_unsupported,
+          _ => l10n.private_media_notification_body,
+        };
+        await showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: Text(l10n.private_media_notification_body),
+            content: Text(stateCopy),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: Text(MaterialLocalizations.of(context).closeButtonLabel),
+              ),
+            ],
+          ),
+        );
+        return;
+      case DirectPrivateMediaAction.deleteForMe:
+        widget.onDeleteMessage?.call(messageId);
+        return;
+      case DirectPrivateMediaAction.openInApp:
+      case DirectPrivateMediaAction.explicitDownload:
+      case DirectPrivateMediaAction.saveToPhotos:
+      case DirectPrivateMediaAction.saveToFiles:
+      case DirectPrivateMediaAction.externalShare:
+      case DirectPrivateMediaAction.internalForward:
+      case DirectPrivateMediaAction.bookmark:
+      case DirectPrivateMediaAction.sharedMedia:
+      case DirectPrivateMediaAction.pictureInPicture:
+        return;
+    }
+  }
+
+  /// Enters only an ordinary viewer after a fresh exact current-row policy
+  /// decision. Available private media retains its typed `openInApp`
+  /// capability for the dedicated Session-05 viewer, but it must never be
+  /// routed through either of the existing ordinary viewer implementations.
+  Future<void> _openOrdinaryMediaViewer(
+    ConversationMessage message,
+    int tappedIndex,
+  ) async {
+    final visual = message.media
+        .where((a) => a.mediaType == 'image' || a.mediaType == 'video')
+        .toList(growable: false);
+    if (tappedIndex < 0 || tappedIndex >= visual.length) return;
+    final tapped = visual[tappedIndex];
+    var currentDecision = _directViewerDecision(message, tapped);
+    if (_existingDirectMediaPath(tapped) == null ||
+        !currentDecision.isOrdinary) {
+      return;
+    }
+
+    final loadDecision = widget.onLoadMediaActionDecision;
+    if (loadDecision != null) {
+      currentDecision = await loadDecision(
+        DirectReceivedMediaActionIdentity(
+          messageId: message.id,
+          attachmentId: tapped.id,
+        ),
+      );
+      if (!mounted || !currentDecision.isOrdinary) return;
+    }
+    if (!mounted) return;
+
+    final mediaViewerBuilder = widget.mediaViewerBuilder;
+    if (mediaViewerBuilder != null) {
+      // Legacy path-only viewer is ordinary-only too. It receives no private
+      // path even when a caller supplies an injected builder.
+      final allPaths = <String>[];
+      for (final attachment in visual) {
+        if (attachment.downloadStatus != kMediaDownloadStatusDone ||
+            !_directViewerDecision(message, attachment).isOrdinary) {
+          continue;
+        }
+        final path = _existingDirectMediaPath(attachment);
+        if (path != null) allPaths.add(path);
+      }
+      final tappedPath = _existingDirectMediaPath(tapped);
+      if (tappedPath == null) return;
+      final startIndex = allPaths.indexOf(tappedPath);
+      if (startIndex < 0) return;
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => mediaViewerBuilder(
+            localPath: tappedPath,
+            allPaths: allPaths,
+            initialIndex: startIndex,
+          ),
+        ),
+      );
+      return;
+    }
+
+    // Message-bounded typed ordinary viewer carrying stable identity and
+    // direct-lane action capabilities.
+    _openDirectMediaViewer(
+      message,
+      visual,
+      tappedIndex,
+      currentParentDecision: currentDecision,
     );
   }
 
@@ -1160,13 +1513,15 @@ class _ConversationScreenState extends State<ConversationScreen> {
   void _openDirectMediaViewer(
     ConversationMessage message,
     List<MediaAttachment> visual,
-    int tappedIndex,
-  ) {
+    int tappedIndex, {
+    DirectPrivateMediaActionDecision? currentParentDecision,
+  }) {
     final viewable = visual
         .where(
           (a) =>
-              a.localPath != null &&
-              a.downloadStatus == kMediaDownloadStatusDone,
+              a.downloadStatus == kMediaDownloadStatusDone &&
+              _directViewerDecision(message, a).isOrdinary &&
+              _existingDirectMediaPath(a) != null,
         )
         .toList();
     if (viewable.isEmpty) return;
@@ -1175,7 +1530,11 @@ class _ConversationScreenState extends State<ConversationScreen> {
     if (initialIndex < 0) initialIndex = 0;
     final items = [
       for (final attachment in viewable)
-        _buildDirectViewerItem(message, attachment),
+        _buildDirectViewerItem(
+          message,
+          attachment,
+          currentParentDecision: currentParentDecision,
+        ),
     ];
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -1183,6 +1542,11 @@ class _ConversationScreenState extends State<ConversationScreen> {
           items: items,
           initialIndex: initialIndex,
           onAction: (item, action) => _handleViewerAction(item, action),
+          resumeStore: widget.mediaViewerResumeStore,
+          pictureInPictureControllerFactory:
+              widget.pictureInPictureControllerFactory,
+          loadPictureInPictureAuthorization:
+              widget.loadPictureInPictureAuthorization,
         ),
       ),
     );
@@ -1190,28 +1554,38 @@ class _ConversationScreenState extends State<ConversationScreen> {
 
   MediaViewerItem _buildDirectViewerItem(
     ConversationMessage message,
-    MediaAttachment attachment,
-  ) {
-    final localPath = attachment.localPath;
-    final resolvedPath = localPath == null || localPath.isEmpty
-        ? null
-        : MediaFileManager.resolveStoredPathSync(localPath);
-    final hasBytes = resolvedPath != null && File(resolvedPath).existsSync();
+    MediaAttachment attachment, {
+    DirectPrivateMediaActionDecision? currentParentDecision,
+  }) {
+    final resolvedPath = _existingDirectMediaPath(attachment);
+    final hasBytes = resolvedPath != null;
     final kind = attachment.mediaType == 'video'
         ? MediaViewerKind.video
         : attachment.isAnimated
         ? MediaViewerKind.gif
         : MediaViewerKind.image;
     final allowed = <MediaViewerAction>{};
-    if (_isDirectMediaActionEligible(message, attachment)) {
-      if (widget.onMediaEgress != null) {
+    final decision = _directViewerDecision(message, attachment);
+    if (_isTrustedDirectMediaTarget(message, attachment)) {
+      if (_isDirectMediaActionEligible(message, attachment) &&
+          widget.onMediaEgress != null) {
         allowed.add(MediaViewerAction.save);
         allowed.add(MediaViewerAction.share);
       }
-      if (widget.onQuoteReply != null) allowed.add(MediaViewerAction.reply);
-      if (widget.onLoadMediaInfo != null) allowed.add(MediaViewerAction.info);
-      if (widget.onForwardMedia != null) allowed.add(MediaViewerAction.forward);
-      if (widget.onDeleteMediaMessage != null) {
+      if (widget.onQuoteReply != null &&
+          decision.allows(DirectPrivateMediaAction.reply)) {
+        allowed.add(MediaViewerAction.reply);
+      }
+      if (widget.onLoadMediaInfo != null &&
+          decision.allows(DirectPrivateMediaAction.info)) {
+        allowed.add(MediaViewerAction.info);
+      }
+      if (widget.onForwardMedia != null &&
+          decision.allows(DirectPrivateMediaAction.internalForward)) {
+        allowed.add(MediaViewerAction.forward);
+      }
+      if (widget.onDeleteMediaMessage != null &&
+          decision.allows(DirectPrivateMediaAction.deleteForMe)) {
         allowed.add(MediaViewerAction.delete);
       }
     }
@@ -1232,9 +1606,15 @@ class _ConversationScreenState extends State<ConversationScreen> {
       durationMs: attachment.durationMs,
       caption: message.isDeleted || message.text.trim().isEmpty
           ? null
+          : decision.requiresPrivacyMinimizedPresentation
+          ? AppLocalizations.of(context)!.private_media_notification_body
           : message.text,
       senderLabel: message.isIncoming ? widget.contactUsername : null,
       timestamp: message.parsedTimestamp,
+      canEnterPictureInPicture:
+          message.isIncoming &&
+          (currentParentDecision?.canEnterPictureInPicture ??
+              decision.canEnterPictureInPicture),
       protection: MediaViewerProtection(
         isDownloaded:
             attachment.downloadStatus == kMediaDownloadStatusDone && hasBytes,
@@ -1244,6 +1624,12 @@ class _ConversationScreenState extends State<ConversationScreen> {
       capabilities: MediaViewerActionCapabilities(allowed: allowed),
     );
   }
+
+  String? _existingDirectMediaPath(MediaAttachment attachment) =>
+      resolveExistingMediaPathForDisplay(
+        attachment: attachment,
+        ownedMediaPeerId: widget.contactPeerId,
+      );
 
   Future<MediaViewerActionResult> _handleViewerAction(
     MediaViewerItem item,
@@ -1255,9 +1641,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
     );
     switch (action) {
       case MediaViewerAction.save:
-        final destination = await DirectMediaSaveDestinationSheet.show(
-          context,
-        );
+        final destination = await DirectMediaSaveDestinationSheet.show(context);
         if (!mounted || destination == null) {
           return MediaViewerActionResult.cancelled;
         }
@@ -1302,6 +1686,10 @@ class _ConversationScreenState extends State<ConversationScreen> {
             : MediaViewerActionResult.failure;
       case MediaViewerAction.bookmark:
         // Plan 233 owns bookmarks on this surface.
+        return MediaViewerActionResult.failure;
+      case MediaViewerAction.messageSender:
+        // Plan 247 is announcement-group owned. Direct items never authorize
+        // this action, and an injected/forged capability still fails closed.
         return MediaViewerActionResult.failure;
     }
   }
@@ -1506,7 +1894,6 @@ class _ConversationScreenState extends State<ConversationScreen> {
       return AppLocalizations.of(context)?.date_today ?? 'Today';
     }
   }
-
 }
 
 class _EditModeBanner extends StatelessWidget {

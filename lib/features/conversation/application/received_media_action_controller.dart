@@ -10,6 +10,8 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:uuid/uuid.dart';
 
+import 'private_media_action_eligibility.dart';
+
 /// 231: the ONLY production call site of [ReceivedMediaEgressService.perform].
 ///
 /// UI surfaces (bubble long-press sheet, typed viewer) hold nothing but a
@@ -64,6 +66,10 @@ enum DirectMediaEgressDenial {
   /// another lane) — fails closed even if the query should have filtered it.
   wrongOwner,
 
+  /// The parent/attachment returned by a lookup does not match the stable
+  /// identity that the caller requested.
+  staleIdentity,
+
   /// The current row is not `done` (pending/downloading/evicted/failed/...).
   notDownloaded,
 
@@ -94,25 +100,49 @@ typedef DirectMediaLaneQualifier =
       MediaAttachment current,
     );
 
-/// Default direct-lane policy: a structurally-qualified current row (incoming
-/// live parent, direct-owned, done, integrity-clean, bytes present) has no
-/// additional expiry/protection restriction on HEAD.
+/// Default direct-lane policy backed by the current durable direct-private
+/// parent/attachment decision. Ordinary media preserves plan-231 behavior;
+/// every private or unsupported mode is denied before native egress.
 Future<DirectMediaLaneQualification?> defaultDirectMediaLaneQualifier(
   ConversationMessage parent,
   MediaAttachment current,
-) async => DirectMediaLaneQualification.eligible;
+) async {
+  final decision = DirectPrivateMediaActionEligibility.evaluate(
+    parent: parent,
+    attachment: current,
+    expectedMessageId: parent.id,
+    expectedAttachmentId: current.id,
+  );
+  return switch (decision.reason) {
+    DirectPrivateMediaEligibilityReason.ordinary =>
+      DirectMediaLaneQualification.eligible,
+    DirectPrivateMediaEligibilityReason.privateTerminal =>
+      DirectMediaLaneQualification.expired,
+    DirectPrivateMediaEligibilityReason.privateAvailable ||
+    DirectPrivateMediaEligibilityReason.unsupported =>
+      DirectMediaLaneQualification.protected,
+    _ => null,
+  };
+}
 
 typedef DirectParentMessageLoader =
     Future<ConversationMessage?> Function(String messageId);
 
+typedef DirectPrivateMediaActionDecisionLoader =
+    Future<DirectPrivateMediaActionDecision> Function(
+      DirectReceivedMediaActionIdentity identity,
+    );
+
 /// Settled outcome of one egress dispatch: either a typed lane denial (zero
 /// service calls) or the untouched typed result of exactly one service call.
 class DirectReceivedMediaEgressOutcome {
-  const DirectReceivedMediaEgressOutcome.denied(DirectMediaEgressDenial this.denial)
-      : result = null;
+  const DirectReceivedMediaEgressOutcome.denied(
+    DirectMediaEgressDenial this.denial,
+  ) : result = null;
 
-  const DirectReceivedMediaEgressOutcome.performed(MediaEgressResult this.result)
-      : denial = null;
+  const DirectReceivedMediaEgressOutcome.performed(
+    MediaEgressResult this.result,
+  ) : denial = null;
 
   final DirectMediaEgressDenial? denial;
   final MediaEgressResult? result;
@@ -133,6 +163,7 @@ class DirectReceivedMediaInfo {
     this.width,
     this.height,
     this.durationMs,
+    this.privateInfo,
   });
 
   final bool isIncoming;
@@ -147,6 +178,9 @@ class DirectReceivedMediaInfo {
   final int? width;
   final int? height;
   final int? durationMs;
+  final DirectPrivateMediaSafeInfo? privateInfo;
+
+  bool get isPrivacyMinimized => privateInfo != null;
 
   bool get isDownloaded => downloadStatus == kMediaDownloadStatusDone;
 
@@ -162,10 +196,11 @@ bool _defaultFileExists(String resolvedPath) => File(resolvedPath).existsSync();
 /// plan-231 denial or a qualified egress candidate built from the RELOADED
 /// row (never a caller snapshot).
 class DirectMediaCurrentRowDecision {
-  const DirectMediaCurrentRowDecision.denied(DirectMediaEgressDenial this.denial)
-      : parent = null,
-        current = null,
-        storedPath = null;
+  const DirectMediaCurrentRowDecision.denied(
+    DirectMediaEgressDenial this.denial,
+  ) : parent = null,
+      current = null,
+      storedPath = null;
 
   const DirectMediaCurrentRowDecision.qualified({
     required ConversationMessage this.parent,
@@ -208,6 +243,11 @@ Future<DirectMediaCurrentRowDecision> qualifyCurrentDirectMediaRow({
       DirectMediaEgressDenial.parentNotFound,
     );
   }
+  if (parent.id != identity.messageId) {
+    return const DirectMediaCurrentRowDecision.denied(
+      DirectMediaEgressDenial.staleIdentity,
+    );
+  }
   if (parent.isDeleted) {
     return const DirectMediaCurrentRowDecision.denied(
       DirectMediaEgressDenial.parentDeleted,
@@ -241,6 +281,42 @@ Future<DirectMediaCurrentRowDecision> qualifyCurrentDirectMediaRow({
   if (current.ownerLane != MediaOwnerLane.direct) {
     return const DirectMediaCurrentRowDecision.denied(
       DirectMediaEgressDenial.wrongOwner,
+    );
+  }
+  if (current.messageId != identity.messageId ||
+      current.id != identity.attachmentId) {
+    return const DirectMediaCurrentRowDecision.denied(
+      DirectMediaEgressDenial.staleIdentity,
+    );
+  }
+
+  // The central durable parent/attachment policy is mandatory. The legacy
+  // injectable qualifier below may only further restrict an ordinary row; it
+  // can never authorize private, terminal, hidden, corrupt, or stale state.
+  // Evaluate before status/path probing so protected metadata is not touched
+  // merely to discover a privacy denial.
+  final centralDecision = DirectPrivateMediaActionEligibility.evaluate(
+    parent: parent,
+    attachment: current,
+    expectedMessageId: identity.messageId,
+    expectedAttachmentId: identity.attachmentId,
+  );
+  if (!centralDecision.isOrdinary) {
+    return DirectMediaCurrentRowDecision.denied(
+      switch (centralDecision.reason) {
+        DirectPrivateMediaEligibilityReason.privateTerminal =>
+          DirectMediaEgressDenial.expired,
+        DirectPrivateMediaEligibilityReason.privateAvailable ||
+        DirectPrivateMediaEligibilityReason.unsupported =>
+          DirectMediaEgressDenial.protected,
+        DirectPrivateMediaEligibilityReason.wrongOwner =>
+          DirectMediaEgressDenial.wrongOwner,
+        DirectPrivateMediaEligibilityReason.staleIdentity =>
+          DirectMediaEgressDenial.staleIdentity,
+        DirectPrivateMediaEligibilityReason.integrityFailed =>
+          DirectMediaEgressDenial.integrityFailed,
+        _ => DirectMediaEgressDenial.policyUnavailable,
+      },
     );
   }
   if (current.downloadStatus == kMediaDownloadStatusIntegrityFailed) {
@@ -344,6 +420,36 @@ class ReceivedMediaActionController {
     return DirectReceivedMediaEgressOutcome.performed(result);
   }
 
+  /// Reloads the exact current direct parent/attachment and returns the same
+  /// typed decision used by dispatch boundaries. Presentation adapters use
+  /// this immediately before entering an ordinary viewer; cached message or
+  /// library rows never authorize navigation.
+  Future<DirectPrivateMediaActionDecision> loadActionDecision(
+    DirectReceivedMediaActionIdentity identity,
+  ) async {
+    final parent = await _loadParentMessage(identity.messageId);
+    MediaAttachment? current;
+    if (parent != null && parent.id == identity.messageId) {
+      final rows = await _mediaAttachmentRepo.getAttachmentsForMessage(
+        identity.messageId,
+        owner: MediaOwnerLane.direct,
+      );
+      for (final row in rows) {
+        if (row.id == identity.attachmentId) {
+          current = row;
+          break;
+        }
+      }
+    }
+    return DirectPrivateMediaActionEligibility.evaluate(
+      parent: parent,
+      attachment: current,
+      expectedMessageId: identity.messageId,
+      expectedAttachmentId: identity.attachmentId,
+      requireIncoming: false,
+    );
+  }
+
   /// Current local metadata for the Info surface — persisted rows only, no
   /// transport access. Returns null when the exact direct-owned current row
   /// (or its live parent) no longer exists.
@@ -357,21 +463,46 @@ class ReceivedMediaActionController {
       identity.messageId,
       owner: MediaOwnerLane.direct,
     );
+    MediaAttachment? current;
     for (final row in rows) {
-      if (row.id != identity.attachmentId) continue;
-      if (row.ownerLane != MediaOwnerLane.direct) return null;
+      if (row.id == identity.attachmentId) {
+        current = row;
+        break;
+      }
+    }
+    final mayOmitCleanedAttachment =
+        parent.privateMediaPolicy.requiresRedaction &&
+        parent.privateMediaState.isTerminal;
+    final decision = DirectPrivateMediaActionEligibility.evaluate(
+      parent: parent,
+      attachment: current,
+      expectedMessageId: identity.messageId,
+      expectedAttachmentId: identity.attachmentId,
+      attachmentRequired: !mayOmitCleanedAttachment,
+    );
+    if (decision.isPrivateOrUnsupported &&
+        decision.allows(DirectPrivateMediaAction.info)) {
       return DirectReceivedMediaInfo(
         isIncoming: parent.isIncoming,
         timestamp: parent.timestamp,
-        mime: row.mime,
-        mediaType: row.mediaType,
-        sizeBytes: row.size,
-        downloadStatus: row.downloadStatus,
-        width: row.width,
-        height: row.height,
-        durationMs: row.durationMs,
+        mime: '',
+        mediaType: '',
+        sizeBytes: 0,
+        downloadStatus: '',
+        privateInfo: decision.safeInfo,
       );
     }
-    return null;
+    if (!decision.isOrdinary || current == null) return null;
+    return DirectReceivedMediaInfo(
+      isIncoming: parent.isIncoming,
+      timestamp: parent.timestamp,
+      mime: current.mime,
+      mediaType: current.mediaType,
+      sizeBytes: current.size,
+      downloadStatus: current.downloadStatus,
+      width: current.width,
+      height: current.height,
+      durationMs: current.durationMs,
+    );
   }
 }

@@ -3,14 +3,17 @@ import 'dart:async';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_deletion_payload.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/direct_private_media_lifecycle_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
@@ -30,13 +33,94 @@ Future<int> deleteMessageForMe({
     },
   );
 
+  // Authority boundary: the caller may hold a stale row snapshot. Branching
+  // on it can physically delete a durable private tombstone and let replay
+  // resurrect the message, so re-read the exact current parent first.
+  ConversationMessage? currentMessage;
+  try {
+    currentMessage = await messageRepo.getMessage(message.id);
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DELETE_FOR_ME_AUTHORITY_READ_FAILED',
+      details: {'error': error.runtimeType.toString()},
+    );
+    return 0;
+  }
+  if (currentMessage == null ||
+      currentMessage.id != message.id ||
+      currentMessage.contactPeerId != message.contactPeerId ||
+      currentMessage.senderPeerId != message.senderPeerId ||
+      currentMessage.isIncoming != message.isIncoming) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DELETE_FOR_ME_AUTHORITY_UNAVAILABLE',
+      details: {
+        'id': message.id.length > 8 ? message.id.substring(0, 8) : message.id,
+      },
+    );
+    return 0;
+  }
+
+  if (currentMessage.privateMediaPolicy.requiresRedaction) {
+    final lifecycleRepository = messageRepo;
+    final attachments = mediaAttachmentRepo;
+    if (lifecycleRepository is! DirectPrivateMediaLifecycleRepository ||
+        attachments is! DirectPrivateMediaCleanupRepository ||
+        attachments is! DirectPrivateMediaCleanupRuntime ||
+        mediaFileManager == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_PRIVATE_DELETE_FOR_ME_UNAVAILABLE',
+        details: {
+          'id': message.id.length > 8 ? message.id.substring(0, 8) : message.id,
+        },
+      );
+      return 0;
+    }
+    final directLifecycleRepository =
+        lifecycleRepository as DirectPrivateMediaLifecycleRepository;
+    final cleanupRuntime = attachments as DirectPrivateMediaCleanupRuntime;
+    final attachmentRepository = attachments as MediaAttachmentRepository;
+    final now = DateTime.now().toUtc();
+    final hidden = await directLifecycleRepository.hidePrivateMediaForMe(
+      currentMessage.id,
+      hiddenAt: now.toIso8601String(),
+      nowMs: now.millisecondsSinceEpoch,
+    );
+    if (!hidden) return 0;
+    await reactionRepo?.deleteReactionsForMessage(currentMessage.id);
+    final adapter = DirectPrivateMediaLifecycle(
+      messageRepository: directLifecycleRepository,
+      mediaAttachmentRepository: attachmentRepository,
+      mediaFileManager: mediaFileManager,
+    );
+    final engine = PrivateMediaLifecycleEngine(
+      adapter: adapter,
+      lifecycleLock: cleanupRuntime.directPrivateMediaLifecycleLock,
+      nowMs: () => DateTime.now().toUtc().millisecondsSinceEpoch,
+    );
+    try {
+      await engine.cleanupTerminalMessage(currentMessage.id);
+    } catch (error) {
+      // The hidden parent is the durable delete claim. Startup/resume recovery
+      // retries raw file/key/row cleanup without resurrecting the message.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_PRIVATE_DELETE_FOR_ME_CLEANUP_RETAINED',
+        details: {'error': error.runtimeType.toString()},
+      );
+    }
+    return 1;
+  }
+
   await cleanupDeletedMessageArtifacts(
-    message: message,
+    message: currentMessage,
     reactionRepo: reactionRepo,
     mediaAttachmentRepo: mediaAttachmentRepo,
     mediaFileManager: mediaFileManager,
   );
-  final count = await messageRepo.deleteMessage(message.id);
+  final count = await messageRepo.deleteMessage(currentMessage.id);
 
   emitFlowEvent(
     layer: 'FL',

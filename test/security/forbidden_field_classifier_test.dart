@@ -15,6 +15,8 @@ void main() {
     'File',
     'Media',
     'GIF',
+    '👍',
+    'Original target text',
   ];
 
   group('push forbidden-field classifier', () {
@@ -24,6 +26,7 @@ void main() {
         'test/features/push/fixtures/group_text.json',
         'test/features/push/frozen_payloads/post_phase1_chat_text.json',
         'test/features/push/frozen_payloads/post_phase1_group_text.json',
+        'test_fixtures/one_to_one_reaction_add.json',
       ];
 
       for (final path in files) {

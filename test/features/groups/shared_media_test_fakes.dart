@@ -23,7 +23,10 @@ class GroupMediaPageRequest {
 }
 
 class StrictGroupMediaLibraryRepository
-    implements MediaLibraryRepository, MediaLibraryStateRepository {
+    implements
+        MediaLibraryRepository,
+        MediaLibraryStateRepository,
+        GroupMediaLibraryStateRepository {
   StrictGroupMediaLibraryRepository({
     required this.expectedGroupId,
     Iterable<MediaLibraryEntry> entries = const [],
@@ -106,6 +109,26 @@ class StrictGroupMediaLibraryRepository
         else
           entry,
     ];
+  }
+
+  @override
+  Future<bool> setGroupBookmarkedIfOrdinary({
+    required String groupId,
+    required String messageId,
+    required String attachmentId,
+    required bool bookmarked,
+  }) async {
+    if (groupId != expectedGroupId) return false;
+    final matches = _entries.where(
+      (entry) =>
+          entry.attachment.id == attachmentId &&
+          entry.attachment.messageId == messageId &&
+          entry.attachment.ownerLane == MediaOwnerLane.group,
+    );
+    if (matches.isEmpty) return false;
+    if (matches.single.attachment.isBookmarked == bookmarked) return true;
+    await setBookmarked(attachmentId, bookmarked: bookmarked);
+    return true;
   }
 
   @override

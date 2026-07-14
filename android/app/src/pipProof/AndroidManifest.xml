@@ -1,0 +1,14 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Mirrors the ordinary debug manifest for Flutter tool connectivity. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application>
+        <receiver
+            android:name=".PictureInPictureEngineDetachProofReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="com.mknoon.app.pipproof.action.PICTURE_IN_PICTURE_ENGINE_DETACH" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

@@ -217,7 +217,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
         : widget.attachment.durationMs ?? 0;
     final progress = totalMs > 0 ? _position.inMilliseconds / totalMs : 0.0;
 
-    final durationText = _isAvailable && _isLoaded
+    final durationText = _isAvailable && totalMs > 0
         ? (_isPlaying
               ? '${formatDurationMs(_position.inMilliseconds)} / ${formatDurationMs(totalMs)}'
               : formatDurationMs(totalMs))

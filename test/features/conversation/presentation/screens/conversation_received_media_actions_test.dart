@@ -1,9 +1,14 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/media/app_owned_media_path_authority.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/picture_in_picture_gateway.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/received_media_egress.dart';
+import 'package:flutter_app/features/conversation/application/private_media_action_eligibility.dart';
 import 'package:flutter_app/features/conversation/application/received_media_action_controller.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -12,6 +17,9 @@ import 'package:flutter_app/features/conversation/presentation/widgets/direct_re
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
+import 'package:flutter_app/shared/widgets/media/media_picture_in_picture_controller.dart';
+import 'package:flutter_app/shared/widgets/media/media_video_resume_controller.dart';
+import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
 
 // 231: 1:1 received media core actions — attachment-specific bubble long
 // press, message-bounded typed viewer parity, close/reopen identity, Info,
@@ -49,6 +57,9 @@ void main() {
     String text = '',
     List<MediaAttachment> media = const [],
     String? deletedAt,
+    String? quotedMessageId,
+    PrivateMediaPolicy policy = const PrivateMediaPolicy.ordinary(),
+    PrivateMediaLifecycleState state = PrivateMediaLifecycleState.none,
   }) {
     return ConversationMessage(
       id: id,
@@ -61,6 +72,9 @@ void main() {
       createdAt: '2026-02-09T15:30:01.000Z',
       media: media,
       deletedAt: deletedAt,
+      quotedMessageId: quotedMessageId,
+      privateMediaPolicy: policy,
+      privateMediaState: state,
     );
   }
 
@@ -98,10 +112,15 @@ void main() {
     Locale locale = const Locale('en'),
     DirectReceivedMediaEgressHandler? onMediaEgress,
     DirectReceivedMediaInfoLoader? onLoadMediaInfo,
+    DirectPrivateMediaActionDecisionLoader? onLoadMediaActionDecision,
     ValueChanged<String>? onDeleteMediaMessage,
     ValueChanged<String>? onQuoteReply,
     ValueChanged<String>? onDeleteMessage,
     String? activeQuoteText,
+    ConversationMediaViewerBuilder? mediaViewerBuilder,
+    MediaPictureInPictureControllerFactory? pictureInPictureControllerFactory,
+    MediaPictureInPictureAuthorizationLoader? loadPictureInPictureAuthorization,
+    MediaViewerResumeStore? mediaViewerResumeStore,
   }) {
     return MaterialApp(
       locale: locale,
@@ -121,8 +140,13 @@ void main() {
           onDeleteMessage: onDeleteMessage,
           onMediaEgress: onMediaEgress,
           onLoadMediaInfo: onLoadMediaInfo,
+          onLoadMediaActionDecision: onLoadMediaActionDecision,
           onDeleteMediaMessage: onDeleteMediaMessage,
           activeQuoteText: activeQuoteText,
+          mediaViewerBuilder: mediaViewerBuilder,
+          pictureInPictureControllerFactory: pictureInPictureControllerFactory,
+          loadPictureInPictureAuthorization: loadPictureInPictureAuthorization,
+          mediaViewerResumeStore: mediaViewerResumeStore,
         ),
       ),
     );
@@ -225,7 +249,12 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
 
       final egressCalls =
-          <({DirectReceivedMediaActionIdentity identity, MediaEgressDestination destination})>[];
+          <
+            ({
+              DirectReceivedMediaActionIdentity identity,
+              MediaEgressDestination destination,
+            })
+          >[];
       final infoCalls = <DirectReceivedMediaActionIdentity>[];
       final deleteMediaCalls = <String>[];
 
@@ -369,7 +398,12 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
 
       final egressCalls =
-          <({DirectReceivedMediaActionIdentity identity, MediaEgressDestination destination})>[];
+          <
+            ({
+              DirectReceivedMediaActionIdentity identity,
+              MediaEgressDestination destination,
+            })
+          >[];
 
       final message = makeMessage(
         id: 'msg-parity',
@@ -448,10 +482,7 @@ void main() {
         expect(find.byKey(key), findsOneWidget, reason: 'viewer missing $key');
       }
       expect(find.byKey(const ValueKey('media_action_forward')), findsNothing);
-      expect(
-        find.byKey(const ValueKey('media_action_bookmark')),
-        findsNothing,
-      );
+      expect(find.byKey(const ValueKey('media_action_bookmark')), findsNothing);
 
       // Page A action carries attachment A...
       await tester.tap(find.byKey(const ValueKey('media_action_share')));
@@ -631,10 +662,7 @@ void main() {
       expect(infoCalls, hasLength(1));
       expect(infoCalls.single.messageId, 'msg-info');
       expect(infoCalls.single.attachmentId, 'att-img');
-      expect(
-        find.byKey(DirectReceivedMediaInfoSheet.sheetKey),
-        findsOneWidget,
-      );
+      expect(find.byKey(DirectReceivedMediaInfoSheet.sheetKey), findsOneWidget);
       expect(
         find.descendant(
           of: find.byKey(DirectReceivedMediaInfoSheet.senderValueKey),
@@ -717,71 +745,389 @@ void main() {
     },
   );
 
+  testWidgets('viewer and bubble reply quote the owning message exactly once', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1080, 2160);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final quoteCalls = <String>[];
+
+    final message = makeMessage(
+      id: 'msg-reply',
+      text: 'reply row',
+      media: [
+        makeAttachment(
+          id: 'att-r',
+          messageId: 'msg-reply',
+          localPath: writeMediaFile('reply.jpg'),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      buildScreen(
+        messages: [message],
+        onQuoteReply: quoteCalls.add,
+        onDeleteMediaMessage: (_) {},
+        onLoadMediaInfo: (_) async =>
+            makeInfo(mime: 'image/jpeg', mediaType: 'image'),
+        onMediaEgress: (identity, destination) async =>
+            performedOutcome(destination, identity.attachmentId),
+      ),
+    );
+    await pumpFrames(tester);
+
+    // Bubble reply: exactly one quote callback with the OWNING message id
+    // (never the attachment id), and the transient overlay closes.
+    await tester.longPress(cell('msg-reply', 'att-r'));
+    await pumpFrames(tester);
+    await tester.tap(find.byKey(MessageContextOverlay.replyActionKey));
+    await pumpFrames(tester);
+    expect(quoteCalls, ['msg-reply']);
+    expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
+
+    // Viewer reply: closes the viewer and quotes the same owning message.
+    await tester.tap(cell('msg-reply', 'att-r'));
+    await pumpFrames(tester);
+    await tester.tap(find.byKey(const ValueKey('media_action_reply')));
+    await pumpFrames(tester);
+    expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
+    expect(quoteCalls, ['msg-reply', 'msg-reply']);
+
+    // The active quote preview renders once the wired layer echoes it back.
+    await tester.pumpWidget(
+      buildScreen(
+        messages: [message],
+        onQuoteReply: quoteCalls.add,
+        activeQuoteText: 'reply row',
+      ),
+    );
+    await pumpFrames(tester);
+    expect(find.text('reply row'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
-    'viewer and bubble reply quote the owning message exactly once',
+    'private terminal and stale parents never enter typed or legacy ordinary viewers',
     (tester) async {
       tester.view.physicalSize = const Size(1080, 2160);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
-      final quoteCalls = <String>[];
-
-      final message = makeMessage(
-        id: 'msg-reply',
-        text: 'reply row',
+      final availableAttachment = makeAttachment(
+        id: 'att-private',
+        messageId: 'msg-private',
+        localPath: writeMediaFile('private.jpg'),
+      );
+      final availablePrivate = makeMessage(
+        id: 'msg-private',
+        text: 'SECRET private caption',
+        media: [availableAttachment],
+        policy: const PrivateMediaPolicy.protected(),
+        state: PrivateMediaLifecycleState.available,
+      );
+      final terminalPrivate = makeMessage(
+        id: 'msg-terminal',
+        text: 'SECRET terminal caption',
         media: [
           makeAttachment(
-            id: 'att-r',
-            messageId: 'msg-reply',
-            localPath: writeMediaFile('reply.jpg'),
+            id: 'att-terminal',
+            messageId: 'msg-terminal',
+            localPath: writeMediaFile('terminal.jpg'),
           ),
         ],
+        policy: const PrivateMediaPolicy.viewOnce(),
+        state: PrivateMediaLifecycleState.expired,
       );
 
       await tester.pumpWidget(
-        buildScreen(
-          messages: [message],
-          onQuoteReply: quoteCalls.add,
-          onDeleteMediaMessage: (_) {},
-          onLoadMediaInfo: (_) async =>
-              makeInfo(mime: 'image/jpeg', mediaType: 'image'),
-          onMediaEgress: (identity, destination) async =>
-              performedOutcome(destination, identity.attachmentId),
-        ),
+        buildScreen(messages: [availablePrivate, terminalPrivate]),
       );
       await pumpFrames(tester);
-
-      // Bubble reply: exactly one quote callback with the OWNING message id
-      // (never the attachment id), and the transient overlay closes.
-      await tester.longPress(cell('msg-reply', 'att-r'));
-      await pumpFrames(tester);
-      await tester.tap(find.byKey(MessageContextOverlay.replyActionKey));
-      await pumpFrames(tester);
-      expect(quoteCalls, ['msg-reply']);
-      expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
-
-      // Viewer reply: closes the viewer and quotes the same owning message.
-      await tester.tap(cell('msg-reply', 'att-r'));
-      await pumpFrames(tester);
-      await tester.tap(find.byKey(const ValueKey('media_action_reply')));
+      expect(cell('msg-private', 'att-private'), findsNothing);
+      expect(cell('msg-terminal', 'att-terminal'), findsNothing);
+      expect(find.byKey(const ValueKey('private-media-open')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('private-terminal-expired')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('SECRET'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('private-media-open')));
       await pumpFrames(tester);
       expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
-      expect(quoteCalls, ['msg-reply', 'msg-reply']);
 
-      // The active quote preview renders once the wired layer echoes it back.
+      var legacyBuilderCalls = 0;
       await tester.pumpWidget(
         buildScreen(
-          messages: [message],
-          onQuoteReply: quoteCalls.add,
-          activeQuoteText: 'reply row',
+          messages: [availablePrivate],
+          mediaViewerBuilder:
+              ({required localPath, required allPaths, required initialIndex}) {
+                legacyBuilderCalls++;
+                return const SizedBox.shrink();
+              },
         ),
       );
       await pumpFrames(tester);
-      expect(find.text('reply row'), findsWidgets);
+      await tester.tap(find.byKey(const ValueKey('private-media-open')));
+      await pumpFrames(tester);
+      expect(legacyBuilderCalls, 0);
+
+      final ordinarySnapshotAttachment = makeAttachment(
+        id: 'att-stale',
+        messageId: 'msg-stale',
+        localPath: writeMediaFile('stale.jpg'),
+      );
+      final ordinarySnapshot = makeMessage(
+        id: 'msg-stale',
+        text: 'SECRET stale caption',
+        media: [ordinarySnapshotAttachment],
+      );
+      final currentPrivate = makeMessage(
+        id: 'msg-stale',
+        text: 'SECRET stale caption',
+        media: [ordinarySnapshotAttachment],
+        policy: PrivateMediaPolicy.disappearing(3600),
+        state: PrivateMediaLifecycleState.available,
+      );
+      var currentDecisionLoads = 0;
+      await tester.pumpWidget(
+        buildScreen(
+          messages: [ordinarySnapshot],
+          onLoadMediaActionDecision: (identity) async {
+            currentDecisionLoads++;
+            return DirectPrivateMediaActionEligibility.evaluate(
+              parent: currentPrivate,
+              attachment: ordinarySnapshotAttachment,
+              expectedMessageId: identity.messageId,
+              expectedAttachmentId: identity.attachmentId,
+            );
+          },
+        ),
+      );
+      await pumpFrames(tester);
+      await tester.tap(cell('msg-stale', 'att-stale'));
+      await pumpFrames(tester);
+      expect(currentDecisionLoads, 1);
+      expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets(
+    'terminal private quote copy stays exactly generic after attachment cleanup',
+    (tester) async {
+      final terminalParent = makeMessage(
+        id: 'private-quoted-parent',
+        text: '',
+        media: const [],
+        policy: const PrivateMediaPolicy.viewOnce(),
+        state: PrivateMediaLifecycleState.consumed,
+      );
+      final reply = makeMessage(
+        id: 'reply-with-private-quote',
+        text: 'reply',
+        quotedMessageId: terminalParent.id,
+      );
+
+      await tester.pumpWidget(buildScreen(messages: [terminalParent, reply]));
+      await pumpFrames(tester);
+
+      expect(find.text('Private media'), findsOneWidget);
+      expect(find.textContaining('SECRET'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('ordinary outgoing media preserves viewer but denies PiP', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1080, 2160);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final attachment = makeAttachment(
+      id: 'att-outgoing-viewer',
+      messageId: 'msg-outgoing-viewer',
+      localPath: writeMediaFile('outgoing-viewer.mp4'),
+      mime: 'video/mp4',
+      mediaType: 'video',
+    );
+    final outgoing = makeMessage(
+      id: 'msg-outgoing-viewer',
+      isIncoming: false,
+      media: [attachment],
+    );
+    await tester.pumpWidget(
+      buildScreen(
+        messages: [outgoing],
+        onLoadMediaActionDecision: (identity) async =>
+            DirectPrivateMediaActionEligibility.evaluate(
+              parent: outgoing,
+              attachment: attachment,
+              expectedMessageId: identity.messageId,
+              expectedAttachmentId: identity.attachmentId,
+              requireIncoming: false,
+            ),
+      ),
+    );
+    await pumpFrames(tester);
+
+    await tester.tap(cell('msg-outgoing-viewer', 'att-outgoing-viewer'));
+    await pumpFrames(tester);
+    expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+    final viewer = tester.widget<FullScreenTypedMediaViewer>(
+      find.byType(FullScreenTypedMediaViewer),
+    );
+    expect(viewer.items.single.canEnterPictureInPicture, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'direct received-video route forwards exact PiP composition to the typed viewer',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2160);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final attachment = makeAttachment(
+        id: 'att-direct-pip',
+        messageId: 'msg-direct-pip',
+        localPath: writeMediaFile('direct-pip.mp4'),
+        mime: 'video/mp4',
+        mediaType: 'video',
+        durationMs: 9000,
+      );
+      final message = makeMessage(id: 'msg-direct-pip', media: [attachment]);
+      final gateway = _DirectRoutePictureInPictureGateway();
+      final resume = _DirectRouteResumeStore();
+      final authorized = <MediaViewerItem>[];
+
+      await tester.pumpWidget(
+        buildScreen(
+          messages: [message],
+          onLoadMediaActionDecision: (identity) async =>
+              DirectPrivateMediaActionEligibility.evaluate(
+                parent: message,
+                attachment: attachment,
+                expectedMessageId: identity.messageId,
+                expectedAttachmentId: identity.attachmentId,
+              ),
+          pictureInPictureControllerFactory:
+              ({required reloadCurrent, required restorePlayback}) =>
+                  MediaPictureInPictureController(
+                    gateway: gateway,
+                    pathAuthority: _DirectRoutePathAuthority(),
+                    reloadCurrent: reloadCurrent,
+                    resumeStore: resume,
+                    restorePlayback: restorePlayback,
+                    pollTicks: const Stream<void>.empty(),
+                  ),
+          loadPictureInPictureAuthorization: (item) async {
+            authorized.add(item);
+            return MediaPictureInPictureAuthorization(
+              item: item,
+              generation: 1,
+              policyState: MediaPictureInPicturePolicyState.ordinary,
+              isIncoming: true,
+              isTransferComplete: true,
+              routeActive: true,
+            );
+          },
+          mediaViewerResumeStore: resume,
+        ),
+      );
+      await pumpFrames(tester);
+      await tester.tap(cell('msg-direct-pip', 'att-direct-pip'));
+      await pumpFrames(tester);
+
+      final viewer = tester.widget<FullScreenTypedMediaViewer>(
+        find.byType(FullScreenTypedMediaViewer),
+      );
+      expect(viewer.items.single.owner, MediaOwnerLane.direct);
+      expect(viewer.items.single.messageId, 'msg-direct-pip');
+      expect(viewer.items.single.canEnterPictureInPicture, isTrue);
+      expect(viewer.pictureInPictureControllerFactory, isNotNull);
+      expect(viewer.loadPictureInPictureAuthorization, isNotNull);
+      expect(
+        find.byKey(const ValueKey('media_action_picture_in_picture')),
+        findsOneWidget,
+      );
+      expect(authorized, isNotEmpty);
+      expect(authorized.last.attachmentId, 'att-direct-pip');
+      expect(gateway.capabilityCalls, greaterThanOrEqualTo(1));
+      expect(gateway.startCalls, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('private Info exposes only generic lifecycle presentation', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1080, 2160);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final message = makeMessage(
+      id: 'msg-private-info',
+      media: [
+        makeAttachment(
+          id: 'att-private-info',
+          messageId: 'msg-private-info',
+          localPath: writeMediaFile('private-info.jpg'),
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      buildScreen(
+        messages: [message],
+        onLoadMediaInfo: (_) async => DirectReceivedMediaInfo(
+          isIncoming: true,
+          timestamp: '2026-02-09T15:30:00.000Z',
+          mime: 'video/SECRET-mime',
+          mediaType: 'video',
+          sizeBytes: 987654,
+          width: 1920,
+          height: 1080,
+          durationMs: 83000,
+          downloadStatus: 'done',
+          privateInfo: const DirectPrivateMediaSafeInfo(
+            mode: PrivateMediaMode.viewOnce,
+            state: PrivateMediaLifecycleState.consumed,
+            terminalAtMs: 1_800_000_000_100,
+          ),
+        ),
+      ),
+    );
+    await pumpFrames(tester);
+
+    await tester.longPress(cell('msg-private-info', 'att-private-info'));
+    await pumpFrames(tester);
+    await tester.tap(find.byKey(MessageContextOverlay.infoActionKey));
+    await pumpFrames(tester);
+
+    expect(find.text('Private media'), findsOneWidget);
+    expect(find.text('consumed'), findsOneWidget);
+    expect(find.textContaining('SECRET-mime'), findsNothing);
+    expect(find.byKey(DirectReceivedMediaInfoSheet.sizeValueKey), findsNothing);
+    expect(
+      find.byKey(DirectReceivedMediaInfoSheet.dimensionsValueKey),
+      findsNothing,
+    );
+    expect(
+      find.byKey(DirectReceivedMediaInfoSheet.durationValueKey),
+      findsNothing,
+    );
+    expect(find.textContaining('1920'), findsNothing);
+    expect(find.textContaining('1:23'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'core media actions stay reachable in German and Arabic small viewports',
@@ -844,11 +1190,9 @@ void main() {
         await pumpFrames(tester);
         // Delete dispatch is post-frame; give it one more frame.
         await tester.pump();
-        expect(
-          deleteMediaCalls,
-          ['msg-l10n'],
-          reason: 'delete unreachable under $locale',
-        );
+        expect(deleteMediaCalls, [
+          'msg-l10n',
+        ], reason: 'delete unreachable under $locale');
         expect(
           tester.takeException(),
           isNull,
@@ -857,4 +1201,92 @@ void main() {
       }
     },
   );
+
+  testWidgets(
+    'corrupt protected visual renders unsupported guidance and never an open affordance',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 568);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final attachment = makeAttachment(
+        id: 'att-corrupt-private',
+        messageId: 'msg-corrupt-private',
+        localPath: writeMediaFile('corrupt-private.jpg'),
+        downloadStatus: 'integrity_failed',
+      );
+      final message = makeMessage(
+        id: 'msg-corrupt-private',
+        text: 'SECRET corrupt caption',
+        media: [attachment],
+        policy: const PrivateMediaPolicy.protected(),
+        state: PrivateMediaLifecycleState.available,
+      );
+
+      await tester.pumpWidget(buildScreen(messages: [message]));
+      await pumpFrames(tester);
+
+      expect(
+        find.byKey(const ValueKey('private-media-unsupported')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('private-media-open')), findsNothing);
+      expect(find.textContaining('SECRET'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+}
+
+class _DirectRoutePathAuthority implements AppOwnedMediaPathAuthority {
+  @override
+  Future<String?> authorize(String? candidatePath) async => candidatePath;
+}
+
+class _DirectRouteResumeStore implements MediaViewerResumeStore {
+  @override
+  Future<int?> readResumePosition(MediaViewerItem item) async => null;
+
+  @override
+  Future<void> writeResumePosition(
+    MediaViewerItem item,
+    int positionMs,
+  ) async {}
+}
+
+class _DirectRoutePictureInPictureGateway implements PictureInPictureGateway {
+  int capabilityCalls = 0;
+  int startCalls = 0;
+
+  @override
+  Stream<PictureInPictureEvent> get events => const Stream.empty();
+
+  @override
+  Future<PictureInPictureCapability> capability() async {
+    capabilityCalls++;
+    return const PictureInPictureCapability.androidSupported();
+  }
+
+  @override
+  Future<PictureInPictureStartOutcome> start(
+    PictureInPictureRequest request,
+  ) async {
+    startCalls++;
+    return PictureInPictureStartOutcome.platformFailure;
+  }
+
+  @override
+  Future<PictureInPictureCommandResult> activate(
+    String session,
+    String attachment,
+  ) async => const PictureInPictureCommandResult.success();
+
+  @override
+  Future<PictureInPictureCommandResult> stop(
+    String session,
+    String attachment,
+  ) async => const PictureInPictureCommandResult.success();
+
+  @override
+  Future<void> dispose() async {}
 }

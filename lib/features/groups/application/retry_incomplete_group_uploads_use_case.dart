@@ -10,6 +10,7 @@ import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
+import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
@@ -53,6 +54,8 @@ Future<int> retryIncompleteGroupUploads({
   UploadMediaFn uploadMediaFn = uploadMedia,
   MediaFileManager? mediaFileManager,
   String? messageId,
+  GroupPrivateMediaAvailability privateMediaAvailability =
+      productionGroupPrivateMediaAvailability,
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
 }) async {
   final retryStopwatch = Stopwatch()..start();
@@ -199,6 +202,28 @@ Future<int> retryIncompleteGroupUploads({
           continue;
         }
 
+        if (parentMessage.privateMediaPolicy.isUnsupported ||
+            (parentMessage.privateMediaPolicy.isPrivate &&
+                !privateMediaAvailability.isEnabled) ||
+            (parentMessage.privateMediaPolicy.isPrivate &&
+                !await requalifyCurrentPrivateGroupMediaSend(
+                  groupRepo: groupRepo,
+                  msgRepo: groupMsgRepo,
+                  expectedParent: parentMessage,
+                  senderPeerId: identity.peerId,
+                ))) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_INCOMPLETE_GROUP_UPLOAD_SKIP_PRIVATE_POLICY',
+            details: {
+              'messageId': messageId.length > 8
+                  ? messageId.substring(0, 8)
+                  : messageId,
+            },
+          );
+          continue;
+        }
+
         final allAttachments = await mediaAttachmentRepo
             .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group);
 
@@ -217,7 +242,7 @@ Future<int> retryIncompleteGroupUploads({
         }
 
         final members = await groupRepo.getMembers(parentMessage.groupId);
-        final allowedPeers = groupMediaAllowedPeersForMembers(members);
+        var allowedPeers = groupMediaAllowedPeersForMembers(members);
 
         final preparedUploads = <_PreparedGroupRetryUpload>[];
         final resolvedPendingAttachments = <String, MediaAttachment>{};
@@ -428,6 +453,33 @@ Future<int> retryIncompleteGroupUploads({
           continue;
         }
 
+        if (parentMessage.privateMediaPolicy.isPrivate) {
+          final preUploadQualification =
+              await qualifyCurrentPrivateGroupMediaSend(
+                groupRepo: groupRepo,
+                msgRepo: groupMsgRepo,
+                expectedParent: parentMessage,
+                senderPeerId: identity.peerId,
+                inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+              );
+          if (preUploadQualification == null) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RETRY_INCOMPLETE_GROUP_UPLOAD_SKIP_PRIVATE_POLICY',
+              details: {
+                'messageId': messageId.length > 8
+                    ? messageId.substring(0, 8)
+                    : messageId,
+                'reason': 'pre_upload_requalification_failed',
+              },
+            );
+            continue;
+          }
+          allowedPeers = groupMediaAllowedPeersForMembers(
+            preUploadQualification.members,
+          );
+        }
+
         final uploadResults = await Future.wait(
           preparedUploads.map((plan) async {
             try {
@@ -533,6 +585,27 @@ Future<int> retryIncompleteGroupUploads({
           continue;
         }
 
+        if (refreshedMessage!.privateMediaPolicy.isUnsupported ||
+            (refreshedMessage.privateMediaPolicy.isPrivate &&
+                !await requalifyCurrentPrivateGroupMediaSend(
+                  groupRepo: groupRepo,
+                  msgRepo: groupMsgRepo,
+                  expectedParent: refreshedMessage,
+                  senderPeerId: identity.peerId,
+                ))) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_INCOMPLETE_GROUP_UPLOAD_ABORT_FINAL_SEND',
+            details: {
+              'messageId': messageId.length > 8
+                  ? messageId.substring(0, 8)
+                  : messageId,
+              'reason': 'private_media_parent_not_currently_qualified',
+            },
+          );
+          continue;
+        }
+
         final fullAttachmentList = refreshedAttachments
             .where((attachment) => attachment.downloadStatus == 'done')
             .toList(growable: false);
@@ -546,7 +619,7 @@ Future<int> retryIncompleteGroupUploads({
           bridge: bridge,
           groupRepo: groupRepo,
           msgRepo: groupMsgRepo,
-          groupId: refreshedMessage!.groupId,
+          groupId: refreshedMessage.groupId,
           text: refreshedMessage.text,
           senderPeerId: identity.peerId,
           senderPublicKey: identity.publicKey,
@@ -558,6 +631,12 @@ Future<int> retryIncompleteGroupUploads({
           timestamp: refreshedMessage.timestamp,
           quotedMessageId: refreshedMessage.quotedMessageId,
           isForwarded: refreshedMessage.isForwarded,
+          privateMediaPolicy: refreshedMessage.privateMediaPolicy,
+          privateMediaAvailability: privateMediaAvailability,
+          expectedPrivateParentBeforeDispatch:
+              refreshedMessage.privateMediaPolicy.isPrivate
+              ? refreshedMessage
+              : null,
           senderDeviceId: currentSenderDeviceId,
           senderTransportPeerId: currentSenderDeviceId,
           mediaAttachments: fullAttachmentList,

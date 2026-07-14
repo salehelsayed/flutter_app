@@ -2668,6 +2668,346 @@ func TestHandleInboxStream_StoreAtCapEvictsAndPushes(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Plan 256 — typed direct-reaction wake rollout.
+// ---------------------------------------------------------------------------
+
+func directReactionEnvelope(eventID, action, targetMessageID, senderPeerID string) string {
+	envelope := map[string]interface{}{
+		"type":         "message_reaction",
+		"version":      "2",
+		"senderPeerId": senderPeerID,
+		"encrypted": map[string]interface{}{
+			"kem":        "fixture-kem",
+			"ciphertext": "fixture-ciphertext",
+			"nonce":      "fixture-nonce",
+		},
+	}
+	if eventID != "" {
+		envelope["eventId"] = eventID
+	}
+	if action != "" {
+		envelope["action"] = action
+	}
+	if targetMessageID != "" {
+		envelope["targetMessageId"] = targetMessageID
+	}
+	encoded, _ := json.Marshal(envelope)
+	return string(encoded)
+}
+
+func configuredReactionInbox(t *testing.T) (*InboxStore, *recordingPushSender) {
+	t.Helper()
+	tokenStore := newMemoryPushTokenStore()
+	tokenStore.RegisterToken(
+		"peer-recipient",
+		"fcm-token",
+		"ios",
+		directReactionCapability,
+	)
+	push := NewPushServiceWithBackend(tokenStore)
+	recorder := newRecordingPushSender()
+	push.sender = recorder.Send
+	inbox := NewInboxStore(push)
+	inbox.SetDirectReactionPushEnabled(true)
+	inbox.RegisterWakeTokens("peer-recipient", []string{"reaction-wake-alice"})
+	return inbox, recorder
+}
+
+func waitForRecordedPush(t *testing.T, recorder *recordingPushSender) *messaging.Message {
+	t.Helper()
+	select {
+	case <-recorder.sentSignal:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for reaction push")
+	}
+	msg := recorder.LastMessage()
+	if msg == nil {
+		t.Fatal("reaction push signal arrived without a recorded message")
+	}
+	return msg
+}
+
+func assertNoRecordedPush(t *testing.T, recorder *recordingPushSender) {
+	t.Helper()
+	select {
+	case <-recorder.sentSignal:
+		t.Fatal("unexpected reaction push")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestInboxStore_ReactionAddRequiresCapabilityAndAuthorization(t *testing.T) {
+	inbox, recorder := configuredReactionInbox(t)
+	envelope := directReactionEnvelope(
+		"reaction-event-123",
+		"add",
+		"target-message-7",
+		"peer-alice",
+	)
+
+	result, err := inbox.Store("peer-recipient", inboxMessage{
+		From:      "peer-alice",
+		Message:   envelope,
+		Timestamp: time.Now().UnixMilli(),
+		WakeToken: "reaction-wake-alice",
+	})
+	if err != nil || result != InboxStoreResultStored {
+		t.Fatalf("authorized reaction store: result=%q err=%v", result, err)
+	}
+	if inbox.Count("peer-recipient") != 1 {
+		t.Fatalf("stored reactions = %d, want 1", inbox.Count("peer-recipient"))
+	}
+
+	msg := waitForRecordedPush(t, recorder)
+	if msg.Notification != nil {
+		t.Fatal("reaction push must be Android data-only (no top-level notification)")
+	}
+	if msg.Android == nil || msg.Android.Priority != "high" || msg.Android.Notification != nil {
+		t.Fatalf("Android reaction push must be high-priority data-only: %#v", msg.Android)
+	}
+	wantData := map[string]string{
+		"type":               "message_reaction",
+		"sender_id":          "peer-alice",
+		"event_id":           "reaction-event-123",
+		"target_message_id":  "target-message-7",
+		"action":             "add",
+		"capability_version": directReactionCapability,
+		"envelope_version":   "2",
+		"kem":                "fixture-kem",
+		"ciphertext":         "fixture-ciphertext",
+		"nonce":              "fixture-nonce",
+	}
+	if !mapsEqualStringString(msg.Data, wantData) {
+		t.Fatalf("reaction push data = %#v, want exact ciphertext-only allowlist %#v", msg.Data, wantData)
+	}
+}
+
+func TestInboxHandler_ReactionPushBindsAuthenticatedRemotePeer(t *testing.T) {
+	tokenStore := newMemoryPushTokenStore()
+	push := NewPushServiceWithBackend(tokenStore)
+	recorder := newRecordingPushSender()
+	push.sender = recorder.Send
+	inbox := NewInboxStore(push)
+	inbox.SetDirectReactionPushEnabled(true)
+	groupInbox := NewGroupInboxStore(500, 7*24*time.Hour)
+	env := setupInboxStreamEnv(t, inbox, groupInbox)
+
+	remotePeer := env.sender.ID().String()
+	recipientPeer := env.recipient.ID().String()
+	tokenStore.RegisterToken(recipientPeer, "recipient-token", "ios", directReactionCapability)
+	inbox.RegisterWakeTokens(recipientPeer, []string{"reaction-wake"})
+
+	stream, err := env.sender.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	defer stream.Close()
+	sendInboxReq(t, stream, inboxRequest{
+		Action:    "store",
+		To:        recipientPeer,
+		From:      env.intruder.ID().String(),
+		Message:   directReactionEnvelope("reaction-auth-1", "add", "target-auth-1", remotePeer),
+		WakeToken: "reaction-wake",
+	})
+	resp := recvInboxResp(t, stream)
+	if resp.Status != "OK" || resp.StoreStatus != string(InboxStoreResultStored) {
+		t.Fatalf("store response = %#v, want OK/stored", resp)
+	}
+
+	msg := waitForRecordedPush(t, recorder)
+	if got := msg.Data["sender_id"]; got != remotePeer {
+		t.Fatalf("push sender_id = %q, want authenticated remote peer %q", got, remotePeer)
+	}
+	pending, _ := inbox.RetrievePendingWithMeta(recipientPeer, 10)
+	if len(pending) != 1 || pending[0].From != remotePeer {
+		t.Fatalf("stored sender attribution = %#v, want authenticated remote peer", pending)
+	}
+}
+
+func TestBuildReactionPush_TimeoutFallbackNeverSaysNewMessage(t *testing.T) {
+	msg := buildReactionPushMessage(
+		"fcm-token",
+		"peer-alice",
+		directReactionEnvelope("reaction-timeout-1", "add", "target-timeout-1", "peer-alice"),
+	)
+	if msg == nil || msg.APNS == nil || msg.APNS.Payload == nil || msg.APNS.Payload.Aps == nil {
+		t.Fatal("reaction builder must produce an APNs fallback")
+	}
+	aps := msg.APNS.Payload.Aps
+	if aps.Alert == nil || aps.Alert.Title != reactionPushTitle || aps.Alert.Body != reactionPushBody {
+		t.Fatalf("reaction APNs fallback = %#v, want fixed typed copy", aps.Alert)
+	}
+	if aps.Alert.Title == pushNotificationTitle || aps.Alert.Body == pushNotificationBody {
+		t.Fatal("reaction timeout fallback must never say New Message")
+	}
+	if aps.Sound != "" {
+		t.Fatalf("reaction provider fallback sound = %q, want silent NSE fallback", aps.Sound)
+	}
+	if !aps.ContentAvailable || !aps.MutableContent || aps.ThreadID != "peer-alice" ||
+		aps.Category != reactionNotificationCategory {
+		t.Fatalf("reaction APNs lifecycle fields = %#v", aps)
+	}
+	if msg.APNS.Headers["apns-push-type"] != "alert" ||
+		msg.APNS.Headers["apns-priority"] != "10" {
+		t.Fatalf("reaction APNs headers = %#v, want alert-class silent fallback", msg.APNS.Headers)
+	}
+	wantIdentity := boundedReactionEventIdentity("reaction-timeout-1")
+	if got := msg.APNS.Headers["apns-collapse-id"]; got != wantIdentity {
+		t.Fatalf("apns-collapse-id = %q, want %q", got, wantIdentity)
+	}
+	if len(wantIdentity) > 64 {
+		t.Fatalf("bounded identity length = %d, exceeds APNs limit", len(wantIdentity))
+	}
+	if msg.Android == nil || msg.Android.CollapseKey != wantIdentity {
+		t.Fatalf("Android collapse key = %#v, want %q", msg.Android, wantIdentity)
+	}
+}
+
+func TestInboxStore_ReactionNonAddOrIneligibleNeverSendsPush(t *testing.T) {
+	tests := []struct {
+		name          string
+		envelope      string
+		wakeToken     string
+		configure     func(*InboxStore, *memoryPushTokenStore)
+		wantStore     InboxStoreResult
+		registeredSet bool
+	}{
+		{name: "remove", envelope: directReactionEnvelope("reaction-remove", "remove", "target-1", "peer-alice"), wakeToken: "reaction-wake", wantStore: InboxStoreResultStored, registeredSet: true},
+		{name: "unknown action", envelope: directReactionEnvelope("reaction-unknown", "dance", "target-1", "peer-alice"), wakeToken: "reaction-wake", wantStore: InboxStoreResultStored, registeredSet: true},
+		{name: "malformed action", envelope: directReactionEnvelope("reaction-malformed-action", " add ", "target-1", "peer-alice"), wakeToken: "reaction-wake", wantStore: InboxStoreResultStored, registeredSet: true},
+		{name: "missing action", envelope: directReactionEnvelope("reaction-missing-action", "", "target-1", "peer-alice"), wakeToken: "reaction-wake", wantStore: InboxStoreResultStored, registeredSet: true},
+		{name: "missing event id", envelope: directReactionEnvelope("", "add", "target-1", "peer-alice"), wakeToken: "reaction-wake", wantStore: InboxStoreResultStored, registeredSet: true},
+		{name: "malformed event id", envelope: directReactionEnvelope(" reaction-malformed-id", "add", "target-1", "peer-alice"), wakeToken: "reaction-wake", wantStore: InboxStoreResultStored, registeredSet: true},
+		{name: "missing target", envelope: directReactionEnvelope("reaction-missing-target", "add", "", "peer-alice"), wakeToken: "reaction-wake", wantStore: InboxStoreResultStored, registeredSet: true},
+		{name: "malformed target", envelope: directReactionEnvelope("reaction-malformed-target", "add", " ", "peer-alice"), wakeToken: "reaction-wake", wantStore: InboxStoreResultStored, registeredSet: true},
+		{name: "envelope sender mismatch", envelope: directReactionEnvelope("reaction-sender-mismatch", "add", "target-1", "peer-forged"), wakeToken: "reaction-wake", wantStore: InboxStoreResultStored, registeredSet: true},
+		{name: "legacy v2", envelope: `{"type":"message_reaction","version":"2","senderPeerId":"peer-alice","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`, wakeToken: "reaction-wake", wantStore: InboxStoreResultStored, registeredSet: true},
+		{name: "unauthorized token", envelope: directReactionEnvelope("reaction-unauthorized", "add", "target-1", "peer-alice"), wakeToken: "wrong-token", wantStore: InboxStoreResultStored, registeredSet: true},
+		{name: "no recipient-issued set does not fail open", envelope: directReactionEnvelope("reaction-no-set", "add", "target-1", "peer-alice"), wakeToken: "anything", wantStore: InboxStoreResultStored},
+		{name: "incapable recipient", envelope: directReactionEnvelope("reaction-incapable", "add", "target-1", "peer-alice"), wakeToken: "reaction-wake", wantStore: InboxStoreResultStored, registeredSet: true, configure: func(_ *InboxStore, tokens *memoryPushTokenStore) {
+			tokens.RegisterToken("peer-recipient", "fcm-token", "ios")
+		}},
+		{name: "disabled rollout", envelope: directReactionEnvelope("reaction-disabled", "add", "target-1", "peer-alice"), wakeToken: "reaction-wake", wantStore: InboxStoreResultStored, registeredSet: true, configure: func(inbox *InboxStore, _ *memoryPushTokenStore) { inbox.SetDirectReactionPushEnabled(false) }},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tokens := newMemoryPushTokenStore()
+			tokens.RegisterToken("peer-recipient", "fcm-token", "ios", directReactionCapability)
+			push := NewPushServiceWithBackend(tokens)
+			recorder := newRecordingPushSender()
+			push.sender = recorder.Send
+			inbox := NewInboxStore(push)
+			inbox.SetDirectReactionPushEnabled(true)
+			if tc.registeredSet {
+				inbox.RegisterWakeTokens("peer-recipient", []string{"reaction-wake"})
+			}
+			if tc.configure != nil {
+				tc.configure(inbox, tokens)
+			}
+
+			result, err := inbox.Store("peer-recipient", inboxMessage{
+				From: "peer-alice", Message: tc.envelope,
+				Timestamp: time.Now().UnixMilli(), WakeToken: tc.wakeToken,
+			})
+			if err != nil || result != tc.wantStore {
+				t.Fatalf("Store() = %q, %v; want %q, nil", result, err, tc.wantStore)
+			}
+			if inbox.Count("peer-recipient") != 1 {
+				t.Fatalf("custody count = %d, want 1", inbox.Count("peer-recipient"))
+			}
+			assertNoRecordedPush(t, recorder)
+		})
+	}
+
+	t.Run("duplicate", func(t *testing.T) {
+		inbox, recorder := configuredReactionInbox(t)
+		envelope := directReactionEnvelope("reaction-duplicate", "add", "target-1", "peer-alice")
+		entry := inboxMessage{From: "peer-alice", Message: envelope, Timestamp: time.Now().UnixMilli(), WakeToken: "reaction-wake-alice"}
+		first, err := inbox.Store("peer-recipient", entry)
+		if err != nil || first != InboxStoreResultStored {
+			t.Fatalf("first Store() = %q, %v", first, err)
+		}
+		waitForRecordedPush(t, recorder)
+		second, err := inbox.Store("peer-recipient", entry)
+		if err != nil || second != InboxStoreResultDuplicate {
+			t.Fatalf("duplicate Store() = %q, %v; want duplicate", second, err)
+		}
+		assertNoRecordedPush(t, recorder)
+		if recorder.SendCallCount() != 1 {
+			t.Fatalf("reaction pushes = %d, want exactly 1", recorder.SendCallCount())
+		}
+	})
+}
+
+func TestInboxStore_ReactionCapabilityRolloutAndRollback(t *testing.T) {
+	tokens := newMemoryPushTokenStore()
+	push := NewPushServiceWithBackend(tokens)
+	recorder := newRecordingPushSender()
+	push.sender = recorder.Send
+	inbox := NewInboxStore(push)
+	inbox.RegisterWakeTokens("peer-recipient", []string{"reaction-wake"})
+
+	store := func(eventID string) InboxStoreResult {
+		t.Helper()
+		result, err := inbox.Store("peer-recipient", inboxMessage{
+			From:      "peer-alice",
+			Message:   directReactionEnvelope(eventID, "add", "target-1", "peer-alice"),
+			Timestamp: time.Now().UnixMilli(), WakeToken: "reaction-wake",
+		})
+		if err != nil {
+			t.Fatalf("Store(%s): %v", eventID, err)
+		}
+		return result
+	}
+
+	// Old/legacy token registration and the default-off relay both keep custody
+	// while emitting no typed wake.
+	tokens.RegisterToken("peer-recipient", "legacy-token", "ios")
+	if got := store("rollout-legacy"); got != InboxStoreResultStored {
+		t.Fatalf("legacy store = %q", got)
+	}
+	assertNoRecordedPush(t, recorder)
+	tokens.RegisterToken("peer-recipient", "capable-token", "ios", directReactionCapability)
+	if got := store("rollout-flag-off"); got != InboxStoreResultStored {
+		t.Fatalf("flag-off store = %q", got)
+	}
+	assertNoRecordedPush(t, recorder)
+
+	inbox.SetDirectReactionPushEnabled(true)
+	if got := store("rollout-enabled"); got != InboxStoreResultStored {
+		t.Fatalf("enabled store = %q", got)
+	}
+	waitForRecordedPush(t, recorder)
+
+	// Immediate rollback disables only the wake; the new envelope remains in the
+	// same opaque inbox custody as the legacy and enabled copies.
+	inbox.SetDirectReactionPushEnabled(false)
+	if got := store("rollout-rolled-back"); got != InboxStoreResultStored {
+		t.Fatalf("rollback store = %q", got)
+	}
+	assertNoRecordedPush(t, recorder)
+	if got := inbox.Count("peer-recipient"); got != 4 {
+		t.Fatalf("custody count after rollout/rollback = %d, want 4", got)
+	}
+	if recorder.SendCallCount() != 1 {
+		t.Fatalf("push calls after rollout/rollback = %d, want 1", recorder.SendCallCount())
+	}
+}
+
+func mapsEqualStringString(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for key, value := range a {
+		if b[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
 func TestHandleInboxStream_StoreReturnsExpiresAtAndOccupancy(t *testing.T) {
 	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
 	inbox := NewInboxStore(push)

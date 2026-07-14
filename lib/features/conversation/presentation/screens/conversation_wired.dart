@@ -11,14 +11,19 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/amplitude_buffer.dart';
+import 'package:flutter_app/core/media/app_owned_media_path_authority.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/downsample_waveform.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
+import 'package:flutter_app/core/media/private_media_protection_coordinator.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
+import 'package:flutter_app/core/media/picture_in_picture_gateway.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/permissions/mic_permission_prompt.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -41,6 +46,7 @@ import 'package:flutter_app/features/contacts/application/unblock_contact_use_ca
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/build_direct_media_library_batch_forward.dart';
 import 'package:flutter_app/features/conversation/application/build_received_media_forward.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/confirmation_dialog.dart';
@@ -48,6 +54,7 @@ import 'package:flutter_app/features/conversation/application/download_media_use
 import 'package:flutter_app/features/conversation/application/load_conversation_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
+import 'package:flutter_app/features/conversation/application/media_viewer_repository_resume_store.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
@@ -58,12 +65,16 @@ import 'package:flutter_app/features/conversation/domain/models/media_rejection.
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/direct_private_media_lifecycle_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/application/load_reactions_use_case.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/application/direct_media_library_batch_actions.dart';
 import 'package:flutter_app/features/conversation/application/direct_media_library_batch_delete.dart';
 import 'package:flutter_app/features/conversation/application/received_media_action_controller.dart';
+import 'package:flutter_app/features/conversation/application/private_media_action_eligibility.dart';
+import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
+import 'package:flutter_app/features/conversation/application/direct_private_media_viewer_controller.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/application/remove_reaction_use_case.dart';
@@ -85,9 +96,15 @@ import 'package:flutter_app/features/groups/domain/repositories/group_message_re
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/share/presentation/navigation/share_target_picker_route.dart';
+import 'package:flutter_app/features/share/application/direct_media_batch_forward_delivery_coordinator.dart';
+import 'package:flutter_app/features/share/application/share_batch_delivery_coordinator.dart';
+import 'package:flutter_app/features/share/presentation/navigation/direct_media_batch_forward_picker_route.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
+import 'package:flutter_app/shared/widgets/media/media_picture_in_picture_controller.dart';
+import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
 import 'conversation_screen.dart';
 import 'direct_shared_media_library_screen.dart';
+import 'direct_private_media_viewer.dart';
 
 typedef SendChatMessageFn =
     Future<(SendChatMessageResult, ConversationMessage?)> Function({
@@ -103,6 +120,7 @@ typedef SendChatMessageFn =
       String? recipientMlKemPublicKey,
       String? quotedMessageId,
       List<MediaAttachment>? mediaAttachments,
+      PrivateMediaPolicy? privateMediaPolicy,
       MediaAttachmentRepository? mediaAttachmentRepo,
       TransportMetrics? transportMetrics,
     });
@@ -136,6 +154,8 @@ typedef DownloadMediaFn =
       required MediaAttachment attachment,
       required String contactPeerId,
       required MediaOwnerLane owner,
+      MessageRepository? messageRepo,
+      MediaDownloadIntent? intent,
     });
 
 typedef EditChatMessageFn =
@@ -190,6 +210,92 @@ typedef DeleteMessageForEveryoneFn =
     });
 
 typedef DeleteContactFn = Future<void> Function(String peerId);
+
+typedef DirectMediaBatchForwardPickerLauncher =
+    Future<DirectMediaBatchForwardCompletion?> Function(
+      BuildContext context,
+      DirectMediaLibraryBatchForwardDraft draft,
+      DirectMediaBatchForwardDeliveryCoordinator deliveryCoordinator,
+    );
+
+Stream<void> _mergeDirectPictureInPictureAuthorizationStreams(
+  Iterable<Stream<void>> streams,
+) => Stream<void>.multi((controller) {
+  final subscriptions = streams
+      .map(
+        (stream) => stream.listen(
+          (_) => controller.addSync(null),
+          onError: controller.addErrorSync,
+        ),
+      )
+      .toList(growable: false);
+  controller.onCancel = () async {
+    for (final subscription in subscriptions) {
+      await subscription.cancel();
+    }
+  };
+});
+
+bool _directAttachmentChangeMatchesCurrent({
+  required MediaAttachmentAuthorizationChange change,
+  required String contactPeerId,
+  required MediaViewerItem? Function()? currentItem,
+}) {
+  if (change.owner != MediaOwnerLane.direct) return false;
+  if (change.scopeId != null && change.scopeId != contactPeerId) return false;
+  final current = currentItem?.call();
+  if (current == null) return true;
+  if (current.owner != MediaOwnerLane.direct) return false;
+  if (change.messageId != null && change.messageId != current.messageId) {
+    return false;
+  }
+  if (change.attachmentId != null &&
+      change.attachmentId != current.attachmentId) {
+    return false;
+  }
+  return true;
+}
+
+/// Exact-current view of durable direct parent, removal, and attachment
+/// mutations. Stream errors remain errors so the controller fails closed.
+Stream<void> directPictureInPictureAuthorizationChanges(
+  Stream<ConversationMessage> messageChanges, {
+  required String contactPeerId,
+  Stream<DirectMessageRemoval> messageRemovals =
+      const Stream<DirectMessageRemoval>.empty(),
+  Stream<MediaAttachmentAuthorizationChange> attachmentChanges =
+      const Stream<MediaAttachmentAuthorizationChange>.empty(),
+  MediaViewerItem? Function()? currentItem,
+}) => _mergeDirectPictureInPictureAuthorizationStreams([
+  messageChanges
+      .where((message) {
+        if (message.contactPeerId != contactPeerId) return false;
+        final current = currentItem?.call();
+        return current == null ||
+            (current.owner == MediaOwnerLane.direct &&
+                current.messageId == message.id);
+      })
+      .map<void>((_) {}),
+  messageRemovals
+      .where((removal) {
+        if (removal.contactPeerId != contactPeerId) return false;
+        final current = currentItem?.call();
+        return current == null ||
+            (current.owner == MediaOwnerLane.direct &&
+                (removal.messageId == null ||
+                    removal.messageId == current.messageId));
+      })
+      .map<void>((_) {}),
+  attachmentChanges
+      .where(
+        (change) => _directAttachmentChangeMatchesCurrent(
+          change: change,
+          contactPeerId: contactPeerId,
+          currentItem: currentItem,
+        ),
+      )
+      .map<void>((_) {}),
+]);
 
 /// Wired widget that connects ConversationScreen to business logic.
 ///
@@ -292,6 +398,11 @@ class ConversationWired extends StatefulWidget {
   /// coordination as the production screen.
   final WidgetBuilder? sharedMediaLibraryRouteBuilder;
 
+  /// Narrow test/owner seam for the already-qualified Plan-249 direct-only
+  /// picker. It cannot authorize a denied Session-01 source build.
+  final DirectMediaBatchForwardPickerLauncher?
+  directMediaBatchForwardPickerLauncher;
+
   /// 233 test seam: the scroll-target delegate for Go to Message. Production
   /// defaults to the element-walk + ensureVisible reveal over the reversed
   /// list's stable `msg-<id>` keys.
@@ -344,6 +455,7 @@ class ConversationWired extends StatefulWidget {
     this.forwardGroupConversationTracker,
     this.receivedMediaForwardLauncher,
     this.sharedMediaLibraryRouteBuilder,
+    this.directMediaBatchForwardPickerLauncher,
     this.revealConversationMessageFn,
   });
 
@@ -388,6 +500,7 @@ class _ConversationWiredState extends State<ConversationWired>
   bool _isSending = false;
 
   List<PendingComposerMedia> _pendingAttachments = [];
+  PrivateMediaPolicy _privateMediaPolicy = const PrivateMediaPolicy.ordinary();
   final _composerState = ValueNotifier(const ConversationComposerViewState());
   static const _maxAttachments = 10;
 
@@ -1462,6 +1575,12 @@ class _ConversationWiredState extends State<ConversationWired>
     }
 
     for (final message in messages) {
+      final currentParent = await widget.messageRepo.getMessage(message.id);
+      final recoveryParent = currentParent ?? message;
+      if (recoveryParent.mustClearTransientMedia ||
+          recoveryParent.privateMediaPolicy.requiresRedaction) {
+        continue;
+      }
       final storedAttachments = await mediaAttachmentRepo
           .getAttachmentsForMessage(message.id, owner: MediaOwnerLane.direct);
       if (storedAttachments.isEmpty) {
@@ -1483,6 +1602,8 @@ class _ConversationWiredState extends State<ConversationWired>
               attachment: resolved,
               contactPeerId: message.contactPeerId,
               owner: MediaOwnerLane.direct,
+              messageRepo: widget.messageRepo,
+              intent: MediaDownloadIntent.automatic,
             );
           } catch (_) {
             downloaded = null;
@@ -1798,7 +1919,9 @@ class _ConversationWiredState extends State<ConversationWired>
     }
     var resolved = message;
     final index = _messages.indexWhere((m) => m.id == message.id);
-    if (mergeMedia && index != -1) {
+    if (message.mustClearTransientMedia) {
+      resolved = message.copyWith(media: const <MediaAttachment>[]);
+    } else if (mergeMedia && index != -1) {
       resolved = message.copyWith(
         media: _mergeLoadedMediaWithCurrentState(
           loaded: message.media,
@@ -1859,6 +1982,15 @@ class _ConversationWiredState extends State<ConversationWired>
     }
 
     try {
+      final currentParent = await widget.messageRepo.getMessage(messageId);
+      if (currentParent == null) return;
+      final isPrivate = currentParent.privateMediaPolicy.requiresRedaction;
+      if (isPrivate &&
+          !currentParent.privateMediaPolicy.allowsExplicitDownload(
+            currentParent.privateMediaState,
+          )) {
+        return;
+      }
       final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
         messageId,
         owner: MediaOwnerLane.direct,
@@ -1878,6 +2010,8 @@ class _ConversationWiredState extends State<ConversationWired>
         attachment: resolved,
         contactPeerId: _contact.peerId,
         owner: MediaOwnerLane.direct,
+        messageRepo: widget.messageRepo,
+        intent: MediaDownloadIntent.explicitUser,
       );
       MediaAttachment refreshedAttachment;
       if (downloaded != null) {
@@ -1945,7 +2079,9 @@ class _ConversationWiredState extends State<ConversationWired>
       _editingOriginalText = message.text;
       _clearRestoredFailedDraftTracking();
       _draftText = message.text;
+      _privateMediaPolicy = const PrivateMediaPolicy.ordinary();
     });
+    _updateComposerState();
   }
 
   void _onCancelEdit() {
@@ -2082,6 +2218,65 @@ class _ConversationWiredState extends State<ConversationWired>
   // ── 231: direct received-media actions → local controller only ──────────
 
   ReceivedMediaActionController? _lazyMediaActionController;
+  MediaViewerRepositoryResumeStore? _lazyMediaViewerResumeStore;
+
+  MediaViewerRepositoryResumeStore? get _mediaViewerResumeStore {
+    final existing = _lazyMediaViewerResumeStore;
+    if (existing != null) return existing;
+    final attachments = widget.mediaAttachmentRepo;
+    if (attachments == null || attachments is! MediaLibraryStateRepository) {
+      return null;
+    }
+    return _lazyMediaViewerResumeStore = MediaViewerRepositoryResumeStore(
+      attachmentRepository: attachments,
+      stateRepository: attachments as MediaLibraryStateRepository,
+    );
+  }
+
+  MediaPictureInPictureController _createMediaPictureInPictureController({
+    required MediaPictureInPictureCurrentAuthorizer reloadCurrent,
+    required MediaPictureInPictureRestorePlayback restorePlayback,
+  }) {
+    final resumeStore = _mediaViewerResumeStore;
+    if (resumeStore == null) {
+      throw StateError('PiP composition requires media library state');
+    }
+    final messageRepository = widget.messageRepo;
+    final attachmentRepository = widget.mediaAttachmentRepo;
+    MediaViewerItem? activeItem;
+    Future<MediaPictureInPictureAuthorization?> trackedReloadCurrent() async {
+      final authorization = await reloadCurrent();
+      if (authorization != null) activeItem = authorization.item;
+      return authorization;
+    }
+
+    final messageChanges = messageRepository is MessageRepositoryChangeSource
+        ? (messageRepository as MessageRepositoryChangeSource).messageChanges
+        : const Stream<ConversationMessage>.empty();
+    final messageRemovals = messageRepository is MessageRepositoryRemovalSource
+        ? (messageRepository as MessageRepositoryRemovalSource).messageRemovals
+        : const Stream<DirectMessageRemoval>.empty();
+    final attachmentChanges =
+        attachmentRepository is MediaAttachmentAuthorizationChangeSource
+        ? (attachmentRepository as MediaAttachmentAuthorizationChangeSource)
+              .authorizationChanges
+        : const Stream<MediaAttachmentAuthorizationChange>.empty();
+    final authorizationChanges = directPictureInPictureAuthorizationChanges(
+      messageChanges,
+      contactPeerId: widget.contact.peerId,
+      messageRemovals: messageRemovals,
+      attachmentChanges: attachmentChanges,
+      currentItem: () => activeItem,
+    );
+    return MediaPictureInPictureController(
+      gateway: PictureInPictureChannelGateway.platform(),
+      pathAuthority: IoAppOwnedMediaPathAuthority(),
+      reloadCurrent: trackedReloadCurrent,
+      resumeStore: resumeStore,
+      restorePlayback: restorePlayback,
+      authorizationChanges: authorizationChanges,
+    );
+  }
 
   /// The single egress/info authority for this screen's media actions. An
   /// injected controller wins (tests); otherwise one is built lazily over the
@@ -2123,6 +2318,261 @@ class _ConversationWiredState extends State<ConversationWired>
     return controller.loadInfo(identity);
   }
 
+  Future<DirectPrivateMediaActionDecision> _loadDirectMediaActionDecision(
+    DirectReceivedMediaActionIdentity identity,
+  ) async {
+    final controller = _mediaActionController;
+    if (controller != null) return controller.loadActionDecision(identity);
+    return DirectPrivateMediaActionEligibility.evaluate(
+      parent: null,
+      attachment: null,
+      expectedMessageId: identity.messageId,
+      expectedAttachmentId: identity.attachmentId,
+    );
+  }
+
+  Future<MediaPictureInPictureAuthorization?>
+  _loadDirectPictureInPictureAuthorization(MediaViewerItem displayed) async {
+    final mediaRepository = widget.mediaAttachmentRepo;
+    if (!mounted ||
+        mediaRepository == null ||
+        displayed.owner != MediaOwnerLane.direct ||
+        !displayed.isVideo) {
+      return null;
+    }
+    final rows = await mediaRepository.getAttachmentsForMessage(
+      displayed.messageId,
+      owner: MediaOwnerLane.direct,
+    );
+    MediaAttachment? currentAttachment;
+    for (final row in rows) {
+      if (row.id == displayed.attachmentId &&
+          row.messageId == displayed.messageId &&
+          row.ownerLane == MediaOwnerLane.direct &&
+          row.mediaType == 'video') {
+        currentAttachment = row;
+        break;
+      }
+    }
+    if (currentAttachment == null) return null;
+
+    // Reload the parent after the attachment await. This is the authority used
+    // immediately before capability presentation, handoff, and every poll.
+    final currentParent = await widget.messageRepo.getMessage(
+      displayed.messageId,
+    );
+    final decision = DirectPrivateMediaActionEligibility.evaluate(
+      parent: currentParent,
+      attachment: currentAttachment,
+      expectedMessageId: displayed.messageId,
+      expectedAttachmentId: displayed.attachmentId,
+    );
+    if (!mounted || currentParent == null || !decision.isOrdinary) return null;
+
+    final storedPath = currentAttachment.localPath;
+    final resolvedPath = storedPath == null || storedPath.isEmpty
+        ? null
+        : MediaFileManager.resolveStoredPathSync(storedPath);
+    final hasBytes = resolvedPath != null && File(resolvedPath).existsSync();
+    final transferComplete =
+        currentAttachment.downloadStatus == kMediaDownloadStatusDone;
+    final currentItem = MediaViewerItem(
+      attachmentId: currentAttachment.id,
+      messageId: currentAttachment.messageId,
+      kind: MediaViewerKind.video,
+      mime: currentAttachment.mime,
+      owner: MediaOwnerLane.direct,
+      localPath: resolvedPath,
+      sizeBytes: currentAttachment.size,
+      width: currentAttachment.width,
+      height: currentAttachment.height,
+      durationMs: currentAttachment.durationMs,
+      canEnterPictureInPicture: decision.canEnterPictureInPicture,
+      protection: MediaViewerProtection(
+        isDownloaded: transferComplete && hasBytes,
+        isIntegrityVerified:
+            currentAttachment.downloadStatus !=
+            kMediaDownloadStatusIntegrityFailed,
+      ),
+    );
+    return MediaPictureInPictureAuthorization(
+      item: currentItem,
+      generation:
+          Object.hash(
+            MediaOwnerLane.direct,
+            currentItem.messageId,
+            currentItem.attachmentId,
+          ) &
+          0x7fffffff,
+      policyState: MediaPictureInPicturePolicyState.ordinary,
+      isIncoming: currentParent.isIncoming,
+      isTransferComplete: transferComplete,
+      routeActive: mounted,
+    );
+  }
+
+  DirectPrivateMediaViewerController? _lazyPrivateMediaViewerController;
+
+  /// Session-05 runtime qualification is deliberately local to the direct
+  /// conversation. Missing lifecycle, raw-cleanup, runtime-lock, or file
+  /// capabilities deny the route without throwing or creating a substitute
+  /// lock/engine.
+  DirectPrivateMediaViewerController? get _privateMediaViewerController {
+    final existing = _lazyPrivateMediaViewerController;
+    if (existing != null) return existing;
+    final messageRepository = widget.messageRepo;
+    final attachmentRepository = widget.mediaAttachmentRepo;
+    final fileManager = widget.mediaFileManager;
+    if (messageRepository is! DirectPrivateMediaLifecycleRepository ||
+        attachmentRepository == null ||
+        attachmentRepository is! DirectPrivateMediaCleanupRepository ||
+        attachmentRepository is! DirectPrivateMediaCleanupRuntime ||
+        fileManager == null) {
+      return null;
+    }
+    final lifecycleMessageRepository =
+        messageRepository as DirectPrivateMediaLifecycleRepository;
+    final cleanupRuntime =
+        attachmentRepository as DirectPrivateMediaCleanupRuntime;
+    final lane = DirectPrivateMediaLifecycle(
+      messageRepository: lifecycleMessageRepository,
+      mediaAttachmentRepository: attachmentRepository,
+      mediaFileManager: fileManager,
+    );
+    final engine = PrivateMediaLifecycleEngine(
+      adapter: lane,
+      lifecycleLock: cleanupRuntime.directPrivateMediaLifecycleLock,
+      nowMs: () => DateTime.now().millisecondsSinceEpoch,
+    );
+    return _lazyPrivateMediaViewerController =
+        DirectPrivateMediaViewerController(
+          loadCurrentRows: (identity) async {
+            final parent = await lifecycleMessageRepository
+                .loadPrivateMediaLifecycleMessage(identity.messageId);
+            final attachments = await attachmentRepository
+                .getAttachmentsForMessage(
+                  identity.messageId,
+                  owner: MediaOwnerLane.direct,
+                );
+            MediaAttachment? exact;
+            for (final attachment in attachments) {
+              if (attachment.id == identity.attachmentId) {
+                if (exact != null) {
+                  exact = null;
+                  break;
+                }
+                exact = attachment;
+              }
+            }
+            return DirectPrivateMediaCurrentRows(
+              parent: parent,
+              attachment: exact,
+            );
+          },
+          lifecycleEngine: engine,
+          protectionCoordinator:
+              PrivateMediaProtectionCoordinator.sharedPlatform(),
+          disposeProtectionCoordinator: false,
+        );
+  }
+
+  Future<DirectPrivateMediaActionDecision> _loadPrivateParentDecision(
+    String messageId,
+  ) async {
+    final repository = widget.messageRepo;
+    final parent = repository is DirectPrivateMediaLifecycleRepository
+        ? await (repository as DirectPrivateMediaLifecycleRepository)
+              .loadPrivateMediaLifecycleMessage(messageId)
+        : await repository.getMessage(messageId);
+    return DirectPrivateMediaActionEligibility.evaluate(
+      parent: parent,
+      attachment: null,
+      expectedMessageId: messageId,
+      attachmentRequired: false,
+    );
+  }
+
+  Future<void> _openDirectPrivateMedia(
+    DirectPrivateMediaViewerIdentity identity,
+  ) async {
+    final controller = _privateMediaViewerController;
+    if (controller == null) return;
+    final grant = await controller.prepare(identity);
+    if (grant == null) return;
+    if (!mounted) {
+      await controller.settle(
+        grant,
+        DirectPrivateMediaExitReason.routePushFailure,
+      );
+      return;
+    }
+    MaterialPageRoute<void>? privateRoute;
+    try {
+      privateRoute = MaterialPageRoute<void>(
+        builder: (_) => DirectPrivateMediaViewer(
+          grant: grant,
+          controller: controller,
+          onSafeAction: (action) async {
+            switch (action) {
+              case DirectPrivateMediaAction.reply:
+                _onQuoteReply(identity.messageId);
+                return;
+              case DirectPrivateMediaAction.info:
+                if (!mounted) return;
+                final l10n = AppLocalizations.of(context)!;
+                await showDialog<void>(
+                  context: context,
+                  builder: (dialogContext) => AlertDialog(
+                    title: Text(l10n.private_media_notification_body),
+                    content: Text(l10n.private_media_notification_body),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.of(dialogContext).pop(),
+                        child: Text(
+                          MaterialLocalizations.of(context).closeButtonLabel,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+                return;
+              case DirectPrivateMediaAction.deleteForMe:
+                await _onDeleteMediaMessage(identity.messageId);
+                return;
+              case DirectPrivateMediaAction.openInApp:
+              case DirectPrivateMediaAction.explicitDownload:
+              case DirectPrivateMediaAction.saveToPhotos:
+              case DirectPrivateMediaAction.saveToFiles:
+              case DirectPrivateMediaAction.externalShare:
+              case DirectPrivateMediaAction.internalForward:
+              case DirectPrivateMediaAction.bookmark:
+              case DirectPrivateMediaAction.sharedMedia:
+              case DirectPrivateMediaAction.pictureInPicture:
+                return;
+            }
+          },
+        ),
+      );
+      await Navigator.of(context).push<void>(privateRoute);
+      await privateRoute.completed;
+    } catch (_) {
+      await controller.settle(
+        grant,
+        DirectPrivateMediaExitReason.routePushFailure,
+      );
+      return;
+    } finally {
+      if (!grant.settled) {
+        await controller.settle(
+          grant,
+          DirectPrivateMediaExitReason.close,
+          releaseProtection: false,
+        );
+      }
+      await controller.releaseProtectionOwner(grant);
+    }
+  }
+
   Future<bool> _forwardDirectReceivedMedia(
     String messageId, {
     String? currentAttachmentId,
@@ -2131,7 +2581,9 @@ class _ConversationWiredState extends State<ConversationWired>
     final parent = await widget.messageRepo.getMessage(messageId);
     if (mediaRepo == null || parent == null || !mounted) return false;
     final result = await BuildReceivedMediaForward(
+      loadParentMessage: widget.messageRepo.getMessage,
       mediaAttachmentRepository: mediaRepo,
+      mediaFileManager: widget.mediaFileManager,
     ).build(parent: parent, currentAttachmentId: currentAttachmentId);
     final intent = result.draft?.shareIntent;
     if (intent == null || !mounted) return false;
@@ -2186,6 +2638,19 @@ class _ConversationWiredState extends State<ConversationWired>
 
     final quoted = _messages.where((m) => m.id == quoteId).firstOrNull;
     if (quoted == null) return (null, true);
+    final decision = DirectPrivateMediaActionEligibility.evaluate(
+      parent: quoted,
+      attachment: null,
+      expectedMessageId: quoted.id,
+      attachmentRequired: false,
+    );
+    if (decision.requiresPrivacyMinimizedPresentation &&
+        decision.allows(DirectPrivateMediaAction.reply)) {
+      return (
+        AppLocalizations.of(context)!.private_media_notification_body,
+        false,
+      );
+    }
     if (quoted.text.isNotEmpty) return (quoted.text, false);
     if (quoted.media.isNotEmpty) return (mediaPreviewText(quoted.media), false);
     return (null, true);
@@ -2228,6 +2693,24 @@ class _ConversationWiredState extends State<ConversationWired>
         : _messages.where((m) => m.id == _editingMessageId).firstOrNull;
     if (sanitizedText.isEmpty && !hasAttachments) return;
     if (_isSending) return;
+
+    final privateMediaPolicy = _privateMediaPolicy;
+    final privateEligibility = _currentPrivateMediaEligibility(
+      draftText: sanitizedText,
+    );
+    if (privateMediaPolicy.isPrivate &&
+        !privateEligibility.allowsPrivateMedia) {
+      _setPrivateMediaPolicy(const PrivateMediaPolicy.ordinary());
+      messenger?.showSnackBar(
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context)!.private_media_invalid_shape,
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
 
     if (editingMessage == null &&
         _shouldRetryRestoredFailedDraft(
@@ -2341,6 +2824,7 @@ class _ConversationWiredState extends State<ConversationWired>
       final composerSnapshot = _ComposerSnapshot(
         draftText: draftText,
         quotedMessageId: quotedMessageId,
+        privateMediaPolicy: privateMediaPolicy,
         pendingAttachments: List<PendingComposerMedia>.from(
           _pendingAttachments,
         ),
@@ -2390,6 +2874,7 @@ class _ConversationWiredState extends State<ConversationWired>
 
       _pendingAttachments = [];
       _draftText = '';
+      _privateMediaPolicy = const PrivateMediaPolicy.ordinary();
       _updateComposerState(
         pendingAttachments: const [],
         isUploading: mediaToUpload.isNotEmpty,
@@ -2407,6 +2892,8 @@ class _ConversationWiredState extends State<ConversationWired>
         createdAt: now,
         quotedMessageId: quotedMessageId,
         media: optimisticMedia ?? const [],
+        privateMediaPolicy: privateMediaPolicy,
+        privateMediaState: privateMediaPolicy.initialState,
       );
 
       if (mounted) {
@@ -2678,6 +3165,7 @@ class _ConversationWiredState extends State<ConversationWired>
           recipientMlKemPublicKey: _contact.mlKemPublicKey,
           quotedMessageId: quotedMessageId,
           mediaAttachments: uploadedAttachments,
+          privateMediaPolicy: privateMediaPolicy,
           mediaAttachmentRepo: widget.mediaAttachmentRepo,
           transportMetrics: widget.transportMetrics,
         );
@@ -2701,7 +3189,14 @@ class _ConversationWiredState extends State<ConversationWired>
         // apply in BOTH result branches — previously only the message != null
         // branch resolved, leaving a null-message result showing the optimistic
         // message's now-deleted picker-temp paths as unavailable.
-        final displayMedia = await _resolveDisplayMedia(uploadedAttachments);
+        // The direct send boundary returns the canonical local projection
+        // (message id + direct owner lane). Resolve paths on that projection
+        // instead of replacing it with the pre-boundary upload objects, whose
+        // local-only owner is intentionally unresolved.
+        final canonicalMedia = message != null && message.media.isNotEmpty
+            ? message.media
+            : uploadedAttachments;
+        final displayMedia = await _resolveDisplayMedia(canonicalMedia);
         if (!mounted) return;
 
         // 185: when a 1:1 send fails ONLY because the SENDER is offline
@@ -2739,8 +3234,7 @@ class _ConversationWiredState extends State<ConversationWired>
                 result == SendChatMessageResult.dialFailed ||
                 result == SendChatMessageResult.sendFailed) &&
             (message != null ||
-                (senderOffline &&
-                    result != SendChatMessageResult.sendFailed));
+                (senderOffline && result != SendChatMessageResult.sendFailed));
 
         if (message != null) {
           final persistedMedia =
@@ -2946,6 +3440,11 @@ class _ConversationWiredState extends State<ConversationWired>
         _clearRestoredFailedDraftTracking();
       }
     });
+    if (sanitizeMessageText(text).trim().isNotEmpty &&
+        _privateMediaPolicy.isPrivate) {
+      _privateMediaPolicy = const PrivateMediaPolicy.ordinary();
+    }
+    _updateComposerState();
   }
 
   bool _shouldRetryRestoredFailedDraft({
@@ -3095,6 +3594,7 @@ class _ConversationWiredState extends State<ConversationWired>
     bool showSnackBar = true,
   }) async {
     _draftText = snapshot.draftText;
+    _privateMediaPolicy = snapshot.privateMediaPolicy;
     _pendingAttachments = List<PendingComposerMedia>.from(
       snapshot.pendingAttachments,
     );
@@ -3345,6 +3845,7 @@ class _ConversationWiredState extends State<ConversationWired>
     if (recorder == null || _composerViewState.recordingState.isActive) return;
 
     _pendingRecorderAbort = false;
+    _privateMediaPolicy = const PrivateMediaPolicy.ordinary();
     _updateComposerState(
       recordingState: VoiceRecordingState.arming,
       recordingDuration: Duration.zero,
@@ -4038,6 +4539,48 @@ class _ConversationWiredState extends State<ConversationWired>
     _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
   }
 
+  PrivateMediaEligibility _currentPrivateMediaEligibility({
+    String? draftText,
+    VoiceRecordingState? recordingState,
+  }) {
+    var kind = PrivateMediaAttachmentKind.unknown;
+    if (_pendingAttachments.length == 1) {
+      final mime = _mimeFromPath(
+        _pendingAttachments.single.file.path,
+      ).toLowerCase();
+      if (mime == 'image/gif') {
+        kind = PrivateMediaAttachmentKind.gif;
+      } else if (mime.startsWith('image/')) {
+        kind = PrivateMediaAttachmentKind.image;
+      } else if (mime.startsWith('video/')) {
+        kind = PrivateMediaAttachmentKind.video;
+      } else if (mime.startsWith('audio/')) {
+        kind = PrivateMediaAttachmentKind.audio;
+      } else {
+        kind = PrivateMediaAttachmentKind.file;
+      }
+    }
+    final effectiveRecordingState =
+        recordingState ?? _composerViewState.recordingState;
+    return PrivateMediaEligibility(
+      attachmentCount: _pendingAttachments.length,
+      attachmentKind: kind,
+      hasTextOrCaption: sanitizeMessageText(
+        draftText ?? _draftText,
+      ).trim().isNotEmpty,
+      isEdit: _editingMessageId != null,
+      isForward: effectiveRecordingState.isActive,
+    );
+  }
+
+  void _setPrivateMediaPolicy(PrivateMediaPolicy policy) {
+    final eligibility = _currentPrivateMediaEligibility();
+    _privateMediaPolicy = policy.isPrivate && eligibility.allowsPrivateMedia
+        ? policy
+        : const PrivateMediaPolicy.ordinary();
+    _updateComposerState();
+  }
+
   List<File> _pendingAttachmentFiles() {
     return _pendingAttachments
         .map((media) => media.file)
@@ -4056,6 +4599,7 @@ class _ConversationWiredState extends State<ConversationWired>
     VoiceRecordingState? recordingState,
     Duration? recordingDuration,
     List<double>? amplitudeValues,
+    PrivateMediaPolicy? privateMediaPolicy,
   }) {
     final current = _composerState.value;
     // 149: whenever the pending-attachment list changes, re-derive the size/GIF
@@ -4080,10 +4624,25 @@ class _ConversationWiredState extends State<ConversationWired>
         // total message budget get a strip-level note (no per-chip index).
         // Suppressed when any attachment is over its own cap (that per-chip
         // reject already disables Send) so the two signals never double up.
-        nextHasTotalSizeOverflow = nextInvalidIndices.isEmpty &&
+        nextHasTotalSizeOverflow =
+            nextInvalidIndices.isEmpty &&
             pendingMediaTotalSizeOverflow(_pendingAttachments);
       }
     }
+    final eligibility = _currentPrivateMediaEligibility(
+      recordingState: recordingState,
+    );
+    final attachmentIdentityChanged =
+        pendingAttachments != null &&
+        current.pendingAttachments.isNotEmpty &&
+        !_fileListsEqual(current.pendingAttachments, pendingAttachments);
+    var effectivePrivateMediaPolicy = privateMediaPolicy ?? _privateMediaPolicy;
+    effectivePrivateMediaPolicy = normalizePrivateMediaComposerPolicy(
+      selectedPolicy: effectivePrivateMediaPolicy,
+      eligibility: eligibility,
+      eligibleAttachmentIdentityChanged: attachmentIdentityChanged,
+    );
+    _privateMediaPolicy = effectivePrivateMediaPolicy;
     final next = current.copyWith(
       pendingAttachments: pendingAttachments,
       invalidAttachmentIndices: nextInvalidIndices,
@@ -4097,6 +4656,8 @@ class _ConversationWiredState extends State<ConversationWired>
       recordingState: recordingState,
       recordingDuration: recordingDuration,
       amplitudeValues: amplitudeValues,
+      privateMediaEligibility: eligibility,
+      privateMediaPolicy: effectivePrivateMediaPolicy,
     );
     if (_composerStateEquals(current, next)) return;
     _composerState.value = next;
@@ -4113,6 +4674,8 @@ class _ConversationWiredState extends State<ConversationWired>
         a.processingTotal == b.processingTotal &&
         a.recordingState == b.recordingState &&
         a.recordingDuration == b.recordingDuration &&
+        a.privateMediaEligibility == b.privateMediaEligibility &&
+        a.privateMediaPolicy == b.privateMediaPolicy &&
         listEquals(a.amplitudeValues, b.amplitudeValues) &&
         setEquals(a.invalidAttachmentIndices, b.invalidAttachmentIndices) &&
         mapEquals(a.invalidAttachmentReasons, b.invalidAttachmentReasons) &&
@@ -4135,12 +4698,15 @@ class _ConversationWiredState extends State<ConversationWired>
           .toList();
       return;
     }
+    final resolved = message.mustClearTransientMedia
+        ? message.copyWith(media: const <MediaAttachment>[])
+        : message;
     final index = _messages.indexWhere((m) => m.id == message.id);
     if (index == -1) {
-      _messages = _sortMessagesForDisplay([..._messages, message]);
+      _messages = _sortMessagesForDisplay([..._messages, resolved]);
     } else {
       final updated = [..._messages];
-      updated[index] = message;
+      updated[index] = resolved;
       _messages = _sortMessagesForDisplay(updated);
     }
     _applyInMemoryCap();
@@ -4163,6 +4729,9 @@ class _ConversationWiredState extends State<ConversationWired>
   ConversationMessage _mergeLoadedMessageWithCurrentState(
     ConversationMessage loaded,
   ) {
+    if (loaded.mustClearTransientMedia) {
+      return loaded.copyWith(media: const <MediaAttachment>[]);
+    }
     final current = _messages
         .where((message) => message.id == loaded.id)
         .firstOrNull;
@@ -4435,6 +5004,95 @@ class _ConversationWiredState extends State<ConversationWired>
       (widget.mediaAttachmentRepo is MediaLibraryRepository &&
           widget.mediaAttachmentRepo is MediaLibraryStateRepository);
 
+  bool get _directMediaBatchForwardAvailable =>
+      widget.mediaAttachmentRepo != null &&
+      widget.contactRepo != null &&
+      widget.bridge != null &&
+      widget.mediaFileManager != null &&
+      widget.imageProcessor != null;
+
+  Future<DirectMediaBatchForwardLibraryLaunchResult>
+  _launchDirectMediaBatchForward(
+    List<DirectReceivedMediaActionIdentity> identities,
+  ) async {
+    final mediaRepository = widget.mediaAttachmentRepo;
+    final contacts = widget.contactRepo;
+    final bridge = widget.bridge;
+    final mediaFileManager = widget.mediaFileManager;
+    final imageProcessor = widget.imageProcessor;
+    if (mediaRepository == null ||
+        contacts == null ||
+        bridge == null ||
+        mediaFileManager == null ||
+        imageProcessor == null) {
+      return const DirectMediaBatchForwardLibraryLaunchResult.sourceUnavailable();
+    }
+
+    final builder = BuildDirectMediaLibraryBatchForward(
+      loadParentMessage: widget.messageRepo.getMessage,
+      mediaAttachmentRepository: mediaRepository,
+    );
+    final buildResult = await builder.build(
+      contactPeerId: _contact.peerId,
+      identities: identities,
+    );
+    final draft = buildResult.draft;
+    if (!buildResult.isReady || draft == null || !mounted) {
+      return const DirectMediaBatchForwardLibraryLaunchResult.sourceUnavailable();
+    }
+
+    final ordinary = DefaultShareBatchDeliveryCoordinator(
+      identityRepository: widget.identityRepo,
+      contactRepository: contacts,
+      messageRepository: widget.messageRepo,
+      mediaAttachmentRepository: mediaRepository,
+      groupRepository: widget.forwardGroupRepository,
+      groupMessageRepository: widget.forwardGroupMessageRepository,
+      groupInviteDeliveryAttemptRepository:
+          widget.forwardGroupInviteDeliveryAttemptRepository,
+      bridge: bridge,
+      p2pService: widget.p2pService,
+      mediaFileManager: mediaFileManager,
+      imageProcessor: imageProcessor,
+      qualityPreference: widget.qualityPreference,
+      videoQualityPreference: widget.videoQualityPreference,
+    );
+    final delivery = DirectMediaBatchForwardDeliveryCoordinator(
+      revalidateForDispatch: ({required contactPeerId, required draft}) =>
+          builder.revalidateForDispatch(
+            contactPeerId: contactPeerId,
+            draft: draft,
+          ),
+      contactRepository: contacts,
+      deliverStrict: ({required shareIntent, required contacts, onProgress}) =>
+          ordinary.deliverDirectMediaBatchForwardStrict(
+            shareIntent: shareIntent,
+            contacts: contacts,
+            onProgress: onProgress,
+          ),
+    );
+
+    final injected = widget.directMediaBatchForwardPickerLauncher;
+    final DirectMediaBatchForwardCompletion? completion;
+    if (injected != null) {
+      completion = await injected(context, draft, delivery);
+    } else {
+      completion = await Navigator.of(context)
+          .push<DirectMediaBatchForwardCompletion>(
+            buildDirectMediaBatchForwardPickerRoute(
+              draft: draft,
+              sourceContactPeerId: _contact.peerId,
+              contactRepository: contacts,
+              deliveryCoordinator: delivery,
+            ),
+          );
+    }
+    if (completion == null) {
+      return const DirectMediaBatchForwardLibraryLaunchResult.cancelled();
+    }
+    return DirectMediaBatchForwardLibraryLaunchResult.completed(completion);
+  }
+
   Future<void> _openSharedMediaLibrary() async {
     final routeBuilder = widget.sharedMediaLibraryRouteBuilder;
     if (routeBuilder != null) {
@@ -4469,6 +5127,15 @@ class _ConversationWiredState extends State<ConversationWired>
               contactUsername: _contact.username,
               libraryRepository: repo as MediaLibraryRepository,
               stateRepository: repo as MediaLibraryStateRepository,
+              loadActionDecision: _loadDirectMediaActionDecision,
+              pictureInPictureControllerFactory:
+                  _createMediaPictureInPictureController,
+              loadPictureInPictureAuthorization:
+                  _loadDirectPictureInPictureAuthorization,
+              mediaViewerResumeStore: _mediaViewerResumeStore,
+              launchBatchForward: _directMediaBatchForwardAvailable
+                  ? _launchDirectMediaBatchForward
+                  : null,
               dispatchEgress: (identities, destination) =>
                   batchActions.performBatchEgress(
                     identities: identities,
@@ -4543,8 +5210,7 @@ class _ConversationWiredState extends State<ConversationWired>
     }
 
     setState(() => _highlightedMessageId = messageId);
-    final reveal =
-        widget.revealConversationMessageFn ?? _revealMessageInList;
+    final reveal = widget.revealConversationMessageFn ?? _revealMessageInList;
     await reveal(messageId);
     _highlightClearTimer?.cancel();
     _highlightClearTimer = Timer(const Duration(milliseconds: 1600), () {
@@ -4646,11 +5312,7 @@ class _ConversationWiredState extends State<ConversationWired>
             value: 'introduce',
             child: Row(
               children: [
-                Icon(
-                  Icons.people_outline,
-                  size: 18,
-                  color: successColor,
-                ),
+                Icon(Icons.people_outline, size: 18, color: successColor),
                 const SizedBox(width: 10),
                 Text(
                   l10n.conversation_introduce_to_circle,
@@ -4713,11 +5375,7 @@ class _ConversationWiredState extends State<ConversationWired>
           value: 'delete',
           child: Row(
             children: [
-              Icon(
-                Icons.delete_outline,
-                size: 18,
-                color: destructiveColor,
-              ),
+              Icon(Icons.delete_outline, size: 18, color: destructiveColor),
               const SizedBox(width: 10),
               Text(
                 l10n.conversation_delete_chat_action,
@@ -4871,6 +5529,11 @@ class _ConversationWiredState extends State<ConversationWired>
     _contactUpdateSubscription?.cancel();
     _reactionSubscription?.cancel();
     _mediaUploadProgressSubscription?.cancel();
+    final privateViewerController = _lazyPrivateMediaViewerController;
+    _lazyPrivateMediaViewerController = null;
+    if (privateViewerController != null) {
+      unawaited(privateViewerController.dispose());
+    }
     _durationSub?.cancel();
     _amplitudeSub?.cancel();
     // Cancel active recording on dispose
@@ -4968,6 +5631,7 @@ class _ConversationWiredState extends State<ConversationWired>
           composerStateListenable: _composerState,
           initialText: _draftText,
           onDraftChanged: _onDraftChanged,
+          onPrivateMediaPolicyChanged: _setPrivateMediaPolicy,
           reactions: _reactions,
           onReactionSelected: widget.reactionRepo != null
               ? _onReactionSelected
@@ -4999,6 +5663,20 @@ class _ConversationWiredState extends State<ConversationWired>
           onLoadMediaInfo: _mediaActionController != null
               ? _loadDirectMediaInfo
               : null,
+          onLoadMediaActionDecision: _mediaActionController != null
+              ? _loadDirectMediaActionDecision
+              : null,
+          pictureInPictureControllerFactory: _mediaViewerResumeStore == null
+              ? null
+              : _createMediaPictureInPictureController,
+          loadPictureInPictureAuthorization: _mediaViewerResumeStore == null
+              ? null
+              : _loadDirectPictureInPictureAuthorization,
+          mediaViewerResumeStore: _mediaViewerResumeStore,
+          onOpenPrivateMedia: _privateMediaViewerController != null
+              ? _openDirectPrivateMedia
+              : null,
+          onLoadPrivateParentDecision: _loadPrivateParentDecision,
           onForwardMedia:
               widget.mediaAttachmentRepo != null &&
                   (widget.receivedMediaForwardLauncher != null ||
@@ -5224,11 +5902,13 @@ class _DeleteSheetAction extends StatelessWidget {
 class _ComposerSnapshot {
   final String draftText;
   final String? quotedMessageId;
+  final PrivateMediaPolicy privateMediaPolicy;
   final List<PendingComposerMedia> pendingAttachments;
 
   const _ComposerSnapshot({
     required this.draftText,
     required this.quotedMessageId,
+    required this.privateMediaPolicy,
     required this.pendingAttachments,
   });
 }

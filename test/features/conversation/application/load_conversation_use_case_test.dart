@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/features/conversation/application/load_conversation_use_case.dart';
@@ -397,6 +398,83 @@ void main() {
       // msg-2 should have empty media
       expect(result[1].media, isEmpty);
     });
+
+    test(
+      'suppresses deleted hidden and terminal media while preserving active private identity',
+      () async {
+        ConversationMessage parent(
+          String id, {
+          String? deletedAt,
+          String? hiddenAt,
+          PrivateMediaPolicy policy = const PrivateMediaPolicy.ordinary(),
+          PrivateMediaLifecycleState state = PrivateMediaLifecycleState.none,
+        }) => ConversationMessage(
+          id: id,
+          contactPeerId: 'contact-A',
+          senderPeerId: 'contact-A',
+          text: '',
+          timestamp: '2026-02-09T10:00:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-09T10:00:01.000Z',
+          deletedAt: deletedAt,
+          hiddenAt: hiddenAt,
+          privateMediaPolicy: policy,
+          privateMediaState: state,
+        );
+
+        const deletedId = 'deleted-parent';
+        const hiddenId = 'hidden-parent';
+        const terminalId = 'private-terminal-parent';
+        const activePrivateId = 'private-active-parent';
+        final parents = [
+          parent(deletedId, deletedAt: '2026-02-09T11:00:00.000Z'),
+          parent(hiddenId, hiddenAt: '2026-02-09T11:00:00.000Z'),
+          parent(
+            terminalId,
+            policy: const PrivateMediaPolicy.protected(),
+            state: PrivateMediaLifecycleState.consumed,
+          ),
+          parent(
+            activePrivateId,
+            policy: const PrivateMediaPolicy.protected(),
+            state: PrivateMediaLifecycleState.available,
+          ),
+        ];
+        MediaAttachment attachment(String messageId) => MediaAttachment(
+          id: '$messageId-image',
+          messageId: messageId,
+          mime: 'image/png',
+          size: 1,
+          mediaType: 'image',
+          downloadStatus: 'done',
+          createdAt: '2026-02-09T10:00:00.000Z',
+        );
+        final messageRepo = FakeMessageRepository(
+          messagesByContact: {'contact-A': parents},
+        );
+        final mediaRepo = FakeMediaAttachmentRepository(
+          mediaByMessage: {
+            for (final item in parents) item.id: [attachment(item.id)],
+          },
+        );
+
+        final result = await loadConversation(
+          messageRepo: messageRepo,
+          contactPeerId: 'contact-A',
+          mediaAttachmentRepo: mediaRepo,
+        );
+        final byId = {for (final item in result) item.id: item};
+
+        expect(byId[deletedId]!.media, isEmpty);
+        expect(byId[hiddenId]!.media, isEmpty);
+        expect(byId[terminalId]!.media, isEmpty);
+        expect(
+          byId[activePrivateId]!.media.single.id,
+          '$activePrivateId-image',
+        );
+      },
+    );
 
     test('returns messages without media when repo is null', () async {
       final messageRepo = FakeMessageRepository(

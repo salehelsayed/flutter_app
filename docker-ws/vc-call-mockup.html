@@ -1,0 +1,765 @@
+<title>mknoon — 1:1 Calls UI Mockup</title>
+<style>
+  :root{
+    --ground:#131118; --panel:#1B1823; --panel2:#221E2B; --line:#2E2939;
+    --ink:#F4F2F8; --muted:#9C96A8; --dim:#6E6879;
+    --green:#1DB954; --green-dim:#128A3E; --red:#FF4B4B; --teal:#4ECDC4; --purple:#A78BFA;
+    --mono:"SF Mono","Roboto Mono","Cascadia Mono",Consolas,monospace;
+    --sys:-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:var(--ground);color:var(--ink);font-family:var(--sys);line-height:1.5;-webkit-font-smoothing:antialiased}
+  button{font-family:inherit;cursor:pointer;border:0;background:none;color:inherit}
+  button:focus-visible,input:focus-visible{outline:2px solid var(--teal);outline-offset:2px;border-radius:6px}
+
+  .wrap{max-width:1180px;margin:0 auto;padding:0 24px}
+  header.page{padding:44px 0 26px;border-bottom:1px solid var(--line)}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--purple)}
+  header.page h1{font-size:clamp(26px,4vw,38px);font-weight:800;letter-spacing:-.02em;text-wrap:balance;margin:10px 0 8px}
+  header.page p.sub{color:var(--muted);max-width:62ch;font-size:15px}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:18px;font-size:12.5px;color:var(--muted)}
+  .legend b{color:var(--ink);font-weight:600}
+  .dotk{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:1px}
+
+  /* ---------- hero: phones + rail ---------- */
+  .hero{display:flex;gap:22px;justify-content:center;align-items:flex-start;flex-wrap:wrap;padding:34px 0 10px}
+  .stage{display:flex;flex-direction:column;align-items:center;gap:10px}
+  .stage .who{font-size:13px;color:var(--muted)}
+  .stage .who b{color:var(--ink)}
+  .stage .caption{font-family:var(--mono);font-size:11px;color:var(--dim);max-width:300px;text-align:center;min-height:2.4em}
+  .caption .tag{color:var(--purple)}
+
+  .phone{width:300px;height:620px;background:#000;border:1px solid #322D3E;border-radius:30px;overflow:hidden;position:relative;box-shadow:0 24px 60px -20px rgba(0,0,0,.7);flex-shrink:0}
+  .statusbar{height:26px;display:flex;justify-content:space-between;align-items:center;padding:0 16px;font-size:10.5px;color:rgba(255,255,255,.75);font-family:var(--mono);position:relative;z-index:5}
+  .cam{position:absolute;top:8px;left:50%;transform:translateX(-50%);width:10px;height:10px;border-radius:50%;background:#151318;border:1px solid #2a2733;z-index:6}
+  .screen{position:absolute;inset:26px 0 0 0;display:flex;flex-direction:column}
+
+  /* chat screen */
+  .appbar{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.08)}
+  .avatar{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;color:#0d0d12;background:linear-gradient(135deg,#a78bfa,#81e6d9);position:relative;flex-shrink:0}
+  .avatar.big{width:96px;height:96px;font-size:34px}
+  .online::after{content:"";position:absolute;right:-1px;bottom:-1px;width:11px;height:11px;border-radius:50%;background:var(--green);border:2px solid #000}
+  .appbar .nm{font-size:15px;font-weight:600}
+  .appbar .st{font-size:11px;color:var(--green)}
+  .appbar .callbtns{margin-left:auto;display:flex;gap:6px}
+  .icbtn{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.09);transition:background .15s}
+  .icbtn:hover{background:rgba(29,185,84,.18)}
+  .icbtn svg{width:17px;height:17px;fill:var(--ink)}
+  .msgs{flex:1;padding:14px 12px;display:flex;flex-direction:column;gap:8px;overflow:hidden}
+  .bubble{max-width:78%;padding:8px 12px;border-radius:16px;font-size:13px;line-height:1.45}
+  .bubble.them{background:rgba(255,255,255,.07);border-bottom-left-radius:5px;align-self:flex-start}
+  .bubble.me{background:rgba(29,185,84,.16);border:1px solid rgba(29,185,84,.25);border-bottom-right-radius:5px;align-self:flex-end}
+  .bubble .t{display:block;font-size:9.5px;color:var(--dim);margin-top:3px;text-align:right;font-family:var(--mono)}
+  .calllog{align-self:center;display:flex;align-items:center;gap:7px;font-size:11px;color:var(--muted);background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);padding:5px 12px;border-radius:20px}
+  .calllog svg{width:12px;height:12px;fill:var(--muted)}
+  .calllog.missed{color:#ff8080}
+  .calllog.missed svg{fill:#ff8080}
+  .composer{display:flex;gap:8px;padding:10px 12px;border-top:1px solid rgba(255,255,255,.08)}
+  .composer .field{flex:1;background:rgba(255,255,255,.07);border-radius:20px;padding:8px 14px;font-size:12.5px;color:var(--dim)}
+  .composer .send{width:34px;height:34px;border-radius:50%;background:var(--green);display:flex;align-items:center;justify-content:center}
+  .composer .send svg{width:15px;height:15px;fill:#04140a}
+
+  /* full-screen call surfaces */
+  .callsurface{flex:1;display:flex;flex-direction:column;align-items:center;padding:26px 18px 22px;background:radial-gradient(120% 60% at 50% 0%,rgba(167,139,250,.10),transparent 60%),#000;text-align:center}
+  .callsurface .kind{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+  .callsurface .peer{font-size:22px;font-weight:700;margin-top:14px}
+  .callsurface .status{font-size:13px;color:var(--muted);margin-top:5px;min-height:1.4em}
+  .callsurface .status.live{color:var(--green)}
+  .ringwrap{position:relative;margin-top:26px}
+  .pulse{position:absolute;inset:-16px;border-radius:50%;border:2px solid rgba(29,185,84,.35);animation:pulse 1.6s ease-out infinite}
+  .pulse.p2{inset:-30px;animation-delay:.5s;opacity:.6}
+  @keyframes pulse{0%{transform:scale(.82);opacity:.9}100%{transform:scale(1.12);opacity:0}}
+  .transport{display:inline-flex;align-items:center;gap:6px;margin-top:14px;font-family:var(--mono);font-size:10.5px;color:var(--teal);background:rgba(78,205,196,.08);border:1px solid rgba(78,205,196,.22);padding:4px 11px;border-radius:14px}
+  .transport .lock{color:var(--muted)}
+  .peerchip{margin-top:10px;font-size:11px;color:#ffd28a;background:rgba(255,180,80,.08);border:1px solid rgba(255,180,80,.2);padding:3px 10px;border-radius:12px;min-height:0}
+  .metricsrow{display:flex;gap:6px;margin-top:auto;padding-top:10px;flex-wrap:wrap;justify-content:center}
+  .mchip{font-family:var(--mono);font-size:9.5px;color:var(--muted);background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);padding:3px 8px;border-radius:10px}
+  .ttl{width:150px;height:3px;border-radius:2px;background:rgba(255,255,255,.12);margin:16px auto 0;overflow:hidden}
+  .ttl i{display:block;height:100%;background:var(--green);border-radius:2px;transition:width .25s linear}
+  .ttlnote{font-family:var(--mono);font-size:9.5px;color:var(--dim);margin-top:6px}
+
+  .controls{display:flex;gap:14px;justify-content:center;align-items:center;margin-top:20px;padding:12px 14px;border-radius:26px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);backdrop-filter:blur(14px)}
+  .ctl{width:46px;height:46px;border-radius:50%;background:rgba(255,255,255,.09);display:flex;align-items:center;justify-content:center;transition:background .15s;position:relative}
+  .ctl svg{width:19px;height:19px;fill:var(--ink)}
+  .ctl:hover{background:rgba(255,255,255,.16)}
+  .ctl.on{background:var(--ink)}
+  .ctl.on svg{fill:#111}
+  .ctl.end{background:var(--red)}
+  .ctl.end svg{fill:#fff}
+  .ctl.answer{background:var(--green)}
+  .ctl.answer svg{fill:#04140a}
+  .ctl.big{width:58px;height:58px}
+  .ctl.big svg{width:24px;height:24px}
+  .ctllbl{position:absolute;top:calc(100% + 5px);left:50%;transform:translateX(-50%);font-size:9px;color:var(--muted);white-space:nowrap}
+  .answerrow{display:flex;gap:56px;justify-content:center;margin-top:auto;padding-bottom:26px}
+
+  /* video call */
+  .video-remote{position:absolute;inset:0;background:linear-gradient(160deg,#2a2440 0%,#12303a 55%,#0b1f16 100%)}
+  .video-remote::after{content:"";position:absolute;inset:0;background:radial-gradient(60% 40% at 50% 38%,rgba(167,139,250,.28),transparent 70%)}
+  .vtag{position:absolute;left:12px;bottom:96px;font-size:11px;background:rgba(0,0,0,.5);padding:3px 9px;border-radius:10px;z-index:3}
+  .pip{position:absolute;right:12px;top:44px;width:86px;height:120px;border-radius:12px;background:linear-gradient(200deg,#81e6d9,#3b2f63);border:1px solid rgba(255,255,255,.25);z-index:3;transition:transform .3s}
+  .pip.flipped{transform:scaleX(-1)}
+  .pip .you{position:absolute;left:6px;bottom:5px;font-size:9px;color:rgba(255,255,255,.9);background:rgba(0,0,0,.4);padding:1px 6px;border-radius:7px}
+  .pip.flipped .you{transform:scaleX(-1)}
+  .videochrome{position:absolute;inset:26px 0 0 0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding:0 14px 20px;z-index:4}
+  .vtop{position:absolute;top:10px;left:0;right:0;display:flex;flex-direction:column;align-items:center;gap:6px}
+  .vtop .nm{font-size:14px;font-weight:600;text-shadow:0 1px 8px rgba(0,0,0,.6)}
+
+  /* overlays inside phone */
+  .overlay{position:absolute;inset:0;background:rgba(5,4,8,.78);backdrop-filter:blur(6px);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:8;padding:24px;text-align:center}
+  .overlay h4{font-size:15px;font-weight:700}
+  .overlay p{font-size:12px;color:var(--muted);max-width:32ch}
+  .spin{width:34px;height:34px;border-radius:50%;border:3px solid rgba(255,255,255,.15);border-top-color:var(--teal);animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .obtns{display:flex;gap:12px;margin-top:8px}
+  .pill-btn{padding:9px 18px;border-radius:20px;font-size:13px;font-weight:600}
+  .pill-btn.yes{background:var(--green);color:#04140a}
+  .pill-btn.no{background:rgba(255,255,255,.1);color:var(--ink);border:1px solid rgba(255,255,255,.16)}
+
+  /* ended screen */
+  .endsum{margin-top:18px;width:100%;max-width:230px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:12px 14px;text-align:left}
+  .endsum h5{font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+  .endsum .row{display:flex;justify-content:space-between;font-size:11.5px;padding:2.5px 0;font-family:var(--mono)}
+  .endsum .row span:first-child{color:var(--muted)}
+  .backchat{margin-top:16px;font-size:12.5px;color:var(--teal);padding:8px 16px;border:1px solid rgba(78,205,196,.3);border-radius:18px}
+
+  /* ---------- signal rail ---------- */
+  .rail{width:330px;min-height:620px;background:var(--panel);border:1px solid var(--line);border-radius:18px;display:flex;flex-direction:column;flex-shrink:1}
+  .rail header{padding:14px 16px 10px;border-bottom:1px solid var(--line)}
+  .rail header h3{font-size:13px;font-weight:700}
+  .rail header p{font-size:11px;color:var(--muted)}
+  .pathviz{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:12px 16px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:9.5px;color:var(--muted)}
+  .node{display:flex;flex-direction:column;align-items:center;gap:3px}
+  .node .box{width:34px;height:34px;border-radius:9px;background:var(--panel2);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:13px}
+  .node.relaynode .box{border-color:rgba(78,205,196,.4)}
+  .link{flex:1;height:2px;background:repeating-linear-gradient(90deg,var(--dim) 0 5px,transparent 5px 10px);position:relative;top:-8px}
+  .link.active{background:var(--green);animation:flow 1.2s linear infinite;background:repeating-linear-gradient(90deg,var(--green) 0 6px,rgba(29,185,84,.25) 6px 12px)}
+  @keyframes flow{to{background-position:12px 0}}
+  .pathlabel{padding:6px 16px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:10px;color:var(--teal);min-height:2.2em}
+  .log{flex:1;overflow-y:auto;padding:10px 14px;display:flex;flex-direction:column;gap:5px;font-family:var(--mono);font-size:10.5px;max-height:330px}
+  .ev{display:flex;gap:8px;align-items:baseline;color:var(--muted);animation:evin .25s ease-out}
+  @keyframes evin{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  .ev .dir{width:16px;flex-shrink:0;text-align:center}
+  .ev.right .dir{color:var(--green)} .ev.left .dir{color:var(--purple)} .ev.both .dir{color:var(--teal)} .ev.sys .dir{color:var(--dim)}
+  .ev .nm2{color:var(--ink)}
+  .ev.sys .nm2{color:var(--teal)}
+  .ev.err .nm2{color:var(--red)}
+  .ev small{color:var(--dim)}
+  .railctl{border-top:1px solid var(--line);padding:12px 14px;display:flex;flex-direction:column;gap:9px}
+  .railctl .grp{display:flex;gap:8px;flex-wrap:wrap}
+  .chaos{font-size:11.5px;padding:7px 12px;border-radius:16px;background:var(--panel2);border:1px solid var(--line);color:var(--muted);transition:all .15s}
+  .chaos:hover{color:var(--ink);border-color:var(--dim)}
+  .chaos[aria-pressed="true"]{background:rgba(78,205,196,.12);border-color:rgba(78,205,196,.5);color:var(--teal)}
+  .chaos.warn:hover{border-color:var(--red);color:var(--red)}
+  .chaos:disabled{opacity:.4;cursor:not-allowed}
+  .simnote{font-family:var(--mono);font-size:9.5px;color:var(--dim)}
+
+  /* ---------- sections ---------- */
+  section.block{padding:46px 0 12px}
+  section.block>.wrap>h2{font-size:21px;font-weight:800;letter-spacing:-.01em;margin:6px 0 4px}
+  section.block>.wrap>p.lead{color:var(--muted);font-size:14px;max-width:70ch;margin-bottom:24px}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+  .card .tag{font-family:var(--mono);font-size:10px;color:var(--purple);letter-spacing:.1em}
+  .card h3{font-size:14.5px;font-weight:700;margin:6px 0 6px}
+  .card p{font-size:12.5px;color:var(--muted)}
+  .card p code{font-family:var(--mono);font-size:11px;color:var(--teal)}
+
+  .gallery{display:flex;gap:16px;overflow-x:auto;padding:6px 2px 18px}
+  .shot{flex-shrink:0;width:240px}
+  .shot .mini{width:240px;height:430px;background:#000;border:1px solid #322D3E;border-radius:22px;position:relative;overflow:hidden}
+  .shot figcaption{font-size:11.5px;color:var(--muted);margin-top:9px;line-height:1.45}
+  .shot figcaption b{color:var(--ink);display:block;font-size:12px}
+  .shot figcaption .tag{font-family:var(--mono);font-size:9.5px;color:var(--purple)}
+
+  /* mini-screen internals (static gallery) */
+  .mini .lockclock{text-align:center;margin-top:44px;font-weight:200;font-size:44px;letter-spacing:-.02em}
+  .mini .lockdate{text-align:center;font-size:11px;color:var(--muted)}
+  .fsnotif{margin:22px 10px 0;background:rgba(30,27,38,.92);border:1px solid rgba(255,255,255,.12);border-radius:18px;padding:14px;backdrop-filter:blur(10px)}
+  .fsnotif .approw{display:flex;gap:6px;align-items:center;font-size:9.5px;color:var(--muted);margin-bottom:9px}
+  .fsnotif .approw .dotk{margin:0}
+  .fsnotif .who2{display:flex;gap:10px;align-items:center}
+  .fsnotif .who2 .nm{font-size:14px;font-weight:700}
+  .fsnotif .who2 .sub2{font-size:10.5px;color:var(--muted)}
+  .fsnotif .acts{display:flex;gap:8px;margin-top:12px}
+  .fsnotif .acts .a{flex:1;text-align:center;padding:8px 0;border-radius:14px;font-size:12px;font-weight:600}
+  .fsnotif .acts .a.g{background:var(--green);color:#04140a}
+  .fsnotif .acts .a.r{background:rgba(255,75,75,.16);color:#ff9d9d;border:1px solid rgba(255,75,75,.35)}
+  .shade{padding:10px}
+  .notif{background:#1c1a22;border:1px solid rgba(255,255,255,.09);border-radius:14px;padding:11px 12px;margin-bottom:8px}
+  .notif .h{display:flex;gap:6px;font-size:9.5px;color:var(--muted);align-items:center;margin-bottom:5px}
+  .notif .b{font-size:12px}
+  .notif .b b{font-size:12.5px}
+  .notif .sub3{font-size:10.5px;color:var(--muted);margin-top:2px}
+  .notif .acts2{display:flex;gap:14px;margin-top:8px;font-size:11px;font-weight:600}
+  .notif .acts2 span{color:var(--green)}
+  .notif .acts2 span.r{color:#ff9d9d}
+  .settingsrow{display:flex;align-items:flex-start;gap:12px;padding:13px 14px;border-bottom:1px solid rgba(255,255,255,.07)}
+  .settingsrow .txt{flex:1}
+  .settingsrow .txt b{font-size:12.5px;display:block}
+  .settingsrow .txt span{font-size:10.5px;color:var(--muted);line-height:1.4;display:block;margin-top:2px}
+  .toggle{width:38px;height:22px;border-radius:12px;background:rgba(255,255,255,.14);position:relative;flex-shrink:0;margin-top:2px}
+  .toggle.on{background:var(--green)}
+  .toggle i{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:left .15s}
+  .toggle.on i{left:18px}
+  .minihdr{padding:12px 14px;font-size:13.5px;font-weight:700;border-bottom:1px solid rgba(255,255,255,.08)}
+
+  footer.page{border-top:1px solid var(--line);margin-top:40px;padding:22px 0 40px;color:var(--dim);font-size:12px}
+  footer.page .wrap{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  footer.page code{font-family:var(--mono);color:var(--muted)}
+
+  @media (max-width:1080px){ .rail{order:3;width:min(660px,100%)} .log{max-height:220px} }
+  @media (prefers-reduced-motion:reduce){
+    .pulse,.link.active{animation:none}
+    .spin{animation:spin 3s linear infinite}
+    .ev{animation:none}
+  }
+</style>
+
+<header class="page">
+  <div class="wrap">
+    <div class="eyebrow">VC epic · Voice-Video-Call-1to1-Feature · design mockup</div>
+    <h1>1:1 voice &amp; video calls — how it looks, how it works</h1>
+    <p class="sub">Two live phones running the real call state machine from the VC plans. Place a call on Maha's Pixel, answer on Omar's device, and watch the actual signaling envelopes (VC-04) travel the rail between them. Dark theme, green primary, and glass controls follow the shipped mknoon theme (<span style="font-family:var(--mono);font-size:12px">app_colors.dart</span>).</p>
+    <div class="legend">
+      <span><span class="dotk" style="background:var(--green)"></span><b>Green</b> — primary action (app accent #1DB954)</span>
+      <span><span class="dotk" style="background:var(--red)"></span><b>Red</b> — end / decline</span>
+      <span><span class="dotk" style="background:var(--teal)"></span><b>Teal</b> — transport &amp; metrics</span>
+      <span><span class="dotk" style="background:var(--purple)"></span><b>Purple</b> — VC story tags</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="hero">
+
+    <div class="stage">
+      <div class="who"><b>Maha</b> · Pixel 6 (caller side)</div>
+      <div class="phone"><div class="cam"></div>
+        <div class="statusbar"><span>10:37</span><span>▲▲ ▂▄▆ 82%</span></div>
+        <div class="screen" id="scrA"></div>
+      </div>
+      <div class="caption" id="capA"></div>
+    </div>
+
+    <div class="rail">
+      <header>
+        <h3>Signal rail — what travels between the phones</h3>
+        <p>Every envelope is a real type from the VC-04 protocol.</p>
+      </header>
+      <div class="pathviz">
+        <div class="node"><div class="box">📱</div>Maha</div>
+        <div class="link" id="linkL"></div>
+        <div class="node relaynode"><div class="box" id="relayIcon">🛰</div><span id="relayName">relay · mknoun.xyz</span></div>
+        <div class="link" id="linkR"></div>
+        <div class="node"><div class="box">📱</div>Omar</div>
+      </div>
+      <div class="pathlabel" id="pathlabel">signaling: libp2p fast path · media: none yet</div>
+      <div class="log" id="log" aria-live="polite"></div>
+      <div class="railctl">
+        <div class="grp">
+          <button class="chaos" id="btnTurn" aria-pressed="false" title="Settings toggle — VC-09">🔒 Always relay (TURN)</button>
+          <button class="chaos" id="btnBusy" aria-pressed="false">📵 Omar in another call</button>
+        </div>
+        <div class="grp">
+          <button class="chaos warn" id="btnDrop" disabled>📶 Drop Maha's Wi-Fi mid-call</button>
+          <button class="chaos" id="btnReset">↺ Reset demo</button>
+        </div>
+        <div class="simnote">Timers compressed ×5 — offer TTL 45 s plays as 9 s. Ring, ICE and reconnect budgets from VC-04/06/09.</div>
+      </div>
+    </div>
+
+    <div class="stage">
+      <div class="who"><b>Omar</b> · Galaxy emulator (callee side)</div>
+      <div class="phone"><div class="cam"></div>
+        <div class="statusbar"><span>10:37</span><span>▲▲ ▂▄▆ 100%</span></div>
+        <div class="screen" id="scrB"></div>
+      </div>
+      <div class="caption" id="capB"></div>
+    </div>
+
+  </div>
+</div>
+
+<section class="block">
+  <div class="wrap">
+    <h2>Where each screen comes from</h2>
+    <p class="lead">Every surface above is owned by one story in <span style="font-family:var(--mono);font-size:12.5px">Test-Flight-Improv/Voice-Video-Call-1to1-Feature/</span>. The mockup follows the locked contracts (L1–L7) — the 45 s offer TTL, the single <code style="font-family:var(--mono);font-size:12px;color:var(--teal)">call_push_request</code> ring mechanism, and the transport pill states.</p>
+    <div class="cards">
+      <div class="card"><div class="tag">VC-04</div><h3>Signaling envelopes</h3><p>The rail shows the real protocol: <code>call_offer</code> (with callId + 45 s TTL), <code>call_answer</code>, <code>call_ice_candidates</code>, <code>call_end / _decline / _busy</code>. Fast-path only — never store-and-forwarded, so a stale offer can't ring anyone 20 minutes late.</p></div>
+      <div class="card"><div class="tag">VC-05</div><h3>Foreground audio call</h3><p>Outgoing, incoming and active-call screens with mute, speaker and hang-up on a glass control bar. The transport pill reports the live ICE pair: <code>direct</code>, <code>punched</code> or <code>TURN relay</code>, plus RTT from getStats.</p></div>
+      <div class="card"><div class="tag">VC-06</div><h3>Android ring path</h3><p>A killed phone rings via a high-priority FCM data push → full-screen intent (gallery below). Ring budget ≤ 3.0 s p95; the ring never outlives the offer: timeout = min(45 s, TTL remaining).</p></div>
+      <div class="card"><div class="tag">VC-07</div><h3>iOS CallKit</h3><p>Same call, Apple rules: PushKit voip push must report to CallKit immediately — the native ringing UI (gallery below). Adds the missing <code>voip</code>/<code>audio</code> background modes, test-locked.</p></div>
+      <div class="card"><div class="tag">VC-08</div><h3>Video &amp; mid-call upgrade</h3><p>Video-from-start or upgrade during audio — the callee always consents before their camera turns on. Local preview PiP, camera flip, speaker default on.</p></div>
+      <div class="card"><div class="tag">VC-09</div><h3>Reliability &amp; quality</h3><p>Wi-Fi drop mid-call → ICE restart with a visible reconnecting state (≤ 10 s budget). Every call ends with a quality trail — setup time, path, RTT, loss — and a privacy toggle forces TURN so your IP never meets the peer.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="block">
+  <div class="wrap">
+    <h2>States gallery — the surfaces you can't click into above</h2>
+    <p class="lead">OS-boundary surfaces from VC-06 / VC-07 / VC-09, static for review.</p>
+    <div class="gallery">
+
+      <figure class="shot">
+        <div class="mini">
+          <div class="lockclock">10:37</div>
+          <div class="lockdate">Sun, Jul 13 · locked</div>
+          <div class="fsnotif">
+            <div class="approw"><span class="dotk" style="background:var(--green)"></span>mknoon · incoming call</div>
+            <div class="who2"><div class="avatar" style="width:34px;height:34px;font-size:13px">M</div>
+              <div><div class="nm">Maha</div><div class="sub2">Voice call · end-to-end encrypted</div></div></div>
+            <div class="acts"><div class="a r">Decline</div><div class="a g">Answer</div></div>
+          </div>
+        </div>
+        <figcaption><b>Android — ring on a killed phone</b><span class="tag">VC-06</span> · full-screen intent over the lock screen, posted from the FCM data push without starting the node. Ring ≤ 3.0 s p95.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="mini" style="background:linear-gradient(180deg,#10131c,#0a0c12)">
+          <div class="lockclock" style="font-size:38px;margin-top:34px">10:37</div>
+          <div class="fsnotif" style="margin-top:30px">
+            <div class="approw">mknoon Audio</div>
+            <div class="who2"><div class="avatar" style="width:34px;height:34px;font-size:13px">M</div>
+              <div><div class="nm">Maha</div><div class="sub2">mknoon · iPhone</div></div></div>
+            <div class="acts"><div class="a r" style="border-radius:50%;flex:0 0 44px;height:44px;line-height:28px">✕</div><div style="flex:1"></div><div class="a g" style="border-radius:50%;flex:0 0 44px;height:44px;line-height:28px">✓</div></div>
+          </div>
+        </div>
+        <figcaption><b>iOS — CallKit native ring</b><span class="tag">VC-07</span> · PushKit voip push reported to CallKit immediately (OS rule). Uses the system call UI, not ours.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="mini">
+          <div class="minihdr">Notifications</div>
+          <div class="shade">
+            <div class="notif">
+              <div class="h"><span class="dotk" style="background:var(--green);width:7px;height:7px"></span>mknoon · ongoing call · 04:12</div>
+              <div class="b"><b>Omar</b></div><div class="sub3">Voice call · direct · tap to return</div>
+              <div class="acts2"><span class="r">Hang up</span><span>Mute</span></div>
+            </div>
+            <div class="notif">
+              <div class="h"><span class="dotk" style="background:var(--red);width:7px;height:7px"></span>mknoon · just now</div>
+              <div class="b"><b>Missed call — Maha</b></div><div class="sub3">Voice call · 10:31</div>
+              <div class="acts2"><span>Call back</span><span>Message</span></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>Ongoing-call service &amp; missed call</b><span class="tag">VC-06</span> · the phoneCall/microphone foreground service keeps the call alive when backgrounded.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="mini">
+          <div class="minihdr">Settings · Calls</div>
+          <div class="settingsrow">
+            <div class="txt"><b>Always relay calls</b><span>Route media through the mknoon relay (TURN) so your IP address is never visible to the other person. Calls may connect a little slower.</span></div>
+            <div class="toggle on"><i></i></div>
+          </div>
+          <div class="settingsrow">
+            <div class="txt"><b>Low-data mode</b><span>Prefer audio-only and cap video quality on mobile data.</span></div>
+            <div class="toggle"><i></i></div>
+          </div>
+        </div>
+        <figcaption><b>Privacy &amp; data controls</b><span class="tag">VC-09</span> · Signal-style IP privacy: forces <code style="font-family:var(--mono);font-size:10px">iceTransportPolicy: relay</code>.</figcaption>
+      </figure>
+
+      <figure class="shot">
+        <div class="mini">
+          <div class="minihdr">Call quality</div>
+          <div style="padding:14px">
+            <div class="endsum" style="margin:0;max-width:none">
+              <h5>Voice call · Omar · 04:12</h5>
+              <div class="row"><span>setup</span><span style="color:var(--green)">1.9 s</span></div>
+              <div class="row"><span>path</span><span>direct (punched)</span></div>
+              <div class="row"><span>rtt p50</span><span>48 ms</span></div>
+              <div class="row"><span>loss</span><span>0.3%</span></div>
+              <div class="row"><span>jitter</span><span>11 ms</span></div>
+              <div class="row"><span>drop cause</span><span>hangup</span></div>
+            </div>
+            <p style="font-size:10.5px;color:var(--dim);margin-top:10px;line-height:1.5">Aggregated counters (no peer IDs) feed relay Prometheus: TURN share, drop causes, setup buckets.</p>
+          </div>
+        </div>
+        <figcaption><b>End-of-call quality trail</b><span class="tag">VC-09</span> · the “why was this call bad?” contract — getStats sampled every few seconds.</figcaption>
+      </figure>
+
+    </div>
+  </div>
+</section>
+
+<footer class="page">
+  <div class="wrap">
+    <span>Interactive mockup · built from <code>VC-00…VC-09</code> accepted plans · timers compressed ×5</span>
+    <span>Final UI ships localized (incl. RTL/Arabic) via <code>app_localizations</code></span>
+  </div>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+  var $=function(id){return document.getElementById(id)};
+  var scrA=$("scrA"),scrB=$("scrB"),capA=$("capA"),capB=$("capB"),log=$("log");
+  var SPEED=5; // ×5 compression
+  var ICONS={
+    phone:'<svg viewBox="0 0 24 24"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.24 11.4 11.4 0 0 0 3.6.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.4 11.4 0 0 0 .57 3.6 1 1 0 0 1-.25 1z"/></svg>',
+    video:'<svg viewBox="0 0 24 24"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11z"/></svg>',
+    mic:'<svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11z"/></svg>',
+    micoff:'<svg viewBox="0 0 24 24"><path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23A6.98 6.98 0 0 0 19 11zM4.27 3 3 4.27l6 6V11a3 3 0 0 0 4.24 2.73l1.66 1.66A6.9 6.9 0 0 1 12 16a7 7 0 0 1-7-5H3.3a8.7 8.7 0 0 0 7.7 6.92V21h2v-3.08c.91-.13 1.77-.42 2.55-.83L19.73 21 21 19.73zM15 11V5a3 3 0 0 0-6 0v.18l6 6z"/></svg>',
+    speaker:'<svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.06A7 7 0 0 1 14 18.7v2.06a9 9 0 0 0 0-17.6z"/></svg>',
+    end:'<svg viewBox="0 0 24 24"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .4-.23.74-.56.9-.98.5-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a1 1 0 0 1 0-1.42C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.66a1 1 0 0 1 0 1.42l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.1-.7-.28-.79-.73-1.68-1.36-2.66-1.85a1 1 0 0 1-.56-.9v-3.1A16.7 16.7 0 0 0 12 9z"/></svg>',
+    flip:'<svg viewBox="0 0 24 24"><path d="M20 5h-3.2L15 3H9L7.2 5H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm-8 3a5 5 0 0 1 4.9 4h-1.9l2.5 3 2.5-3h-1.6a6.5 6.5 0 0 0-12.8 0H7a5 5 0 0 1 5-4z"/></svg>',
+    send:'<svg viewBox="0 0 24 24"><path d="M2 21 23 12 2 3v7l15 2-15 2z"/></svg>',
+    arrow:'<svg viewBox="0 0 24 24"><path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>'
+  };
+  function callLogSvg(){return '<svg viewBox="0 0 24 24"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.24 11.4 11.4 0 0 0 3.6.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.4 11.4 0 0 0 .57 3.6 1 1 0 0 1-.25 1z"/></svg>'}
+
+  var st={
+    phase:"idle", kind:"voice", callId:null,
+    alwaysRelay:false, busy:false, muted:{A:false,B:false}, speaker:{A:false,B:false},
+    video:{A:false,B:false}, flipped:false, path:null, setupMs:null,
+    t0:null, durTimer:null, ttlTimer:null, timers:[], logs:{A:[],B:[]}
+  };
+  function after(ms,fn){var t=setTimeout(fn,ms);st.timers.push(t);return t}
+  function clearTimers(){st.timers.forEach(clearTimeout);st.timers=[];if(st.durTimer)clearInterval(st.durTimer);if(st.ttlTimer)clearInterval(st.ttlTimer);st.durTimer=st.ttlTimer=null}
+  function fmt(s){var m=Math.floor(s/60),ss=s%60;return (m<10?"0":"")+m+":"+(ss<10?"0":"")+ss}
+  function newId(){return Math.random().toString(16).slice(2,6)}
+
+  /* ---------- rail ---------- */
+  function ev(dir,name,note,cls){
+    var d={right:"→",left:"←",both:"⇄",sys:"●"}[dir]||"●";
+    var el=document.createElement("div");
+    el.className="ev "+dir+(cls?" "+cls:"");
+    el.innerHTML='<span class="dir">'+d+'</span><span><span class="nm2">'+name+'</span>'+(note?' <small>'+note+'</small>':'')+'</span>';
+    log.appendChild(el); log.scrollTop=log.scrollHeight;
+  }
+  function setPath(mode){
+    var L=$("linkL"),R=$("linkR"),lbl=$("pathlabel"),icon=$("relayIcon"),nm=$("relayName");
+    L.className="link";R.className="link";
+    if(mode==="signal"){L.className="link active";R.className="link active";icon.textContent="🛰";nm.textContent="relay · mknoun.xyz";
+      lbl.textContent="signaling: libp2p fast path via relay · media: none yet";}
+    else if(mode==="direct"){icon.textContent="✕";nm.textContent="bypassed";L.className="link active";R.className="link active";
+      lbl.textContent="media: direct P2P (DTLS-SRTP) · signaling stays on libp2p";}
+    else if(mode==="turn"){icon.textContent="🔒";nm.textContent="TURN · mknoun.xyz";L.className="link active";R.className="link active";
+      lbl.textContent="media: relayed via TURN (still E2E — server sees only ciphertext)";}
+    else{icon.textContent="🛰";nm.textContent="relay · mknoun.xyz";lbl.textContent="signaling: libp2p fast path · media: none yet";}
+  }
+
+  /* ---------- screens ---------- */
+  function avatar(initial,big,online){return '<div class="avatar'+(big?" big":"")+(online?" online":"")+'">'+initial+'</div>'}
+
+  function chatScreen(side){
+    var peer=side==="A"?"Omar":"Maha", ini=peer[0];
+    var extra=st.logs[side].map(function(l){return l}).join("");
+    var missedBanner="";
+    return ''+
+    '<div class="appbar">'+avatar(ini,false,true)+
+      '<div><div class="nm">'+peer+'</div><div class="st">online · direct</div></div>'+
+      '<div class="callbtns">'+
+        '<button class="icbtn" data-act="callvoice" aria-label="Voice call">'+ICONS.phone+'</button>'+
+        '<button class="icbtn" data-act="callvideo" aria-label="Video call">'+ICONS.video+'</button>'+
+      '</div></div>'+
+    '<div class="msgs">'+
+      '<div class="bubble them">The venue is booked for Thursday 🎉<span class="t">10:21</span></div>'+
+      '<div class="bubble me">Perfect — sending the poster draft now<span class="t">10:22 ✓✓</span></div>'+
+      '<div class="bubble them">Can we talk it through quickly?<span class="t">10:36</span></div>'+
+      extra+
+    '</div>'+
+    '<div class="composer"><div class="field">Message</div><div class="send">'+ICONS.send+'</div></div>';
+  }
+
+  function outgoingScreen(status){
+    return '<div class="callsurface">'+
+      '<div class="kind">'+(st.kind==="video"?"mknoon video call":"mknoon voice call")+' · encrypted</div>'+
+      '<div class="ringwrap">'+(status==="Ringing…"?'<div class="pulse"></div><div class="pulse p2"></div>':"")+avatar("O",true)+'</div>'+
+      '<div class="peer">Omar</div><div class="status">'+status+'</div>'+
+      (status==="Ringing…"?'<div class="ttlnote">offer TTL 45 s — ring can never outlive it</div>':"")+
+      '<div class="answerrow" style="gap:0;padding-bottom:30px;margin-top:auto">'+
+        '<button class="ctl end big" data-act="hangup" aria-label="Cancel call">'+ICONS.end+'</button>'+
+      '</div></div>';
+  }
+
+  function incomingScreen(){
+    return '<div class="callsurface">'+
+      '<div class="kind">incoming '+(st.kind==="video"?"video":"voice")+' call · mknoon</div>'+
+      '<div class="ringwrap"><div class="pulse"></div><div class="pulse p2"></div>'+avatar("M",true)+'</div>'+
+      '<div class="peer">Maha</div><div class="status">is calling you…</div>'+
+      '<div class="ttl"><i id="ttlbar" style="width:100%"></i></div>'+
+      '<div class="ttlnote">rings for min(45 s, offer TTL left) · sim ×5</div>'+
+      '<div class="answerrow">'+
+        '<button class="ctl end big" data-act="decline" aria-label="Decline"><span class="ctllbl">Decline</span>'+ICONS.end+'</button>'+
+        '<button class="ctl answer big" data-act="answer" aria-label="Answer"><span class="ctllbl">Answer</span>'+ICONS.phone+'</button>'+
+      '</div></div>';
+  }
+
+  function activeAudio(side){
+    var peer=side==="A"?"Omar":"Maha", ini=peer[0];
+    var mutedMe=st.muted[side], peerMuted=st.muted[side==="A"?"B":"A"];
+    var pathTxt=st.path==="turn"?"TURN relay":st.path==="punched"?"direct · punched":"direct";
+    return '<div class="callsurface">'+
+      '<div class="kind">voice call · encrypted</div>'+
+      '<div class="ringwrap" style="margin-top:18px">'+avatar(ini,true)+'</div>'+
+      '<div class="peer">'+peer+'</div><div class="status live" id="dur'+side+'">00:00</div>'+
+      '<div class="transport"><span class="lock">🔒</span> '+pathTxt+' · '+(st.path==="turn"?"81":"48")+' ms rtt</div>'+
+      '<div class="peerchip" style="visibility:'+(peerMuted?"visible":"hidden")+'">'+peer+' muted their mic</div>'+
+      '<div class="metricsrow"><span class="mchip">setup '+(st.setupMs/1000).toFixed(1)+' s</span><span class="mchip">loss 0.3%</span><span class="mchip">opus 24 kbps</span></div>'+
+      '<div class="controls">'+
+        '<button class="ctl'+(mutedMe?" on":"")+'" data-act="mute" aria-label="Mute" aria-pressed="'+mutedMe+'">'+(mutedMe?ICONS.micoff:ICONS.mic)+'</button>'+
+        '<button class="ctl'+(st.speaker[side]?" on":"")+'" data-act="speaker" aria-label="Speaker" aria-pressed="'+st.speaker[side]+'">'+ICONS.speaker+'</button>'+
+        '<button class="ctl" data-act="reqvideo" aria-label="Turn on video">'+ICONS.video+'</button>'+
+        '<button class="ctl end" data-act="hangup" aria-label="Hang up">'+ICONS.end+'</button>'+
+      '</div></div>';
+  }
+
+  function activeVideo(side){
+    var peer=side==="A"?"Omar":"Maha";
+    var mutedMe=st.muted[side];
+    var pathTxt=st.path==="turn"?"TURN relay":st.path==="punched"?"direct · punched":"direct";
+    return '<div class="video-remote"></div>'+
+      '<div class="vtag">'+peer+(st.muted[side==="A"?"B":"A"]?" · mic off":"")+'</div>'+
+      '<div class="pip'+(st.flipped&&side==="A"?" flipped":"")+'"><span class="you">You</span></div>'+
+      '<div class="videochrome">'+
+        '<div class="vtop"><div class="nm">'+peer+'</div>'+
+        '<div class="transport"><span class="lock">🔒</span> '+pathTxt+' · <span id="dur'+side+'">00:00</span></div></div>'+
+        '<div class="controls">'+
+          '<button class="ctl'+(mutedMe?" on":"")+'" data-act="mute" aria-label="Mute" aria-pressed="'+mutedMe+'">'+(mutedMe?ICONS.micoff:ICONS.mic)+'</button>'+
+          '<button class="ctl" data-act="flip" aria-label="Flip camera">'+ICONS.flip+'</button>'+
+          '<button class="ctl on" data-act="camoff" aria-label="Camera off">'+ICONS.video+'</button>'+
+          '<button class="ctl end" data-act="hangup" aria-label="Hang up">'+ICONS.end+'</button>'+
+        '</div></div>';
+  }
+
+  function endedScreen(side,reason,dur){
+    var peer=side==="A"?"Omar":"Maha", ini=peer[0];
+    var showSum=reason==="Call ended";
+    return '<div class="callsurface">'+
+      '<div class="kind">mknoon call</div>'+
+      '<div class="ringwrap" style="margin-top:22px">'+avatar(ini,true)+'</div>'+
+      '<div class="peer">'+peer+'</div><div class="status">'+reason+(dur?" · "+dur:"")+'</div>'+
+      (showSum?'<div class="endsum"><h5>quality trail · VC-09</h5>'+
+        '<div class="row"><span>setup</span><span>'+(st.setupMs/1000).toFixed(1)+' s</span></div>'+
+        '<div class="row"><span>path</span><span>'+(st.path==="turn"?"relay (TURN)":st.path==="punched"?"direct (punched)":"direct")+'</span></div>'+
+        '<div class="row"><span>rtt p50</span><span>'+(st.path==="turn"?"81":"48")+' ms</span></div>'+
+        '<div class="row"><span>loss</span><span>0.3%</span></div></div>':"")+
+      '<button class="backchat" data-act="back">Back to chat</button></div>';
+  }
+
+  function consentOverlay(){
+    return '<div class="overlay"><div class="avatar big">M</div>'+
+      '<h4>Maha wants to turn on video</h4><p>Your camera stays off until you accept. The call stays encrypted.</p>'+
+      '<div class="obtns"><button class="pill-btn no" data-act="keepaudio">Keep audio</button>'+
+      '<button class="pill-btn yes" data-act="acceptvideo">Turn on video</button></div></div>';
+  }
+  function reconnectOverlay(){
+    return '<div class="overlay"><div class="spin" role="img" aria-label="Reconnecting"></div>'+
+      '<h4>Reconnecting…</h4><p>Network changed. Restarting ICE — up to 10 s before we give up.</p></div>';
+  }
+
+  /* ---------- render ---------- */
+  var screens={A:"chat",B:"chat"}, overlays={A:null,B:null};
+  function cap(side,txt){(side==="A"?capA:capB).innerHTML=txt}
+  function render(side){
+    var el=side==="A"?scrA:scrB, s=screens[side], html="";
+    if(s==="chat")html=chatScreen(side);
+    else if(s==="outgoing-calling")html=outgoingScreen("Calling…");
+    else if(s==="outgoing-ringing")html=outgoingScreen("Ringing…");
+    else if(s==="outgoing-connecting")html=outgoingScreen("Connecting…");
+    else if(s==="incoming")html=incomingScreen();
+    else if(s==="connecting")html=outgoingScreen("Connecting…").replace(">Omar<",side==="B"?">Maha<":">Omar<");
+    else if(s==="active")html=st.video.A&&st.video.B?activeVideo(side):activeAudio(side);
+    else if(s.indexOf("ended:")===0){var parts=s.split(":");html=endedScreen(side,parts[1],parts[2]||"")}
+    if(overlays[side]==="consent")html+=consentOverlay();
+    if(overlays[side]==="reconnect")html+=reconnectOverlay();
+    el.innerHTML=html;
+    el.querySelectorAll("[data-act]").forEach(function(b){b.addEventListener("click",function(){act(side,b.getAttribute("data-act"))})});
+  }
+  function setScreen(side,s,o){screens[side]=s;overlays[side]=o||null;render(side)}
+  function renderBothActive(){setScreen("A","active");setScreen("B","active");tickDur()}
+
+  /* ---------- durations ---------- */
+  function tickDur(){
+    if(st.durTimer)clearInterval(st.durTimer);
+    st.durTimer=setInterval(function(){
+      if(!st.t0)return;
+      var s=Math.floor((Date.now()-st.t0)/1000);
+      var a=$("durA"),b=$("durB");
+      if(a)a.textContent=fmt(s); if(b)b.textContent=fmt(s);
+    },500);
+  }
+
+  /* ---------- call flow ---------- */
+  function startCall(kind){
+    if(st.phase!=="idle")return;
+    st.kind=kind; st.callId=newId(); st.phase="dialing";
+    st.video={A:kind==="video",B:kind==="video"};
+    setScreen("A","outgoing-calling");
+    cap("A",'OutgoingCallScreen — <span class="tag">VC-05</span>');
+    setPath("signal");
+    ev("right","call_push_request","FCM high-priority · rings even if killed · VC-06");
+    ev("right","call_offer","callId "+st.callId+" · "+(kind==="video"?"video":"audio")+" · TTL 45 s");
+    $("btnDrop").disabled=true;
+    after(900/1,function(){
+      if(st.phase!=="dialing")return;
+      if(st.busy){
+        ev("left","call_busy","Omar is in another call");
+        setScreen("A","ended:Busy");cap("A",'Busy — auto <code>call_busy</code> <span class="tag">VC-04</span>');
+        st.phase="idle";setPath(null);return;
+      }
+      st.phase="ringing";
+      setScreen("A","outgoing-ringing");
+      setScreen("B","incoming");
+      cap("B",'IncomingCallScreen — full-screen ring <span class="tag">VC-06</span>');
+      ev("sys","ring shown on Omar","0.8 s — budget ≤ 3.0 s p95");
+      startTtl();
+    });
+  }
+  function startTtl(){
+    var total=45000/SPEED, left=total;
+    st.ttlTimer=setInterval(function(){
+      left-=250;
+      var bar=$("ttlbar"); if(bar)bar.style.width=Math.max(0,left/total*100)+"%";
+      if(left<=0){clearInterval(st.ttlTimer);st.ttlTimer=null;timeoutCall()}
+    },250);
+  }
+  function stopTtl(){if(st.ttlTimer){clearInterval(st.ttlTimer);st.ttlTimer=null}}
+  function timeoutCall(){
+    if(st.phase!=="ringing")return;
+    st.phase="idle";
+    ev("sys","offer TTL expired","no stale ring — offer dies with it","err");
+    setScreen("A","ended:No answer");cap("A","Timeout — offer expired");
+    st.logs.B.push('<div class="calllog missed">'+callLogSvg()+'Missed voice call · 10:37</div>');
+    setScreen("B","chat");cap("B",'Missed-call entry + notification <span class="tag">VC-06</span>');
+    setPath(null);
+  }
+  function answer(){
+    if(st.phase!=="ringing")return;
+    stopTtl(); st.phase="connecting";
+    ev("left","call_answer","callId "+st.callId);
+    setScreen("A","outgoing-connecting");setScreen("B","connecting");
+    cap("A","ICE negotiation — STUN"+(st.alwaysRelay?" skipped, TURN forced":" + TURN fallback")+' <span class="tag">VC-03/05</span>');
+    cap("B","ICE negotiation");
+    ev("both","call_ice_candidates","×"+(st.alwaysRelay?3:6)+(st.alwaysRelay?" · relay-only":""));
+    var t=st.alwaysRelay?2300:1600;
+    after(t,function(){
+      if(st.phase!=="connecting")return;
+      st.phase="active"; st.t0=Date.now(); st.setupMs=t+900;
+      st.path=st.alwaysRelay?"turn":"punched";
+      ev("sys","ICE connected","pair: "+(st.alwaysRelay?"relay (TURN)":"direct (punched)")+" · setup "+((t+900)/1000).toFixed(1)+" s");
+      setPath(st.alwaysRelay?"turn":"direct");
+      renderBothActive();
+      cap("A",'ActiveCallScreen — glass controls <span class="tag">VC-05</span>');
+      cap("B",'Transport pill = live ICE pair <span class="tag">VC-09</span>');
+      $("btnDrop").disabled=false;
+    });
+  }
+  function decline(){
+    if(st.phase!=="ringing")return;
+    stopTtl(); st.phase="idle";
+    ev("left","call_decline","");
+    setScreen("A","ended:Declined");cap("A","Declined");
+    st.logs.B.push('<div class="calllog">'+callLogSvg()+'Declined voice call · 10:37</div>');
+    setScreen("B","chat");cap("B","");
+    setPath(null);
+  }
+  function hangup(side){
+    var wasActive=st.phase==="active";
+    var dur=wasActive?fmt(Math.floor((Date.now()-st.t0)/1000)):null;
+    stopTtl(); st.phase="idle"; $("btnDrop").disabled=true;
+    ev(side==="A"?"right":"left","call_end",wasActive?"hangup after "+dur:"cancelled");
+    if(wasActive){
+      setScreen("A","ended:Call ended:"+dur);setScreen("B","ended:Call ended:"+dur);
+      cap("A",'Quality trail on hangup <span class="tag">VC-09</span>');cap("B","");
+      var entry='<div class="calllog">'+callLogSvg()+(st.kind==="video"?"Video":"Voice")+" call · "+dur+"</div>";
+      st.logs.A.push(entry);st.logs.B.push(entry);
+    }else{
+      setScreen("A","chat");setScreen("B","chat");cap("A","");cap("B","");
+    }
+    if(st.durTimer){clearInterval(st.durTimer);st.durTimer=null}
+    st.t0=null;st.video={A:false,B:false};st.muted={A:false,B:false};st.speaker={A:false,B:false};st.flipped=false;
+    setPath(null);
+  }
+  function reqVideo(side){
+    if(st.phase!=="active"||st.video.A)return;
+    var other=side==="A"?"B":"A";
+    ev(side==="A"?"right":"left","call_offer","renegotiate · same callId · seq+1 · +video · VC-08");
+    overlays[other]="consent";render(other);
+    cap(other==="B"?"B":"A",'Consent before camera <span class="tag">VC-08</span>');
+  }
+  function acceptVideo(){
+    overlays.B=null;overlays.A=null;
+    ev("left","call_answer","video accepted");
+    st.video={A:true,B:true};st.speaker={A:true,B:true};
+    renderBothActive();
+    cap("A",'VideoCallScreen — PiP preview, camera flip <span class="tag">VC-08</span>');
+    cap("B","Speaker defaults on for video");
+  }
+  function keepAudio(){
+    overlays.B=null;overlays.A=null;
+    ev("left","call_decline","kept audio-only");
+    renderBothActive();cap("B","Stayed audio — no camera without consent");
+  }
+  function dropNetwork(){
+    if(st.phase!=="active")return;
+    st.phase="reconnecting";$("btnDrop").disabled=true;
+    ev("sys","ICE disconnected","Maha's Wi-Fi dropped","err");
+    overlays.A="reconnect";render("A");
+    cap("A",'Reconnecting state — ICE restart <span class="tag">VC-09</span>');
+    setPath("signal");
+    after(1200,function(){ev("right","call_offer","ICE restart · seq+2 · via signaling")});
+    after(1700,function(){ev("both","call_ice_candidates","×4 · cellular path")});
+    after(3200,function(){
+      if(st.phase!=="reconnecting")return;
+      st.phase="active";overlays.A=null;
+      st.path=st.alwaysRelay?"turn":"direct";
+      ev("sys","ICE reconnected","2.9 s · budget ≤ 10 s · pair: "+(st.alwaysRelay?"relay (TURN)":"direct (srflx)"));
+      setPath(st.alwaysRelay?"turn":"direct");
+      renderBothActive();
+      cap("A","Recovered on cellular — call never dropped");
+      $("btnDrop").disabled=false;
+    });
+  }
+
+  function act(side,a){
+    if(a==="callvoice"&&side==="A")startCall("voice");
+    else if(a==="callvideo"&&side==="A")startCall("video");
+    else if(a==="callvoice"||a==="callvideo")cap("B","Tip: place the call from Maha's phone (left) — either side can call in the real app");
+    else if(a==="answer")answer();
+    else if(a==="decline")decline();
+    else if(a==="hangup")hangup(side);
+    else if(a==="mute"){st.muted[side]=!st.muted[side];ev(side==="A"?"right":"left","(media)","mic "+(st.muted[side]?"off":"on")+" — RTP flag, not signaling");renderBothActive()}
+    else if(a==="speaker"){st.speaker[side]=!st.speaker[side];render(side)}
+    else if(a==="reqvideo")reqVideo(side);
+    else if(a==="acceptvideo")acceptVideo();
+    else if(a==="keepaudio")keepAudio();
+    else if(a==="flip"){st.flipped=!st.flipped;render(side)}
+    else if(a==="camoff"){st.video={A:false,B:false};ev(side==="A"?"right":"left","call_offer","renegotiate · video off");renderBothActive();cap("A","Back to audio");cap("B","")}
+    else if(a==="back"){screens[side]="chat";render(side);cap(side,"");if(st.phase==="idle"){var o=side==="A"?"B":"A";if(screens[o].indexOf("ended")===0){screens[o]="chat";render(o);cap(o,"")}}}
+  }
+
+  /* ---------- rail buttons ---------- */
+  $("btnTurn").addEventListener("click",function(){
+    st.alwaysRelay=!st.alwaysRelay;
+    this.setAttribute("aria-pressed",String(st.alwaysRelay));
+    ev("sys","always-relay "+(st.alwaysRelay?"ON":"OFF"),"iceTransportPolicy: "+(st.alwaysRelay?"relay — IP never exposed":"all"));
+    if(st.phase==="active"){st.path=st.alwaysRelay?"turn":"punched";setPath(st.alwaysRelay?"turn":"direct");renderBothActive()}
+  });
+  $("btnBusy").addEventListener("click",function(){
+    st.busy=!st.busy;this.setAttribute("aria-pressed",String(st.busy));
+  });
+  $("btnDrop").addEventListener("click",dropNetwork);
+  $("btnReset").addEventListener("click",function(){
+    clearTimers();st.phase="idle";st.callId=null;st.t0=null;
+    st.muted={A:false,B:false};st.speaker={A:false,B:false};st.video={A:false,B:false};st.flipped=false;
+    st.logs={A:[],B:[]};log.innerHTML="";overlays={A:null,B:null};
+    setScreen("A","chat");setScreen("B","chat");cap("A","");cap("B","");
+    setPath(null);$("btnDrop").disabled=true;
+    ev("sys","demo reset","tap ☎ or 🎥 on Maha's phone to start");
+  });
+
+  /* ---------- boot ---------- */
+  setScreen("A","chat");setScreen("B","chat");
+  cap("A",'Tap ☎ or 🎥 in the chat header to start <span class="tag">VC-05</span>');
+  cap("B","Omar will ring here");
+  setPath(null);
+  ev("sys","demo ready","place a call from Maha's phone →");
+})();
+</script>

@@ -1,0 +1,3254 @@
+#!/usr/bin/env dart
+
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:crypto/crypto.dart';
+
+import '_android_app_package.dart';
+import 'group_reaction_notification_device_criteria.dart';
+import 'reaction_notification_proof_support.dart';
+
+const _defaultRelayTarget = 'ubuntu@mknoun.xyz';
+const _defaultRelayKey = 'se.pem';
+const _defaultServiceAccount =
+    'mknoon-c6e62-firebase-adminsdk-fbsvc-70e1a8d4fb.json';
+const _reactionEmoji = '👍';
+const _sqlCipherProbe =
+    'integration_test/group_reaction_notification_sqlcipher_probe_test.dart';
+const _duplicateRedrivePrefix = 'MKNOON_257_DUPLICATE_REDRIVE_OBSERVATION ';
+const _iosTapTest = 'ios/RunnerUITests/NotificationTapUITests.swift';
+const _iosTapSelector = 'testAnnouncementReactionNotificationTap';
+const _iosFixtureCreateSelector = 'testCreateAnnouncementReactionFixture';
+const _iosFixtureAuthorSelector = 'testAuthorAnnouncementReactionTarget';
+const _iosNotificationPrepareSelector = 'testPrepareWarmNotificationTap';
+const _iosSystemLogExecutable = 'idevicesyslog';
+
+Future<void> main(List<String> args) async {
+  final scenarioId = _valueFor(args, '--scenario');
+  final senderId = _valueFor(args, '--sender');
+  final recipientId = _valueFor(args, '--recipient');
+  final artifactPath = _valueFor(args, '--artifact-dir');
+  final scenario = scenarioId == null
+      ? null
+      : groupReactionNotificationScenario(scenarioId);
+  if (scenario == null ||
+      senderId == null ||
+      recipientId == null ||
+      artifactPath == null) {
+    _usage();
+  }
+
+  final artifactDirectory = Directory(artifactPath).absolute;
+  final stagingPath =
+      _valueFor(args, '--staging-manifest') ??
+      Platform.environment['MKNOON_257_STAGING_MANIFEST'];
+  if (stagingPath == null || stagingPath.trim().isEmpty) {
+    await writeGroupReactionNotificationVerdict(
+      outputDirectory: artifactDirectory,
+      scenario: scenario.id,
+      ok: false,
+      stage: 'configuration',
+      status: 'configuration_blocked',
+      detail:
+          'staging_manifest_required: pass a redacted Plan 257 staging '
+          'manifest; relay/provider readiness is never inferred',
+    );
+    stderr.writeln(
+      'CONFIGURATION BLOCKED [${scenario.testCase}/${scenario.id}]: '
+      'staging_manifest_required.',
+    );
+    exit(78);
+  }
+
+  final capture = _Plan257Capture(
+    scenario: scenario,
+    senderId: senderId,
+    recipientId: recipientId,
+    artifactDirectory: artifactDirectory,
+    stagingManifest: File(stagingPath).absolute,
+    relayTarget:
+        _valueFor(args, '--relay-target') ??
+        Platform.environment['MKNOON_257_RELAY_TARGET'] ??
+        _defaultRelayTarget,
+    relayKey: File(
+      _valueFor(args, '--relay-key') ??
+          Platform.environment['MKNOON_257_RELAY_KEY'] ??
+          _defaultRelayKey,
+    ).absolute,
+    serviceAccount: File(
+      _valueFor(args, '--service-account') ??
+          Platform.environment['FIREBASE_SERVICE_ACCOUNT'] ??
+          _defaultServiceAccount,
+    ).absolute,
+    verbose: args.contains('--verbose'),
+    keepBuildArtifacts: args.contains('--keep-build-artifacts'),
+  );
+
+  try {
+    await capture.run();
+  } on _CaptureFailure catch (failure, stackTrace) {
+    await capture.writeFailure(failure, stackTrace);
+    stderr.writeln(
+      '${failure.status.toUpperCase()} '
+      '[${scenario.testCase}/${scenario.id}/${failure.stage}]: '
+      '${failure.message}',
+    );
+    exit(failure.exitCode);
+  } on Object catch (error, stackTrace) {
+    final failure = _CaptureFailure.capture(
+      capture.stage,
+      'unexpected_${error.runtimeType}: capture stopped without a proof '
+      'artifact',
+    );
+    await capture.writeFailure(failure, stackTrace);
+    stderr.writeln(
+      'CAPTURE_FAILED [${scenario.testCase}/${scenario.id}/${capture.stage}]: '
+      '${failure.message}',
+    );
+    exit(1);
+  }
+}
+
+class _CaptureFailure implements Exception {
+  const _CaptureFailure._(this.stage, this.message, this.status, this.exitCode);
+
+  factory _CaptureFailure.configuration(String stage, String message) =>
+      _CaptureFailure._(stage, message, 'configuration_blocked', 78);
+
+  factory _CaptureFailure.environment(String stage, String message) =>
+      _CaptureFailure._(stage, message, 'environment_blocked', 78);
+
+  factory _CaptureFailure.capture(String stage, String message) =>
+      _CaptureFailure._(stage, message, 'capture_failed', 1);
+
+  final String stage;
+  final String message;
+  final String status;
+  final int exitCode;
+}
+
+class _CommandOutput {
+  const _CommandOutput({
+    required this.exitCode,
+    required this.stdout,
+    required this.stderr,
+  });
+
+  final int exitCode;
+  final String stdout;
+  final String stderr;
+
+  String get combined => '$stdout\n$stderr';
+}
+
+class _Party {
+  _Party({required this.role, required this.deviceId, required this.username});
+
+  final String role;
+  final String deviceId;
+  final String username;
+  String peerId = '';
+  String qrPayload = '';
+  String? mlKemPublicKey;
+
+  String get peerPrefix =>
+      peerId.length <= 20 ? peerId : peerId.substring(0, 20);
+}
+
+class _RelayObservation {
+  const _RelayObservation({required this.revision, required this.sha256});
+
+  final String revision;
+  final String sha256;
+}
+
+class _AndroidBuilds {
+  const _AndroidBuilds({
+    required this.provenance,
+    required this.e2eApk,
+    required this.normalApk,
+    required this.e2eSha256,
+    required this.normalSha256,
+  });
+
+  final String provenance;
+  final File e2eApk;
+  final File normalApk;
+  final String e2eSha256;
+  final String normalSha256;
+}
+
+class _Plan257Capture {
+  _Plan257Capture({
+    required this.scenario,
+    required this.senderId,
+    required this.recipientId,
+    required this.artifactDirectory,
+    required this.stagingManifest,
+    required this.relayTarget,
+    required this.relayKey,
+    required this.serviceAccount,
+    required this.verbose,
+    required this.keepBuildArtifacts,
+  }) : sender = _Party(
+         role: scenario.senderRole,
+         deviceId: senderId,
+         username: 'Alice',
+       ),
+       recipient = _Party(
+         role: scenario.recipientRole,
+         deviceId: recipientId,
+         username: 'Bob',
+       ),
+       appPackage = resolveAndroidAppPackage();
+
+  final GroupReactionNotificationScenario scenario;
+  final String senderId;
+  final String recipientId;
+  final Directory artifactDirectory;
+  final File stagingManifest;
+  final String relayTarget;
+  final File relayKey;
+  final File serviceAccount;
+  final bool verbose;
+  final bool keepBuildArtifacts;
+  final _Party sender;
+  final _Party recipient;
+  final String appPackage;
+
+  String stage = 'configuration';
+  late Map<String, Object?> _staging;
+  late List<String> _relayAddresses;
+  late _RelayObservation _relay;
+  _AndroidBuilds? _androidBuilds;
+  DateTime? _captureWindowStart;
+  String _groupName = '';
+  String _firstMarker = '';
+  String _secondMarker = '';
+  String _targetMarker = '';
+  final List<int> _uiUnreadTimeline = <int>[];
+  final List<File> _uiSnapshots = <File>[];
+  final List<File> _notificationSnapshots = <File>[];
+  String _senderLogcat = '';
+  String _recipientLogcat = '';
+  String _relayJournal = '';
+  String _iosSystemLog = '';
+  String _iosXcuitestOutput = '';
+  String _exactDuplicateRedriveObservation = '';
+  String _iosE2eAppSha256 = '';
+  String _iosNormalAppSha256 = '';
+  final Map<String, File> _iosInstallReceipts = <String, File>{};
+  Process? _iosSystemLogProcess;
+  final StringBuffer _iosSystemLogStdout = StringBuffer();
+  final StringBuffer _iosSystemLogStderr = StringBuffer();
+  Future<void>? _iosSystemLogStdoutDone;
+  Future<void>? _iosSystemLogStderrDone;
+  final List<Map<String, Object?>> _commandJournal = <Map<String, Object?>>[];
+
+  Map<String, Object?> get _iosCapture =>
+      Map<String, Object?>.from(_staging['iosCapture'] as Map);
+
+  File get _commandJournalFile => File(
+    '${artifactDirectory.path}${Platform.pathSeparator}'
+    'automation_command_journal.json',
+  );
+
+  Future<void> run() async {
+    await artifactDirectory.create(recursive: true);
+    final staleArtifact = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}${scenario.id}.json',
+    );
+    if (await staleArtifact.exists()) {
+      await staleArtifact.delete();
+    }
+    stage = 'configuration';
+    _staging = await _readStagingManifest();
+    _relayAddresses = (_staging['relayAddresses'] as List<dynamic>)
+        .cast<String>()
+        .map((value) => value.trim())
+        .toList(growable: false);
+
+    stage = 'device_inventory';
+    await _verifyLiveDeviceTopology();
+
+    stage = 'relay_configuration';
+    _relay = await _verifyRelay();
+
+    stage = 'provider_configuration';
+    if (scenario.recipientPlatform == 'android') {
+      await _verifyFcmConfiguration();
+    } else {
+      await _verifyApnsConfiguration();
+    }
+    await _writeConfigurationVerdict();
+
+    if (scenario.recipientPlatform == 'ios') {
+      await _runIosAvailableStages();
+      return;
+    }
+
+    stage = 'candidate_build';
+    _androidBuilds = await _buildAndroidCandidate();
+
+    stage = 'android_role_install';
+    await _resetAndInstallAndroidRoles(_androidBuilds!.e2eApk);
+
+    stage = 'android_identity_setup';
+    await _prepareAndroidIdentity(sender);
+    await _prepareAndroidIdentity(recipient);
+    await _launchAndroid(senderId);
+    await _launchAndroid(recipientId);
+    await _collectAndroidIdentity(sender);
+    await _collectAndroidIdentity(recipient);
+    await _prepopulateAndroidContacts();
+
+    stage = 'group_fixture_setup';
+    await _createAndAcceptGroup();
+
+    stage = 'provider_registration';
+    await _installApk(recipientId, _androidBuilds!.normalApk);
+    await _grantNotificationPermission(recipientId);
+    final tokenWindow = DateTime.now().toUtc();
+    await _launchAndroid(recipientId);
+    await _waitForRelayTokenRegistration(tokenWindow);
+    await _requireCleanNotificationSlate();
+
+    _captureWindowStart = DateTime.now().toUtc();
+    await _adb(senderId, const <String>['logcat', '-c']);
+    await _adb(recipientId, const <String>['logcat', '-c']);
+    if (scenario.id.endsWith('_message_unread_lifecycle')) {
+      stage = 'android_unread_lifecycle';
+      await _runAndroidUnreadLifecycle();
+    } else {
+      stage = 'android_reaction_lifecycle';
+      await _runAndroidReactionLifecycle();
+    }
+
+    stage = 'sqlcipher_observation';
+    final sqlCipherEvidence = await _captureSqlCipherObservation();
+
+    stage = 'artifact_capture';
+    await _writeAndroidArtifact(sqlCipherEvidence);
+
+    stage = 'artifact_self_validation';
+    final artifact = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}${scenario.id}.json',
+    );
+    final result = await validateGroupReactionNotificationArtifact(
+      scenario: scenario.id,
+      artifactFile: artifact,
+      expectedSenderDeviceId: senderId,
+      expectedRecipientDeviceId: recipientId,
+    );
+    if (!result.ok) {
+      throw _CaptureFailure.capture(
+        stage,
+        'captured_authoritative_evidence_rejected: ${result.detail}',
+      );
+    }
+
+    await writeGroupReactionNotificationVerdict(
+      outputDirectory: artifactDirectory,
+      scenario: scenario.id,
+      ok: true,
+      stage: 'capture',
+      status: 'passed',
+      detail:
+          'real device roles, staging relay/provider, SQLCipher, OS card, '
+          'and automated UI evidence captured and self-validated',
+    );
+    stdout.writeln('PASS: ${scenario.id} captured at ${artifact.path}.');
+
+    if (!keepBuildArtifacts) {
+      await _deleteBuildCopies();
+    }
+  }
+
+  Future<void> writeFailure(
+    _CaptureFailure failure,
+    StackTrace stackTrace,
+  ) async {
+    await artifactDirectory.create(recursive: true);
+    await _flushCommandJournal();
+    await writeGroupReactionNotificationVerdict(
+      outputDirectory: artifactDirectory,
+      scenario: scenario.id,
+      ok: false,
+      stage: failure.stage,
+      status: failure.status,
+      detail: failure.message,
+    );
+    final failureFile = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}'
+      '${scenario.id}_capture_failure.json',
+    );
+    await failureFile.writeAsString(
+      const JsonEncoder.withIndent(' ').convert(<String, Object?>{
+        'schema': 'mknoon.plan257.capture-failure.v1',
+        'scenario': scenario.id,
+        'status': failure.status,
+        'stage': failure.stage,
+        'detail': failure.message,
+        'recordedAt': DateTime.now().toUtc().toIso8601String(),
+        'stackType': stackTrace.runtimeType.toString(),
+        'completedStages': _commandJournal
+            .map((record) => record['stage'])
+            .toSet()
+            .toList(growable: false),
+      }),
+      flush: true,
+    );
+  }
+
+  Future<Map<String, Object?>> _readStagingManifest() async {
+    if (!await stagingManifest.exists()) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'staging_manifest_missing: ${stagingManifest.path}',
+      );
+    }
+    Object? decoded;
+    try {
+      decoded = jsonDecode(await stagingManifest.readAsString());
+    } on Object {
+      throw _CaptureFailure.configuration(
+        stage,
+        'staging_manifest_invalid_json',
+      );
+    }
+    if (decoded is! Map) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'staging_manifest_root_not_object',
+      );
+    }
+    final manifest = Map<String, Object?>.from(decoded);
+    final validation = validateGroupReactionNotificationStagingManifest(
+      manifest,
+      scenario: scenario,
+    );
+    if (!validation.ok) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'staging_manifest_contract_rejected: ${validation.detail}',
+      );
+    }
+    return manifest;
+  }
+
+  Future<void> _verifyLiveDeviceTopology() async {
+    final selectionErrors = _validateTopologyShape();
+    if (selectionErrors.isNotEmpty) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'explicit_topology_invalid: ${selectionErrors.join('; ')}',
+      );
+    }
+
+    final flutterDevices = await _run('flutter', const <String>[
+      'devices',
+      '--machine',
+    ], environmentFailure: true);
+    Object? decoded;
+    try {
+      decoded = jsonDecode(flutterDevices.stdout);
+    } on Object {
+      throw _CaptureFailure.environment(
+        stage,
+        'flutter_device_inventory_invalid_json',
+      );
+    }
+    if (decoded is! List) {
+      throw _CaptureFailure.environment(
+        stage,
+        'flutter_device_inventory_not_list',
+      );
+    }
+    final devices = decoded
+        .whereType<Map>()
+        .map((entry) => Map<String, Object?>.from(entry))
+        .toList(growable: false);
+    Map<String, Object?>? find(String id) {
+      for (final device in devices) {
+        if (device['id'] == id) return device;
+      }
+      return null;
+    }
+
+    final senderDevice = find(senderId);
+    final recipientDevice = find(recipientId);
+    if (senderDevice == null || recipientDevice == null) {
+      throw _CaptureFailure.environment(
+        stage,
+        'explicit_device_unavailable: senderPresent=${senderDevice != null}, '
+        'recipientPresent=${recipientDevice != null}',
+      );
+    }
+    if (!senderDevice['targetPlatform'].toString().contains('android')) {
+      throw _CaptureFailure.environment(
+        stage,
+        'sender_not_live_android_target',
+      );
+    }
+    final expectedRecipientPlatform = scenario.recipientPlatform;
+    if (!recipientDevice['targetPlatform'].toString().contains(
+      expectedRecipientPlatform,
+    )) {
+      throw _CaptureFailure.environment(
+        stage,
+        'recipient_not_live_${expectedRecipientPlatform}_target',
+      );
+    }
+
+    final adb = await _run('adb', const <String>[
+      'devices',
+    ], environmentFailure: true);
+    if (!adb.stdout.contains('$senderId\tdevice')) {
+      throw _CaptureFailure.environment(stage, 'sender_absent_from_adb');
+    }
+    if (scenario.recipientPlatform == 'android' &&
+        !adb.stdout.contains('$recipientId\tdevice')) {
+      throw _CaptureFailure.environment(stage, 'recipient_absent_from_adb');
+    }
+    if (scenario.recipientPlatform == 'ios') {
+      final ios = await _run('xcrun', const <String>[
+        'xctrace',
+        'list',
+        'devices',
+      ], environmentFailure: true);
+      final lines = ios.stdout
+          .split('\n')
+          .where((line) => line.contains(recipientId))
+          .where((line) => !line.toLowerCase().contains('simulator'));
+      if (lines.isEmpty) {
+        throw _CaptureFailure.environment(
+          stage,
+          'recipient_not_live_physical_ios_target',
+        );
+      }
+    }
+  }
+
+  List<String> _validateTopologyShape() {
+    final failures = <String>[];
+    if (senderId == recipientId) failures.add('device ids must differ');
+    final safe = RegExp(r'^[A-Za-z0-9._:-]{4,128}$');
+    if (!safe.hasMatch(senderId)) failures.add('unsafe sender id');
+    if (!safe.hasMatch(recipientId)) failures.add('unsafe recipient id');
+    final senderEmulator = RegExp(r'^emulator-[0-9]+$').hasMatch(senderId);
+    final recipientEmulator = RegExp(
+      r'^emulator-[0-9]+$',
+    ).hasMatch(recipientId);
+    final recipientIos = RegExp(
+      r'^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{16}$',
+    ).hasMatch(recipientId);
+    if (scenario.senderDeviceKind == 'emulator' && !senderEmulator) {
+      failures.add('sender must be Android emulator');
+    }
+    if (scenario.senderDeviceKind == 'physical' && senderEmulator) {
+      failures.add('sender must be physical');
+    }
+    if (scenario.recipientDeviceKind == 'physical' && recipientEmulator) {
+      failures.add('recipient must be physical');
+    }
+    if (scenario.recipientPlatform == 'ios' && !recipientIos) {
+      failures.add('recipient must be physical iOS id');
+    }
+    if (scenario.recipientPlatform == 'android' && recipientIos) {
+      failures.add('recipient must be Android');
+    }
+    return failures;
+  }
+
+  Future<_RelayObservation> _verifyRelay() async {
+    if (!relayKey.existsSync()) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'relay_ssh_key_missing: ${relayKey.path}',
+      );
+    }
+    final active = await _ssh(const <String>[
+      'systemctl',
+      'is-active',
+      'relay-server',
+    ], environmentFailure: true);
+    if (active.stdout.trim() != 'active') {
+      throw _CaptureFailure.environment(stage, 'staging_relay_not_active');
+    }
+    final version = await _ssh(const <String>[
+      '/usr/local/bin/relay-server',
+      'version',
+    ], environmentFailure: true);
+    final digest = await _ssh(const <String>[
+      'sha256sum',
+      '/usr/local/bin/relay-server',
+    ], environmentFailure: true);
+    final actualSha = digest.stdout.trim().split(RegExp(r'\s+')).first;
+    final expectedRevision = _staging['candidateRelayRevision'].toString();
+    final expectedSha = _staging['candidateRelaySha256'].toString();
+    if (!version.stdout.contains(expectedRevision) ||
+        actualSha != expectedSha) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'relay_candidate_mismatch: live revision/digest does not match the '
+        'staging declaration',
+      );
+    }
+    final mainPidOutput = await _ssh(const <String>[
+      'systemctl',
+      'show',
+      'relay-server',
+      '--property=MainPID',
+      '--value',
+    ], environmentFailure: true);
+    List<String> flagProbe;
+    try {
+      flagProbe = groupReactionRelayProcessFlagProbe(
+        mainPidOutput.stdout.trim(),
+      );
+    } on FormatException {
+      throw _CaptureFailure.environment(
+        stage,
+        'staging_relay_has_no_live_main_pid',
+      );
+    }
+    final flag = await _ssh(
+      flagProbe,
+      allowFail: true,
+      environmentFailure: true,
+    );
+    if (flag.exitCode != 0) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'group_reaction_rollout_flag_disabled: live relay process does not '
+        'inherit '
+        'GROUP_REACTION_PUSH_ENABLED=true',
+      );
+    }
+    return _RelayObservation(
+      revision: version.stdout.trim(),
+      sha256: actualSha,
+    );
+  }
+
+  Future<void> _verifyFcmConfiguration() async {
+    if (!serviceAccount.existsSync()) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'fcm_service_account_missing: ${serviceAccount.path}',
+      );
+    }
+    final googleServices = File('android/app/google-services.json').absolute;
+    if (!googleServices.existsSync()) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'android_google_services_missing',
+      );
+    }
+    Map<String, dynamic> service;
+    Map<String, dynamic> google;
+    try {
+      service = Map<String, dynamic>.from(
+        jsonDecode(await serviceAccount.readAsString()) as Map,
+      );
+      google = Map<String, dynamic>.from(
+        jsonDecode(await googleServices.readAsString()) as Map,
+      );
+    } on Object {
+      throw _CaptureFailure.configuration(
+        stage,
+        'fcm_configuration_invalid_json',
+      );
+    }
+    final projectInfo = Map<String, dynamic>.from(
+      google['project_info'] as Map? ?? const <String, dynamic>{},
+    );
+    final serviceProject = service['project_id']?.toString().trim();
+    final appProject = projectInfo['project_id']?.toString().trim();
+    final clientEmail = service['client_email']?.toString().trim();
+    final privateKey = service['private_key']?.toString().trim();
+    if (serviceProject == null ||
+        serviceProject.isEmpty ||
+        serviceProject != appProject ||
+        clientEmail == null ||
+        clientEmail.isEmpty ||
+        privateKey == null ||
+        !privateKey.contains('BEGIN PRIVATE KEY')) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'fcm_configuration_project_or_credential_mismatch',
+      );
+    }
+  }
+
+  Future<void> _verifyApnsConfiguration() async {
+    final entitlements = File('ios/Runner/Runner.entitlements');
+    final nseEntitlements = File(
+      'ios/NotificationService/NotificationService.entitlements',
+    );
+    final project = File('ios/Runner.xcodeproj/project.pbxproj');
+    if (!entitlements.existsSync() ||
+        !nseEntitlements.existsSync() ||
+        !project.existsSync()) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'apns_entitlement_or_xcode_project_missing',
+      );
+    }
+    final combined =
+        '${await entitlements.readAsString()}\n'
+        '${await nseEntitlements.readAsString()}\n'
+        '${await project.readAsString()}';
+    if (!combined.contains('aps-environment') ||
+        !combined.contains('NotificationService.appex')) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'apns_or_nse_configuration_not_present',
+      );
+    }
+  }
+
+  Future<void> _writeConfigurationVerdict() async {
+    final file = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}'
+      'configuration_verdict.json',
+    );
+    await file.writeAsString(
+      const JsonEncoder.withIndent(' ').convert(<String, Object?>{
+        'schema': 'mknoon.plan257.configuration-verdict.v1',
+        'scenario': scenario.id,
+        'ok': true,
+        'environment': 'staging',
+        'sender': <String, Object?>{
+          'deviceId': senderId,
+          'platform': scenario.senderPlatform,
+          'deviceKind': scenario.senderDeviceKind,
+          'liveDiscovered': true,
+        },
+        'recipient': <String, Object?>{
+          'deviceId': recipientId,
+          'platform': scenario.recipientPlatform,
+          'deviceKind': scenario.recipientDeviceKind,
+          'liveDiscovered': true,
+        },
+        'relay': <String, Object?>{
+          'active': true,
+          'candidateRevisionMatched': true,
+          'candidateSha256': _relay.sha256,
+          'groupReactionRolloutEnabled': true,
+        },
+        'provider': <String, Object?>{
+          'kind': scenario.recipientPlatform == 'ios' ? 'apns' : 'fcm',
+          'configurationChecked': true,
+          'deliveryStillRequiresScenarioEvidence': true,
+        },
+        'productionDeploymentPerformed': false,
+        'recordedAt': DateTime.now().toUtc().toIso8601String(),
+      }),
+      flush: true,
+    );
+  }
+
+  Future<void> _runIosAvailableStages() async {
+    stage = 'ios_android_sender_build';
+    _androidBuilds = await _buildAndroidCandidate();
+    await _adbShell(senderId, <String>[
+      'pm',
+      'clear',
+      appPackage,
+    ], allowFail: true);
+    await _installApk(senderId, _androidBuilds!.e2eApk);
+    await _prepareAndroidIdentity(sender);
+    await _launchAndroid(senderId);
+    await _collectAndroidIdentity(sender);
+
+    stage = 'ios_candidate_build';
+    final e2eApp = await _buildIosCandidate(e2eMode: true);
+
+    stage = 'ios_candidate_install';
+    await _run('xcrun', <String>[
+      'devicectl',
+      'device',
+      'uninstall',
+      'app',
+      '--device',
+      recipientId,
+      _iosCapture['bundleId']! as String,
+    ], allowFail: true);
+    await _installIosCandidate(e2eApp, mode: 'e2e');
+
+    stage = 'ios_fixture_staging';
+    await _stageIosAppFile(
+      'auto_setup.json',
+      jsonEncode(<String, Object?>{'username': recipient.username}),
+    );
+    await _launchIosCandidate();
+    await _collectIosIdentity(recipient);
+    await _prepopulateContact(sender, recipient);
+    await _prepopulateIosContact(recipient, sender);
+
+    final stamp = DateTime.now().toUtc().microsecondsSinceEpoch;
+    _groupName = 'TC257Ann$stamp';
+    _targetMarker = 'TC257Target$stamp';
+    final tapConfig = await _writeIosTapConfig();
+
+    final uiTest = File(_iosTapTest);
+    final uiSource = uiTest.existsSync() ? await uiTest.readAsString() : '';
+    for (final selector in const <String>[
+      _iosFixtureCreateSelector,
+      _iosFixtureAuthorSelector,
+      _iosNotificationPrepareSelector,
+      _iosTapSelector,
+    ]) {
+      if (!uiSource.contains(selector)) {
+        throw _CaptureFailure.environment(
+          stage,
+          'native_plan257_xcuitest_selector_missing: '
+          'RunnerUITests/NotificationTapUITests/$selector',
+        );
+      }
+    }
+
+    _iosXcuitestOutput += await _runIosUiSelector(
+      _iosFixtureCreateSelector,
+      tapConfig,
+    );
+    await _acceptIosCreatedGroupOnAndroid();
+    _iosXcuitestOutput += await _runIosUiSelector(
+      _iosFixtureAuthorSelector,
+      tapConfig,
+    );
+    await _openGroup(senderId);
+    await _waitForUiText(senderId, _targetMarker, const Duration(minutes: 2));
+
+    stage = 'ios_candidate_build';
+    final normalApp = await _buildIosCandidate(e2eMode: false);
+    stage = 'ios_candidate_install';
+    await _installIosCandidate(normalApp, mode: 'normal');
+    final tokenWindow = DateTime.now().toUtc();
+    await _launchIosCandidate();
+    await _waitForRelayTokenRegistration(tokenWindow);
+
+    _iosXcuitestOutput += await _runIosUiSelector(
+      _iosNotificationPrepareSelector,
+      tapConfig,
+    );
+
+    stage = 'ios_reaction_lifecycle';
+    _captureWindowStart = DateTime.now().toUtc();
+    await _adb(senderId, const <String>['logcat', '-c']);
+    await _startIosSystemLog();
+    try {
+      await _runIosReactionLifecycle(tapConfig);
+    } finally {
+      await _stopIosSystemLog();
+    }
+
+    stage = 'sqlcipher_observation';
+    final sqlCipherEvidence = await _captureSqlCipherObservation();
+
+    stage = 'artifact_capture';
+    await _writeIosArtifact(sqlCipherEvidence);
+
+    stage = 'artifact_self_validation';
+    final artifact = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}${scenario.id}.json',
+    );
+    final validation = await validateGroupReactionNotificationArtifact(
+      scenario: scenario.id,
+      artifactFile: artifact,
+      expectedSenderDeviceId: senderId,
+      expectedRecipientDeviceId: recipientId,
+    );
+    if (!validation.ok) {
+      throw _CaptureFailure.capture(
+        stage,
+        'captured_authoritative_evidence_rejected: ${validation.detail}',
+      );
+    }
+
+    await writeGroupReactionNotificationVerdict(
+      outputDirectory: artifactDirectory,
+      scenario: scenario.id,
+      ok: true,
+      stage: 'capture',
+      status: 'passed',
+      detail:
+          'physical Android/iPhone roles, staging relay/APNs, raw NSE, '
+          'XCUITest notification/tap, and SQLCipher evidence captured and '
+          'self-validated',
+    );
+    stdout.writeln('PASS: ${scenario.id} captured at ${artifact.path}.');
+    if (!keepBuildArtifacts) await _deleteBuildCopies();
+  }
+
+  Future<Directory> _buildIosCandidate({required bool e2eMode}) async {
+    await _runStreaming('flutter', <String>[
+      'build',
+      'ios',
+      '--debug',
+      '--no-pub',
+      '--dart-define=E2E_TEST_MODE=$e2eMode',
+      '--dart-define=MKNOON_RELAY_ADDRESSES=${_relayAddresses.join(',')}',
+    ], environmentFailure: true);
+    final app = Directory('build/ios/iphoneos/Runner.app').absolute;
+    if (!app.existsSync()) {
+      throw _CaptureFailure.capture(
+        stage,
+        'signed_physical_ios_candidate_not_materialized',
+      );
+    }
+    final digest = await _sha256Directory(app);
+    if (e2eMode) {
+      _iosE2eAppSha256 = digest;
+    } else {
+      _iosNormalAppSha256 = digest;
+    }
+    return app;
+  }
+
+  Future<void> _installIosCandidate(
+    Directory app, {
+    required String mode,
+  }) async {
+    await _run('xcrun', <String>[
+      'devicectl',
+      'device',
+      'install',
+      'app',
+      '--device',
+      recipientId,
+      app.path,
+    ], environmentFailure: true);
+    final receipt = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}'
+      'ios_${mode}_installed_app_inventory.json',
+    );
+    if (receipt.existsSync()) await receipt.delete();
+    await _run('xcrun', <String>[
+      'devicectl',
+      'device',
+      'info',
+      'apps',
+      '--device',
+      recipientId,
+      '--bundle-id',
+      _iosCapture['bundleId']! as String,
+      '--json-output',
+      receipt.path,
+    ], environmentFailure: true);
+    if (!receipt.existsSync() ||
+        !await receipt.readAsString().then(
+          (raw) => raw.contains(_iosCapture['bundleId']! as String),
+        )) {
+      throw _CaptureFailure.capture(
+        stage,
+        'physical_ios_${mode}_install_inventory_missing_candidate_bundle',
+      );
+    }
+    _iosInstallReceipts[mode] = receipt;
+  }
+
+  Future<void> _launchIosCandidate() async {
+    await _run('xcrun', <String>[
+      'devicectl',
+      'device',
+      'process',
+      'launch',
+      '--device',
+      recipientId,
+      '--terminate-existing',
+      _iosCapture['bundleId']! as String,
+    ], environmentFailure: true);
+  }
+
+  Future<void> _stageIosAppFile(String name, String contents) async {
+    final local = File(
+      '${Directory.systemTemp.path}${Platform.pathSeparator}'
+      'plan257_ios_${DateTime.now().microsecondsSinceEpoch}_$name',
+    );
+    await local.writeAsString(contents, flush: true);
+    try {
+      await _run('xcrun', <String>[
+        'devicectl',
+        'device',
+        'copy',
+        'to',
+        '--device',
+        recipientId,
+        '--source',
+        local.path,
+        '--destination',
+        'Documents/$name',
+        '--domain-type',
+        'appDataContainer',
+        '--domain-identifier',
+        _iosCapture['bundleId']! as String,
+      ], environmentFailure: true);
+    } finally {
+      if (local.existsSync()) await local.delete();
+    }
+  }
+
+  Future<String?> _readIosAppFile(String name) async {
+    final directory = await Directory.systemTemp.createTemp(
+      'plan257_ios_read_',
+    );
+    try {
+      final output = await _run('xcrun', <String>[
+        'devicectl',
+        'device',
+        'copy',
+        'from',
+        '--device',
+        recipientId,
+        '--source',
+        'Documents/$name',
+        '--destination',
+        directory.path,
+        '--domain-type',
+        'appDataContainer',
+        '--domain-identifier',
+        _iosCapture['bundleId']! as String,
+      ], allowFail: true);
+      if (output.exitCode != 0) return null;
+      final direct = File('${directory.path}${Platform.pathSeparator}$name');
+      if (direct.existsSync()) return direct.readAsString();
+      final files = directory.listSync(recursive: true).whereType<File>();
+      for (final file in files) {
+        if (file.uri.pathSegments.last == name) return file.readAsString();
+      }
+      return null;
+    } finally {
+      if (directory.existsSync()) await directory.delete(recursive: true);
+    }
+  }
+
+  Future<void> _collectIosIdentity(_Party party) async {
+    final raw = await _waitForValue<String>(
+      'physical iOS identity export for ${party.role}',
+      const Duration(minutes: 3),
+      () => _readIosAppFile('intro_e2e_identity.json'),
+    );
+    try {
+      final exported = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+      party.qrPayload = exported['qrPayload'] as String;
+      party.mlKemPublicKey = exported['mlKemPublicKey'] as String?;
+      final qr = Map<String, dynamic>.from(jsonDecode(party.qrPayload) as Map);
+      party.peerId = qr['ns'] as String;
+    } on Object {
+      throw _CaptureFailure.capture(
+        stage,
+        'physical_ios_identity_export_invalid',
+      );
+    }
+    if (party.peerId.isEmpty) {
+      throw _CaptureFailure.capture(
+        stage,
+        'physical_ios_identity_export_missing_peer',
+      );
+    }
+  }
+
+  Future<void> _prepopulateIosContact(_Party owner, _Party contact) async {
+    final stepId =
+        '257-ios-${scenario.id}-${DateTime.now().microsecondsSinceEpoch}';
+    await _stageIosAppFile(
+      'intro_e2e_config.json',
+      jsonEncode(<String, Object?>{
+        'stepId': stepId,
+        'add_contacts': <Object?>[
+          <String, Object?>{
+            'qrPayload': contact.qrPayload,
+            'mlKemPublicKey': contact.mlKemPublicKey,
+          },
+        ],
+      }),
+    );
+    await _launchIosCandidate();
+    final raw = await _waitForValue<String>(
+      'physical iOS contact fixture completion',
+      const Duration(minutes: 3),
+      () async {
+        final value = await _readIosAppFile('intro_e2e_result.json');
+        if (value == null) return null;
+        try {
+          final decoded = Map<String, dynamic>.from(jsonDecode(value) as Map);
+          return decoded['stepId'] == stepId && decoded['status'] == 'complete'
+              ? value
+              : null;
+        } on Object {
+          return null;
+        }
+      },
+    );
+    final result = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+    if (result['success'] != true) {
+      throw _CaptureFailure.capture(
+        stage,
+        'physical_ios_contact_fixture_failed',
+      );
+    }
+  }
+
+  Future<File> _writeIosTapConfig() async {
+    final file = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}'
+      'ios_announcement_reaction_tap_config.json',
+    );
+    await file.writeAsString(
+      const JsonEncoder.withIndent(' ').convert(<String, Object?>{
+        'expectedTitle': _groupName,
+        'expectedGroupName': _groupName,
+        'expectedTargetMessageText': _targetMarker,
+        'expectedMemberName': sender.username,
+        'expectedActorName': sender.username,
+        'expectedReactionEmoji': _reactionEmoji,
+        'preBackgroundWaitSeconds': '12',
+      }),
+      flush: true,
+    );
+    return file;
+  }
+
+  Future<String> _runIosUiSelector(String selector, File tapConfig) async {
+    final resultBundle = Directory(
+      '${artifactDirectory.path}${Platform.pathSeparator}'
+      '${selector.replaceAll(RegExp(r'[^A-Za-z0-9]'), '_')}.xcresult',
+    );
+    if (resultBundle.existsSync()) {
+      await resultBundle.delete(recursive: true);
+    }
+    final output = await _runStreaming(
+      'xcodebuild',
+      <String>[
+        'test',
+        '-workspace',
+        _iosCapture['workspace']! as String,
+        '-scheme',
+        _iosCapture['scheme']! as String,
+        '-destination',
+        'platform=iOS,id=$recipientId',
+        '-only-testing:RunnerUITests/NotificationTapUITests/$selector',
+        '-resultBundlePath',
+        resultBundle.path,
+      ],
+      environmentFailure: true,
+      environment: <String, String>{
+        'MKNOON_APNS_TAP_APP_BUNDLE_ID': _iosCapture['bundleId']! as String,
+        'MKNOON_APNS_TAP_CONFIG_FILE': tapConfig.path,
+        'MKNOON_APNS_TAP_EXPECTED_TITLE': _groupName,
+        'MKNOON_257_EXPECTED_GROUP_NAME': _groupName,
+        'MKNOON_257_EXPECTED_TARGET_TEXT': _targetMarker,
+        'MKNOON_257_EXPECTED_MEMBER_NAME': sender.username,
+        'MKNOON_257_EXPECTED_ACTOR_NAME': sender.username,
+        'MKNOON_257_EXPECTED_REACTION_EMOJI': _reactionEmoji,
+      },
+    );
+    return '${output.stdout}\n${output.stderr}\n';
+  }
+
+  Future<void> _acceptIosCreatedGroupOnAndroid() async {
+    await _launchAndroid(senderId);
+    final review = await _waitForAnyText(senderId, const <String>[
+      'Open introductions review',
+      'Pending Group Invites',
+    ], const Duration(minutes: 3));
+    if (review.startsWith('Open introductions review')) {
+      await _tapText(senderId, review);
+    }
+    await _waitForUiText(senderId, _groupName, const Duration(minutes: 1));
+    await _tapText(senderId, 'Accept');
+    await _waitForUiText(
+      senderId,
+      'Open group $_groupName',
+      const Duration(minutes: 3),
+    );
+  }
+
+  Future<void> _startIosSystemLog() async {
+    _iosSystemLogProcess = await Process.start(
+      _iosSystemLogExecutable,
+      <String>['--udid', recipientId, '--no-colors'],
+    );
+    _iosSystemLogStdoutDone = _iosSystemLogProcess!.stdout
+        .transform(utf8.decoder)
+        .forEach(_iosSystemLogStdout.write);
+    _iosSystemLogStderrDone = _iosSystemLogProcess!.stderr
+        .transform(utf8.decoder)
+        .forEach(_iosSystemLogStderr.write);
+  }
+
+  Future<void> _stopIosSystemLog() async {
+    final process = _iosSystemLogProcess;
+    if (process == null) return;
+    process.kill();
+    final exitCode = await process.exitCode.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        process.kill(ProcessSignal.sigkill);
+        return -1;
+      },
+    );
+    await Future.wait(<Future<void>>[
+      ?_iosSystemLogStdoutDone,
+      ?_iosSystemLogStderrDone,
+    ]);
+    _iosSystemLog =
+        '${_iosSystemLogStdout.toString()}\n${_iosSystemLogStderr.toString()}';
+    _recordCommandAtStage('ios_system_log', _iosSystemLogExecutable, <String>[
+      '--udid',
+      recipientId,
+      '--no-colors',
+    ], exitCode);
+    _iosSystemLogProcess = null;
+  }
+
+  Future<void> _runIosReactionLifecycle(File tapConfig) async {
+    await _openGroup(senderId);
+    final firstWindow = DateTime.now().toUtc();
+    await _longPressText(senderId, _targetMarker);
+    await _tapText(senderId, _reactionEmoji);
+    await _waitForSenderEventCount('GROUP_REACTION_SEND_QUEUED', 1);
+    await _waitForProviderSendCount(firstWindow, 1);
+
+    await _longPressText(senderId, _targetMarker);
+    await _tapText(senderId, _reactionEmoji);
+    await _waitForSenderEventCount('GROUP_REACTION_REMOVE_QUEUED', 1);
+    await Future<void>.delayed(const Duration(seconds: 8));
+    if (_countProviderSends(await _relayJournalSince(firstWindow)) != 1) {
+      throw _CaptureFailure.capture(
+        stage,
+        'ios_remove_transition_woke_provider',
+      );
+    }
+
+    await _longPressText(senderId, _targetMarker);
+    await _tapText(senderId, _reactionEmoji);
+    await _waitForSenderEventCount('GROUP_REACTION_SEND_QUEUED', 2);
+    await _waitForProviderSendCount(firstWindow, 2);
+    await Future<void>.delayed(const Duration(seconds: 10));
+    _iosXcuitestOutput += await _runIosUiSelector(_iosTapSelector, tapConfig);
+
+    final senderLog = await _adb(senderId, const <String>[
+      'logcat',
+      '-d',
+      '-v',
+      'threadtime',
+    ]);
+    _senderLogcat = _flowLines(senderLog.stdout);
+    _relayJournal = await _relayJournalSince(
+      _captureWindowStart ?? firstWindow,
+    );
+    if (_countProviderSends(_relayJournal) != 2) {
+      throw _CaptureFailure.capture(
+        stage,
+        'ios_provider_send_count_mismatch_after_quiescence',
+      );
+    }
+  }
+
+  Future<_AndroidBuilds> _buildAndroidCandidate() async {
+    final provenance = await _candidateProvenance();
+    final e2eApk = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}'
+      'candidate_e2e_arm64.apk',
+    );
+    final normalApk = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}'
+      'candidate_normal_arm64.apk',
+    );
+    final buildArgs = <String>[
+      'build',
+      'apk',
+      '--debug',
+      '--no-pub',
+      '--target-platform=android-arm64',
+      '--dart-define=MKNOON_RELAY_ADDRESSES=${_relayAddresses.join(',')}',
+    ];
+    await _runStreaming('flutter', <String>[
+      ...buildArgs,
+      '--dart-define=E2E_TEST_MODE=true',
+    ], environmentFailure: true);
+    final output = File('build/app/outputs/flutter-apk/app-debug.apk').absolute;
+    if (!output.existsSync()) {
+      throw _CaptureFailure.capture(stage, 'candidate_e2e_apk_missing');
+    }
+    await output.copy(e2eApk.path);
+
+    await _runStreaming('flutter', <String>[
+      ...buildArgs,
+      '--dart-define=E2E_TEST_MODE=false',
+    ], environmentFailure: true);
+    if (!output.existsSync()) {
+      throw _CaptureFailure.capture(stage, 'candidate_normal_apk_missing');
+    }
+    await output.copy(normalApk.path);
+    final builds = _AndroidBuilds(
+      provenance: provenance,
+      e2eApk: e2eApk,
+      normalApk: normalApk,
+      e2eSha256: await _sha256(e2eApk),
+      normalSha256: await _sha256(normalApk),
+    );
+    await File(
+      '${artifactDirectory.path}${Platform.pathSeparator}'
+      'candidate_build_provenance.json',
+    ).writeAsString(
+      const JsonEncoder.withIndent(' ').convert(<String, Object?>{
+        'schema': 'mknoon.plan257.candidate-build.v1',
+        'sourceProvenance': builds.provenance,
+        'e2eApkSha256': builds.e2eSha256,
+        'normalApkSha256': builds.normalSha256,
+        'builtAt': DateTime.now().toUtc().toIso8601String(),
+      }),
+      flush: true,
+    );
+    return builds;
+  }
+
+  Future<String> _candidateProvenance() async {
+    final revision = await _run('git', const <String>['rev-parse', 'HEAD']);
+    final files = await _run('git', const <String>[
+      'ls-files',
+      '-co',
+      '--exclude-standard',
+      '--',
+      'lib',
+      'packages',
+      'android',
+      'ios',
+      'pubspec.yaml',
+      'pubspec.lock',
+    ]);
+    final sink = _SingleDigestSink();
+    final converter = sha256.startChunkedConversion(sink);
+    final paths =
+        files.stdout
+            .split('\n')
+            .map((value) => value.trim())
+            .where((value) => value.isNotEmpty)
+            .toList()
+          ..sort();
+    for (final path in paths) {
+      final file = File(path);
+      if (!file.existsSync()) continue;
+      converter.add(utf8.encode('$path\u0000'));
+      converter.add(await file.readAsBytes());
+      converter.add(const <int>[0]);
+    }
+    converter.close();
+    final treeDigest = sink.value?.toString();
+    if (treeDigest == null) {
+      throw _CaptureFailure.capture(stage, 'candidate_provenance_hash_missing');
+    }
+    return '${revision.stdout.trim()}+worktree:$treeDigest';
+  }
+
+  Future<void> _resetAndInstallAndroidRoles(File apk) async {
+    for (final id in <String>[senderId, recipientId]) {
+      await _adbShell(id, <String>['pm', 'clear', appPackage], allowFail: true);
+      await _installApk(id, apk);
+      await _grantNotificationPermission(id);
+      await _wakeAndroid(id);
+    }
+  }
+
+  Future<void> _installApk(String deviceId, File apk) async {
+    final result = await _adb(deviceId, <String>[
+      'install',
+      '-r',
+      '-d',
+      '-t',
+      apk.path,
+    ], allowFail: true);
+    if (result.exitCode != 0) {
+      throw _CaptureFailure.environment(
+        stage,
+        'candidate_install_failed_on_$deviceId: ${_lastLine(result.combined)}',
+      );
+    }
+    final installedPath = await _adbShell(deviceId, <String>[
+      'pm',
+      'path',
+      appPackage,
+    ], environmentFailure: true);
+    if (!installedPath.contains('package:')) {
+      throw _CaptureFailure.environment(
+        stage,
+        'candidate_install_not_discoverable_on_$deviceId',
+      );
+    }
+  }
+
+  Future<void> _wakeAndroid(String deviceId) async {
+    await _adbShell(deviceId, const <String>[
+      'input',
+      'keyevent',
+      'KEYCODE_WAKEUP',
+    ], allowFail: true);
+    await _adbShell(deviceId, const <String>[
+      'wm',
+      'dismiss-keyguard',
+    ], allowFail: true);
+  }
+
+  Future<void> _prepareAndroidIdentity(_Party party) async {
+    await _wakeAndroid(party.deviceId);
+    await _writeAppFile(
+      party.deviceId,
+      'auto_setup.json',
+      jsonEncode(<String, Object?>{'username': party.username}),
+    );
+    for (final name in const <String>[
+      'intro_e2e_identity.json',
+      'intro_e2e_config.json',
+      'intro_e2e_result.json',
+    ]) {
+      await _deleteAppFile(party.deviceId, name);
+    }
+  }
+
+  Future<void> _collectAndroidIdentity(_Party party) async {
+    final raw = await _waitForValue<String>(
+      'identity export for ${party.role}',
+      const Duration(minutes: 3),
+      () => _readAppFile(party.deviceId, 'intro_e2e_identity.json'),
+    );
+    Map<String, dynamic> exported;
+    Map<String, dynamic> qr;
+    try {
+      exported = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+      party.qrPayload = exported['qrPayload'] as String;
+      party.mlKemPublicKey = exported['mlKemPublicKey'] as String?;
+      qr = Map<String, dynamic>.from(jsonDecode(party.qrPayload) as Map);
+      party.peerId = qr['ns'] as String;
+    } on Object {
+      throw _CaptureFailure.capture(
+        stage,
+        'identity_export_invalid_for_${party.role}',
+      );
+    }
+    if (party.peerId.isEmpty) {
+      throw _CaptureFailure.capture(
+        stage,
+        'identity_export_missing_peer_for_${party.role}',
+      );
+    }
+  }
+
+  Future<void> _prepopulateAndroidContacts() async {
+    await _prepopulateContact(sender, recipient);
+    await _prepopulateContact(recipient, sender);
+  }
+
+  Future<void> _prepopulateContact(_Party owner, _Party contact) async {
+    await _writeAppFile(
+      owner.deviceId,
+      'intro_e2e_config.json',
+      jsonEncode(<String, Object?>{
+        'stepId':
+            '257-${scenario.id}-${owner.username}-'
+            '${DateTime.now().microsecondsSinceEpoch}',
+        'add_contacts': <Object?>[
+          <String, Object?>{
+            'qrPayload': contact.qrPayload,
+            'mlKemPublicKey': contact.mlKemPublicKey,
+          },
+        ],
+      }),
+    );
+    await _launchAndroid(owner.deviceId);
+    await _deleteAppFile(owner.deviceId, 'intro_e2e_config.json');
+    await _deleteAppFile(owner.deviceId, 'intro_e2e_result.json');
+    await _launchAndroid(owner.deviceId);
+  }
+
+  Future<void> _createAndAcceptGroup() async {
+    final now = DateTime.now().toUtc().microsecondsSinceEpoch;
+    _groupName = scenario.groupType == 'announcement'
+        ? 'TC257Ann$now'
+        : 'TC257Group$now';
+    final creator = scenario.id.endsWith('_message_unread_lifecycle')
+        ? sender
+        : recipient;
+    final invitee = identical(creator, sender) ? recipient : sender;
+
+    await _launchAndroid(creator.deviceId);
+    await _tapOrbitCreateFab(creator.deviceId);
+    await _tapText(
+      creator.deviceId,
+      scenario.groupType == 'announcement' ? 'New Announce' : 'New Group',
+    );
+    await _tapText(creator.deviceId, invitee.username);
+    final groupNameField = findBottommostNodeCenterByClass(
+      await _uiDump(creator.deviceId),
+      'android.widget.EditText',
+    );
+    if (groupNameField == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'group_name_field_not_found_on_${creator.deviceId}',
+      );
+    }
+    await _adbShell(creator.deviceId, <String>[
+      'input',
+      'tap',
+      '${groupNameField.$1}',
+      '${groupNameField.$2}',
+    ], environmentFailure: true);
+    await _adbShell(creator.deviceId, <String>[
+      'input',
+      'text',
+      _groupName,
+    ], environmentFailure: true);
+    await _tapText(creator.deviceId, 'Start group chat');
+    await _waitForUiText(
+      creator.deviceId,
+      _groupName,
+      const Duration(minutes: 2),
+    );
+
+    await _startAndroid(invitee.deviceId);
+    final review = await _waitForAnyText(invitee.deviceId, const <String>[
+      'Open introductions review',
+      'Pending Group Invites',
+    ], const Duration(minutes: 3));
+    if (review.startsWith('Open introductions review')) {
+      await _tapText(invitee.deviceId, review);
+    }
+    await _waitForUiText(
+      invitee.deviceId,
+      _groupName,
+      const Duration(seconds: 30),
+    );
+    await _tapText(invitee.deviceId, 'Accept');
+    await _waitForValue<bool>(
+      'accepted group surface for $_groupName on ${invitee.deviceId}',
+      const Duration(minutes: 3),
+      () async =>
+          isAcceptedGroupSurface(await _uiDump(invitee.deviceId), _groupName)
+          ? true
+          : null,
+    );
+  }
+
+  Future<void> _runAndroidUnreadLifecycle() async {
+    final stamp = DateTime.now().toUtc().microsecondsSinceEpoch;
+    _firstMarker = 'TC257First$stamp';
+    _secondMarker = 'TC257Second$stamp';
+    await _ensureOrbit(recipientId);
+    await _captureUiSnapshot('unread_0', expectedUnread: 0);
+
+    await _openGroup(senderId);
+    await _sendGroupText(senderId, _firstMarker);
+    await _waitForGroupUnread(1);
+    await _captureUiSnapshot('unread_1', expectedUnread: 1);
+    final firstCard = await _waitForNotificationCard();
+    _notificationSnapshots.add(
+      await _writeNotificationSnapshot('message_first', firstCard.$2),
+    );
+    await _dismissNotificationCard();
+    await _waitForNoNotificationCard();
+    await _waitForGroupUnread(1);
+    await _captureUiSnapshot('unread_1_after_dismiss', expectedUnread: 1);
+
+    await _openGroup(senderId);
+    await _sendGroupText(senderId, _secondMarker);
+    await _waitForGroupUnread(2);
+    await _captureUiSnapshot('unread_2', expectedUnread: 2);
+    final secondCard = await _waitForNotificationCard();
+    _notificationSnapshots.add(
+      await _writeNotificationSnapshot('message_second', secondCard.$2),
+    );
+    await _tapNotificationCard();
+    await _waitForUiText(
+      recipientId,
+      _firstMarker,
+      const Duration(seconds: 45),
+    );
+    await _waitForUiText(
+      recipientId,
+      _secondMarker,
+      const Duration(seconds: 45),
+    );
+    await _captureRawUiSnapshot('conversation_after_tap');
+    await _adbShell(recipientId, const <String>[
+      'input',
+      'keyevent',
+      'KEYCODE_BACK',
+    ], environmentFailure: true);
+    await _waitForUiText(
+      recipientId,
+      'Open group $_groupName',
+      const Duration(seconds: 45),
+    );
+    await _captureUiSnapshot('unread_0_after_tap', expectedUnread: 0);
+    await _collectBoundedLogs();
+  }
+
+  Future<void> _runAndroidReactionLifecycle() async {
+    final stamp = DateTime.now().toUtc().microsecondsSinceEpoch;
+    _targetMarker = 'TC257Target$stamp';
+
+    await _openGroup(recipientId);
+    await _sendGroupText(recipientId, _targetMarker);
+    await _openGroup(senderId);
+    await _waitForUiText(senderId, _targetMarker, const Duration(minutes: 2));
+    await _ensureOrbit(recipientId);
+    await _captureUiSnapshot('reaction_unread_0_before', expectedUnread: 0);
+    await _terminateAndroidRecipient();
+
+    await _openGroup(senderId);
+    final firstWindow = DateTime.now().toUtc();
+    await _longPressText(senderId, _targetMarker);
+    await _tapText(senderId, _reactionEmoji);
+    await _waitForSenderEventCount('GROUP_REACTION_SEND_QUEUED', 1);
+    await _waitForProviderSendCount(firstWindow, 1);
+    final firstCard = await _waitForNotificationCard();
+    _notificationSnapshots.add(
+      await _writeNotificationSnapshot('reaction_first', firstCard.$2),
+    );
+
+    await _longPressText(senderId, _targetMarker);
+    await _tapText(senderId, _reactionEmoji);
+    await _waitForSenderEventCount('GROUP_REACTION_REMOVE_QUEUED', 1);
+    await Future<void>.delayed(const Duration(seconds: 8));
+    final afterRemove = await _relayJournalSince(firstWindow);
+    final providerAfterRemove = _countProviderSends(afterRemove);
+    if (providerAfterRemove != 1) {
+      throw _CaptureFailure.capture(
+        stage,
+        'remove_transition_woke_provider: expected one ADD provider send '
+        'before re-add, observed $providerAfterRemove',
+      );
+    }
+
+    await _longPressText(senderId, _targetMarker);
+    await _tapText(senderId, _reactionEmoji);
+    await _waitForSenderEventCount('GROUP_REACTION_SEND_QUEUED', 2);
+    await _waitForProviderSendCount(firstWindow, 2);
+    final replacementCard = await _waitForNotificationCard();
+    _notificationSnapshots.add(
+      await _writeNotificationSnapshot(
+        'reaction_replacement',
+        replacementCard.$2,
+      ),
+    );
+    if (firstCard.$1 != replacementCard.$1) {
+      throw _CaptureFailure.capture(
+        stage,
+        'reaction_notification_not_stable_per_group: first=${firstCard.$1}, '
+        'replacement=${replacementCard.$1}',
+      );
+    }
+    final expectedBody = 'Alice reacted $_reactionEmoji to your message';
+    if (replacementCard.$2.title != _groupName ||
+        replacementCard.$2.body != expectedBody ||
+        replacementCard.$2.body.contains('New Message')) {
+      throw _CaptureFailure.capture(
+        stage,
+        'reaction_card_copy_mismatch: observed title/body did not match '
+        'recipient-owned group and trusted actor copy',
+      );
+    }
+
+    await _redriveExactStoredAdd(firstWindow);
+
+    await _tapNotificationCard();
+    await _waitForUiText(
+      recipientId,
+      _targetMarker,
+      const Duration(seconds: 60),
+    );
+    await _captureRawUiSnapshot('reaction_target_after_tap');
+    await _adbShell(recipientId, const <String>[
+      'input',
+      'keyevent',
+      'KEYCODE_BACK',
+    ], environmentFailure: true);
+    await _waitForUiText(
+      recipientId,
+      'Open group $_groupName',
+      const Duration(seconds: 45),
+    );
+    await _captureUiSnapshot('reaction_unread_0_after', expectedUnread: 0);
+    await _collectBoundedLogs();
+  }
+
+  Future<void> _redriveExactStoredAdd(DateTime providerWindow) async {
+    final output = await _runStreaming('flutter', <String>[
+      'drive',
+      '--no-pub',
+      '-d',
+      senderId,
+      '--driver',
+      'test_driver/integration_test.dart',
+      '--target',
+      _sqlCipherProbe,
+      '--keep-app-running',
+      '--dart-define=MKNOON_257_PROBE_SCENARIO=${scenario.id}',
+      '--dart-define=MKNOON_257_PROBE_GROUP_NAME=$_groupName',
+      '--dart-define=MKNOON_257_PROBE_TARGET_MARKER=$_targetMarker',
+    ]);
+    String? encoded;
+    for (final line in output.combined.split('\n')) {
+      final index = line.indexOf(_duplicateRedrivePrefix);
+      if (index >= 0) {
+        encoded = line.substring(index + _duplicateRedrivePrefix.length).trim();
+      }
+    }
+    if (encoded == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'exact_duplicate_redrive_probe_emitted_no_observation',
+      );
+    }
+    Map<String, dynamic> observation;
+    try {
+      observation = Map<String, dynamic>.from(jsonDecode(encoded) as Map);
+    } on Object {
+      throw _CaptureFailure.capture(
+        stage,
+        'exact_duplicate_redrive_observation_invalid_json',
+      );
+    }
+    final identityHashes = <String>[
+      'transitionIdSha256',
+      'reactionStateIdSha256',
+      'targetMessageIdSha256',
+    ].map((key) => observation[key]).toList(growable: false);
+    final validSha = RegExp(r'^[0-9a-f]{64}$');
+    if (observation['schema'] !=
+            'mknoon.plan257.duplicate-redrive-observation.v1' ||
+        observation['scenario'] != scenario.id ||
+        observation['prepared'] != true ||
+        observation['notificationExtensionBound'] != true ||
+        observation['signedEnvelopePresent'] != true ||
+        observation['storedEnvelopeDecryptOk'] != true ||
+        identityHashes.any(
+          (value) => value is! String || !validSha.hasMatch(value),
+        ) ||
+        identityHashes.toSet().length != 3 ||
+        observation['transitionIdPrefixSha256'] is! String ||
+        !validSha.hasMatch(observation['transitionIdPrefixSha256'] as String) ||
+        observation['inboxRetryPayloadSha256'] is! String ||
+        !validSha.hasMatch(observation['inboxRetryPayloadSha256'] as String)) {
+      throw _CaptureFailure.capture(
+        stage,
+        'exact_duplicate_redrive_observation_contract_mismatch',
+      );
+    }
+    _exactDuplicateRedriveObservation =
+        '$_duplicateRedrivePrefix${jsonEncode(observation)}\n';
+
+    // flutter drive keeps the probe application installed/running, so the
+    // sender's identity and SQLCipher rows survive. Reinstalling/launching the
+    // normal candidate then makes the production pending retrier submit the
+    // same persisted inbox_retry_payload bytes.
+    await _installApk(senderId, _androidBuilds!.normalApk);
+    await _startAndroid(senderId);
+    await _waitFor(
+      'production exact group reaction duplicate retry',
+      const Duration(minutes: 3),
+      () async {
+        final log = await _adb(senderId, const <String>[
+          'logcat',
+          '-d',
+          '-v',
+          'brief',
+        ]);
+        return log.stdout.contains('RETRY_FAILED_GROUP_REACTION_REPLAY_OK');
+      },
+    );
+    await Future<void>.delayed(const Duration(seconds: 10));
+    final providerCount = _countProviderSends(
+      await _relayJournalSince(providerWindow),
+    );
+    if (providerCount != 2) {
+      throw _CaptureFailure.capture(
+        stage,
+        'exact_duplicate_redrive_changed_provider_count: expected 2, '
+        'observed $providerCount',
+      );
+    }
+  }
+
+  Future<void> _collectBoundedLogs() async {
+    // The provider count is an eventual boundary. Wait through a bounded
+    // quiescence interval, then require the final raw relay window to contain
+    // exactly the two expected sends (first ADD/message and replacement). A
+    // late third send can no longer pass an earlier `>= 2` wait.
+    await Future<void>.delayed(const Duration(seconds: 10));
+    final senderLog = await _adb(senderId, const <String>[
+      'logcat',
+      '-d',
+      '-v',
+      'threadtime',
+    ]);
+    final recipientLog = await _adb(recipientId, const <String>[
+      'logcat',
+      '-d',
+      '-v',
+      'threadtime',
+    ]);
+    _senderLogcat = _flowLines(senderLog.stdout);
+    _recipientLogcat = _flowLines(recipientLog.stdout);
+    _relayJournal = await _relayJournalSince(
+      _captureWindowStart ?? DateTime.now().toUtc(),
+    );
+    final providerSendCount = _countProviderSends(_relayJournal);
+    if (providerSendCount != 2) {
+      throw _CaptureFailure.capture(
+        stage,
+        'provider_send_count_mismatch_after_quiescence: expected=2 '
+        'observed=$providerSendCount',
+      );
+    }
+  }
+
+  Future<void> _tapOrbitCreateFab(String deviceId) async {
+    final dump = await _uiDump(deviceId);
+    final center = findTopRightClickableNodeCenter(dump);
+    if (center == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'orbit_create_fab_not_found_on_$deviceId',
+      );
+    }
+    await _adbShell(deviceId, <String>[
+      'input',
+      'tap',
+      '${center.$1}',
+      '${center.$2}',
+    ], environmentFailure: true);
+    await _waitForAnyText(deviceId, const <String>[
+      'New Group',
+      'New Announce',
+    ], const Duration(seconds: 15));
+  }
+
+  Future<void> _ensureOrbit(String deviceId) async {
+    for (var attempt = 0; attempt < 5; attempt++) {
+      final dump = await _uiDump(deviceId);
+      if (findSemanticNodeCenter(dump, 'Open group $_groupName') != null ||
+          dump.contains('Open introductions review')) {
+        return;
+      }
+      await _adbShell(deviceId, const <String>[
+        'input',
+        'keyevent',
+        'KEYCODE_BACK',
+      ], allowFail: true);
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+    }
+    throw _CaptureFailure.capture(
+      stage,
+      'orbit_surface_not_reached_on_$deviceId',
+    );
+  }
+
+  Future<void> _openGroup(String deviceId) async {
+    var dump = await _uiDump(deviceId);
+    if (isGroupConversationSurface(dump, _groupName)) {
+      return;
+    }
+    await _ensureOrbit(deviceId);
+    dump = await _uiDump(deviceId);
+    final group = findSemanticNodeCenter(dump, 'Open group $_groupName');
+    if (group == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'group_orbit_node_missing_on_$deviceId',
+      );
+    }
+    await _adbShell(deviceId, <String>[
+      'input',
+      'tap',
+      '${group.$1}',
+      '${group.$2}',
+    ], environmentFailure: true);
+    await _waitFor(
+      'group conversation on $deviceId',
+      const Duration(seconds: 30),
+      () async =>
+          isGroupConversationSurface(await _uiDump(deviceId), _groupName),
+    );
+  }
+
+  Future<void> _sendGroupText(String deviceId, String marker) async {
+    final dump = await _uiDump(deviceId);
+    final editor = findNodeBoundsByClass(dump, 'android.widget.EditText');
+    if (editor == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'group_compose_editor_missing_on_$deviceId',
+      );
+    }
+    await _adbShell(deviceId, <String>[
+      'input',
+      'tap',
+      '${(editor.$1 + editor.$3) ~/ 2}',
+      '${(editor.$2 + editor.$4) ~/ 2}',
+    ], environmentFailure: true);
+    await _adbShell(deviceId, <String>[
+      'input',
+      'text',
+      marker,
+    ], environmentFailure: true);
+    await _waitForUiText(deviceId, marker, const Duration(seconds: 10));
+    final typed = await _uiDump(deviceId);
+    final typedEditor = findNodeBoundsByClass(typed, 'android.widget.EditText');
+    if (typedEditor == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'group_compose_editor_disappeared_before_send',
+      );
+    }
+    await _adbShell(deviceId, <String>[
+      'input',
+      'tap',
+      '${typedEditor.$3 + 70}',
+      '${(typedEditor.$2 + typedEditor.$4) ~/ 2}',
+    ], environmentFailure: true);
+    await _waitForUiText(deviceId, marker, const Duration(seconds: 30));
+  }
+
+  Future<void> _waitForGroupUnread(int count) async {
+    final label = count == 1
+        ? 'Open group $_groupName, 1 unread message'
+        : 'Open group $_groupName, $count unread messages';
+    await _waitForUiText(recipientId, label, const Duration(minutes: 2));
+  }
+
+  Future<void> _captureUiSnapshot(
+    String name, {
+    required int expectedUnread,
+  }) async {
+    final xml = await _uiDump(recipientId);
+    final expected = expectedUnread == 0
+        ? 'Open group $_groupName'
+        : expectedUnread == 1
+        ? 'Open group $_groupName, 1 unread message'
+        : 'Open group $_groupName, $expectedUnread unread messages';
+    final center = findSemanticNodeCenter(xml, expected);
+    if (center == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'ui_unread_observation_missing: expected "$expected"',
+      );
+    }
+    if (expectedUnread == 0 &&
+        xml.contains('Open group $_groupName,') &&
+        xml.contains('unread message')) {
+      throw _CaptureFailure.capture(
+        stage,
+        'ui_unread_zero_observation_still_contains_unread_semantics',
+      );
+    }
+    final file = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}ui_$name.xml',
+    );
+    await file.writeAsString(xml, flush: true);
+    _uiSnapshots.add(file);
+    _uiUnreadTimeline.add(expectedUnread);
+  }
+
+  Future<void> _captureRawUiSnapshot(String name) async {
+    final file = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}ui_$name.xml',
+    );
+    await file.writeAsString(await _uiDump(recipientId), flush: true);
+    _uiSnapshots.add(file);
+  }
+
+  Future<(int, ActiveNotificationCard)> _waitForNotificationCard() {
+    return _waitForValue<(int, ActiveNotificationCard)>(
+      'one active $_groupName notification card',
+      const Duration(minutes: 2),
+      () async {
+        final dump = await _notificationDump(recipientId);
+        final records = _activeNotificationRecords(dump);
+        if (records.length != 1) return null;
+        return records.single;
+      },
+    );
+  }
+
+  Future<File> _writeNotificationSnapshot(
+    String name,
+    ActiveNotificationCard observed,
+  ) async {
+    final dump = await _notificationDump(recipientId);
+    final records = _appNotificationRecords(dump);
+    if (records.trim().isEmpty) {
+      throw _CaptureFailure.capture(
+        stage,
+        'notification_record_disappeared_before_capture',
+      );
+    }
+    final file = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}'
+      'notification_$name.log',
+    );
+    await file.writeAsString(
+      '${_redact(records)}\n'
+      'observed_title=${observed.title}\n'
+      'observed_body=${observed.body}\n',
+      flush: true,
+    );
+    return file;
+  }
+
+  Future<void> _dismissNotificationCard() async {
+    await _adbShell(recipientId, const <String>[
+      'cmd',
+      'statusbar',
+      'expand-notifications',
+    ], environmentFailure: true);
+    final center = await _waitForNotificationCardInShade();
+    await _adbShell(recipientId, <String>[
+      'input',
+      'swipe',
+      '${center.$1}',
+      '${center.$2}',
+      '1',
+      '${center.$2}',
+      '450',
+    ], environmentFailure: true);
+    await _adbShell(recipientId, const <String>[
+      'cmd',
+      'statusbar',
+      'collapse',
+    ], allowFail: true);
+  }
+
+  Future<void> _waitForNoNotificationCard() async {
+    await _waitFor(
+      'notification card dismissal',
+      const Duration(seconds: 30),
+      () async => _activeNotificationRecords(
+        await _notificationDump(recipientId),
+      ).isEmpty,
+    );
+  }
+
+  Future<void> _tapNotificationCard() async {
+    await _adbShell(recipientId, const <String>[
+      'cmd',
+      'statusbar',
+      'expand-notifications',
+    ], environmentFailure: true);
+    final center = await _waitForNotificationCardInShade();
+    await _adbShell(recipientId, <String>[
+      'input',
+      'tap',
+      '${center.$1}',
+      '${center.$2}',
+    ], environmentFailure: true);
+  }
+
+  Future<(int, int)> _waitForNotificationCardInShade() async {
+    await Future<void>.delayed(const Duration(milliseconds: 750));
+    for (var attempt = 0; attempt < 6; attempt++) {
+      final xml = await _uiDump(recipientId);
+      final title = findSemanticNodeCenter(xml, _groupName);
+      if (title != null) return title;
+      if (attempt < 5) {
+        await _adbShell(recipientId, const <String>[
+          'input',
+          'swipe',
+          '540',
+          '1900',
+          '540',
+          '700',
+          '500',
+        ], environmentFailure: true);
+        await Future<void>.delayed(const Duration(milliseconds: 750));
+      }
+    }
+    throw _CaptureFailure.capture(
+      stage,
+      'active_group_notification_not_reachable_in_bounded_shade_scroll',
+    );
+  }
+
+  Future<void> _terminateAndroidRecipient() async {
+    await _adbShell(recipientId, const <String>[
+      'input',
+      'keyevent',
+      'KEYCODE_HOME',
+    ], environmentFailure: true);
+    await _adbShell(recipientId, <String>[
+      'am',
+      'kill',
+      appPackage,
+    ], environmentFailure: true);
+    if (!await _recipientProcessAbsentWithin(const Duration(seconds: 5))) {
+      await _adbShell(recipientId, <String>[
+        'am',
+        'stop-app',
+        appPackage,
+      ], environmentFailure: true);
+    }
+    await _waitFor(
+      'recipient process absent before provider delivery',
+      const Duration(seconds: 30),
+      () async => (await _adbShell(recipientId, <String>[
+        'pidof',
+        appPackage,
+      ], allowFail: true)).trim().isEmpty,
+    );
+  }
+
+  Future<bool> _recipientProcessAbsentWithin(Duration timeout) async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      final pid = await _adbShell(recipientId, <String>[
+        'pidof',
+        appPackage,
+      ], allowFail: true);
+      if (pid.trim().isEmpty) return true;
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+    return false;
+  }
+
+  Future<void> _waitForRelayTokenRegistration(DateTime since) async {
+    final platform = scenario.recipientPlatform == 'ios' ? 'ios' : 'android';
+    await _waitFor(
+      'capability-bearing recipient $platform token registration',
+      const Duration(minutes: 3),
+      () async {
+        final log = await _relayJournalSince(since);
+        return log.contains(
+          '[PUSH] Token registered for ${recipient.peerPrefix} ($platform)',
+        );
+      },
+    );
+  }
+
+  Future<void> _requireCleanNotificationSlate() async {
+    await Future<void>.delayed(const Duration(seconds: 2));
+    final records = _activeNotificationRecords(
+      await _notificationDump(recipientId),
+    );
+    if (records.isNotEmpty) {
+      throw _CaptureFailure.environment(
+        stage,
+        'recipient_notification_slate_not_clean: ${records.length} app '
+        'record(s) already active; unrelated cards are never cancelled',
+      );
+    }
+  }
+
+  Future<void> _waitForSenderEventCount(String event, int count) async {
+    await _waitFor(
+      '$count sender $event event(s)',
+      const Duration(seconds: 60),
+      () async {
+        final log = await _adb(senderId, const <String>[
+          'logcat',
+          '-d',
+          '-v',
+          'brief',
+        ]);
+        return RegExp(RegExp.escape(event)).allMatches(log.stdout).length >=
+            count;
+      },
+    );
+  }
+
+  Future<void> _waitForProviderSendCount(DateTime since, int count) async {
+    await _waitFor(
+      '$count real provider send(s)',
+      const Duration(minutes: 2),
+      () async => _countProviderSends(await _relayJournalSince(since)) >= count,
+    );
+  }
+
+  int _countProviderSends(String journal) => RegExp(
+    RegExp.escape(_providerSuccessMarker) +
+        RegExp.escape(recipient.peerPrefix) +
+        r'\b',
+  ).allMatches(journal).length;
+
+  Future<String> _captureSqlCipherObservation() async {
+    final args = <String>[
+      'test',
+      '--no-pub',
+      '-d',
+      recipientId,
+      _sqlCipherProbe,
+      '--plain-name',
+      'Plan 257 reads the installed app SQLCipher state',
+      '--dart-define=MKNOON_257_PROBE_SCENARIO=${scenario.id}',
+      '--dart-define=MKNOON_257_PROBE_GROUP_NAME=$_groupName',
+      '--dart-define=MKNOON_257_PROBE_FIRST_MARKER=$_firstMarker',
+      '--dart-define=MKNOON_257_PROBE_SECOND_MARKER=$_secondMarker',
+      '--dart-define=MKNOON_257_PROBE_TARGET_MARKER=$_targetMarker',
+    ];
+    final output = await _runStreaming('flutter', args);
+    const prefix = 'MKNOON_257_SQLCIPHER_OBSERVATION ';
+    String? encoded;
+    for (final line in output.combined.split('\n')) {
+      final index = line.indexOf(prefix);
+      if (index >= 0) {
+        encoded = line.substring(index + prefix.length).trim();
+      }
+    }
+    if (encoded == null) {
+      throw _CaptureFailure.capture(
+        stage,
+        'sqlcipher_probe_emitted_no_observation',
+      );
+    }
+    Map<String, dynamic> observed;
+    try {
+      observed = Map<String, dynamic>.from(jsonDecode(encoded) as Map);
+    } on Object {
+      throw _CaptureFailure.capture(
+        stage,
+        'sqlcipher_probe_observation_invalid_json',
+      );
+    }
+    _validateSqlCipherObservation(observed);
+    return '$prefix${jsonEncode(observed)}\n';
+  }
+
+  void _validateSqlCipherObservation(Map<String, dynamic> observed) {
+    if (observed['schema'] != 'mknoon.plan257.sqlcipher-observation.v1' ||
+        observed['scenario'] != scenario.id ||
+        observed['groupName'] != _groupName ||
+        observed['groupRows'] != 1 ||
+        observed['groupType'] != scenario.groupType ||
+        observed['unreadCount'] != 0 ||
+        observed['reactionMessageRows'] != 0) {
+      throw _CaptureFailure.capture(
+        stage,
+        'sqlcipher_observation_core_invariant_mismatch',
+      );
+    }
+    final markers = (observed['markers'] as List<dynamic>? ?? const <dynamic>[])
+        .whereType<Map>()
+        .map((value) => Map<String, dynamic>.from(value))
+        .toList(growable: false);
+    if (scenario.id.endsWith('_message_unread_lifecycle')) {
+      final first = markers.where((value) => value['marker'] == 'first');
+      final second = markers.where((value) => value['marker'] == 'second');
+      if (first.length != 1 ||
+          second.length != 1 ||
+          first.single['incoming'] != true ||
+          second.single['incoming'] != true ||
+          first.single['read'] != true ||
+          second.single['read'] != true ||
+          observed['reactionRows'] != 0) {
+        throw _CaptureFailure.capture(
+          stage,
+          'sqlcipher_unread_lifecycle_rows_mismatch',
+        );
+      }
+    } else {
+      final target = markers.where((value) => value['marker'] == 'target');
+      if (target.length != 1 ||
+          target.single['incoming'] != false ||
+          observed['reactionRows'] != 1 ||
+          observed['reactionEmoji'] != _reactionEmoji ||
+          observed['reactionTargetIdSha256'] != target.single['idSha256']) {
+        throw _CaptureFailure.capture(
+          stage,
+          'sqlcipher_group_reaction_rows_mismatch',
+        );
+      }
+    }
+  }
+
+  Future<void> _writeAndroidArtifact(String sqlCipherObservation) async {
+    if (_relayJournal.trim().isEmpty ||
+        _senderLogcat.trim().isEmpty ||
+        _recipientLogcat.trim().isEmpty ||
+        _uiSnapshots.isEmpty ||
+        _notificationSnapshots.isEmpty) {
+      throw _CaptureFailure.capture(
+        stage,
+        'authoritative_capture_inventory_incomplete',
+      );
+    }
+
+    final relayLines = _relayJournal
+        .split('\n')
+        .where(
+          (line) => line.contains('[GROUP_INBOX]') || line.contains('[PUSH]'),
+        )
+        .join('\n');
+    if (!relayLines.contains('[GROUP_INBOX] Stored message for group') ||
+        !relayLines.contains(_providerSuccessMarker)) {
+      throw _CaptureFailure.capture(
+        stage,
+        'relay_or_provider_window_missing_group_store_or_send',
+      );
+    }
+
+    final notificationText = StringBuffer();
+    for (final file in _notificationSnapshots) {
+      notificationText
+        ..writeln('source_file=${file.uri.pathSegments.last}')
+        ..writeln('source_sha256=${await _sha256(file)}')
+        ..writeln(await file.readAsString());
+    }
+    final uiText = StringBuffer();
+    for (final file in _uiSnapshots) {
+      uiText
+        ..writeln('source_file=${file.uri.pathSegments.last}')
+        ..writeln('source_sha256=${await _sha256(file)}')
+        ..writeln(await file.readAsString());
+    }
+
+    final evidenceText = <String, String>{};
+    if (scenario.id.endsWith('_message_unread_lifecycle')) {
+      if (_uiUnreadTimeline.join(',') != '0,1,1,2,0') {
+        throw _CaptureFailure.capture(
+          stage,
+          'unread_ui_timeline_mismatch: ${_uiUnreadTimeline.join(',')}',
+        );
+      }
+      evidenceText.addAll(<String, String>{
+        'relay': '${_redact(relayLines)}\n',
+        'provider_fcm': _providerLines(_relayJournal),
+        'sender_app': '${_redact(_senderLogcat)}\n',
+        'recipient_app': '${_redact(_recipientLogcat)}\n',
+        'sqlcipher_state': sqlCipherObservation,
+        'android_notification_records': notificationText.toString(),
+        'ui_automation': uiText.toString(),
+      });
+    } else {
+      for (final marker in const <String>[
+        'PUSH_BACKGROUND_REACTION_CRYPTO_PLUGIN_OK',
+        'PUSH_ANDROID_DATA_DECRYPT_OK',
+      ]) {
+        if (!_recipientLogcat.contains(marker)) {
+          throw _CaptureFailure.capture(
+            stage,
+            'android_background_group_crypto_marker_missing: $marker',
+          );
+        }
+      }
+      evidenceText.addAll(<String, String>{
+        'relay': '${_redact(relayLines)}\n',
+        'provider_fcm': _providerLines(_relayJournal),
+        'sender_app':
+            '${_redact(_senderLogcat)}\n$_exactDuplicateRedriveObservation',
+        'recipient_app': '${_redact(_recipientLogcat)}\n',
+        'sqlcipher_state': sqlCipherObservation,
+        'android_logcat': _redact(_recipientLogcat),
+        'android_notification_records': notificationText.toString(),
+        'ui_automation': uiText.toString(),
+      });
+    }
+
+    final evidence = <Map<String, Object?>>[];
+    for (final requirement in scenario.evidenceRequirements) {
+      final text = evidenceText[requirement.kind];
+      if (text == null) {
+        throw _CaptureFailure.capture(
+          stage,
+          'capture_has_no_writer_for_evidence_kind_${requirement.kind}',
+        );
+      }
+      final file = File(
+        '${artifactDirectory.path}${Platform.pathSeparator}'
+        '${requirement.kind}.log',
+      );
+      final redacted = _redact(text);
+      _rejectSensitivePersistence(redacted, requirement.kind);
+      await file.writeAsString(redacted, flush: true);
+      final bytes = await file.readAsBytes();
+      evidence.add(<String, Object?>{
+        'kind': requirement.kind,
+        'path': file.uri.pathSegments.last,
+        'sha256': sha256.convert(bytes).toString(),
+        'bytes': bytes.length,
+      });
+    }
+
+    final build = _androidBuilds!;
+    await _flushCommandJournal();
+    final configurationFile = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}'
+      'configuration_verdict.json',
+    );
+    final buildProvenanceFile = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}'
+      'candidate_build_provenance.json',
+    );
+    final artifact = <String, Object?>{
+      'schema': groupReactionNotificationArtifactSchema,
+      'version': groupReactionNotificationArtifactVersion,
+      'scenario': scenario.id,
+      'testCase': scenario.testCase,
+      'status': 'passed',
+      'generatedBy': 'automated_capture_pipeline',
+      'capture': <String, Object?>{
+        'configuration': await _artifactFileReference(configurationFile),
+        'candidateBuild': await _artifactFileReference(buildProvenanceFile),
+        'commandJournal': await _artifactFileReference(_commandJournalFile),
+      },
+      'measurements': <String, Object?>{
+        'appPackage': appPackage,
+        'groupName': _groupName,
+        'actorName': sender.username,
+        'firstMarker': _firstMarker,
+        'secondMarker': _secondMarker,
+        'targetMarker': _targetMarker,
+        'expectedProviderSendCount': 2,
+      },
+      'topology': <String, Object?>{
+        'groupType': scenario.groupType,
+        'sender': <String, Object?>{
+          'role': scenario.senderRole,
+          'platform': scenario.senderPlatform,
+          'deviceKind': scenario.senderDeviceKind,
+          'deviceId': senderId,
+          'liveDiscovered': true,
+          'explicitId': true,
+        },
+        'recipient': <String, Object?>{
+          'role': scenario.recipientRole,
+          'platform': scenario.recipientPlatform,
+          'deviceKind': scenario.recipientDeviceKind,
+          'deviceId': recipientId,
+          'liveDiscovered': true,
+          'explicitId': true,
+        },
+      },
+      'execution': <String, Object?>{
+        'automation': 'fully_automated',
+        'manualTaps': 0,
+        // Setup launches may reset a debug process, but the bounded recipient
+        // delivery lifecycle above uses only `am kill`, never force-stop.
+        'forceStopUsed': false,
+        'candidateBuildInstalled':
+            build.e2eSha256.isNotEmpty && build.normalSha256.isNotEmpty,
+        'stagingRelay': _relay.sha256 == _staging['candidateRelaySha256'],
+        'realProvider': _providerLines(
+          _relayJournal,
+        ).contains(_providerSuccessMarker),
+      },
+      'evidence': evidence,
+      'redaction': const <String, Object?>{
+        'pushTokensPersisted': false,
+        'secretKeysPersisted': false,
+        'ciphertextPersisted': false,
+        'plaintextPayloadPersisted': false,
+        'rawPeerIdsPersisted': false,
+      },
+    };
+    final encoded = const JsonEncoder.withIndent(' ').convert(artifact);
+    _rejectSensitivePersistence(encoded, 'artifact');
+    final output = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}${scenario.id}.json',
+    );
+    final pending = File('${output.path}.pending');
+    await pending.writeAsString(encoded, flush: true);
+    await pending.rename(output.path);
+  }
+
+  Future<void> _writeIosArtifact(String sqlCipherObservation) async {
+    final relayLines = _relayJournal
+        .split('\n')
+        .where(
+          (line) => line.contains('[GROUP_INBOX]') || line.contains('[PUSH]'),
+        )
+        .join('\n');
+    final recipientLines = _iosSystemLog
+        .split('\n')
+        .where(
+          (line) =>
+              line.contains('[PUSH_DIAG]') ||
+              line.contains('IOS_APNS_') ||
+              line.contains('NOTIFICATION_TAP_') ||
+              line.contains('INITIAL_LOCAL_NOTIFICATION_ROUTE_'),
+        )
+        .join('\n');
+    final nseLines = _iosSystemLog
+        .split('\n')
+        .where((line) => line.contains('PUSH_NSE_'))
+        .join('\n');
+    if (!relayLines.contains('[GROUP_INBOX] Stored message for group') ||
+        _providerLines(_relayJournal).trim().isEmpty ||
+        _senderLogcat.trim().isEmpty ||
+        recipientLines.trim().isEmpty ||
+        nseLines.trim().isEmpty ||
+        _iosXcuitestOutput.trim().isEmpty) {
+      throw _CaptureFailure.capture(
+        stage,
+        'physical_ios_authoritative_capture_inventory_incomplete',
+      );
+    }
+
+    await _writeIosBuildProvenance();
+    final evidenceText = <String, String>{
+      'relay': '${_redact(relayLines)}\n',
+      'provider_apns': _providerLines(_relayJournal),
+      'sender_app': '${_redact(_senderLogcat)}\n',
+      'recipient_app': '${_redact(recipientLines)}\n',
+      'sqlcipher_state': sqlCipherObservation,
+      'nse_log': '${_redact(nseLines)}\n',
+      'xcuitest': '${_redact(_iosXcuitestOutput)}\n',
+    };
+    final evidence = <Map<String, Object?>>[];
+    for (final requirement in scenario.evidenceRequirements) {
+      final text = evidenceText[requirement.kind];
+      if (text == null) {
+        throw _CaptureFailure.capture(
+          stage,
+          'capture_has_no_writer_for_evidence_kind_${requirement.kind}',
+        );
+      }
+      final redacted = _redact(text);
+      _rejectSensitivePersistence(redacted, requirement.kind);
+      final file = File(
+        '${artifactDirectory.path}${Platform.pathSeparator}'
+        '${requirement.kind}.log',
+      );
+      await file.writeAsString(redacted, flush: true);
+      final bytes = await file.readAsBytes();
+      evidence.add(<String, Object?>{
+        'kind': requirement.kind,
+        'path': file.uri.pathSegments.last,
+        'sha256': sha256.convert(bytes).toString(),
+        'bytes': bytes.length,
+      });
+    }
+
+    await _flushCommandJournal();
+    final configurationFile = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}'
+      'configuration_verdict.json',
+    );
+    final buildProvenanceFile = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}'
+      'candidate_build_provenance.json',
+    );
+    final artifact = <String, Object?>{
+      'schema': groupReactionNotificationArtifactSchema,
+      'version': groupReactionNotificationArtifactVersion,
+      'scenario': scenario.id,
+      'testCase': scenario.testCase,
+      'status': 'passed',
+      'generatedBy': 'automated_capture_pipeline',
+      'capture': <String, Object?>{
+        'configuration': await _artifactFileReference(configurationFile),
+        'candidateBuild': await _artifactFileReference(buildProvenanceFile),
+        'commandJournal': await _artifactFileReference(_commandJournalFile),
+      },
+      'measurements': <String, Object?>{
+        'appPackage': _iosCapture['bundleId']! as String,
+        'groupName': _groupName,
+        'actorName': sender.username,
+        'firstMarker': '',
+        'secondMarker': '',
+        'targetMarker': _targetMarker,
+        'expectedProviderSendCount': 2,
+      },
+      'topology': <String, Object?>{
+        'groupType': scenario.groupType,
+        'sender': <String, Object?>{
+          'role': scenario.senderRole,
+          'platform': scenario.senderPlatform,
+          'deviceKind': scenario.senderDeviceKind,
+          'deviceId': senderId,
+          'liveDiscovered': true,
+          'explicitId': true,
+        },
+        'recipient': <String, Object?>{
+          'role': scenario.recipientRole,
+          'platform': scenario.recipientPlatform,
+          'deviceKind': scenario.recipientDeviceKind,
+          'deviceId': recipientId,
+          'liveDiscovered': true,
+          'explicitId': true,
+        },
+      },
+      'execution': <String, Object?>{
+        'automation': 'fully_automated',
+        'manualTaps': 0,
+        'forceStopUsed': false,
+        'candidateBuildInstalled':
+            _iosE2eAppSha256.isNotEmpty &&
+            _iosNormalAppSha256.isNotEmpty &&
+            _iosE2eAppSha256 != _iosNormalAppSha256 &&
+            _iosInstallReceipts.length == 2,
+        'stagingRelay': _relay.sha256 == _staging['candidateRelaySha256'],
+        'realProvider':
+            _providerLines(_relayJournal)
+                .split('\n')
+                .where((line) => line.contains(_providerSuccessMarker))
+                .length ==
+            2,
+      },
+      'evidence': evidence,
+      'redaction': const <String, Object?>{
+        'pushTokensPersisted': false,
+        'secretKeysPersisted': false,
+        'ciphertextPersisted': false,
+        'plaintextPayloadPersisted': false,
+        'rawPeerIdsPersisted': false,
+      },
+    };
+    final encoded = const JsonEncoder.withIndent(' ').convert(artifact);
+    _rejectSensitivePersistence(encoded, 'artifact');
+    final output = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}${scenario.id}.json',
+    );
+    final pending = File('${output.path}.pending');
+    await pending.writeAsString(encoded, flush: true);
+    await pending.rename(output.path);
+  }
+
+  Future<void> _writeIosBuildProvenance() async {
+    final file = File(
+      '${artifactDirectory.path}${Platform.pathSeparator}'
+      'candidate_build_provenance.json',
+    );
+    if (!file.existsSync() ||
+        _iosE2eAppSha256.isEmpty ||
+        _iosNormalAppSha256.isEmpty ||
+        _iosE2eAppSha256 == _iosNormalAppSha256 ||
+        !_iosInstallReceipts.keys.toSet().containsAll(const <String>{
+          'e2e',
+          'normal',
+        })) {
+      throw _CaptureFailure.capture(
+        stage,
+        'physical_ios_build_or_install_provenance_incomplete',
+      );
+    }
+    final decoded = Map<String, Object?>.from(
+      jsonDecode(await file.readAsString()) as Map,
+    );
+    decoded.addAll(<String, Object?>{
+      'iosBundleId': _iosCapture['bundleId']! as String,
+      'iosBuildTarget': 'build/ios/iphoneos/Runner.app',
+      'iosE2eAppSha256': _iosE2eAppSha256,
+      'iosNormalAppSha256': _iosNormalAppSha256,
+      'iosInstallReceipts': <Object?>[
+        for (final mode in const <String>['e2e', 'normal'])
+          <String, Object?>{
+            'mode': mode,
+            'receipt': await _artifactFileReference(_iosInstallReceipts[mode]!),
+          },
+      ],
+    });
+    await file.writeAsString(
+      const JsonEncoder.withIndent(' ').convert(decoded),
+      flush: true,
+    );
+  }
+
+  Future<Map<String, Object?>> _artifactFileReference(File file) async {
+    if (!await file.exists()) {
+      throw _CaptureFailure.capture(
+        stage,
+        'capture_provenance_file_missing_${file.uri.pathSegments.last}',
+      );
+    }
+    final bytes = await file.readAsBytes();
+    return <String, Object?>{
+      'path': file.uri.pathSegments.last,
+      'sha256': sha256.convert(bytes).toString(),
+      'bytes': bytes.length,
+    };
+  }
+
+  String get _providerSuccessMarker =>
+      scenario.id.endsWith('_message_unread_lifecycle')
+      ? '[PUSH] Group notification sent to '
+      : '[PUSH] Notification sent to ';
+
+  String _providerLines(String journal) =>
+      '${journal.split('\n').where((line) => line.contains(_providerSuccessMarker)).map(_redact).join('\n')}\n';
+
+  void _rejectSensitivePersistence(String text, String source) {
+    for (final forbidden in const <String>[
+      '"fcmToken":',
+      '"apnsToken":',
+      '"secretKey":',
+      '"ciphertext":',
+      '"plaintext":',
+      '"senderPeerId":',
+      '"recipientPeerId":',
+      'BEGIN PRIVATE KEY',
+    ]) {
+      if (text.contains(forbidden)) {
+        throw _CaptureFailure.capture(
+          stage,
+          '$source contains forbidden persisted material $forbidden',
+        );
+      }
+    }
+  }
+
+  Future<void> _deleteBuildCopies() async {
+    for (final file in <File?>[
+      _androidBuilds?.e2eApk,
+      _androidBuilds?.normalApk,
+    ]) {
+      if (file != null && file.existsSync()) await file.delete();
+    }
+  }
+
+  Future<void> _grantNotificationPermission(String deviceId) async {
+    await _adbShell(deviceId, <String>[
+      'pm',
+      'grant',
+      appPackage,
+      'android.permission.POST_NOTIFICATIONS',
+    ], allowFail: true);
+  }
+
+  Future<void> _launchAndroid(String deviceId) async {
+    // Setup launches are cold so bootstrap deterministically consumes the
+    // app-private fixture. The actual notification boundary later uses only
+    // `am kill`; force-stop is never used after the capture window opens.
+    await _adbShell(deviceId, <String>[
+      'am',
+      'force-stop',
+      appPackage,
+    ], environmentFailure: true);
+    await _startAndroid(deviceId);
+  }
+
+  Future<void> _startAndroid(String deviceId) async {
+    // Used inside proof windows after an APK reinstall has already stopped the
+    // prior process. Do not add force-stop here: the lifecycle contract rejects
+    // it because force-stopped apps are not eligible for ordinary push wakeup.
+    await _adbShell(deviceId, <String>[
+      'am',
+      'start',
+      '-W',
+      '-n',
+      '$appPackage/.MainActivity',
+    ], environmentFailure: true);
+  }
+
+  Future<void> _writeAppFile(
+    String deviceId,
+    String name,
+    String content,
+  ) async {
+    final safeId = deviceId.replaceAll(RegExp(r'[^A-Za-z0-9]'), '_');
+    final local = File(
+      '${Directory.systemTemp.path}${Platform.pathSeparator}'
+      'plan257_${safeId}_$name',
+    );
+    final remote = '/data/local/tmp/plan257_$name';
+    await local.writeAsString(content, flush: true);
+    try {
+      await _adb(deviceId, <String>['push', local.path, remote]);
+      await _adbShell(deviceId, <String>[
+        'run-as',
+        appPackage,
+        'mkdir',
+        '-p',
+        'app_flutter',
+      ], environmentFailure: true);
+      await _adbShell(deviceId, <String>[
+        'run-as',
+        appPackage,
+        'cp',
+        remote,
+        'app_flutter/$name',
+      ], environmentFailure: true);
+    } finally {
+      await _adbShell(deviceId, <String>['rm', '-f', remote], allowFail: true);
+      if (local.existsSync()) await local.delete();
+    }
+  }
+
+  Future<String?> _readAppFile(String deviceId, String name) async {
+    final result = await _adbShell(deviceId, <String>[
+      'run-as',
+      appPackage,
+      'cat',
+      'app_flutter/$name',
+    ], allowFail: true);
+    if (result.trim().isEmpty || result.contains('No such file')) return null;
+    return result;
+  }
+
+  Future<void> _deleteAppFile(String deviceId, String name) async {
+    await _adbShell(deviceId, <String>[
+      'run-as',
+      appPackage,
+      'rm',
+      '-f',
+      'app_flutter/$name',
+    ], allowFail: true);
+  }
+
+  Future<void> _longPressText(String deviceId, String text) async {
+    final center = await _waitForBounds(
+      deviceId,
+      text,
+      const Duration(seconds: 30),
+    );
+    await _adbShell(deviceId, <String>[
+      'input',
+      'swipe',
+      '${center.$1}',
+      '${center.$2}',
+      '${center.$1}',
+      '${center.$2}',
+      '900',
+    ], environmentFailure: true);
+  }
+
+  Future<void> _tapText(String deviceId, String text) async {
+    final center = await _waitForBounds(
+      deviceId,
+      text,
+      const Duration(seconds: 30),
+    );
+    await _adbShell(deviceId, <String>[
+      'input',
+      'tap',
+      '${center.$1}',
+      '${center.$2}',
+    ], environmentFailure: true);
+  }
+
+  Future<void> _waitForUiText(
+    String deviceId,
+    String text,
+    Duration timeout,
+  ) async {
+    await _waitForBounds(deviceId, text, timeout);
+  }
+
+  Future<String> _waitForAnyText(
+    String deviceId,
+    List<String> texts,
+    Duration timeout,
+  ) {
+    return _waitForValue<String>(
+      'one of ${texts.join(', ')} on $deviceId',
+      timeout,
+      () async {
+        final xml = await _uiDump(deviceId);
+        for (final text in texts) {
+          if (findSemanticNodeCenter(xml, text) != null) return text;
+        }
+        return null;
+      },
+    );
+  }
+
+  Future<(int, int)> _waitForBounds(
+    String deviceId,
+    String text,
+    Duration timeout,
+  ) {
+    return _waitForValue<(int, int)>(
+      'UI node "$text" on $deviceId',
+      timeout,
+      () async => findSemanticNodeCenter(await _uiDump(deviceId), text),
+    );
+  }
+
+  Future<String> _uiDump(String deviceId) async {
+    const remote = '/data/local/tmp/plan257_ui.xml';
+    await _adbShell(deviceId, const <String>[
+      'uiautomator',
+      'dump',
+      remote,
+    ], allowFail: true);
+    final xml = await _adbShell(deviceId, const <String>[
+      'cat',
+      remote,
+    ], allowFail: true);
+    await _adbShell(deviceId, const <String>[
+      'rm',
+      '-f',
+      remote,
+    ], allowFail: true);
+    return xml;
+  }
+
+  Future<String> _notificationDump(String deviceId) {
+    return _adbShell(deviceId, const <String>[
+      'dumpsys',
+      'notification',
+      '--noredact',
+    ], environmentFailure: true);
+  }
+
+  List<(int, ActiveNotificationCard)> _activeNotificationRecords(String dump) {
+    final activeSection = dump.split(RegExp(r'\nRanking Config:')).first;
+    final records = RegExp(
+      r'NotificationRecord\([\s\S]*?(?=\n\s*NotificationRecord\(|$)',
+    ).allMatches(activeSection);
+    final packagePattern = RegExp(
+      r'\bpkg=' + RegExp.escape(appPackage) + r'\b',
+    );
+    final result = <(int, ActiveNotificationCard)>[];
+    for (final match in records) {
+      final record = match.group(0)!;
+      if (!packagePattern.hasMatch(record)) continue;
+      final idMatch = RegExp(r'\bid=(\d+)\b').firstMatch(record);
+      if (idMatch == null) {
+        throw _CaptureFailure.capture(
+          stage,
+          'android_notification_record_has_no_numeric_id',
+        );
+      }
+      result.add((
+        int.parse(idMatch.group(1)!),
+        ActiveNotificationCard(
+          title: _notificationValue(record, 'android.title'),
+          body: _notificationValue(record, 'android.text'),
+        ),
+      ));
+    }
+    return result;
+  }
+
+  String _notificationValue(String record, String key) {
+    final match = RegExp(
+      '^\\s*${RegExp.escape(key)}=(.+)\$',
+      multiLine: true,
+    ).firstMatch(record);
+    if (match == null) return '';
+    var value = match.group(1)!.trim();
+    if (value.startsWith('String (') && value.endsWith(')')) {
+      value = value.substring('String ('.length, value.length - 1);
+    }
+    return value == 'null' ? '' : value;
+  }
+
+  String _appNotificationRecords(String dump) {
+    final section = dump.split(RegExp(r'\nRanking Config:')).first;
+    return RegExp(
+          r'NotificationRecord\([\s\S]*?(?=\n\s*NotificationRecord\(|$)',
+        )
+        .allMatches(section)
+        .map((match) => match.group(0)!)
+        .where((record) => record.contains('pkg=$appPackage'))
+        .join('\n');
+  }
+
+  Future<String> _relayJournalSince(DateTime since) async {
+    final epochSeconds = since.millisecondsSinceEpoch ~/ 1000 - 2;
+    final result = await _ssh(<String>[
+      'sudo',
+      'journalctl',
+      '-u',
+      'relay-server',
+      '--since',
+      '@$epochSeconds',
+      '--no-pager',
+      '-o',
+      'short-iso',
+    ], environmentFailure: true);
+    return result.stdout;
+  }
+
+  Future<_CommandOutput> _ssh(
+    List<String> remoteArgs, {
+    bool allowFail = false,
+    bool environmentFailure = false,
+  }) {
+    return _run(
+      'ssh',
+      <String>[
+        '-o',
+        'BatchMode=yes',
+        '-o',
+        'ConnectTimeout=15',
+        '-i',
+        relayKey.path,
+        relayTarget,
+        _shellJoin(remoteArgs),
+      ],
+      allowFail: allowFail,
+      environmentFailure: environmentFailure,
+    );
+  }
+
+  Future<_CommandOutput> _adb(
+    String deviceId,
+    List<String> args, {
+    bool allowFail = false,
+    bool environmentFailure = false,
+  }) {
+    return _run(
+      'adb',
+      <String>['-s', deviceId, ...args],
+      allowFail: allowFail,
+      environmentFailure: environmentFailure,
+    );
+  }
+
+  Future<String> _adbShell(
+    String deviceId,
+    List<String> args, {
+    bool allowFail = false,
+    bool environmentFailure = false,
+  }) async {
+    return (await _adb(
+      deviceId,
+      <String>['shell', ...args],
+      allowFail: allowFail,
+      environmentFailure: environmentFailure,
+    )).stdout;
+  }
+
+  Future<_CommandOutput> _run(
+    String executable,
+    List<String> args, {
+    bool allowFail = false,
+    bool environmentFailure = false,
+  }) async {
+    if (verbose) stdout.writeln('RUN: $executable ${args.join(' ')}');
+    final result = await Process.run(executable, args);
+    final output = _CommandOutput(
+      exitCode: result.exitCode,
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString(),
+    );
+    _recordCommand(executable, args, output.exitCode);
+    if (verbose) {
+      stdout.write(output.stdout);
+      stderr.write(output.stderr);
+    }
+    if (output.exitCode != 0 && !allowFail) {
+      final message =
+          '$executable exited ${output.exitCode}: ${_lastLine(output.combined)}';
+      throw environmentFailure
+          ? _CaptureFailure.environment(stage, message)
+          : _CaptureFailure.capture(stage, message);
+    }
+    return output;
+  }
+
+  Future<_CommandOutput> _runStreaming(
+    String executable,
+    List<String> args, {
+    bool environmentFailure = false,
+    Map<String, String>? environment,
+  }) async {
+    stdout.writeln('RUN: $executable ${args.join(' ')}');
+    final process = await Process.start(
+      executable,
+      args,
+      environment: environment,
+      includeParentEnvironment: true,
+    );
+    final out = StringBuffer();
+    final err = StringBuffer();
+    final outDone = process.stdout.transform(utf8.decoder).forEach((chunk) {
+      out.write(chunk);
+      stdout.write(chunk);
+    });
+    final errDone = process.stderr.transform(utf8.decoder).forEach((chunk) {
+      err.write(chunk);
+      stderr.write(chunk);
+    });
+    final exitCode = await process.exitCode;
+    await Future.wait(<Future<void>>[outDone, errDone]);
+    _recordCommand(executable, args, exitCode);
+    final output = _CommandOutput(
+      exitCode: exitCode,
+      stdout: out.toString(),
+      stderr: err.toString(),
+    );
+    if (exitCode != 0) {
+      final message =
+          '$executable exited $exitCode: ${_lastLine(output.combined)}';
+      throw environmentFailure
+          ? _CaptureFailure.environment(stage, message)
+          : _CaptureFailure.capture(stage, message);
+    }
+    return output;
+  }
+
+  void _recordCommand(String executable, List<String> args, int exitCode) {
+    _recordCommandAtStage(stage, executable, args, exitCode);
+  }
+
+  void _recordCommandAtStage(
+    String commandStage,
+    String executable,
+    List<String> args,
+    int exitCode,
+  ) {
+    final safeArgs = args
+        .map((argument) {
+          if (argument == serviceAccount.path) return '[service-account-path]';
+          if (argument == relayKey.path) return '[relay-key-path]';
+          return _redact(argument);
+        })
+        .toList(growable: false);
+    _commandJournal.add(<String, Object?>{
+      'stage': commandStage,
+      'executable': executable,
+      'args': safeArgs,
+      'exitCode': exitCode,
+      'recordedAt': DateTime.now().toUtc().toIso8601String(),
+    });
+  }
+
+  Future<void> _flushCommandJournal() async {
+    final encoded = const JsonEncoder.withIndent(' ').convert(<String, Object?>{
+      'schema': 'mknoon.plan257.command-journal.v1',
+      'scenario': scenario.id,
+      'commands': _commandJournal,
+    });
+    _rejectSensitivePersistence(encoded, 'command journal');
+    await _commandJournalFile.writeAsString(encoded, flush: true);
+  }
+
+  Future<void> _waitFor(
+    String label,
+    Duration timeout,
+    Future<bool> Function() probe,
+  ) async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      if (await probe()) return;
+      await Future<void>.delayed(const Duration(seconds: 1));
+    }
+    throw _CaptureFailure.capture(stage, 'timed_out_waiting_for_$label');
+  }
+
+  Future<T> _waitForValue<T>(
+    String label,
+    Duration timeout,
+    Future<T?> Function() probe,
+  ) async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      final value = await probe();
+      if (value != null) return value;
+      await Future<void>.delayed(const Duration(seconds: 1));
+    }
+    throw _CaptureFailure.capture(stage, 'timed_out_waiting_for_$label');
+  }
+
+  Future<String> _sha256(File file) async =>
+      sha256.convert(await file.readAsBytes()).toString();
+
+  Future<String> _sha256Directory(Directory directory) async {
+    final files = await directory
+        .list(recursive: true, followLinks: false)
+        .where((entity) => entity is File)
+        .cast<File>()
+        .toList();
+    files.sort((left, right) => left.path.compareTo(right.path));
+    final sink = _SingleDigestSink();
+    final converter = sha256.startChunkedConversion(sink);
+    final prefix = '${directory.path}${Platform.pathSeparator}';
+    for (final file in files) {
+      final relative = file.path.startsWith(prefix)
+          ? file.path.substring(prefix.length)
+          : file.path;
+      converter.add(utf8.encode('$relative\u0000'));
+      converter.add(await file.readAsBytes());
+      converter.add(const <int>[0]);
+    }
+    converter.close();
+    final digest = sink.value;
+    if (digest == null) {
+      throw _CaptureFailure.capture(stage, 'ios_candidate_bundle_hash_failed');
+    }
+    return digest.toString();
+  }
+
+  String _flowLines(String logcat) => logcat
+      .split('\n')
+      .where(
+        (line) =>
+            line.contains('[FLOW]') ||
+            line.contains('PUSH_BACKGROUND_REACTION_') ||
+            line.contains('PUSH_ANDROID_DATA_DECRYPT_'),
+      )
+      .map(_redact)
+      .join('\n');
+
+  String _redact(String value) {
+    var redacted = value;
+    for (final peer in <String>[
+      sender.peerId,
+      sender.peerPrefix,
+      recipient.peerId,
+      recipient.peerPrefix,
+    ]) {
+      if (peer.isNotEmpty) redacted = redacted.replaceAll(peer, '[peer]');
+    }
+    redacted = redacted.replaceAll(RegExp(r'12D3Koo[A-Za-z0-9]+'), '[peer]');
+    return redacted;
+  }
+}
+
+class _SingleDigestSink implements Sink<Digest> {
+  Digest? value;
+
+  @override
+  void add(Digest data) {
+    if (value != null) throw StateError('digest sink received two values');
+    value = data;
+  }
+
+  @override
+  void close() {}
+}
+
+String _shellJoin(List<String> values) => values.map(_shellQuote).join(' ');
+
+String _shellQuote(String value) {
+  if (RegExp(r'^[A-Za-z0-9_./:@=+-]+$').hasMatch(value)) return value;
+  return "'${value.replaceAll("'", "'\\''")}'";
+}
+
+String _lastLine(String value) {
+  final lines = value
+      .split('\n')
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty)
+      .toList(growable: false);
+  return lines.isEmpty ? '' : lines.last;
+}
+
+String? _valueFor(List<String> args, String name) {
+  for (var index = 0; index < args.length; index++) {
+    final argument = args[index];
+    if (argument == name) {
+      if (index + 1 >= args.length || args[index + 1].startsWith('--')) {
+        _usage('Missing value for $name.');
+      }
+      return args[index + 1];
+    }
+    if (argument.startsWith('$name=')) {
+      final value = argument.substring(name.length + 1);
+      if (value.isEmpty) _usage('Missing value for $name.');
+      return value;
+    }
+  }
+  return null;
+}
+
+Never _usage([String? error]) {
+  if (error != null) stderr.writeln(error);
+  stderr.writeln(
+    'Usage: dart run integration_test/scripts/'
+    'capture_group_reaction_notification_device.dart '
+    '--scenario <plan257-id> --sender <explicit-id> '
+    '--recipient <explicit-id> --artifact-dir <dir> '
+    '--staging-manifest <redacted-json> [--relay-target <ssh-target>] '
+    '[--relay-key <file>] [--service-account <file>] [--verbose] '
+    '[--keep-build-artifacts]',
+  );
+  exit(64);
+}

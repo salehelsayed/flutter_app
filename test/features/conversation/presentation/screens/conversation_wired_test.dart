@@ -11,6 +11,7 @@ import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
@@ -1078,6 +1079,236 @@ void main() {
   });
 
   group('ConversationWired optimistic send', () {
+    testWidgets('selected private policy reaches the injected send seam', (
+      tester,
+    ) async {
+      final tempDir = Directory.systemTemp.createTempSync(
+        'private_media_send_',
+      );
+      addTearDown(() {
+        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+      });
+      final image = File('${tempDir.path}/private.png')
+        ..writeAsBytesSync(_tinyPngBytes);
+      final nextImage = File('${tempDir.path}/next.png')
+        ..writeAsBytesSync(_tinyPngBytes);
+      final mediaPicker = FakeMediaPicker()
+        ..multipleMediaResult = [XFile(nextImage.path)];
+      final messageRepo = FakeMessageRepository();
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      final capturedPolicies = <PrivateMediaPolicy>[];
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        initialAttachments: [image],
+        mediaPicker: mediaPicker,
+        bridge: FakeBridge(),
+        uploadMediaFn:
+            ({
+              required bridge,
+              required localFilePath,
+              required mime,
+              required recipientPeerId,
+              mediaFileManager,
+              blobId,
+              width,
+              height,
+              durationMs,
+              waveform,
+              allowedPeers,
+              deleteSourceWhenDone = false,
+              preparedArtifact,
+            }) async => MediaAttachment(
+              id: 'private-media-upload',
+              messageId: '',
+              mime: mime,
+              size: File(localFilePath).lengthSync(),
+              mediaType: MediaAttachment.mediaTypeFromMime(mime),
+              localPath: localFilePath,
+              downloadStatus: 'done',
+              createdAt: DateTime.now().toUtc().toIso8601String(),
+            ),
+        sendFn:
+            ({
+              required p2pService,
+              required messageRepo,
+              required targetPeerId,
+              required text,
+              required senderPeerId,
+              required senderUsername,
+              messageId,
+              timestamp,
+              bridge,
+              recipientMlKemPublicKey,
+              quotedMessageId,
+              mediaAttachments,
+              privateMediaPolicy,
+              mediaAttachmentRepo,
+              transportMetrics,
+            }) async {
+              capturedPolicies.add(
+                privateMediaPolicy ?? const PrivateMediaPolicy.ordinary(),
+              );
+              return _instantSuccessSendFn(
+                p2pService: p2pService,
+                messageRepo: messageRepo,
+                targetPeerId: targetPeerId,
+                text: text,
+                senderPeerId: senderPeerId,
+                senderUsername: senderUsername,
+                messageId: messageId,
+                timestamp: timestamp,
+                bridge: bridge,
+                recipientMlKemPublicKey: recipientMlKemPublicKey,
+                quotedMessageId: quotedMessageId,
+                mediaAttachments: mediaAttachments,
+                privateMediaPolicy: privateMediaPolicy,
+                mediaAttachmentRepo: mediaAttachmentRepo,
+                transportMetrics: transportMetrics,
+              );
+            },
+      );
+      await tester.tap(find.byKey(const ValueKey('private-media-selector')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(
+        find.byKey(const ValueKey('private-media-option-protected')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await pumpUntil(tester, () => capturedPolicies.length == 1);
+
+      expect(capturedPolicies.single, const PrivateMediaPolicy.protected());
+
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump(const Duration(milliseconds: 500));
+      tester
+          .widget<ListTile>(find.widgetWithText(ListTile, 'Media Library'))
+          .onTap!();
+      await pumpUntil(
+        tester,
+        () => find
+            .byKey(const ValueKey('private-media-selector'))
+            .evaluate()
+            .isNotEmpty,
+      );
+      expect(find.text('Ordinary'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await pumpUntil(tester, () => capturedPolicies.length == 2);
+      expect(capturedPolicies.last, const PrivateMediaPolicy.ordinary());
+    });
+
+    testWidgets('failed private upload restores the exact selected policy', (
+      tester,
+    ) async {
+      final tempDir = Directory.systemTemp.createTempSync(
+        'private_media_restore_',
+      );
+      addTearDown(() {
+        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+      });
+      final image = File('${tempDir.path}/private.png')
+        ..writeAsBytesSync(_tinyPngBytes);
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      var sendCalls = 0;
+
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        initialAttachments: [image],
+        bridge: FakeBridge(),
+        uploadMediaFn:
+            ({
+              required bridge,
+              required localFilePath,
+              required mime,
+              required recipientPeerId,
+              mediaFileManager,
+              blobId,
+              width,
+              height,
+              durationMs,
+              waveform,
+              allowedPeers,
+              deleteSourceWhenDone = false,
+              preparedArtifact,
+            }) async => null,
+        sendFn:
+            ({
+              required p2pService,
+              required messageRepo,
+              required targetPeerId,
+              required text,
+              required senderPeerId,
+              required senderUsername,
+              messageId,
+              timestamp,
+              bridge,
+              recipientMlKemPublicKey,
+              quotedMessageId,
+              mediaAttachments,
+              privateMediaPolicy,
+              mediaAttachmentRepo,
+              transportMetrics,
+            }) async {
+              sendCalls++;
+              return _instantSuccessSendFn(
+                p2pService: p2pService,
+                messageRepo: messageRepo,
+                targetPeerId: targetPeerId,
+                text: text,
+                senderPeerId: senderPeerId,
+                senderUsername: senderUsername,
+                messageId: messageId,
+                timestamp: timestamp,
+                bridge: bridge,
+                recipientMlKemPublicKey: recipientMlKemPublicKey,
+                quotedMessageId: quotedMessageId,
+                mediaAttachments: mediaAttachments,
+                privateMediaPolicy: privateMediaPolicy,
+                mediaAttachmentRepo: mediaAttachmentRepo,
+                transportMetrics: transportMetrics,
+              );
+            },
+      );
+      await tester.tap(find.byKey(const ValueKey('private-media-selector')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(
+        find.byKey(const ValueKey('private-media-option-view-once')),
+      );
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await pumpUntil(
+        tester,
+        () => find
+            .text('Failed to upload media. Try again.')
+            .evaluate()
+            .isNotEmpty,
+      );
+
+      expect(sendCalls, 0);
+      expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+      expect(find.text('View once'), findsOneWidget);
+    });
+
     testWidgets('prefills shared text into the composer', (tester) async {
       final identityRepo = FakeIdentityRepository(makeIdentity());
       final messageRepo = FakeMessageRepository();
@@ -1127,6 +1358,7 @@ void main() {
           String? recipientMlKemPublicKey,
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
+          PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
         }) async {
@@ -1333,6 +1565,7 @@ void main() {
         String? recipientMlKemPublicKey,
         String? quotedMessageId,
         List<MediaAttachment>? mediaAttachments,
+        PrivateMediaPolicy? privateMediaPolicy,
         MediaAttachmentRepository? mediaAttachmentRepo,
         TransportMetrics? transportMetrics,
       }) async {
@@ -1412,6 +1645,7 @@ void main() {
         String? recipientMlKemPublicKey,
         String? quotedMessageId,
         List<MediaAttachment>? mediaAttachments,
+        PrivateMediaPolicy? privateMediaPolicy,
         MediaAttachmentRepository? mediaAttachmentRepo,
         TransportMetrics? transportMetrics,
       }) async {
@@ -1477,6 +1711,7 @@ void main() {
           String? recipientMlKemPublicKey,
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
+          PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
         }) async {
@@ -1586,6 +1821,7 @@ void main() {
           String? recipientMlKemPublicKey,
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
+          PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
         }) async {
@@ -1688,6 +1924,7 @@ void main() {
         String? recipientMlKemPublicKey,
         String? quotedMessageId,
         List<MediaAttachment>? mediaAttachments,
+        PrivateMediaPolicy? privateMediaPolicy,
         MediaAttachmentRepository? mediaAttachmentRepo,
         TransportMetrics? transportMetrics,
       }) async {
@@ -1815,6 +2052,188 @@ void main() {
       expect(savedAttachment.localPath, attachment.path);
       expect(savedAttachment.size, attachment.lengthSync());
     });
+
+    testWidgets(
+      'post-send image/video viewer keeps the canonical direct owner projection',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final tempDir = Directory.systemTemp.createTempSync(
+          'conv_outgoing_owner_projection_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final image = File('${tempDir.path}/outgoing.png')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final video = File('${tempDir.path}/outgoing.mp4')
+          ..writeAsBytesSync(const [
+            0x00,
+            0x00,
+            0x00,
+            0x18,
+            0x66,
+            0x74,
+            0x79,
+            0x70,
+            0x69,
+            0x73,
+            0x6f,
+            0x6d,
+          ]);
+        final uploadedOwnerLanes = <MediaOwnerLane?>[];
+
+        Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String text,
+          required String senderPeerId,
+          required String senderUsername,
+          String? messageId,
+          String? timestamp,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments,
+          PrivateMediaPolicy? privateMediaPolicy,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
+        }) async {
+          expectSync(mediaAttachments, hasLength(2));
+          expectSync(
+            mediaAttachments!.every(
+              (attachment) => attachment.ownerLane == null,
+            ),
+            isTrue,
+            reason: 'upload results are production-shaped and unresolved',
+          );
+          final canonical = mediaAttachments
+              .map(
+                (attachment) => attachment.copyWith(
+                  messageId: messageId,
+                  ownerLane: MediaOwnerLane.direct,
+                ),
+              )
+              .toList(growable: false);
+          final delivered = ConversationMessage(
+            id: messageId!,
+            contactPeerId: targetPeerId,
+            senderPeerId: senderPeerId,
+            text: text,
+            timestamp: timestamp!,
+            status: 'delivered',
+            isIncoming: false,
+            createdAt: timestamp,
+            media: canonical,
+          );
+          await messageRepo.saveMessage(delivered);
+          return (SendChatMessageResult.success, delivered);
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: sendFn,
+          bridge: FakeBridge(),
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                mediaFileManager,
+                blobId,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
+              }) async {
+                final attachment = MediaAttachment(
+                  id: blobId!,
+                  messageId: '',
+                  mime: mime,
+                  size: File(localFilePath).lengthSync(),
+                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                  width: width,
+                  height: height,
+                  durationMs: durationMs,
+                  localPath: localFilePath,
+                  downloadStatus: 'done',
+                  createdAt: '2026-07-14T12:00:00.000Z',
+                );
+                uploadedOwnerLanes.add(attachment.ownerLane);
+                return attachment;
+              },
+          initialAttachments: [image, video],
+        );
+
+        tester
+            .widget<ConversationScreen>(find.byType(ConversationScreen))
+            .onSend('');
+        await pumpUntil(
+          tester,
+          () =>
+              messageRepo.store.values.any(
+                (message) =>
+                    message.status == 'delivered' && message.media.length == 2,
+              ) &&
+              tester
+                  .widget<ConversationScreen>(find.byType(ConversationScreen))
+                  .messages
+                  .any(
+                    (message) =>
+                        message.status == 'delivered' &&
+                        message.media.length == 2,
+                  ),
+        );
+
+        expect(uploadedOwnerLanes, [null, null]);
+        final displayed = tester
+            .widget<ConversationScreen>(find.byType(ConversationScreen))
+            .messages
+            .singleWhere((message) => message.status == 'delivered');
+        expect(
+          displayed.media.map((attachment) => attachment.ownerLane),
+          everyElement(MediaOwnerLane.direct),
+        );
+
+        for (var index = 0; index < displayed.media.length; index++) {
+          final attachment = displayed.media[index];
+          final cell = find.byKey(
+            ValueKey('media-grid-cell-${displayed.id}-${attachment.id}'),
+          );
+          tester.widget<GestureDetector>(cell).onTap!.call();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
+          final viewer = tester.widget<FullScreenTypedMediaViewer>(
+            find.byType(FullScreenTypedMediaViewer),
+          );
+          expect(viewer.initialIndex, index);
+          expect(
+            viewer.items.map((item) => item.owner),
+            everyElement(MediaOwnerLane.direct),
+          );
+          Navigator.of(
+            tester.element(find.byType(FullScreenTypedMediaViewer)),
+          ).pop();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+      },
+    );
 
     testWidgets(
       'durable media prep stores upload_pending rows in app-owned storage when MediaFileManager is available',
@@ -2245,6 +2664,7 @@ void main() {
           String? recipientMlKemPublicKey,
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
+          PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
         }) async {
@@ -2467,6 +2887,7 @@ void main() {
           String? recipientMlKemPublicKey,
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
+          PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
         }) async {
@@ -2587,6 +3008,7 @@ void main() {
           String? recipientMlKemPublicKey,
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
+          PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
         }) async {
@@ -2700,6 +3122,7 @@ void main() {
           String? recipientMlKemPublicKey,
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
+          PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
         }) async {
@@ -2824,6 +3247,7 @@ void main() {
           String? recipientMlKemPublicKey,
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
+          PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
         }) async {
@@ -2947,6 +3371,7 @@ void main() {
           String? recipientMlKemPublicKey,
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
+          PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
         }) async {
@@ -3093,6 +3518,7 @@ void main() {
           String? recipientMlKemPublicKey,
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
+          PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
         }) async {
@@ -3169,6 +3595,7 @@ void main() {
           String? recipientMlKemPublicKey,
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
+          PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
         }) async {
@@ -3384,6 +3811,8 @@ void main() {
         required MediaAttachment attachment,
         required String contactPeerId,
         required MediaOwnerLane owner,
+        MessageRepository? messageRepo,
+        MediaDownloadIntent? intent,
       }) async {
         downloadCalls++;
         requestedAttachment = attachment;
@@ -3435,6 +3864,334 @@ void main() {
       expect(refreshed.messages.single.media.single.id, attachmentId);
       expect(refreshed.messages.single.media.single.localPath, isNotNull);
     });
+
+    testWidgets(
+      'async media refresh cannot resurrect deleted or private-terminal media',
+      (tester) async {
+        const deletedMessageId = 'async-refresh-deleted';
+        const terminalMessageId = 'async-refresh-private-terminal';
+        const ordinaryMessageId = 'async-refresh-ordinary';
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+        final mediaFileManager = FakeMediaFileManager();
+        final tempDir = Directory.systemTemp.createTempSync(
+          'conversation_async_media_refresh_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+
+        ConversationMessage message(String id, int second) {
+          final createdAt = '2026-02-09T15:30:0$second.000Z';
+          return ConversationMessage(
+            id: id,
+            contactPeerId: makeContact().peerId,
+            senderPeerId: makeContact().peerId,
+            text: id,
+            timestamp: createdAt,
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: createdAt,
+          );
+        }
+
+        MediaAttachment attachment(String messageId) => MediaAttachment(
+          id: '$messageId-attachment',
+          messageId: messageId,
+          mime: 'image/png',
+          size: _tinyPngBytes.length,
+          mediaType: 'image',
+          downloadStatus: kMediaDownloadStatusEvicted,
+          createdAt: '2026-02-09T15:30:00.000Z',
+          ownerLane: MediaOwnerLane.direct,
+        );
+
+        final deletedMessage = message(deletedMessageId, 1);
+        final terminalMessage = message(terminalMessageId, 2);
+        final ordinaryMessage = message(ordinaryMessageId, 3);
+        final messages = [deletedMessage, terminalMessage, ordinaryMessage];
+        final attachments = messages
+            .map((item) => attachment(item.id))
+            .toList();
+        for (final item in messages) {
+          messageRepo.store[item.id] = item;
+        }
+        mediaAttachmentRepo.seed(attachments);
+
+        final releaseDownloads = Completer<void>();
+        final startedAttachmentIds = <String>{};
+        Future<MediaAttachment?> controlledDownload({
+          required Bridge bridge,
+          required MediaAttachmentRepository mediaAttachmentRepo,
+          required MediaFileManager mediaFileManager,
+          required MediaAttachment attachment,
+          required String contactPeerId,
+          required MediaOwnerLane owner,
+          MessageRepository? messageRepo,
+          MediaDownloadIntent? intent,
+        }) async {
+          startedAttachmentIds.add(attachment.id);
+          await releaseDownloads.future;
+          if (attachment.messageId == terminalMessageId) {
+            throw StateError('force hydrated-media fallback');
+          }
+          final recoveredFile = File(
+            '${tempDir.path}/${attachment.messageId}.png',
+          )..writeAsBytesSync(_tinyPngBytes);
+          final recovered = attachment.copyWith(
+            localPath: recoveredFile.path,
+            downloadStatus: 'done',
+          );
+          await mediaAttachmentRepo.saveAttachment(recovered, owner: owner);
+          return recovered;
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          bridge: FakeBridge(),
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+          initialMessages: messages,
+          downloadMediaFn: controlledDownload,
+        );
+
+        var screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        for (final item in messages) {
+          screen.onRetryUnavailableMedia!(item.id, '${item.id}-attachment');
+        }
+        await pumpUntil(
+          tester,
+          () => startedAttachmentIds.length == attachments.length,
+        );
+
+        messageRepo.store[deletedMessageId] = deletedMessage.copyWith(
+          deletedAt: '2026-02-09T15:31:00.000Z',
+          deletedByPeerId: makeIdentity().peerId,
+          media: const <MediaAttachment>[],
+        );
+        messageRepo.store[terminalMessageId] = terminalMessage.copyWith(
+          privateMediaPolicy: const PrivateMediaPolicy.protected(),
+          privateMediaState: PrivateMediaLifecycleState.consumed,
+          media: const <MediaAttachment>[],
+        );
+        releaseDownloads.complete();
+
+        await pumpUntil(tester, () {
+          screen = tester.widget<ConversationScreen>(
+            find.byType(ConversationScreen),
+          );
+          final visibleById = {
+            for (final item in screen.messages) item.id: item,
+          };
+          final ordinaryMedia =
+              visibleById[ordinaryMessageId]?.media ??
+              const <MediaAttachment>[];
+          return visibleById[deletedMessageId]?.media.isEmpty == true &&
+              visibleById[terminalMessageId]?.media.isEmpty == true &&
+              ordinaryMedia.length == 1 &&
+              ordinaryMedia.single.downloadStatus == 'done';
+        });
+
+        expect(
+          find.byKey(
+            const ValueKey(
+              'media-grid-cell-async-refresh-deleted-async-refresh-deleted-attachment',
+            ),
+          ),
+          findsNothing,
+        );
+        expect(
+          find.byKey(
+            const ValueKey(
+              'media-grid-cell-async-refresh-private-terminal-async-refresh-private-terminal-attachment',
+            ),
+          ),
+          findsNothing,
+        );
+        final ordinaryCell = find.byKey(
+          const ValueKey(
+            'media-grid-cell-async-refresh-ordinary-async-refresh-ordinary-attachment',
+          ),
+        );
+        expect(ordinaryCell, findsOneWidget);
+        expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
+        await tester.tap(ordinaryCell);
+        await pumpUntil(
+          tester,
+          () => find.byType(FullScreenTypedMediaViewer).evaluate().isNotEmpty,
+        );
+        expect(find.byType(FullScreenTypedMediaViewer), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'active private identity survives initial and live hydration until terminal',
+      (tester) async {
+        const initialMessageId = 'private-initial-active';
+        const liveMessageId = 'private-live-active';
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+
+        ConversationMessage activeParent({
+          required String id,
+          required String timestamp,
+        }) => ConversationMessage(
+          id: id,
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeContact().peerId,
+          text: 'SECRET $id caption',
+          timestamp: timestamp,
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: timestamp,
+          privateMediaPolicy: const PrivateMediaPolicy.protected(),
+          privateMediaState: PrivateMediaLifecycleState.available,
+        );
+
+        MediaAttachment privateAttachment(String messageId) => MediaAttachment(
+          id: '$messageId-attachment',
+          messageId: messageId,
+          mime: 'image/png',
+          size: _tinyPngBytes.length,
+          mediaType: 'image',
+          downloadStatus: 'done',
+          createdAt: '2026-02-09T15:40:00.000Z',
+          ownerLane: MediaOwnerLane.direct,
+        );
+
+        final initialParent = activeParent(
+          id: initialMessageId,
+          timestamp: '2026-02-09T15:40:00.000Z',
+        );
+        final initialAttachment = privateAttachment(initialMessageId);
+        messageRepo.store[initialMessageId] = initialParent;
+        mediaAttachmentRepo.seed([initialAttachment]);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+        );
+
+        ConversationScreen screen() =>
+            tester.widget<ConversationScreen>(find.byType(ConversationScreen));
+        ConversationMessage? maybeVisible(String id) {
+          final matches = screen().messages.where(
+            (message) => message.id == id,
+          );
+          return matches.isEmpty ? null : matches.single;
+        }
+
+        ConversationMessage visible(String id) => maybeVisible(id)!;
+
+        await pumpUntil(tester, () => maybeVisible(initialMessageId) != null);
+        expect(
+          visible(initialMessageId).media.map((attachment) => attachment.id),
+          <String>[initialAttachment.id],
+        );
+        await pumpUntil(
+          tester,
+          () => find
+              .byKey(const ValueKey('private-media-open'))
+              .evaluate()
+              .isNotEmpty,
+        );
+        expect(
+          find.byKey(const ValueKey('private-media-unsupported')),
+          findsNothing,
+        );
+        expect(find.textContaining('SECRET'), findsNothing);
+        expect(
+          find.byKey(
+            const ValueKey(
+              'media-grid-cell-private-initial-active-private-initial-active-attachment',
+            ),
+          ),
+          findsNothing,
+          reason: 'private bytes stay redacted from the ordinary LetterCard',
+        );
+
+        final liveParent = activeParent(
+          id: liveMessageId,
+          timestamp: '2026-02-09T15:41:00.000Z',
+        );
+        final liveAttachment = privateAttachment(liveMessageId);
+        await mediaAttachmentRepo.saveAttachment(
+          liveAttachment,
+          owner: MediaOwnerLane.direct,
+        );
+        await messageRepo.saveMessage(liveParent);
+
+        await pumpUntil(tester, () => maybeVisible(liveMessageId) != null);
+        expect(
+          visible(liveMessageId).media.map((attachment) => attachment.id),
+          <String>[liveAttachment.id],
+        );
+        await pumpUntil(
+          tester,
+          () =>
+              find
+                  .byKey(const ValueKey('private-media-open'))
+                  .evaluate()
+                  .length ==
+              2,
+        );
+        expect(
+          find.byKey(const ValueKey('private-media-unsupported')),
+          findsNothing,
+        );
+        expect(find.textContaining('SECRET'), findsNothing);
+
+        await messageRepo.saveMessage(
+          liveParent.copyWith(
+            privateMediaState: PrivateMediaLifecycleState.consumed,
+            media: const <MediaAttachment>[],
+          ),
+        );
+        await pumpUntil(
+          tester,
+          () =>
+              maybeVisible(liveMessageId)?.media.isEmpty == true &&
+              find
+                      .byKey(const ValueKey('private-terminal-consumed'))
+                      .evaluate()
+                      .length ==
+                  1,
+        );
+
+        expect(
+          find.byKey(const ValueKey('private-media-open')),
+          findsOneWidget,
+          reason: 'the initial active parent remains openable',
+        );
+        expect(visible(initialMessageId).media.single.id, initialAttachment.id);
+        expect(visible(liveMessageId).media, isEmpty);
+        expect(find.textContaining('SECRET'), findsNothing);
+      },
+    );
 
     testWidgets(
       'loadInitialPage does not overwrite newer streamed media repair',
@@ -4920,6 +5677,7 @@ void main() {
         String? recipientMlKemPublicKey,
         String? quotedMessageId,
         List<MediaAttachment>? mediaAttachments,
+        PrivateMediaPolicy? privateMediaPolicy,
         MediaAttachmentRepository? mediaAttachmentRepo,
         TransportMetrics? transportMetrics,
       }) async {
@@ -4988,6 +5746,7 @@ void main() {
         String? recipientMlKemPublicKey,
         String? quotedMessageId,
         List<MediaAttachment>? mediaAttachments,
+        PrivateMediaPolicy? privateMediaPolicy,
         MediaAttachmentRepository? mediaAttachmentRepo,
         TransportMetrics? transportMetrics,
       }) async {
@@ -5049,6 +5808,7 @@ void main() {
         String? recipientMlKemPublicKey,
         String? quotedMessageId,
         List<MediaAttachment>? mediaAttachments,
+        PrivateMediaPolicy? privateMediaPolicy,
         MediaAttachmentRepository? mediaAttachmentRepo,
         TransportMetrics? transportMetrics,
       }) async {
@@ -5138,6 +5898,7 @@ void main() {
           String? recipientMlKemPublicKey,
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
+          PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
         }) async {
@@ -5228,6 +5989,7 @@ void main() {
           String? recipientMlKemPublicKey,
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
+          PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
         }) async {
@@ -6968,6 +7730,8 @@ void main() {
           required MediaAttachment attachment,
           required String contactPeerId,
           required MediaOwnerLane owner,
+          MessageRepository? messageRepo,
+          MediaDownloadIntent? intent,
         }) async {
           downloadCalls += 1;
           return null;
@@ -7075,6 +7839,7 @@ void main() {
             );
         expect(savedAttachment.messageId, isNotEmpty);
         expect(savedAttachment.localPath, recorder.fakeOutputPath);
+        expect(savedAttachment.durationMs, recorder.fakeDurationMs);
         await tester.pump(const Duration(milliseconds: 500));
         await tester.pumpWidget(const SizedBox.shrink());
         await tester.pump();
@@ -7748,6 +8513,7 @@ void main() {
           String? recipientMlKemPublicKey,
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
+          PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
         }) async {
@@ -7903,6 +8669,7 @@ void main() {
           String? recipientMlKemPublicKey,
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
+          PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
         }) async {
@@ -8198,8 +8965,7 @@ void main() {
             mime: 'image/jpeg',
             size: 10,
             mediaType: 'image',
-            localPath:
-                'pending_uploads/collide-lane-msg/att-collide-group.jpg',
+            localPath: 'pending_uploads/collide-lane-msg/att-collide-group.jpg',
             downloadStatus: 'upload_pending',
             createdAt: '2026-02-11T10:05:00.000Z',
           ),
@@ -8309,6 +9075,7 @@ void main() {
           String? recipientMlKemPublicKey,
           String? quotedMessageId,
           List<MediaAttachment>? mediaAttachments,
+          PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
         }) async => (SendChatMessageResult.sendFailed, null);
@@ -9017,8 +9784,14 @@ void main() {
 
   group('229 mounted media recovery obeys direct auto download policy', () {
     ConversationMessage makeIncoming(String id, int secondsOffset) {
-      final ts = DateTime.utc(2026, 2, 11, 10, 0, secondsOffset)
-          .toIso8601String();
+      final ts = DateTime.utc(
+        2026,
+        2,
+        11,
+        10,
+        0,
+        secondsOffset,
+      ).toIso8601String();
       return ConversationMessage(
         id: id,
         contactPeerId: makeContact().peerId,
@@ -9052,7 +9825,8 @@ void main() {
     /// the older-page trigger. Eligible rows: a pending attachment on the
     /// newest message, a retryable-failed attachment on the oldest (older
     /// page), plus an evicted attachment that must never transfer.
-    (FakeMessageRepository, FakeMediaAttachmentRepository) seedRecoveryFixture() {
+    (FakeMessageRepository, FakeMediaAttachmentRepository)
+    seedRecoveryFixture() {
       final messageRepo = FakeMessageRepository();
       final mediaRepo = FakeMediaAttachmentRepository();
       for (var i = 0; i <= 50; i++) {
@@ -9096,6 +9870,8 @@ void main() {
           required MediaAttachment attachment,
           required String contactPeerId,
           required MediaOwnerLane owner,
+          MessageRepository? messageRepo,
+          MediaDownloadIntent? intent,
         }) async {
           downloadCalls.add((attachment.id, owner));
           return attachment;
@@ -9124,7 +9900,8 @@ void main() {
         expect(
           downloadCalls,
           isEmpty,
-          reason: 'a denied policy must produce zero transfers from mount, '
+          reason:
+              'a denied policy must produce zero transfers from mount, '
               'staged-drain reload and older-page recovery',
         );
         // The policy was genuinely consulted (per eligible attachment,
@@ -9135,16 +9912,20 @@ void main() {
           expect(request.storageOwner, MediaOwnerLane.direct);
           expect(request.userInitiated, isFalse);
         }
-        final consultedStatuses =
-            denying.requests.map((r) => r.downloadStatus).toSet();
+        final consultedStatuses = denying.requests
+            .map((r) => r.downloadStatus)
+            .toSet();
         expect(consultedStatuses.contains('pending'), isTrue);
         expect(
           consultedStatuses.contains('failed'),
           isTrue,
           reason: 'the older-page retryable row must also be policy-gated',
         );
-        expect(consultedStatuses.contains(kMediaDownloadStatusEvicted), isFalse,
-            reason: 'evicted rows are not recovery candidates at all');
+        expect(
+          consultedStatuses.contains(kMediaDownloadStatusEvicted),
+          isFalse,
+          reason: 'evicted rows are not recovery candidates at all',
+        );
         // Rows are untouched: still pending/failed/evicted after all
         // recovery passes.
         final newRows = await mediaRepo.getAttachmentsForMessage(
@@ -9152,6 +9933,103 @@ void main() {
           owner: MediaOwnerLane.direct,
         );
         expect(newRows.single.downloadStatus, 'pending');
+      },
+    );
+
+    testWidgets(
+      'private and unsupported parents skip visible recovery before policy or transfer',
+      (tester) async {
+        final messageRepo = FakeMessageRepository();
+        final mediaRepo = FakeMediaAttachmentRepository();
+        final protected = makeIncoming('msg-private-recovery', 0).copyWith(
+          text: '',
+          privateMediaPolicy: const PrivateMediaPolicy.protected(),
+          privateMediaState: PrivateMediaLifecycleState.available,
+        );
+        final unsupported = makeIncoming('msg-unsupported-recovery', 1)
+            .copyWith(
+              text: '',
+              privateMediaPolicy: const PrivateMediaPolicy.unsupported(
+                sourceVersion: 9,
+              ),
+              privateMediaState: PrivateMediaLifecycleState.unsupported,
+            );
+        messageRepo.store[protected.id] = protected;
+        messageRepo.store[unsupported.id] = unsupported;
+        mediaRepo.seed([
+          makeRecoveryAttachment('att-private-recovery', protected.id),
+          makeRecoveryAttachment('att-unsupported-recovery', unsupported.id),
+        ]);
+        final downloadCalls = <String>[];
+        Future<MediaAttachment?> recordingDownload({
+          required Bridge bridge,
+          required MediaAttachmentRepository mediaAttachmentRepo,
+          required MediaFileManager mediaFileManager,
+          required MediaAttachment attachment,
+          required String contactPeerId,
+          required MediaOwnerLane owner,
+          MessageRepository? messageRepo,
+          MediaDownloadIntent? intent,
+        }) async {
+          downloadCalls.add(attachment.id);
+          return attachment;
+        }
+
+        final allowing = RecordingMediaAutoDownloadDecider();
+
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: messageRepo,
+          chatListener: ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
+            messageRepo: messageRepo,
+            contactRepo: FakeContactRepository(),
+          ),
+          sendFn: _instantSuccessSendFn,
+          bridge: FakeBridge(),
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: FakeMediaFileManager(),
+          downloadMediaFn: recordingDownload,
+          autoDownloadDecider: allowing,
+        );
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pump(const Duration(milliseconds: 400));
+
+        final screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        final visibleProtected = screen.messages.singleWhere(
+          (message) => message.id == protected.id,
+        );
+        expect(visibleProtected.media.single.id, 'att-private-recovery');
+        expect(
+          find.byKey(const ValueKey('private-media-open')),
+          findsOneWidget,
+          reason:
+              'active private hydration must retain the attachment identity '
+              'needed by the guarded open placeholder',
+        );
+        expect(
+          find.byKey(const ValueKey('private-media-unsupported')),
+          findsOneWidget,
+        );
+        expect(downloadCalls, isEmpty);
+        expect(
+          allowing.requests,
+          isEmpty,
+          reason: 'private qualification must precede the ordinary auto policy',
+        );
+        for (final message in [protected, unsupported]) {
+          final rows = await mediaRepo.getAttachmentsForMessage(
+            message.id,
+            owner: MediaOwnerLane.direct,
+          );
+          expect(rows.single.downloadStatus, 'pending');
+        }
       },
     );
 
@@ -9168,6 +10046,8 @@ void main() {
           required MediaAttachment attachment,
           required String contactPeerId,
           required MediaOwnerLane owner,
+          MessageRepository? messageRepo,
+          MediaDownloadIntent? intent,
         }) async {
           downloadCalls.add((attachment.id, owner));
           final done = attachment.copyWith(downloadStatus: 'done');
@@ -9200,86 +10080,106 @@ void main() {
           callsById[id] = (callsById[id] ?? 0) + 1;
           expect(owner, MediaOwnerLane.direct);
         }
-        expect(callsById['att-229-new'], 1,
-            reason: 'the pending attachment transfers exactly once');
-        expect(callsById['att-229-old'], 1,
-            reason: 'the older-page retryable attachment transfers exactly '
-                'once');
-        expect(callsById.containsKey('att-229-evicted'), isFalse,
-            reason: 'an evicted local copy must never auto-recover');
+        expect(
+          callsById['att-229-new'],
+          1,
+          reason: 'the pending attachment transfers exactly once',
+        );
+        expect(
+          callsById['att-229-old'],
+          1,
+          reason:
+              'the older-page retryable attachment transfers exactly '
+              'once',
+        );
+        expect(
+          callsById.containsKey('att-229-evicted'),
+          isFalse,
+          reason: 'an evicted local copy must never auto-recover',
+        );
         expect(allowing.requests, isNotEmpty);
       },
     );
 
-    testWidgets(
-      'direct evicted media retries only after visible action',
-      (tester) async {
-        final messageRepo = FakeMessageRepository();
-        final mediaRepo = FakeMediaAttachmentRepository();
-        final message = makeIncoming('msg-evicted-ui', 0);
-        messageRepo.store[message.id] = message;
-        mediaRepo.seed([
-          makeRecoveryAttachment(
-            'att-evicted-ui',
-            'msg-evicted-ui',
-            status: kMediaDownloadStatusEvicted,
-          ),
-        ]);
+    testWidgets('direct evicted media retries only after visible action', (
+      tester,
+    ) async {
+      final messageRepo = FakeMessageRepository();
+      final mediaRepo = FakeMediaAttachmentRepository();
+      final message = makeIncoming('msg-evicted-ui', 0);
+      messageRepo.store[message.id] = message;
+      mediaRepo.seed([
+        makeRecoveryAttachment(
+          'att-evicted-ui',
+          'msg-evicted-ui',
+          status: kMediaDownloadStatusEvicted,
+        ),
+      ]);
 
-        final downloadCalls = <(String, MediaOwnerLane)>[];
-        Future<MediaAttachment?> recordingDownload({
-          required Bridge bridge,
-          required MediaAttachmentRepository mediaAttachmentRepo,
-          required MediaFileManager mediaFileManager,
-          required MediaAttachment attachment,
-          required String contactPeerId,
-          required MediaOwnerLane owner,
-        }) async {
-          downloadCalls.add((attachment.id, owner));
-          final done = attachment.copyWith(downloadStatus: 'done');
-          await mediaAttachmentRepo.saveAttachment(done, owner: owner);
-          return done;
-        }
+      final downloadCalls = <(String, MediaOwnerLane)>[];
+      Future<MediaAttachment?> recordingDownload({
+        required Bridge bridge,
+        required MediaAttachmentRepository mediaAttachmentRepo,
+        required MediaFileManager mediaFileManager,
+        required MediaAttachment attachment,
+        required String contactPeerId,
+        required MediaOwnerLane owner,
+        MessageRepository? messageRepo,
+        MediaDownloadIntent? intent,
+      }) async {
+        downloadCalls.add((attachment.id, owner));
+        final done = attachment.copyWith(downloadStatus: 'done');
+        await mediaAttachmentRepo.saveAttachment(done, owner: owner);
+        return done;
+      }
 
-        // A fully-permissive policy still never auto-transfers evicted rows.
-        await pumpScreen(
-          tester,
-          identityRepo: FakeIdentityRepository(makeIdentity()),
+      // A fully-permissive policy still never auto-transfers evicted rows.
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
           messageRepo: messageRepo,
-          chatListener: ChatMessageListener(
-            chatMessageStream: const Stream.empty(),
-            messageRepo: messageRepo,
-            contactRepo: FakeContactRepository(),
-          ),
-          sendFn: _instantSuccessSendFn,
-          bridge: FakeBridge(),
-          mediaAttachmentRepo: mediaRepo,
-          mediaFileManager: FakeMediaFileManager(),
-          downloadMediaFn: recordingDownload,
-          autoDownloadDecider: RecordingMediaAutoDownloadDecider(),
-        );
-        await tester.pump(const Duration(milliseconds: 300));
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        bridge: FakeBridge(),
+        mediaAttachmentRepo: mediaRepo,
+        mediaFileManager: FakeMediaFileManager(),
+        downloadMediaFn: recordingDownload,
+        autoDownloadDecider: RecordingMediaAutoDownloadDecider(),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
 
-        expect(downloadCalls, isEmpty,
-            reason: 'mount must make zero transfers for an evicted row');
+      expect(
+        downloadCalls,
+        isEmpty,
+        reason: 'mount must make zero transfers for an evicted row',
+      );
 
-        // The truthful removed state with its explicit retry is visible.
-        const retryKey = ValueKey(
-          'evicted-media-retry-msg-evicted-ui-att-evicted-ui',
-        );
-        expect(find.text('Local copy removed'), findsOneWidget);
-        expect(find.byKey(retryKey), findsOneWidget);
+      // The truthful removed state with its explicit retry is visible.
+      const retryKey = ValueKey(
+        'evicted-media-retry-msg-evicted-ui-att-evicted-ui',
+      );
+      expect(find.text('Local copy removed'), findsOneWidget);
+      expect(find.byKey(retryKey), findsOneWidget);
 
-        await tester.tap(find.byKey(retryKey));
-        await pumpUntil(tester, () => downloadCalls.isNotEmpty);
+      await tester.tap(find.byKey(retryKey));
+      await pumpUntil(tester, () => downloadCalls.isNotEmpty);
 
-        expect(downloadCalls, hasLength(1),
-            reason: 'one visible action performs exactly one retry');
-        expect(downloadCalls.single.$1, 'att-evicted-ui');
-        expect(downloadCalls.single.$2, MediaOwnerLane.direct,
-            reason: 'the explicit retry stays owner-aware');
-      },
-    );
+      expect(
+        downloadCalls,
+        hasLength(1),
+        reason: 'one visible action performs exactly one retry',
+      );
+      expect(downloadCalls.single.$1, 'att-evicted-ui');
+      expect(
+        downloadCalls.single.$2,
+        MediaOwnerLane.direct,
+        reason: 'the explicit retry stays owner-aware',
+      );
+    });
   });
 
   // ── 233 sentinel: direct pagination window preservation ──────────────────
@@ -9357,133 +10257,128 @@ void main() {
       return tempDir;
     }
 
-    testWidgets(
-      'viewer delete invokes existing direct whole message cleanup',
-      (tester) async {
-        tester.view.physicalSize = const Size(1080, 2160);
-        tester.view.devicePixelRatio = 1.0;
-        addTearDown(tester.view.resetPhysicalSize);
-        addTearDown(tester.view.resetDevicePixelRatio);
+    testWidgets('viewer delete invokes existing direct whole message cleanup', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1080, 2160);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
 
-        final tempDir = createMediaTempDir(tester);
-        final imagePath = '${tempDir.path}/delete-me.jpg';
-        File(imagePath).writeAsBytesSync(const [1, 2, 3]);
+      final tempDir = createMediaTempDir(tester);
+      final imagePath = '${tempDir.path}/delete-me.jpg';
+      File(imagePath).writeAsBytesSync(const [1, 2, 3]);
 
-        final identityRepo = FakeIdentityRepository(makeIdentity());
-        final messageRepo = FakeMessageRepository();
-        final chatListener = ChatMessageListener(
-          chatMessageStream: const Stream.empty(),
-          messageRepo: messageRepo,
-          contactRepo: FakeContactRepository(),
-        );
-        await messageRepo.saveMessage(
-          ConversationMessage(
-            id: 'media-del-msg',
-            contactPeerId: makeContact().peerId,
-            senderPeerId: makeContact().peerId,
-            text: 'delete my media',
-            timestamp: '2026-02-09T15:30:00.000Z',
-            status: 'delivered',
-            isIncoming: true,
-            createdAt: '2026-02-09T15:30:01.000Z',
-          ),
-        );
-        final mediaRepo = FakeMediaAttachmentRepository();
-        mediaRepo.seed([
-          MediaAttachment(
-            id: 'att-del',
-            messageId: 'media-del-msg',
-            mime: 'image/jpeg',
-            size: 3,
-            mediaType: 'image',
-            localPath: imagePath,
-            downloadStatus: 'done',
-            createdAt: '2026-02-09T15:30:02.000Z',
-            ownerLane: MediaOwnerLane.direct,
-          ),
-        ]);
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: 'media-del-msg',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeContact().peerId,
+          text: 'delete my media',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        ),
+      );
+      final mediaRepo = FakeMediaAttachmentRepository();
+      mediaRepo.seed([
+        MediaAttachment(
+          id: 'att-del',
+          messageId: 'media-del-msg',
+          mime: 'image/jpeg',
+          size: 3,
+          mediaType: 'image',
+          localPath: imagePath,
+          downloadStatus: 'done',
+          createdAt: '2026-02-09T15:30:02.000Z',
+          ownerLane: MediaOwnerLane.direct,
+        ),
+      ]);
 
-        final deleteCalls = <String>[];
-        Future<int> recordingDeleteForMe({
-          required ConversationMessage message,
-          required MessageRepository messageRepo,
-          ReactionRepository? reactionRepo,
-          MediaAttachmentRepository? mediaAttachmentRepo,
-          MediaFileManager? mediaFileManager,
-        }) async {
-          deleteCalls.add(message.id);
-          expect(
-            identical(mediaAttachmentRepo, mediaRepo),
-            isTrue,
-            reason:
-                'whole-message cleanup must run against the owner-aware '
-                'direct attachment repository',
-          );
-          await messageRepo.deleteMessage(message.id);
-          return 1;
-        }
-
-        final controller = ReceivedMediaActionController(
-          loadParentMessage: messageRepo.getMessage,
-          mediaAttachmentRepo: mediaRepo,
-          egressService: _RecordingEgressService(),
-          resolveStoredPath: (storedPath) => storedPath,
-        );
-
-        await pumpScreen(
-          tester,
-          identityRepo: identityRepo,
-          messageRepo: messageRepo,
-          chatListener: chatListener,
-          sendFn: _instantSuccessSendFn,
-          deleteForMeFn: recordingDeleteForMe,
-          mediaAttachmentRepo: mediaRepo,
-          mediaFileManager: FakeMediaFileManager(),
-          receivedMediaActionController: controller,
-        );
-        await tester.pump(const Duration(milliseconds: 300));
-
-        await tester.tap(
-          find.byKey(const ValueKey('media-grid-cell-media-del-msg-att-del')),
-        );
-        await pumpUntil(
-          tester,
-          () =>
-              find.byType(FullScreenTypedMediaViewer).evaluate().isNotEmpty,
-        );
-
-        await tester.tap(find.byKey(const ValueKey('media_action_delete')));
-        await pumpUntil(
-          tester,
-          () =>
-              find.byKey(ConversationWired.deleteSheetKey).evaluate().isNotEmpty,
-        );
-
-        // Viewer closed; exactly ONE local Delete-for-Me choice, labeled as
-        // whole-message deletion (message + all attachments, this device).
-        expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
-        expect(find.byKey(ConversationWired.deleteForMeKey), findsOneWidget);
+      final deleteCalls = <String>[];
+      Future<int> recordingDeleteForMe({
+        required ConversationMessage message,
+        required MessageRepository messageRepo,
+        ReactionRepository? reactionRepo,
+        MediaAttachmentRepository? mediaAttachmentRepo,
+        MediaFileManager? mediaFileManager,
+      }) async {
+        deleteCalls.add(message.id);
         expect(
-          find.byKey(ConversationWired.deleteForEveryoneKey),
-          findsNothing,
+          identical(mediaAttachmentRepo, mediaRepo),
+          isTrue,
+          reason:
+              'whole-message cleanup must run against the owner-aware '
+              'direct attachment repository',
         );
-        expect(
-          find.text(
-            'Delete this message? The message and all of its attachments '
-            'will be removed from this device.',
-          ),
-          findsOneWidget,
-        );
+        await messageRepo.deleteMessage(message.id);
+        return 1;
+      }
 
-        await tester.tap(find.byKey(ConversationWired.deleteForMeKey));
-        await pumpUntil(tester, () => deleteCalls.isNotEmpty);
+      final controller = ReceivedMediaActionController(
+        loadParentMessage: messageRepo.getMessage,
+        mediaAttachmentRepo: mediaRepo,
+        egressService: _RecordingEgressService(),
+        resolveStoredPath: (storedPath) => storedPath,
+      );
 
-        expect(deleteCalls, ['media-del-msg']);
-        await tester.pump(const Duration(milliseconds: 500));
-        expect(find.text('delete my media'), findsNothing);
-        expect(tester.takeException(), isNull);
-      },
-    );
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+        deleteForMeFn: recordingDeleteForMe,
+        mediaAttachmentRepo: mediaRepo,
+        mediaFileManager: FakeMediaFileManager(),
+        receivedMediaActionController: controller,
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+
+      await tester.tap(
+        find.byKey(const ValueKey('media-grid-cell-media-del-msg-att-del')),
+      );
+      await pumpUntil(
+        tester,
+        () => find.byType(FullScreenTypedMediaViewer).evaluate().isNotEmpty,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('media_action_delete')));
+      await pumpUntil(
+        tester,
+        () =>
+            find.byKey(ConversationWired.deleteSheetKey).evaluate().isNotEmpty,
+      );
+
+      // Viewer closed; exactly ONE local Delete-for-Me choice, labeled as
+      // whole-message deletion (message + all attachments, this device).
+      expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
+      expect(find.byKey(ConversationWired.deleteForMeKey), findsOneWidget);
+      expect(find.byKey(ConversationWired.deleteForEveryoneKey), findsNothing);
+      expect(
+        find.text(
+          'Delete this message? The message and all of its attachments '
+          'will be removed from this device.',
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(ConversationWired.deleteForMeKey));
+      await pumpUntil(tester, () => deleteCalls.isNotEmpty);
+
+      expect(deleteCalls, ['media-del-msg']);
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.text('delete my media'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
 
     testWidgets(
       'bubble and viewer media egress use controller with zero delivery calls',
@@ -9592,17 +10487,13 @@ void main() {
           egressService.calls.single.selection.single.storedPath,
           imagePath,
         );
-        expect(
-          egressService.calls.single.selection.single.mime,
-          'image/jpeg',
-        );
+        expect(egressService.calls.single.selection.single.mime, 'image/jpeg');
 
         // Viewer → Share uses the SAME controller seam with exact identity.
         await tester.tap(find.byKey(cellKey));
         await pumpUntil(
           tester,
-          () =>
-              find.byType(FullScreenTypedMediaViewer).evaluate().isNotEmpty,
+          () => find.byType(FullScreenTypedMediaViewer).evaluate().isNotEmpty,
         );
         await tester.tap(find.byKey(const ValueKey('media_action_share')));
         await pumpUntil(tester, () => egressService.calls.length >= 2);
@@ -9644,10 +10535,8 @@ void main() {
         );
         await pumpUntil(
           tester,
-          () => find
-              .textContaining('no longer available')
-              .evaluate()
-              .isNotEmpty,
+          () =>
+              find.textContaining('no longer available').evaluate().isNotEmpty,
         );
 
         expect(egressService.calls, hasLength(2));
@@ -9687,6 +10576,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _instantSuccessSendFn({
   String? recipientMlKemPublicKey,
   String? quotedMessageId,
   List<MediaAttachment>? mediaAttachments,
+  PrivateMediaPolicy? privateMediaPolicy,
   MediaAttachmentRepository? mediaAttachmentRepo,
   TransportMetrics? transportMetrics,
 }) async {
@@ -9699,6 +10589,11 @@ Future<(SendChatMessageResult, ConversationMessage?)> _instantSuccessSendFn({
     status: 'delivered',
     isIncoming: false,
     createdAt: timestamp ?? DateTime.now().toUtc().toIso8601String(),
+    privateMediaPolicy:
+        privateMediaPolicy ?? const PrivateMediaPolicy.ordinary(),
+    privateMediaState:
+        (privateMediaPolicy ?? const PrivateMediaPolicy.ordinary())
+            .initialState,
   );
   await messageRepo.saveMessage(delivered);
   return (SendChatMessageResult.success, delivered);
@@ -9708,11 +10603,13 @@ Future<(SendChatMessageResult, ConversationMessage?)> _instantSuccessSendFn({
 /// touching a platform channel.
 class _RecordingEgressService extends ReceivedMediaEgressService {
   final calls =
-      <({
-        String requestId,
-        MediaEgressDestination destination,
-        List<ReceivedMediaEgressCandidate> selection,
-      })>[];
+      <
+        ({
+          String requestId,
+          MediaEgressDestination destination,
+          List<ReceivedMediaEgressCandidate> selection,
+        })
+      >[];
 
   @override
   Future<MediaEgressResult> perform({
@@ -9783,6 +10680,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _throwingSendFn({
   String? recipientMlKemPublicKey,
   String? quotedMessageId,
   List<MediaAttachment>? mediaAttachments,
+  PrivateMediaPolicy? privateMediaPolicy,
   MediaAttachmentRepository? mediaAttachmentRepo,
   TransportMetrics? transportMetrics,
 }) async {

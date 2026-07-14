@@ -1,0 +1,2628 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='28' fill='%234ecdc4'/%3E%3Ccircle cx='32' cy='32' r='10' fill='%23090b11'/%3E%3C/svg%3E">
+  <title>Mknoon · Received media actions prototype</title>
+  <style>
+    :root {
+      --page: #090b11;
+      --page-2: #10131c;
+      --panel: rgba(19, 22, 32, 0.86);
+      --panel-strong: #171a24;
+      --panel-soft: #11141d;
+      --line: rgba(255, 255, 255, 0.1);
+      --line-strong: rgba(255, 255, 255, 0.18);
+      --ink: #f8fafc;
+      --ink-2: #d9dde5;
+      --muted: #969dac;
+      --faint: #686f7e;
+      --accent: #4ecdc4;
+      --green: #1db954;
+      --violet: #a78bfa;
+      --coral: #ff7f73;
+      --amber: #f4c06b;
+      --danger: #ff6b78;
+      --shadow: 0 28px 80px rgba(0, 0, 0, 0.46);
+      --radius: 22px;
+      --ui: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+      --display: Iowan Old Style, "Palatino Linotype", Georgia, serif;
+    }
+
+    * { box-sizing: border-box; }
+    html { min-width: 320px; background: var(--page); }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--ui);
+      color: var(--ink);
+      background:
+        radial-gradient(900px 520px at 12% -10%, rgba(78, 205, 196, 0.12), transparent 64%),
+        radial-gradient(760px 520px at 96% 4%, rgba(167, 139, 250, 0.13), transparent 65%),
+        linear-gradient(180deg, #0b0d14 0%, #07090e 100%);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button, input { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+    }
+
+    .svg-sprite {
+      position: absolute;
+      width: 0;
+      height: 0;
+      overflow: hidden;
+    }
+
+    .icon {
+      width: 21px;
+      height: 21px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.85;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      pointer-events: none;
+    }
+
+    .studio {
+      width: min(1520px, 100%);
+      margin: 0 auto;
+      padding: 34px clamp(18px, 4vw, 58px) 70px;
+    }
+
+    .studio-header {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.8fr);
+      gap: 42px;
+      align-items: end;
+      padding-bottom: 28px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .eyebrow {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      margin-bottom: 13px;
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.17em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 28px;
+      height: 1px;
+      background: currentColor;
+    }
+
+    h1 {
+      margin: 0;
+      max-width: 760px;
+      font-family: var(--display);
+      font-size: clamp(34px, 5.2vw, 66px);
+      font-weight: 500;
+      letter-spacing: -0.035em;
+      line-height: 0.98;
+    }
+
+    h1 em {
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    .header-copy {
+      margin: 0;
+      max-width: 580px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.75;
+    }
+
+    .header-copy strong { color: var(--ink-2); }
+
+    .prototype-grid {
+      display: grid;
+      grid-template-columns: 242px minmax(390px, 1fr) 286px;
+      gap: clamp(22px, 3vw, 44px);
+      align-items: start;
+      margin-top: 34px;
+    }
+
+    .rail {
+      position: sticky;
+      top: 18px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .rail-card {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(24, 27, 39, 0.94), rgba(14, 17, 25, 0.92));
+      box-shadow: 0 14px 44px rgba(0, 0, 0, 0.16);
+      overflow: hidden;
+    }
+
+    .rail-card-head {
+      padding: 14px 15px 10px;
+      color: var(--faint);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .control-list {
+      display: grid;
+      gap: 5px;
+      padding: 0 8px 9px;
+    }
+
+    .control-button {
+      min-height: 42px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      border: 1px solid transparent;
+      border-radius: 12px;
+      padding: 9px 10px;
+      background: transparent;
+      color: var(--muted);
+      text-align: left;
+      cursor: pointer;
+      transition: 160ms ease;
+    }
+
+    .control-button:hover {
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .control-button.active {
+      color: var(--ink);
+      border-color: rgba(78, 205, 196, 0.24);
+      background: rgba(78, 205, 196, 0.1);
+    }
+
+    .control-button .mini-icon {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      flex: 0 0 auto;
+      border-radius: 9px;
+      background: rgba(255, 255, 255, 0.055);
+      color: var(--ink-2);
+    }
+
+    .control-button.active .mini-icon {
+      background: rgba(78, 205, 196, 0.16);
+      color: var(--accent);
+    }
+
+    .control-button span:last-child {
+      font-size: 12.5px;
+      font-weight: 650;
+    }
+
+    .segmented {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 5px;
+      padding: 0 8px 9px;
+    }
+
+    .segment {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.025);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 750;
+      cursor: pointer;
+    }
+
+    .segment.active {
+      border-color: rgba(167, 139, 250, 0.36);
+      background: rgba(167, 139, 250, 0.12);
+      color: #ddd2ff;
+    }
+
+    .utility-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      padding: 0 8px 9px;
+    }
+
+    .utility-button {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.025);
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .utility-button.active {
+      color: var(--ink);
+      border-color: var(--line-strong);
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .stage {
+      display: grid;
+      justify-items: center;
+      min-width: 0;
+    }
+
+    .stage-note {
+      width: min(510px, 100%);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 22px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .stage-note strong { color: var(--ink-2); }
+
+    .status-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 27px;
+      border: 1px solid rgba(29, 185, 84, 0.25);
+      border-radius: 999px;
+      padding: 0 10px;
+      background: rgba(29, 185, 84, 0.08);
+      color: #88e7aa;
+      font-size: 9px;
+      font-weight: 850;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .status-chip::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 8px currentColor;
+    }
+
+    .phone-shell {
+      position: relative;
+      width: 390px;
+      height: 844px;
+      padding: 9px;
+      border-radius: 54px;
+      background: linear-gradient(145deg, #373b47 0%, #090a0d 34%, #242731 100%);
+      box-shadow:
+        0 1px 0 rgba(255, 255, 255, 0.28) inset,
+        0 0 0 1px rgba(255, 255, 255, 0.08),
+        var(--shadow);
+    }
+
+    .phone-shell::before,
+    .phone-shell::after {
+      content: "";
+      position: absolute;
+      left: -3px;
+      width: 3px;
+      border-radius: 3px 0 0 3px;
+      background: #20232c;
+    }
+
+    .phone-shell::before { top: 150px; height: 78px; }
+    .phone-shell::after { top: 242px; height: 48px; }
+
+    .phone {
+      --app-bg: #0a0a0f;
+      --app-bg-2: #11131a;
+      --app-surface: rgba(24, 26, 32, 0.92);
+      --app-surface-solid: #181a20;
+      --app-subtle: rgba(16, 18, 24, 0.9);
+      --app-line: rgba(255, 255, 255, 0.12);
+      --app-ink: #f8fafc;
+      --app-muted: #c4c9d1;
+      --app-faint: #7f8794;
+      --app-accent: #4ecdc4;
+      --app-primary: #1db954;
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      border-radius: 46px;
+      color: var(--app-ink);
+      background: var(--app-bg);
+      font-family: var(--ui);
+      isolation: isolate;
+    }
+
+    .phone[data-theme="light"] {
+      --app-bg: #ece8e1;
+      --app-bg-2: #f4f0ea;
+      --app-surface: rgba(250, 248, 243, 0.95);
+      --app-surface-solid: #faf8f3;
+      --app-subtle: rgba(225, 220, 229, 0.94);
+      --app-line: rgba(96, 69, 182, 0.22);
+      --app-ink: #25222b;
+      --app-muted: #56515e;
+      --app-faint: #6f6977;
+      --app-accent: #6045b6;
+      --app-primary: #2f7755;
+    }
+
+    .phone[data-font="large"] { font-size: 1.085em; }
+
+    .dynamic-island {
+      position: absolute;
+      z-index: 90;
+      top: 11px;
+      left: 50%;
+      width: 112px;
+      height: 31px;
+      transform: translateX(-50%);
+      border-radius: 18px;
+      background: #020203;
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset;
+      pointer-events: none;
+    }
+
+    .status-bar {
+      position: absolute;
+      z-index: 85;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 51px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      color: var(--app-ink);
+      font-size: 12px;
+      font-weight: 800;
+      pointer-events: none;
+    }
+
+    .status-icons {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .battery {
+      width: 21px;
+      height: 10px;
+      border: 1px solid currentColor;
+      border-radius: 3px;
+      padding: 1px;
+      opacity: 0.88;
+    }
+
+    .battery::after {
+      content: "";
+      display: block;
+      width: 72%;
+      height: 100%;
+      border-radius: 1px;
+      background: currentColor;
+    }
+
+    .screen {
+      position: absolute;
+      inset: 0;
+      display: none;
+      overflow: hidden;
+      background: var(--app-bg);
+    }
+
+    .screen.active { display: block; }
+
+    .cosmic-ground {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      background:
+        radial-gradient(330px 280px at 0% 15%, rgba(78, 205, 196, 0.1), transparent 65%),
+        radial-gradient(300px 280px at 100% 34%, rgba(167, 139, 250, 0.12), transparent 68%),
+        linear-gradient(180deg, var(--app-bg), var(--app-bg-2));
+    }
+
+    .phone[data-theme="light"] .cosmic-ground {
+      background:
+        radial-gradient(300px 250px at 2% 16%, rgba(47, 119, 85, 0.09), transparent 68%),
+        radial-gradient(300px 280px at 100% 36%, rgba(96, 69, 182, 0.1), transparent 70%),
+        linear-gradient(180deg, var(--app-bg), var(--app-bg-2));
+    }
+
+    .app-bar {
+      position: relative;
+      z-index: 4;
+      min-height: 96px;
+      display: flex;
+      align-items: flex-end;
+      gap: 10px;
+      padding: 50px 15px 11px;
+      border-bottom: 1px solid var(--app-line);
+      background: color-mix(in srgb, var(--app-bg) 82%, transparent);
+      backdrop-filter: blur(22px);
+    }
+
+    .round-button {
+      width: 43px;
+      height: 43px;
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      border: 1px solid var(--app-line);
+      border-radius: 50%;
+      background: color-mix(in srgb, var(--app-surface) 88%, transparent);
+      color: var(--app-ink);
+      cursor: pointer;
+    }
+
+    .round-button.subtle {
+      border-color: transparent;
+      background: transparent;
+      color: var(--app-muted);
+    }
+
+    .avatar {
+      position: relative;
+      width: 43px;
+      height: 43px;
+      flex: 0 0 auto;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 46% 32%, #f2c9b3 0 12%, transparent 13%),
+        radial-gradient(circle at 50% 47%, #d89374 0 20%, transparent 21%),
+        linear-gradient(145deg, #5a4a7c, #1d2338);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-accent) 20%, transparent);
+    }
+
+    .avatar.group {
+      background:
+        radial-gradient(circle at 32% 38%, #7fe4d5 0 10%, transparent 11%),
+        radial-gradient(circle at 66% 35%, #c7a7ff 0 10%, transparent 11%),
+        radial-gradient(circle at 50% 68%, #ff9e91 0 10%, transparent 11%),
+        linear-gradient(145deg, #34374a, #131620);
+    }
+
+    .avatar.announcement {
+      display: grid;
+      place-items: center;
+      background: linear-gradient(145deg, #6551a4, #312462);
+      color: white;
+    }
+
+    .header-person {
+      min-width: 0;
+      flex: 1;
+      padding-bottom: 1px;
+    }
+
+    .header-name {
+      overflow: hidden;
+      color: var(--app-ink);
+      font-size: 15px;
+      font-weight: 760;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .header-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 3px;
+      color: var(--app-faint);
+      font-size: 10.5px;
+    }
+
+    .header-meta .online-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--app-primary);
+      box-shadow: 0 0 7px color-mix(in srgb, var(--app-primary) 60%, transparent);
+    }
+
+    .lane-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 19px;
+      border: 1px solid color-mix(in srgb, var(--app-accent) 25%, transparent);
+      border-radius: 99px;
+      padding: 0 7px;
+      background: color-mix(in srgb, var(--app-accent) 9%, transparent);
+      color: var(--app-accent);
+      font-size: 8px;
+      font-weight: 850;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+
+    .messages {
+      position: absolute;
+      z-index: 2;
+      inset: 96px 0 76px;
+      overflow: auto;
+      padding: 17px 13px 26px;
+      scrollbar-width: none;
+    }
+
+    .messages::-webkit-scrollbar { display: none; }
+
+    .date-pill {
+      width: fit-content;
+      margin: 0 auto 17px;
+      border: 1px solid var(--app-line);
+      border-radius: 99px;
+      padding: 5px 10px;
+      background: color-mix(in srgb, var(--app-surface) 78%, transparent);
+      color: var(--app-faint);
+      font-size: 9px;
+      font-weight: 750;
+      backdrop-filter: blur(16px);
+    }
+
+    .message-run {
+      display: flex;
+      align-items: flex-end;
+      gap: 7px;
+      margin-bottom: 13px;
+    }
+
+    .message-run.outgoing { justify-content: flex-end; }
+
+    .message-avatar {
+      width: 25px;
+      height: 25px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      background: linear-gradient(145deg, #a990ef, #473c76);
+    }
+
+    .bubble {
+      max-width: 286px;
+      border: 1px solid var(--app-line);
+      border-radius: 21px 21px 21px 7px;
+      background: var(--app-subtle);
+      box-shadow: 0 9px 24px rgba(0, 0, 0, 0.12);
+      overflow: hidden;
+    }
+
+    .outgoing .bubble {
+      border-color: color-mix(in srgb, var(--app-primary) 28%, transparent);
+      border-radius: 21px 21px 7px 21px;
+      background: color-mix(in srgb, var(--app-primary) 12%, var(--app-subtle));
+    }
+
+    .bubble-text {
+      padding: 10px 12px;
+      color: var(--app-ink);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .bubble-caption {
+      padding: 9px 11px 4px;
+      color: var(--app-ink);
+      font-size: 11.5px;
+      line-height: 1.42;
+    }
+
+    .bubble-meta {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 4px;
+      padding: 4px 10px 8px;
+      color: var(--app-faint);
+      font-size: 8.5px;
+    }
+
+    .media-bubble {
+      position: relative;
+      width: 272px;
+      padding: 4px;
+    }
+
+    .media-open {
+      display: block;
+      width: 100%;
+      border: 0;
+      border-radius: 17px;
+      padding: 0;
+      overflow: hidden;
+      background: #0d111b;
+      cursor: pointer;
+    }
+
+    .media-more {
+      position: absolute;
+      z-index: 3;
+      top: 11px;
+      right: 11px;
+      width: 35px;
+      height: 35px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 50%;
+      background: rgba(7, 9, 14, 0.68);
+      color: white;
+      backdrop-filter: blur(15px);
+      cursor: pointer;
+    }
+
+    .media-status {
+      position: absolute;
+      z-index: 3;
+      left: 12px;
+      bottom: 57px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-height: 24px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 99px;
+      padding: 0 8px;
+      background: rgba(7, 9, 14, 0.65);
+      color: white;
+      font-size: 8px;
+      font-weight: 760;
+      backdrop-filter: blur(13px);
+    }
+
+    .media-status .icon { width: 13px; height: 13px; }
+
+    .protected-only { display: none !important; }
+    .phone[data-privacy="protected"] .ordinary-only { display: none !important; }
+    .phone[data-privacy="protected"] .protected-only { display: inline-flex !important; }
+
+    .photo-art {
+      position: relative;
+      height: 210px;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 73% 22%, rgba(255, 241, 194, 0.96) 0 7%, rgba(255, 218, 152, 0.18) 8%, transparent 17%),
+        radial-gradient(circle at 15% 13%, rgba(255,255,255,.85) 0 0.7px, transparent 1px),
+        radial-gradient(circle at 36% 18%, rgba(255,255,255,.75) 0 0.8px, transparent 1.1px),
+        radial-gradient(circle at 54% 10%, rgba(255,255,255,.8) 0 0.7px, transparent 1px),
+        radial-gradient(circle at 88% 13%, rgba(255,255,255,.7) 0 0.8px, transparent 1.1px),
+        linear-gradient(180deg, #111e3c 0%, #27355c 43%, #df8f68 73%, #f1c495 100%);
+    }
+
+    .photo-art.small { height: 111px; }
+    .photo-art.viewer-art { height: 100%; border-radius: 0; }
+
+    .mountain {
+      position: absolute;
+      left: -7%;
+      bottom: 24%;
+      width: 72%;
+      height: 43%;
+      transform: skewX(-14deg) rotate(-4deg);
+      background: linear-gradient(155deg, #2b3150, #11182c 70%);
+      clip-path: polygon(0 100%, 28% 38%, 43% 64%, 64% 16%, 100% 100%);
+      opacity: 0.96;
+    }
+
+    .mountain.second {
+      left: 46%;
+      width: 65%;
+      height: 36%;
+      transform: skewX(10deg) rotate(2deg);
+      background: linear-gradient(155deg, #42425f, #191c32 75%);
+      opacity: 0.88;
+    }
+
+    .lake {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 31%;
+      background:
+        linear-gradient(168deg, transparent 0 42%, rgba(255, 219, 164, 0.25) 43% 48%, transparent 49%),
+        linear-gradient(180deg, #17233c, #0c1425);
+    }
+
+    .lake::after {
+      content: "";
+      position: absolute;
+      left: 56%;
+      top: 8%;
+      width: 34%;
+      height: 42%;
+      border-radius: 50%;
+      background: linear-gradient(90deg, transparent, rgba(255, 223, 173, 0.42), transparent);
+      filter: blur(4px);
+    }
+
+    .play-button {
+      position: absolute;
+      z-index: 4;
+      top: 50%;
+      left: 50%;
+      width: 62px;
+      height: 62px;
+      display: none;
+      place-items: center;
+      transform: translate(-50%, -50%);
+      border: 1px solid rgba(255, 255, 255, 0.32);
+      border-radius: 50%;
+      background: rgba(6, 8, 14, 0.48);
+      color: white;
+      box-shadow: 0 10px 35px rgba(0, 0, 0, 0.3);
+      backdrop-filter: blur(18px);
+    }
+
+    .phone[data-media="video"] .play-button { display: grid; }
+
+    .read-only-banner {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      margin: 0 3px 14px;
+      border: 1px solid color-mix(in srgb, var(--violet) 24%, transparent);
+      border-radius: 13px;
+      padding: 9px 10px;
+      background: color-mix(in srgb, var(--violet) 9%, transparent);
+      color: color-mix(in srgb, var(--app-ink) 80%, var(--violet));
+      font-size: 9.5px;
+      line-height: 1.35;
+    }
+
+    .read-only-banner .icon { width: 16px; height: 16px; color: var(--violet); }
+    .phone[data-lane="announcement"] .read-only-banner { display: flex; }
+
+    .composer {
+      position: absolute;
+      z-index: 5;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      min-height: 77px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 12px 21px;
+      border-top: 1px solid var(--app-line);
+      background: color-mix(in srgb, var(--app-bg) 85%, transparent);
+      backdrop-filter: blur(22px);
+    }
+
+    .compose-input {
+      min-height: 43px;
+      display: flex;
+      align-items: center;
+      flex: 1;
+      border: 1px solid var(--app-line);
+      border-radius: 22px;
+      padding: 0 14px;
+      background: color-mix(in srgb, var(--app-surface) 76%, transparent);
+      color: var(--app-faint);
+      font-size: 11px;
+    }
+
+    .reaction-compose {
+      display: none;
+      width: 100%;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .composer-normal { display: contents; }
+
+    .reaction-copy {
+      color: var(--app-faint);
+      font-size: 10px;
+    }
+
+    .reaction-row {
+      display: flex;
+      gap: 6px;
+    }
+
+    .reaction-pill {
+      min-width: 37px;
+      min-height: 35px;
+      border: 1px solid var(--app-line);
+      border-radius: 99px;
+      background: var(--app-surface);
+      cursor: pointer;
+    }
+
+    .phone[data-lane="announcement"] .composer-normal { display: none; }
+    .phone[data-lane="announcement"] .reaction-compose { display: flex; }
+
+    .viewer-screen {
+      color: white;
+      background: #040508;
+    }
+
+    .viewer-stage {
+      position: absolute;
+      inset: 0;
+    }
+
+    .viewer-stage .photo-art {
+      position: absolute;
+      inset: 0;
+      height: 100%;
+      filter: saturate(0.94);
+    }
+
+    .viewer-stage::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(180deg, rgba(0,0,0,.62), transparent 24%, transparent 58%, rgba(0,0,0,.82)),
+        radial-gradient(circle at 50% 45%, transparent 40%, rgba(0,0,0,.18));
+      pointer-events: none;
+    }
+
+    .viewer-top {
+      position: absolute;
+      z-index: 5;
+      top: 51px;
+      left: 13px;
+      right: 13px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .viewer-top-group { display: flex; gap: 8px; }
+
+    .viewer-top .round-button {
+      border-color: rgba(255, 255, 255, 0.16);
+      background: rgba(7, 9, 13, 0.48);
+      color: white;
+      backdrop-filter: blur(18px);
+    }
+
+    .viewer-count {
+      display: inline-flex;
+      align-items: center;
+      min-height: 37px;
+      border: 1px solid rgba(255,255,255,.15);
+      border-radius: 99px;
+      padding: 0 13px;
+      background: rgba(7, 9, 13, 0.42);
+      color: rgba(255,255,255,.84);
+      font-size: 10px;
+      font-weight: 740;
+      backdrop-filter: blur(18px);
+    }
+
+    .viewer-protection {
+      position: absolute;
+      z-index: 5;
+      top: 105px;
+      left: 50%;
+      display: none;
+      align-items: center;
+      gap: 6px;
+      transform: translateX(-50%);
+      border: 1px solid rgba(244, 192, 107, 0.32);
+      border-radius: 99px;
+      padding: 7px 11px;
+      background: rgba(23, 18, 10, 0.62);
+      color: #f5d396;
+      font-size: 9px;
+      font-weight: 800;
+      backdrop-filter: blur(18px);
+    }
+
+    .viewer-protection .icon { width: 14px; height: 14px; }
+    .phone[data-privacy="protected"] .viewer-protection { display: flex; }
+
+    .video-controls {
+      position: absolute;
+      z-index: 5;
+      left: 16px;
+      right: 16px;
+      bottom: 171px;
+      display: none;
+      gap: 9px;
+      align-items: center;
+      border: 1px solid rgba(255,255,255,.15);
+      border-radius: 16px;
+      padding: 10px;
+      background: rgba(7, 9, 13, 0.54);
+      backdrop-filter: blur(18px);
+    }
+
+    .phone[data-media="video"] .video-controls { display: flex; }
+
+    .video-time { font-size: 8px; color: rgba(255,255,255,.76); }
+
+    .video-track {
+      position: relative;
+      height: 4px;
+      flex: 1;
+      overflow: hidden;
+      border-radius: 99px;
+      background: rgba(255,255,255,.2);
+    }
+
+    .video-track::before {
+      content: "";
+      position: absolute;
+      inset: 0 42% 0 0;
+      border-radius: inherit;
+      background: var(--accent);
+    }
+
+    .speed-pill {
+      min-width: 34px;
+      height: 26px;
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 8px;
+      background: rgba(255,255,255,.08);
+      color: white;
+      font-size: 8px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .pip-button { display: none; }
+    .phone[data-release="vision"][data-media="video"] .pip-button { display: grid; }
+    .phone[data-privacy="protected"] .pip-button { display: none !important; }
+
+    .viewer-bottom {
+      position: absolute;
+      z-index: 5;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      padding: 18px 15px 22px;
+      background: linear-gradient(180deg, transparent, rgba(3,4,7,.78) 22%, rgba(3,4,7,.96));
+    }
+
+    .viewer-caption {
+      padding: 0 4px 12px;
+    }
+
+    .viewer-caption strong {
+      display: block;
+      font-size: 12px;
+      font-weight: 760;
+    }
+
+    .viewer-caption span {
+      display: block;
+      margin-top: 4px;
+      color: rgba(255,255,255,.65);
+      font-size: 9px;
+    }
+
+    .action-rail {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 7px;
+    }
+
+    .viewer-action {
+      min-height: 64px;
+      display: grid;
+      justify-items: center;
+      align-content: center;
+      gap: 6px;
+      border: 1px solid rgba(255,255,255,.13);
+      border-radius: 15px;
+      background: rgba(255,255,255,.08);
+      color: white;
+      cursor: pointer;
+      backdrop-filter: blur(16px);
+    }
+
+    .viewer-action .icon { width: 19px; height: 19px; }
+    .viewer-action span { font-size: 8.5px; font-weight: 720; }
+
+    .reply-private-action { display: none; }
+    .phone[data-lane="announcement"] .reply-action { display: none; }
+    .phone[data-lane="announcement"][data-release="vision"] .reply-private-action { display: grid; }
+
+    .phone[data-privacy="protected"] .viewer-action[data-export="true"] {
+      opacity: 0.38;
+      pointer-events: none;
+    }
+
+    .library-screen, .storage-screen {
+      background:
+        radial-gradient(280px 240px at 100% 0%, color-mix(in srgb, var(--app-accent) 10%, transparent), transparent 72%),
+        var(--app-bg);
+    }
+
+    .simple-app-bar {
+      position: relative;
+      z-index: 4;
+      min-height: 103px;
+      display: flex;
+      align-items: flex-end;
+      gap: 10px;
+      padding: 50px 14px 10px;
+      border-bottom: 1px solid var(--app-line);
+      background: color-mix(in srgb, var(--app-bg) 87%, transparent);
+      backdrop-filter: blur(20px);
+    }
+
+    .simple-title {
+      flex: 1;
+      padding-bottom: 3px;
+    }
+
+    .simple-title strong {
+      display: block;
+      font-size: 16px;
+      font-weight: 780;
+    }
+
+    .simple-title span {
+      display: block;
+      margin-top: 3px;
+      color: var(--app-faint);
+      font-size: 9px;
+    }
+
+    .text-button {
+      min-height: 39px;
+      border: 0;
+      border-radius: 11px;
+      padding: 0 11px;
+      background: color-mix(in srgb, var(--app-accent) 10%, transparent);
+      color: var(--app-accent);
+      font-size: 10px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .filter-row {
+      display: flex;
+      gap: 7px;
+      overflow: auto;
+      padding: 13px 13px 9px;
+      scrollbar-width: none;
+    }
+
+    .filter-row::-webkit-scrollbar { display: none; }
+
+    .filter-chip {
+      min-height: 33px;
+      flex: 0 0 auto;
+      border: 1px solid var(--app-line);
+      border-radius: 99px;
+      padding: 0 12px;
+      background: var(--app-surface);
+      color: var(--app-muted);
+      font-size: 9px;
+      font-weight: 720;
+      cursor: pointer;
+    }
+
+    .filter-chip.active {
+      border-color: color-mix(in srgb, var(--app-accent) 36%, transparent);
+      background: color-mix(in srgb, var(--app-accent) 13%, var(--app-surface));
+      color: var(--app-accent);
+    }
+
+    .month-label {
+      padding: 8px 14px 8px;
+      color: var(--app-faint);
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .media-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 3px;
+      padding: 0 3px 120px;
+      overflow: auto;
+      max-height: 650px;
+    }
+
+    .grid-item {
+      position: relative;
+      aspect-ratio: 1;
+      border: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #202534;
+      cursor: pointer;
+    }
+
+    .grid-item .photo-art { height: 100%; }
+    .grid-item:nth-child(2) .photo-art { filter: hue-rotate(24deg) saturate(.8); }
+    .grid-item:nth-child(3) .photo-art { filter: hue-rotate(282deg) saturate(.72); }
+    .grid-item:nth-child(4) .photo-art { filter: hue-rotate(140deg) saturate(.7); }
+    .grid-item:nth-child(5) .photo-art { filter: hue-rotate(202deg) saturate(.75); }
+    .grid-item:nth-child(6) .photo-art { filter: grayscale(.28) contrast(1.05); }
+    .grid-item:nth-child(8) .photo-art { filter: hue-rotate(64deg) saturate(.68); }
+
+    .grid-check {
+      position: absolute;
+      z-index: 3;
+      top: 7px;
+      right: 7px;
+      width: 24px;
+      height: 24px;
+      display: none;
+      place-items: center;
+      border: 1px solid rgba(255,255,255,.74);
+      border-radius: 50%;
+      background: rgba(0,0,0,.24);
+      color: white;
+      font-size: 12px;
+      backdrop-filter: blur(8px);
+    }
+
+    .library-screen.selecting .grid-check { display: grid; }
+    .grid-item.selected .grid-check {
+      border-color: var(--app-accent);
+      background: var(--app-accent);
+      color: #07100f;
+    }
+
+    .video-duration {
+      position: absolute;
+      z-index: 2;
+      right: 6px;
+      bottom: 6px;
+      border-radius: 6px;
+      padding: 3px 5px;
+      background: rgba(0,0,0,.58);
+      color: white;
+      font-size: 7px;
+      font-weight: 800;
+    }
+
+    .batch-bar {
+      position: absolute;
+      z-index: 8;
+      left: 9px;
+      right: 9px;
+      bottom: 17px;
+      display: none;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 5px;
+      border: 1px solid var(--app-line);
+      border-radius: 20px;
+      padding: 8px;
+      background: color-mix(in srgb, var(--app-surface-solid) 88%, transparent);
+      box-shadow: 0 14px 34px rgba(0,0,0,.26);
+      backdrop-filter: blur(22px);
+    }
+
+    .library-screen.selecting .batch-bar { display: grid; }
+
+    .batch-action {
+      min-height: 53px;
+      display: grid;
+      place-items: center;
+      gap: 3px;
+      border: 0;
+      border-radius: 13px;
+      background: transparent;
+      color: var(--app-muted);
+      font-size: 7.5px;
+      font-weight: 730;
+      cursor: pointer;
+    }
+
+    .batch-action:hover { background: color-mix(in srgb, var(--app-accent) 10%, transparent); }
+    .batch-action .icon { width: 18px; height: 18px; }
+    .batch-forward { display: none; }
+    .phone[data-release="vision"] .batch-forward { display: grid; }
+
+    .storage-content {
+      position: absolute;
+      inset: 103px 0 0;
+      overflow: auto;
+      padding: 16px 13px 40px;
+      scrollbar-width: none;
+    }
+
+    .storage-content::-webkit-scrollbar { display: none; }
+
+    .storage-hero {
+      display: grid;
+      grid-template-columns: 96px 1fr;
+      align-items: center;
+      gap: 16px;
+      border: 1px solid var(--app-line);
+      border-radius: 20px;
+      padding: 15px;
+      background: var(--app-surface);
+    }
+
+    .storage-ring {
+      width: 88px;
+      height: 88px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: conic-gradient(var(--app-accent) 0 62%, color-mix(in srgb, var(--app-line) 85%, transparent) 62% 100%);
+      box-shadow: 0 0 28px color-mix(in srgb, var(--app-accent) 9%, transparent);
+    }
+
+    .storage-ring::before {
+      content: "1.8 GB";
+      width: 67px;
+      height: 67px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--app-surface-solid);
+      color: var(--app-ink);
+      font-size: 11px;
+      font-weight: 820;
+    }
+
+    .storage-copy strong {
+      display: block;
+      font-size: 15px;
+      font-weight: 780;
+    }
+
+    .storage-copy p {
+      margin: 6px 0 0;
+      color: var(--app-faint);
+      font-size: 9px;
+      line-height: 1.45;
+    }
+
+    .storage-key {
+      display: flex;
+      gap: 10px;
+      margin-top: 11px;
+      color: var(--app-faint);
+      font-size: 8px;
+    }
+
+    .storage-key i {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      margin-right: 4px;
+      border-radius: 50%;
+      background: var(--app-accent);
+    }
+
+    .settings-section-title {
+      margin: 20px 3px 8px;
+      color: var(--app-faint);
+      font-size: 9px;
+      font-weight: 850;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .settings-card {
+      overflow: hidden;
+      border: 1px solid var(--app-line);
+      border-radius: 17px;
+      background: var(--app-surface);
+    }
+
+    .setting-row {
+      min-height: 57px;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--app-line);
+    }
+
+    .setting-row:last-child { border-bottom: 0; }
+
+    .setting-icon {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      border-radius: 10px;
+      background: color-mix(in srgb, var(--app-accent) 11%, transparent);
+      color: var(--app-accent);
+    }
+
+    .setting-icon .icon { width: 18px; height: 18px; }
+
+    .setting-copy { min-width: 0; flex: 1; }
+    .setting-copy strong { display: block; font-size: 10.5px; font-weight: 730; }
+    .setting-copy span { display: block; margin-top: 3px; color: var(--app-faint); font-size: 8px; }
+
+    .toggle {
+      position: relative;
+      width: 39px;
+      height: 23px;
+      flex: 0 0 auto;
+      border: 0;
+      border-radius: 99px;
+      background: color-mix(in srgb, var(--app-line) 88%, transparent);
+      cursor: pointer;
+      transition: 160ms ease;
+    }
+
+    .toggle::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 17px;
+      height: 17px;
+      border-radius: 50%;
+      background: var(--app-ink);
+      box-shadow: 0 2px 5px rgba(0,0,0,.22);
+      transition: inherit;
+    }
+
+    .toggle.on { background: var(--app-primary); }
+    .toggle.on::after { transform: translateX(16px); background: white; }
+
+    .clear-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border: 1px solid color-mix(in srgb, var(--danger) 24%, transparent);
+      border-radius: 17px;
+      padding: 13px;
+      background: color-mix(in srgb, var(--danger) 7%, var(--app-surface));
+    }
+
+    .clear-card strong { display: block; color: var(--app-ink); font-size: 10.5px; }
+    .clear-card span { display: block; margin-top: 3px; color: var(--app-faint); font-size: 8px; }
+
+    .clear-button {
+      min-height: 35px;
+      border: 1px solid color-mix(in srgb, var(--danger) 34%, transparent);
+      border-radius: 10px;
+      padding: 0 10px;
+      background: color-mix(in srgb, var(--danger) 10%, transparent);
+      color: var(--danger);
+      font-size: 8px;
+      font-weight: 820;
+      cursor: pointer;
+    }
+
+    .scrim {
+      position: absolute;
+      z-index: 50;
+      inset: 0;
+      display: none;
+      background: rgba(0, 0, 0, 0.58);
+      backdrop-filter: blur(3px);
+    }
+
+    .scrim.open { display: block; }
+
+    .bottom-sheet {
+      position: absolute;
+      z-index: 60;
+      left: 7px;
+      right: 7px;
+      bottom: 7px;
+      display: none;
+      max-height: 720px;
+      overflow: hidden;
+      border: 1px solid var(--app-line);
+      border-radius: 29px 29px 39px 39px;
+      background: color-mix(in srgb, var(--app-surface-solid) 94%, transparent);
+      box-shadow: 0 -20px 60px rgba(0, 0, 0, 0.34);
+      backdrop-filter: blur(28px);
+      transform-origin: bottom;
+    }
+
+    .bottom-sheet.open {
+      display: block;
+      animation: sheet-in 210ms ease-out;
+    }
+
+    @keyframes sheet-in {
+      from { transform: translateY(18px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    .sheet-handle {
+      width: 37px;
+      height: 4px;
+      margin: 9px auto 8px;
+      border-radius: 99px;
+      background: var(--app-line);
+    }
+
+    .sheet-head {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 7px 15px 12px;
+    }
+
+    .sheet-thumb {
+      width: 45px;
+      height: 45px;
+      flex: 0 0 auto;
+      overflow: hidden;
+      border-radius: 12px;
+    }
+
+    .sheet-thumb .photo-art { height: 100%; }
+
+    .sheet-title { min-width: 0; flex: 1; }
+    .sheet-title strong { display: block; font-size: 13px; font-weight: 790; }
+    .sheet-title span { display: block; margin-top: 3px; color: var(--app-faint); font-size: 8.5px; }
+
+    .sheet-close {
+      width: 35px;
+      height: 35px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 50%;
+      background: var(--app-subtle);
+      color: var(--app-muted);
+      cursor: pointer;
+    }
+
+    .protection-notice {
+      display: none;
+      align-items: flex-start;
+      gap: 8px;
+      margin: 0 12px 10px;
+      border: 1px solid rgba(244, 192, 107, 0.25);
+      border-radius: 13px;
+      padding: 10px;
+      background: rgba(244, 192, 107, 0.07);
+      color: var(--amber);
+      font-size: 8.7px;
+      line-height: 1.4;
+    }
+
+    .protection-notice .icon { width: 16px; height: 16px; flex: 0 0 auto; }
+    .phone[data-privacy="protected"] .protection-notice { display: flex; }
+
+    .quick-actions {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 7px;
+      padding: 2px 12px 13px;
+    }
+
+    .quick-action {
+      min-height: 70px;
+      display: grid;
+      justify-items: center;
+      align-content: center;
+      gap: 7px;
+      border: 1px solid var(--app-line);
+      border-radius: 15px;
+      background: var(--app-subtle);
+      color: var(--app-muted);
+      cursor: pointer;
+    }
+
+    .quick-action .icon { width: 20px; height: 20px; color: var(--app-accent); }
+    .quick-action span { font-size: 8px; font-weight: 730; }
+
+    .quick-action.reply-private-action { display: none; }
+    .phone[data-lane="announcement"][data-release="vision"] .quick-action.reply-private-action { display: grid; }
+
+    .phone[data-privacy="protected"] .quick-action[data-export="true"] {
+      opacity: 0.35;
+      pointer-events: none;
+    }
+
+    .sheet-list {
+      margin: 0 9px 11px;
+      overflow: hidden;
+      border: 1px solid var(--app-line);
+      border-radius: 17px;
+    }
+
+    .sheet-row {
+      min-height: 49px;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      width: 100%;
+      border: 0;
+      border-bottom: 1px solid var(--app-line);
+      padding: 0 12px;
+      background: transparent;
+      color: var(--app-ink);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .sheet-row:last-child { border-bottom: 0; }
+    .sheet-row .icon { width: 18px; height: 18px; color: var(--app-muted); }
+    .sheet-row span { flex: 1; font-size: 10.5px; font-weight: 650; }
+    .sheet-row.danger, .sheet-row.danger .icon { color: var(--danger); }
+
+    .later-badge {
+      display: none;
+      border: 1px solid rgba(244, 192, 107, 0.24);
+      border-radius: 99px;
+      padding: 3px 6px;
+      background: rgba(244, 192, 107, 0.08);
+      color: var(--amber);
+      font-size: 6.8px;
+      font-weight: 850;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+
+    .planned-row { display: none; }
+    .phone[data-release="vision"] .planned-row { display: flex; }
+    .phone[data-release="vision"] .planned-row .later-badge { display: inline-flex; }
+
+    .choice-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 9px;
+      padding: 4px 12px 16px;
+    }
+
+    .choice-card {
+      min-height: 112px;
+      display: grid;
+      justify-items: center;
+      align-content: center;
+      gap: 8px;
+      border: 1px solid var(--app-line);
+      border-radius: 18px;
+      background: var(--app-subtle);
+      color: var(--app-muted);
+      cursor: pointer;
+    }
+
+    .choice-card .choice-icon {
+      width: 45px;
+      height: 45px;
+      display: grid;
+      place-items: center;
+      border-radius: 14px;
+      background: color-mix(in srgb, var(--app-accent) 12%, transparent);
+      color: var(--app-accent);
+    }
+
+    .choice-card strong { color: var(--app-ink); font-size: 10px; }
+    .choice-card span { max-width: 100px; color: var(--app-faint); font-size: 7.5px; line-height: 1.35; text-align: center; }
+
+    .picker-search {
+      min-height: 41px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 12px 11px;
+      border: 1px solid var(--app-line);
+      border-radius: 14px;
+      padding: 0 12px;
+      background: var(--app-subtle);
+      color: var(--app-faint);
+      font-size: 9px;
+    }
+
+    .picker-search .icon { width: 17px; height: 17px; }
+
+    .target-list {
+      display: grid;
+      gap: 7px;
+      padding: 0 12px 10px;
+    }
+
+    .target-row {
+      min-height: 52px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border: 1px solid var(--app-line);
+      border-radius: 14px;
+      padding: 7px 9px;
+      background: var(--app-subtle);
+      cursor: pointer;
+    }
+
+    .target-row.selected {
+      border-color: color-mix(in srgb, var(--app-accent) 35%, transparent);
+      background: color-mix(in srgb, var(--app-accent) 10%, var(--app-subtle));
+    }
+
+    .target-avatar {
+      width: 35px;
+      height: 35px;
+      flex: 0 0 auto;
+      border-radius: 50%;
+      background: linear-gradient(145deg, #756ca1, #282c42);
+    }
+
+    .target-avatar.group { border-radius: 12px; background: linear-gradient(145deg, #2d8177, #243149); }
+    .target-copy { min-width: 0; flex: 1; }
+    .target-copy strong { display: block; font-size: 10px; }
+    .target-copy span { display: block; margin-top: 3px; color: var(--app-faint); font-size: 7.5px; }
+
+    .target-check {
+      width: 23px;
+      height: 23px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--app-line);
+      border-radius: 50%;
+      color: transparent;
+      font-size: 11px;
+    }
+
+    .target-row.selected .target-check {
+      border-color: var(--app-accent);
+      background: var(--app-accent);
+      color: #06100f;
+    }
+
+    .caption-input {
+      min-height: 42px;
+      display: flex;
+      align-items: center;
+      margin: 0 12px 10px;
+      border: 1px solid var(--app-line);
+      border-radius: 13px;
+      padding: 0 11px;
+      background: var(--app-subtle);
+      color: var(--app-muted);
+      font-size: 8.5px;
+    }
+
+    .primary-sheet-button {
+      min-height: 45px;
+      width: calc(100% - 24px);
+      margin: 0 12px 15px;
+      border: 0;
+      border-radius: 14px;
+      background: var(--app-accent);
+      color: #06100f;
+      font-size: 10px;
+      font-weight: 850;
+      cursor: pointer;
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 7px;
+      padding: 0 12px 14px;
+    }
+
+    .info-cell {
+      min-height: 58px;
+      border: 1px solid var(--app-line);
+      border-radius: 13px;
+      padding: 9px;
+      background: var(--app-subtle);
+    }
+
+    .info-cell span {
+      display: block;
+      color: var(--app-faint);
+      font-size: 7px;
+      font-weight: 800;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+    }
+
+    .info-cell strong {
+      display: block;
+      margin-top: 5px;
+      color: var(--app-ink);
+      font-size: 9px;
+      font-weight: 720;
+    }
+
+    .confirm-copy {
+      padding: 3px 17px 15px;
+      color: var(--app-muted);
+      font-size: 9px;
+      line-height: 1.55;
+    }
+
+    .confirm-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      padding: 0 12px 15px;
+    }
+
+    .confirm-button {
+      min-height: 43px;
+      border: 1px solid var(--app-line);
+      border-radius: 13px;
+      background: var(--app-subtle);
+      color: var(--app-muted);
+      font-size: 9px;
+      font-weight: 780;
+      cursor: pointer;
+    }
+
+    .confirm-button.danger {
+      border-color: color-mix(in srgb, var(--danger) 32%, transparent);
+      background: color-mix(in srgb, var(--danger) 10%, transparent);
+      color: var(--danger);
+    }
+
+    .toast {
+      position: absolute;
+      z-index: 100;
+      left: 50%;
+      bottom: 29px;
+      display: none;
+      align-items: center;
+      gap: 8px;
+      max-width: 310px;
+      transform: translateX(-50%);
+      border: 1px solid var(--app-line);
+      border-radius: 99px;
+      padding: 10px 14px;
+      background: color-mix(in srgb, var(--app-surface-solid) 95%, transparent);
+      color: var(--app-ink);
+      box-shadow: 0 12px 32px rgba(0,0,0,.34);
+      font-size: 9px;
+      font-weight: 700;
+      white-space: nowrap;
+      backdrop-filter: blur(22px);
+    }
+
+    .toast.show {
+      display: flex;
+      animation: toast-in 180ms ease-out;
+    }
+
+    @keyframes toast-in {
+      from { transform: translate(-50%, 8px); opacity: 0; }
+      to { transform: translate(-50%, 0); opacity: 1; }
+    }
+
+    .note-card {
+      padding: 16px;
+    }
+
+    .note-label {
+      color: var(--accent);
+      font-size: 9px;
+      font-weight: 850;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+
+    .note-card h2 {
+      margin: 9px 0 8px;
+      font-family: var(--display);
+      font-size: 25px;
+      font-weight: 500;
+      letter-spacing: -.02em;
+      line-height: 1.05;
+    }
+
+    .note-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.62;
+    }
+
+    .boundary {
+      display: flex;
+      align-items: flex-start;
+      gap: 9px;
+      margin-top: 14px;
+      border: 1px solid rgba(78, 205, 196, 0.18);
+      border-radius: 13px;
+      padding: 10px;
+      background: rgba(78, 205, 196, 0.055);
+      color: #acdeda;
+      font-size: 10px;
+      line-height: 1.45;
+    }
+
+    .boundary .icon { width: 16px; height: 16px; flex: 0 0 auto; }
+
+    .horizon-stack {
+      display: grid;
+      gap: 1px;
+      background: var(--line);
+    }
+
+    .horizon {
+      padding: 14px 15px;
+      background: var(--panel-strong);
+    }
+
+    .horizon-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .horizon-name {
+      font-size: 10px;
+      font-weight: 850;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .horizon-state {
+      border: 1px solid var(--line);
+      border-radius: 99px;
+      padding: 3px 6px;
+      color: var(--faint);
+      font-size: 7px;
+      font-weight: 850;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+
+    .horizon.now .horizon-name { color: #88e7aa; }
+    .horizon.next .horizon-name { color: #d7c6ff; }
+    .horizon.future .horizon-name { color: #f5d396; }
+
+    .horizon p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.52;
+    }
+
+    .flow-map {
+      display: grid;
+      gap: 7px;
+      padding: 4px 14px 15px;
+    }
+
+    .flow-step {
+      display: grid;
+      grid-template-columns: 23px 1fr;
+      gap: 9px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .flow-num {
+      width: 23px;
+      height: 23px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 50%;
+      color: var(--accent);
+      font-size: 8px;
+      font-weight: 850;
+    }
+
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      margin-top: 42px;
+      padding-top: 20px;
+      border-top: 1px solid var(--line);
+      color: var(--faint);
+      font-size: 10px;
+      line-height: 1.6;
+    }
+
+    .footer strong { color: var(--muted); }
+
+    [dir="rtl"] .app-bar,
+    [dir="rtl"] .simple-app-bar,
+    [dir="rtl"] .message-run,
+    [dir="rtl"] .sheet-head,
+    [dir="rtl"] .sheet-row,
+    [dir="rtl"] .target-row,
+    [dir="rtl"] .setting-row {
+      flex-direction: row-reverse;
+      text-align: right;
+    }
+
+    [dir="rtl"] .message-run.outgoing { justify-content: flex-start; }
+    [dir="rtl"] .bubble { border-radius: 21px 21px 7px 21px; }
+    [dir="rtl"] .outgoing .bubble { border-radius: 21px 21px 21px 7px; }
+
+    @media (max-width: 1120px) {
+      .prototype-grid { grid-template-columns: 210px minmax(390px, 1fr); }
+      .right-rail {
+        position: static;
+        grid-column: 1 / -1;
+        grid-template-columns: repeat(3, 1fr);
+      }
+      .right-rail .rail-card:first-child { grid-column: span 1; }
+    }
+
+    @media (max-width: 760px) {
+      .studio { padding: 24px 14px 52px; }
+      .studio-header { grid-template-columns: 1fr; gap: 18px; }
+      .prototype-grid { grid-template-columns: 1fr; }
+      .left-rail { position: static; grid-template-columns: 1fr 1fr; }
+      .left-rail .rail-card:first-child,
+      .left-rail .rail-card:nth-child(2) { grid-column: span 1; }
+      .left-rail .rail-card:nth-child(n+3) { grid-column: span 1; }
+      .stage { order: -1; }
+      .right-rail { grid-template-columns: 1fr; }
+      .phone-shell {
+        width: min(390px, calc(100vw - 30px));
+        height: min(844px, calc((100vw - 30px) * 2.164));
+        min-height: 682px;
+      }
+      .footer { flex-direction: column; }
+    }
+
+    @media (max-width: 500px) {
+      .studio-header { padding-inline: 4px; }
+      .left-rail { grid-template-columns: 1fr; }
+      .right-rail { display: none; }
+      .stage-note { padding-inline: 4px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <svg class="svg-sprite" aria-hidden="true">
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/><path d="M9 12h10"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m4 17 4.5-4.5 3.2 3.2 2.2-2.2L20 19"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+    <symbol id="i-megaphone" viewBox="0 0 24 24"><path d="m3 11 15-6v14L3 13v-2Z"/><path d="M11.6 16.4 13 21H8l-1.5-6.2"/><path d="M21 9v6"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
+    <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 10.5 6.8-4M8.6 13.5l6.8 4"/></symbol>
+    <symbol id="i-forward" viewBox="0 0 24 24"><path d="m14 8 5 4-5 4"/><path d="M19 12H8a4 4 0 0 0-4 4v2"/></symbol>
+    <symbol id="i-reply" viewBox="0 0 24 24"><path d="m10 8-5 4 5 4"/><path d="M5 12h11a4 4 0 0 1 4 4v2"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><path d="M12 7h.01"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="m6 7 1 14h10l1-14"/><path d="M9 7V4h6v3"/></symbol>
+    <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M6 4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18l-6-4-6 4V4Z"/></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 22V3"/><path d="M5 4h12l-2 4 2 4H5"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6Z"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/></symbol>
+    <symbol id="i-volume" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15 9a5 5 0 0 1 0 6M18 6a9 9 0 0 1 0 12"/></symbol>
+    <symbol id="i-pip" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><rect x="12" y="11" width="7" height="5" rx="1"/></symbol>
+    <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M17.5 19H6a4 4 0 1 1 1.1-7.85A6 6 0 0 1 19 12a3.5 3.5 0 0 1-1.5 7Z"/></symbol>
+    <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0"/><path d="M12 20h.01"/></symbol>
+    <symbol id="i-cell" viewBox="0 0 24 24"><path d="M5 20v-3M9.5 20v-6M14.5 20v-9M19 20V8"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4 20-7Z"/><path d="M22 2 11 13"/></symbol>
+    <symbol id="i-smile" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><path d="M9 9h.01M15 9h.01"/></symbol>
+    <symbol id="i-paperclip" viewBox="0 0 24 24"><path d="m21 11.5-8.5 8.5a6 6 0 0 1-8.5-8.5L13 2.5a4 4 0 0 1 5.7 5.7L9.6 17.3a2 2 0 0 1-2.8-2.8L15 6.3"/></symbol>
+    <symbol id="i-message" viewBox="0 0 24 24"><path d="M21 14a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v7Z"/></symbol>
+  </svg>
+
+  <main class="studio">
+    <header class="studio-header">
+      <div>
+        <div class="eyebrow">Mknoon · received media · interactive prototype</div>
+        <h1>The media you receive should feel <em>yours to manage.</em></h1>
+      </div>
+      <p class="header-copy">
+        A mobile-native proposal for <strong>Save, Share, Forward, Delete, Info, Shared Media, storage controls, video tools</strong>, and the privacy-sensitive features that follow. Switch lanes and surfaces to see how the same media object behaves without weakening discussion or announcement authorization.
+      </p>
+    </header>
+
+    <section class="prototype-grid" aria-label="Interactive received media prototype">
+      <aside class="rail left-rail" aria-label="Prototype controls">
+        <section class="rail-card">
+          <div class="rail-card-head">Conversation lane</div>
+          <div class="control-list">
+            <button class="control-button active" data-set="lane" data-value="direct"><span class="mini-icon"><svg class="icon"><use href="#i-message"/></svg></span><span>1:1 chat</span></button>
+            <button class="control-button" data-set="lane" data-value="group"><span class="mini-icon"><svg class="icon"><use href="#i-users"/></svg></span><span>Discussion</span></button>
+            <button class="control-button" data-set="lane" data-value="announcement"><span class="mini-icon"><svg class="icon"><use href="#i-megaphone"/></svg></span><span>Announcement</span></button>
+          </div>
+        </section>
+
+        <section class="rail-card">
+          <div class="rail-card-head">Surface</div>
+          <div class="control-list">
+            <button class="control-button active" data-set="surface" data-value="chat"><span class="mini-icon"><svg class="icon"><use href="#i-message"/></svg></span><span>Conversation</span></button>
+            <button class="control-button" data-set="surface" data-value="viewer"><span class="mini-icon"><svg class="icon"><use href="#i-eye"/></svg></span><span>Media viewer</span></button>
+            <button class="control-button" data-set="surface" data-value="library"><span class="mini-icon"><svg class="icon"><use href="#i-grid"/></svg></span><span>Shared media</span></button>
+            <button class="control-button" data-set="surface" data-value="storage"><span class="mini-icon"><svg class="icon"><use href="#i-database"/></svg></span><span>Media &amp; storage</span></button>
+          </div>
+        </section>
+
+        <section class="rail-card">
+          <div class="rail-card-head">Delivery horizon</div>
+          <div class="segmented">
+            <button class="segment active" data-set="release" data-value="now">Release 1</button>
+            <button class="segment" data-set="release" data-value="vision">Full vision</button>
+          </div>
+        </section>
+
+        <section class="rail-card">
+          <div class="rail-card-head">Media</div>
+          <div class="segmented">
+            <button class="segment active" data-set="media" data-value="image">Image</button>
+            <button class="segment" data-set="media" data-value="video">Video</button>
+          </div>
+          <div class="segmented">
+            <button class="segment active" data-set="privacy" data-value="ordinary">Ordinary</button>
+            <button class="segment" data-set="privacy" data-value="protected">Protected</button>
+          </div>
+        </section>
+
+        <section class="rail-card">
+          <div class="rail-card-head">Accessibility preview</div>
+          <div class="utility-row">
+            <button class="utility-button active" data-utility="theme" aria-label="Toggle light or dark theme">Theme</button>
+            <button class="utility-button" data-utility="font" aria-label="Toggle larger type">A+</button>
+            <button class="utility-button" data-utility="direction" aria-label="Toggle RTL direction">RTL</button>
+          </div>
+        </section>
+      </aside>
+
+      <div class="stage">
+        <div class="stage-note">
+          <span><strong>Try it:</strong> tap the photo, overflow menu, Select, or storage switches.</span>
+          <span class="status-chip" id="stage-status">Implementation-ready slice</span>
+        </div>
+
+        <div class="phone-shell">
+          <div class="phone" id="phone" data-lane="direct" data-theme="dark" data-release="now" data-media="image" data-privacy="ordinary" data-font="normal">
+            <div class="dynamic-island"></div>
+            <div class="status-bar"><span>20:42</span><span class="status-icons">▮▮▮ <span>⌁</span><span class="battery"></span></span></div>
+
+            <section class="screen chat-screen active" data-screen="chat" aria-label="Conversation mockup">
+              <div class="cosmic-ground"></div>
+              <header class="app-bar">
+                <button class="round-button subtle" aria-label="Back"><svg class="icon"><use href="#i-back"/></svg></button>
+                <div class="avatar lane-avatar"></div>
+                <div class="header-person">
+                  <div class="header-name lane-name">Maya Chen</div>
+                  <div class="header-meta"><span class="online-dot"></span><span class="lane-meta">Online</span><span class="lane-badge">1:1</span></div>
+                </div>
+                <button class="round-button subtle" aria-label="Search conversation"><svg class="icon"><use href="#i-search"/></svg></button>
+                <button class="round-button subtle open-actions" aria-label="More conversation options"><svg class="icon"><use href="#i-more"/></svg></button>
+              </header>
+
+              <div class="messages">
+                <div class="read-only-banner"><svg class="icon"><use href="#i-megaphone"/></svg><span>Only announcement admins can publish. Readers can still manage their local copy.</span></div>
+                <div class="date-pill">Today</div>
+                <div class="message-run">
+                  <div class="message-avatar"></div>
+                  <div class="bubble"><div class="bubble-text">This view was worth the late train 🌙</div><div class="bubble-meta">20:38</div></div>
+                </div>
+                <div class="message-run">
+                  <div class="message-avatar"></div>
+                  <div class="bubble media-bubble">
+                    <button class="media-open" aria-label="Open received media">
+                      <div class="photo-art small">
+                        <div class="mountain"></div><div class="mountain second"></div><div class="lake"></div>
+                        <span class="play-button"><svg class="icon"><use href="#i-play"/></svg></span>
+                      </div>
+                    </button>
+                    <button class="media-more open-actions" aria-label="Open media actions"><svg class="icon"><use href="#i-more"/></svg></button>
+                    <span class="media-status ordinary-only"><svg class="icon"><use href="#i-check"/></svg>Downloaded</span>
+                    <span class="media-status protected-only"><svg class="icon"><use href="#i-lock"/></svg>Protected</span>
+                    <div class="bubble-caption">Moonrise over the old reservoir.</div>
+                    <div class="bubble-meta"><span class="media-kind">Image</span> · 20:39</div>
+                  </div>
+                </div>
+                <div class="message-run outgoing">
+                  <div class="bubble"><div class="bubble-text">Keep that one — it is beautiful.</div><div class="bubble-meta">20:41 ✓✓</div></div>
+                </div>
+              </div>
+
+              <footer class="composer">
+                <div class="composer-normal">
+                  <button class="round-button" aria-label="Attach"><svg class="icon"><use href="#i-paperclip"/></svg></button>
+                  <div class="compose-input">Message</div>
+                  <button class="round-button" aria-label="Send"><svg class="icon"><use href="#i-send"/></svg></button>
+                </div>
+                <div class="reaction-compose">
+                  <span class="reaction-copy">React to this update</span>
+                  <div class="reaction-row"><button class="reaction-pill">❤️</button><button class="reaction-pill">👏</button><button class="reaction-pill">✨</button></div>
+                </div>
+              </footer>
+            </section>
+
+            <section class="screen viewer-screen" data-screen="viewer" aria-label="Full-screen media viewer mockup">
+              <div class="viewer-stage">
+                <div class="photo-art viewer-art"><div class="mountain"></div><div class="mountain second"></div><div class="lake"></div></div>
+                <span class="play-button"><svg class="icon"><use href="#i-play"/></svg></span>
+              </div>
+              <div class="viewer-top">
+                <button class="round-button screen-back" data-back="chat" aria-label="Back to conversation"><svg class="icon"><use href="#i-back"/></svg></button>
+                <div class="viewer-count">4 of 27</div>
+                <div class="viewer-top-group">
+                  <button class="round-button pip-button" data-action="pip" aria-label="Picture in picture"><svg class="icon"><use href="#i-pip"/></svg></button>
+                  <button class="round-button" data-action="info" aria-label="Media information"><svg class="icon"><use href="#i-info"/></svg></button>
+                  <button class="round-button open-actions" aria-label="More media actions"><svg class="icon"><use href="#i-more"/></svg></button>
+                </div>
+              </div>
+              <div class="viewer-protection"><svg class="icon"><use href="#i-lock"/></svg>Protected media · export disabled</div>
+              <div class="video-controls">
+                <button class="speed-pill" aria-label="Mute"><svg class="icon" style="width:14px;height:14px"><use href="#i-volume"/></svg></button>
+                <span class="video-time">0:18</span><div class="video-track"></div><span class="video-time">0:42</span>
+                <button class="speed-pill" data-action="speed">1×</button>
+              </div>
+              <div class="viewer-bottom">
+                <div class="viewer-caption"><strong>Moonrise over the old reservoir.</strong><span><span class="lane-name">Maya Chen</span> · Today, 20:39 · <span class="media-detail">JPEG · 2.4 MB</span></span></div>
+                <div class="action-rail">
+                  <button class="viewer-action reply-action" data-action="reply"><svg class="icon"><use href="#i-reply"/></svg><span>Reply</span></button>
+                  <button class="viewer-action reply-private-action" data-action="private-reply"><svg class="icon"><use href="#i-message"/></svg><span>Reply privately</span></button>
+                  <button class="viewer-action" data-action="forward" data-export="true"><svg class="icon"><use href="#i-forward"/></svg><span>Forward</span></button>
+                  <button class="viewer-action" data-action="save" data-export="true"><svg class="icon"><use href="#i-download"/></svg><span>Save</span></button>
+                  <button class="viewer-action" data-action="share" data-export="true"><svg class="icon"><use href="#i-share"/></svg><span>Share</span></button>
+                </div>
+              </div>
+            </section>
+
+            <section class="screen library-screen" data-screen="library" aria-label="Shared media library mockup">
+              <header class="simple-app-bar">
+                <button class="round-button subtle screen-back" data-back="chat" aria-label="Back"><svg class="icon"><use href="#i-back"/></svg></button>
+                <div class="simple-title"><strong>Shared media</strong><span><span class="lane-name">Maya Chen</span> · 184 items</span></div>
+                <button class="text-button select-media">Select</button>
+              </header>
+              <div class="filter-row">
+                <button class="filter-chip active">All</button><button class="filter-chip">Images</button><button class="filter-chip">Videos</button><button class="filter-chip">Bookmarked</button>
+              </div>
+              <div class="month-label">July 2026</div>
+              <div class="media-grid">
+                <button class="grid-item selected"><div class="photo-art"><div class="mountain"></div><div class="mountain second"></div><div class="lake"></div></div><span class="grid-check">✓</span></button>
+                <button class="grid-item"><div class="photo-art"><div class="mountain"></div><div class="mountain second"></div><div class="lake"></div></div><span class="grid-check">✓</span><span class="video-duration">0:42</span></button>
+                <button class="grid-item selected"><div class="photo-art"><div class="mountain"></div><div class="mountain second"></div><div class="lake"></div></div><span class="grid-check">✓</span></button>
+                <button class="grid-item"><div class="photo-art"><div class="mountain"></div><div class="mountain second"></div><div class="lake"></div></div><span class="grid-check">✓</span></button>
+                <button class="grid-item"><div class="photo-art"><div class="mountain"></div><div class="mountain second"></div><div class="lake"></div></div><span class="grid-check">✓</span><span class="video-duration">1:08</span></button>
+                <button class="grid-item"><div class="photo-art"><div class="mountain"></div><div class="mountain second"></div><div class="lake"></div></div><span class="grid-check">✓</span></button>
+                <button class="grid-item"><div class="photo-art"><div class="mountain"></div><div class="mountain second"></div><div class="lake"></div></div><span class="grid-check">✓</span></button>
+                <button class="grid-item"><div class="photo-art"><div class="mountain"></div><div class="mountain second"></div><div class="lake"></div></div><span class="grid-check">✓</span><span class="video-duration">0:19</span></button>
+                <button class="grid-item"><div class="photo-art"><div class="mountain"></div><div class="mountain second"></div><div class="lake"></div></div><span class="grid-check">✓</span></button>
+              </div>
+              <div class="batch-bar">
+                <button class="batch-action" data-action="save"><svg class="icon"><use href="#i-download"/></svg><span>Save</span></button>
+                <button class="batch-action" data-action="share"><svg class="icon"><use href="#i-share"/></svg><span>Share</span></button>
+                <button class="batch-action batch-forward" data-action="forward"><svg class="icon"><use href="#i-forward"/></svg><span>Forward</span></button>
+                <button class="batch-action" data-action="bookmark"><svg class="icon"><use href="#i-bookmark"/></svg><span>Bookmark</span></button>
+                <button class="batch-action" data-action="delete"><svg class="icon"><use href="#i-trash"/></svg><span>Delete</span></button>
+              </div>
+            </section>
+
+            <section class="screen storage-screen" data-screen="storage" aria-label="Media and storage settings mockup">
+              <header class="simple-app-bar">
+                <button class="round-button subtle screen-back" data-back="chat" aria-label="Back"><svg class="icon"><use href="#i-back"/></svg></button>
+                <div class="simple-title"><strong>Media &amp; storage</strong><span>Downloads and local copies</span></div>
+              </header>
+              <div class="storage-content">
+                <div class="storage-hero">
+                  <div class="storage-ring"></div>
+                  <div class="storage-copy"><strong>Media uses 1.8 GB</strong><p>Only app-owned local copies are counted. Files saved to Photos or Files remain yours.</p><div class="storage-key"><span><i></i>Images 1.1 GB</span><span><i style="background:var(--violet)"></i>Video 0.7 GB</span></div></div>
+                </div>
+
+                <div class="settings-section-title">Automatic downloads</div>
+                <div class="settings-card">
+                  <div class="setting-row"><span class="setting-icon"><svg class="icon"><use href="#i-wifi"/></svg></span><span class="setting-copy"><strong>Images on Wi-Fi</strong><span>1:1, discussions and announcements</span></span><button class="toggle on" aria-label="Toggle images on Wi-Fi"></button></div>
+                  <div class="setting-row"><span class="setting-icon"><svg class="icon"><use href="#i-cell"/></svg></span><span class="setting-copy"><strong>Images on mobile data</strong><span>Keep data use predictable</span></span><button class="toggle on" aria-label="Toggle images on mobile data"></button></div>
+                  <div class="setting-row"><span class="setting-icon"><svg class="icon"><use href="#i-play"/></svg></span><span class="setting-copy"><strong>Videos on mobile data</strong><span>Tap to download when disabled</span></span><button class="toggle" aria-label="Toggle videos on mobile data"></button></div>
+                </div>
+
+                <div class="settings-section-title">Conversation copy</div>
+                <div class="clear-card">
+                  <span><strong>Clear local copies</strong><span>Messages stay. Old relay media may no longer be downloadable.</span></span>
+                  <button class="clear-button" data-action="clear">Review</button>
+                </div>
+              </div>
+            </section>
+
+            <div class="scrim close-overlay"></div>
+
+            <section class="bottom-sheet" id="action-sheet" role="dialog" aria-modal="true" aria-label="Media actions">
+              <div class="sheet-handle"></div>
+              <div class="sheet-head">
+                <div class="sheet-thumb"><div class="photo-art"><div class="mountain"></div><div class="lake"></div></div></div>
+                <div class="sheet-title"><strong>Media actions</strong><span><span class="lane-name">Maya Chen</span> · <span class="media-kind">Image</span> · 20:39</span></div>
+                <button class="sheet-close close-overlay" aria-label="Close"><svg class="icon"><use href="#i-x"/></svg></button>
+              </div>
+              <div class="protection-notice"><svg class="icon"><use href="#i-lock"/></svg><span>This media is protected. Save, Share, Forward, bookmarks and PiP are unavailable.</span></div>
+              <div class="quick-actions">
+                <button class="quick-action" data-action="save" data-export="true"><svg class="icon"><use href="#i-download"/></svg><span>Save</span></button>
+                <button class="quick-action" data-action="share" data-export="true"><svg class="icon"><use href="#i-share"/></svg><span>Share</span></button>
+                <button class="quick-action" data-action="forward" data-export="true"><svg class="icon"><use href="#i-forward"/></svg><span>Forward</span></button>
+                <button class="quick-action reply-action" data-action="reply"><svg class="icon"><use href="#i-reply"/></svg><span>Reply</span></button>
+                <button class="quick-action reply-private-action" data-action="private-reply"><svg class="icon"><use href="#i-message"/></svg><span>Private reply</span></button>
+              </div>
+              <div class="sheet-list">
+                <button class="sheet-row" data-action="info"><svg class="icon"><use href="#i-info"/></svg><span>Media info</span></button>
+                <button class="sheet-row" data-action="bookmark"><svg class="icon"><use href="#i-bookmark"/></svg><span>Bookmark</span></button>
+                <button class="sheet-row" data-action="goto"><svg class="icon"><use href="#i-message"/></svg><span>Go to message</span></button>
+                <button class="sheet-row planned-row" data-action="report"><svg class="icon"><use href="#i-flag"/></svg><span>Report media</span><small class="later-badge">Decision gate</small></button>
+                <button class="sheet-row danger" data-action="delete"><svg class="icon"><use href="#i-trash"/></svg><span>Delete for me</span></button>
+              </div>
+            </section>
+
+            <section class="bottom-sheet" id="save-sheet" role="dialog" aria-modal="true" aria-label="Save media">
+              <div class="sheet-handle"></div>
+              <div class="sheet-head"><div class="sheet-title"><strong>Save a copy</strong><span>The message stays unchanged in Mknoon.</span></div><button class="sheet-close close-overlay" aria-label="Close"><svg class="icon"><use href="#i-x"/></svg></button></div>
+              <div class="choice-grid">
+                <button class="choice-card" data-save-result="Saved to Photos"><span class="choice-icon"><svg class="icon"><use href="#i-image"/></svg></span><strong>Photos</strong><span>Add to your device photo library</span></button>
+                <button class="choice-card" data-save-result="Files picker opened"><span class="choice-icon"><svg class="icon"><use href="#i-folder"/></svg></span><strong>Files</strong><span>Choose a folder or provider</span></button>
+              </div>
+            </section>
+
+            <section class="bottom-sheet" id="forward-sheet" role="dialog" aria-modal="true" aria-label="Forward media">
+              <div class="sheet-handle"></div>
+              <div class="sheet-head"><div class="sheet-title"><strong>Forward in Mknoon</strong><span>A fresh encrypted copy is made for every target.</span></div><button class="sheet-close close-overlay" aria-label="Close"><svg class="icon"><use href="#i-x"/></svg></button></div>
+              <div class="picker-search"><svg class="icon"><use href="#i-search"/></svg>Search people and discussions</div>
+              <div class="target-list">
+                <button class="target-row selected"><span class="target-avatar"></span><span class="target-copy"><strong>Leila Haddad</strong><span>Contact · active now</span></span><span class="target-check">✓</span></button>
+                <button class="target-row"><span class="target-avatar group"></span><span class="target-copy"><strong>Design Circle</strong><span>Discussion · 12 members</span></span><span class="target-check">✓</span></button>
+                <button class="target-row"><span class="target-avatar group"></span><span class="target-copy"><strong>Weekend Crew</strong><span>Discussion · 6 members</span></span><span class="target-check">✓</span></button>
+              </div>
+              <div class="caption-input">Moonrise over the old reservoir.</div>
+              <button class="primary-sheet-button" data-forward-send>Forward to selected targets</button>
+            </section>
+
+            <section class="bottom-sheet" id="info-sheet" role="dialog" aria-modal="true" aria-label="Media information">
+              <div class="sheet-handle"></div>
+              <div class="sheet-head"><div class="sheet-title"><strong>Media info</strong><span>Local, privacy-safe details</span></div><button class="sheet-close close-overlay" aria-label="Close"><svg class="icon"><use href="#i-x"/></svg></button></div>
+              <div class="info-grid">
+                <div class="info-cell"><span>From</span><strong class="lane-name">Maya Chen</strong></div>
+                <div class="info-cell"><span>Sent</span><strong>Today, 20:39</strong></div>
+                <div class="info-cell"><span>Type</span><strong class="media-info-type">JPEG image</strong></div>
+                <div class="info-cell"><span>Size</span><strong class="media-info-size">2.4 MB</strong></div>
+                <div class="info-cell"><span>Dimensions</span><strong class="media-info-dim">4032 × 3024</strong></div>
+                <div class="info-cell"><span>Integrity</span><strong>Verified</strong></div>
+              </div>
+            </section>
+
+            <section class="bottom-sheet" id="delete-sheet" role="dialog" aria-modal="true" aria-label="Delete media message">
+              <div class="sheet-handle"></div>
+              <div class="sheet-head"><div class="sheet-title"><strong>Delete this message?</strong><span>Delete for me</span></div><button class="sheet-close close-overlay" aria-label="Close"><svg class="icon"><use href="#i-x"/></svg></button></div>
+              <div class="confirm-copy">The message and all of its app-owned attachments will be removed from this device. Copies already saved to Photos or Files are not affected.</div>
+              <div class="confirm-actions"><button class="confirm-button close-overlay">Cancel</button><button class="confirm-button danger" data-delete-confirm>Delete for me</button></div>
+            </section>
+
+            <div class="toast" role="status" aria-live="polite"><svg class="icon"><use href="#i-check"/></svg><span id="toast-copy">Done</span></div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="rail right-rail" aria-label="Design rationale">
+        <section class="rail-card note-card">
+          <div class="note-label" id="context-label">1:1 · conversation</div>
+          <h2 id="context-title">The action is close to the media.</h2>
+          <p id="context-copy">A tap opens the viewer; overflow gives the same safe actions without forcing users to leave the thread.</p>
+          <div class="boundary"><svg class="icon"><use href="#i-lock"/></svg><span id="boundary-copy">Save and external Share stay outside messaging transport. Delete for me remains local.</span></div>
+        </section>
+
+        <section class="rail-card">
+          <div class="rail-card-head">Evolution map</div>
+          <div class="horizon-stack">
+            <div class="horizon now"><div class="horizon-head"><span class="horizon-name">Now</span><span class="horizon-state">Ready</span></div><p>Save, Files, external Share, single Forward, Delete, Info, Reply, Shared Media, bookmarks, storage and video controls.</p></div>
+            <div class="horizon next"><div class="horizon-head"><span class="horizon-name">Next</span><span class="horizon-state">Evidence</span></div><p>Reporting, private reply, view-once/disappearing rules and multi-source Forward after product and authority decisions.</p></div>
+            <div class="horizon future"><div class="horizon-head"><span class="horizon-name">Future</span><span class="horizon-state">Native proof</span></div><p>Video-only PiP and cross-device private-state behavior only after platform ownership and privacy evidence.</p></div>
+          </div>
+        </section>
+
+        <section class="rail-card">
+          <div class="rail-card-head">Primary flow</div>
+          <div class="flow-map">
+            <div class="flow-step"><span class="flow-num">1</span><span>Open or long-press received media</span></div>
+            <div class="flow-step"><span class="flow-num">2</span><span>Choose a capability-derived action</span></div>
+            <div class="flow-step"><span class="flow-num">3</span><span>Re-check current file and policy</span></div>
+            <div class="flow-step"><span class="flow-num">4</span><span>Show a truthful per-action result</span></div>
+          </div>
+        </section>
+      </aside>
+    </section>
+
+    <footer class="footer">
+      <span><strong>Self-contained prototype.</strong> No production code or network behavior is used.</span>
+      <span>44px+ touch targets · light/dark · large type · RTL · reduced-motion aware.</span>
+    </footer>
+  </main>
+
+  <script>
+    (function () {
+      var state = {
+        lane: "direct",
+        surface: "chat",
+        release: "now",
+        media: "image",
+        privacy: "ordinary",
+        theme: "dark",
+        font: "normal",
+        direction: "ltr"
+      };
+
+      var phone = document.getElementById("phone");
+      var stageStatus = document.getElementById("stage-status");
+      var toast = document.querySelector(".toast");
+      var toastCopy = document.getElementById("toast-copy");
+      var toastTimer;
+
+      var laneData = {
+        direct: {
+          name: "Maya Chen",
+          meta: "Online",
+          badge: "1:1",
+          avatarClass: "",
+          label: "1:1",
+          boundary: "Save and external Share stay outside messaging transport. Delete for me remains local."
+        },
+        group: {
+          name: "Night Shift",
+          meta: "8 members · 3 online",
+          badge: "Discussion",
+          avatarClass: "group",
+          label: "Discussion",
+          boundary: "Forward creates new destination encryption. Group topic, authorization, fanout and retry semantics stay unchanged."
+        },
+        announcement: {
+          name: "Product Signals",
+          meta: "1.2k readers",
+          badge: "Announcement",
+          avatarClass: "announcement",
+          label: "Announcement",
+          boundary: "Reader actions never publish into the source announcement. Admin-only authoring remains enforced."
+        }
+      };
+
+      var surfaceData = {
+        chat: ["The action is close to the media.", "A tap opens the viewer; overflow gives the same safe actions without forcing users to leave the thread."],
+        viewer: ["The viewer knows the current item.", "After every swipe, labels and actions follow the visible attachment rather than a stale file path."],
+        library: ["Shared Media becomes a useful memory.", "Paging, filters, bookmarks and Go to Message make old media reachable without loading the entire history."],
+        storage: ["Downloads are a user choice.", "Per-lane controls separate app-local copies from irreversible Photos, Files and external Share exports."]
+      };
+
+      function iconUse(id) {
+        return '<svg class="icon"><use href="#' + id + '"/></svg>';
+      }
+
+      function setSurface(surface) {
+        state.surface = surface;
+        document.querySelectorAll(".screen").forEach(function (screen) {
+          screen.classList.toggle("active", screen.getAttribute("data-screen") === surface);
+        });
+        document.querySelectorAll('[data-set="surface"]').forEach(function (button) {
+          button.classList.toggle("active", button.getAttribute("data-value") === surface);
+        });
+        closeOverlays();
+        updateNotes();
+      }
+
+      function syncControls(key) {
+        document.querySelectorAll('[data-set="' + key + '"]').forEach(function (button) {
+          button.classList.toggle("active", button.getAttribute("data-value") === state[key]);
+        });
+      }
+
+      function render() {
+        phone.setAttribute("data-lane", state.lane);
+        phone.setAttribute("data-theme", state.theme);
+        phone.setAttribute("data-release", state.release);
+        phone.setAttribute("data-media", state.media);
+        phone.setAttribute("data-privacy", state.privacy);
+        phone.setAttribute("data-font", state.font);
+        phone.setAttribute("dir", state.direction);
+
+        var lane = laneData[state.lane];
+        document.querySelectorAll(".lane-name").forEach(function (node) { node.textContent = lane.name; });
+        document.querySelectorAll(".lane-meta").forEach(function (node) { node.textContent = lane.meta; });
+        document.querySelectorAll(".lane-badge").forEach(function (node) { node.textContent = lane.badge; });
+        document.querySelectorAll(".lane-avatar").forEach(function (node) {
+          node.className = "avatar lane-avatar " + lane.avatarClass;
+          node.innerHTML = state.lane === "announcement" ? iconUse("i-megaphone") : "";
+        });
+
+        var kind = state.media === "video" ? "Video" : "Image";
+        document.querySelectorAll(".media-kind").forEach(function (node) { node.textContent = kind; });
+        document.querySelectorAll(".media-detail").forEach(function (node) {
+          node.textContent = state.media === "video" ? "MP4 · 42 sec · 18.6 MB" : "JPEG · 2.4 MB";
+        });
+        document.querySelectorAll(".media-info-type").forEach(function (node) { node.textContent = state.media === "video" ? "MP4 video" : "JPEG image"; });
+        document.querySelectorAll(".media-info-size").forEach(function (node) { node.textContent = state.media === "video" ? "18.6 MB" : "2.4 MB"; });
+        document.querySelectorAll(".media-info-dim").forEach(function (node) { node.textContent = state.media === "video" ? "1080p · 0:42" : "4032 × 3024"; });
+
+        stageStatus.textContent = state.release === "now" ? "Implementation-ready slice" : "Full vision · evidence-gated";
+        stageStatus.style.borderColor = state.release === "now" ? "rgba(29,185,84,.25)" : "rgba(244,192,107,.32)";
+        stageStatus.style.background = state.release === "now" ? "rgba(29,185,84,.08)" : "rgba(244,192,107,.08)";
+        stageStatus.style.color = state.release === "now" ? "#88e7aa" : "#f5d396";
+
+        syncControls("lane");
+        syncControls("release");
+        syncControls("media");
+        syncControls("privacy");
+        updateNotes();
+      }
+
+      function updateNotes() {
+        var lane = laneData[state.lane];
+        var surface = surfaceData[state.surface];
+        document.getElementById("context-label").textContent = lane.label + " · " + state.surface;
+        document.getElementById("context-title").textContent = surface[0];
+        document.getElementById("context-copy").textContent = surface[1];
+        document.getElementById("boundary-copy").textContent = lane.boundary;
+      }
+
+      function closeOverlays() {
+        document.querySelector(".scrim").classList.remove("open");
+        document.querySelectorAll(".bottom-sheet").forEach(function (sheet) { sheet.classList.remove("open"); });
+      }
+
+      function openSheet(id) {
+        closeOverlays();
+        document.querySelector(".scrim").classList.add("open");
+        document.getElementById(id).classList.add("open");
+      }
+
+      function showToast(message, icon) {
+        clearTimeout(toastTimer);
+        toast.querySelector("use").setAttribute("href", "#" + (icon || "i-check"));
+        toastCopy.textContent = message;
+        toast.classList.add("show");
+        toastTimer = setTimeout(function () { toast.classList.remove("show"); }, 2200);
+      }
+
+      document.querySelectorAll("[data-set]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          var key = button.getAttribute("data-set");
+          var value = button.getAttribute("data-value");
+          state[key] = value;
+          if (key === "surface") {
+            setSurface(value);
+          } else {
+            render();
+          }
+        });
+      });
+
+      document.querySelectorAll("[data-utility]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          var utility = button.getAttribute("data-utility");
+          if (utility === "theme") state.theme = state.theme === "dark" ? "light" : "dark";
+          if (utility === "font") state.font = state.font === "normal" ? "large" : "normal";
+          if (utility === "direction") state.direction = state.direction === "ltr" ? "rtl" : "ltr";
+          button.classList.toggle("active");
+          render();
+        });
+      });
+
+      document.querySelectorAll(".screen-back").forEach(function (button) {
+        button.addEventListener("click", function () { setSurface(button.getAttribute("data-back") || "chat"); });
+      });
+
+      document.querySelector(".media-open").addEventListener("click", function () { setSurface("viewer"); });
+      document.querySelectorAll(".open-actions").forEach(function (button) {
+        button.addEventListener("click", function () { openSheet("action-sheet"); });
+      });
+      document.querySelectorAll(".close-overlay").forEach(function (button) { button.addEventListener("click", closeOverlays); });
+
+      document.querySelectorAll("[data-action]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          var action = button.getAttribute("data-action");
+          if (state.privacy === "protected" && button.getAttribute("data-export") === "true") {
+            showToast("Protected media cannot leave this viewer", "i-lock");
+            return;
+          }
+          if (action === "save") return openSheet("save-sheet");
+          if (action === "forward") return openSheet("forward-sheet");
+          if (action === "share") { closeOverlays(); return showToast("System share sheet opened", "i-share"); }
+          if (action === "info") return openSheet("info-sheet");
+          if (action === "delete") return openSheet("delete-sheet");
+          if (action === "bookmark") { closeOverlays(); return showToast("Bookmarked locally", "i-bookmark"); }
+          if (action === "goto") { closeOverlays(); setSurface("chat"); return showToast("Jumped to the original message", "i-message"); }
+          if (action === "reply") { closeOverlays(); setSurface("chat"); return showToast("Replying to media", "i-reply"); }
+          if (action === "private-reply") { closeOverlays(); return showToast("1:1 draft opened — nothing sent yet", "i-message"); }
+          if (action === "report") { closeOverlays(); return showToast("Report flow preview — authority contract required", "i-flag"); }
+          if (action === "pip") return showToast("PiP preview — native proof required", "i-pip");
+          if (action === "speed") {
+            var values = ["1×", "1.5×", "2×", "0.5×"];
+            var next = (values.indexOf(button.textContent.trim()) + 1) % values.length;
+            button.textContent = values[next];
+            return;
+          }
+          if (action === "clear") return showToast("Reviewing 1.8 GB of app-owned copies", "i-database");
+        });
+      });
+
+      document.querySelectorAll("[data-save-result]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          closeOverlays();
+          showToast(button.getAttribute("data-save-result"), "i-download");
+        });
+      });
+
+      document.querySelectorAll(".target-row").forEach(function (button) {
+        button.addEventListener("click", function () { button.classList.toggle("selected"); });
+      });
+
+      document.querySelector("[data-forward-send]").addEventListener("click", function () {
+        var selected = document.querySelectorAll(".target-row.selected").length;
+        closeOverlays();
+        showToast("Forward prepared for " + selected + (selected === 1 ? " target" : " targets"), "i-forward");
+      });
+
+      document.querySelector("[data-delete-confirm]").addEventListener("click", function () {
+        closeOverlays();
+        showToast("Deleted locally · saved copies untouched", "i-trash");
+      });
+
+      document.querySelector(".select-media").addEventListener("click", function (event) {
+        var screen = document.querySelector(".library-screen");
+        screen.classList.toggle("selecting");
+        event.currentTarget.textContent = screen.classList.contains("selecting") ? "Done" : "Select";
+      });
+
+      document.querySelectorAll(".grid-item").forEach(function (button) {
+        button.addEventListener("click", function () {
+          var screen = document.querySelector(".library-screen");
+          if (screen.classList.contains("selecting")) {
+            button.classList.toggle("selected");
+          } else {
+            setSurface("viewer");
+          }
+        });
+      });
+
+      document.querySelectorAll(".filter-chip").forEach(function (button) {
+        button.addEventListener("click", function () {
+          document.querySelectorAll(".filter-chip").forEach(function (chip) { chip.classList.remove("active"); });
+          button.classList.add("active");
+          showToast(button.textContent + " filter applied", "i-grid");
+        });
+      });
+
+      document.querySelectorAll(".toggle").forEach(function (button) {
+        button.addEventListener("click", function () {
+          button.classList.toggle("on");
+          showToast(button.classList.contains("on") ? "Automatic download enabled" : "Tap-to-download enabled", "i-download");
+        });
+      });
+
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") closeOverlays();
+      });
+
+      render();
+    }());
+  </script>
+</body>
+</html>

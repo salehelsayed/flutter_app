@@ -17,6 +17,7 @@ void main() {
   });
 
   tearDown(() {
+    debugResetRecentRemoteNotificationGate();
     try {
       support.deleteSync(recursive: true);
     } catch (_) {}
@@ -70,10 +71,55 @@ void main() {
       );
 
       expect(
+        await recentRemoteNotificationGate.resolveFilePath(),
+        '${appGroup.path}/mknoon_recent_remote_notifications.json',
+      );
+
+      expect(
         await recentRemoteNotificationGate.consumeIfRecentAnnouncement(
           payload: 'peer-1',
           messageId: 'm-1',
         ),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'configured gate retries App Group resolution without pinning systemTemp',
+    () async {
+      var appGroupReady = false;
+      final tempFallback = File(
+        '${Directory.systemTemp.path}/mknoon_recent_remote_notifications.json',
+      );
+      if (tempFallback.existsSync()) tempFallback.deleteSync();
+
+      configureRecentRemoteNotificationGateForIos(
+        channel: AppGroupPathChannel(
+          invoker: (_, _) async => appGroupReady ? appGroup.path : null,
+        ),
+        supportDirectory: () async => support,
+      );
+
+      await recentRemoteNotificationGate.markAnnouncement(
+        payload: 'peer-race',
+        messageId: 'event-race',
+      );
+      expect(tempFallback.existsSync(), isFalse);
+
+      appGroupReady = true;
+      await recentRemoteNotificationGate.markAnnouncement(
+        payload: 'peer-race',
+        messageId: 'event-race',
+      );
+      expect(
+        await recentRemoteNotificationGate.resolveFilePath(),
+        '${appGroup.path}/mknoon_recent_remote_notifications.json',
+      );
+      expect(
+        File(
+          '${appGroup.path}/mknoon_recent_remote_notifications.json',
+        ).existsSync(),
         isTrue,
       );
     },

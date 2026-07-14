@@ -10,6 +10,7 @@ import 'package:flutter_app/features/groups/domain/repositories/pending_sibling_
 class InMemoryGroupRepository
     implements
         GroupRepository,
+        GroupForwardAuthorizationSnapshotRepository,
         RemovedGroupMemberSnapshotRepository,
         GroupMemberDeviceSnapshotRepository,
         PendingSiblingDeviceRepository,
@@ -151,6 +152,31 @@ class InMemoryGroupRepository
     if (group != null) {
       _groups[id] = group.copyWith(isArchived: false, archivedAt: null);
     }
+  }
+
+  @override
+  Future<GroupForwardAuthorizationSnapshot?>
+  loadGroupForwardAuthorizationSnapshot(String groupId) async {
+    // Capture every component without an await so test mutations cannot
+    // interleave a mixed group/member/key view.
+    final group = _groups[groupId];
+    final members = (_members[groupId]?.values.toList() ?? <GroupMember>[])
+      ..sort((a, b) {
+        final joined = a.joinedAt.compareTo(b.joinedAt);
+        return joined != 0 ? joined : a.peerId.compareTo(b.peerId);
+      });
+    final keys = _keys[groupId];
+    int? latestKeyGeneration;
+    if (keys != null && keys.isNotEmpty) {
+      latestKeyGeneration = keys
+          .map((key) => key.keyGeneration)
+          .reduce((a, b) => a > b ? a : b);
+    }
+    return GroupForwardAuthorizationSnapshot(
+      group: group,
+      members: List<GroupMember>.unmodifiable(members),
+      latestKeyGeneration: latestKeyGeneration,
+    );
   }
 
   // --- Members ---

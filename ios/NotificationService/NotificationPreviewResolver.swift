@@ -264,19 +264,24 @@ final class NotificationPreviewResolver {
   private let dedupeStore: PushDedupeStoring?
   private let toneLeaseStore: PushToneLeaseStoring?
   private let eventEmitter: PushPreviewEventEmitting
+  private let localeIdentifierProvider: () -> String
 
   init(
     keyReader: PushKeyReading,
     decryptor: PushPayloadDecrypting,
     dedupeStore: PushDedupeStoring?,
     toneLeaseStore: PushToneLeaseStoring? = nil,
-    eventEmitter: PushPreviewEventEmitting = LogPushPreviewEventEmitter()
+    eventEmitter: PushPreviewEventEmitting = LogPushPreviewEventEmitter(),
+    localeIdentifierProvider: @escaping () -> String = {
+      Locale.preferredLanguages.first ?? Locale.current.identifier
+    }
   ) {
     self.keyReader = keyReader
     self.decryptor = decryptor
     self.dedupeStore = dedupeStore
     self.toneLeaseStore = toneLeaseStore
     self.eventEmitter = eventEmitter
+    self.localeIdentifierProvider = localeIdentifierProvider
   }
 
   func resolve(
@@ -454,10 +459,14 @@ final class NotificationPreviewResolver {
       }
 
       emitDecryptOK(kind: "chat")
-      let previewBody = pushPreviewBody(
-        text: trimmedString(payload["text"]) ?? "",
-        media: payload["media"]
-      )
+      let previewBody = payload.keys.contains("privateMedia")
+        ? privateMediaNotificationBody(
+          localeIdentifier: localeIdentifierProvider()
+        )
+        : pushPreviewBody(
+          text: trimmedString(payload["text"]) ?? "",
+          media: payload["media"]
+        )
       return prepareOrdinaryDisplay(
         type: "new_message",
         messageId: messageId,
@@ -1062,6 +1071,22 @@ final class NotificationPreviewResolver {
           eventKind: "group"
         )
       }
+      if containsGroupPrivateMediaPolicyMarker(payload: payload, extra: extra) {
+        emitDecryptOK(kind: "group")
+        return prepareOrdinaryDisplay(
+          type: "group_message",
+          messageId: messageId,
+          conversationId: "group:\(groupId)",
+          title: "Mknoon",
+          body: groupPrivateMediaNotificationBody(
+            localeIdentifier: localeIdentifierProvider()
+          ),
+          threadIdentifier: groupId,
+          didDecrypt: true,
+          reason: "group"
+        )
+      }
+
       let text = trimmedString(payload["text"]) ?? ""
       let systemPreview = groupSystemPreviewBody(
         text: text,
@@ -2861,6 +2886,40 @@ func pushPreviewBody(text: String, media: Any?) -> String {
   }
 }
 
+private func privateMediaNotificationBody(localeIdentifier: String) -> String {
+  switch Locale(identifier: localeIdentifier).languageCode?.lowercased() {
+  case "ar":
+    return "وسائط خاصة"
+  case "de":
+    return "Private Medien"
+  default:
+    return "Private media"
+  }
+}
+
+private func containsGroupPrivateMediaPolicyMarker(
+  payload: [String: Any],
+  extra: [String: Any]?
+) -> Bool {
+  let policyKeys = [
+    "mediaPolicyVersion",
+    "mediaLifecycle",
+    "mediaDurationSeconds",
+    "mediaProtected",
+  ]
+  return policyKeys.contains { payload.keys.contains($0) || extra?.keys.contains($0) == true }
+}
+
+private func groupPrivateMediaNotificationBody(localeIdentifier: String) -> String {
+  switch Locale(identifier: localeIdentifier).languageCode?.lowercased() {
+  case "ar":
+    return "وسائط خاصة جديدة"
+  case "de":
+    return "Neue private Medien"
+  default:
+    return "New private media"
+  }
+}
 
 private func capPreview(_ text: String, maxScalars: Int = 140) -> String {
   if text.unicodeScalars.count <= maxScalars {

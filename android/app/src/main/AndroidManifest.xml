@@ -19,6 +19,12 @@
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules">
+        <!-- Flutter 3.41 only honors ImpellerBackend in non-release builds.
+             Disable Impeller so release/profile builds use the hardware-
+             accelerated Skia/OpenGLES path instead of auto-selecting Vulkan. -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -84,6 +90,15 @@
                 <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".ReceivedVideoPictureInPictureActivity"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:hardwareAccelerated="true"
+            android:resizeableActivity="true"
+            android:supportsPictureInPicture="true"
+            android:theme="@style/NormalTheme" />
         <!-- Keeps the app process alive while a Move Account transfer is in
              flight; started/stopped via the mknoon/migration_keepalive
              method channel. -->

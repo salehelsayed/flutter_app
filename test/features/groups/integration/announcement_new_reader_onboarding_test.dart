@@ -13,9 +13,7 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_group_pubsub_network.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/group_test_user.dart';
-
-const _downloadedBytesHash =
-    '55e5509f8052998294266ee5b50cb592938191fb5d67f73cac2e60b0276b1bdd';
+import '../../../shared/fixtures/media_bytes.dart';
 
 class _DownloadWritingBridge extends FakeBridge {
   @override
@@ -33,9 +31,14 @@ class _DownloadWritingBridge extends FakeBridge {
       final outputPath = payload['outputPath'] as String;
       final file = File(outputPath);
       await file.parent.create(recursive: true);
-      await file.writeAsBytes(<int>[5, 6, 7, 8]);
+      final bytes = validMediaFixtureBytesForPath(outputPath);
+      await file.writeAsBytes(bytes);
 
-      return jsonEncode({'ok': true, 'id': payload['id'], 'size': 4});
+      return jsonEncode({
+        'ok': true,
+        'id': payload['id'],
+        'size': bytes.length,
+      });
     }
     return super.send(message);
   }
@@ -58,20 +61,20 @@ void main() {
     int? height,
     int? durationMs,
     List<double>? waveform,
-    String contentHash = _downloadedBytesHash,
+    String? contentHash,
   }) {
     return MediaAttachment(
       id: id,
       messageId: '',
       mime: mime,
-      size: size,
+      size: size == 4 ? validMediaFixtureBytesForMime(mime).length : size,
       mediaType: MediaAttachment.mediaTypeFromMime(mime),
       width: width,
       height: height,
       durationMs: durationMs,
       localPath: 'pending_uploads/$id',
       downloadStatus: 'done',
-      contentHash: contentHash,
+      contentHash: contentHash ?? validMediaFixtureHashForMime(mime),
       encryptionKeyBase64: 'key-$id',
       encryptionNonce: 'nonce-$id',
       encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
@@ -258,7 +261,10 @@ void main() {
             (message) => message.text == text,
           );
           final attachments = await reader.mediaAttachmentRepo
-              .getAttachmentsForMessage(message.id, owner: MediaOwnerLane.group);
+              .getAttachmentsForMessage(
+                message.id,
+                owner: MediaOwnerLane.group,
+              );
           expect(attachments, hasLength(1), reason: text);
           return attachments.single;
         }

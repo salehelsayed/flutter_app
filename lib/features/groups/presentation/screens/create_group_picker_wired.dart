@@ -39,6 +39,7 @@ class CreateGroupPickerWired extends StatefulWidget {
   final GroupRepository groupRepo;
   final GroupMessageRepository msgRepo;
   final GroupMessageListener groupMessageListener;
+  final OpenAnnouncementSenderConversation? openAnnouncementSenderConversation;
   final GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo;
   final ContactRepository contactRepo;
   final Bridge bridge;
@@ -62,6 +63,7 @@ class CreateGroupPickerWired extends StatefulWidget {
     required this.groupRepo,
     required this.msgRepo,
     required this.groupMessageListener,
+    this.openAnnouncementSenderConversation,
     this.inviteDeliveryAttemptRepo,
     required this.contactRepo,
     required this.bridge,
@@ -206,6 +208,8 @@ class _CreateGroupPickerWiredState extends State<CreateGroupPickerWired> {
             groupRepo: widget.groupRepo,
             msgRepo: widget.msgRepo,
             groupMessageListener: widget.groupMessageListener,
+            openAnnouncementSenderConversation:
+                widget.openAnnouncementSenderConversation,
             inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
             bridge: widget.bridge,
             identityRepo: widget.identityRepo,

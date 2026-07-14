@@ -12,7 +12,8 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 /// so a wrong enum at a caller fails the test instead of being hidden by an
 /// untyped fake. Seeded attachments without an explicit lane default to
 /// [seedOwnerLane] (direct unless overridden).
-class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
+class FakeMediaAttachmentRepository
+    implements MediaAttachmentRepository, MediaAttachmentByIdLookup {
   FakeMediaAttachmentRepository({this.seedOwnerLane = MediaOwnerLane.direct});
 
   final List<MediaAttachment> _attachments = [];
@@ -36,8 +37,8 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 
   MediaAttachment _withSeedLane(MediaAttachment attachment) =>
       attachment.ownerLane == null
-          ? attachment.copyWith(ownerLane: seedOwnerLane)
-          : attachment;
+      ? attachment.copyWith(ownerLane: seedOwnerLane)
+      : attachment;
 
   /// Seed attachments for testing.
   void seed(List<MediaAttachment> attachments) {
@@ -101,6 +102,14 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
     return _attachments
         .where((a) => a.messageId == messageId && a.ownerLane == owner)
         .toList();
+  }
+
+  @override
+  Future<MediaAttachment?> getAttachmentById(String id) async {
+    for (final attachment in _attachments) {
+      if (attachment.id == id) return attachment;
+    }
+    return null;
   }
 
   @override
@@ -185,8 +194,7 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   }) async {
     return _attachments
         .where(
-          (a) =>
-              a.downloadStatus == 'upload_pending' && a.ownerLane == owner,
+          (a) => a.downloadStatus == 'upload_pending' && a.ownerLane == owner,
         )
         .toList();
   }

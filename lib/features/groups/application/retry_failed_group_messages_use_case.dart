@@ -7,6 +7,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -139,6 +140,8 @@ Future<int> retryFailedGroupMessages({
   required IdentityRepository identityRepo,
   required Bridge bridge,
   required MediaAttachmentRepository mediaAttachmentRepo,
+  GroupPrivateMediaAvailability privateMediaAvailability =
+      productionGroupPrivateMediaAvailability,
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
 }) {
   return _retryFailedGroupMessagesInternal(
@@ -147,6 +150,7 @@ Future<int> retryFailedGroupMessages({
     identityRepo: identityRepo,
     bridge: bridge,
     mediaAttachmentRepo: mediaAttachmentRepo,
+    privateMediaAvailability: privateMediaAvailability,
     inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
     loadFailedMessages: groupMsgRepo.getRetryableOutgoingMessages,
   );
@@ -160,6 +164,8 @@ Future<int> retryFailedGroupMessage({
   required IdentityRepository identityRepo,
   required Bridge bridge,
   required MediaAttachmentRepository mediaAttachmentRepo,
+  GroupPrivateMediaAvailability privateMediaAvailability =
+      productionGroupPrivateMediaAvailability,
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
 }) {
   final normalizedMessageId = messageId.trim();
@@ -177,6 +183,7 @@ Future<int> retryFailedGroupMessage({
     identityRepo: identityRepo,
     bridge: bridge,
     mediaAttachmentRepo: mediaAttachmentRepo,
+    privateMediaAvailability: privateMediaAvailability,
     inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
     loadFailedMessages: () async {
       final message = await groupMsgRepo.getMessage(normalizedMessageId);
@@ -210,6 +217,7 @@ Future<int> _retryFailedGroupMessagesInternal({
   required IdentityRepository identityRepo,
   required Bridge bridge,
   required MediaAttachmentRepository mediaAttachmentRepo,
+  required GroupPrivateMediaAvailability privateMediaAvailability,
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
   required Future<List<GroupMessage>> Function() loadFailedMessages,
 }) async {
@@ -287,6 +295,7 @@ Future<int> _retryFailedGroupMessagesInternal({
       groupRepo: groupRepo,
       bridge: bridge,
       mediaAttachmentRepo: mediaAttachmentRepo,
+      privateMediaAvailability: privateMediaAvailability,
       identity: identity,
       inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
     );
@@ -323,9 +332,50 @@ _retryFailedGroupMessageCandidate({
   required GroupRepository groupRepo,
   required Bridge bridge,
   required MediaAttachmentRepository mediaAttachmentRepo,
+  required GroupPrivateMediaAvailability privateMediaAvailability,
   required dynamic identity,
   GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
 }) async {
+  if (msg.privateMediaPolicy.isUnsupported) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_GROUP_MESSAGES_MESSAGE_SKIPPED_UNSUPPORTED',
+      details: {
+        'messageId': _shortId(msg.id),
+        'reason': 'unsupported_private_media_policy',
+      },
+    );
+    return (retried: false, skippedUnsupported: true);
+  }
+  if (msg.privateMediaPolicy.isPrivate && !privateMediaAvailability.isEnabled) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_GROUP_MESSAGES_MESSAGE_SKIPPED_UNSUPPORTED',
+      details: {
+        'messageId': _shortId(msg.id),
+        'reason': 'private_media_unavailable',
+      },
+    );
+    return (retried: false, skippedUnsupported: true);
+  }
+  if (msg.privateMediaPolicy.isPrivate &&
+      !await requalifyCurrentPrivateGroupMediaSend(
+        groupRepo: groupRepo,
+        msgRepo: groupMsgRepo,
+        expectedParent: msg,
+        senderPeerId: identity.peerId,
+      )) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_GROUP_MESSAGES_MESSAGE_SKIPPED_UNSUPPORTED',
+      details: {
+        'messageId': _shortId(msg.id),
+        'reason': 'private_media_parent_not_currently_qualified',
+      },
+    );
+    return (retried: false, skippedUnsupported: true);
+  }
+
   final retryPayloadAvailable =
       (msg.inboxRetryPayload?.isNotEmpty ?? false) ||
       (msg.wireEnvelope?.isNotEmpty ?? false);
@@ -379,6 +429,11 @@ _retryFailedGroupMessageCandidate({
       timestamp: msg.timestamp,
       quotedMessageId: msg.quotedMessageId,
       isForwarded: msg.isForwarded,
+      privateMediaPolicy: msg.privateMediaPolicy,
+      privateMediaAvailability: privateMediaAvailability,
+      expectedPrivateParentBeforeDispatch: msg.privateMediaPolicy.isPrivate
+          ? msg
+          : null,
       mediaAttachments: retryAttachments,
       mediaAttachmentRepo: mediaAttachmentRepo,
       inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,

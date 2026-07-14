@@ -2507,22 +2507,23 @@ void main() {
       expect(find.textContaining(expected), findsOneWidget);
     });
 
-    testWidgets('ar renders the locale-formatted time (Eastern-Arabic digits)', (
-      tester,
-    ) async {
-      await tester.pumpWidget(
-        buildTestWidget(
-          messages: [timestampMessage()],
-          locale: const Locale('ar'),
-        ),
-      );
-      await tester.pump();
+    testWidgets(
+      'ar renders the locale-formatted time (Eastern-Arabic digits)',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [timestampMessage()],
+            locale: const Locale('ar'),
+          ),
+        );
+        await tester.pump();
 
-      final expected = intl.DateFormat.jm('ar').format(localAfternoon);
-      // Sanity: the Arabic format is not the ASCII-digit Western form.
-      expect(expected, isNot(contains('14:05')));
-      expect(find.textContaining(expected), findsOneWidget);
-    });
+        final expected = intl.DateFormat.jm('ar').format(localAfternoon);
+        // Sanity: the Arabic format is not the ASCII-digit Western form.
+        expect(expected, isNot(contains('14:05')));
+        expect(find.textContaining(expected), findsOneWidget);
+      },
+    );
   });
 
   // 136 Phase 4: wire bubble grouping into the group conversation screen.
@@ -2615,45 +2616,44 @@ void main() {
       },
     );
 
-    testWidgets(
-      'TC-24 group outgoing run groups and never shows an avatar',
-      (tester) async {
-        final base = DateTime.utc(2026, 2, 9, 15, 30);
-        await tester.pumpWidget(
-          buildTestWidget(
-            messages: [
-              groupMsg(
-                id: 'g-out-1',
-                senderPeerId: 'peer-1',
-                senderUsername: 'You',
-                text: 'My first',
-                timestamp: base,
-                isIncoming: false,
-              ),
-              groupMsg(
-                id: 'g-out-2',
-                senderPeerId: 'peer-1',
-                senderUsername: 'You',
-                text: 'My second',
-                timestamp: base.add(const Duration(minutes: 1)),
-                isIncoming: false,
-              ),
-            ],
-            initialLoadDone: true,
-          ),
-        );
-        await tester.pump();
+    testWidgets('TC-24 group outgoing run groups and never shows an avatar', (
+      tester,
+    ) async {
+      final base = DateTime.utc(2026, 2, 9, 15, 30);
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [
+            groupMsg(
+              id: 'g-out-1',
+              senderPeerId: 'peer-1',
+              senderUsername: 'You',
+              text: 'My first',
+              timestamp: base,
+              isIncoming: false,
+            ),
+            groupMsg(
+              id: 'g-out-2',
+              senderPeerId: 'peer-1',
+              senderUsername: 'You',
+              text: 'My second',
+              timestamp: base.add(const Duration(minutes: 1)),
+              isIncoming: false,
+            ),
+          ],
+          initialLoadDone: true,
+        ),
+      );
+      await tester.pump();
 
-        // Outgoing never shows an avatar in either balloon.
-        expect(avatarsInList(), findsNothing);
-        expect(liveLetterCard(tester, 'g-out-1').showAvatar, isFalse);
-        expect(liveLetterCard(tester, 'g-out-2').showAvatar, isFalse);
+      // Outgoing never shows an avatar in either balloon.
+      expect(avatarsInList(), findsNothing);
+      expect(liveLetterCard(tester, 'g-out-1').showAvatar, isFalse);
+      expect(liveLetterCard(tester, 'g-out-2').showAvatar, isFalse);
 
-        // The run groups: the first is first-in-run, the second continues it.
-        expect(liveLetterCard(tester, 'g-out-1').isFirstInGroup, isTrue);
-        expect(liveLetterCard(tester, 'g-out-2').isFirstInGroup, isFalse);
-      },
-    );
+      // The run groups: the first is first-in-run, the second continues it.
+      expect(liveLetterCard(tester, 'g-out-1').isFirstInGroup, isTrue);
+      expect(liveLetterCard(tester, 'g-out-2').isFirstInGroup, isFalse);
+    });
 
     testWidgets(
       'TC-25 group system row (sys- prefix) breaks the run and never shows '
@@ -2735,10 +2735,7 @@ void main() {
         await tester.pump();
 
         expect(find.byType(SwipeToQuoteBubble), findsOneWidget);
-        await tester.drag(
-          find.byType(SwipeToQuoteBubble),
-          const Offset(80, 0),
-        );
+        await tester.drag(find.byType(SwipeToQuoteBubble), const Offset(80, 0));
         await tester.pump();
         expect(quotedId, 'g-swipe-out');
 
@@ -2799,70 +2796,67 @@ void main() {
       },
     );
 
-    testWidgets(
-      'TC-27 group run detection uses rendered list adjacency '
-      '(reply-reordered, non-monotonic)',
-      (tester) async {
-        // Simulate orderGroupMessagesForTimeline output: a reply (later
-        // timestamp) is pulled directly under its quoted parent, so the
-        // RENDERED order interleaves senders and is NOT timestamp-monotonic.
-        // Raw-timestamp sort would group the two peer-2 messages together
-        // (and break the run differently); rendered adjacency must win.
-        final base = DateTime.utc(2026, 2, 9, 15, 30);
-        final messages = [
-          // peer-2 parent (earliest)
-          groupMsg(
-            id: 'nm-parent',
-            senderPeerId: 'peer-2',
-            senderUsername: 'Alice',
-            text: 'Parent from Alice',
-            timestamp: base,
-          ),
-          // peer-3 reply pulled under the parent — LATER timestamp than the
-          // peer-2 message that follows it in render order.
-          groupMsg(
-            id: 'nm-reply',
-            senderPeerId: 'peer-3',
-            senderUsername: 'Bob',
-            text: 'Reply from Bob',
-            timestamp: base.add(const Duration(minutes: 10)),
-          ),
-          // peer-2 again, EARLIER timestamp than the reply above it.
-          groupMsg(
-            id: 'nm-alice-2',
-            senderPeerId: 'peer-2',
-            senderUsername: 'Alice',
-            text: 'Second from Alice',
-            timestamp: base.add(const Duration(minutes: 2)),
-          ),
-        ];
+    testWidgets('TC-27 group run detection uses rendered list adjacency '
+        '(reply-reordered, non-monotonic)', (tester) async {
+      // Simulate orderGroupMessagesForTimeline output: a reply (later
+      // timestamp) is pulled directly under its quoted parent, so the
+      // RENDERED order interleaves senders and is NOT timestamp-monotonic.
+      // Raw-timestamp sort would group the two peer-2 messages together
+      // (and break the run differently); rendered adjacency must win.
+      final base = DateTime.utc(2026, 2, 9, 15, 30);
+      final messages = [
+        // peer-2 parent (earliest)
+        groupMsg(
+          id: 'nm-parent',
+          senderPeerId: 'peer-2',
+          senderUsername: 'Alice',
+          text: 'Parent from Alice',
+          timestamp: base,
+        ),
+        // peer-3 reply pulled under the parent — LATER timestamp than the
+        // peer-2 message that follows it in render order.
+        groupMsg(
+          id: 'nm-reply',
+          senderPeerId: 'peer-3',
+          senderUsername: 'Bob',
+          text: 'Reply from Bob',
+          timestamp: base.add(const Duration(minutes: 10)),
+        ),
+        // peer-2 again, EARLIER timestamp than the reply above it.
+        groupMsg(
+          id: 'nm-alice-2',
+          senderPeerId: 'peer-2',
+          senderUsername: 'Alice',
+          text: 'Second from Alice',
+          timestamp: base.add(const Duration(minutes: 2)),
+        ),
+      ];
 
-        await tester.pumpWidget(
-          buildTestWidget(messages: messages, initialLoadDone: true),
-        );
-        await tester.pump();
+      await tester.pumpWidget(
+        buildTestWidget(messages: messages, initialLoadDone: true),
+      );
+      await tester.pump();
 
-        // All three balloons must render in bubble layout (RED on HEAD where
-        // bubbleLayout is never passed).
-        expect(liveLetterCard(tester, 'nm-parent').bubbleLayout, isTrue);
-        expect(liveLetterCard(tester, 'nm-reply').bubbleLayout, isTrue);
-        expect(liveLetterCard(tester, 'nm-alice-2').bubbleLayout, isTrue);
+      // All three balloons must render in bubble layout (RED on HEAD where
+      // bubbleLayout is never passed).
+      expect(liveLetterCard(tester, 'nm-parent').bubbleLayout, isTrue);
+      expect(liveLetterCard(tester, 'nm-reply').bubbleLayout, isTrue);
+      expect(liveLetterCard(tester, 'nm-alice-2').bubbleLayout, isTrue);
 
-        // Run flags are computed on adjacency-as-rendered. The peer-3 reply
-        // sits between two peer-2 messages, so EACH of the three balloons is
-        // first-in-run by position (the neighbor differs by sender).
-        expect(liveLetterCard(tester, 'nm-parent').isFirstInGroup, isTrue);
-        expect(liveLetterCard(tester, 'nm-reply').isFirstInGroup, isTrue);
-        expect(liveLetterCard(tester, 'nm-alice-2').isFirstInGroup, isTrue);
+      // Run flags are computed on adjacency-as-rendered. The peer-3 reply
+      // sits between two peer-2 messages, so EACH of the three balloons is
+      // first-in-run by position (the neighbor differs by sender).
+      expect(liveLetterCard(tester, 'nm-parent').isFirstInGroup, isTrue);
+      expect(liveLetterCard(tester, 'nm-reply').isFirstInGroup, isTrue);
+      expect(liveLetterCard(tester, 'nm-alice-2').isFirstInGroup, isTrue);
 
-        // Discriminator vs the re-sort mutation: with rendered adjacency the
-        // second Alice message is a FRESH incoming run head, so it shows run
-        // chrome. If detection re-sorted by timestamp, the two peer-2 messages
-        // would be adjacent and this balloon would lose its chrome
-        // (isFirstInGroup:false, showSenderName:false).
-        expect(liveLetterCard(tester, 'nm-alice-2').showSenderName, isTrue);
-      },
-    );
+      // Discriminator vs the re-sort mutation: with rendered adjacency the
+      // second Alice message is a FRESH incoming run head, so it shows run
+      // chrome. If detection re-sorted by timestamp, the two peer-2 messages
+      // would be adjacent and this balloon would lose its chrome
+      // (isFirstInGroup:false, showSenderName:false).
+      expect(liveLetterCard(tester, 'nm-alice-2').showSenderName, isTrue);
+    });
 
     testWidgets(
       'TC-28 group per-message ValueKey(grp-msg-<id>) + scroll-to-highlight '
@@ -3103,7 +3097,10 @@ void main() {
           find.byKey(MessageContextOverlay.reactionBarKey),
           findsOneWidget,
         );
-        expect(find.byKey(MessageContextOverlay.replyActionKey), findsOneWidget);
+        expect(
+          find.byKey(MessageContextOverlay.replyActionKey),
+          findsOneWidget,
+        );
         expect(find.byKey(MessageContextOverlay.copyActionKey), findsOneWidget);
         expect(find.byKey(MessageContextOverlay.saveActionKey), findsOneWidget);
         expect(
@@ -3178,10 +3175,7 @@ void main() {
 
         // The tile long-press falls back to the plain message overlay.
         await openMediaOverlay(tester, 'media-grid-cell-msg-out-att-out');
-        expect(
-          find.byKey(MessageContextOverlay.overlayKey),
-          findsOneWidget,
-        );
+        expect(find.byKey(MessageContextOverlay.overlayKey), findsOneWidget);
         expect(find.byKey(MessageContextOverlay.saveActionKey), findsNothing);
         expect(find.byKey(MessageContextOverlay.shareActionKey), findsNothing);
         expect(find.byKey(MessageContextOverlay.infoActionKey), findsNothing);
@@ -3260,9 +3254,7 @@ void main() {
         // size, transfer/integrity state, caption.
         expect(
           tester
-              .widget<Text>(
-                find.byKey(const ValueKey('group-media-info-kind')),
-              )
+              .widget<Text>(find.byKey(const ValueKey('group-media-info-kind')))
               .data,
           'Image',
         );
@@ -3280,9 +3272,7 @@ void main() {
         );
         expect(
           tester
-              .widget<Text>(
-                find.byKey(const ValueKey('group-media-info-size')),
-              )
+              .widget<Text>(find.byKey(const ValueKey('group-media-info-size')))
               .data,
           '2 KB',
         );

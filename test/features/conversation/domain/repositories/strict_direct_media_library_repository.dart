@@ -13,7 +13,10 @@ import 'fake_media_attachment_repository.dart';
 /// and a cursor THIS repository minted under the SAME filter throws before
 /// returning data — a permissive fake would hide every scope/cursor bug.
 class StrictDirectMediaLibraryRepository extends FakeMediaAttachmentRepository
-    implements MediaLibraryRepository, MediaLibraryStateRepository {
+    implements
+        MediaLibraryRepository,
+        MediaLibraryStateRepository,
+        DirectMediaLibraryStateRepository {
   StrictDirectMediaLibraryRepository({required this.expectedContactPeerId});
 
   final String expectedContactPeerId;
@@ -31,6 +34,9 @@ class StrictDirectMediaLibraryRepository extends FakeMediaAttachmentRepository
   >
   pageCalls = [];
   final List<({String id, bool bookmarked})> bookmarkCalls = [];
+  final List<({String messageId, String attachmentId, bool bookmarked})>
+  directBookmarkCalls = [];
+  bool directBookmarkResult = true;
 
   /// When set, every page request parks on its own completer so tests can
   /// interleave stale/late responses deterministically.
@@ -94,6 +100,21 @@ class StrictDirectMediaLibraryRepository extends FakeMediaAttachmentRepository
   @override
   Future<void> setBookmarked(String id, {required bool bookmarked}) async {
     bookmarkCalls.add((id: id, bookmarked: bookmarked));
+  }
+
+  @override
+  Future<bool> setDirectBookmarkedIfOrdinary({
+    required String messageId,
+    required String attachmentId,
+    required bool bookmarked,
+  }) async {
+    bookmarkCalls.add((id: attachmentId, bookmarked: bookmarked));
+    directBookmarkCalls.add((
+      messageId: messageId,
+      attachmentId: attachmentId,
+      bookmarked: bookmarked,
+    ));
+    return directBookmarkResult;
   }
 
   @override

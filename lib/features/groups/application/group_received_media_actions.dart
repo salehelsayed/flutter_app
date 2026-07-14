@@ -81,6 +81,9 @@ Future<GroupMediaCurrentRowDecision> qualifyCurrentGroupMediaRow({
   if (!parent.isIncoming) {
     return const GroupMediaCurrentRowDecision.refused('not_incoming');
   }
+  if (parent.privateMediaPolicy.requiresRedaction) {
+    return const GroupMediaCurrentRowDecision.refused('lifecycle_restricted');
+  }
 
   final rows = await mediaAttachmentRepository.getAttachmentsForMessage(
     messageId,

@@ -1,238 +1,200 @@
 # 250 - Group Shared Media Batch Forwarding
 
-Status: evidence-gated
+Status: accepted
 Type: New Feature
-Spec: free-text intent — define and implement multi-selection forwarding from a discussion-group media library without inventing album, caption, provenance, or retry semantics
-Classification: evidence-gated
-Closure tier: host/device conditional
+Wave: Track 2 / Wave 2 / Forwarding
+Dependencies: accepted Plan 236, accepted Plan 237, and the shared Plan 249 forwarding foundation
+Closure tier: host composition over already-proven ordinary direct/group media delivery
 
-## Planning Progress
+## Outcome
 
-| Time | Role | Files inspected | Decision/blocker | Next action |
-|---|---|---|---|---|
-| 2026-07-09 | Evidence Collector / Planner | graphify-arch query, group media library plan/source, share picker/coordinator, group message media/send/retry paths, group forwarding plan, bridge/node extra handling and gates | Existing single-item plan 236 and share coordinator provide destination-scoped upload/send primitives. Multi-selection still lacks an accepted album-vs-individual, ordering/caption, identity/provenance, cap, and partial-retry contract. Plan 237 therefore keeps multi-select Forward absent. | Product accepts the batch semantics ledger; then choose host/device boundary and start the draft-builder RED. |
-| 2026-07-10 | Dependency refresh | revised plan 228 group ownership/cursor contract and shared migration registry | Future selection must contain resolved group-owned entries from one scope/filter signature; same-ID direct and unresolved rows stay excluded, and local owner never becomes provenance. Evidence decisions remain unresolved. | Carry these invariants into the post-ledger refresh without expanding Go/libp2p. |
+Discussion-group shared-media libraries now expose internal Batch Forward for an eligible selection of 2..10 items. The implementation creates one ordinary forwarded message per selected attachment and target, preserves an independent editable caption for every item, validates current source and target state, and reports a truthful source-item-by-target result matrix. It does not introduce albums, a new wire format, transport behavior, database migration, or durable batch job.
 
-## Problem And Evidence
+Single-item Forward remains the Plan 236 route. Existing Save, OS Share, Bookmark, Delete and Evict actions remain unchanged.
 
-- Behavior to improve: after selecting multiple entries in a `GroupType.chat` shared-media library, a user may want to forward them to one or more contacts and writable discussion groups.
-- Impact: plan 237 supplies safe multi-selection for Save/Share/Bookmark/Delete/Evict but intentionally omits internal Forward; plan 236 forwards exactly one selected item. Guessing how several source messages become destination messages can lose captions, reorder content, duplicate retries, or misstate provenance.
-- Confirmed existing primitive: `DefaultShareBatchDeliveryCoordinator` already uploads attachments separately per target and invokes existing contact/group send use cases. Plan 236 constrains internal Forward to verified ordinary media, contact/`GroupType.chat` destinations, destination-current authorization, new attachment ids/ciphertext/access, and a backward-compatible forwarded marker.
-- Confirmed representational option: group messages can carry a media list plus one message text/caption, so one destination album may be technically representable through existing media payloads. That does not decide how captions from several parent messages are preserved or whether one batch should instead emit individual messages.
-- Confirmed provenance constraint: plan 236 intentionally stores only `isForwarded` and never copies original sender, source group, or source message identity. A multi-source album has one message-level marker, while individual sends have one marker per output; the product must define the expected truthful label without origin leakage.
-- Confirmed ordering ambiguity: plan 228 library pages are newest-first, while human forwarding may expect tap-selection order or chronological source order. Equal timestamps require attachment/message identity tie-breaking.
-- Confirmed retry ambiguity: an album has a per-target atomic send boundary but may have per-attachment upload failures; individual messages create a source-by-target result matrix. Retrying successful cells can duplicate messages, while retrying a partially uploaded album may leak abandoned blobs.
-- Confirmed resource risk: there is no approved maximum item count, total bytes, per-file bytes, video duration, preprocessing policy, or preflight behavior for multi-source internal forwarding.
-- Confirmed authorization race: destination membership/key/writability and source integrity/private state can change while the picker or a long batch is open. Eligibility needs an accepted revalidation/stop policy.
-- Missing coverage: no batch-forward action, draft semantics, ordering/caption policy, selection cap, source-target identity matrix, per-target encryption assertion, partial retry contract, restart behavior, announcement guard, or real multi-item crypto proof exists.
-- Refuted finding: invoking plan 236 once per selected item is not a neutral implementation detail. It chooses individual-message UX, caption handling, notification count, ordering, retry granularity, and recipient rendering without product approval.
-- Unresolved findings that block implementation:
-  - Output unit: one multi-attachment album per target or one message per selected source item; whether contacts/groups differ.
-  - Stable ordering: explicit selection order, source chronological order, or library order; equal-time tie breaker.
-  - Caption semantics: keep each source caption, one editable batch caption, first caption only, concatenate with limits, or no caption; album representation supports only one message text.
-  - Provenance: message-level vs attachment-level display and idempotency while still forbidding original sender/group/message identity propagation.
-  - Selection cap: count/total bytes/per-item bytes/video duration and whether ineligible entries are rejected individually or block the batch.
-  - Partial results/retry: atomicity per target/album/source-target cell, retry selection, duplicate prevention, cleanup of uploads for a failed output, and app-restart behavior.
-  - Destination authorization race: skip one target, halt all, or continue already-authorized targets when membership/key changes mid-batch.
-  - Private/expired/evicted items and whether explicit redownload is allowed before batch submission.
-- No migration or transport version is reserved by this evidence-gated plan.
+## Accepted Decision Ledger
 
-## Evidence Decision Ledger
+Accepted on 2026-07-12 for Track 2 / Wave 2.
 
-| Decision | Required accepted evidence | Current state | Consequence if unresolved |
-|---|---|---|---|
-| Output unit | album-vs-individual decision for contact and discussion-group targets | unresolved | no batch draft/delivery loop |
-| Ordering | exact input/output order and equal-time tie breaker | unresolved | no deterministic request model |
-| Captions | preserve/edit/drop rules and length/normalization limits | unresolved | no composed output payload |
-| Provenance/idempotency | output marker granularity and source-target delivery identity without origin leakage | unresolved | no safe retry/dedup key |
-| Selection cap | count/bytes/duration limits and preflight/partial rejection UX | unresolved | no bounded resource contract |
-| Partial retry | target/source/album success matrix, retry and orphan-upload cleanup | unresolved | no truthful result/retry UI |
-| Authorization race | send-time and mid-batch target/source change policy | unresolved | no dispatch controller |
-| Restart durability | route-local only or durable batch resume/cancel | unresolved | no persistence/migration decision |
+| Decision | Accepted contract | Executable oracle |
+|---|---|---|
+| Output unit | One ordinary destination message per selected attachment per target; never combine the selection into an album. | Draft and delivery suites assert exact item-by-target calls and settled identities. |
+| Ordering | Canonical source order is parent timestamp DESC, message ID DESC, attachment ID DESC. | `GBF-02 owner scoped draft output order and captions match approved contract`. |
+| Captions | Each output starts with its own parent caption and is independently editable or clearable. No first-caption, concatenation or batch-caption fallback. | Draft test plus the real routed picker test. |
+| Provenance and idempotency | Generate an opaque random base per source item, then domain-separate by target kind and target. Keys are retry-stable and contain no source group/message/attachment identity. | Delivery and announcement provenance suites. |
+| Selection bound | The reusable foundation accepts 1..10; the visible batch route accepts 2..10. Enforce current per-MIME limits and at most 500 MiB aggregate current bytes before picker/delivery. No additional duration cap was introduced. | Draft, preflight and presentation suites. |
+| Source policy | Exact ordinary incoming, verified, group-owned image/video entries from one active discussion source. Re-resolve the current row/file/hash; no redownload and no caller path trust. | Draft, source-gate and delivery suites. |
+| Destination policy | Current active contacts and current active writable `GroupType.chat` groups only. Announcement and QA groups are excluded for a discussion source. | Presentation, picker and authorization suites. |
+| Authorization race | A contact is reloaded at final dispatch. A group requires a coherent current group/member/key-generation snapshot and exact send-time role; missing capability or any drift fails before upload. | `GBF-04` authorization suite and real SQL helper test. |
+| Partial result and retry | Track every source-item × target cell as sent, queued or failed. Sent/queued cells are immutable; retry only failed cells for the same route and stable operation identity. | `group_media_batch_forward_delivery_test.dart`. |
+| Restart behavior | Route-local only. Closing/restarting abandons the batch; there is no durable resume/cancel promise and no migration. | Delivery coordinator model and absence of persistence/schema change. |
+| Recipient contract | Reuse the accepted Plan 236 ordinary forwarded-message marker, destination-specific upload/encryption/access and recipient rendering. | Plan 236 preservation sentinels and batch delivery tests. |
 
-## Scope Contract And Guard
+All previously unresolved decisions are closed. No product choice remains as an implementation blocker.
 
-Provisional in scope after every ledger row is accepted:
-- Source is a bounded multi-selection of ordinary incoming verified image/video entries from one `GroupType.chat` library.
-- Every source entry must be `owner_lane='group'`, belong to the exact group scope/filter signature and originate from a page limit in `1..100`; stale-cursor, direct-owned and unresolved entries fail before preprocessing.
-- Destinations reuse plan 236: contacts and writable `GroupType.chat` groups only. Revalidate each destination and each source at the approved dispatch boundary.
-- Add multi-select Forward to plan 237 only after the accepted cap/draft/result contract is available; canceled picker/preflight changes nothing.
-- Build a typed `GroupMediaBatchForwardDraft` whose ordered source identities, chosen caption policy, output grouping, destination set, and idempotency keys are explicit and immutable after confirmation.
-- Reuse plan 236 for every actual output: new message/attachment ids, explicit forwarded marker, destination-specific upload/encryption/access, current authorization, no source mutation, and no original-author/source-conversation metadata.
-- Model results at the approved atomicity boundary. Keep successful targets/outputs successful, retry only approved failures, and never label queued/partial work as fully sent.
-- Preflight approved count/byte/duration limits before native decode/upload; stop or exclude ineligible items exactly as decided and disclose the result.
-- Clean only batch-owned uncommitted temp/upload state according to the accepted failure policy; never delete source files/messages or a successful destination output.
-- If durable batch resume is approved, allocate a freshly verified next free DB version at evidence refresh with structural host and production-SQLCipher device proof. Otherwise keep draft/results route-local and make restart cancellation explicit.
+## Scope And Invariants
 
-Must preserve:
-- Implemented/accepted Plan 237 remains without active multi-select Forward until this plan clears evidence.
-- Implemented/device-proven Plan 236 single-item forwarding, destination filters, `v99` group marker, legacy false fallback, per-target encryption, narrow Go-bridge-only allowance, and no-origin policy.
-- Announcement readers/admins and announcement destination rules remain unchanged; this plan is discussion-source/discussion-target only.
-- Existing group send authorization, inbox/retry identity, media integrity, and source rows/files.
+In scope:
 
-Hard `Do not`:
-- Do not implement batch Forward, choose album/individual output, or reuse a loop of single-item forwards while the ledger is unresolved.
-- Do not add a new group message type, album protocol, pubsub topic, outer routing field, recipient/fanout rule, retry protocol, group key rule, relay behavior, or Go node/libp2p production edit without an accepted transport expansion.
-- Do not reuse source ciphertext/key/nonce/blob id/allowed peers across any target.
-- Do not propagate original sender, source group/message ids, or per-source hidden metadata in marker, caption, diagnostics, or idempotency keys visible to recipients.
-- Do not serialize local owner lane, accept a same-message-ID direct sibling, reclassify unresolved rows, or reuse a cursor after the scope/filter signature changes.
-- Do not forward announcement/QA sources or targets, pending/failed/quarantined/missing/expired/consumed/protected media, or exceed accepted caps.
-- Do not retry successful source-target outputs, delete successful destination messages, or call a partially completed matrix “sent.”
-- Do not reserve a migration while restart durability is undecided.
+- A bounded 2..10-item batch action from a `GroupType.chat` shared-media library.
+- Exact `GroupSharedMediaIdentity` values from one source group.
+- Independent caption editing and one ordinary output per item/target.
+- Active contact and writable discussion-group targets.
+- Current source verification, current destination authorization, partial truth and failed-cell retry.
 
-Deferred / accepted difference:
-- Single-item Forward remains plan 236 and is not blocked by this plan.
-- Implemented/accepted Plan 237 multi-select Save/OS Share/Bookmark/Delete/Evict remains independent.
-- Album-specific visual layout, caption-per-attachment wire metadata, or a new protocol requires a refreshed implementation plan if the accepted decision cannot use the existing media-list message safely.
-- Announcement batch forwarding requires a separate announcement policy owner.
+Preserved:
 
-Dependencies:
-- Implemented/device-proven Plan 236 group received-media forwarding and its `v99`/real-crypto closure.
-- Implemented/accepted Plan 237 group shared-media library selection identities/capabilities.
-- Plan 228 resolved group ownership, stable media-library identity/order, scope/filter-bound cursor, `1..100` page ceiling and shared production migration registry; plan 230 supplies the typed selected-item viewer.
-- Product decision for every Evidence Decision Ledger row.
+- Plan 236 single-item Forward and its forwarded marker, fresh destination IDs/crypto/access, retry behavior and origin-minimizing payload.
+- Plan 237 library identity, ordering, selection and sibling actions.
+- Source message, attachment, file and bookmark state.
+- Announcement/QA authorization and destination policy.
+- Existing direct/group transport, pubsub, group-key and recipient behavior.
 
-## Test Contract
+Explicitly absent:
 
-| Case | Behavior | Named test/proof | Tier / fixture | HEAD -> GREEN | Mutation | Gate / registration |
-|---|---|---|---|---|---|---|
-| TC-250-00 | No batch-forward code starts until output, order, caption, provenance, cap, retry, authorization-race, and restart decisions are accepted. | `Test-Flight-Improv/250-group-shared-media-batch-forwarding-tdd-plan.md::Evidence Decision Ledger` | planning evidence / product-security-engineering review | HEAD evidence RED: all rows unresolved -> each records accepted choice, owner/date, user copy, and proof topology | N/A — stop gate makes later tests causal | manual plan-review gate; blocks all following rows |
-| TC-250-01 | Multi-select Forward appears only after an accepted bounded eligible selection; single-item behavior remains plan 236. | `test/features/groups/presentation/group_shared_media_batch_forward_test.dart::GBF-01 batch forward visibility follows approved selection and cap matrix` | evidence-gated host widget / eligible/ineligible count-byte-state table | HEAD GREEN sentinel from plan 237 says action absent -> after acceptance exact eligible rows expose it; invalid rows remain absent/disabled truthfully | show action before decision, exceed cap, or use first-item eligibility only -> GBF-01 red | add file to `GROUP_TESTS` after TC-250-00 |
-| TC-250-02 | Draft grouping/order/captions exactly match the accepted output contract and accept only one resolved group scope/filter sequence under tied timestamps. | `test/features/groups/application/group_media_batch_forward_draft_test.dart::GBF-02 owner scoped draft output order and captions match approved contract` | evidence-gated host unit / selection-order, tied captions, stale cursor, same-ID direct/group and unresolved fixtures | HEAD compile RED: draft absent -> exact output and immutable source order pass; direct/unresolved/mismatched-signature inputs fail before draft creation | switch order, omit owner/signature validation, include direct/unresolved, or group individual outputs contrary to policy -> GBF-02 red | add file to `GROUP_TESTS` |
-| TC-250-03 | Preflight enforces approved count/total/per-item/duration limits and source eligibility without decoding/uploading rejected work. | `test/features/groups/application/group_media_batch_forward_preflight_test.dart::GBF-03 preflight is bounded fail closed and side effect free` | evidence-gated host application / metadata table + decode/upload spies | HEAD compile RED -> accepted reject/partial policy, reason/counts, and zero forbidden calls are exact | check limit after upload, overflow arithmetic, or silently drop item -> GBF-03 red | add file to `GROUP_TESTS` |
-| TC-250-04 | Picker exposes contacts/writable discussion groups only and dispatch revalidates destination plus group-owned source identity/signature according to the approved stop policy. | `test/features/groups/application/group_media_batch_forward_authorization_test.dart::GBF-04 destination and owner scoped source changes follow approved dispatch policy` | evidence-gated host application / membership/key/group-type, source owner/state and cursor-generation changes | HEAD compile RED -> exact continue/skip/halt results and zero unauthorized/cross-owner upload/send calls | accept announcement/direct/unresolved source, trust picker-time auth, or continue revoked target -> GBF-04 red | add file to `GROUP_TESTS` |
-| TC-250-05 | Every output/source-target cell has stable opaque provenance/idempotency, is visibly forwarded, and reveals no original identity. | `test/features/groups/application/group_media_batch_forward_provenance_test.dart::GBF-05 provenance is stable per approved output and origin minimizing` | evidence-gated host unit/integration / retry and sentinel origin fixtures | HEAD compile RED -> approved ids/marker granularity remain stable on retry; sender/group/message sentinel values absent | mint retry ids, leave one output unmarked, or serialize origin -> GBF-05 red | add file to `GROUP_TESTS`; plan-236 marker sentinels remain green |
-| TC-250-06 | Every attachment is uploaded/re-encrypted separately for each target with new ids and destination-current access; no source crypto crosses. | `test/features/share/application/share_batch_delivery_coordinator_test.dart::GBF-06 multi-source forward isolates encryption and access per target` | evidence-gated host integration / real temp sources + fake uploader/contact/group senders | HEAD lacks typed batch draft -> exact call matrix/new ids/keys/nonces/allowed peers and output grouping pass | reuse any crypto/blob/access metadata or use one target's peers for another -> GBF-06 red | existing share test AUTO; add named group registration if split |
-| TC-250-07 | Partial result and retry operate only at the accepted target/source/album boundary, never duplicating successful outputs or leaking abandoned uploads. | `test/features/groups/application/group_media_batch_forward_delivery_test.dart::GBF-07 partial retry is idempotent and cleanup scoped at approved boundary` | evidence-gated host application / deterministic upload/send success, queue, timeout, failure matrix | HEAD compile RED -> exact result grid, retry calls, stable ids, cleanup and labels pass | retry success, collapse partial to success, orphan failed temp/blob, or delete committed output -> GBF-07 red | add file to `GROUP_TESTS` |
-| TC-250-08 | Cancel, source mutation, route disposal, and approved restart behavior preserve source state and converge without unintended dispatch. | `test/features/groups/integration/group_media_batch_forward_lifecycle_test.dart::GBF-08 cancel mutation disposal and restart follow approved durability contract` | evidence-gated host integration / fresh controller/repository, temp sources, delayed picker/uploader | HEAD compile RED -> cancel zero calls; changed sources revalidate; disposal/restart state exact | dispatch after cancel/dispose, mutate source, or resume when policy says cancel -> GBF-08 red | add file to `GROUP_TESTS`; persistence proof conditional |
-| TC-250-09 | Recipient rendering/notifications reflect the accepted output unit/order/caption and one truthful Forwarded indicator per output without origin details. | `test/features/groups/presentation/group_media_batch_forward_render_test.dart::GBF-09 destination output renders approved grouping order caption and marker` | evidence-gated host widget / contact/group output fixtures | HEAD no batch outputs -> exact message/media count, order/text/marker and notification count/copy pass after decision | render wrong grouping/caption/order or one marker per attachment contrary to policy -> GBF-09 red | add group-owned test to `GROUP_TESTS`; contact sentinel AUTO as required |
-| TC-250-10 | Announcement/QA sources and targets stay excluded and their current writer/read-only rules do not change. | `test/features/groups/presentation/group_shared_media_batch_forward_test.dart::GBF-10 batch forwarding remains discussion only` | `GREEN sentinel` extension / chat, announcement reader/admin, QA fixtures | HEAD plan-237 action absent and announcement rules green -> only accepted chat flow changes | broaden group type or share picker target rule -> GBF-10 red | `GROUP_TESTS`; existing announcement sentinels |
-| TC-250-11 | Chosen implementation uses only plan-236 existing delivery semantics unless a refreshed plan explicitly proves an approved album protocol change. | `test/features/groups/integration/group_media_batch_forward_transport_boundary_test.dart::GBF-11 batch forwarding introduces no implicit group transport change` | host source-contract / exact allowlist | HEAD compile RED: batch sources absent -> permits library/draft/coordinator adapters; forbids Go node/topic/auth/fanout/key/retry changes | add a wire/message type or call bridge directly -> GBF-11 red | add file to `GROUP_TESTS`; pinned Go/node sentinels |
-| TC-250-12 | Real selected output survives destination encryption/decryption with the approved grouping/order/marker and no cross-target access. | `integration_test/group_batch_forwarding_crypto_proof_test.dart::GBF-12 approved multi-source output survives real encrypted group delivery` | external-fixture-blocked device proof / topology selected by album-vs-individual decision | HEAD evidence/device RED: no contract/file -> actual output count/media order/caption/marker decrypt correctly and unauthorized target cannot access | N/A until output unit selected; then reorder/drop attachment, wrong allowed peers, or marker loss -> GBF-12 red | add an exact `classify_path` `group/test` rule and group simulator entry if this dedicated proof is required |
+- Album semantics or attachment-level wire captions.
+- Original sender, source group, source message or source attachment metadata in destination payloads or recipient-visible diagnostics.
+- Cross-target ciphertext, nonce, key, blob ID or allowed-peer reuse.
+- Source redownload, source publish/inbox commands or source-row mutation.
+- Durable batch persistence, a database migration, a new group message type, or Go/libp2p production changes.
 
-### Test Notes
+## Implementation Manifest
 
-- TC-250-02 must include at least two selected attachments from different parent messages with different captions and identical timestamps; otherwise ordering/caption mutations can pass vacuously.
-- TC-250-05 idempotency may derive from opaque batch/source/target ids internally, but recipient payload/diagnostics must not reveal original message/group/sender identity.
-- TC-250-07's expected retry grid cannot be written until album-vs-individual atomicity is accepted; that is why the plan remains evidence-gated.
-- TC-250-12 may reuse/extend plan 236's real-crypto fixture if the accepted solution only composes existing outputs. A new dedicated path still requires an exact discovery rule; no wildcard classifier exists.
+Primary production surfaces:
 
-## Implementation Steps
+- `lib/features/groups/application/group_media_batch_forward.dart`
+- `lib/features/share/application/group_media_batch_forward_delivery_coordinator.dart`
+- `lib/features/share/presentation/screens/group_media_batch_forward_picker_screen.dart`
+- `lib/features/share/presentation/screens/group_media_batch_forward_picker_wired.dart`
+- `lib/features/share/presentation/navigation/group_media_batch_forward_picker_route.dart`
+- `lib/features/groups/presentation/screens/group_shared_media_library_screen.dart`
+- `lib/features/groups/presentation/screens/group_conversation_wired.dart`
+- `lib/features/share/application/share_batch_delivery_coordinator.dart`
+- `lib/features/groups/domain/repositories/group_repository.dart`
+- `lib/features/groups/domain/repositories/group_repository_impl.dart`
+- `lib/core/database/helpers/group_forward_authorization_db_helpers.dart`
+- `lib/main.dart`
 
-1. Resolve every Evidence Decision Ledger row with product/security/engineering owners. Keep plan-237 batch Forward absent and make no production/test/persistence/transport edits.
-2. Refresh this plan with exact output model, state/result matrix, limits, captions, idempotency, file symbols, and device topology; if durable restart is approved, allocate a freshly verified next free DB version and add structural plus SQLCipher proof. Independently review the refresh.
-   Any migration must extend plan 228's shared production registry and preserve its owner/local-state collision fixtures.
-3. Verify plans 236/237 have landed. Snapshot `git status --short`; add TC-250-02 as the first executable RED after evidence acceptance.
-4. Add pure draft/preflight/provenance policies and multi-select UI capability before delivery; prove no origin leakage and deterministic bounds/order.
-5. Compose only plan-236 destination-specific forwarding primitives at the accepted output boundary; implement truthful result/retry/cleanup without bridge/node shortcuts.
-6. Add exact group device-proof classification if required, run real crypto plus host mutation/preservation/announcement/gate/analyzer/hygiene closure.
+Supporting compatibility/test surfaces:
 
-## Risks And Blind Spots
+- `lib/features/groups/application/group_shared_media_library_controller.dart`
+- `test/shared/fakes/in_memory_group_repository.dart`
+- `test/features/share/application/announcement_forward_test_harness.dart`
 
-- Album-vs-individual choice changes recipient UX/notifications/retry -> TC-250-00/02/09.
-- Captions or ordering can be silently lost -> tied multi-parent fixtures in TC-250-02/09.
-- Large batches can exhaust memory/storage/network -> TC-250-03 preflights bounded metadata before decode/upload.
-- Cross-target ciphertext/access reuse leaks content -> TC-250-06/12.
-- Partial retry can duplicate successful messages -> TC-250-05/07 stable identity/result grid.
-- Authorization/source eligibility may change mid-batch -> TC-250-04/08.
-- Lifecycle / derived-state durability: route-local vs durable resume is a ledger decision; TC-250-08 reconstructs only if durability is selected.
-- Sibling-surface consistency: plan 237 selection and plan 236 single-output policy are reused, not duplicated -> TC-250-01/04/11.
-- Destructive-action side effects: forwarding never mutates/deletes sources or committed outputs; cleanup is batch-owned/uncommitted only -> TC-250-07/08.
-- Invariant re-verification under new transitions: every source/target rechecks current integrity, lifecycle, membership, key, and cap at the accepted dispatch boundary.
-- Announcement regression -> TC-250-10.
+The database helper reads group state, fully aliased ordered member rows and `MAX(key_generation)` in one SQL `SELECT`. `GroupRepositoryImpl` exposes that as the optional coherent-snapshot capability. Picker eligibility and final dispatch fail closed without the capability; final dispatch uses it as the last awaited group authority before upload.
 
-## Acceptance Gates
+## Actual Test Contract
+
+The following nine files are registered in `GROUP_TESTS` in this exact order. Rows 1..5 are the shared Plan 250/251 foundation, row 6 is the Plan 250 presentation owner, and rows 7..9 are Plan 251 owners. The core/feature host families discover and sort matching tests automatically; they do not promise this manual order.
+
+1. `test/features/groups/application/group_media_batch_forward_draft_test.dart`
+2. `test/features/groups/application/group_media_batch_forward_preflight_test.dart`
+3. `test/features/groups/application/group_media_batch_forward_authorization_test.dart`
+4. `test/core/database/helpers/group_forward_authorization_db_helpers_test.dart`
+5. `test/features/groups/application/group_media_batch_forward_delivery_test.dart`
+6. `test/features/groups/presentation/group_shared_media_batch_forward_test.dart`
+7. `test/features/groups/presentation/announcement_media_batch_forward_test.dart`
+8. `test/features/share/presentation/announcement_batch_forward_target_policy_test.dart`
+9. `test/features/share/application/announcement_batch_forward_provenance_test.dart`
+
+Plan 250 causal coverage includes:
+
+- `GBF-02` exact scope/order/caption construction, 1..10 foundation bound, invalid scope/duplicate/source-derived token denial.
+- `GBF-03` per-MIME and 500 MiB aggregate preflight before target or delivery work.
+- `GBF-04` strict contact reload and coherent group snapshot denial for missing capability, membership/role/key drift, inactive/unsupported/source targets and discussion-to-announcement widening.
+- Real single-statement SQL alias/no-member/current-generation mapping.
+- Source×target delivery settlement, stable retry and no resend of sent/queued cells.
+- 2..10 discussion-library entry behavior, typed size denial, single-item preservation and discussion-only target policy.
+
+## Executed Evidence
+
+Focused GREEN on 2026-07-12:
 
 ```bash
-# Evidence stop: no batch-forward work while any decision is unresolved
-! rg -n '\| unresolved \|' Test-Flight-Improv/250-group-shared-media-batch-forwarding-tdd-plan.md
-
-# Accepted dependencies after plan refresh
-test -f Test-Flight-Improv/236-group-received-media-forwarding-tdd-plan.md
-test -f Test-Flight-Improv/237-group-shared-media-library-batch-tdd-plan.md
-git status --short
-git status --short --untracked-files=all -- go-mknoon/node > /tmp/plan-250-go-node-status.before
-git diff --binary -- go-mknoon/node > /tmp/plan-250-go-node-diff.before
-
-# First executable causal RED after TC-250-00; expect non-zero because draft model is absent
-flutter test test/features/groups/application/group_media_batch_forward_draft_test.dart --plain-name 'GBF-02 owner scoped draft output order and captions match approved contract'
-
-# Focused host GREEN selected by accepted semantics
-flutter test test/features/groups/application/group_media_batch_forward_draft_test.dart
-flutter test test/features/groups/application/group_media_batch_forward_preflight_test.dart
-flutter test test/features/groups/application/group_media_batch_forward_authorization_test.dart
-flutter test test/features/groups/application/group_media_batch_forward_provenance_test.dart
-flutter test test/features/groups/application/group_media_batch_forward_delivery_test.dart
-flutter test test/features/groups/integration/group_media_batch_forward_lifecycle_test.dart
-flutter test test/features/groups/presentation/group_shared_media_batch_forward_test.dart
-flutter test test/features/groups/presentation/group_media_batch_forward_render_test.dart
-flutter test test/features/groups/integration/group_media_batch_forward_transport_boundary_test.dart
-flutter test test/features/share/application/share_batch_delivery_coordinator_test.dart --plain-name 'GBF-06'
-
-# Preserve single-item forwarding, announcements, and transport boundary
-flutter test test/features/groups/application/group_media_forward_policy_test.dart
-flutter test test/features/groups/domain/usecases/send_group_message_use_case_test.dart --plain-name 'returns unauthorized for non-admin in announcement group'
-(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge ./node -run 'GMF11|GK030' -count=1)
-./scripts/run_test_gates.sh groups
-./scripts/run_host_test_gates.sh feature-host-all
-
-# If TC-250-12 is required, refresh with exact path classification and run:
-./scripts/check_reliability_simulation_discovery.sh --records-tsv | rg '^group\ttest\tintegration_test/group_batch_forwarding_crypto_proof_test\.dart\t'
-./scripts/run_reliability_simulations.sh group --list | rg 'group_batch_forwarding_crypto_proof_test.dart'
-flutter test -d "$FLUTTER_DEVICE_ID" integration_test/group_batch_forwarding_crypto_proof_test.dart --plain-name 'GBF-12 approved multi-source output survives real encrypted group delivery'
-
-# Hygiene
-git status --short --untracked-files=all -- go-mknoon/node | cmp -s - /tmp/plan-250-go-node-status.before
-git diff --binary -- go-mknoon/node | cmp -s - /tmp/plan-250-go-node-diff.before
-flutter analyze
-git diff --check
+flutter test --no-pub \
+  test/features/groups/application/group_media_batch_forward_draft_test.dart \
+  test/features/groups/application/group_media_batch_forward_preflight_test.dart \
+  test/features/groups/application/group_media_batch_forward_authorization_test.dart \
+  test/core/database/helpers/group_forward_authorization_db_helpers_test.dart \
+  test/features/groups/application/group_media_batch_forward_delivery_test.dart \
+  test/features/groups/presentation/group_shared_media_batch_forward_test.dart \
+  test/features/groups/presentation/announcement_media_batch_forward_test.dart \
+  test/features/share/presentation/announcement_batch_forward_target_policy_test.dart \
+  test/features/share/application/announcement_batch_forward_provenance_test.dart \
+  --reporter compact
 ```
 
-## Device/Relay Proof Profile
+Result: exit 0, 30/30 tests passed.
 
-- Profile: `external-fixture-blocked` until output unit/restart decisions are accepted. Minimum likely profile is one device using the real Go bridge and destination crypto; an approved new album protocol or cross-target proof may need more peers.
-- Boundary being proven: actual chosen output grouping/order/caption/forward marker survives destination-specific upload and encrypted group delivery; an unauthorized target cannot access reused content because none is reused.
-- Live availability check: `flutter devices --machine`; no fixed device id is assumed. A new proof must appear as `group/test` in exact discovery records and group `--list`.
-- Required setup: plan-236 `v99`/bridge implementation, multiple verified source fixtures with different captions/tied timestamps, writable target group keys/membership, and any second target needed by the accepted access proof.
-- Closure role: required if this plan makes a new real multi-source output claim. Host fakes prove orchestration but not bridge encryption/rendered media-list delivery.
-- `FLUTTER_DEVICE_ID`: sufficient only if the refreshed topology uses one in-process real bridge fixture; otherwise the refresh must name additional ids/relay setup.
-- Registration: if dedicated proof is required, add exact `integration_test/group_batch_forwarding_crypto_proof_test.dart` to `classify_path` as `group/test` and the group simulator array. Do not rely on a filename pattern.
-- Discovery command: the literal `--records-tsv | rg` and group `--list` checks in Acceptance Gates.
-- Closure command: the GBF-12 direct device command in Acceptance Gates after topology acceptance.
-- Deferred device work: none for selected claims. If accepted implementation is provably just repeated plan-236 outputs and product accepts dependency closure, refresh may justify TC-250-12 as inherited; do not silently make that choice here.
+Controlled mutation re-RED evidence captured on 2026-07-12:
 
-## Execution Interpretation And Done Criteria
+| Mutation | Command/oracle | RED result | Restoration |
+|---|---|---|---|
+| Shared route minimum `2 -> 3` | Run the draft, discussion presentation and announcement presentation files together. | Exit 1. The exact route-min assertion failed (`expected 2, actual 3`) and both Plan 250/251 two-item Batch Forward entry tests failed because the action disappeared. | Restore `2`; exact nine-file aggregate returned 30/30. |
+| Plan 250 authorization: temporarily treat a chat `MemberRole.reader` as writable in `canDeliverAnnouncementForwardToGroup`. | `flutter test --no-pub test/features/groups/application/group_media_batch_forward_authorization_test.dart --plain-name 'GBF-04 chat own-member writer to reader prevents upload' --reporter expanded` | Exit 1. The mutation crossed the denial boundary, performed upload/send work and changed the expected failure count from 1 to 0. | Restore admin-or-chat-writer policy; exact test returned 1/1 and the final nine-file aggregate returned 30/30. |
 
-- Expected evidence RED: TC-250-00 fails because every ledger row is unresolved; plan 237 must keep batch Forward absent.
-- Expected first executable RED after evidence: TC-250-02 fails because `GroupMediaBatchForwardDraft` does not exist.
-- Green sentinels: plan-236 single-item forward, plan-237 non-forward batch actions, announcement authorization, and pinned Go extra-delivery tests remain green.
-- Pre-existing dirty tree / known failure: record from execution-time snapshot; do not absorb unrelated changes.
-- Evidence blocker: any unresolved ledger row keeps implementation stopped; looping single-item Forward is not an acceptable default.
-- Environment blocker: unavailable selected device/peer/relay or SQLCipher fixture blocks the corresponding promised boundary and final closure.
-- Scope drift: unapproved album wire/message type, origin metadata, new migration, Go node/topic/auth/fanout/retry change, or announcement path requires replanning.
+The mutations were applied and reversed with exact patches; neither mutation remains in the production diff.
 
-- [ ] Evidence Decision Ledger has accepted owner/date/user copy/proof profile for every row.
-- [ ] Refreshed plan names exact draft/result/idempotency/cap/caption semantics and files.
-- [ ] Every selected behavior has a named causal test or real-boundary proof.
-- [ ] First executable RED, focused GREEN, and representative mutation re-red are recorded.
-- [ ] Output grouping/order/caption and forwarded provenance are exact and origin-minimizing.
-- [ ] Every source-target attachment gets fresh encryption/access and current authorization.
-- [ ] Partial results/retry never duplicate successes and clean only uncommitted batch-owned state.
-- [ ] Plan-237 other batch actions and plan-236 single-item forwarding remain green.
-- [ ] Required device proof, announcement/group/feature gates, pinned Go sentinel, analyzer, and hygiene pass.
-- [ ] Scope Contract And Guard is respected.
+Preservation evidence completed before final integrated gates:
 
-## Handoff
+| Dependency | Evidence result |
+|---|---|
+| Plan 236 | Group forward policy/intent/flow 9/9; `GMF-` coordinator 3/3; `GMF-08` listener 1/1; non-admin announcement send denial 1/1. |
+| Plan 237 | `GML-05` 1/1, `GML-06F` 1/1, transport boundary 1/1, batch actions 2/2, current `GML-10 production nested route consumes bounded anchor result` 1/1. |
+| Plan 240 | Canonical eight-file family 10/10; wired picker 16/16; native announcement writer lifecycle regex passed. |
+| Plan 241 | `AML-07` + `AML-11` 2/2; native writer/validator regex passed. |
+| Plan 249 | Canonical five-file foundation/picker/transport set 30/30; received-media transport baseline 1/1. |
 
-- First causal RED command: none while TC-250-00 is unresolved. After accepted/refreshed semantics: `flutter test test/features/groups/application/group_media_batch_forward_draft_test.dart --plain-name 'GBF-02 owner scoped draft output order and captions match approved contract'`.
-- Preservation command: `flutter test test/features/groups/application/group_media_forward_policy_test.dart` plus plan-237 `GML-05 batch capabilities fail closed and batch forward stays deferred` until the feature is accepted.
-- Harness registration: eventual host files into `GROUP_TESTS`; exact group/test device record and simulator entry only if GBF-12 is required.
-- Migration: none reserved. If durable restart is accepted, allocate the freshly verified next free version at evidence refresh with host structural and real-SQLCipher device proof.
-- Boundary closure: selected album/individual real encrypted output; currently evidence/external-fixture blocked.
-- Unresolved evidence: output unit, ordering, captions, provenance/idempotency, cap, partial retry/cleanup, authorization-race, and restart durability.
+Scoped analysis of the changed forwarding/authorization/picker surfaces completed with no issues. The final hygiene and affected-graph checks are recorded at handoff.
+
+## Device And Boundary Decision
+
+This plan composes the already-accepted one-item Plan 236/Plan 249 ordinary sends. It adds no payload field, codec, schema, pubsub behavior, crypto primitive or native boundary claim. Therefore the real device/crypto proof is inherited from those plans and the new proof tier is host orchestration. No unavailable device is a closure condition, and no simulator-only claim is made.
+
+## Final Acceptance Gates
+
+Per the project TDD cadence, do not run full `host-all` for this individual plan. Final integrated closure requires the affected curated lane plus the justified core and feature family sweeps because this wave changes a core database helper and feature orchestration:
+
+```bash
+./scripts/run_test_gates.sh groups
+./scripts/run_host_test_gates.sh core-host-all
+./scripts/run_host_test_gates.sh feature-host-all
+```
+
+Integrated gate results on 2026-07-12:
+
+- `groups`: `2171/2171` Flutter tests plus every registered Go leg passed, exit 0; retained log `/tmp/track2_groups_rerun.log`.
+- `core-host-all`: `310/310` discovered files and `2485` tests passed with `0` skipped, exit 0; retained log `/tmp/track2_core_host_all_rerun.log`.
+- `feature-host-all`: user-provided external all-green run (2026-07-12; no local count/log).
+- Wave-level `host-all` (2026-07-13): all `1151/1151` commands passed across
+  `1143` Flutter files (`11502` tests passed, `1` skipped) and `8/8` Go legs;
+  former failures `#407` and `#616` passed in full-suite context. Retained log:
+  `/tmp/track2_wave2_host_all_rerun2.log`.
+
+Closure checklist:
+
+- [x] Decision ledger resolved with exact executable semantics.
+- [x] Production flow and actual nine-file causal manifest implemented.
+- [x] Focused 30/30 batch aggregate green.
+- [x] Plans 236/237/240/241/249 preservation sentinels green.
+- [x] No migration, wire, Go/libp2p or durable-restart scope was introduced.
+- [x] New suites are registered in `GROUP_TESTS` in exact order and auto-discovered by the core/feature host families.
+- [x] Shared entry-bound and Plan 250 authorization mutations re-RED, then restore to focused GREEN.
+- [x] Scoped analyzer is clean.
+- [x] Curated `groups` gate passes on the integrated tree.
+- [x] `core-host-all` passes on the integrated tree.
+- [x] `feature-host-all` passes on the integrated tree.
+- [x] The single Wave-2 `host-all` closure sweep passes on the integrated tree.
+
+All required per-plan named gates are green and Plan 250 is accepted/closed.
+Full `host-all` was not a Plan-250 closure obligation; the later single
+Wave-2 closure sweep is now complete and does not change this plan's scope.
 
 ## Execution Progress
 
-| Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
-|---|---|---|---|---|---|---|
-| 2026-07-09 | evidence gate | plan only | graph/source audit complete | single-item and generic share primitives exist; multi-source semantics do not | all Evidence Decision Ledger rows unresolved | product/security/engineering decision review |
+| Date | Phase | Result | Next |
+|---|---|---|---|
+| 2026-07-12 | Contract resolution | Output, ordering, captions, cap, provenance, authorization, retry and restart rows accepted. | Implement causal foundation and route. |
+| 2026-07-12 | Implementation and focused verification | Production flow complete; shared entry-bound and Plan 250 authorization mutations re-RED; exact restoration aggregate 30/30; dependency preservation green; scoped analysis clean. | Run integrated named gates. |
+| 2026-07-12 | Integrated closure | `groups` 2171/2171 plus Go, `core-host-all` 310/310 files and 2485 tests with 0 skipped, and the user-provided external all-green `feature-host-all` run passed. | Accepted/closed; wave-level `host-all` was pending at this checkpoint. |
+| 2026-07-13 | Wave-2 final closure | Wave-level `host-all` passed `1151/1151` commands: `1143` Flutter files, `11502` tests passed, `1` skipped, and `8/8` Go legs; `#407` and `#616` passed in context. | Final wave evidence recorded; Plan 250 remains accepted/closed. |

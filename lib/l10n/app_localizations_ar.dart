@@ -610,6 +610,16 @@ class AppLocalizationsAr extends AppLocalizations {
   String get conversation_context_reply => 'رد';
 
   @override
+  String get announcement_private_reply_action => 'مراسلة المرسل';
+
+  @override
+  String get announcement_private_reply_unavailable =>
+      'مراسلة المرسل غير متاحة.';
+
+  @override
+  String get announcement_private_reply_open_failed => 'تعذّر فتح المحادثة.';
+
+  @override
   String get conversation_context_edit => 'تعديل';
 
   @override
@@ -2007,6 +2017,13 @@ class AppLocalizationsAr extends AppLocalizations {
   String get media_viewer_action_reply => 'رد';
 
   @override
+  String get media_viewer_action_picture_in_picture => 'صورة داخل صورة';
+
+  @override
+  String get media_viewer_picture_in_picture_start_failed =>
+      'تعذر بدء وضع صورة داخل صورة';
+
+  @override
   String get media_save_destination_prompt => 'الحفظ في…';
 
   @override
@@ -3098,10 +3115,136 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get contact_profile_message_button => 'مراسلة';
 
+  @override
+  String get private_media_selector_label => 'وسائط خاصة';
+
+  @override
+  String get private_media_ordinary => 'عادية';
+
+  @override
+  String get private_media_protected => 'محمية';
+
+  @override
+  String get private_media_view_once => 'عرض مرة واحدة';
+
+  @override
+  String get private_media_disappearing_1h => 'تختفي بعد ساعة';
+
+  @override
+  String get private_media_disappearing_1d => 'تختفي بعد يوم';
+
+  @override
+  String get private_media_disappearing_7d => 'تختفي بعد 7 أيام';
+
+  @override
+  String get private_media_invalid_shape =>
+      'تتطلب الوسائط الخاصة صورة أو GIF أو فيديو واحدًا بلا تعليق.';
 
   @override
   String get private_media_notification_body => 'وسائط خاصة';
 
   @override
   String get group_private_media_notification_body => 'وسائط خاصة جديدة';
+
+  @override
+  String get private_media_expiry_device_local =>
+      'يُحتسب وقت الانتهاء على جهاز المستلم.';
+
+  @override
+  String get private_media_view_once_copy =>
+      'متاحة للعرض مرة واحدة على هذا الجهاز.';
+
+  @override
+  String get private_media_open => 'فتح الوسائط الخاصة';
+
+  @override
+  String get private_media_opening => 'جارٍ فتح الوسائط الخاصة…';
+
+  @override
+  String get private_media_consumed => 'تم عرضها مسبقًا على هذا الجهاز';
+
+  @override
+  String get private_media_expired => 'انتهت صلاحيتها على هذا الجهاز';
+
+  @override
+  String get private_media_unsupported =>
+      'حدّث Mknoon لعرض هذه الوسائط الخاصة أو احذفها';
+
+  @override
+  String get private_media_android_capture_limit =>
+      'تُحظر لقطات الشاشة وتسجيلها فقط أثناء فتح هذا العرض الخاص';
+
+  @override
+  String get private_media_ios_capture_limit =>
+      'لا يستطيع iOS منع لقطات الشاشة بشكل موثوق؛ يُكتشف الالتقاط وتُحجب الوسائط الخاصة أو يُغلق عرضها';
+
+  @override
+  String get private_media_general_capture_limit =>
+      'لا يزال بإمكان جهاز آخر أو كاميرا تصوير الشاشة';
+
+  @override
+  String get shared_media_action_forward => 'إعادة توجيه متعددة';
+
+  @override
+  String get direct_batch_forward_title => 'إعادة توجيه متعددة';
+
+  @override
+  String direct_batch_forward_item_count(int count) {
+    return '$count عناصر محددة';
+  }
+
+  @override
+  String direct_batch_forward_source_label(int index, int count) {
+    return 'المصدر $index من $count';
+  }
+
+  @override
+  String direct_batch_forward_caption_label(int index, int count) {
+    return 'تعليق المصدر $index من $count';
+  }
+
+  @override
+  String get direct_batch_forward_contacts_title => 'جهات الاتصال المباشرة';
+
+  @override
+  String get direct_batch_forward_no_contacts =>
+      'لا توجد جهات اتصال مباشرة نشطة';
+
+  @override
+  String get direct_batch_forward_send => 'إرسال';
+
+  @override
+  String get direct_batch_forward_retry_failed => 'إعادة محاولة الفاشلة';
+
+  @override
+  String direct_batch_forward_progress(String phase, int completed, int total) {
+    return '$phase: $completed من $total';
+  }
+
+  @override
+  String get direct_batch_forward_source_unavailable =>
+      'لم تعد الوسائط المحددة متاحة';
+
+  @override
+  String get direct_batch_forward_status_sent => 'تم الإرسال';
+
+  @override
+  String get direct_batch_forward_status_queued => 'في قائمة الانتظار';
+
+  @override
+  String get direct_batch_forward_status_failed => 'فشل';
+
+  @override
+  String direct_batch_forward_summary(int sent, int queued, int failed) {
+    return 'تم الإرسال $sent، في الانتظار $queued، فشل $failed';
+  }
+
+  @override
+  String get direct_batch_forward_phase_uploading => 'جارٍ الرفع';
+
+  @override
+  String get direct_batch_forward_phase_sending => 'جارٍ الإرسال';
+
+  @override
+  String get direct_batch_forward_close => 'إغلاق';
 }

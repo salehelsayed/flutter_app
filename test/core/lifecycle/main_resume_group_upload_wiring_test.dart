@@ -5,6 +5,64 @@ import 'package:flutter_app/main.dart' as app;
 
 void main() {
   test(
+    'GPL-09B main wires atomic current-ordinary group bookmark qualification',
+    () async {
+      expect(app.MyApp.navigatorKey, isNotNull);
+
+      final mainSource = await File('lib/main.dart').readAsString();
+      final start = mainSource.indexOf(
+        'final mediaAttachmentRepository = MediaAttachmentRepositoryImpl(',
+      );
+      expect(start, isNonNegative);
+      final end = mainSource.indexOf(');', start);
+      expect(end, greaterThan(start));
+
+      final repositoryBlock = mainSource.substring(start, end);
+      expect(repositoryBlock, contains('dbSetGroupMediaBookmarkedIfOrdinary:'));
+      expect(
+        repositoryBlock,
+        contains('dbSetGroupMediaBookmarkedIfOrdinary('),
+        reason:
+            'production group bookmark mutation must use the exact atomic parent predicate',
+      );
+    },
+  );
+
+  test(
+    'GPL-03B main supplies current group and identity authority to failed inbox retries',
+    () async {
+      expect(app.MyApp.navigatorKey, isNotNull);
+
+      final mainSource = await File('lib/main.dart').readAsString();
+      final backgroundStart = mainSource.indexOf(
+        'retryFailedGroupInboxStoresFn: () => runAccountRuntimeNetworkAction(',
+      );
+      final backgroundEnd = mainSource.indexOf(
+        'clearGroupRetryBackoffFn:',
+        backgroundStart,
+      );
+      expect(backgroundStart, isNonNegative);
+      expect(backgroundEnd, greaterThan(backgroundStart));
+      final backgroundBlock = mainSource.substring(
+        backgroundStart,
+        backgroundEnd,
+      );
+      expect(backgroundBlock, contains('groupRepo: groupRepository'));
+      expect(backgroundBlock, contains('identityRepo: repository'));
+
+      final resumeStart = mainSource.lastIndexOf(
+        'retryFailedGroupInboxStoresFn: () => retryFailedGroupInboxStores(',
+      );
+      final resumeEnd = mainSource.indexOf('      );', resumeStart);
+      expect(resumeStart, isNonNegative);
+      expect(resumeEnd, greaterThan(resumeStart));
+      final resumeBlock = mainSource.substring(resumeStart, resumeEnd);
+      expect(resumeBlock, contains('groupRepo: widget.groupRepository'));
+      expect(resumeBlock, contains('identityRepo: widget.repository'));
+    },
+  );
+
+  test(
     'main.dart passes mediaFileManager into direct retryIncompleteUploads on resume',
     () async {
       expect(app.MyApp.navigatorKey, isNotNull);

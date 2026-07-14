@@ -139,6 +139,11 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
   ShareBatchDeliveryPhase? _deliveryPhase;
   String? _inlineFeedback;
 
+  bool get _isInternalForward =>
+      widget.groupMediaForwardRequest != null ||
+      widget.shareIntent.forwardProvenance != null ||
+      widget.shareIntent.directForwardSourceAuthority != null;
+
   @override
   void initState() {
     super.initState();
@@ -170,7 +175,7 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
       final contacts = (results[0] as List<ContactModel>)
           .where(
             (contact) =>
-                widget.groupMediaForwardRequest == null ||
+                !_isInternalForward ||
                 GroupMediaForwardPolicy.canTargetContact(contact),
           )
           .toList(growable: false);
@@ -287,11 +292,16 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
     if (group.isArchived || group.isDissolved) {
       return false;
     }
-    if (widget.groupMediaForwardRequest != null &&
+    final forwardRequest = widget.groupMediaForwardRequest;
+    if (forwardRequest != null &&
         !GroupMediaForwardPolicy.canTargetGroup(group)) {
       return false;
     }
-    final forwardRequest = widget.groupMediaForwardRequest;
+    if (forwardRequest != null &&
+        forwardRequest is! AnnouncementMediaForwardRequest &&
+        group.type == GroupType.announcement) {
+      return false;
+    }
     if (forwardRequest is AnnouncementMediaForwardRequest &&
         group.id == forwardRequest.groupId) {
       return false;
@@ -356,7 +366,7 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
       if (!mounted) {
         return;
       }
-      _syncSelectedGroupsToTargets(targets);
+      _syncSelectedTargetsToCurrentRows(targets);
       if (targets.isEmpty) {
         setState(() => _isSending = false);
         return;
@@ -472,7 +482,7 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
         selected.peerId,
       );
       if (current == null ||
-          (widget.groupMediaForwardRequest != null &&
+          (_isInternalForward &&
               !GroupMediaForwardPolicy.canTargetContact(current))) {
         continue;
       }
@@ -509,16 +519,25 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
     return targets;
   }
 
-  void _syncSelectedGroupsToTargets(List<ShareTargetSelection> targets) {
+  void _syncSelectedTargetsToCurrentRows(List<ShareTargetSelection> targets) {
+    final validContactPeerIds = targets
+        .where((target) => target.kind == ShareTargetSelectionKind.contact)
+        .map((target) => target.requireContact.peerId)
+        .toSet();
     final validGroupIds = targets
         .where((target) => target.kind == ShareTargetSelectionKind.group)
         .map((target) => target.requireGroup.id)
         .toSet();
-    if (validGroupIds.length == _selectedGroupIds.length &&
+    if (validContactPeerIds.length == _selectedContactPeerIds.length &&
+        _selectedContactPeerIds.containsAll(validContactPeerIds) &&
+        validGroupIds.length == _selectedGroupIds.length &&
         _selectedGroupIds.containsAll(validGroupIds)) {
       return;
     }
     setState(() {
+      _selectedContactPeerIds
+        ..clear()
+        ..addAll(validContactPeerIds);
       _selectedGroupIds
         ..clear()
         ..addAll(validGroupIds);

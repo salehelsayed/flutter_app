@@ -22,6 +22,7 @@ import 'package:flutter_app/features/conversation/application/download_media_use
 import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
@@ -159,6 +160,7 @@ class _TempMediaFileManager extends MediaFileManager {
     String reason = 'media_file_delete',
     String? storedPath,
     Map<String, Object?> details = const {},
+    bool redactTelemetry = false,
   }) async {
     final file = File(localPath);
     if (await file.exists()) {
@@ -174,6 +176,7 @@ void main() {
   late _RelayBridge bobBridge;
   late InMemoryMediaAttachmentRepository aliceMediaRepo;
   late InMemoryMediaAttachmentRepository bobMediaRepo;
+  late InMemoryMessageRepository bobMessageRepo;
   late InMemoryContactRepository bobContacts;
   late _TempMediaFileManager bobFileManager;
 
@@ -186,6 +189,7 @@ void main() {
     bobBridge = _RelayBridge(relayStore);
     aliceMediaRepo = InMemoryMediaAttachmentRepository();
     bobMediaRepo = InMemoryMediaAttachmentRepository();
+    bobMessageRepo = InMemoryMessageRepository();
     bobContacts = InMemoryContactRepository();
     bobContacts.addTestContact(
       ContactModel(
@@ -200,98 +204,112 @@ void main() {
     bobFileManager = _TempMediaFileManager(tempDir.path);
   });
 
+  Future<void> seedOrdinaryIncomingParent(String messageId) async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    await bobMessageRepo.saveMessage(
+      ConversationMessage(
+        id: messageId,
+        contactPeerId: _alicePeerId,
+        senderPeerId: _alicePeerId,
+        text: '',
+        timestamp: now,
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: now,
+      ),
+    );
+  }
+
   tearDown(() async {
     if (await tempDir.exists()) {
       await tempDir.delete(recursive: true);
     }
   });
 
-  test(
-    'sender encrypts, key rides the v2 envelope, receiver decrypts to '
-    'byte-identical media',
-    () async {
-      final photo = File('${tempDir.path}/photo.jpg');
-      await photo.writeAsBytes(plaintextBytes, flush: true);
+  test('sender encrypts, key rides the v2 envelope, receiver decrypts to '
+      'byte-identical media', () async {
+    final photo = File('${tempDir.path}/photo.jpg');
+    await photo.writeAsBytes(plaintextBytes, flush: true);
 
-      // 1. Upload (sender).
-      final uploaded = await uploadMedia(
-        bridge: aliceBridge,
-        localFilePath: photo.path,
-        mime: 'image/jpeg',
-        recipientPeerId: _bobPeerId,
-      );
-      expect(uploaded, isNotNull);
-      // THE flip assertion: what the relay stores is ciphertext.
-      expect(relayStore[uploaded!.id], isNotNull);
-      expect(relayStore[uploaded.id], isNot(equals(plaintextBytes)));
+    // 1. Upload (sender).
+    final uploaded = await uploadMedia(
+      bridge: aliceBridge,
+      localFilePath: photo.path,
+      mime: 'image/jpeg',
+      recipientPeerId: _bobPeerId,
+    );
+    expect(uploaded, isNotNull);
+    // THE flip assertion: what the relay stores is ciphertext.
+    expect(relayStore[uploaded!.id], isNotNull);
+    expect(relayStore[uploaded.id], isNot(equals(plaintextBytes)));
 
-      // 2. Send (sender) — key/nonce/scheme/hash ride INSIDE the v2
-      // envelope; the outer wire never carries them in cleartext fields.
-      final aliceP2P = FakeP2PService(
-        initialState: const NodeState(isStarted: true, peerId: _alicePeerId),
-      );
-      final (sendResult, _) = await sendChatMessage(
-        p2pService: aliceP2P,
-        messageRepo: InMemoryMessageRepository(),
-        targetPeerId: _bobPeerId,
-        text: 'photo for you',
-        senderPeerId: _alicePeerId,
-        senderUsername: 'Alice',
-        bridge: aliceBridge,
-        recipientMlKemPublicKey: 'mlkem-bob',
-        mediaAttachments: [uploaded],
-        mediaAttachmentRepo: aliceMediaRepo,
-      );
-      expect(sendResult, SendChatMessageResult.success);
-      final wire =
-          aliceP2P.lastSendMessageContent ?? aliceP2P.lastStoreInInboxMessage;
-      expect(wire, isNotNull);
-      final outerEnvelope = jsonDecode(wire!) as Map<String, dynamic>;
-      expect(outerEnvelope['version'], '2');
-      expect(outerEnvelope.containsKey('media'), isFalse);
+    // 2. Send (sender) — key/nonce/scheme/hash ride INSIDE the v2
+    // envelope; the outer wire never carries them in cleartext fields.
+    final aliceP2P = FakeP2PService(
+      initialState: const NodeState(isStarted: true, peerId: _alicePeerId),
+    );
+    final (sendResult, _) = await sendChatMessage(
+      p2pService: aliceP2P,
+      messageRepo: InMemoryMessageRepository(),
+      targetPeerId: _bobPeerId,
+      text: 'photo for you',
+      senderPeerId: _alicePeerId,
+      senderUsername: 'Alice',
+      bridge: aliceBridge,
+      recipientMlKemPublicKey: 'mlkem-bob',
+      mediaAttachments: [uploaded],
+      mediaAttachmentRepo: aliceMediaRepo,
+    );
+    expect(sendResult, SendChatMessageResult.success);
+    final wire =
+        aliceP2P.lastSendMessageContent ?? aliceP2P.lastStoreInInboxMessage;
+    expect(wire, isNotNull);
+    final outerEnvelope = jsonDecode(wire!) as Map<String, dynamic>;
+    expect(outerEnvelope['version'], '2');
+    expect(outerEnvelope.containsKey('media'), isFalse);
 
-      // 3. Receive + hydrate (receiver).
-      final (rxResult, rxMessage, _) = await handleIncomingChatMessage(
-        message: ChatMessage(
-          from: _alicePeerId,
-          to: _bobPeerId,
-          content: wire,
-          timestamp: DateTime.now().toUtc().toIso8601String(),
-          isIncoming: true,
-        ),
-        messageRepo: InMemoryMessageRepository(),
-        contactRepo: bobContacts,
-        bridge: bobBridge,
-        ownMlKemSecretKey: 'mlkem-bob-secret',
-        mediaAttachmentRepo: bobMediaRepo,
-      );
-      expect(rxResult, HandleChatMessageResult.chatMessage);
-      expect(rxMessage, isNotNull);
-      final hydrated = rxMessage!.media.single;
-      expect(hydrated.encryptionKeyBase64, uploaded.encryptionKeyBase64);
-      expect(hydrated.encryptionNonce, uploaded.encryptionNonce);
-      expect(hydrated.encryptionScheme, uploaded.encryptionScheme);
-      expect(hydrated.contentHash, uploaded.contentHash);
+    // 3. Receive + hydrate (receiver).
+    final (rxResult, rxMessage, _) = await handleIncomingChatMessage(
+      message: ChatMessage(
+        from: _alicePeerId,
+        to: _bobPeerId,
+        content: wire,
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        isIncoming: true,
+      ),
+      messageRepo: bobMessageRepo,
+      contactRepo: bobContacts,
+      bridge: bobBridge,
+      ownMlKemSecretKey: 'mlkem-bob-secret',
+      mediaAttachmentRepo: bobMediaRepo,
+    );
+    expect(rxResult, HandleChatMessageResult.chatMessage);
+    expect(rxMessage, isNotNull);
+    final hydrated = rxMessage!.media.single;
+    expect(hydrated.encryptionKeyBase64, uploaded.encryptionKeyBase64);
+    expect(hydrated.encryptionNonce, uploaded.encryptionNonce);
+    expect(hydrated.encryptionScheme, uploaded.encryptionScheme);
+    expect(hydrated.contentHash, uploaded.contentHash);
 
-      // 4. Download + decrypt (receiver).
-      final persisted = (await bobMediaRepo.getPendingDownloads()).single;
-      final downloaded = await downloadMedia(
-        bridge: bobBridge,
-        mediaAttachmentRepo: bobMediaRepo,
-        mediaFileManager: bobFileManager,
-        attachment: persisted,
-        contactPeerId: _alicePeerId,
-        owner: MediaOwnerLane.direct,
-      );
-      expect(downloaded, isNotNull);
-      expect(downloaded!.downloadStatus, kMediaDownloadStatusDone);
-      expect(
-        File(downloaded.localPath!).readAsBytesSync(),
-        equals(plaintextBytes),
-      );
-      expect(bobBridge.commandLog, contains('blob:decrypt'));
-    },
-  );
+    // 4. Download + decrypt (receiver).
+    final persisted = (await bobMediaRepo.getPendingDownloads()).single;
+    final downloaded = await downloadMedia(
+      bridge: bobBridge,
+      mediaAttachmentRepo: bobMediaRepo,
+      mediaFileManager: bobFileManager,
+      attachment: persisted,
+      contactPeerId: _alicePeerId,
+      owner: MediaOwnerLane.direct,
+      messageRepo: bobMessageRepo,
+    );
+    expect(downloaded, isNotNull);
+    expect(downloaded!.downloadStatus, kMediaDownloadStatusDone);
+    expect(
+      File(downloaded.localPath!).readAsBytesSync(),
+      equals(plaintextBytes),
+    );
+    expect(bobBridge.commandLog, contains('blob:decrypt'));
+  });
 
   test('legacy plaintext message from old sender still round-trips', () async {
     // Mixed-version matrix cell: an old-build sender shipped a v1 envelope
@@ -326,7 +344,7 @@ void main() {
         timestamp: DateTime.now().toUtc().toIso8601String(),
         isIncoming: true,
       ),
-      messageRepo: InMemoryMessageRepository(),
+      messageRepo: bobMessageRepo,
       contactRepo: bobContacts,
       bridge: bobBridge,
       ownMlKemSecretKey: 'mlkem-bob-secret',
@@ -345,6 +363,7 @@ void main() {
       attachment: persisted,
       contactPeerId: _alicePeerId,
       owner: MediaOwnerLane.direct,
+      messageRepo: bobMessageRepo,
     );
     expect(downloaded, isNotNull);
     expect(downloaded!.downloadStatus, kMediaDownloadStatusDone);
@@ -375,6 +394,8 @@ void main() {
     expect(uploaded, isNotNull);
     expect(relayStore[uploaded!.id], isNot(equals(voiceBytes)));
 
+    await seedOrdinaryIncomingParent('msg-voice-rt');
+
     await bobMediaRepo.saveAttachment(
       uploaded.copyWith(
         messageId: 'msg-voice-rt',
@@ -391,14 +412,12 @@ void main() {
       attachment: persisted,
       contactPeerId: _alicePeerId,
       owner: MediaOwnerLane.direct,
+      messageRepo: bobMessageRepo,
     );
 
     expect(downloaded, isNotNull);
     expect(downloaded!.downloadStatus, kMediaDownloadStatusDone);
-    expect(
-      File(downloaded.localPath!).readAsBytesSync(),
-      equals(voiceBytes),
-    );
+    expect(File(downloaded.localPath!).readAsBytesSync(), equals(voiceBytes));
     // Voice metadata rides the attachment, never the transport.
     expect(downloaded.durationMs, 4200);
     expect(downloaded.waveform, const [0.2, 0.7, 0.4]);
@@ -424,6 +443,8 @@ void main() {
       expect(uploaded!.mediaType, 'file');
       expect(relayStore[uploaded.id], isNot(equals(sharedBytes)));
 
+      await seedOrdinaryIncomingParent('msg-share-rt');
+
       await bobMediaRepo.saveAttachment(
         uploaded.copyWith(
           messageId: 'msg-share-rt',
@@ -440,6 +461,7 @@ void main() {
         attachment: persisted,
         contactPeerId: _alicePeerId,
         owner: MediaOwnerLane.direct,
+        messageRepo: bobMessageRepo,
       );
 
       expect(downloaded, isNotNull);

@@ -14,6 +14,70 @@ void main() {
       expect(routeTarget.peerId, 'peer-123');
     });
 
+    test(
+      'message_reaction routes to reactor conversation with target anchor',
+      () {
+        final routeTarget = NotificationRouteTarget.fromRemoteMessageData({
+          'type': 'message_reaction',
+          'sender_id': 'peer-reactor',
+          'event_id': 'reaction-event-1',
+          'target_message_id': 'target-message-1',
+          'action': 'add',
+        });
+
+        expect(routeTarget, isNotNull);
+        expect(routeTarget!.kind, NotificationRouteTargetKind.conversation);
+        expect(routeTarget.peerId, 'peer-reactor');
+        expect(routeTarget.messageId, 'target-message-1');
+        expect(routeTarget.toPayload(), 'peer-reactor');
+      },
+    );
+
+    test('message_reaction rejects remove and incomplete wake metadata', () {
+      expect(
+        NotificationRouteTarget.fromRemoteMessageData({
+          'type': 'message_reaction',
+          'sender_id': 'peer-reactor',
+          'event_id': 'reaction-event-1',
+          'target_message_id': 'target-message-1',
+          'action': 'remove',
+        }),
+        isNull,
+      );
+      expect(
+        NotificationRouteTarget.fromRemoteMessageData({
+          'type': 'message_reaction',
+          'sender_id': 'peer-reactor',
+          'event_id': 'reaction-event-1',
+          'action': 'add',
+        }),
+        isNull,
+      );
+    });
+
+    test(
+      'group_reaction uses relay reactor identity and routes to target message',
+      () {
+        final routeTarget = NotificationRouteTarget.fromRemoteMessageData({
+          'type': 'group_reaction',
+          'groupId': 'group-123',
+          'reactor_peer_id': 'peer-reactor',
+          'event_id': 'reaction-event-1',
+          'target_message_id': 'target-message-1',
+          'action': 'add',
+        });
+
+        expect(routeTarget, isNotNull);
+        expect(routeTarget!.kind, NotificationRouteTargetKind.group);
+        expect(routeTarget.groupId, 'group-123');
+        expect(routeTarget.messageId, 'target-message-1');
+        expect(
+          routeTarget.toPayload(),
+          'group:group-123|message:target-message-1',
+        );
+      },
+    );
+
     test('fromRemoteMessageData maps group_message to group route', () {
       final routeTarget = NotificationRouteTarget.fromRemoteMessageData({
         'type': 'group_message',

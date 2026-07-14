@@ -39,6 +39,19 @@ class GroupSharedMediaIdentity {
   final String groupId;
   final String messageId;
   final String attachmentId;
+
+  @override
+  bool operator ==(Object other) =>
+      other is GroupSharedMediaIdentity &&
+      other.groupId == groupId &&
+      other.messageId == messageId &&
+      other.attachmentId == attachmentId;
+
+  @override
+  int get hashCode => Object.hash(groupId, messageId, attachmentId);
+
+  @override
+  String toString() => 'GroupSharedMediaIdentity(redacted)';
 }
 
 /// Strict discussion-group media-library state.
@@ -235,13 +248,28 @@ class GroupSharedMediaLibraryController extends ChangeNotifier {
     if (index < 0) return false;
     final current = _entries[index];
     if (current.attachment.ownerLane != MediaOwnerLane.group) return false;
-    if (current.attachment.isBookmarked == bookmarked) return true;
+    final messageId = _messageIdByAttachmentId[attachmentId];
+    final writer = _stateRepository;
+    if (messageId == null || writer is! GroupMediaLibraryStateRepository) {
+      _removeEntryAt(index);
+      notifyListeners();
+      return false;
+    }
+    final groupWriter = writer as GroupMediaLibraryStateRepository;
     final next = bookmarked;
-    await _stateRepository.setBookmarked(attachmentId, bookmarked: next);
+    final changed = await groupWriter.setGroupBookmarkedIfOrdinary(
+      groupId: groupId,
+      messageId: messageId,
+      attachmentId: attachmentId,
+      bookmarked: next,
+    );
+    if (!changed) {
+      _removeEntryAt(index);
+      notifyListeners();
+      return false;
+    }
     if (_filter == GroupSharedMediaFilter.bookmarked && !next) {
-      _entries.removeAt(index);
-      _entryIds.remove(attachmentId);
-      _selectedIds.remove(attachmentId);
+      _removeEntryAt(index);
     } else {
       _entries[index] = MediaLibraryEntry(
         attachment: current.attachment.copyWith(isBookmarked: next),
@@ -251,6 +279,14 @@ class GroupSharedMediaLibraryController extends ChangeNotifier {
     }
     notifyListeners();
     return true;
+  }
+
+  void _removeEntryAt(int index) {
+    final attachmentId = _entries[index].attachment.id;
+    _entries.removeAt(index);
+    _entryIds.remove(attachmentId);
+    _selectedIds.remove(attachmentId);
+    _messageIdByAttachmentId.remove(attachmentId);
   }
 
   void removeEntriesForMessages(Iterable<String> messageIds) {
