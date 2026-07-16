@@ -28,8 +28,7 @@ void _probeLog(String event, [Map<String, Object?> details = const {}]) {
 
 String _tokenSummary(String? token) {
   if (token == null || token.isEmpty) return '<none>';
-  final prefix = token.length <= 10 ? token : token.substring(0, 10);
-  return '$prefix...(${token.length})';
+  return '<present:length=${token.length}>';
 }
 
 Future<String?> _waitForApnsToken() async {
@@ -83,10 +82,7 @@ Future<void> main() async {
       fail('FCM token was not available');
     }
 
-    _probeLog('fcm_token_ready', {
-      'token': fcmToken,
-      'summary': _tokenSummary(fcmToken),
-    });
+    _probeLog('fcm_token_ready', {'summary': _tokenSummary(fcmToken)});
 
     FirebaseMessaging.onMessage.listen((message) {
       _probeLog('foreground_message', {

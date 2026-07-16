@@ -12,9 +12,11 @@
 ///
 /// Scenarios:
 ///  - `physical_introducer`: A = physical Android, B = Android emulator,
-///    C = iOS simulator.
+///    C = a second Android emulator for the sims-major adapter (legacy direct
+///    runs may still supply an iOS simulator).
 ///  - `emulator_introducer`:  A = Android emulator, B = physical Android,
-///    C = iOS simulator.
+///    C = a second Android emulator for the sims-major adapter (legacy direct
+///    runs may still supply an iOS simulator).
 ///
 /// The orchestrator performs ALL setup/actions/taps itself through the
 /// debug-build intro E2E config channel (`intro_e2e_config.json`), `adb`, and
@@ -30,6 +32,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../support/android_app_state_guard.dart';
 import '_android_app_package.dart';
 
 const _iosBundleId = 'com.mknoon.app';
@@ -59,14 +62,15 @@ const List<_Scenario> _scenarios = <_Scenario>[
     id: 'physical_introducer',
     testCase: 'TC-12',
     summary:
-        'physical Android introducer; emulator B + simulator C acceptances '
+        'physical Android introducer; Android emulators B/C acceptances '
         'show acceptance copy; automated terminated-app taps open A-B',
   ),
   _Scenario(
     id: 'emulator_introducer',
     testCase: 'TC-13',
     summary:
-        'Android emulator introducer; physical B + simulator C acceptances '
+        'Android emulator introducer; physical B + Android emulator C '
+        'acceptances '
         'show acceptance copy; automated terminated-app taps open A-B',
   ),
 ];
@@ -100,7 +104,9 @@ Future<void> main(List<String> args) async {
 
   final introducer = _valueFor(args, '--introducer');
   final recipient = _valueFor(args, '--recipient');
-  final introduced = _valueFor(args, '--introduced');
+  final introducedAndroid = _valueFor(args, '--introduced-android');
+  final introduced = introducedAndroid ?? _valueFor(args, '--introduced');
+  final preparedArtifact = _valueFor(args, '--artifact');
   if (scenarioArg == 'all' ||
       introducer == null ||
       recipient == null ||
@@ -109,12 +115,13 @@ Future<void> main(List<String> args) async {
       'Usage: dart run integration_test/scripts/'
       'run_intro_accept_notification_android.dart '
       '--scenario <physical_introducer|emulator_introducer> '
-      '--introducer <android-id> --recipient <android-or-sim-id> '
-      '--introduced <ios-sim-udid> [--artifact-dir <dir>] [--verbose]',
+      '--introducer <android-id> --recipient <android-id> '
+      '--introduced-android <second-android-emulator-id> '
+      '--artifact <central-prebuilt-apk> [--artifact-dir <dir>] [--verbose]',
     );
     stderr.writeln(
-      'Both --introducer and --recipient must be Android (adb) targets for '
-      'this campaign; --introduced is the iOS simulator party C.',
+      'All three sims-major parties are Android adb targets. A legacy direct '
+      'run may use --introduced <ios-sim-udid> for party C.',
     );
     exit(64);
   }
@@ -130,13 +137,16 @@ Future<void> main(List<String> args) async {
       scenario: scenario,
       introducerAndroidId: introducer,
       recipientAndroidId: recipient,
-      introducedSimUdid: introduced,
+      introducedDeviceId: introduced,
+      introducedIsIos: introducedAndroid == null,
+      preparedArtifact: preparedArtifact == null
+          ? null
+          : File(preparedArtifact).absolute,
+      statePreparedByParent: args.contains('--android-state-prepared'),
       artifactDir: artifactDir,
     );
     await campaign.run();
-    stdout.writeln(
-      'PASS: ${scenario.id} artifacts at ${artifactDir.path}',
-    );
+    stdout.writeln('PASS: ${scenario.id} artifacts at ${artifactDir.path}');
   } on _CampaignFailure catch (failure) {
     stderr.writeln('FAIL: ${failure.message}');
     exit(1);
@@ -168,16 +178,26 @@ class _Campaign {
     required this.scenario,
     required this.introducerAndroidId,
     required this.recipientAndroidId,
-    required this.introducedSimUdid,
+    required this.introducedDeviceId,
+    required this.introducedIsIos,
+    required this.preparedArtifact,
+    required this.statePreparedByParent,
     required this.artifactDir,
   }) : a = _Party(role: 'A', deviceId: introducerAndroidId, isIos: false),
        b = _Party(role: 'B', deviceId: recipientAndroidId, isIos: false),
-       c = _Party(role: 'C', deviceId: introducedSimUdid, isIos: true);
+       c = _Party(
+         role: 'C',
+         deviceId: introducedDeviceId,
+         isIos: introducedIsIos,
+       );
 
   final _Scenario scenario;
   final String introducerAndroidId;
   final String recipientAndroidId;
-  final String introducedSimUdid;
+  final String introducedDeviceId;
+  final bool introducedIsIos;
+  final File? preparedArtifact;
+  final bool statePreparedByParent;
   final Directory artifactDir;
 
   final _Party a;
@@ -189,26 +209,49 @@ class _Campaign {
 
   Future<void> run() async {
     await _verifyTargetsAvailable();
-    await _launchAll();
-    await _collectIdentities();
-    await _setupContacts();
-    await _sendIntroduction();
+    AndroidAppStateGuard? directStateGuard;
+    if (!statePreparedByParent) {
+      try {
+        directStateGuard = await AndroidAppStateGuard.capture(
+          devices: <String>[a.deviceId, b.deviceId, if (!c.isIos) c.deviceId],
+          packageName: _appPackage,
+          backupLabel: 'intro-accept-direct',
+        );
+      } on AndroidAppStateBlocked catch (error) {
+        throw _CampaignFailure(error.detail);
+      } on AndroidAppStateFailure catch (error) {
+        throw _CampaignFailure(error.detail);
+      }
+    }
+    try {
+      await _installPreparedArtifactIfPresent(directStateGuard);
+      await _launchAll();
+      await _collectIdentities();
+      await _setupContacts();
+      await _sendIntroduction();
 
-    // Leg 1: B accepts while A is terminated.
-    await _acceptanceLeg(
-      responder: b,
-      legLabel: 'b_accept',
-      expectedStatusContext: 'b_accept_recorded',
-    );
+      // Leg 1: B accepts while A is terminated.
+      await _acceptanceLeg(
+        responder: b,
+        legLabel: 'b_accept',
+        expectedStatusContext: 'b_accept_recorded',
+      );
 
-    // Leg 2: C accepts while A is terminated again.
-    await _acceptanceLeg(
-      responder: c,
-      legLabel: 'c_accept',
-      expectedStatusContext: 'bc_connected',
-    );
+      // Leg 2: C accepts while A is terminated again.
+      await _acceptanceLeg(
+        responder: c,
+        legLabel: 'c_accept',
+        expectedStatusContext: 'bc_connected',
+      );
 
-    await _assertNoNavigationErrors();
+      await _assertNoNavigationErrors();
+    } finally {
+      try {
+        await directStateGuard?.restoreAll();
+      } on AndroidAppStateFailure catch (error) {
+        throw _CampaignFailure(error.detail);
+      }
+    }
     _writeArtifact();
   }
 
@@ -216,7 +259,12 @@ class _Campaign {
 
   Future<void> _verifyTargetsAvailable() async {
     final adbDevices = await _run('adb', ['devices']);
-    for (final android in [a, b]) {
+    final androidParties = <_Party>[a, b, if (!c.isIos) c];
+    if (androidParties.map((party) => party.deviceId).toSet().length !=
+        androidParties.length) {
+      throw _CampaignFailure('All Android party target IDs must be distinct.');
+    }
+    for (final android in androidParties) {
       if (!adbDevices.contains(android.deviceId)) {
         throw _CampaignFailure(
           'Android target ${android.deviceId} (${android.role}) is not '
@@ -225,49 +273,135 @@ class _Campaign {
         );
       }
     }
+    if (!c.isIos) {
+      final aIsEmulator = await _isAndroidEmulator(a.deviceId);
+      final bIsEmulator = await _isAndroidEmulator(b.deviceId);
+      final cIsEmulator = await _isAndroidEmulator(c.deviceId);
+      final topologyMatches = switch (scenario.id) {
+        'physical_introducer' => !aIsEmulator && bIsEmulator && cIsEmulator,
+        'emulator_introducer' => aIsEmulator && !bIsEmulator && cIsEmulator,
+        _ => false,
+      };
+      if (!topologyMatches) {
+        throw _CampaignFailure(
+          '${scenario.id} requires one physical Android plus two distinct '
+          'Android emulators in the declared A/B/C roles.',
+        );
+      }
+      checks['targetsDiscovered'] = true;
+      return;
+    }
     final simList = await _run('xcrun', [
       'simctl',
       'list',
       'devices',
       'available',
     ]);
-    if (!simList.contains(introducedSimUdid)) {
+    if (!simList.contains(introducedDeviceId)) {
       throw _CampaignFailure(
-        'iOS simulator $introducedSimUdid (C) is not available. Boot it '
+        'iOS simulator $introducedDeviceId (C) is not available. Boot it '
         'explicitly before use.',
       );
     }
     final booted = await _run('xcrun', ['simctl', 'list', 'devices']);
-    if (!booted.contains('$introducedSimUdid) (Booted)')) {
+    if (!booted.contains('$introducedDeviceId) (Booted)')) {
       // Boot explicitly before use (idempotent when already booted).
       await _run('xcrun', [
         'simctl',
         'boot',
-        introducedSimUdid,
+        introducedDeviceId,
       ], allowFail: true);
     }
     checks['targetsDiscovered'] = true;
   }
 
+  Future<bool> _isAndroidEmulator(String deviceId) async {
+    if (deviceId.startsWith('emulator-')) return true;
+    final qemu = await _adbShell(deviceId, <String>[
+      'getprop',
+      'ro.kernel.qemu',
+    ], allowFail: true);
+    return qemu.trim() == '1';
+  }
+
+  Future<void> _installPreparedArtifactIfPresent(
+    AndroidAppStateGuard? directStateGuard,
+  ) async {
+    final artifact = preparedArtifact;
+    if (artifact == null) return;
+    if (!artifact.existsSync()) {
+      throw _CampaignFailure(
+        'Prepared Android artifact is missing: ${artifact.path}',
+      );
+    }
+    for (final party in <_Party>[a, b, if (!c.isIos) c]) {
+      if (directStateGuard != null) {
+        await directStateGuard.prepareFreshInstall(
+          device: party.deviceId,
+          artifact: artifact,
+        );
+      } else {
+        final paths = await _adbShell(party.deviceId, <String>[
+          'pm',
+          'path',
+          _appPackage,
+        ]);
+        if (!paths.contains('package:')) {
+          throw _CampaignFailure(
+            'Parent-prepared APK is missing on ${party.deviceId}.',
+          );
+        }
+      }
+      final sdkRaw = await _adbShell(party.deviceId, <String>[
+        'getprop',
+        'ro.build.version.sdk',
+      ]);
+      final sdk = int.tryParse(sdkRaw.trim());
+      if (sdk != null && sdk >= 33) {
+        await _adbShell(party.deviceId, <String>[
+          'pm',
+          'grant',
+          _appPackage,
+          'android.permission.POST_NOTIFICATIONS',
+        ]);
+      }
+      await _writeAppDocumentsFile(
+        party,
+        'auto_setup.json',
+        jsonEncode(<String, Object?>{'username': 'SimsIntro${party.role}'}),
+      );
+    }
+    checks['centralPreparedArtifactInstalled'] = true;
+  }
+
   // ---- Phase 1: launch + identity export ----------------------------------
 
   Future<void> _launchAll() async {
-    for (final party in [a, b]) {
-      await _adbShell(party.deviceId, [
-        'monkey',
-        '-p',
-        _appPackage,
-        '-c',
-        'android.intent.category.LAUNCHER',
-        '1',
+    for (final party in <_Party>[a, b, if (!c.isIos) c]) {
+      final output = await _adbShell(party.deviceId, [
+        'am',
+        'start',
+        '-W',
+        '-n',
+        '$_appPackage/.MainActivity',
       ]);
+      if (!RegExp(
+        r'^Status:[ \t]+ok[ \t]*\r?$',
+        multiLine: true,
+      ).hasMatch(output)) {
+        throw _CampaignFailure(
+          'Parent-prepared APK did not launch on ${party.deviceId}.',
+        );
+      }
     }
-    await _run('xcrun', [
-      'simctl',
-      'launch',
-      introducedSimUdid,
-      _iosBundleId,
-    ], allowFail: true);
+    if (c.isIos) {
+      await _run('xcrun', [
+        'simctl',
+        'launch',
+        introducedDeviceId,
+        _iosBundleId,
+      ], allowFail: true);
+    }
 
     // Precondition: no stale acceptance card may remain on A before the
     // first acceptance, or copy/tap attribution would be ambiguous. The
@@ -359,12 +493,25 @@ class _Campaign {
     checks['${legLabel}IntroducerTerminatedBeforeSend'] = true;
 
     // Responder accepts every pending introduction via the E2E channel.
-    await _writeConfigAndAwait(responder, {
+    final response = await _writeConfigAndAwait(responder, {
       'stepId': '252-${scenario.id}-$legLabel',
       'introduction_action': 'accept_all',
       'poll_cycles': 40,
       'poll_interval_ms': 1000,
+      'require_introducer_acceptance_custody': true,
+      'introducer_acceptance_custody_timeout_ms': 150000,
     });
+    final custody = response['introDeliveryCustody'];
+    if (custody is! Map<String, dynamic> ||
+        custody['status'] != 'confirmed' ||
+        custody['introductionCount'] is! int ||
+        (custody['introductionCount'] as int) < 1) {
+      throw _CampaignFailure(
+        '$legLabel did not return exact introducer-custody confirmation',
+      );
+    }
+    stdout.writeln('INTRODUCER_CUSTODY: PASS ($legLabel)');
+    checks['${legLabel}IntroducerCustody'] = true;
 
     // Wait for the relay-built FCM card on terminated A.
     await _waitFor(
@@ -372,9 +519,11 @@ class _Campaign {
       const Duration(seconds: 90),
       () async => (await _notificationTitlesOnA()).contains(_acceptTitle),
     );
-    await _requirePidofEmpty(
-      'after $legLabel card arrived / before tap',
-    );
+    // FCM delivery may start a headless process after the card is staged.
+    // Kill that process without force-stopping the package so the existing
+    // notification PendingIntent still exercises a true cold tap.
+    await _terminateIntroducer();
+    await _requirePidofEmpty('after $legLabel card arrived / before tap');
     checks['${legLabel}IntroducerStillTerminatedBeforeTap'] = true;
 
     // Copy assertion through the feasibility-probed extractor.
@@ -423,19 +572,30 @@ class _Campaign {
   }
 
   Future<void> _terminateIntroducer() async {
-    // Background first so am kill is honored, then verify the process died.
-    await _adbShell(a.deviceId, [
-      'input',
-      'keyevent',
-      'KEYCODE_HOME',
-    ]);
+    // Background first so am kill is honored. Some emulator activity-manager
+    // races leave the process alive, so use stop-app as the bounded fallback.
+    await _adbShell(a.deviceId, ['input', 'keyevent', 'KEYCODE_HOME']);
     await Future<void>.delayed(const Duration(seconds: 1));
     await _adbShell(a.deviceId, ['am', 'kill', _appPackage]);
-    await _waitFor(
-      'A process terminated (pidof empty)',
-      const Duration(seconds: 20),
-      () async => (await _pidofA()).isEmpty,
-    );
+    if (!await _pidofEmptyWithin(const Duration(seconds: 5))) {
+      await _adbShell(a.deviceId, ['cmd', 'activity', 'stop-app', _appPackage]);
+    }
+    if (!await _pidofEmptyWithin(const Duration(seconds: 20))) {
+      final pid = await _pidofA();
+      throw _CampaignFailure(
+        'A process remained alive after bounded termination (pidof=$pid); '
+        'the push/tap boundary would be unfaithful',
+      );
+    }
+  }
+
+  Future<bool> _pidofEmptyWithin(Duration timeout) async {
+    final deadline = DateTime.now().add(timeout);
+    do {
+      if ((await _pidofA()).isEmpty) return true;
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    } while (DateTime.now().isBefore(deadline));
+    return false;
   }
 
   Future<void> _requirePidofEmpty(String context) async {
@@ -503,18 +663,14 @@ class _Campaign {
         'notification',
         '--noredact',
       ]);
-      final title = RegExp(
-        r'android\.title=(?:String\s*\()?([^)\n]+)',
-      ).allMatches(dump).map((match) => match.group(1)!.trim()).firstWhere(
-        (value) => value == _acceptTitle,
-        orElse: () => '',
-      );
-      final body = RegExp(
-        r'android\.text=(?:String\s*\()?([^)\n]+)',
-      ).allMatches(dump).map((match) => match.group(1)!.trim()).firstWhere(
-        (value) => value.contains(_acceptBody),
-        orElse: () => '',
-      );
+      final title = RegExp(r'android\.title=(?:String\s*\()?([^)\n]+)')
+          .allMatches(dump)
+          .map((match) => match.group(1)!.trim())
+          .firstWhere((value) => value == _acceptTitle, orElse: () => '');
+      final body = RegExp(r'android\.text=(?:String\s*\()?([^)\n]+)')
+          .allMatches(dump)
+          .map((match) => match.group(1)!.trim())
+          .firstWhere((value) => value.contains(_acceptBody), orElse: () => '');
       if (title.isNotEmpty && body.isNotEmpty) {
         return (title: title, body: body);
       }
@@ -566,11 +722,7 @@ class _Campaign {
   }
 
   Future<void> _expandShade() async {
-    await _adbShell(a.deviceId, [
-      'cmd',
-      'statusbar',
-      'expand-notifications',
-    ]);
+    await _adbShell(a.deviceId, ['cmd', 'statusbar', 'expand-notifications']);
     await Future<void>.delayed(const Duration(seconds: 1));
   }
 
@@ -621,11 +773,11 @@ class _Campaign {
 
   Future<String> _logcatMark() async {
     // Timestamp mark so we only read post-tap log lines.
-    final out = await _adbShell(a.deviceId, [
-      'date',
-      '+%m-%d %H:%M:%S.000',
-    ]);
-    return out.trim();
+    final mark = (await _adbShell(a.deviceId, ['date', '+%s.%3N'])).trim();
+    if (!RegExp(r'^\d{10,}\.\d{3}$').hasMatch(mark)) {
+      throw _CampaignFailure('Android logcat cursor is invalid: "$mark"');
+    }
+    return mark;
   }
 
   Future<({String finalPeer, String statusContext})> _waitForRedirectMarker(
@@ -680,7 +832,7 @@ class _Campaign {
 
   // ---- E2E config channel --------------------------------------------------
 
-  Future<void> _writeConfigAndAwait(
+  Future<Map<String, dynamic>> _writeConfigAndAwait(
     _Party party,
     Map<String, dynamic> config,
   ) async {
@@ -715,6 +867,7 @@ class _Campaign {
         'step $stepId failed on ${party.role}: ${decoded['error']}',
       );
     }
+    return decoded;
   }
 
   Future<String?> _readAppDocumentsFile(_Party party, String name) async {
@@ -776,9 +929,19 @@ class _Campaign {
         'shell',
         'run-as',
         _appPackage,
-        'sh',
-        '-c',
-        'cp $remoteTmp app_flutter/$name',
+        'mkdir',
+        '-p',
+        'app_flutter',
+      ]);
+      await _run('adb', [
+        '-s',
+        party.deviceId,
+        'shell',
+        'run-as',
+        _appPackage,
+        'cp',
+        remoteTmp,
+        'app_flutter/$name',
       ]);
       await _adbShell(party.deviceId, ['rm', '-f', remoteTmp], allowFail: true);
     } finally {
@@ -814,7 +977,7 @@ class _Campaign {
       'devices': <String>[
         introducerAndroidId,
         recipientAndroidId,
-        introducedSimUdid,
+        introducedDeviceId,
       ],
       'copyExtractor': copyExtractor,
       'recipientPeerPrefix': b.peerPrefix,

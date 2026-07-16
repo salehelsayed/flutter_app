@@ -203,6 +203,96 @@ void main() {
     );
     expect(await projection.readLocalAccountPeerId(), isNull);
   });
+
+  test(
+    'SIMS fixture mutation is exact-generation and never invalidates siblings',
+    () async {
+      final store = _MemorySecureKeyStore();
+      final projection = DirectReactionNotificationProjection(store: store);
+      await projection.replaceLocalIdentity(accountPeerId: 'peer-local');
+      final existing = _contact(username: 'Existing');
+      await projection.upsertContact(existing);
+      await projection.upsertAuthoredTarget(_message(id: 'existing-target'));
+      final digest = 'a' * 64;
+
+      expect(
+        await projection.insertSimsFixtureContactIfAbsent(
+          peerId: 'peer-sims',
+          username: 'Encrypted fixture title',
+          fixtureDigest: digest,
+        ),
+        isTrue,
+      );
+      expect(
+        await projection.insertSimsFixtureContactIfAbsent(
+          peerId: 'peer-sims',
+          username: 'Encrypted fixture title',
+          fixtureDigest: digest,
+        ),
+        isFalse,
+      );
+      expect((await projection.readContacts())['peer-sims'], <String, Object?>{
+        'username': 'Encrypted fixture title',
+        'blocked': false,
+        'archived': false,
+        'simsFixtureDigest': digest,
+      });
+      await projection.replaceContacts(<ContactModel>[
+        existing,
+        ContactModel(
+          peerId: 'peer-sims',
+          publicKey: 'mknoon-sims-projection-only',
+          rendezvous: '/mknoon/sims/projection-only',
+          username: 'Encrypted fixture title',
+          signature: 'mknoon-sims-ios:$digest',
+          scannedAt: '1970-01-01T00:00:00.000Z',
+        ),
+      ]);
+      expect(
+        (await projection.readContacts())['peer-sims']?['simsFixtureDigest'],
+        digest,
+        reason: 'launch-time backfill must preserve the exact fixture marker',
+      );
+
+      store.failNextWriteKeys.add(sharedDirectReactionContactsKey);
+      await expectLater(
+        projection.insertSimsFixtureContactIfAbsent(
+          peerId: 'peer-write-failure',
+          username: 'Failure fixture',
+          fixtureDigest: 'b' * 64,
+        ),
+        throwsStateError,
+      );
+      expect(await projection.readContacts(), contains(existing.peerId));
+      expect(
+        (await projection.readAuthoredTargets()).map((row) => row['id']),
+        contains('existing-target'),
+      );
+
+      await projection.upsertContact(
+        ContactModel(
+          peerId: 'peer-sims',
+          publicKey: 'real-key',
+          rendezvous: '/dns4/real.example/tcp/443',
+          username: 'Real replacement',
+          signature: 'real-signature',
+          scannedAt: '2026-07-12T12:00:00.000Z',
+        ),
+      );
+      expect(
+        await projection.removeSimsFixtureContactIfExact(
+          peerId: 'peer-sims',
+          username: 'Encrypted fixture title',
+          fixtureDigest: digest,
+        ),
+        isFalse,
+      );
+      expect(
+        (await projection.readContacts())['peer-sims']?['username'],
+        'Real replacement',
+      );
+    },
+  );
 }
 
 ContactModel _contact({required String username}) => ContactModel(

@@ -631,6 +631,28 @@ void main() {
     expect(method, contains('await _waitForNotificationCardInShade()'));
   });
 
+  test('Plan 257 group sends require a committed FLOW outcome', () {
+    final source = File(
+      'integration_test/scripts/'
+      'capture_group_reaction_notification_device.dart',
+    ).readAsStringSync();
+    final methodStart = source.indexOf('Future<void> _sendGroupText(');
+    final methodEnd = source.indexOf(
+      'Future<void> _waitForGroupUnread',
+      methodStart,
+    );
+
+    expect(methodStart, greaterThan(0));
+    expect(methodEnd, greaterThan(methodStart));
+    final method = source.substring(methodStart, methodEnd);
+    expect(method, contains('baselineOutcomeCount'));
+    expect(method, contains('extractGroupSendTimingObservations('));
+    expect(method, contains('outcome.isRecoveryPending'));
+    expect(method, contains('outcome.hasRequiredInboxCustody('));
+    expect(method, contains('findNodeBoundsByClassContainingText('));
+    expect(method, isNot(contains('_waitForUiText(deviceId, marker')));
+  });
+
   test(
     'Plan 257 SQLCipher probes cannot downgrade and erase candidate data',
     () {
@@ -686,10 +708,15 @@ void main() {
     final probe = File(
       'integration_test/group_reaction_notification_sqlcipher_probe_test.dart',
     ).readAsStringSync();
+    final appProbe = File(
+      'lib/core/debug/group_reaction_e2e_probe.dart',
+    ).readAsStringSync();
 
     expect(capture, contains("observation['storedEnvelopeDecryptOk'] != true"));
-    expect(probe, contains('BackgroundPushCrypto().decryptGroup('));
-    expect(probe, contains("'storedEnvelopeDecryptOk'"));
+    expect(probe, contains('prepareExactGroupReactionAddRedrive('));
+    expect(appProbe, contains('crypto.decryptGroup('));
+    expect(appProbe, contains("'storedEnvelopeDecryptOk'"));
+    expect(appProbe, contains('runGroupReactionE2EProbeAction('));
 
     final methodStart = capture.indexOf('Future<void> _redriveExactStoredAdd(');
     final methodEnd = capture.indexOf(
@@ -702,7 +729,32 @@ void main() {
     expect(method, contains("'drive'"));
     expect(method, contains("'--keep-app-running'"));
     expect(method, contains("'test_driver/integration_test.dart'"));
+    expect(method, contains('_runInstalledGroupReactionProbe('));
+    expect(method, contains('if (noChildBuilds)'));
     expect(method, isNot(contains("'test',\n")));
+  });
+
+  test('Plan 257 installed-app probe is wired before generic E2E actions', () {
+    final runner = File(
+      'lib/core/debug/intro_e2e_runner.dart',
+    ).readAsStringSync();
+    final mainSource = File('lib/main.dart').readAsStringSync();
+    final probeBranch = runner.indexOf('isGroupReactionE2EProbeAction(');
+    final genericActions = runner.indexOf(
+      'await runIntroE2EActions(',
+      probeBranch,
+    );
+
+    expect(probeBranch, greaterThan(0));
+    expect(genericActions, greaterThan(probeBranch));
+    expect(runner, contains('runGroupReactionE2EProbeAction('));
+    expect(runner, contains('groupReactionProbeDatabase'));
+    expect(runner, contains('groupReactionProbeSecureKeyStore'));
+    expect(mainSource, contains('groupReactionProbeDatabase: db'));
+    expect(
+      mainSource,
+      contains('groupReactionProbeSecureKeyStore: secureKeyStore'),
+    );
   });
 
   test(
@@ -1082,6 +1134,44 @@ I/flutter: [FLOW] {"event":"CHAT_SEND_SUCCESS","details":{"id":"wrong"}}
     });
   });
 
+  group('extractGroupSendTimingObservations', () {
+    test('preserves terminal ordering across recovery and committed retry', () {
+      const log = '''
+I/flutter: [FLOW] {"event":"GROUP_SEND_MSG_TIMING","details":{"outcome":"success","expectedRecipientCount":1,"inboxStored":true,"inboxPending":false}}
+I/flutter: [FLOW] not-json
+I/flutter: [FLOW] {"event":"GROUP_SEND_MSG_USE_CASE_RECOVERY_PENDING","details":{}}
+I/flutter: [FLOW] {"event":"GROUP_SEND_MSG_TIMING","details":{"outcome":"group_recovery_pending"}}
+I/flutter: [FLOW] {"event":"GROUP_SEND_MSG_TIMING","details":{"outcome":"success_no_peers","expectedRecipientCount":1,"inboxStored":true,"inboxPending":false}}
+''';
+
+      final observations = extractGroupSendTimingObservations(log);
+
+      expect(observations, hasLength(3));
+      expect(observations[0].isCommitted, isTrue);
+      expect(observations[1].isRecoveryPending, isTrue);
+      expect(observations[2].outcome, 'success_no_peers');
+      expect(
+        observations[2].hasRequiredInboxCustody(recipientCount: 1),
+        isTrue,
+      );
+    });
+
+    test('does not accept incomplete or mismatched custody as a commit', () {
+      const log = '''
+I/flutter: [FLOW] {"event":"GROUP_SEND_MSG_TIMING","details":{"outcome":"success","expectedRecipientCount":2,"inboxStored":true,"inboxPending":false}}
+I/flutter: [FLOW] {"event":"GROUP_SEND_MSG_TIMING","details":{"outcome":"success","expectedRecipientCount":1,"inboxStored":true,"inboxPending":true}}
+I/flutter: [FLOW] {"event":"GROUP_SEND_MSG_TIMING","details":{"outcome":"success_no_peers","expectedRecipientCount":1,"inboxStored":false,"inboxPending":false}}
+''';
+
+      final observations = extractGroupSendTimingObservations(log);
+
+      expect(observations, hasLength(3));
+      for (final observation in observations) {
+        expect(observation.hasRequiredInboxCustody(recipientCount: 1), isFalse);
+      }
+    });
+  });
+
   group('extractActiveNotificationCards', () {
     test('returns only active records for the requested package', () {
       const dump = '''
@@ -1329,6 +1419,38 @@ Ranking Config:
 ''';
 
       expect(findNodeBoundsByClass(dump, 'android.widget.EditText'), isNull);
+    });
+
+    test('class-scoped text distinguishes a restored draft from a bubble', () {
+      const withDraft = '''
+<hierarchy>
+  <node class="android.view.View" content-desc="TC257First123" bounds="[42,900][1038,1040]" />
+  <node class="android.widget.EditText" text="TC257First123" bounds="[192,1328][888,1454]" />
+</hierarchy>
+''';
+      const bubbleOnly = '''
+<hierarchy>
+  <node class="android.view.View" content-desc="TC257First123" bounds="[42,900][1038,1040]" />
+  <node class="android.widget.EditText" text="" bounds="[192,1328][888,1454]" />
+</hierarchy>
+''';
+
+      expect(
+        findNodeBoundsByClassContainingText(
+          withDraft,
+          'android.widget.EditText',
+          'TC257First123',
+        ),
+        (192, 1328, 888, 1454),
+      );
+      expect(
+        findNodeBoundsByClassContainingText(
+          bubbleOnly,
+          'android.widget.EditText',
+          'TC257First123',
+        ),
+        isNull,
+      );
     });
   });
 

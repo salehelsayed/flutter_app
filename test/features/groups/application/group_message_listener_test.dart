@@ -11732,12 +11732,22 @@ void main() {
 
         delayedBridge.downloadGate.complete();
         await firstDownloadFuture;
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-
-        final savedAttachments = await mediaRepo.getAttachmentsForMessage(
-          'msg-group-1',
-          owner: MediaOwnerLane.group,
+        final persistenceDeadline = DateTime.now().add(
+          const Duration(seconds: 5),
         );
+        late List<MediaAttachment> savedAttachments;
+        do {
+          savedAttachments = await mediaRepo.getAttachmentsForMessage(
+            'msg-group-1',
+            owner: MediaOwnerLane.group,
+          );
+          if (savedAttachments.single.downloadStatus == 'done') break;
+          if (DateTime.now().isAfter(persistenceDeadline)) {
+            fail('listener did not persist the joined media download in time');
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        } while (true);
+
         expect(savedAttachments.single.downloadStatus, 'done');
         expect(savedAttachments.single.localPath, startsWith('media/'));
         expect(mediaRepo.downloadingUpdateCalls, 1);

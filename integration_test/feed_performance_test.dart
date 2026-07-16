@@ -12,6 +12,8 @@ import 'package:flutter_app/features/identity/presentation/widgets/daylight_lago
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
+import 'support/android_critical_performance_budget.dart';
+
 // ─── Data Generator ───────────────────────────────────────────────────────────
 
 List<FeedItem> _generateFeedItems() {
@@ -224,6 +226,8 @@ class _FrameStats {
     return sorted.last;
   }
 
+  int get frameCount => buildTimesMs.length;
+
   void printSummary(String label) {
     if (!hasData) {
       debugPrint('[$label] No frame data');
@@ -238,6 +242,70 @@ class _FrameStats {
       'Worst: ${worst.toStringAsFixed(2)}ms',
     );
   }
+}
+
+/// Durable metrics for the device-critical feed scroll budget.
+///
+/// This value is also consumed by the runtime-dispatched sims campaign, so the
+/// centrally prepared Android APK exercises the exact FEED 1 measurement and
+/// thresholds instead of selecting a second compile-time `PERF_TARGET`.
+final class FeedScrollPerformanceResult {
+  const FeedScrollPerformanceResult({
+    required this.frameCount,
+    required this.averageBuildMs,
+    required this.p99BuildMs,
+    required this.worstBuildMs,
+  });
+
+  final int frameCount;
+  final double averageBuildMs;
+  final double p99BuildMs;
+  final double worstBuildMs;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'frameCount': frameCount,
+    'averageBuildMs': averageBuildMs,
+    'p99BuildMs': p99BuildMs,
+    'worstBuildMs': worstBuildMs,
+  };
+}
+
+/// Runs FEED 1 as a callable runtime action and returns its measured evidence.
+///
+/// The assertions deliberately retain FEED 1's existing debug/device budgets.
+/// A missing engine timing sample fails; it is never converted to a skip.
+Future<FeedScrollPerformanceResult> runFeedScrollCriticalPerformance(
+  WidgetTester tester,
+) async {
+  final items = _generateFeedItems();
+  await _pumpFeedScreen(tester, items);
+
+  final scrollable = find.byType(CustomScrollView);
+  expect(scrollable, findsOneWidget);
+
+  final collector = _FrameTimingCollector()..start();
+
+  await tester.fling(scrollable, const Offset(0, -1500), 3000);
+  await _pumpFrames(tester, count: 30);
+
+  await tester.fling(scrollable, const Offset(0, 1500), 3000);
+  await _pumpFrames(tester, count: 30);
+
+  await collector.stop();
+  final stats = collector.stats;
+  _assertThresholds(
+    stats,
+    'Scroll',
+    maxAvgMs: androidFeedAverageBuildBudgetMs,
+    maxP99Ms: androidFeedP99BuildBudgetMs,
+    maxWorstMs: androidFeedWorstBuildBudgetMs,
+  );
+  return FeedScrollPerformanceResult(
+    frameCount: stats.frameCount,
+    averageBuildMs: stats.average,
+    p99BuildMs: stats.percentile(99),
+    worstBuildMs: stats.worst,
+  );
 }
 
 /// Pumps [count] frames at 60fps intervals (no measurement, just animation).
@@ -351,26 +419,7 @@ void registerFeedPerf() {
 
   // 1. Scroll performance
   testWidgets('FEED 1', (tester) async {
-    await _pumpFeedScreen(tester, items);
-
-    final scrollable = find.byType(CustomScrollView);
-    expect(scrollable, findsOneWidget);
-
-    final collector = _FrameTimingCollector()..start();
-
-    // Fling scroll to bottom
-    await tester.fling(scrollable, const Offset(0, -1500), 3000);
-    await _pumpFrames(tester, count: 30);
-
-    // Fling scroll back to top
-    await tester.fling(scrollable, const Offset(0, 1500), 3000);
-    await _pumpFrames(tester, count: 30);
-
-    await collector.stop();
-    // Debug-mode flutter test scroll timing includes occasional sliver/card
-    // first-build spikes. Keep average and P99 budgets tight while allowing
-    // one isolated debug outlier to avoid false failures on lazy card mount.
-    _assertThresholds(collector.stats, 'Scroll', maxP99Ms: 24, maxWorstMs: 100);
+    await runFeedScrollCriticalPerformance(tester);
   });
 
   // 2/3/4. Card expand-collapse, swipe-to-quote, and inline-compose perf.

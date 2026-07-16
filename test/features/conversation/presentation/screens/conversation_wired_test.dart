@@ -259,6 +259,7 @@ class TrackingDurableConversationMediaFileManager extends FakeMediaFileManager {
   final Directory rootDir;
   int copyCalls = 0;
   final List<String> deletedPendingUploadDirs = <String>[];
+  final Completer<void> pendingUploadDirDeleted = Completer<void>();
 
   @override
   Future<String> copyToDurableStorage({
@@ -317,6 +318,9 @@ class TrackingDurableConversationMediaFileManager extends FakeMediaFileManager {
     final dir = Directory('${rootDir.path}/pending_uploads/$messageId');
     if (dir.existsSync()) {
       dir.deleteSync(recursive: true);
+    }
+    if (!pendingUploadDirDeleted.isCompleted) {
+      pendingUploadDirDeleted.complete();
     }
   }
 }
@@ -1050,6 +1054,20 @@ void main() {
       await tester.pump(step);
     }
     await tester.pump(const Duration(milliseconds: 500));
+    expect(condition(), isTrue);
+  }
+
+  Future<void> pumpUntilAsyncIo(
+    WidgetTester tester,
+    bool Function() condition, {
+    Duration timeout = const Duration(seconds: 5),
+    Duration pollInterval = const Duration(milliseconds: 10),
+  }) async {
+    final stopwatch = Stopwatch()..start();
+    while (!condition() && stopwatch.elapsed < timeout) {
+      await tester.runAsync(() => Future<void>.delayed(pollInterval));
+      await tester.pump(pollInterval);
+    }
     expect(condition(), isTrue);
   }
 
@@ -2247,6 +2265,8 @@ void main() {
         );
         final mediaAttachmentRepo = FakeMediaAttachmentRepository();
         final callOrder = <String>[];
+        final uploadStarted = Completer<void>();
+        final uploadGate = Completer<void>();
         mediaAttachmentRepo.onSaveAttachment = (attachment) =>
             callOrder.add('save:${attachment.downloadStatus}');
 
@@ -2256,6 +2276,11 @@ void main() {
         addTearDown(() {
           if (tempDir.existsSync()) {
             tempDir.deleteSync(recursive: true);
+          }
+        });
+        addTearDown(() {
+          if (!uploadGate.isCompleted) {
+            uploadGate.complete();
           }
         });
         final mediaFileManager = TrackingDurableConversationMediaFileManager(
@@ -2290,6 +2315,8 @@ void main() {
                 preparedArtifact,
               }) async {
                 callOrder.add('uploadMedia');
+                uploadStarted.complete();
+                await uploadGate.future;
                 return MediaAttachment(
                   id: blobId ?? 'uploaded-1',
                   messageId: '',
@@ -2313,7 +2340,7 @@ void main() {
         await tester.enterText(find.byType(TextField), 'Durable photo');
         await tester.pump(const Duration(milliseconds: 300));
         await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-        await pumpUntil(tester, () => mediaFileManager.copyCalls == 1);
+        await pumpUntilAsyncIo(tester, () => uploadStarted.isCompleted);
 
         expect(mediaFileManager.copyCalls, 1);
         expect(callOrder, contains('save:upload_pending'));
@@ -2331,7 +2358,12 @@ void main() {
         expect(durableFiles, isNotEmpty);
         expect(durableFiles.single.existsSync(), isTrue);
 
-        await tester.pump(const Duration(seconds: 1));
+        uploadGate.complete();
+        await pumpUntilAsyncIo(
+          tester,
+          () => mediaFileManager.pendingUploadDirDeleted.isCompleted,
+        );
+        expect(mediaFileManager.deletedPendingUploadDirs, isNotEmpty);
       },
     );
 

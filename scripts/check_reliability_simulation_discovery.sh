@@ -68,6 +68,54 @@ record_expansion_error() {
   printf '%s\t%s\n' "$path" "$note" >>"$expansion_errors_file"
 }
 
+# Capability records keep required proof boundaries visible without pretending
+# that a placeholder, recipe catalog, or artifact binding is executable. The
+# Plan 258 manifest is the release-gate source of truth; these structured notes
+# are the compatibility discovery inventory used to reconcile that manifest.
+record_capability() {
+  local lifecycle="$1"
+  local path="$2"
+  local capability_id="$3"
+  local requiredness="$4"
+  local family="$5"
+  local boundary="$6"
+  local profile="$7"
+  local target="$8"
+  local reason="$9"
+
+  record "$lifecycle" "$path" "capability" \
+    "id=$capability_id required=$requiredness family=$family boundary=$boundary profile=$profile target=$target reason=$reason"
+}
+
+record_archived_proof_requirements() {
+  local registry="Test-Flight-Improv/sims-manual-proof-registry.md"
+  record_capability "implemented" "$registry" \
+    "android.connectivity_restore_inbox_drain" "major" "1to1" \
+    "android-os-network+relay" "android.e2e.main" \
+    "android-physical+android-emulator" \
+    "manifest_owned_ADB_driver_three_message_drain_no_resume_and_fdc04_network_change_rewarm"
+  record_capability "implemented" "$registry" \
+    "android.keepalive_drop_skip_direct" "major" "1to1" \
+    "android-process-lifecycle+bridge+relay" "android.e2e.main" \
+    "android-physical+android-emulator" \
+    "manifest_owned_main_app_driver_natural_drop_no_dial_bounded_custody_recovery_delivery_and_rearm"
+  record_capability "implemented" "$registry" \
+    "android.wake_token_directionality" "major" "1to1" \
+    "android-native-bridge-relay" "android.e2e.wake_token" \
+    "android-physical+android-emulator" \
+    "manifest_owned_hash_only_registered_stored_attached_directionality_driver"
+  record_capability "inactive" "$registry" \
+    "vc02.dcutr_upgrade" "future" "voice-video-1to1" \
+    "android-nat-relay" "android.e2e.standard" \
+    "android-physical+android-emulator" \
+    "INACTIVE_until_VC01_circuit_hold_and_VC02_default_on_upgrade_are_implemented"
+  record_capability "inactive" "$registry" \
+    "vc02.dcutr_symmetric_cgnat_negative" "future" \
+    "voice-video-1to1" "android-symmetric-cgnat-relay" \
+    "android.e2e.standard" "network-symmetric-cgnat" \
+    "INACTIVE_until_VC01_VC02_implemented_then_NA_only_when_topology_unavailable"
+}
+
 classify_path() {
   local path="$1"
 
@@ -84,8 +132,16 @@ classify_path() {
       record "support" "$path" "support" "intro E2E app-side runner"
       return
       ;;
-    lib/core/debug/e2e_test_mode.dart)
-      record "support" "$path" "support" "debug E2E mode wiring"
+    lib/core/debug/e2e_test_mode.dart|\
+    lib/core/debug/connectivity_restore_e2e_contract.dart|\
+    lib/core/debug/keepalive_drop_e2e.dart|\
+    lib/core/debug/keepalive_drop_e2e_contract.dart|\
+    lib/core/debug/group_reaction_e2e_probe.dart|\
+    lib/core/debug/android_notification_payload_e2e.dart|\
+    lib/core/debug/android_notification_payload_e2e_protocol.dart|\
+    lib/core/debug/wake_token_directionality_e2e.dart|\
+    lib/core/debug/wake_token_directionality_e2e_protocol.dart)
+      record "support" "$path" "support" "debug-only E2E mode, campaign contract, or production-database probe wiring"
       return
       ;;
     lib/core/debug/smoke_test_runner.dart)
@@ -169,9 +225,10 @@ classify_path() {
       ;;
     integration_test/scripts/_android_app_package.dart|\
     integration_test/scripts/routing_smoke_group_criteria.dart|\
+    integration_test/sims_dispatcher.dart|\
     integration_test/setup_device.dart|\
     integration_test/benchmark_helpers.dart)
-      record "support" "$path" "support" "shared integration-test helper"
+      record "support" "$path" "support" "shared integration-test helper or prebuilt runtime dispatcher"
       return
       ;;
     integration_test/scripts/posts_phase*_smoke.sh|\
@@ -198,10 +255,6 @@ classify_path() {
       ;;
     integration_test/app_group_path_simulator_test.dart)
       record "1to1" "$path" "test" "iOS app-group notification dedupe simulator proof"
-      return
-      ;;
-    integration_test/wake_token_distribution_proof_test.dart)
-      record "1to1" "$path" "test" "217 CV-14 wake-token distribute→store→attach directionality proof (A13a; sim-local --dart-define=MKNOON_EMIT_WAKE_TOKEN=true, relay gate stays OFF)"
       return
       ;;
     integration_test/benchmark_harness.dart|\
@@ -250,11 +303,47 @@ classify_path() {
       return
       ;;
     integration_test/scripts/run_1to1_device_real.dart)
-      record "1to1" "$path" "runner" "FDC-16 CV-07 1:1 device-real campaign orchestrator (--list-scenarios)"
+      record "support" "$path" "support" "mixed typed 1:1 facade: manifest owns prebuilt Android recorder and two-peer campaigns; unimplemented legacy recipes remain BLOCKED"
       return
       ;;
-    integration_test/scripts/run_notification_tap_device_real.dart)
-      record "1to1" "$path" "runner" "225 notification-tap device/relay proof campaign orchestrator (--list-scenarios)"
+    integration_test/scripts/run_connectivity_restore_sims.dart)
+      record "support" "$path" "support" "manifest-owned build-free physical-Android plus emulator connectivity restore campaign"
+      return
+      ;;
+    integration_test/scripts/android_keepalive_drop_campaign.dart)
+      record "support" "$path" "support" "manifest-owned build-free physical-Android plus emulator keepalive drop campaign"
+      return
+      ;;
+    integration_test/scripts/android_wake_token_directionality_campaign.dart)
+      record "support" "$path" "support" "manifest-owned build-free physical-Android plus emulator hash-only wake-token directionality campaign"
+      return
+      ;;
+    integration_test/scripts/run_voice_message_sims.dart|\
+    integration_test/scripts/android_voice_message_device_campaign.dart)
+      record "support" "$path" "support" "manifest-owned prebuilt main-app physical-Android plus emulator voice-message campaign"
+      return
+      ;;
+    integration_test/scripts/run_notification_tap_device_real.dart|\
+    integration_test/scripts/notification_android_payload_campaign.dart|\
+    integration_test/scripts/notification_ios_payload_campaign.dart|\
+    integration_test/scripts/ios_notification_payload_xcui_driver.dart|\
+    integration_test/scripts/run_ios_notification_payload_sims.dart)
+      record "support" "$path" "support" "typed notification facade/campaign: Android and prebuilt physical-iOS APNs/NSE campaigns are automation-ready; live iOS credentials and dedicated-device teardown remain typed BLOCKED prerequisites; manifest owns execution"
+      return
+      ;;
+    integration_test/scripts/ios_notification_provider_adapter.md|\
+    integration_test/scripts/ios_notification_provider_adapter.py|\
+    integration_test/scripts/ios_notification_relay_fixture.md|\
+    integration_test/scripts/ios_notification_relay_fixture_driver.py|\
+    integration_test/scripts/ios_notification_relay_remote_helper.py|\
+    integration_test/scripts/ios_receiver_bootstrap.md|\
+    integration_test/scripts/ios_receiver_bootstrap.py)
+      record "support" "$path" "support" "physical-iOS APNs provider, relay-fixture, and receiver-bootstrap automation support"
+      return
+      ;;
+    lib/core/debug/android_voice_message_e2e.dart|\
+    lib/core/debug/android_voice_message_e2e_protocol.dart)
+      record "support" "$path" "support" "debug-only main-app voice-message endpoint and pure host protocol"
       return
       ;;
     integration_test/scripts/run_1to1_reaction_notification_device.dart)
@@ -274,7 +363,7 @@ classify_path() {
       return
       ;;
     integration_test/scripts/validate_group_reaction_notification_artifacts.dart)
-      record "group" "$path" "runner" "257 standalone authoritative device-artifact validator (--list-scenarios)"
+      record "support" "$path" "support" "257 capture-owned authoritative artifact validator; invoked only after its owning capture"
       return
       ;;
     integration_test/group_announcement_reaction_notification_proof_test.dart)
@@ -285,8 +374,12 @@ classify_path() {
       record "intro" "$path" "runner" "252 intro-accept notification copy/tap three-party Android device proof campaign orchestrator (--list-scenarios)"
       return
       ;;
+    integration_test/scripts/run_intro_accept_notification_sims.dart)
+      record "support" "$path" "support" "typed sims adapter for the intro notification campaign; manifest owns the executable proof row"
+      return
+      ;;
     integration_test/intro_accept_notification_android_proof_test.dart)
-      record "intro" "$path" "test" "252 TC-12/TC-13 intro-accept notification copy + A-B routing device proof artifact validation"
+      record "support" "$path" "support" "252 capture-owned TC-12/TC-13 intro-accept artifact binding; not a device execution row"
       return
       ;;
     integration_test/scripts/run_media_stable_id_smoke.dart|\
@@ -311,15 +404,15 @@ classify_path() {
       return
       ;;
     integration_test/inbox_replay_before_ack_custody_harness.dart)
-      record "1to1" "$path" "test" "225 TC-A6 replay-before-ack relay custody simulator proof"
+      record "support" "$path" "support" "225 capture-owned TC-A6 replay-before-ack artifact binding; not a device execution row"
       return
       ;;
     integration_test/notif_push_payload_persist_harness.dart)
-      record "1to1" "$path" "test" "225 TC-B11 push payload persist simulator proof"
+      record "support" "$path" "support" "225 capture-owned TC-B11 payload-persist artifact binding; not a device execution row"
       return
       ;;
     integration_test/notification_tap_message_visible_proof_test.dart)
-      record "1to1" "$path" "test" "225 TC-B12 device notification tap payload fast-path proof"
+      record "support" "$path" "support" "225 capture-owned TC-B12 payload-fast-path artifact binding; not a device execution row"
       return
       ;;
     integration_test/notification_sound_smoke_harness.dart)
@@ -352,6 +445,14 @@ classify_path() {
       ;;
     integration_test/scripts/group_multi_party_runtime_config.dart)
       record "support" "$path" "support" "group multi-party runtime config helper"
+      return
+      ;;
+    integration_test/scripts/run_group_multi_party_sims.dart)
+      record "support" "$path" "support" "typed sims adapter for the existing group multi-party runner; not a second executable proof row"
+      return
+      ;;
+    integration_test/scripts/run_group_reaction_notification_sims.dart)
+      record "support" "$path" "support" "typed sims adapter for the group reaction-notification campaign; manifest owns the executable proof row"
       return
       ;;
     integration_test/group_multi_party_phase0_runtime_channel_probe.dart)
@@ -397,22 +498,13 @@ classify_path() {
     integration_test/soak_e2e_test.dart|\
     integration_test/conversation_bridge_test.dart|\
     integration_test/media_message_journey_e2e_test.dart|\
-    integration_test/voice_message_e2e_test.dart|\
     integration_test/warm_peer_lan_aware_smoke_test.dart|\
     integration_test/cold_start_sendable_no_user_action_test.dart)
       record "1to1" "$path" "test" "1:1 transport/conversation simulator test"
       return
       ;;
-    integration_test/dcutr_upgrade_proof_test.dart)
-      record "1to1" "$path" "test" "FDC-12 DCUtR relay->direct upgrade device proof (CV-11/12, TC-12-12/13)"
-      return
-      ;;
-    integration_test/connectivity_restore_inbox_drain_proof_test.dart)
-      record "1to1" "$path" "test" "182 connectivity-restore inbox drain device proof (TC-182-08; foreground WiFi toggle, no resume)"
-      return
-      ;;
-    integration_test/keepalive_drop_skip_direct_proof_test.dart)
-      record "1to1" "$path" "test" "187 keepalive-drop skip doomed direct dial device proof (TC-187-32; latched-dropped active peer, no ~1.5s DIAL_PEER_ERROR, custody sub-second, delivers on recovery)"
+    integration_test/voice_message_e2e_test.dart)
+      record "1to1" "$path" "test" "Android native microphone recorder smoke; physical Android target required; permission/plugin failures are test failures"
       return
       ;;
     integration_test/media_stable_id_smoke_test.dart|\
@@ -922,20 +1014,11 @@ expand_record_to_checks() {
       expand_group_multi_party_device_real "$category" "$path" "$note"
       return
       ;;
-    integration_test/scripts/run_1to1_device_real.dart)
-      expand_1to1_device_real "$category" "$path" "$note"
-      return
-      ;;
-    integration_test/scripts/run_notification_tap_device_real.dart)
-      expand_1to1_device_real "$category" "$path" "$note"
-      return
-      ;;
     integration_test/scripts/run_1to1_reaction_notification_device.dart)
       expand_1to1_device_real "$category" "$path" "$note"
       return
       ;;
-    integration_test/scripts/run_group_reaction_notification_device.dart|\
-    integration_test/scripts/validate_group_reaction_notification_artifacts.dart)
+    integration_test/scripts/run_group_reaction_notification_device.dart)
       expand_group_reaction_notification_device "$category" "$path" "$note"
       return
       ;;
@@ -989,6 +1072,8 @@ while IFS= read -r path; do
   classify_path "$path"
 done < <(discover_candidates)
 
+record_archived_proof_requirements
+
 while IFS=$'\t' read -r category kind path note; do
   [ -n "$category" ] || continue
   expand_record_to_checks "$category" "$kind" "$path" "$note"
@@ -1018,6 +1103,8 @@ print_category "group" "Group entrypoints/files"
 print_category "intro" "Intro entrypoints/files"
 print_category "move-feature" "Move Feature entrypoints/files"
 print_category "support" "Support"
+print_category "blocked" "Required blocked capabilities (manifest-enforced)"
+print_category "inactive" "Inactive future capabilities"
 print_category "ignored" "Ignored"
 print_category "unclassified" "Unclassified"
 
@@ -1034,4 +1121,4 @@ fi
 
 emit_failures_if_any "$unclassified_count" "$expansion_error_count"
 
-printf '\nPASS: all discovered simulator/E2E candidates are classified or explicitly ignored, and known tests/scenarios expanded.\n'
+printf '\nPASS: all discovered simulator/E2E candidates are classified, capability gaps are inventoried, and executable tests/scenarios expanded.\n'

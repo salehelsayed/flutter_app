@@ -24,6 +24,8 @@
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
 		A1B2C3D400000000GOBRIDGE /* GoBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D400000001GOBRIDGE /* GoBridge.swift */; };
+		A258A00173A4000000000001 /* IosReceiverBootstrapHandoff.swift in Sources */ = {isa = PBXBuildFile; fileRef = A258A00173A4000000000002 /* IosReceiverBootstrapHandoff.swift */; };
+		A258B00173A4000000000001 /* IosReceiverBootstrapHandoffTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A258B00173A4000000000002 /* IosReceiverBootstrapHandoffTests.swift */; };
 		A9E1F9A8B9EA89AF4D091A90 /* Pods_NotificationService.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D7511F7CC6C3F71F16E8DD52 /* Pods_NotificationService.framework */; };
 		D23405010000000000000001 /* PrivateMediaProtectionCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D23405010000000000000002 /* PrivateMediaProtectionCoordinatorTests.swift */; };
 		D23405010000000000000011 /* PrivateMediaProtectionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = D23405010000000000000012 /* PrivateMediaProtectionCoordinator.swift */; };
@@ -123,10 +125,12 @@
 		97C147001CF9000F007C117D /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		97C147021CF9000F007C117D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A1B2C3D400000001GOBRIDGE /* GoBridge.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = GoBridge.swift; sourceTree = "<group>"; };
+		A258A00173A4000000000002 /* IosReceiverBootstrapHandoff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosReceiverBootstrapHandoff.swift; sourceTree = "<group>"; };
+		A258B00173A4000000000002 /* IosReceiverBootstrapHandoffTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosReceiverBootstrapHandoffTests.swift; sourceTree = "<group>"; };
 		A5AF3834B1837CFD0077AC1D /* Pods-NotificationService.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-NotificationService.release.xcconfig"; path = "Target Support Files/Pods-NotificationService/Pods-NotificationService.release.xcconfig"; sourceTree = "<group>"; };
 		A6F5A2268673135A7EB8756C /* Pods-NotificationService.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-NotificationService.profile.xcconfig"; path = "Target Support Files/Pods-NotificationService/Pods-NotificationService.profile.xcconfig"; sourceTree = "<group>"; };
-		B17D000173A2000000000001 /* BuildMetadata.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = BuildMetadata.xcconfig; path = Flutter/BuildMetadata.xcconfig; sourceTree = "<group>"; };
 		A738F5EA98B49F043A6EBC7C /* Pods-RunnerTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug.xcconfig"; sourceTree = "<group>"; };
+		B17D000173A2000000000001 /* BuildMetadata.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = BuildMetadata.xcconfig; path = Flutter/BuildMetadata.xcconfig; sourceTree = "<group>"; };
 		D23405010000000000000002 /* PrivateMediaProtectionCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateMediaProtectionCoordinatorTests.swift; sourceTree = "<group>"; };
 		D23405010000000000000012 /* PrivateMediaProtectionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateMediaProtectionCoordinator.swift; sourceTree = "<group>"; };
 		D7511F7CC6C3F71F16E8DD52 /* Pods_NotificationService.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_NotificationService.framework; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -227,6 +231,7 @@
 		331C8082294A63A400263BE5 /* RunnerTests */ = {
 			isa = PBXGroup;
 			children = (
+				A258B00173A4000000000002 /* IosReceiverBootstrapHandoffTests.swift */,
 				D23405010000000000000002 /* PrivateMediaProtectionCoordinatorTests.swift */,
 				E227B00173A0000000000002 /* ReceivedMediaEgressCoordinatorTests.swift */,
 				6F73C00273A0000000000002 /* NotificationPreviewResolver.swift */,
@@ -305,6 +310,7 @@
 		97C146F01CF9000F007C117D /* Runner */ = {
 			isa = PBXGroup;
 			children = (
+				A258A00173A4000000000002 /* IosReceiverBootstrapHandoff.swift */,
 				D23405010000000000000012 /* PrivateMediaProtectionCoordinator.swift */,
 				E227A00173A0000000000002 /* ReceivedMediaEgressCoordinator.swift */,
 				6990BBC32F6AFE8D00B1FF97 /* GoogleService-Info.plist */,
@@ -597,250 +603,13 @@
 		};
 		77715C4E00D1DB8B21DC2285 /* [CP-User] Ensure GoMknoon iOS Bindings */ = {
 			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			inputPaths = (
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/bridge.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/bridge_entrypoint_contract_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/bridge_generate_next_key_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/bridge_lan.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/bridge_ping.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/bridge_ping_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/bridge_presence.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/bridge_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/bridge_wake.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/events.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/bridge/feature_flags_partial_map_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/cmd/testpeer/commands.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/cmd/testpeer/commands_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/cmd/testpeer/envelope.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/cmd/testpeer/envelope_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/cmd/testpeer/listener.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/cmd/testpeer/main.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/crypto/decrypt.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/crypto/encrypt.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/crypto/file_crypto.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/crypto/file_crypto_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/crypto/group.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/crypto/group_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/crypto/interop_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/crypto/migration.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/crypto/migration_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/crypto/mlkem.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/crypto/mlkem_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/crypto/sign.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/crypto/sign_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/crypto/signature_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/crypto/x25519.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/crypto/x25519_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/identity/identity.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/identity/identity_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/integration/ipv6_dual_stack_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/integration/local_relay_harness_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/integration/media_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/integration/multi_relay_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/integration/no_circuit_recovery_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/integration/personal_discoverability_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/integration/profile_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/integration/relay_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/integration/watchdog_failover_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/internal/envelope.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/internal/group_envelope.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/internal/group_envelope_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/addr_visibility_denial_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/autorelay_metrics.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/autorelay_metrics_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/benchmark_ack_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/benchmark_bridge_concurrency_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/benchmark_crypto_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/benchmark_event_queue_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/benchmark_harness_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/benchmark_inbox_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/benchmark_media_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/benchmark_relay_recovery_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/benchmark_send_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/benchmark_startup_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/benchmark_timeout_accuracy_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/config.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/config_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/dcutr_upgrade_flag_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/early_reserve.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/event_dispatcher.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/feature_flags.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/feature_flags_merge_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/feature_flags_runtime.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/feature_flags_runtime_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/group.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/group_inbox.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/group_inbox_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/group_private_media_policy_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/group_reaction_signed_set_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/group_security_harness_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/group_validation_feedback.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/holepunch_feasibility_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/holepunch_negative_control_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/holepunch_tracer.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/holepunch_tracer_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/inbox.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/inbox_parse_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/inbox_presence_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/inbox_push_capability_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/inbox_wake_token_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/lan_dial.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/lan_dial_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/libp2p_refactor_contract_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/media.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/media_lan.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/media_lan_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/media_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/multi_relay_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/node.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/node_start_early_reserve_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/node_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/peer_session.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/peer_session_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/personal_rendezvous_refresh.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/ping.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/protocol_version_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/pubsub.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/pubsub_authorization_forward_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/pubsub_decryption_failure_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/pubsub_delivery_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/pubsub_key_rotation_grace_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/pubsub_key_rotation_grace_udme_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/pubsub_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/pubsub_udmf_emit_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/pubsub_unsubscribe_exit_paths_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/quic_identify_revalidation_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/reachability_default_guard_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/relay_selector.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/relay_session.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/relay_session_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/rendezvous.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/rendezvous_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/send_message_recovery_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/stream_timeout_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/testhooks_integration.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/node/transport_label_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/stub/gosigar/sigar.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/backoff.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/backoff_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/blacklist.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/blacklist_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/comm.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/compat/compat.pb.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/compat_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/discovery.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/discovery_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/doc.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/extensions.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/floodsub.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/floodsub_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/fuzz_helpers_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/gossip_tracer.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/gossip_tracer_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/gossipsub.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/gossipsub_connmgr_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/gossipsub_feat.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/gossipsub_feat_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/gossipsub_matchfn_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/gossipsub_spam_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/gossipsub_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/internal/gologshim/gologshim.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/limited_conn.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/mcache.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/mcache_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/messagebatch.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/midgen.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/notify_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/pb/rpc.pb.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/pb/slog.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/pb/trace.pb.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/peer_gater.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/peer_gater_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/peer_notify.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/pubsub.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/pubsub_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/randomsub.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/randomsub_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/rpc_queue.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/rpc_queue_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/score.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/score_params.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/score_params_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/score_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/sign.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/sign_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/subscription.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/subscription_filter.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/subscription_filter_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/tag_tracer.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/tag_tracer_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/testextension.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/timecache/first_seen_cache.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/timecache/first_seen_cache_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/timecache/last_seen_cache.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/timecache/last_seen_cache_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/timecache/time_cache.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/timecache/util.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/topic.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/topic_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/trace.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/trace_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/tracer.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/validation.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/validation_builtin.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/validation_builtin_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-libp2p-pubsub/validation_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/codec.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/component.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/doc.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/filter.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/filter_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/interface.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/multiaddr.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/multiaddr/main.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/multiaddr_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/net/convert.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/net/convert_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/net/doc.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/net/interface_default_android.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/net/interface_default_other.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/net/interface_provider.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/net/interface_provider_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/net/ip.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/net/ip_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/net/net.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/net/net_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/net/private.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/net/private_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/net/registry.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/net/registry_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/net/resolve.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/net/resolve_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/protocol.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/protocols.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/transcoders.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/util.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/util_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-multiaddr/varint.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-netroute/common.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-netroute/netroute_bsd.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-netroute/netroute_bsd_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-netroute/netroute_hook.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-netroute/netroute_linux.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-netroute/netroute_plan9.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-netroute/netroute_stub.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-netroute/netroute_test.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-netroute/netroute_windows.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/third_party/go-netroute/sockaddr_windows.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/tools.go",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/go.mod",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/go-mknoon/go.sum",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/ios/Runner/GoBridge.swift",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/scripts/ensure_go_ios_bindings.sh",
-				"/Users/I560101/Project-Sat/mknoon-2/flutter_app/scripts/verify_gomobile_bindings.sh",
+				"$(SRCROOT)/../scripts/gomobile_binding_inputs.sh",
+				"$(SRCROOT)/../scripts/ensure_go_ios_bindings.sh",
 			);
 			name = "[CP-User] Ensure GoMknoon iOS Bindings";
 			outputPaths = (
@@ -933,6 +702,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A258B00173A4000000000001 /* IosReceiverBootstrapHandoffTests.swift in Sources */,
 				D23405010000000000000001 /* PrivateMediaProtectionCoordinatorTests.swift in Sources */,
 				E227B00173A0000000000001 /* ReceivedMediaEgressCoordinatorTests.swift in Sources */,
 				F10C6A2E0B4C44E2A0C0A001 /* GoBridgeCriticalTaskTests.swift in Sources */,
@@ -970,6 +740,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A258A00173A4000000000001 /* IosReceiverBootstrapHandoff.swift in Sources */,
 				D23405010000000000000011 /* PrivateMediaProtectionCoordinator.swift in Sources */,
 				E227A00173A0000000000001 /* ReceivedMediaEgressCoordinator.swift in Sources */,
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
@@ -1108,6 +879,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 397R9Q4WMX;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.mknoon.app.RunnerTests;
@@ -1126,6 +898,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 397R9Q4WMX;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.mknoon.app.RunnerTests;
@@ -1142,6 +915,7 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 397R9Q4WMX;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.mknoon.app.RunnerTests;
@@ -1420,6 +1194,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 397R9Q4WMX;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1443,6 +1218,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 397R9Q4WMX;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1464,6 +1240,7 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 397R9Q4WMX;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
 				LD_RUNPATH_SEARCH_PATHS = (

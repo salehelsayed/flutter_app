@@ -25,6 +25,176 @@ final class NotificationTapUITests: XCTestCase {
     try tapExistingNotification(waitForHostPush: false)
   }
 
+  /// Pure decoder coverage for the system-owned Control Center switch. This
+  /// selector does not launch an app or change device radio state.
+  func testAirplaneToggleStateDecoderContract() {
+    let english = (on: "On", off: "Off")
+    XCTAssertEqual(
+      decodeAirplaneToggleState(
+        value: true,
+        isSelected: false,
+        localizedValues: english
+      ),
+      true
+    )
+    XCTAssertEqual(
+      decodeAirplaneToggleState(
+        value: NSNumber(value: 0),
+        isSelected: false,
+        localizedValues: english
+      ),
+      false
+    )
+    XCTAssertEqual(
+      decodeAirplaneToggleState(
+        value: "Airplane Mode, On",
+        isSelected: false,
+        localizedValues: english
+      ),
+      true
+    )
+
+    let german = (on: "Ein", off: "Aus")
+    XCTAssertEqual(
+      decodeAirplaneToggleState(
+        value: "Flugmodus: Ein",
+        isSelected: false,
+        localizedValues: german
+      ),
+      true
+    )
+    XCTAssertEqual(
+      decodeAirplaneToggleState(
+        value: "Aus",
+        isSelected: true,
+        localizedValues: german
+      ),
+      false,
+      "An explicit switch value must take precedence over selection state"
+    )
+    XCTAssertNil(
+      decodeAirplaneToggleState(
+        value: "unknown-state",
+        isSelected: false,
+        localizedValues: english
+      ),
+      "An unknown switch value must never be collapsed to off"
+    )
+    XCTAssertEqual(
+      decodeAirplaneToggleState(
+        value: nil,
+        isSelected: true,
+        localizedValues: english
+      ),
+      true
+    )
+  }
+
+  /// Plan 258 / Plan 225 TC-B12 preparation. The host has installed the
+  /// centrally prepared IPA and staged the private fixture. This selector
+  /// grants notification permission, backgrounds the app, and emits a bounded
+  /// readiness marker before the host asks the staging provider to send.
+  func testPreparePayloadFastPathNotificationTap() throws {
+    try prepareWarmNotificationTap()
+    emitPlan258Marker("READY", fields: ["permission_automated": "true"])
+  }
+
+  /// Plan 258 / Plan 225 TC-B12 physical-iPhone closure. The provider has
+  /// already delivered an NSE-eligible envelope. This selector proves that the
+  /// card exists, enables airplane mode before the tap, performs the tap, and
+  /// requires the exact message to render while the network remains cut.
+  func testPayloadFastPathNotificationTap() throws {
+    let bundleId = ProcessInfo.processInfo.environment["MKNOON_APNS_TAP_APP_BUNDLE_ID"] ?? "com.mknoon.app"
+    guard let expectedMessage = configuredValue(
+      environmentName: "MKNOON_258_EXPECTED_MESSAGE_TEXT",
+      configKey: "expectedMessageText"
+    ), !expectedMessage.isEmpty else {
+      XCTFail("Plan 258 payload fast path requires expectedMessageText")
+      return
+    }
+
+    let app = XCUIApplication(bundleIdentifier: bundleId)
+    app.terminate()
+    var mustRestoreNetwork = false
+    defer {
+      if mustRestoreNetwork {
+        app.terminate()
+        let appTerminated = app.wait(for: .notRunning, timeout: 5)
+        var networkRestored = false
+        do {
+          networkRestored = try setAirplaneMode(false)
+        } catch {
+          XCTFail("Payload fast-path inline network restoration threw an error")
+        }
+        if !appTerminated {
+          XCTFail("Payload fast-path app did not terminate before network restoration")
+        }
+        if networkRestored && appTerminated {
+          emitPlan258Marker(
+            "NETWORK_RESTORED",
+            fields: [
+              "airplane": "false",
+              "app_terminated": "true",
+              "inline": "true",
+            ]
+          )
+        } else if !networkRestored {
+          XCTFail("Payload fast-path inline network restoration did not complete")
+        }
+      }
+    }
+
+    guard configuredNotificationIsPresent() else {
+      XCTFail("Could not find the configured APNs notification card")
+      return
+    }
+    emitPlan258Marker("APNS_DELIVERED", fields: ["card_observed": "true"])
+    mustRestoreNetwork = true
+    guard try setAirplaneMode(true) else {
+      return
+    }
+    emitPlan258Marker("AIRPLANE_ENABLED", fields: ["before_tap": "true"])
+    try tapExistingNotification(
+      waitForHostPush: false,
+      requireTitleMatchedNotification: true
+    )
+    emitPlan258Marker("TAPPED", fields: ["automated": "true"])
+
+    let message = element(in: app, containing: expectedMessage)
+    guard message.waitForExistence(timeout: 20) else {
+      XCTFail("Payload fast-path tap did not render the expected staged message")
+      return
+    }
+    emitPlan258Marker(
+      "VISIBLE",
+      fields: ["staged_envelope": "true", "relay_drain_before_visibility": "0"]
+    )
+  }
+
+  /// Best-effort cleanup selector used after a failed physical capture. It is
+  /// intentionally idempotent so the next Sims row never inherits airplane
+  /// mode from an interrupted run.
+  func testRestorePayloadFastPathNetwork() throws {
+    guard try setAirplaneMode(false) else {
+      return
+    }
+    let bundleId = ProcessInfo.processInfo.environment["MKNOON_APNS_TAP_APP_BUNDLE_ID"] ?? "com.mknoon.app"
+    let app = XCUIApplication(bundleIdentifier: bundleId)
+    app.terminate()
+    guard app.wait(for: .notRunning, timeout: 5) else {
+      XCTFail("Payload fast-path cleanup app did not terminate")
+      return
+    }
+    emitPlan258Marker(
+      "NETWORK_RESTORED",
+      fields: [
+        "airplane": "false",
+        "app_terminated": "true",
+        "inline": "false",
+      ]
+    )
+  }
+
   /// Plan 256 TC-14: cold-tap an already staged reaction notification and
   /// require a real conversation semantic from the app. The host staging
   /// controller owns APNs/NSE delivery and writes the existing tap config;
@@ -269,7 +439,10 @@ final class NotificationTapUITests: XCTestCase {
   ) throws {
     let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
     XCUIDevice.shared.press(.home)
-    XCTAssertTrue(springboard.wait(for: .runningForeground, timeout: 10))
+    guard springboard.wait(for: .runningForeground, timeout: 10) else {
+      XCTFail("SpringBoard did not become ready for notification observation")
+      return
+    }
     settleOnSpringboard()
     openNotificationCenter(from: springboard)
 
@@ -310,6 +483,268 @@ final class NotificationTapUITests: XCTestCase {
       return
     }
     let line = "MKNOON_257_IOS_NOTIFICATION_OBSERVATION \(json)"
+    NSLog("%@", line)
+    fputs("\(line)\n", stdout)
+    fflush(stdout)
+  }
+
+  private func configuredNotificationIsPresent() -> Bool {
+    let title = configuredValue(
+      environmentName: "MKNOON_APNS_TAP_EXPECTED_TITLE",
+      configKey: "expectedTitle"
+    ) ?? "New Message"
+    let body = configuredValue(
+      environmentName: "MKNOON_APNS_TAP_EXPECTED_BODY",
+      configKey: "expectedBody"
+    )
+    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+
+    XCUIDevice.shared.press(.home)
+    guard springboard.wait(for: .runningForeground, timeout: 10) else {
+      return false
+    }
+    settleOnSpringboard()
+
+    let titleOnCurrentSurface = notificationTextExists(
+      title,
+      springboard: springboard,
+      timeout: 4
+    )
+    let bodyOnCurrentSurface = body == nil || notificationTextExists(
+      body!,
+      springboard: springboard,
+      timeout: 2
+    )
+    emitPlan258Marker(
+      "CARD_LOOKUP",
+      fields: [
+        "attempt": "1",
+        "body_matched": bodyOnCurrentSurface ? "true" : "false",
+        "surface": "current",
+        "title_matched": titleOnCurrentSurface ? "true" : "false",
+      ]
+    )
+    if titleOnCurrentSurface && bodyOnCurrentSurface {
+      return true
+    }
+
+    for attempt in 2...3 {
+      XCUIDevice.shared.press(.home)
+      guard springboard.wait(for: .runningForeground, timeout: 10) else {
+        return false
+      }
+      settleOnSpringboard()
+      openNotificationCenter(from: springboard)
+      if attempt == 3 {
+        revealNotificationHistory(from: springboard)
+      }
+      let titleMatched = notificationTextExists(
+        title,
+        springboard: springboard,
+        timeout: 10
+      )
+      let bodyMatched = body == nil || notificationTextExists(
+        body!,
+        springboard: springboard,
+        timeout: 4
+      )
+      emitPlan258Marker(
+        "CARD_LOOKUP",
+        fields: [
+          "attempt": String(attempt),
+          "body_matched": bodyMatched ? "true" : "false",
+          "surface": attempt == 2
+            ? "notification_center"
+            : "notification_history",
+          "title_matched": titleMatched ? "true" : "false",
+        ]
+      )
+      if titleMatched && bodyMatched {
+        return true
+      }
+    }
+    return false
+  }
+
+  private func setAirplaneMode(_ enabled: Bool) throws -> Bool {
+    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+    XCUIDevice.shared.press(.home)
+    guard springboard.wait(for: .runningForeground, timeout: 10) else {
+      XCTFail("SpringBoard did not become ready for airplane-mode automation")
+      return false
+    }
+    settleOnSpringboard()
+
+    let topRight = springboard.coordinate(
+      withNormalizedOffset: CGVector(dx: 0.92, dy: 0.01)
+    )
+    let center = springboard.coordinate(
+      withNormalizedOffset: CGVector(dx: 0.92, dy: 0.62)
+    )
+    topRight.press(forDuration: 0.1, thenDragTo: center)
+    RunLoop.current.run(until: Date().addingTimeInterval(1.5))
+
+    let localizedValues = localizedAirplaneToggleValues()
+    let toggle = airplaneModeToggle(in: springboard)
+    guard toggle.waitForExistence(timeout: 10) else {
+      XCTFail("Control Center airplane-mode toggle is unavailable")
+      return false
+    }
+    guard let initialState = airplaneToggleIsOn(
+      toggle,
+      localizedValues: localizedValues
+    ) else {
+      XCTFail("Control Center airplane-mode toggle has an unknown initial state: \(airplaneToggleDiagnostic(toggle))")
+      return false
+    }
+
+    var currentState: Bool? = initialState
+    var currentToggle = toggle
+    if initialState != enabled {
+      toggle.tap()
+      let deadline = Date().addingTimeInterval(8)
+      while Date() < deadline {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        currentToggle = airplaneModeToggle(in: springboard)
+        if currentToggle.exists {
+          currentState = airplaneToggleIsOn(
+            currentToggle,
+            localizedValues: localizedValues
+          )
+          if currentState == enabled {
+            break
+          }
+        }
+      }
+    }
+    guard currentState == enabled else {
+      XCTFail(
+        "Airplane mode did not reach the requested state: \(airplaneToggleDiagnostic(currentToggle))"
+      )
+      return false
+    }
+    XCUIDevice.shared.press(.home)
+    settleOnSpringboard()
+    return true
+  }
+
+  private func airplaneModeToggle(in springboard: XCUIApplication) -> XCUIElement {
+    springboard.switches
+      .matching(identifier: "airplane-mode-button")
+      .firstMatch
+  }
+
+  private func airplaneToggleIsOn(
+    _ element: XCUIElement,
+    localizedValues: (on: String, off: String)
+  ) -> Bool? {
+    decodeAirplaneToggleState(
+      value: element.value,
+      isSelected: element.isSelected,
+      localizedValues: localizedValues
+    )
+  }
+
+  private func decodeAirplaneToggleState(
+    value: Any?,
+    isSelected: Bool,
+    localizedValues: (on: String, off: String)
+  ) -> Bool? {
+    if let boolean = value as? Bool {
+      return boolean
+    }
+    if let number = value as? NSNumber {
+      switch number.intValue {
+      case 0:
+        return false
+      case 1:
+        return true
+      default:
+        break
+      }
+    }
+    if let text = value as? String {
+      let normalized = normalizedAirplaneStateText(text)
+      let normalizedOn = normalizedAirplaneStateText(localizedValues.on)
+      let normalizedOff = normalizedAirplaneStateText(localizedValues.off)
+      if airplaneStateText(normalized, matches: normalizedOn)
+        || ["1", "true", "yes", "on"].contains(normalized)
+      {
+        return true
+      }
+      if airplaneStateText(normalized, matches: normalizedOff)
+        || ["0", "false", "no", "off"].contains(normalized)
+      {
+        return false
+      }
+    }
+
+    // Selection is a reliable positive signal on some Control Center
+    // versions, but false does not mean that a switch is off.
+    return isSelected ? true : nil
+  }
+
+  private func localizedAirplaneToggleValues() -> (on: String, off: String) {
+    let bundlePath = "/System/Library/ControlCenter/Bundles/ConnectivityModule.bundle"
+    guard let bundle = Bundle(path: bundlePath) else {
+      return (on: "On", off: "Off")
+    }
+    return (
+      on: bundle.localizedString(
+        forKey: "CONTROL_CENTER_STATUS_AIRPLANE_MODE_ON",
+        value: "On",
+        table: "Localizable"
+      ),
+      off: bundle.localizedString(
+        forKey: "CONTROL_CENTER_STATUS_AIRPLANE_MODE_OFF",
+        value: "Off",
+        table: "Localizable"
+      )
+    )
+  }
+
+  private func normalizedAirplaneStateText(_ value: String) -> String {
+    value
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .folding(
+        options: [.caseInsensitive, .diacriticInsensitive],
+        locale: Locale.current
+      )
+  }
+
+  private func airplaneStateText(_ value: String, matches state: String) -> Bool {
+    guard !state.isEmpty else {
+      return false
+    }
+    if value == state {
+      return true
+    }
+    for separator in [",", ":", ";", "،"] {
+      if value.hasPrefix("\(state)\(separator)")
+        || value.hasSuffix("\(separator)\(state)")
+        || value.hasSuffix("\(separator) \(state)")
+      {
+        return true
+      }
+    }
+    return false
+  }
+
+  private func airplaneToggleDiagnostic(_ element: XCUIElement) -> String {
+    let rawValue = String(reflecting: element.value)
+    return "identifier=\(element.identifier) type=\(element.elementType) selected=\(element.isSelected) value=\(rawValue)"
+  }
+
+  private func emitPlan258Marker(
+    _ event: String,
+    fields: [String: String] = [:]
+  ) {
+    let timestamp = ISO8601DateFormatter().string(from: Date())
+    let suffix = fields.keys.sorted().map { key in
+      "\(key)=\(fields[key] ?? "")"
+    }.joined(separator: " ")
+    let line = "MKNOON_258_IOS_PAYLOAD_\(event) at=\(timestamp) \(suffix)"
+      .trimmingCharacters(in: .whitespaces)
     NSLog("%@", line)
     fputs("\(line)\n", stdout)
     fflush(stdout)
@@ -404,44 +839,54 @@ final class NotificationTapUITests: XCTestCase {
       waitForHostPushInjection()
     }
     if let expectedBody {
-      XCTAssertTrue(
-        notificationTextExists(
+      var bodyMatched = notificationTextExists(
+        expectedBody,
+        springboard: springboard,
+        timeout: 8
+      )
+      if !bodyMatched {
+        openNotificationCenter(from: springboard)
+        bodyMatched = notificationTextExists(
+          expectedBody,
+          springboard: springboard,
+          timeout: 12
+        )
+      }
+      if !bodyMatched {
+        revealNotificationHistory(from: springboard)
+        bodyMatched = notificationTextExists(
           expectedBody,
           springboard: springboard,
           timeout: 8
-        ) || {
-          openNotificationCenter(from: springboard)
-          return notificationTextExists(
-            expectedBody,
-            springboard: springboard,
-            timeout: 12
-          )
-        }(),
-        "Could not find expected Springboard notification body \(expectedBody)"
+        )
+      }
+      XCTAssertTrue(
+        bodyMatched,
+        "Could not find the configured Springboard notification body"
       )
       NSLog(
-        "MKNOON_IOS_NOTIFICATION_PRESENTED title=%@ body=%@ routeCategory=%@",
-        title,
-        expectedBody,
+        "MKNOON_IOS_NOTIFICATION_PRESENTED title_matched=true body_matched=true routeCategory=%@",
         routeCategory
       )
     }
     XCTAssertTrue(
       tapNotification(
         title: title,
+        expectedBody: expectedBody,
         springboard: springboard,
         allowGenericChromeFallback: !requireTitleMatchedNotification
       ),
-      "Could not find a Springboard notification titled \(title)"
+      "Could not find the configured Springboard notification title"
     )
     if !app.wait(for: .runningForeground, timeout: 8) {
       XCTAssertTrue(
         tapNotification(
           title: title,
+          expectedBody: expectedBody,
           springboard: springboard,
           allowGenericChromeFallback: !requireTitleMatchedNotification
         ),
-        "Could not re-tap a Springboard notification titled \(title)"
+        "Could not re-tap the configured Springboard notification"
       )
     }
     XCTAssertTrue(
@@ -482,7 +927,7 @@ final class NotificationTapUITests: XCTestCase {
   }
 
   private func emitReadyMarker(mode: String, title: String) {
-    let line = "\(readyMarker) mode=\(mode) title=\(title)"
+    let line = "\(readyMarker) mode=\(mode) title_configured=\(!title.isEmpty)"
     if let readyFile = configuredValue(
       environmentName: "MKNOON_APNS_TAP_READY_FILE",
       configKey: "readyFile"
@@ -553,6 +998,7 @@ final class NotificationTapUITests: XCTestCase {
 
   private func tapNotification(
     title: String,
+    expectedBody: String?,
     springboard: XCUIApplication,
     allowGenericChromeFallback: Bool = true
   ) -> Bool {
@@ -567,6 +1013,20 @@ final class NotificationTapUITests: XCTestCase {
 
     openNotificationCenter(from: springboard)
     if tapVisibleNotification(title: title, springboard: springboard, timeout: 20) {
+      return true
+    }
+
+    revealNotificationHistory(from: springboard)
+    let bodyMatched = expectedBody == nil || notificationTextExists(
+      expectedBody!,
+      springboard: springboard,
+      timeout: 4
+    )
+    if bodyMatched && tapVisibleNotification(
+      title: title,
+      springboard: springboard,
+      timeout: 10
+    ) {
       return true
     }
 
@@ -615,10 +1075,17 @@ final class NotificationTapUITests: XCTestCase {
       text,
       text
     )
-    let match = springboard.descendants(matching: .any)
-      .matching(predicate)
-      .firstMatch
-    return match.waitForExistence(timeout: timeout)
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+      let match = springboard.descendants(matching: .any)
+        .matching(predicate)
+        .firstMatch
+      if match.exists {
+        return true
+      }
+      RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+    }
+    return false
   }
 
   private func tapVisibleNotificationChrome(
@@ -708,5 +1175,16 @@ final class NotificationTapUITests: XCTestCase {
     let center = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.75))
     top.press(forDuration: 0.1, thenDragTo: center)
     RunLoop.current.run(until: Date().addingTimeInterval(2))
+  }
+
+  private func revealNotificationHistory(from springboard: XCUIApplication) {
+    let lower = springboard.coordinate(
+      withNormalizedOffset: CGVector(dx: 0.5, dy: 0.82)
+    )
+    let upper = springboard.coordinate(
+      withNormalizedOffset: CGVector(dx: 0.5, dy: 0.28)
+    )
+    lower.press(forDuration: 0.05, thenDragTo: upper)
+    RunLoop.current.run(until: Date().addingTimeInterval(1))
   }
 }

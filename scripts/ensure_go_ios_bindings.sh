@@ -16,11 +16,21 @@ framework_root="$repo_root/ios/Runner/GoMknoon.xcframework"
 framework_info="$framework_root/Info.plist"
 header="$framework_root/ios-arm64_x86_64-simulator/GoMknoon.framework/Headers/Bridge.objc.h"
 verify_script="$repo_root/scripts/verify_gomobile_bindings.sh"
+input_helper="$repo_root/scripts/gomobile_binding_inputs.sh"
+input_stamp="$repo_root/ios/Runner/GoMknoon.inputs.sha256"
+
+# shellcheck source=gomobile_binding_inputs.sh
+source "$input_helper"
+input_digest="$(gomobile_binding_input_digest "$repo_root" ios)"
+stored_digest=''
+if [[ -f "$input_stamp" ]]; then
+  stored_digest="$(tr -d '[:space:]' <"$input_stamp")"
+fi
 
 needs_rebuild=0
 if [[ ! -f "$framework_info" || ! -f "$header" ]]; then
   needs_rebuild=1
-elif find "$go_root" -type f -name '*.go' -newer "$framework_info" | grep -q .; then
+elif [[ "$stored_digest" != "$input_digest" ]]; then
   needs_rebuild=1
 elif ! "$verify_script" ios >/dev/null 2>&1; then
   needs_rebuild=1
@@ -28,17 +38,20 @@ fi
 
 if [[ "$needs_rebuild" -eq 1 ]]; then
   export PATH="$PATH:$(go env GOPATH)/bin"
+  rm -f "$input_stamp"
   (cd "$go_root" && make ios)
 fi
 
 "$verify_script" ios
+input_digest="$(gomobile_binding_input_digest "$repo_root" ios)"
+printf '%s\n' "$input_digest" >"$input_stamp.tmp"
+mv "$input_stamp.tmp" "$input_stamp"
 
-# Stamp the Xcode-declared output (a DerivedData sentinel) so the build system can
-# skip this phase when no Go sources changed. The output is deliberately NOT a file
-# inside GoMknoon.xcframework — declaring framework-internal files as outputs of
-# this Runner script phase creates a build-dependency cycle with
-# Pods-NotificationService (which links the same GoMknoon pod) and breaks on-device
-# builds. SCRIPT_OUTPUT_FILE_0 is set by Xcode; guard for manual/CI runs.
+# Preserve the Xcode-declared DerivedData sentinel. The phase intentionally runs
+# every build so toolchain-only changes reach the cheap content-digest check;
+# gomobile itself still runs only when that digest changes. The output is not
+# placed inside GoMknoon.xcframework because doing so creates a dependency cycle
+# with Pods-NotificationService. Guard for manual/CI runs.
 if [[ -n "${SCRIPT_OUTPUT_FILE_0:-}" ]]; then
   mkdir -p "$(dirname "$SCRIPT_OUTPUT_FILE_0")"
   touch "$SCRIPT_OUTPUT_FILE_0"

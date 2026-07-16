@@ -267,6 +267,7 @@ func startLocalNodeForMultiRelayTest(t *testing.T) *Node {
 	t.Helper()
 	hexKey := generateTestKey(t)
 	n := NewNode()
+	n.hermeticLocalNetworkForTests = true
 	_, err := n.Start(NodeConfig{
 		PrivateKeyHex:  hexKey,
 		RelayAddresses: []string{},
@@ -277,6 +278,20 @@ func startLocalNodeForMultiRelayTest(t *testing.T) *Node {
 	}
 	t.Cleanup(func() { n.Stop() })
 	return n
+}
+
+func TestStartLocalNodeForMultiRelayTestAdvertisesLoopbackOnly(t *testing.T) {
+	n := startLocalNodeForMultiRelayTest(t)
+	addrs := n.Host().Addrs()
+	if len(addrs) == 0 {
+		t.Fatal("local test node has no advertised addresses")
+	}
+	for _, addr := range addrs {
+		ip := extractIP(addr)
+		if ip == nil || !ip.IsLoopback() {
+			t.Fatalf("local test node advertised non-loopback address %s", addr)
+		}
+	}
 }
 
 // setFakeRelays configures two fake relay addresses on a node using

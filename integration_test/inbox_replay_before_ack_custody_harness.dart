@@ -1,4 +1,5 @@
-@Tags(['device'])
+// Capture-owned artifact binding. It performs no device action and is invoked
+// only after the notification capture owner writes the TC-A6 artifact.
 library;
 
 import 'package:flutter_test/flutter_test.dart';

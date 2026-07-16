@@ -550,6 +550,11 @@ func TestRelaySession_ResetPreservesInFlightRecovery(t *testing.T) {
 
 func TestRecoveryPromise_StalledRecoveryTimesOut(t *testing.T) {
 	m := NewRelaySessionManager()
+	if RecoveryWaitTimeout != 30*time.Second {
+		t.Fatalf("RecoveryWaitTimeout = %v, want 30s", RecoveryWaitTimeout)
+	}
+	const testTimeout = 20 * time.Millisecond
+	m.recoveryWaitTimeout = testTimeout
 
 	// Goroutine A starts recovery but NEVER completes it.
 	_, isNew := m.BeginRecovery()
@@ -575,9 +580,10 @@ func TestRecoveryPromise_StalledRecoveryTimesOut(t *testing.T) {
 		t.Fatalf("expected RecoveryResult with RecoveryMode=timeout, got: %+v", result)
 	}
 
-	// Should have taken roughly RecoveryWaitTimeout (30s), with margin.
-	if elapsed < RecoveryWaitTimeout-time.Second || elapsed > RecoveryWaitTimeout+2*time.Second {
-		t.Errorf("timeout took %v, expected ~%v", elapsed, RecoveryWaitTimeout)
+	// The exact 30-second production value is asserted above; the behavioral
+	// timeout uses the same path with a bounded test-only duration.
+	if elapsed < testTimeout || elapsed > time.Second {
+		t.Errorf("timeout took %v, expected %v..1s", elapsed, testTimeout)
 	}
 }
 
@@ -643,6 +649,9 @@ func TestGR003RelaySessionStalledRecoveryClearsGateAfterTimeout(t *testing.T) {
 
 func TestRecoveryPromise_TimeoutClearsRecoveryGate(t *testing.T) {
 	m := NewRelaySessionManager()
+	// The preceding stalled-recovery test owns the real 30-second duration
+	// sentinel. This case only needs to prove the state transition.
+	m.recoveryWaitTimeout = 20 * time.Millisecond
 
 	// Start recovery, never complete.
 	_, isNew := m.BeginRecovery()
@@ -673,6 +682,8 @@ func TestRecoveryPromise_TimeoutClearsRecoveryGate(t *testing.T) {
 
 func TestRecoveryPromise_LateCompletionAfterTimeoutIsIgnored(t *testing.T) {
 	m := NewRelaySessionManager()
+	// Exercise late completion without paying the production timeout again.
+	m.recoveryWaitTimeout = 20 * time.Millisecond
 
 	// Start recovery, never complete within timeout.
 	_, isNew := m.BeginRecovery()
@@ -707,6 +718,8 @@ func TestRecoveryPromise_LateCompletionAfterTimeoutIsIgnored(t *testing.T) {
 
 func TestRecoveryPromise_ConcurrentWaitersAllReceiveTimeout(t *testing.T) {
 	m := NewRelaySessionManager()
+	// Concurrency, not the production timeout constant, is the assertion here.
+	m.recoveryWaitTimeout = 20 * time.Millisecond
 
 	// Start recovery, never complete.
 	_, isNew := m.BeginRecovery()

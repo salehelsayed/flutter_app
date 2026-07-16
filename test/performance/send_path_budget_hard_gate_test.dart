@@ -76,7 +76,8 @@ void main() {
         expect(
           msg.transport,
           isNot('local'),
-          reason: 'the 5s local ack must be abandoned at the 1500ms budget, so '
+          reason:
+              'the 5s local ack must be abandoned at the 1500ms budget, so '
               'the direct leg wins',
         );
         // PROOF the cutoff fired: completion is bounded near the budget, NOT
@@ -104,24 +105,28 @@ void main() {
       () async {
         // Peer offline: no live path can win. Discover is far slower than the
         // direct budget. With the budget enforced the direct leg is cut at ~2s
-        // and the inbox fallback (custody) lands; without enforcement we would
-        // block ~8s on discover.
+        // while the concurrent inbox custody leg lands; without enforcement
+        // we would block ~8s on discover.
         bob.setOnline(false);
         aliceP2P.discoverDelay = const Duration(seconds: 8);
 
         final stopwatch = Stopwatch()..start();
-        final (result, msg) = await alice.sendMessage(bob.peerId, 'offline-budgeted');
+        final (result, msg) = await alice.sendMessage(
+          bob.peerId,
+          'offline-budgeted',
+        );
         stopwatch.stop();
 
         expect(result, SendChatMessageResult.success);
-        expect(msg!.status, 'delivered');
+        expect(msg!.status, 'inboxed');
         expect(msg.transport, 'inbox');
         // PROOF the direct cutoff fired: the durable fallback lands far sooner
         // than the 8s discover delay would allow.
         expect(
           stopwatch.elapsed,
           lessThan(const Duration(seconds: 6)),
-          reason: 'the 8s discover must be abandoned at the 2000ms direct '
+          reason:
+              'the 8s discover must be abandoned at the 2000ms direct '
               'budget, then the inbox tail (<=3s) takes custody — never an 8s '
               'block',
         );
@@ -135,8 +140,9 @@ void main() {
       'WELL UNDER budget is NOT cut and delivers live',
       () async {
         // No delays, peer online → the direct leg should win fast and live,
-        // proving the budget cut above is a real cut, not a path that always
-        // fails/falls back regardless of timing.
+        // proving the budget cut above is a real cut. Unknown presence also
+        // starts a concurrent durable custody copy; that copy must not relabel
+        // a successful live delivery as inbox transport.
         aliceP2P.testConnections.clear();
 
         final stopwatch = Stopwatch()..start();
@@ -150,7 +156,11 @@ void main() {
           isNot('inbox'),
           reason: 'a healthy fast path is delivered live, never cut to inbox',
         );
-        expect(network.storeInInboxCallCount, 0);
+        expect(
+          network.storeInInboxCallCount,
+          1,
+          reason: 'unknown-presence sends retain one concurrent durable copy',
+        );
         expect(stopwatch.elapsed, lessThan(const Duration(seconds: 1)));
       },
     );

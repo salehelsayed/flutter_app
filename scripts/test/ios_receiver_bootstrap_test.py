@@ -1,0 +1,374 @@
+from __future__ import annotations
+
+import base64
+import json
+import hashlib
+import os
+from pathlib import Path
+import stat
+import subprocess
+import sys
+import tempfile
+import textwrap
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[2]
+DRIVER = ROOT / "integration_test" / "scripts" / "ios_receiver_bootstrap.py"
+
+
+class IosReceiverBootstrapTest(unittest.TestCase):
+    def test_private_handoff_is_nonce_bound_redacted_and_cleaned(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            fake = self._fake_xcrun(root)
+            output = root / "private" / "receiver-handoff.json"
+            token = "ab" * 32
+            peer = "12D3KooW" + "1" * 44
+            ml_kem = base64.b64encode(b"A" * 1184).decode()
+            environment = {
+                **os.environ,
+                "SIMS_IOS_RECEIVER_BOOTSTRAP_XCRUN": str(fake),
+                "FAKE_DEVICECTL_STATE": str(root / "state.json"),
+                "FAKE_APNS_TOKEN": token,
+                "FAKE_PEER_ID": peer,
+                "FAKE_ML_KEM_PUBLIC": ml_kem,
+                "SIMS_IOS_PHYSICAL_DEVICE_ID": "00008110-001A123E0E91801E",
+                "SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_NONCE":
+                    "nonce-bootstrap-contract-1",
+                "SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_PATH": str(output),
+            }
+            result = subprocess.run(
+                [sys.executable, str(DRIVER), "--timeout-seconds", "5"],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn(token, result.stdout + result.stderr)
+            self.assertNotIn(ml_kem, result.stdout + result.stderr)
+            self.assertTrue(output.is_file())
+            self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o600)
+            handoff = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(
+                set(handoff),
+                {
+                    "schema",
+                    "captureNonce",
+                    "receiverDeviceId",
+                    "peerDeviceId",
+                    "bundleId",
+                    "apnsEnvironment",
+                    "apnsDeviceToken",
+                    "mlKemPublicKey",
+                    "notificationAuthorization",
+                    "notificationAlertSetting",
+                    "capturedAt",
+                },
+            )
+            self.assertEqual(
+                handoff["schema"],
+                "mknoon.sims.ios-provider-receiver-handoff.v1",
+            )
+            self.assertEqual(handoff["apnsDeviceToken"], token)
+            self.assertEqual(handoff["peerDeviceId"], peer)
+            self.assertEqual(handoff["notificationAuthorization"], "authorized")
+            self.assertEqual(handoff["notificationAlertSetting"], "enabled")
+
+            state = json.loads((root / "state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["lastAction"], "cleanup")
+            self.assertTrue(
+                state["commands"][0].startswith("devicectl device copy to "),
+                state["commands"],
+            )
+            self.assertTrue(
+                state["commands"][1].startswith("devicectl device process launch "),
+                state["commands"],
+            )
+            joined = " ".join(state["commands"])
+            self.assertNotIn(" install ", f" {joined} ")
+            self.assertNotIn("uninstall", joined)
+
+    def test_nonce_mismatch_fails_without_persisting_token(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            fake = self._fake_xcrun(root)
+            output = root / "receiver-handoff.json"
+            token = "cd" * 32
+            environment = {
+                **os.environ,
+                "SIMS_IOS_RECEIVER_BOOTSTRAP_XCRUN": str(fake),
+                "FAKE_DEVICECTL_STATE": str(root / "state.json"),
+                "FAKE_APNS_TOKEN": token,
+                "FAKE_PEER_ID": "12D3KooW" + "2" * 44,
+                "FAKE_ML_KEM_PUBLIC": base64.b64encode(b"B" * 1184).decode(),
+                "FAKE_NONCE_OVERRIDE": "nonce-bootstrap-wrong-2",
+                "SIMS_IOS_PHYSICAL_DEVICE_ID": "00008110-001A123E0E91801E",
+                "SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_NONCE":
+                    "nonce-bootstrap-contract-2",
+                "SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_PATH": str(output),
+            }
+            result = subprocess.run(
+                [sys.executable, str(DRIVER), "--timeout-seconds", "5"],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 1)
+            self.assertFalse(output.exists())
+            self.assertNotIn(token, result.stdout + result.stderr)
+            self.assertIn('"containsSecrets":false', result.stdout)
+
+    def test_probe_sources_do_not_log_full_fcm_tokens(self) -> None:
+        app_delegate = (ROOT / "ios" / "Runner" / "AppDelegate.swift").read_text()
+        probe_app = (ROOT / "integration_test" / "apns_provider_probe_app.dart").read_text()
+        probe_harness = (
+            ROOT / "integration_test" / "apns_provider_probe_harness.dart"
+        ).read_text()
+        self.assertNotIn("token=%@", app_delegate)
+        self.assertNotIn("'token': fcmToken", probe_app)
+        self.assertNotIn("'token': fcmToken", probe_harness)
+
+    def test_unsafe_notification_settings_reject_private_handoff(self) -> None:
+        for authorization, alert_setting in (
+            ("denied", "enabled"),
+            ("authorized", "disabled"),
+        ):
+            with self.subTest(
+                authorization=authorization,
+                alert_setting=alert_setting,
+            ), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                fake = self._fake_xcrun(root)
+                output = root / "receiver-handoff.json"
+                environment = {
+                    **os.environ,
+                    "SIMS_IOS_RECEIVER_BOOTSTRAP_XCRUN": str(fake),
+                    "FAKE_DEVICECTL_STATE": str(root / "state.json"),
+                    "FAKE_APNS_TOKEN": "ef" * 32,
+                    "FAKE_PEER_ID": "12D3KooW" + "4" * 44,
+                    "FAKE_ML_KEM_PUBLIC": base64.b64encode(
+                        b"C" * 1184
+                    ).decode(),
+                    "FAKE_NOTIFICATION_AUTHORIZATION": authorization,
+                    "FAKE_NOTIFICATION_ALERT_SETTING": alert_setting,
+                    "SIMS_IOS_PHYSICAL_DEVICE_ID": "00008110-001A123E0E91801E",
+                    "SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_NONCE":
+                        "nonce-bootstrap-settings-1",
+                    "SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_PATH": str(output),
+                }
+                result = subprocess.run(
+                    [sys.executable, str(DRIVER), "--timeout-seconds", "5"],
+                    cwd=ROOT,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertFalse(output.exists())
+                self.assertIn('"containsSecrets":false', result.stdout)
+
+    def test_sender_seed_and_cleanup_use_only_private_payload_and_hashed_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            fake = self._fake_xcrun(root)
+            sender = "12D3KooW" + "3" * 44
+            payload = {
+                "fixture_schema": "mknoon.sims.ios-payload-private-fixture.v1",
+                "aps": {
+                    "alert": {"title": "Encrypted title", "body": "Encrypted body"},
+                    "mutable-content": 1,
+                },
+                "type": "new_message",
+                "sender_id": sender,
+                "message_id": "message-private-1",
+                "kem": "opaque-kem",
+                "ciphertext": "opaque-ciphertext",
+                "nonce": "opaque-nonce",
+            }
+            payload_path = root / "payload.json"
+            payload_path.write_text(
+                json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            payload_path.chmod(0o600)
+            receipt = root / "sender-receipt.json"
+            nonce = "nonce-bootstrap-sender-contract-1"
+            receiver = "00008110-001A123E0E91801E"
+            environment = {
+                **os.environ,
+                "SIMS_IOS_RECEIVER_BOOTSTRAP_XCRUN": str(fake),
+                "FAKE_DEVICECTL_STATE": str(root / "state.json"),
+                "SIMS_IOS_PHYSICAL_DEVICE_ID": receiver,
+                "SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_NONCE": nonce,
+                "SIMS_IOS_NOTIFICATION_APNS_PAYLOAD_PATH": str(payload_path),
+                "SIMS_IOS_NOTIFICATION_SENDER_PROJECTION_RECEIPT_PATH": str(receipt),
+            }
+
+            for action, native_status in (
+                ("seed-sender", "seeded"),
+                ("cleanup-sender", "cleaned"),
+            ):
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(DRIVER),
+                        "--action",
+                        action,
+                        "--timeout-seconds",
+                        "5",
+                    ],
+                    cwd=ROOT,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn(sender, result.stdout + result.stderr)
+                self.assertTrue(receipt.is_file())
+                self.assertEqual(stat.S_IMODE(receipt.stat().st_mode), 0o600)
+                value = json.loads(receipt.read_text(encoding="utf-8"))
+                self.assertEqual(
+                    set(value),
+                    {
+                        "schema",
+                        "action",
+                        "status",
+                        "containsSecrets",
+                        "bundleId",
+                        "captureNonceSha256",
+                        "receiverDeviceIdSha256",
+                        "senderPeerIdSha256",
+                        "apnsPayloadSha256",
+                        "fixtureDigest",
+                        "nativeStatus",
+                        "resultCode",
+                        "completedAt",
+                    },
+                )
+                self.assertEqual(value["action"], action)
+                self.assertEqual(value["nativeStatus"], native_status)
+                self.assertEqual(
+                    value["senderPeerIdSha256"], hashlib.sha256(sender.encode()).hexdigest()
+                )
+                self.assertEqual(
+                    value["apnsPayloadSha256"],
+                    hashlib.sha256(payload_path.read_bytes()).hexdigest(),
+                )
+
+            state = json.loads((root / "state.json").read_text(encoding="utf-8"))
+            joined = " ".join(state["commands"])
+            self.assertNotIn(sender, joined)
+            self.assertEqual(state["lastAction"], "cleanup")
+
+            payload["aps"]["alert"]["title"] = "x" * 31
+            payload_path.write_text(
+                json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            payload_path.chmod(0o600)
+            over_bound = subprocess.run(
+                [sys.executable, str(DRIVER), "--action", "seed-sender"],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+            self.assertEqual(over_bound.returncode, 78)
+            self.assertFalse(receipt.exists())
+
+    def _fake_xcrun(self, root: Path) -> Path:
+        script = root / "fake-xcrun.py"
+        script.write_text(
+            textwrap.dedent(
+                r'''#!/usr/bin/env python3
+import datetime, hashlib, json, os, pathlib, sys
+args=sys.argv[1:]
+state_path=pathlib.Path(os.environ['FAKE_DEVICECTL_STATE'])
+if state_path.exists():
+  state=json.loads(state_path.read_text())
+else:
+  state={'commands':[]}
+state['commands'].append(' '.join(args))
+def value(name):
+  return args[args.index(name)+1]
+if args[:4] == ['devicectl','device','copy','to']:
+  request=json.loads(pathlib.Path(value('--source')).read_text())
+  state['request']=request
+  state['lastAction']=request['action']
+elif args[:4] == ['devicectl','device','copy','from']:
+  request=state.get('request',{})
+  source=value('--source')
+  sender_result=source.endswith('/sender-result.json')
+  if sender_result and request.get('action') in ('seed_sender','cleanup_sender'):
+    fields={
+      'schema':'mknoon.sims.ios-sender-projection-request.v1',
+      'captureNonce':request['captureNonce'],
+      'receiverDeviceId':request['receiverDeviceId'],
+      'bundleId':'com.mknoon.app',
+      'senderPeerId':request['senderPeerId'],
+      'senderUsername':request['senderUsername'],
+      'apnsPayloadSha256':request['apnsPayloadSha256'],
+    }
+    fixture=hashlib.sha256(json.dumps(fields,separators=(',',':')).encode()).hexdigest()
+    response={
+      'schema':'mknoon.sims.ios-sender-projection-result.v1',
+      'action':request['action'],
+      'captureNonce':request['captureNonce'],
+      'receiverDeviceId':request['receiverDeviceId'],
+      'bundleId':'com.mknoon.app',
+      'apnsPayloadSha256':request['apnsPayloadSha256'],
+      'fixtureDigest':fixture,
+      'status':'seeded' if request['action']=='seed_sender' else 'cleaned',
+      'resultCode':'ok',
+      'completedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z'),
+    }
+  elif request.get('action') == 'capture' and not sender_result:
+    nonce=os.environ.get('FAKE_NONCE_OVERRIDE',request['captureNonce'])
+    response={
+      'schema':'mknoon.sims.ios-provider-receiver-handoff.v1',
+      'captureNonce':nonce,
+      'receiverDeviceId':request['receiverDeviceId'],
+      'peerDeviceId':os.environ['FAKE_PEER_ID'],
+      'bundleId':'com.mknoon.app',
+      'apnsEnvironment':'development',
+      'apnsDeviceToken':os.environ['FAKE_APNS_TOKEN'],
+      'mlKemPublicKey':os.environ['FAKE_ML_KEM_PUBLIC'],
+      'notificationAuthorization':os.environ.get('FAKE_NOTIFICATION_AUTHORIZATION','authorized'),
+      'notificationAlertSetting':os.environ.get('FAKE_NOTIFICATION_ALERT_SETTING','enabled'),
+      'capturedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z'),
+    }
+  else:
+    state_path.write_text(json.dumps(state))
+    raise SystemExit(1)
+  destination=pathlib.Path(value('--destination'))
+  destination.write_text(json.dumps(response))
+  destination.chmod(0o600)
+for option in ('--json-output','--log-output'):
+  if option in args:
+    pathlib.Path(value(option)).write_text('{}')
+state_path.write_text(json.dumps(state))
+'''
+            ),
+            encoding="utf-8",
+        )
+        script.chmod(0o700)
+        return script
+
+
+if __name__ == "__main__":
+    unittest.main()

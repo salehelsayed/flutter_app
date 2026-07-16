@@ -12,12 +12,14 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_mes
 const String sharedDirectReactionContactsKey = 'direct_reaction_contacts_v1';
 const String sharedDirectReactionAuthoredTargetsKey =
     'direct_reaction_authored_targets_v1';
+const String _simsFixtureDigestKey = 'simsFixtureDigest';
 
 class DirectReactionNotificationProjection {
   final SecureKeyStore _store;
   final int maxAuthoredTargets;
   Future<void> _tail = Future<void>.value();
   String? _expectedAccountPeerId;
+  final Map<String, String> _simsCleanupTombstones = <String, String>{};
 
   DirectReactionNotificationProjection({
     required SecureKeyStore store,
@@ -33,6 +35,9 @@ class DirectReactionNotificationProjection {
   /// direct documents and the group identity document to name the same account.
   Future<void> replaceLocalIdentity({required String? accountPeerId}) {
     final normalizedAccount = _nonEmpty(accountPeerId);
+    if (_expectedAccountPeerId != normalizedAccount) {
+      _simsCleanupTombstones.clear();
+    }
     _expectedAccountPeerId = normalizedAccount;
     return _enqueue(() async {
       if (normalizedAccount == null) {
@@ -68,6 +73,7 @@ class DirectReactionNotificationProjection {
 
   Future<void> clearForLogout() {
     _expectedAccountPeerId = null;
+    _simsCleanupTombstones.clear();
     return _enqueue(_deleteAllDocuments, propagateError: true);
   }
 
@@ -111,14 +117,92 @@ class DirectReactionNotificationProjection {
         if (!_owns(current.accountPeerId)) return;
         final projection = <String, Map<String, Object?>>{};
         for (final contact in contacts) {
-          projection[contact.peerId] = <String, Object?>{
+          final exactSimsDigest = _exactSimsFixtureDigest(contact);
+          if (exactSimsDigest != null &&
+              _simsCleanupTombstones[contact.peerId] == exactSimsDigest) {
+            continue;
+          }
+          final value = <String, Object?>{
             'username': contact.username.trim(),
             'blocked': contact.isBlocked,
             'archived': contact.isArchived,
           };
+          final simsDigest = _simsFixtureDigestForBackfill(
+            contact,
+            current.contacts[contact.peerId],
+          );
+          if (simsDigest != null) {
+            value[_simsFixtureDigestKey] = simsDigest;
+          }
+          projection[contact.peerId] = value;
         }
         await _writeContacts(current.accountPeerId!, projection);
       });
+
+  /// Test-only targeted insert used by the private physical-iOS SIMS seam.
+  ///
+  /// Unlike ordinary production mutations, this operation propagates a write
+  /// failure without invalidating either shared document. It also refuses to
+  /// replace an existing peer entry. The generation digest is ignored by the
+  /// NSE but lets cleanup distinguish this exact disposable seed from a real
+  /// contact that was created or updated concurrently.
+  Future<bool> insertSimsFixtureContactIfAbsent({
+    required String peerId,
+    required String username,
+    required String fixtureDigest,
+  }) => _enqueueIsolated(() async {
+    if (_nonEmpty(peerId) == null ||
+        _nonEmpty(username) == null ||
+        !_isSha256(fixtureDigest)) {
+      return false;
+    }
+    final document = await _readContactsDocument();
+    if (!_owns(document.accountPeerId) ||
+        document.contacts.containsKey(peerId)) {
+      return false;
+    }
+    final next = Map<String, Map<String, Object?>>.from(document.contacts);
+    next[peerId] = <String, Object?>{
+      'username': username.trim(),
+      'blocked': false,
+      'archived': false,
+      _simsFixtureDigestKey: fixtureDigest,
+    };
+    await _writeContacts(document.accountPeerId!, next);
+    if (_simsCleanupTombstones[peerId] == fixtureDigest) {
+      _simsCleanupTombstones.remove(peerId);
+    }
+    return true;
+  });
+
+  /// Test-only exact-generation removal paired with
+  /// [insertSimsFixtureContactIfAbsent]. Any changed field fails closed.
+  Future<bool> removeSimsFixtureContactIfExact({
+    required String peerId,
+    required String username,
+    required String fixtureDigest,
+  }) => _enqueueIsolated(() async {
+    if (!_isSha256(fixtureDigest)) return false;
+    final document = await _readContactsDocument();
+    if (!_owns(document.accountPeerId)) return false;
+    final current = document.contacts[peerId];
+    if (current == null) {
+      _simsCleanupTombstones[peerId] = fixtureDigest;
+      return true;
+    }
+    if (!_isExactSimsFixtureProjection(
+      current,
+      username: username,
+      fixtureDigest: fixtureDigest,
+    )) {
+      return false;
+    }
+    _simsCleanupTombstones[peerId] = fixtureDigest;
+    final next = Map<String, Map<String, Object?>>.from(document.contacts)
+      ..remove(peerId);
+    await _writeContacts(document.accountPeerId!, next);
+    return true;
+  });
 
   Future<void> upsertAuthoredTarget(ConversationMessage message) {
     if (message.isIncoming ||
@@ -230,6 +314,12 @@ class DirectReactionNotificationProjection {
     return next;
   }
 
+  Future<T> _enqueueIsolated<T>(Future<T> Function() action) {
+    final result = _tail.then((_) => action());
+    _tail = result.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    return result;
+  }
+
   Future<_DirectContactsDocument> _readContactsDocument() async {
     final raw = await _store.read(sharedDirectReactionContactsKey);
     if (raw == null || raw.isEmpty) return _DirectContactsDocument.empty();
@@ -255,6 +345,8 @@ class DirectReactionNotificationProjection {
           'username': username,
           'blocked': value['blocked'] == true,
           'archived': value['archived'] == true,
+          if (_isSha256(value[_simsFixtureDigestKey]?.toString() ?? ''))
+            _simsFixtureDigestKey: value[_simsFixtureDigestKey].toString(),
         };
       }
       return _DirectContactsDocument(
@@ -349,6 +441,66 @@ class DirectReactionNotificationProjection {
       });
     return sorted.take(maxAuthoredTargets).toList(growable: false);
   }
+}
+
+bool _isExactSimsFixtureProjection(
+  Map<String, Object?>? value, {
+  required String username,
+  required String fixtureDigest,
+}) =>
+    value != null &&
+    value.length == 4 &&
+    value['username'] == username.trim() &&
+    value['blocked'] == false &&
+    value['archived'] == false &&
+    value[_simsFixtureDigestKey] == fixtureDigest;
+
+bool _isSha256(String value) => RegExp(r'^[0-9a-f]{64}$').hasMatch(value);
+
+String? _simsFixtureDigestForBackfill(
+  ContactModel contact,
+  Map<String, Object?>? projected,
+) {
+  final digest = _exactSimsFixtureDigest(contact);
+  if (digest == null) return null;
+  final username = contact.username.trim();
+  if (projected == null ||
+      (projected.length != 3 && projected.length != 4) ||
+      projected['username'] != username ||
+      projected['blocked'] != false ||
+      projected['archived'] != false) {
+    return null;
+  }
+  final projectedDigest = projected[_simsFixtureDigestKey];
+  return projectedDigest == null || projectedDigest == digest ? digest : null;
+}
+
+String? _exactSimsFixtureDigest(ContactModel contact) {
+  const signaturePrefix = 'mknoon-sims-ios:';
+  if (!contact.signature.startsWith(signaturePrefix)) return null;
+  final digest = contact.signature.substring(signaturePrefix.length);
+  final username = contact.username.trim();
+  if (!_isSha256(digest) ||
+      contact.peerId.trim().isEmpty ||
+      username.isEmpty ||
+      contact.publicKey != 'mknoon-sims-projection-only' ||
+      contact.rendezvous != '/mknoon/sims/projection-only' ||
+      contact.scannedAt != '1970-01-01T00:00:00.000Z' ||
+      contact.avatarPath != null ||
+      contact.avatarVersion != null ||
+      contact.mlKemPublicKey != null ||
+      contact.mlKemKeyUpdatedTs != null ||
+      contact.isArchived ||
+      contact.archivedAt != null ||
+      contact.isBlocked ||
+      contact.blockedAt != null ||
+      contact.introsBannerDismissed ||
+      contact.introsSentAt != null ||
+      contact.introducedBy != null ||
+      contact.introducedByPeerId != null) {
+    return null;
+  }
+  return digest;
 }
 
 class _DirectContactsDocument {

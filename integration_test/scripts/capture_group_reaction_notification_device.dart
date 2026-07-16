@@ -3,6 +3,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 
@@ -18,6 +19,10 @@ const _reactionEmoji = '👍';
 const _sqlCipherProbe =
     'integration_test/group_reaction_notification_sqlcipher_probe_test.dart';
 const _duplicateRedrivePrefix = 'MKNOON_257_DUPLICATE_REDRIVE_OBSERVATION ';
+const _runtimeRequestSchema = 'mknoon.plan257.runtime-probe-request.v1';
+const _runtimeResultSchema = 'mknoon.plan257.runtime-probe-result.v1';
+const _runtimeObserveAction = 'group_reaction_sqlcipher_observe';
+const _runtimeExactAddRedriveAction = 'group_reaction_exact_add_redrive';
 const _iosTapTest = 'ios/RunnerUITests/NotificationTapUITests.swift';
 const _iosTapSelector = 'testAnnouncementReactionNotificationTap';
 const _iosFixtureCreateSelector = 'testCreateAnnouncementReactionFixture';
@@ -62,6 +67,9 @@ Future<void> main(List<String> args) async {
     exit(78);
   }
 
+  final prebuiltAndroidPath =
+      _valueFor(args, '--prebuilt-android-apk') ??
+      Platform.environment['SIMS_ARTIFACT_ANDROID_PRODUCTION_FCM'];
   final capture = _Plan257Capture(
     scenario: scenario,
     senderId: senderId,
@@ -82,6 +90,12 @@ Future<void> main(List<String> args) async {
           Platform.environment['FIREBASE_SERVICE_ACCOUNT'] ??
           _defaultServiceAccount,
     ).absolute,
+    prebuiltAndroidApk:
+        prebuiltAndroidPath == null || prebuiltAndroidPath.trim().isEmpty
+        ? null
+        : File(prebuiltAndroidPath).absolute,
+    noChildBuilds: args.contains('--no-child-builds'),
+    statePreparedByParent: args.contains('--android-state-prepared'),
     verbose: args.contains('--verbose'),
     keepBuildArtifacts: args.contains('--keep-build-artifacts'),
   );
@@ -190,6 +204,9 @@ class _Plan257Capture {
     required this.relayTarget,
     required this.relayKey,
     required this.serviceAccount,
+    required this.prebuiltAndroidApk,
+    required this.noChildBuilds,
+    required this.statePreparedByParent,
     required this.verbose,
     required this.keepBuildArtifacts,
   }) : sender = _Party(
@@ -212,6 +229,9 @@ class _Plan257Capture {
   final String relayTarget;
   final File relayKey;
   final File serviceAccount;
+  final File? prebuiltAndroidApk;
+  final bool noChildBuilds;
+  final bool statePreparedByParent;
   final bool verbose;
   final bool keepBuildArtifacts;
   final _Party sender;
@@ -246,6 +266,9 @@ class _Plan257Capture {
   Future<void>? _iosSystemLogStdoutDone;
   Future<void>? _iosSystemLogStderrDone;
   final List<Map<String, Object?>> _commandJournal = <Map<String, Object?>>[];
+  final Random _random = Random.secure();
+  late final String _runtimeRunId = _runtimeToken('run');
+  late final String _runtimeNonce = _runtimeToken('nonce');
 
   Map<String, Object?> get _iosCapture =>
       Map<String, Object?>.from(_staging['iosCapture'] as Map);
@@ -270,6 +293,18 @@ class _Plan257Capture {
         .map((value) => value.trim())
         .toList(growable: false);
 
+    if (noChildBuilds && scenario.recipientPlatform == 'android') {
+      final prepared = prebuiltAndroidApk;
+      if (prepared == null ||
+          FileSystemEntity.typeSync(prepared.path, followLinks: true) !=
+              FileSystemEntityType.file) {
+        throw _CaptureFailure.configuration(
+          'prepared_artifact',
+          'central_prebuilt_android_apk_required',
+        );
+      }
+    }
+
     stage = 'device_inventory';
     await _verifyLiveDeviceTopology();
 
@@ -290,10 +325,12 @@ class _Plan257Capture {
     }
 
     stage = 'candidate_build';
-    _androidBuilds = await _buildAndroidCandidate();
+    _androidBuilds = prebuiltAndroidApk == null
+        ? await _buildAndroidCandidate()
+        : await _loadPreparedAndroidCandidate(prebuiltAndroidApk!);
 
     stage = 'android_role_install';
-    await _resetAndInstallAndroidRoles(_androidBuilds!.e2eApk);
+    await _resetAndInstallAndroidRoles(_androidBuilds!);
 
     stage = 'android_identity_setup';
     await _prepareAndroidIdentity(sender);
@@ -308,7 +345,10 @@ class _Plan257Capture {
     await _createAndAcceptGroup();
 
     stage = 'provider_registration';
-    await _installApk(recipientId, _androidBuilds!.normalApk);
+    if (!statePreparedByParent ||
+        _androidBuilds!.e2eSha256 != _androidBuilds!.normalSha256) {
+      await _installApk(recipientId, _androidBuilds!.normalApk);
+    }
     await _grantNotificationPermission(recipientId);
     final tokenWindow = DateTime.now().toUtc();
     await _launchAndroid(recipientId);
@@ -754,12 +794,8 @@ class _Plan257Capture {
   Future<void> _runIosAvailableStages() async {
     stage = 'ios_android_sender_build';
     _androidBuilds = await _buildAndroidCandidate();
-    await _adbShell(senderId, <String>[
-      'pm',
-      'clear',
-      appPackage,
-    ], allowFail: true);
     await _installApk(senderId, _androidBuilds!.e2eApk);
+    await _clearAndroidPrivateEntries(senderId);
     await _prepareAndroidIdentity(sender);
     await _launchAndroid(senderId);
     await _collectAndroidIdentity(sender);
@@ -1309,6 +1345,41 @@ class _Plan257Capture {
     return builds;
   }
 
+  Future<_AndroidBuilds> _loadPreparedAndroidCandidate(File apk) async {
+    if (!apk.existsSync()) {
+      throw _CaptureFailure.configuration(
+        stage,
+        'central_prebuilt_android_apk_missing: ${apk.path}',
+      );
+    }
+    final digest = await _sha256(apk);
+    final builds = _AndroidBuilds(
+      provenance: 'central-prebuilt:android.production_fcm:$digest',
+      e2eApk: apk,
+      normalApk: apk,
+      e2eSha256: digest,
+      normalSha256: digest,
+    );
+    await File(
+      '${artifactDirectory.path}${Platform.pathSeparator}'
+      'candidate_build_provenance.json',
+    ).writeAsString(
+      const JsonEncoder.withIndent(' ').convert(<String, Object?>{
+        'schema': 'mknoon.plan257.candidate-build.v1',
+        'sourceProvenance': builds.provenance,
+        'buildMode': 'central_prebuilt',
+        'buildProfile': 'android.production_fcm',
+        'childBuildCount': 0,
+        'parentPreparedAndroidState': statePreparedByParent,
+        'e2eApkSha256': builds.e2eSha256,
+        'normalApkSha256': builds.normalSha256,
+        'preparedAt': DateTime.now().toUtc().toIso8601String(),
+      }),
+      flush: true,
+    );
+    return builds;
+  }
+
   Future<String> _candidateProvenance() async {
     final revision = await _run('git', const <String>['rev-parse', 'HEAD']);
     final files = await _run('git', const <String>[
@@ -1347,12 +1418,118 @@ class _Plan257Capture {
     return '${revision.stdout.trim()}+worktree:$treeDigest';
   }
 
-  Future<void> _resetAndInstallAndroidRoles(File apk) async {
+  Future<void> _resetAndInstallAndroidRoles(_AndroidBuilds builds) async {
     for (final id in <String>[senderId, recipientId]) {
-      await _adbShell(id, <String>['pm', 'clear', appPackage], allowFail: true);
-      await _installApk(id, apk);
+      if (!statePreparedByParent) {
+        await _installApk(id, builds.e2eApk);
+        await _clearAndroidPrivateEntries(id);
+      } else {
+        await _verifyParentPreparedAndroidRole(
+          deviceId: id,
+          expectedSha256: builds.e2eSha256,
+        );
+      }
       await _grantNotificationPermission(id);
       await _wakeAndroid(id);
+    }
+  }
+
+  Future<void> _verifyParentPreparedAndroidRole({
+    required String deviceId,
+    required String expectedSha256,
+  }) async {
+    final installed = await _adbShell(deviceId, <String>[
+      'pm',
+      'path',
+      appPackage,
+    ], environmentFailure: true);
+    final packagePaths = installed
+        .split('\n')
+        .map((line) => line.trim())
+        .where((line) => line.startsWith('package:'))
+        .map((line) => line.substring('package:'.length))
+        .toList(growable: false);
+    if (packagePaths.length != 1) {
+      throw _CaptureFailure.environment(
+        stage,
+        'parent_prepared_app_requires_single_base_apk_on_$deviceId',
+      );
+    }
+
+    final baseApkPath = packagePaths.single;
+    if (!baseApkPath.startsWith('/') ||
+        !baseApkPath.endsWith('/base.apk') ||
+        baseApkPath.contains(RegExp(r'[\s\x00]'))) {
+      throw _CaptureFailure.environment(
+        stage,
+        'parent_prepared_app_base_apk_path_invalid_on_$deviceId',
+      );
+    }
+
+    final digestOutput = await _adbShell(deviceId, <String>[
+      'sha256sum',
+      baseApkPath,
+    ], environmentFailure: true);
+    final digestParts = digestOutput.trim().split(RegExp(r'\s+'));
+    final actualSha256 = digestParts.isEmpty
+        ? ''
+        : digestParts.first.toLowerCase();
+    if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(actualSha256)) {
+      throw _CaptureFailure.environment(
+        stage,
+        'parent_prepared_app_digest_invalid_on_$deviceId',
+      );
+    }
+    if (actualSha256 != expectedSha256.toLowerCase()) {
+      throw _CaptureFailure.environment(
+        stage,
+        'parent_prepared_app_digest_mismatch_on_$deviceId',
+      );
+    }
+  }
+
+  Future<void> _clearAndroidPrivateEntries(String deviceId) async {
+    final inventory = await _adb(deviceId, <String>[
+      'shell',
+      'run-as',
+      appPackage,
+      'ls',
+      '-1',
+      '-A',
+      '.',
+    ], allowFail: true);
+    if (inventory.exitCode != 0) {
+      throw _CaptureFailure.environment(
+        stage,
+        'private_app_inventory_unavailable_on_$deviceId',
+      );
+    }
+    final entries = inventory.stdout
+        .split('\n')
+        .map((entry) => entry.trim())
+        .where((entry) => entry.isNotEmpty)
+        .toList(growable: false);
+    if (entries.any(
+      (entry) =>
+          !RegExp(r'^[A-Za-z0-9_.-]+$').hasMatch(entry) ||
+          entry == '.' ||
+          entry == '..',
+    )) {
+      throw _CaptureFailure.capture(
+        stage,
+        'unsafe_private_app_inventory_on_$deviceId',
+      );
+    }
+    for (final entry in entries) {
+      await _adb(deviceId, <String>[
+        'shell',
+        'run-as',
+        appPackage,
+        'rm',
+        '-rf',
+        '--',
+        entry,
+      ]);
     }
   }
 
@@ -1679,6 +1856,57 @@ class _Plan257Capture {
   }
 
   Future<void> _redriveExactStoredAdd(DateTime providerWindow) async {
+    final observation = noChildBuilds
+        ? await _runInstalledGroupReactionProbe(
+            deviceId: senderId,
+            action: _runtimeExactAddRedriveAction,
+          )
+        : await _runLegacyExactAddRedriveProbe();
+    _validateExactAddRedriveObservation(observation);
+    _exactDuplicateRedriveObservation =
+        '$_duplicateRedrivePrefix${jsonEncode(observation)}\n';
+
+    if (noChildBuilds) {
+      // The production app performed the bounded SQLCipher mutation in place.
+      // Its ordinary pending retrier must now resubmit the unchanged stored
+      // inbox_retry_payload; no reinstall, test target, or child build is
+      // permitted in the central-build path.
+      await _startAndroid(senderId);
+    } else {
+      // flutter drive keeps the probe application installed/running, so the
+      // sender's identity and SQLCipher rows survive. Reinstalling/launching
+      // the normal candidate makes the production pending retrier submit the
+      // same persisted inbox_retry_payload bytes.
+      await _installApk(senderId, _androidBuilds!.normalApk);
+      await _startAndroid(senderId);
+    }
+    await _waitFor(
+      'production exact group reaction duplicate retry',
+      const Duration(minutes: 3),
+      () async {
+        final log = await _adb(senderId, const <String>[
+          'logcat',
+          '-d',
+          '-v',
+          'brief',
+        ]);
+        return log.stdout.contains('RETRY_FAILED_GROUP_REACTION_REPLAY_OK');
+      },
+    );
+    await Future<void>.delayed(const Duration(seconds: 10));
+    final providerCount = _countProviderSends(
+      await _relayJournalSince(providerWindow),
+    );
+    if (providerCount != 2) {
+      throw _CaptureFailure.capture(
+        stage,
+        'exact_duplicate_redrive_changed_provider_count: expected 2, '
+        'observed $providerCount',
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>> _runLegacyExactAddRedriveProbe() async {
     final output = await _runStreaming('flutter', <String>[
       'drive',
       '--no-pub',
@@ -1706,15 +1934,17 @@ class _Plan257Capture {
         'exact_duplicate_redrive_probe_emitted_no_observation',
       );
     }
-    Map<String, dynamic> observation;
     try {
-      observation = Map<String, dynamic>.from(jsonDecode(encoded) as Map);
+      return Map<String, dynamic>.from(jsonDecode(encoded) as Map);
     } on Object {
       throw _CaptureFailure.capture(
         stage,
         'exact_duplicate_redrive_observation_invalid_json',
       );
     }
+  }
+
+  void _validateExactAddRedriveObservation(Map<String, dynamic> observation) {
     final identityHashes = <String>[
       'transitionIdSha256',
       'reactionStateIdSha256',
@@ -1739,39 +1969,6 @@ class _Plan257Capture {
       throw _CaptureFailure.capture(
         stage,
         'exact_duplicate_redrive_observation_contract_mismatch',
-      );
-    }
-    _exactDuplicateRedriveObservation =
-        '$_duplicateRedrivePrefix${jsonEncode(observation)}\n';
-
-    // flutter drive keeps the probe application installed/running, so the
-    // sender's identity and SQLCipher rows survive. Reinstalling/launching the
-    // normal candidate then makes the production pending retrier submit the
-    // same persisted inbox_retry_payload bytes.
-    await _installApk(senderId, _androidBuilds!.normalApk);
-    await _startAndroid(senderId);
-    await _waitFor(
-      'production exact group reaction duplicate retry',
-      const Duration(minutes: 3),
-      () async {
-        final log = await _adb(senderId, const <String>[
-          'logcat',
-          '-d',
-          '-v',
-          'brief',
-        ]);
-        return log.stdout.contains('RETRY_FAILED_GROUP_REACTION_REPLAY_OK');
-      },
-    );
-    await Future<void>.delayed(const Duration(seconds: 10));
-    final providerCount = _countProviderSends(
-      await _relayJournalSince(providerWindow),
-    );
-    if (providerCount != 2) {
-      throw _CaptureFailure.capture(
-        stage,
-        'exact_duplicate_redrive_changed_provider_count: expected 2, '
-        'observed $providerCount',
       );
     }
   }
@@ -1898,22 +2095,101 @@ class _Plan257Capture {
       'text',
       marker,
     ], environmentFailure: true);
-    await _waitForUiText(deviceId, marker, const Duration(seconds: 10));
-    final typed = await _uiDump(deviceId);
-    final typedEditor = findNodeBoundsByClass(typed, 'android.widget.EditText');
-    if (typedEditor == null) {
-      throw _CaptureFailure.capture(
-        stage,
-        'group_compose_editor_disappeared_before_send',
+
+    // Announcement sends are intentionally rejected while the production
+    // group-recovery gate is active. That result restores this exact draft,
+    // so a generic `marker is visible` wait would falsely report a commit.
+    // Every re-tap below is therefore gated by a newly observed, explicit
+    // recovery-pending terminal outcome; an ambiguous timeout is never retried.
+    const maxRecoveryPendingOutcomes = 8;
+    var recoveryPendingOutcomes = 0;
+    while (true) {
+      final typedEditor = await _waitForValue<(int, int, int, int)>(
+        'group compose draft restored on $deviceId',
+        const Duration(seconds: 20),
+        () async => findNodeBoundsByClassContainingText(
+          await _uiDump(deviceId),
+          'android.widget.EditText',
+          marker,
+        ),
+      );
+      final baselineOutcomeCount = (await _groupSendTimingObservations(
+        deviceId,
+      )).length;
+      await _adbShell(deviceId, <String>[
+        'input',
+        'tap',
+        '${typedEditor.$3 + 70}',
+        '${(typedEditor.$2 + typedEditor.$4) ~/ 2}',
+      ], environmentFailure: true);
+
+      final outcome = await _waitForValue<GroupSendTimingObservation>(
+        'terminal group send FLOW outcome on $deviceId',
+        const Duration(seconds: 30),
+        () async {
+          final observations = await _groupSendTimingObservations(deviceId);
+          return observations.length > baselineOutcomeCount
+              ? observations[baselineOutcomeCount]
+              : null;
+        },
+      );
+      if (outcome.isCommitted) {
+        if (!outcome.hasRequiredInboxCustody(recipientCount: 1)) {
+          throw _CaptureFailure.capture(
+            stage,
+            'group_send_commit_lacked_exact_durable_inbox_custody_on_'
+            '$deviceId',
+          );
+        }
+        await _waitFor(
+          'committed group message outside compose editor on $deviceId',
+          const Duration(seconds: 30),
+          () async {
+            final committed = await _uiDump(deviceId);
+            return findSemanticNodeCenter(committed, marker) != null &&
+                findNodeBoundsByClassContainingText(
+                      committed,
+                      'android.widget.EditText',
+                      marker,
+                    ) ==
+                    null;
+          },
+        );
+        return;
+      }
+      if (!outcome.isRecoveryPending) {
+        throw _CaptureFailure.capture(
+          stage,
+          'group_send_terminal_outcome_${outcome.outcome}_on_$deviceId',
+        );
+      }
+
+      recoveryPendingOutcomes += 1;
+      if (recoveryPendingOutcomes >= maxRecoveryPendingOutcomes) {
+        throw _CaptureFailure.capture(
+          stage,
+          'group_send_recovery_remained_pending_after_'
+          '${maxRecoveryPendingOutcomes}_bounded_attempts_on_$deviceId',
+        );
+      }
+      await Future<void>.delayed(
+        Duration(seconds: min(recoveryPendingOutcomes, 4)),
       );
     }
-    await _adbShell(deviceId, <String>[
-      'input',
-      'tap',
-      '${typedEditor.$3 + 70}',
-      '${(typedEditor.$2 + typedEditor.$4) ~/ 2}',
-    ], environmentFailure: true);
-    await _waitForUiText(deviceId, marker, const Duration(seconds: 30));
+  }
+
+  Future<List<GroupSendTimingObservation>> _groupSendTimingObservations(
+    String deviceId,
+  ) async {
+    final logcat = await _adb(deviceId, const <String>[
+      'logcat',
+      '-d',
+      '-v',
+      'brief',
+    ]);
+    return extractGroupSendTimingObservations(
+      '${logcat.stdout}\n${logcat.stderr}',
+    );
   }
 
   Future<void> _waitForGroupUnread(int count) async {
@@ -2175,7 +2451,87 @@ class _Plan257Capture {
         r'\b',
   ).allMatches(journal).length;
 
+  Future<Map<String, dynamic>> _runInstalledGroupReactionProbe({
+    required String deviceId,
+    required String action,
+  }) async {
+    final stepId = 'plan257-$action-$_runtimeRunId';
+    final request = <String, Object?>{
+      'schema': _runtimeRequestSchema,
+      'transport_action': action,
+      'scenario': scenario.id,
+      'stepId': stepId,
+      'runId': _runtimeRunId,
+      'nonce': _runtimeNonce,
+      'groupName': _groupName,
+      'firstMarker': _firstMarker,
+      'secondMarker': _secondMarker,
+      'targetMarker': _targetMarker,
+    };
+    await _deleteAppFile(deviceId, 'intro_e2e_result.json');
+    await _deleteAppFile(deviceId, 'intro_e2e_config.json');
+    await _writeAppFile(deviceId, 'intro_e2e_config.json', jsonEncode(request));
+    // Starting an already installed candidate is build-free and gives the
+    // production E2E poller a deterministic foreground opportunity. It does
+    // not clear app data or replace the SQLCipher database being observed.
+    await _startAndroid(deviceId);
+
+    try {
+      return await _waitForValue<Map<String, dynamic>>(
+        '$action installed-app result',
+        const Duration(seconds: 45),
+        () async {
+          final raw = await _readAppFile(deviceId, 'intro_e2e_result.json');
+          if (raw == null) return null;
+          late final Map<String, dynamic> result;
+          try {
+            result = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+          } on Object {
+            throw _CaptureFailure.capture(
+              stage,
+              'group_reaction_runtime_result_invalid_json',
+            );
+          }
+          if (result['stepId'] != stepId) return null;
+          if (result['schema'] != _runtimeResultSchema ||
+              result['transport_action'] != action ||
+              result['scenario'] != scenario.id ||
+              result['runId'] != _runtimeRunId ||
+              result['nonce'] != _runtimeNonce ||
+              result['status'] != 'complete' ||
+              result['success'] != true ||
+              result['observation'] is! Map) {
+            throw _CaptureFailure.capture(
+              stage,
+              'group_reaction_runtime_result_contract_mismatch',
+            );
+          }
+          return Map<String, dynamic>.from(result['observation'] as Map);
+        },
+      );
+    } finally {
+      await _deleteAppFile(deviceId, 'intro_e2e_config.json');
+      await _deleteAppFile(deviceId, 'intro_e2e_result.json');
+    }
+  }
+
+  String _runtimeToken(String prefix) {
+    final bytes = List<int>.generate(16, (_) => _random.nextInt(256));
+    final hex = bytes
+        .map((value) => value.toRadixString(16).padLeft(2, '0'))
+        .join();
+    return '$prefix-$hex';
+  }
+
   Future<String> _captureSqlCipherObservation() async {
+    if (noChildBuilds) {
+      final observed = await _runInstalledGroupReactionProbe(
+        deviceId: recipientId,
+        action: _runtimeObserveAction,
+      );
+      _validateSqlCipherObservation(observed);
+      return 'MKNOON_257_SQLCIPHER_OBSERVATION ${jsonEncode(observed)}\n';
+    }
     final args = <String>[
       'test',
       '--no-pub',
@@ -2692,11 +3048,13 @@ class _Plan257Capture {
   }
 
   Future<void> _deleteBuildCopies() async {
+    final preparedPath = prebuiltAndroidApk?.absolute.path;
     for (final file in <File?>[
       _androidBuilds?.e2eApk,
       _androidBuilds?.normalApk,
     ]) {
-      if (file != null && file.existsSync()) await file.delete();
+      if (file == null || file.absolute.path == preparedPath) continue;
+      if (file.existsSync()) await file.delete();
     }
   }
 
@@ -3247,7 +3605,8 @@ Never _usage([String? error]) {
     '--scenario <plan257-id> --sender <explicit-id> '
     '--recipient <explicit-id> --artifact-dir <dir> '
     '--staging-manifest <redacted-json> [--relay-target <ssh-target>] '
-    '[--relay-key <file>] [--service-account <file>] [--verbose] '
+    '[--relay-key <file>] [--service-account <file>] '
+    '[--prebuilt-android-apk <central-apk> --no-child-builds] [--verbose] '
     '[--keep-build-artifacts]',
   );
   exit(64);

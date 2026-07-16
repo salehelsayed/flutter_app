@@ -121,6 +121,8 @@ ios/Runner/GoMknoon.xcframework/
 macos/Runner/GoMknoon.xcframework/
 android/app/libs/*.aar
 android/app/libs/*.jar
+android/app/libs/GoMknoon.inputs.sha256*
+ios/Runner/GoMknoon.inputs.sha256*
 
 # Private keys
 *.pem
@@ -177,3 +179,6 @@ graphify-arch/tdd-overlay.json
 # Generated build artifacts — keep local, never commit.
 /build_group_forward_agent/test_cache/build_group_forward_agent/8730b13ca0249799964d0a71255a8f3b.cache.dill.track.dill
 /go-relay-server/relay-server-linux-amd64
+
+# SIMS iOS notification external inputs (credential-adjacent) — never commit.
+/docker-ws/sims-ios-notification/

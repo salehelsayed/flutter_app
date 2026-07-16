@@ -73,6 +73,14 @@ val keystorePropertiesFile = rootProject.file("key.properties")
 val hasReleaseSigning = keystorePropertiesFile.exists()
 val allowDebugSigningInRelease =
     providers.gradleProperty("allowDebugSigningInRelease").orNull == "true"
+val simsAndroidAbi =
+    when (val raw = providers.gradleProperty("simsAndroidAbi").orNull?.trim()) {
+        null, "" -> null
+        "arm64-v8a" -> raw
+        else -> throw GradleException(
+            "simsAndroidAbi must be exactly arm64-v8a when supplied."
+        )
+    }
 
 fun requireKeystoreProperty(name: String): String =
     keystoreProperties.getProperty(name)?.takeIf { it.isNotBlank() }
@@ -155,6 +163,14 @@ android {
     }
 
     buildTypes {
+        getByName("debug") {
+            simsAndroidAbi?.let { abi ->
+                ndk {
+                    abiFilters.clear()
+                    abiFilters.add(abi)
+                }
+            }
+        }
         release {
             when {
                 hasReleaseSigning -> signingConfig = signingConfigs.getByName("release")
@@ -182,8 +198,10 @@ tasks.register("buildGoAar") {
     val aar = file("libs/GoMknoon.aar")
     val sourcesJar = file("libs/GoMknoon-sources.jar")
     val goRoot = rootProject.file("../go-mknoon")
+    val bindingInputsScript = rootProject.file("../scripts/gomobile_binding_inputs.sh")
     val ensureBindingsScript = rootProject.file("../scripts/ensure_go_android_bindings.sh")
     val verifyBindingsScript = rootProject.file("../scripts/verify_gomobile_bindings.sh")
+    val bindingInputStamp = file("libs/GoMknoon.inputs.sha256")
     val goInputs = fileTree(goRoot) {
         include("**/*.go", "go.mod", "go.sum")
         exclude("**/*_test.go")
@@ -194,10 +212,15 @@ tasks.register("buildGoAar") {
 
     inputs.files(goInputs)
     inputs.files(kotlinBridgeInputs)
+    inputs.file(bindingInputsScript)
     inputs.file(ensureBindingsScript)
     inputs.file(verifyBindingsScript)
     outputs.file(aar)
     outputs.file(sourcesJar)
+    outputs.file(bindingInputStamp)
+    // Always execute the cheap deterministic digest check. The ensure script
+    // invokes gomobile only when source or toolchain identity has changed.
+    outputs.upToDateWhen { false }
     doLast {
         @Suppress("DEPRECATION")
         exec {

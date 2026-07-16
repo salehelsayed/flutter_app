@@ -3,6 +3,9 @@
 import 'dart:convert';
 import 'dart:io';
 
+import '../../tool/sims/device_criteria.dart';
+import 'notification_android_payload_campaign.dart';
+
 class _Scenario {
   const _Scenario({
     required this.id,
@@ -98,7 +101,14 @@ const List<_Scenario> _scenarios = <_Scenario>[
   ),
 ];
 
-void main(List<String> args) {
+const _androidPayloadCampaignIds = <String>{
+  'tc_a6_replay_before_ack_custody',
+  'tc_b11_payload_persist_pre_drain',
+  'payload_fast_path_android_receiver',
+  'payload_fast_path_cold_kill',
+};
+
+Future<void> main(List<String> args) async {
   final scenario = _valueFor(args, '--scenario') ?? 'all';
   final listScenarios = args.contains('--list-scenarios');
   final printSchema = args.contains('--artifact-schema');
@@ -128,6 +138,71 @@ void main(List<String> args) {
     exit(ok ? 0 : 66);
   }
 
+  if (scenario == 'payload_fast_path_ios_receiver') {
+    _emitResult(<String, Object?>{
+      'status': 'BLOCKED',
+      'assertionsAttempted': 0,
+      'artifactPresent': false,
+      'printOnly': false,
+      'blocker': 'missingDriver',
+      'exitCode': 78,
+      'detail':
+          'The APNs/NSE/app-group phase remains a separate iOS-only capture '
+          'and has no automated driver in this runner.',
+    });
+    exitCode = 78;
+    return;
+  }
+
+  if (scenario == 'android_payload_campaign') {
+    final suppliedDevices = devices;
+    final physical =
+        _valueFor(args, '--physical') ??
+        Platform.environment['SIMS_ANDROID_PHYSICAL_DEVICE_ID'] ??
+        (suppliedDevices.isNotEmpty ? suppliedDevices.first : null);
+    final emulator =
+        _valueFor(args, '--emulator') ??
+        Platform.environment['SIMS_ANDROID_EMULATOR_DEVICE_ID'] ??
+        (suppliedDevices.length > 1 ? suppliedDevices[1] : null);
+    final apk =
+        _valueFor(args, '--application-binary') ??
+        _valueFor(args, '--prebuilt-apk') ??
+        Platform.environment['SIMS_ARTIFACT_ANDROID_PRODUCTION_FCM'];
+    final proofDirectory =
+        artifactDir ??
+        Platform.environment['SIMS_PROOF_DIRECTORY'] ??
+        'build/sims/proofs/notifications.android_payload_campaign';
+    final relayTarget =
+        _valueFor(args, '--relay-target') ??
+        Platform.environment['SIMS_NOTIFICATION_RELAY_TARGET'] ??
+        Platform.environment['MKNOON_RELAY_TARGET'] ??
+        'ubuntu@mknoun.xyz';
+    final relayKey =
+        _valueFor(args, '--relay-key') ??
+        Platform.environment['SIMS_NOTIFICATION_RELAY_KEY'] ??
+        Platform.environment['MKNOON_RELAY_KEY'] ??
+        'se.pem';
+
+    final result = await runAndroidNotificationPayloadCampaign(
+      AndroidNotificationCampaignOptions(
+        physicalDeviceId: physical,
+        emulatorDeviceId: emulator,
+        prebuiltApkPath: apk,
+        proofDirectory: proofDirectory,
+        relayTarget: relayTarget,
+        relayKeyPath: relayKey,
+        serviceAccountPath:
+            Platform.environment['SIMS_PROVIDER_FCM_CREDENTIAL_PATH'] ??
+            Platform.environment['FIREBASE_SERVICE_ACCOUNT'],
+        relayAddresses: Platform.environment['MKNOON_RELAY_ADDRESSES'],
+        verbose: args.contains('--verbose'),
+      ),
+    );
+    _emitResult(result.json);
+    exitCode = result.processExitCode;
+    return;
+  }
+
   stdout.writeln('225 notification-tap device/relay proof campaign');
   stdout.writeln(
     'Devices: ${devices.isEmpty ? '(none supplied)' : devices.join(', ')}',
@@ -139,20 +214,23 @@ void main(List<String> args) {
     stdout.writeln('  required checks: ${item.requiredChecks.join(', ')}');
   }
   stdout.writeln('');
-  stdout.writeln(
-    'BLOCKED: this repo does not contain an APNs/FCM + real relay + '
-    'multi-device driver that can capture these proofs automatically. Capture '
-    'one JSON artifact per scenario on the real rig, then run:',
-  );
-  stdout.writeln(
-    '  dart run integration_test/scripts/run_notification_tap_device_real.dart '
-    '--scenario $scenario --artifact-dir <dir> --validate-artifacts',
-  );
-  stdout.writeln(
-    'Then rerun the Flutter proof tests with '
-    '--dart-define=MKNOON_225_PROOF_DIR=<dir>.',
-  );
-  exit(78);
+  _emitResult(<String, Object?>{
+    'status': 'BLOCKED',
+    'assertionsAttempted': 0,
+    'artifactPresent': false,
+    'printOnly': false,
+    'blocker': 'unsupportedSelection',
+    'exitCode': 78,
+    'detail':
+        'Executable capture is campaign-owned. Select '
+        '--scenario android_payload_campaign so setup/build/device state is '
+        'shared across A6, B11, and B12.',
+  });
+  exitCode = 78;
+}
+
+void _emitResult(Map<String, Object?> result) {
+  stdout.writeln('SIMS_RESULT_JSON=${jsonEncode(result)}');
 }
 
 String? _valueFor(List<String> args, String name) {
@@ -188,10 +266,16 @@ List<_Scenario> _selectedScenarios(String scenario) {
   if (scenario == 'all') {
     return _scenarios;
   }
+  if (scenario == 'android_payload_campaign') {
+    return _scenarios
+        .where((item) => _androidPayloadCampaignIds.contains(item.id))
+        .toList(growable: false);
+  }
   final matches = _scenarios.where((item) => item.id == scenario).toList();
   if (matches.isEmpty) {
     stderr.writeln(
-      'Unknown --scenario "$scenario". Expected all or one of: '
+      'Unknown --scenario "$scenario". Expected all, '
+      'android_payload_campaign, or one of: '
       '${_scenarios.map((item) => item.id).join(', ')}',
     );
     exit(64);
@@ -241,24 +325,12 @@ bool _validateArtifacts(Directory artifactDir, List<_Scenario> selected) {
       ok = false;
       continue;
     }
-    if (decoded['testCase'] != item.testCase ||
-        decoded['scenario'] != item.id ||
-        decoded['status'] != 'passed' ||
-        decoded['capturedAt'] is! String) {
-      stderr.writeln('Artifact metadata mismatch: ${file.path}');
+    final result = validateNotificationArtifact(
+      decoded.cast<String, Object?>(),
+    );
+    if (!result.ok || decoded['testCase'] != item.testCase) {
+      stderr.writeln('Artifact ${file.path} rejected: ${result.detail}');
       ok = false;
-    }
-    final checks = decoded['checks'];
-    if (checks is! Map<String, dynamic>) {
-      stderr.writeln('Artifact checks object missing: ${file.path}');
-      ok = false;
-      continue;
-    }
-    for (final check in item.requiredChecks) {
-      if (checks[check] != true) {
-        stderr.writeln('Artifact ${file.path} missing check "$check": true');
-        ok = false;
-      }
     }
   }
   if (ok) {

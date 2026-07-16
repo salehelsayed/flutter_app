@@ -1,99 +1,32 @@
-/// End-to-end voice message smoke test.
+/// Android native microphone recorder smoke test.
 ///
-/// Tests the full flow: record → stop → verify recording file exists.
-/// The full send/receive/playback flow requires two real peers
-/// and is best tested manually.
+/// Proves the production `record` plugin can record AAC in an M4A container on
+/// a physical Android target. It does not prove voice-message send, receive, or
+/// playback; those remain separate two-peer media-journey requirements.
+///
+/// The owning harness must pregrant `android.permission.RECORD_AUDIO`, pin an
+/// explicit physical Android ID, and restore permission state after the run.
+/// A wrong platform, missing permission, or missing plugin fails closed. The
+/// same callable proof is registered by `integration_test/sims_dispatcher.dart`.
 ///
 /// Run with:
-/// flutter test integration_test/voice_message_e2e_test.dart -d deviceId \
-///   --dart-define=RUN_REAL_VOICE_MESSAGE_E2E=true
+/// flutter test integration_test/voice_message_e2e_test.dart -d ANDROID_SERIAL
 @Tags(['device'])
 library;
 
-import 'dart:async';
-import 'dart:io';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:flutter_app/core/media/record_audio_recorder_service.dart';
 
-const _runRealVoiceMessageE2E = bool.fromEnvironment(
-  'RUN_REAL_VOICE_MESSAGE_E2E',
-);
+import 'support/android_voice_recorder_smoke.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  group('Voice message E2E smoke', () {
+  group('Android native microphone recorder smoke', () {
     testWidgets(
-      'record voice → stop → file exists with valid duration',
-      (tester) async {
-        final recorder = RecordAudioRecorderService();
-
-        try {
-          final hasPermission = await _safeHasPermission(recorder);
-          if (!hasPermission) {
-            // Skip on devices without mic permission granted
-            print('[TEST] SKIP: microphone permission not available.');
-            return;
-          }
-
-          // Start recording
-          await recorder
-              .start(outputPath: '')
-              .timeout(const Duration(seconds: 10));
-          expect(recorder.isRecording, true);
-
-          // Record for 2 seconds
-          await Future.delayed(const Duration(seconds: 2));
-
-          // Stop and get recording
-          final recording = await recorder.stop().timeout(
-            const Duration(seconds: 15),
-          );
-          expect(recording, isNotNull);
-          expect(recording!.durationMs, greaterThan(1500));
-          expect(recording.mime, 'audio/mp4');
-
-          // Verify file
-          final file = File(recording.filePath);
-          expect(await file.exists(), true);
-          expect(recording.sizeBytes, greaterThan(0));
-
-          // Clean up
-          await file.delete();
-        } finally {
-          await recorder.dispose();
-        }
-      },
-      skip: _shouldSkipVoiceMessageE2E(),
+      'physical Android records a nonempty AAC/M4A file with valid duration',
+      (_) => runAndroidVoiceRecorderSmoke(),
       timeout: const Timeout(Duration(minutes: 1)),
     );
   });
-}
-
-bool _shouldSkipVoiceMessageE2E() {
-  if (!_runRealVoiceMessageE2E) {
-    return true;
-  }
-  if (Platform.isMacOS || Platform.isLinux || Platform.isWindows) {
-    return true;
-  }
-  if (!Platform.isIOS) return false;
-  if (Directory.systemTemp.path.contains('CoreSimulator')) {
-    return true;
-  }
-  final env = Platform.environment;
-  return env.containsKey('SIMULATOR_DEVICE_NAME') ||
-      env.containsKey('SIMULATOR_UDID') ||
-      env.containsKey('SIMULATOR_HOST_HOME') ||
-      env.containsKey('IPHONE_SIMULATOR_ROOT');
-}
-
-Future<bool> _safeHasPermission(RecordAudioRecorderService recorder) async {
-  try {
-    return await recorder.hasPermission();
-  } on MissingPluginException {
-    return false;
-  }
 }

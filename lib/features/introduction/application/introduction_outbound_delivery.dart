@@ -145,8 +145,11 @@ Future<void> deliverStagedIntroductionDelivery({
 Future<int> retryPendingIntroductionDeliveries({
   required IntroductionRepository introRepo,
   required P2PService p2pService,
+  Duration olderThan = const Duration(seconds: 60),
 }) async {
-  final deliveries = await introRepo.loadRetryableOutboxDeliveries();
+  final deliveries = await introRepo.loadRetryableOutboxDeliveries(
+    olderThan: olderThan,
+  );
   if (deliveries.isEmpty) {
     return 0;
   }
@@ -286,6 +289,7 @@ Future<_DeliveryAttemptResult> _deliverEnvelope({
   required String rawEnvelope,
   bool allowInboxFallback = true,
 }) async {
+  _DeliveryAttemptResult? unacknowledgedSend;
   final alreadyConnected =
       p2pService.isConnectedToPeer(targetPeerId) ||
       p2pService.currentState.connections.any((c) => c.peerId == targetPeerId);
@@ -298,53 +302,70 @@ Future<_DeliveryAttemptResult> _deliverEnvelope({
         timeoutMs: interactiveDirectBudget.inMilliseconds,
       );
       if (sendResult.sent) {
-        return _DeliveryAttemptResult(
-          state: sendResult.acknowledged
-              ? _IntroductionDeliveryState.delivered
-              : _IntroductionDeliveryState.sent,
-          via: _resolveGoSendTransport(
-            p2pService,
-            targetPeerId,
-            sendResult,
-            preserveLocalPeerLabel: true,
-          ),
+        final via = _resolveGoSendTransport(
+          p2pService,
+          targetPeerId,
+          sendResult,
+          preserveLocalPeerLabel: true,
+        );
+        if (sendResult.acknowledged) {
+          return _DeliveryAttemptResult(
+            state: _IntroductionDeliveryState.delivered,
+            via: via,
+          );
+        }
+        unacknowledgedSend = _DeliveryAttemptResult(
+          state: _IntroductionDeliveryState.sent,
+          via: via,
         );
       }
     } catch (_) {}
   }
 
-  final raceResult = await _runInteractiveRace(
-    p2pService: p2pService,
-    senderPeerId: senderPeerId,
-    targetPeerId: targetPeerId,
-    rawEnvelope: rawEnvelope,
-  );
-  if (raceResult.success) {
-    return _DeliveryAttemptResult(
-      state: raceResult.acknowledged
-          ? _IntroductionDeliveryState.delivered
-          : _IntroductionDeliveryState.sent,
-      via: raceResult.via,
+  var failureReason = 'send_failed';
+  if (unacknowledgedSend == null) {
+    final raceResult = await _runInteractiveRace(
+      p2pService: p2pService,
+      senderPeerId: senderPeerId,
+      targetPeerId: targetPeerId,
+      rawEnvelope: rawEnvelope,
     );
-  }
-
-  var failureReason = raceResult.reason ?? 'send_failed';
-  if (raceResult.relayProbeEligible) {
-    final relayProbeResult = await _tryRelayProbeSend(
-      p2pService,
-      targetPeerId,
-      rawEnvelope,
-      failureReason: failureReason,
-    );
-    if (relayProbeResult.success) {
-      return _DeliveryAttemptResult(
-        state: relayProbeResult.acknowledged
-            ? _IntroductionDeliveryState.delivered
-            : _IntroductionDeliveryState.sent,
-        via: relayProbeResult.via,
+    if (raceResult.success) {
+      if (raceResult.acknowledged) {
+        return _DeliveryAttemptResult(
+          state: _IntroductionDeliveryState.delivered,
+          via: raceResult.via,
+        );
+      }
+      unacknowledgedSend = _DeliveryAttemptResult(
+        state: _IntroductionDeliveryState.sent,
+        via: raceResult.via,
       );
+    } else {
+      failureReason = raceResult.reason ?? failureReason;
+      if (raceResult.relayProbeEligible) {
+        final relayProbeResult = await _tryRelayProbeSend(
+          p2pService,
+          targetPeerId,
+          rawEnvelope,
+          failureReason: failureReason,
+        );
+        if (relayProbeResult.success) {
+          if (relayProbeResult.acknowledged) {
+            return _DeliveryAttemptResult(
+              state: _IntroductionDeliveryState.delivered,
+              via: relayProbeResult.via,
+            );
+          }
+          unacknowledgedSend = _DeliveryAttemptResult(
+            state: _IntroductionDeliveryState.sent,
+            via: relayProbeResult.via,
+          );
+        } else {
+          failureReason = relayProbeResult.reason ?? failureReason;
+        }
+      }
     }
-    failureReason = relayProbeResult.reason ?? failureReason;
   }
 
   if (allowInboxFallback) {
@@ -357,6 +378,10 @@ Future<_DeliveryAttemptResult> _deliverEnvelope({
         );
       }
     } catch (_) {}
+  }
+
+  if (unacknowledgedSend != null) {
+    return unacknowledgedSend;
   }
 
   return _DeliveryAttemptResult(

@@ -20,8 +20,7 @@ void main() {
   });
 
   group('Benchmark: Deferred Direct ACK Timing', () {
-    test('L-Dart-1: Send reports ACK timing in CHAT_MSG_SEND_TIMING',
-        () async {
+    test('L-Dart-1: Send reports ACK timing in CHAT_MSG_SEND_TIMING', () async {
       final alice = TestUser.create(
         peerId: 'alice-peer',
         username: 'Alice',
@@ -37,13 +36,16 @@ void main() {
       alice.start();
       bob.start();
 
-      // Use connection reuse path (fast path)
-      alice.p2pService.testConnections.add(p2p.ConnectionState(
-        peerId: bob.peerId,
-        multiaddrs: ['/p2p-circuit/p2p/relay'],
-        direction: 'outbound',
-        status: 'connected',
-      ));
+      // Use a warm direct connection. Circuit-only connections intentionally
+      // stay in the ranked live race and are not eligible for direct reuse.
+      alice.p2pService.testConnections.add(
+        p2p.ConnectionState(
+          peerId: bob.peerId,
+          multiaddrs: ['/ip4/10.0.0.2/tcp/4001'],
+          direction: 'outbound',
+          status: 'connected',
+        ),
+      );
 
       final events = await harness.captureFlowEvents(() async {
         await alice.sendMessage(bob.peerId, 'ACK test message');

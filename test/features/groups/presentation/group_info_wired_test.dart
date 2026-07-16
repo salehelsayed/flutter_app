@@ -520,9 +520,21 @@ Future<void> _openGroupDetailsEditor(WidgetTester tester) async {
 Future<void> _pickGroupEditPhoto(WidgetTester tester) async {
   await tester.runAsync(() async {
     await tester.tap(find.byKey(const ValueKey('group-edit-pick-photo')));
-    await Future<void>.delayed(const Duration(milliseconds: 50));
   });
-  await pumpFrames(tester, count: 10);
+
+  final previewFinder = find.byType(GroupInfoScreenAvatarPreview);
+  for (var i = 0; i < 100; i++) {
+    await tester.pump();
+    final preview = tester.widget<GroupInfoScreenAvatarPreview>(previewFinder);
+    if (preview.previewBytes != null) {
+      return;
+    }
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+  }
+
+  fail('Timed out waiting for selected group photo preview');
 }
 
 Future<void> _tapGroupEditSave(WidgetTester tester) async {
@@ -1561,9 +1573,8 @@ void main() {
       expect(find.text('Joined'), findsOneWidget);
       expect(find.text('Invite unknown'), findsOneWidget);
 
-      Finder statusBadge(String peerId) => find.byKey(
-        ValueKey('group-member-invite-status-$peerId'),
-      );
+      Finder statusBadge(String peerId) =>
+          find.byKey(ValueKey('group-member-invite-status-$peerId'));
       for (final peerId in const [
         'peer-sent',
         'peer-queued',
@@ -2875,10 +2886,7 @@ void main() {
         // _currentSenderDeviceId resolves to 'peer-admin' (the preferred
         // device/transport hint fed into resolveGroupSenderDeviceBinding).
         final p2pService = FakeP2PService(
-          initialState: const NodeState(
-            peerId: 'peer-admin',
-            isStarted: true,
-          ),
+          initialState: const NodeState(peerId: 'peer-admin', isStarted: true),
         );
 
         await tester.pumpWidget(
@@ -2927,8 +2935,7 @@ void main() {
             jsonDecode(replayPlaintext['text'] as String)
                 as Map<String, dynamic>;
         final audit =
-            sysPayload[signedGroupTransitionAuditField]
-                as Map<String, dynamic>;
+            sysPayload[signedGroupTransitionAuditField] as Map<String, dynamic>;
         final signedPayload =
             jsonDecode(audit['signedPayload'] as String)
                 as Map<String, dynamic>;
@@ -5572,7 +5579,10 @@ void main() {
         expect(broadcast.sysText, contains('"__sys":"member_removed"'));
         final updatedGroup = await groupRepo.getGroup('group-1');
         expect(broadcast.sourceMessageId, updatedGroup!.lastMembershipEventId);
-        expect(broadcast.eventAt.toUtc(), updatedGroup.lastMembershipEventAt?.toUtc());
+        expect(
+          broadcast.eventAt.toUtc(),
+          updatedGroup.lastMembershipEventAt?.toUtc(),
+        );
 
         // Convergence still proceeds: durable inbox delivery + key rotation.
         expect(bridge.commandLog, contains('group:inboxStore'));

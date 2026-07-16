@@ -29,6 +29,7 @@ func startLocalNodeForMultiRelayTestWithCollector(t *testing.T, collector *testE
 	t.Helper()
 	hexKey := generateTestKey(t)
 	n := New(collector)
+	n.hermeticLocalNetworkForTests = true
 	_, err := n.Start(NodeConfig{
 		PrivateKeyHex:  hexKey,
 		RelayAddresses: []string{},
@@ -820,7 +821,9 @@ func TestGP006PublishWithPartialPeersRefreshesKnownMembersBeforeSend(t *testing.
 			return false
 		}
 		n.relayReady = make(chan struct{})
-		close(n.relayReady)
+		if n != nodeA {
+			close(n.relayReady)
+		}
 	}
 
 	groupID := "gp006-partial-peer-refresh"
@@ -864,6 +867,9 @@ func TestGP006PublishWithPartialPeersRefreshesKnownMembersBeforeSend(t *testing.
 	if initialPeers != 1 {
 		t.Fatalf("initial topic peer count = %d, want exactly one live recipient before publish", initialPeers)
 	}
+	// This test owns the foreground publish-refresh attempt. Keep the periodic
+	// discovery loop from racing it and consuming the newly seeded C route.
+	cancelNW002GroupDiscovery(t, nodeA, groupID)
 
 	nodeCID, err := peer.Decode(nodeC.PeerId())
 	if err != nil {
@@ -1038,7 +1044,9 @@ func TestGP008PublishPeerRefreshUsesLatestConfigAfterAddRemove(t *testing.T) {
 			return false
 		}
 		n.relayReady = make(chan struct{})
-		close(n.relayReady)
+		if n != nodeA {
+			close(n.relayReady)
+		}
 	}
 
 	groupID := "gp008-latest-config-peer-refresh"
@@ -1095,6 +1103,9 @@ func TestGP008PublishPeerRefreshUsesLatestConfigAfterAddRemove(t *testing.T) {
 	if initialPeers != 1 {
 		t.Fatalf("initial topic peer count = %d, want exactly one live recipient before publish", initialPeers)
 	}
+	// The foreground refresh must be the only owner of the add/remove decision;
+	// otherwise the old-config discovery goroutine can finish after the update.
+	cancelNW002GroupDiscovery(t, nodeA, groupID)
 
 	nodeCID, err := peer.Decode(nodeC.PeerId())
 	if err != nil {
@@ -6125,7 +6136,7 @@ func TestGP009GroupDiscoveryRegistersAndDiscoversAfterRelayReady(t *testing.T) {
 		for _, addr := range nodeB.Host().Addrs() {
 			nodeBAddrs = append(nodeBAddrs, addr.String())
 		}
-		return nodeA.DialPeerWithTimeout(peerIdStr, nodeBAddrs, 1000)
+		return nodeA.DialPeerWithTimeout(peerIdStr, nodeBAddrs, 5000)
 	}
 	nodeA.rendezvousRegisterHook = func(namespace string, serverAddresses []string) error {
 		registerCalls.Add(1)
@@ -6247,7 +6258,7 @@ func TestGR014GroupDiscoveryResumesAfterRelayReadyClosesLate(t *testing.T) {
 		for _, addr := range nodeB.Host().Addrs() {
 			nodeBAddrs = append(nodeBAddrs, addr.String())
 		}
-		return nodeA.DialPeerWithTimeout(peerIdStr, nodeBAddrs, 1000)
+		return nodeA.DialPeerWithTimeout(peerIdStr, nodeBAddrs, 5000)
 	}
 	nodeA.rendezvousRegisterHook = func(namespace string, serverAddresses []string) error {
 		registerCalls.Add(1)

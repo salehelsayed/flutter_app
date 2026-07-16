@@ -15,6 +15,8 @@ simultaneous=0
 max_parallel="${SIMS_MAX_PARALLEL:-4}"
 start_at=1
 only_selector=""
+excluded_paths=()
+excluded_path_count=0
 
 default_rendezvous_address="/dns/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g"
 default_quic_relay_address="/dns/mknoun.xyz/udp/4002/quic-v1/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g"
@@ -30,13 +32,15 @@ Options:
   --continue-on-failure      Run the remaining commands after a failure.
   --include-direct-targets   Also run direct integration_test files even when a
                              selected runner already targets the same file.
-  --simultaneous             Run only resource-compatible rows concurrently.
-                             Shared devices/build outputs stay serial; read-only
-                             post-capture validators run afterward in a bounded
-                             pool.
+  --simultaneous             Compatibility flag. Legacy reliability rows all
+                             remain serial because they share device/build/relay
+                             state. Use the typed `sims` gate for manifest-owned
+                             resource-aware concurrency.
   --start-at <N>             Run the planned command list starting at item N.
   --only <N|path|path:scenario>
                              Run only planned item N, path, or path:scenario.
+  --exclude-path <path>      Omit one exact discovered path. Repeatable and
+                             reserved for typed sims aggregate ownership.
   -h, --help                 Show this help.
 
 Environment:
@@ -65,8 +69,8 @@ Environment:
   RELIABILITY_NOTIFICATION_SOUND_INTERACTIVE=1
                                     Do not force notification sound smoke into
                                     non-interactive mode.
-  SIMS_MAX_PARALLEL                 Maximum concurrent post-capture validators
-                                    under --simultaneous (default: 4; range: 1-64).
+  SIMS_MAX_PARALLEL                 Compatibility bound accepted by
+                                    --simultaneous (default: 4; range: 1-64).
 EOF
 }
 
@@ -110,6 +114,11 @@ while (($# > 0)); do
       ;;
     --only)
       only_selector="${2:?missing --only value}"
+      shift 2
+      ;;
+    --exclude-path)
+      excluded_paths[$excluded_path_count]="${2:?missing --exclude-path value}"
+      excluded_path_count=$((excluded_path_count + 1))
       shift 2
       ;;
     -h|--help)
@@ -218,6 +227,18 @@ else
     }
   ' "$selected_file" >"$raw_plan_file"
 fi
+
+# Apply typed-owner exclusions after runner target deduplication. This prevents
+# an excluded owning runner from accidentally re-introducing its direct proof
+# file as a second executable row.
+for ((excluded_path_index = 0; excluded_path_index < excluded_path_count; excluded_path_index++)); do
+  excluded_path="${excluded_paths[$excluded_path_index]}"
+  filtered_raw_plan_file="$(mktemp)"
+  awk -F '\t' -v excluded_path="$excluded_path" \
+    '$2 != excluded_path { print }' \
+    "$raw_plan_file" >"$filtered_raw_plan_file"
+  mv "$filtered_raw_plan_file" "$raw_plan_file"
+done
 
 group_multi_party_tier() {
   local tier="${RELIABILITY_GROUP_TIER:-full}"
@@ -382,17 +403,11 @@ if [ ! -s "$active_plan_file" ]; then
 fi
 
 resource_class_for_path() {
-  case "$1" in
-    integration_test/scripts/validate_group_reaction_notification_artifacts.dart)
-      printf 'post-capture-validator\n'
-      ;;
-    *)
-      # Fail closed. A path is parallel only after it is explicitly proven to
-      # be read-only and independent of every device, build output, relay
-      # mutation, and performance measurement.
-      printf 'exclusive-shared-device-build\n'
-      ;;
-  esac
+  # Plan 258 removed artifact-only support files from this executable catalog.
+  # Resource-aware overlap is now compiled from tool/sims/critical_features.json;
+  # this compatibility runner has no typed lock metadata and therefore fails
+  # closed by serializing every row.
+  printf 'exclusive-shared-device-build\n'
 }
 
 while IFS=$'\t' read -r index kind path scenario; do
@@ -503,15 +518,6 @@ path_needs_multi_device() {
 
 device_arg_for_path() {
   local path="$1"
-
-  case "$path" in
-    integration_test/scripts/validate_group_reaction_notification_artifacts.dart)
-      # This is a read-only post-capture validator. It consumes an artifact,
-      # not a Flutter target, and is the only current reliability row allowed
-      # into the simultaneous pool.
-      return
-      ;;
-  esac
 
   if path_needs_four_device "$path"; then
     four_device_ids
@@ -689,7 +695,7 @@ run_path() {
 printf '\nReliability simulation command plan: %s\n' "$scope"
 printf 'Relay addresses: %s\n' "$(relay_addresses)"
 if [ "$simultaneous" -eq 1 ]; then
-  printf 'Simultaneous policy: shared device/build rows serialize; post-capture validators run after producers with max %s.\n' \
+  printf 'Simultaneous policy: legacy reliability rows serialize; typed resource-aware overlap is owned by the sims manifest scheduler (compatibility max %s).\n' \
     "$max_parallel"
 fi
 group_multi_party_active_count="$(
@@ -776,7 +782,7 @@ printf '\nRunning %s reliability simulation command(s)...\n' "$command_count"
 if [ "$simultaneous" -eq 1 ]; then
   serial_count="$(awk 'END { print NR + 0 }' "$serial_plan_file")"
   parallel_count="$(awk 'END { print NR + 0 }' "$parallel_plan_file")"
-  printf 'Schedule: %s exclusive row(s), then %s post-capture validator row(s) with max %s concurrent.\n' \
+  printf 'Schedule: %s exclusive legacy row(s), %s manifest-owned parallel row(s) in this compatibility runner (max %s).\n' \
     "$serial_count" "$parallel_count" "$max_parallel"
 fi
 # Read the plan on FD 3, not stdin: run_path executes real commands (e.g. smoke

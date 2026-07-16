@@ -11,12 +11,34 @@ import 'group_multi_party_runtime_config.dart';
 const _harnessPath =
     'integration_test/group_multi_party_device_real_harness.dart';
 const _iosRunnerBundleId = 'com.mknoon.app';
-const _iosRunnerAppPath = 'build/ios/iphonesimulator/Runner.app';
+const _defaultIosRunnerAppPath = 'build/ios/iphonesimulator/Runner.app';
 const _roleIdentityTimeout = Duration(minutes: 90);
 const _roleVerdictTimeout = Duration(minutes: 15);
 const _rapidKeyRotationGracePeriodMs = 1500;
+const _disposableSimulatorIdsEnvironment = 'SIMS_IOS_DISPOSABLE_SIMULATOR_IDS';
 
 String? _iosHarnessBuiltForRelayAddresses;
+
+/// Resolves the Runner.app used by iOS Simulator roles.
+///
+/// `$sims` owns compilation and supplies an immutable, attested artifact via
+/// [groupMultiPartySimsArtifactEnvironmentKey]. Direct/legacy invocations keep
+/// using Flutter's conventional build output.
+String resolveGroupMultiPartyIosRunnerAppPath({
+  Map<String, String>? environment,
+}) {
+  final value =
+      (environment ??
+              Platform.environment)[groupMultiPartySimsArtifactEnvironmentKey]
+          ?.trim();
+  return value == null || value.isEmpty ? _defaultIosRunnerAppPath : value;
+}
+
+bool _hasSimsPreparedIosRunnerApp() {
+  final value = Platform.environment[groupMultiPartySimsArtifactEnvironmentKey]
+      ?.trim();
+  return value != null && value.isNotEmpty;
+}
 
 class _ProcessExit {
   const _ProcessExit(this.exitCode);
@@ -388,9 +410,25 @@ Future<Process> _startHarnessRole({
 }
 
 Future<void> _ensureIosHarnessBuilt(String relayAddresses) async {
-  final runnerApp = Directory(_iosRunnerAppPath);
+  final runnerAppPath = resolveGroupMultiPartyIosRunnerAppPath();
+  final runnerApp = Directory(runnerAppPath);
   if (_iosHarnessBuiltForRelayAddresses == relayAddresses &&
       runnerApp.existsSync()) {
+    return;
+  }
+  if (_hasSimsPreparedIosRunnerApp()) {
+    if (!runnerApp.existsSync()) {
+      throw StateError(
+        '$groupMultiPartySimsArtifactEnvironmentKey points to a missing '
+        'Runner.app: $runnerAppPath',
+      );
+    }
+    _log(
+      'ORCH',
+      'Reusing centrally prepared $groupMultiPartySimsArtifactEnvironmentKey: '
+          '$runnerAppPath',
+    );
+    _iosHarnessBuiltForRelayAddresses = relayAddresses;
     return;
   }
   // One-invocation-per-scenario drivers (external chunked sweeps) set this to
@@ -399,10 +437,7 @@ Future<void> _ensureIosHarnessBuilt(String relayAddresses) async {
   // scenario costs a full xcodebuild + repo-wide xattr scan each time.
   if (Platform.environment['GMP_SKIP_HARNESS_BUILD'] == '1' &&
       runnerApp.existsSync()) {
-    _log(
-      'ORCH',
-      'GMP_SKIP_HARNESS_BUILD=1: reusing existing $_iosRunnerAppPath',
-    );
+    _log('ORCH', 'GMP_SKIP_HARNESS_BUILD=1: reusing existing $runnerAppPath');
     _iosHarnessBuiltForRelayAddresses = relayAddresses;
     return;
   }
@@ -428,11 +463,12 @@ Future<void> _ensureIosHarnessBuilt(String relayAddresses) async {
 }
 
 Future<void> _installRunnerApp(String deviceId, String label) async {
+  final runnerAppPath = resolveGroupMultiPartyIosRunnerAppPath();
   final result = await Process.run('xcrun', [
     'simctl',
     'install',
     deviceId,
-    _iosRunnerAppPath,
+    runnerAppPath,
   ]).timeout(const Duration(minutes: 3));
   if (result.exitCode != 0) {
     throw StateError(
@@ -588,6 +624,24 @@ List<String> _parseDevices(List<String> args) {
     }
   }
   return devices;
+}
+
+bool groupMultiPartySimulatorTargetsAreDisposable(
+  List<String> deviceIds, {
+  Map<String, String>? environment,
+}) {
+  final simulatorIds = deviceIds.where(_isIosDeviceId).toSet();
+  if (simulatorIds.isEmpty) return true;
+  final declared =
+      ((environment ??
+                  Platform.environment)[_disposableSimulatorIdsEnvironment] ??
+              '')
+          .split(',')
+          .map((value) => value.trim())
+          .where((value) => value.isNotEmpty)
+          .toSet();
+  return declared.length == simulatorIds.length &&
+      declared.containsAll(simulatorIds);
 }
 
 List<String> _scenariosToRun(String scenario) {
@@ -2981,6 +3035,13 @@ Future<void> main(List<String> args) async {
     }
     if (!relayCheck.ok) {
       throw ArgumentError(relayCheck.detail);
+    }
+    if (!groupMultiPartySimulatorTargetsAreDisposable(devices)) {
+      throw ArgumentError(
+        'Every selected iOS simulator must be explicitly listed in '
+        '$_disposableSimulatorIdsEnvironment before Runner uninstall/data '
+        'mutation is allowed.',
+      );
     }
   } on ArgumentError catch (error) {
     stderr.writeln(error.message);

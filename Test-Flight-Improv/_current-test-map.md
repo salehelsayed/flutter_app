@@ -1,6 +1,6 @@
 # Current Test Map
 
-Generated: `2026-04-06`
+Updated: `2026-07-15`
 
 ## Purpose
 
@@ -20,6 +20,9 @@ not a file-by-file replacement for the deeper audits under
 ## Source Of Truth
 
 - For named regression gates, `scripts/run_test_gates.sh` wins.
+- For the critical-feature umbrella, `./scripts/run_test_gates.sh sims ...`
+  and the repo-owned typed manifest/planner win; the `$sims` skill only
+  delegates to that CLI.
 - For gate rationale and classification, see
   `Test-Flight-Improv/test-gate-definitions.md`.
 - For operator-facing gate usage, see
@@ -32,6 +35,14 @@ not a file-by-file replacement for the deeper audits under
 ## Fast Commands
 
 ```bash
+# Safe pre-major-update default; inspect before executing.
+.claude/skills/sims/scripts/run_with_devices.sh --list
+./scripts/run_test_gates.sh sims major --list
+
+# Faster/deeper diagnostic reliability modes (not release-green by themselves).
+./scripts/run_test_gates.sh sims smoke --list
+./scripts/run_test_gates.sh sims full --list
+
 ./scripts/run_test_gates.sh baseline
 ./scripts/run_test_gates.sh 1to1
 ./scripts/run_test_gates.sh feed
@@ -41,6 +52,26 @@ not a file-by-file replacement for the deeper audits under
 FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh transport
 ./scripts/run_test_gates.sh completeness-check
 ```
+
+Current Plan-258 status: the orchestration/cache/scheduler/device-resolution
+stack and all active campaign drivers are implemented. The logical `major`
+plan has 26 active rows, six declared reusable device build profiles, and 11
+device/campaign consumers. Live preflight—not missing-driver placeholders—now
+decides whether each campaign can run: absent policy-bounded topology is `N/A`,
+while missing provider, relay, signing, staging, or disposable-iOS-receiver
+attestation is `BLOCKED`. Android campaigns restore the exact pre-run APK,
+private app data, permissions, process, and relevant OS state before PASS. The
+Android recorder and performance campaign reuse the centrally prepared
+`android.e2e.standard` APK through an acknowledged runtime tuple; performance
+keeps four strict budgets: FEED average build `<8 ms`, FEED build p99 `<24 ms`,
+FEED worst build `<100 ms`, and production Go `node:status` MethodChannel p99
+`<50 ms`. This is implementation readiness, not a fabricated clean-major or
+unrun live PASS. The iOS-simulator group multi-party adapter remains conditional
+on relay configuration and four disposable/restore-safe simulators.
+Two future VC-02 capabilities remain inactive and do not participate in or
+block the current major gate.
+Use `--list` to inspect the logical plan, not as proof that live preflight
+passed.
 
 For one targeted test:
 
@@ -58,6 +89,7 @@ flutter test -d <device-id> <integration_test-file>
 
 | Gate | Use It When | Command | Canonical Coverage |
 |---|---|---|---|
+| Sims Major | Before a major update or release candidate, and after repairing any failure found by a provisional sims run | `.claude/skills/sims/scripts/run_with_devices.sh` (no mode defaults to `major`), or `./scripts/run_test_gates.sh sims major` | Deduplicated registered critical capabilities across analyzer, Dart host, full Go, native, nested packages, reliability/device campaigns, capture-owned validation, and critical performance. This is the only sims mode eligible for release green |
 | Baseline | Broad PR safety check | `./scripts/run_test_gates.sh baseline` | Startup routing, QR, offline inbox roundtrip, loading smoke, posts phase 1, group messaging smoke |
 | 1:1 Reliability | Shared conversation send, retry, upload, listener, inbox, or feed-originated 1:1 send changes | `./scripts/run_test_gates.sh 1to1` | Text, media, voice, retry, resume, offline inbox, quote/reply |
 | Feed / Surface | Feed cards, inline reply, feed-to-conversation handoff | `./scripts/run_test_gates.sh feed` | Feed card flow, expanded/collapsed state, feed color smoke |
@@ -70,6 +102,7 @@ flutter test -d <device-id> <integration_test-file>
 
 | Area / Journey | First Thing To Run | Then Run When Needed | Notes |
 |---|---|---|---|
+| Major-update / release confidence | `$sims` or `./scripts/run_test_gates.sh sims major --list` | Execute the unfiltered `major`; `--simultaneous` may reduce safe wall time; after an authorized `--fix-as-you-go` / `--only <stable-id>` / `--resume` loop, run one separate clean `major` | `major` is capability-deduplicated and typed. Only `PASS` or a policy-valid unavailable-target `N/A` satisfies a mandatory row. `full`, `smoke`, filtered, continued, retried, and resumed runs are diagnostic, not release green. Six reusable device profiles serve 11 active device/campaign rows; compatible consumers share their central artifact and no child runner may rebuild. Live targets, credentials/configuration, state-safety policy, and cache contents decide actual builds and verdicts, so the report is authoritative. All active rows have automated drivers; configuration or target blockers remain visible rather than becoming a false PASS. |
 | Startup / bootstrap | `./scripts/run_test_gates.sh baseline` | `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh transport` | Baseline catches routing/loading breakage; transport gate catches real reconnect/fallback seams |
 | Contact bootstrap / QR | `./scripts/run_test_gates.sh baseline` | `flutter test --no-pub test/features/contact_request/integration/contact_request_flow_test.dart` | Use the direct contact flow when request acceptance or key-exchange behavior changes |
 | 1:1 text / media / voice reliability | `./scripts/run_test_gates.sh 1to1` | direct files under `test/features/conversation/integration/` as needed | This is the main shared-pipeline gate; production messaging bugs should usually add a permanent regression here or beside it |
@@ -100,6 +133,12 @@ flutter test -d <device-id> <integration_test-file>
 These are intentionally outside the named gates because they are heavier,
 device-bound, real-stack, or soak-style confidence tests:
 
+The sims manifest may own a cleaned executable capability backed by one of
+these files without making the entire historical pool part of every mode.
+`sims major` selects mandatory critical capabilities; `sims full` selects the
+cleaned registered reliability/device inventory, including typed blockers; the legacy `reliability-sim`
+pool is not a substitute for either contract.
+
 - `integration_test/smoke_test.dart`
 - `integration_test/conversation_bridge_test.dart`
 - `integration_test/wifi_transport_test.dart`
@@ -123,6 +162,10 @@ device-bound, real-stack, or soak-style confidence tests:
   - `Test-Flight-Improv/test-gate-definitions.md`
   - `Test-Flight-Improv/test-gates-reference.md`
   - this document
+- When a critical capability, build profile, device criterion, dependency, or
+  resource lock changes, update the repo sims manifest/contracts and keep the
+  `major`, `full`, and `smoke` descriptions truthful. Never grant release green
+  to a filtered or partial run.
 - When a feature gets new direct coverage but no gate changes, update only the
   relevant row here.
 - When a user-journey contract changes, update the relevant matrix or audit doc

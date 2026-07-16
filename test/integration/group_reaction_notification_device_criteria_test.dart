@@ -82,6 +82,206 @@ void main() {
       );
     }
 
+    test('accepts a centrally prepared production-FCM Android APK', () async {
+      const scenario = 'android_group_message_unread_lifecycle';
+      final artifact = await _writeArtifactFixture(
+        tempDirectory,
+        scenario,
+        centralPrebuilt: true,
+      );
+
+      final result = await validateGroupReactionNotificationArtifact(
+        scenario: scenario,
+        artifactFile: artifact,
+      );
+
+      expect(result.ok, isTrue, reason: result.detail);
+    });
+
+    test('allows a direct central-prebuilt run to install its APK', () async {
+      const scenario = 'android_group_message_unread_lifecycle';
+      final artifact = await _writeArtifactFixture(
+        tempDirectory,
+        scenario,
+        centralPrebuilt: true,
+        parentPreparedAndroidState: false,
+      );
+
+      final result = await validateGroupReactionNotificationArtifact(
+        scenario: scenario,
+        artifactFile: artifact,
+      );
+
+      expect(result.ok, isTrue, reason: result.detail);
+    });
+
+    test(
+      'rejects parent-prepared central APK without both-device SHA verification',
+      () async {
+        const scenario = 'android_group_message_unread_lifecycle';
+        final artifact = await _writeArtifactFixture(
+          tempDirectory,
+          scenario,
+          centralPrebuilt: true,
+        );
+        _mutateCaptureJson(artifact, 'commandJournal', (journal) {
+          final commands = journal['commands'] as List<dynamic>;
+          commands.removeWhere((raw) {
+            final command = raw as Map<String, dynamic>;
+            final args = command['args'] as List<dynamic>;
+            return command['stage'] == 'android_role_install' &&
+                args.contains('ANDROIDPHYSICAL123') &&
+                args.contains('sha256sum');
+          });
+        });
+
+        final result = await validateGroupReactionNotificationArtifact(
+          scenario: scenario,
+          artifactFile: artifact,
+        );
+
+        expect(result.ok, isFalse);
+        expect(result.detail, contains('both-device pm path and SHA-256'));
+      },
+    );
+
+    test(
+      'rejects provider reinstall for parent-prepared central APK',
+      () async {
+        const scenario = 'android_group_message_unread_lifecycle';
+        final artifact = await _writeArtifactFixture(
+          tempDirectory,
+          scenario,
+          centralPrebuilt: true,
+        );
+        _mutateCaptureJson(artifact, 'commandJournal', (journal) {
+          (journal['commands'] as List<dynamic>).add(<String, Object?>{
+            'stage': 'provider_registration',
+            'executable': 'adb',
+            'args': <String>[
+              '-s',
+              'ANDROIDPHYSICAL123',
+              'install',
+              'candidate-normal.apk',
+            ],
+            'exitCode': 0,
+            'recordedAt': '2026-07-12T12:00:00.000Z',
+          });
+        });
+
+        final result = await validateGroupReactionNotificationArtifact(
+          scenario: scenario,
+          artifactFile: artifact,
+        );
+
+        expect(result.ok, isFalse);
+        expect(result.detail, contains('forbidden provider reinstall'));
+      },
+    );
+
+    test(
+      'rejects central provenance without parent-prepared state flag',
+      () async {
+        const scenario = 'android_group_message_unread_lifecycle';
+        final artifact = await _writeArtifactFixture(
+          tempDirectory,
+          scenario,
+          centralPrebuilt: true,
+        );
+        _mutateCaptureJson(artifact, 'candidateBuild', (candidate) {
+          candidate.remove('parentPreparedAndroidState');
+        });
+
+        final result = await validateGroupReactionNotificationArtifact(
+          scenario: scenario,
+          artifactFile: artifact,
+        );
+
+        expect(result.ok, isFalse);
+        expect(
+          result.detail,
+          contains('central-prebuilt candidate provenance'),
+        );
+      },
+    );
+
+    test('legacy distinct builds still require Android role install', () async {
+      const scenario = 'android_group_message_unread_lifecycle';
+      final artifact = await _writeArtifactFixture(tempDirectory, scenario);
+      _mutateCaptureJson(artifact, 'commandJournal', (journal) {
+        final commands = journal['commands'] as List<dynamic>;
+        commands.removeWhere((raw) {
+          final command = raw as Map<String, dynamic>;
+          return command['stage'] == 'android_role_install' &&
+              (command['args'] as List<dynamic>).contains('install');
+        });
+      });
+
+      final result = await validateGroupReactionNotificationArtifact(
+        scenario: scenario,
+        artifactFile: artifact,
+      );
+
+      expect(result.ok, isFalse);
+      expect(result.detail, contains('Android-role preparation boundary'));
+    });
+
+    test('accepts installed-app exact ADD redrive for a central APK', () async {
+      const scenario = 'android_group_reaction_recipient';
+      final artifact = await _writeArtifactFixture(
+        tempDirectory,
+        scenario,
+        centralPrebuilt: true,
+      );
+
+      final result = await validateGroupReactionNotificationArtifact(
+        scenario: scenario,
+        artifactFile: artifact,
+      );
+
+      expect(result.ok, isTrue, reason: result.detail);
+    });
+
+    test('rejects a child Flutter probe for a central APK', () async {
+      const scenario = 'android_group_reaction_recipient';
+      final artifact = await _writeArtifactFixture(
+        tempDirectory,
+        scenario,
+        centralPrebuilt: true,
+      );
+      final decoded = _readArtifact(artifact);
+      final capture = decoded['capture'] as Map<String, dynamic>;
+      final journalReference =
+          capture['commandJournal'] as Map<String, dynamic>;
+      final journalFile = File(
+        '${artifact.parent.path}${Platform.pathSeparator}'
+        '${journalReference['path']}',
+      );
+      final journal =
+          jsonDecode(journalFile.readAsStringSync()) as Map<String, dynamic>;
+      (journal['commands'] as List<dynamic>).add(<String, Object?>{
+        'stage': 'sqlcipher_observation',
+        'executable': 'flutter',
+        'args': <String>[
+          'test',
+          'integration_test/group_reaction_notification_sqlcipher_probe_test.dart',
+        ],
+        'exitCode': 0,
+        'recordedAt': '2026-07-12T12:00:00.000Z',
+      });
+      journalFile.writeAsStringSync(jsonEncode(journal), flush: true);
+      _updateEvidenceDigest(journalReference, journalFile);
+      _writeArtifact(artifact, decoded);
+
+      final result = await validateGroupReactionNotificationArtifact(
+        scenario: scenario,
+        artifactFile: artifact,
+      );
+
+      expect(result.ok, isFalse);
+      expect(result.detail, contains('forbidden child Flutter'));
+    });
+
     test('accepts realistic raw physical-iOS boundary evidence', () async {
       const scenario = 'ios_announcement_reaction_recipient';
       final artifact = await _writeArtifactFixture(tempDirectory, scenario);
@@ -544,6 +744,8 @@ Future<File> _writeArtifactFixture(
   Directory root,
   String scenarioId, {
   bool markerOnly = false,
+  bool centralPrebuilt = false,
+  bool parentPreparedAndroidState = true,
 }) async {
   final scenario = groupReactionNotificationScenario(scenarioId)!;
   final directory = Directory(
@@ -561,6 +763,8 @@ Future<File> _writeArtifactFixture(
     scenario: scenario,
     senderId: senderId,
     recipientId: recipientId,
+    centralPrebuilt: centralPrebuilt,
+    parentPreparedAndroidState: parentPreparedAndroidState,
   );
   final evidence = <Map<String, dynamic>>[];
   for (final requirement in scenario.evidenceRequirements) {
@@ -656,6 +860,8 @@ Future<Map<String, dynamic>> _writeCaptureBundle(
   required GroupReactionNotificationScenario scenario,
   required String senderId,
   required String recipientId,
+  required bool centralPrebuilt,
+  required bool parentPreparedAndroidState,
 }) async {
   final configuration = await _writeReferencedJson(
     directory,
@@ -701,8 +907,16 @@ Future<Map<String, dynamic>> _writeCaptureBundle(
     <String, Object?>{
       'schema': 'mknoon.plan257.candidate-build.v1',
       'e2eApkSha256': '1' * 64,
-      'normalApkSha256': '2' * 64,
-      'sourceProvenance': 'revision:plan257+worktree:fixture',
+      'normalApkSha256': centralPrebuilt ? '1' * 64 : '2' * 64,
+      'sourceProvenance': centralPrebuilt
+          ? 'central-prebuilt:android.production_fcm:${'1' * 64}'
+          : 'revision:plan257+worktree:fixture',
+      if (centralPrebuilt) ...<String, Object?>{
+        'buildMode': 'central_prebuilt',
+        'buildProfile': 'android.production_fcm',
+        'childBuildCount': 0,
+        'parentPreparedAndroidState': parentPreparedAndroidState,
+      },
       if (scenario.recipientPlatform == 'ios') ...<String, Object?>{
         'iosBundleId': 'com.mknoon.app',
         'iosBuildTarget': 'build/ios/iphoneos/Runner.app',
@@ -728,6 +942,8 @@ Future<Map<String, dynamic>> _writeCaptureBundle(
         scenario: scenario,
         senderId: senderId,
         recipientId: recipientId,
+        centralPrebuilt: centralPrebuilt,
+        parentPreparedAndroidState: parentPreparedAndroidState,
       ),
     },
   );
@@ -742,6 +958,8 @@ List<Map<String, Object?>> _commandJournal({
   required GroupReactionNotificationScenario scenario,
   required String senderId,
   required String recipientId,
+  required bool centralPrebuilt,
+  required bool parentPreparedAndroidState,
 }) {
   final commands = <Map<String, Object?>>[];
   void add(String stage, String executable, List<String> args) {
@@ -765,37 +983,89 @@ List<Map<String, Object?>> _commandJournal({
   final androidBuildStage = scenario.recipientPlatform == 'ios'
       ? 'ios_android_sender_build'
       : 'candidate_build';
-  add(androidBuildStage, 'flutter', <String>[
-    'build',
-    'apk',
-    '--target=integration_test/group_reaction_notification_device.dart',
-  ]);
-  add(androidBuildStage, 'flutter', <String>[
-    'build',
-    'apk',
-    '--target=lib/main.dart',
-  ]);
-  add(
-    scenario.recipientPlatform == 'ios'
-        ? 'ios_android_sender_build'
-        : 'android_role_install',
-    'adb',
-    <String>['-s', senderId, 'install', 'candidate-e2e.apk'],
-  );
-  if (scenario.recipientPlatform == 'android') {
-    add('provider_registration', 'adb', <String>[
-      '-s',
-      senderId,
-      'install',
-      'candidate-normal.apk',
+  if (!centralPrebuilt) {
+    add(androidBuildStage, 'flutter', <String>[
+      'build',
+      'apk',
+      '--target=integration_test/group_reaction_notification_device.dart',
+    ]);
+    add(androidBuildStage, 'flutter', <String>[
+      'build',
+      'apk',
+      '--target=lib/main.dart',
     ]);
   }
-  add('sqlcipher_observation', 'flutter', <String>[
-    'test',
-    'integration_test/group_reaction_notification_sqlcipher_probe_test.dart',
-    '-d',
-    recipientId,
-  ]);
+  final parentPreparedCentral =
+      centralPrebuilt &&
+      parentPreparedAndroidState &&
+      scenario.recipientPlatform == 'android';
+  if (parentPreparedCentral) {
+    for (final deviceId in <String>[senderId, recipientId]) {
+      add('android_role_install', 'adb', <String>[
+        '-s',
+        deviceId,
+        'shell',
+        'pm',
+        'path',
+        'com.mknoon.app',
+      ]);
+      add('android_role_install', 'adb', <String>[
+        '-s',
+        deviceId,
+        'shell',
+        'sha256sum',
+        '/data/app/com.mknoon.app/base.apk',
+      ]);
+    }
+  } else {
+    add(
+      scenario.recipientPlatform == 'ios'
+          ? 'ios_android_sender_build'
+          : 'android_role_install',
+      'adb',
+      <String>['-s', senderId, 'install', 'candidate-e2e.apk'],
+    );
+  }
+  if (scenario.recipientPlatform == 'android') {
+    if (parentPreparedCentral) {
+      add('provider_registration', 'adb', <String>[
+        '-s',
+        recipientId,
+        'shell',
+        'am',
+        'start',
+        '-W',
+        '-n',
+        'com.mknoon.app/.MainActivity',
+      ]);
+    } else {
+      add('provider_registration', 'adb', <String>[
+        '-s',
+        senderId,
+        'install',
+        'candidate-normal.apk',
+      ]);
+    }
+  }
+  if (centralPrebuilt && scenario.recipientPlatform == 'android') {
+    add('sqlcipher_observation', 'adb', <String>[
+      '-s',
+      recipientId,
+      'shell',
+      'run-as',
+      'com.mknoon.app',
+      'cp',
+      '/data/local/tmp/plan257_intro_e2e_config.json',
+      'app_flutter/intro_e2e_config.json',
+    ]);
+  } else {
+    add('sqlcipher_observation', 'flutter', <String>[
+      'test',
+      'integration_test/group_reaction_notification_sqlcipher_probe_test.dart',
+      '-d',
+      recipientId,
+    ]);
+  }
   if (scenario.recipientPlatform == 'ios') {
     add('ios_candidate_build', 'flutter', <String>['build', 'ios', '--debug']);
     for (final mode in const <String>['e2e', 'normal']) {
@@ -876,20 +1146,33 @@ List<Map<String, Object?>> _commandJournal({
       'com.mknoon.app',
     ]);
     if (scenario.recipientPlatform == 'android') {
-      add(lifecycleStage, 'flutter', <String>[
-        'drive',
-        '--driver',
-        'test_driver/integration_test.dart',
-        '--target',
-        'integration_test/group_reaction_notification_sqlcipher_probe_test.dart',
-        '--keep-app-running',
-      ]);
-      add(lifecycleStage, 'adb', <String>[
-        '-s',
-        senderId,
-        'install',
-        'candidate_normal_arm64.apk',
-      ]);
+      if (centralPrebuilt) {
+        add(lifecycleStage, 'adb', <String>[
+          '-s',
+          senderId,
+          'shell',
+          'run-as',
+          'com.mknoon.app',
+          'cp',
+          '/data/local/tmp/plan257_intro_e2e_config.json',
+          'app_flutter/intro_e2e_config.json',
+        ]);
+      } else {
+        add(lifecycleStage, 'flutter', <String>[
+          'drive',
+          '--driver',
+          'test_driver/integration_test.dart',
+          '--target',
+          'integration_test/group_reaction_notification_sqlcipher_probe_test.dart',
+          '--keep-app-running',
+        ]);
+        add(lifecycleStage, 'adb', <String>[
+          '-s',
+          senderId,
+          'install',
+          'candidate_normal_arm64.apk',
+        ]);
+      }
       add(lifecycleStage, 'adb', <String>[
         '-s',
         senderId,
@@ -1157,6 +1440,24 @@ String _uiHierarchySnapshots({
 
 Map<String, dynamic> _readArtifact(File artifact) {
   return jsonDecode(artifact.readAsStringSync()) as Map<String, dynamic>;
+}
+
+void _mutateCaptureJson(
+  File artifact,
+  String captureKey,
+  void Function(Map<String, dynamic> value) mutate,
+) {
+  final decoded = _readArtifact(artifact);
+  final capture = decoded['capture'] as Map<String, dynamic>;
+  final reference = capture[captureKey] as Map<String, dynamic>;
+  final file = File(
+    '${artifact.parent.path}${Platform.pathSeparator}${reference['path']}',
+  );
+  final value = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+  mutate(value);
+  file.writeAsStringSync(jsonEncode(value), flush: true);
+  _updateEvidenceDigest(reference, file);
+  _writeArtifact(artifact, decoded);
 }
 
 void _writeArtifact(File artifact, Map<String, dynamic> decoded) {

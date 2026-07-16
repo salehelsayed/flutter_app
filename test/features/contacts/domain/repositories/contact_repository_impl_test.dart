@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/debug/ios_sender_projection_fixture_contract.dart';
 import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -159,7 +160,176 @@ void main() {
       expect(await projection.readContacts(), isNot(contains(contact.peerId)));
     },
   );
+
+  test(
+    'SIMS seed survives launch mirror and same-name ingest then cleans exactly',
+    () async {
+      final rows = <String, Map<String, Object?>>{};
+      final projection = DirectReactionNotificationProjection(
+        store: _MemorySecureKeyStore(),
+      );
+      final cleanupMutationOrder = <String>[];
+      var replayStaleMirrorAfterProjectionDelete = false;
+      await projection.replaceLocalIdentity(accountPeerId: 'peer-local');
+      final projectedRepo = ContactRepositoryImpl(
+        dbLoadAllContacts: () async => rows.values.toList(),
+        dbLoadContact: (peerId) async => rows[peerId],
+        dbUpsertContact: (row) async =>
+            rows[row['peer_id'] as String] = Map<String, Object?>.from(row),
+        dbDeleteContact: (peerId) async => rows.remove(peerId),
+        dbGetContactCount: () async => rows.length,
+        dbContactExists: (peerId) async => rows.containsKey(peerId),
+        dbArchiveContact: (_) async {},
+        dbUnarchiveContact: (_) async {},
+        dbLoadActiveContacts: () async => rows.values.toList(),
+        dbLoadArchivedContacts: () async => const <Map<String, Object?>>[],
+        dbBlockContact: (_) async {},
+        dbUnblockContact: (_) async {},
+        dbDismissIntroBanner: (_) async {},
+        dbSetIntrosSentAt: (_, _) async {},
+        directReactionProjection: projection,
+      );
+      final store = IosSenderProjectionFixtureStore(
+        loadLocalAccountPeerId: () async => 'peer-local',
+        loadProjectionAccountPeerId: projection.readLocalAccountPeerId,
+        loadContact: projectedRepo.getContact,
+        insertContactIfAbsent: (contact) async {
+          if (rows.containsKey(contact.peerId)) return false;
+          rows[contact.peerId] = contact.toMap();
+          return true;
+        },
+        deleteContactIfExact: (contact) async {
+          cleanupMutationOrder.add('db');
+          final current = rows[contact.peerId];
+          if (current == null || !_sameMap(current, contact.toMap())) {
+            return false;
+          }
+          rows.remove(contact.peerId);
+          return true;
+        },
+        loadProjectedContact: (peerId) async =>
+            (await projection.readContacts())[peerId],
+        insertProjectedContactIfAbsent: (request) =>
+            projection.insertSimsFixtureContactIfAbsent(
+              peerId: request.senderPeerId,
+              username: request.senderUsername,
+              fixtureDigest: request.fixtureDigest,
+            ),
+        deleteProjectedContactIfExact: (request) async {
+          cleanupMutationOrder.add('projection');
+          final removed = await projection.removeSimsFixtureContactIfExact(
+            peerId: request.senderPeerId,
+            username: request.senderUsername,
+            fixtureDigest: request.fixtureDigest,
+          );
+          if (removed && replayStaleMirrorAfterProjectionDelete) {
+            replayStaleMirrorAfterProjectionDelete = false;
+            await projection.replaceContacts(<ContactModel>[
+              request.fixtureContact,
+            ]);
+          }
+          return removed;
+        },
+      );
+      final coordinator = IosSenderProjectionFixtureCoordinator(store);
+      final now = DateTime.utc(2030, 3, 17, 12);
+      final seed = _simsRequest(
+        action: iosSenderProjectionSeedAction,
+        now: now,
+      );
+      final cleanup = _simsRequest(
+        action: iosSenderProjectionCleanupAction,
+        now: now.add(const Duration(seconds: 1)),
+      );
+
+      final seeded = await coordinator.execute(seed);
+      expect(seeded.status, 'seeded');
+      expect(seeded.resultCode, 'ok');
+      await projectedRepo.mirrorAllDirectReactionContacts();
+      expect(
+        (await projection.readContacts())[seed
+            .senderPeerId]?[iosSenderProjectionDigestField],
+        seed.fixtureDigest,
+      );
+
+      // This is the production ingest branch: an equal decrypted username is
+      // a no-op and must leave the fixture signature/generation intact.
+      final beforeIngest = await projectedRepo.getContact(seed.senderPeerId);
+      expect(beforeIngest?.username, seed.senderUsername);
+      if (beforeIngest!.username != seed.senderUsername) {
+        await projectedRepo.addContact(
+          beforeIngest.copyWith(username: seed.senderUsername),
+        );
+      }
+      expect(
+        (await projectedRepo.getContact(seed.senderPeerId))?.signature,
+        'mknoon-sims-ios:${seed.fixtureDigest}',
+      );
+
+      cleanupMutationOrder.clear();
+      replayStaleMirrorAfterProjectionDelete = true;
+      final cleaned = await coordinator.execute(cleanup);
+      expect(cleaned.status, 'cleaned');
+      expect(cleaned.resultCode, 'ok');
+      expect(cleanupMutationOrder, <String>['db', 'projection']);
+      expect(rows, isNot(contains(seed.senderPeerId)));
+      expect(
+        await projection.readContacts(),
+        isNot(contains(seed.senderPeerId)),
+      );
+
+      final reseeded = await coordinator.execute(seed);
+      expect(reseeded.status, 'seeded');
+      final concurrentRealContact = ContactModel(
+        peerId: seed.senderPeerId,
+        publicKey: 'real-public-key',
+        rendezvous: '/dns4/real.example/tcp/443',
+        username: seed.senderUsername,
+        signature: 'real-signature',
+        scannedAt: '2030-03-17T13:00:00.000Z',
+      );
+      rows[seed.senderPeerId] = concurrentRealContact.toMap();
+      await projection.upsertContact(concurrentRealContact);
+
+      // A concurrent real/contact-like replacement at the same peer is neither
+      // blessed by backfill nor removable by the disposable generation.
+      await projectedRepo.mirrorAllDirectReactionContacts();
+      expect(
+        (await projection.readContacts())[seed.senderPeerId]?.containsKey(
+          iosSenderProjectionDigestField,
+        ),
+        isFalse,
+      );
+      final collision = await coordinator.execute(seed);
+      expect(collision.status, 'rejected');
+      expect(collision.resultCode, 'sender_state_collision');
+      final refused = await coordinator.execute(cleanup);
+      expect(refused.status, 'rejected');
+      expect(refused.resultCode, 'cleanup_state_mismatch');
+      expect(rows, contains(seed.senderPeerId));
+    },
+  );
 }
+
+IosSenderProjectionRequest _simsRequest({
+  required String action,
+  required DateTime now,
+}) => IosSenderProjectionRequest.tryParse(<String, Object?>{
+  'schema': iosSenderProjectionRequestSchema,
+  'action': action,
+  'captureNonce': 'nonce-contact-backfill-1234',
+  'receiverDeviceId': '00008110-001A123E0E91801E',
+  'bundleId': iosSenderProjectionBundleId,
+  'senderPeerId': '12D3KooW${'3' * 44}',
+  'senderUsername': 'Encrypted fixture title',
+  'apnsPayloadSha256': 'c' * 64,
+  'createdAt': now.toIso8601String(),
+  'expiresAt': now.add(const Duration(minutes: 2)).toIso8601String(),
+}, now: now)!;
+
+bool _sameMap(Map<String, Object?> left, Map<String, Object?> right) =>
+    left.length == right.length &&
+    right.entries.every((entry) => left[entry.key] == entry.value);
 
 class _MemorySecureKeyStore implements SecureKeyStore {
   final Map<String, String> _values = <String, String>{};

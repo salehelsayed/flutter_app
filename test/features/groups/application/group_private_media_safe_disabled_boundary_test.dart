@@ -27,6 +27,16 @@ import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 const _hash =
     'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 
+Future<void> _waitUntil(
+  bool Function() predicate, {
+  Duration timeout = const Duration(seconds: 2),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (!predicate() && DateTime.now().isBefore(deadline)) {
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+}
+
 void main() {
   test(
     'GPL-04A availability off suppresses private derivatives before every ordinary seam',
@@ -256,7 +266,11 @@ void main() {
 
       final ordinaryMessage = await receive('ordinary-received', const {});
       expect(ordinaryMessage.privateMediaPolicy, ordinary);
-      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await _waitUntil(
+        () =>
+            notifications.shown.length == 1 &&
+            receiveBridge.commandLog.contains('media:download'),
+      );
       expect(notifications.shown, hasLength(1));
       expect(receiveBridge.commandLog, contains('media:download'));
     },

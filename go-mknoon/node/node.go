@@ -104,6 +104,9 @@ type Node struct {
 	groupInboxRecoverHook              func(error) error
 	newHost                            func(NodeConfig, []libp2p.Option) (host.Host, error)
 	connectGroupPeerHook               func(peerId string, candidateAddrs []ma.Multiaddr, allowRelayFallback bool) (groupPeerConnectResult, error)
+	// Local multi-node tests opt into loopback-only addresses without NAT port
+	// mapping so same-process fixtures never depend on a host/VPN interface.
+	hermeticLocalNetworkForTests bool
 
 	// Personal rendezvous refresh state.
 	personalRendezvousRefreshCancel context.CancelFunc
@@ -271,6 +274,7 @@ func (n *Node) Start(cfg NodeConfig) (state *NodeState, err error) {
 	hostFactory := n.newHost
 	holePunchTracer := n.holePunchTracerForTests
 	forcePublicReachability := n.forcePublicReachabilityForTests
+	hermeticLocalNetwork := n.hermeticLocalNetworkForTests
 	eventCallback := n.eventCallback
 	n.mu.Unlock()
 	lockHeld := time.Since(initialLockAt)
@@ -394,6 +398,21 @@ func (n *Node) Start(cfg NodeConfig) (state *NodeState, err error) {
 	if dcutrReachabilityMode(flags.EnableDcutrUpgrade, forcePublicReachability) == "public" {
 		reachabilityOpt = libp2p.ForceReachabilityPublic()
 	}
+	advertisedAddrsFactory := filterAddresses
+	if hermeticLocalNetwork {
+		advertisedAddrsFactory = func(addrs []ma.Multiaddr) []ma.Multiaddr {
+			loopback := make([]ma.Multiaddr, 0, len(addrs))
+			for _, addr := range addrs {
+				if ip := extractIP(addr); ip != nil && ip.IsLoopback() {
+					loopback = append(loopback, addr)
+				}
+			}
+			if len(loopback) == 0 {
+				return filterAddresses(addrs)
+			}
+			return loopback
+		}
+	}
 
 	hostOpts := []libp2p.Option{
 		libp2p.Identity(privKey),
@@ -401,10 +420,15 @@ func (n *Node) Start(cfg NodeConfig) (state *NodeState, err error) {
 		libp2p.ConnectionManager(cm),
 		libp2p.EnableRelay(),
 		libp2p.EnableHolePunching(holeOpts...),
-		libp2p.NATPortMap(),
-		reachabilityOpt,
-		libp2p.AddrsFactory(filterAddresses),
 	}
+	if !hermeticLocalNetwork {
+		hostOpts = append(hostOpts, libp2p.NATPortMap())
+	}
+	hostOpts = append(
+		hostOpts,
+		reachabilityOpt,
+		libp2p.AddrsFactory(advertisedAddrsFactory),
+	)
 	if len(relayInfos) > 0 {
 		hostOpts = append(hostOpts,
 			libp2p.EnableAutoRelayWithStaticRelays(relayInfos,

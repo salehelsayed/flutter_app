@@ -44,10 +44,11 @@ import (
 // fixed ~timeout — a deterministic, hermetic stand-in for an "unreachable" peer
 // with no dependency on real network routing.
 type deadDialListener struct {
-	ln    net.Listener
-	mu    sync.Mutex
-	conns []net.Conn
-	port  int
+	ln       net.Listener
+	mu       sync.Mutex
+	conns    []net.Conn
+	port     int
+	accepted chan struct{}
 }
 
 func startDeadDialListener(t *testing.T) *deadDialListener {
@@ -56,7 +57,11 @@ func startDeadDialListener(t *testing.T) *deadDialListener {
 	if err != nil {
 		t.Fatalf("dead listener: %v", err)
 	}
-	d := &deadDialListener{ln: ln, port: ln.Addr().(*net.TCPAddr).Port}
+	d := &deadDialListener{
+		ln:       ln,
+		port:     ln.Addr().(*net.TCPAddr).Port,
+		accepted: make(chan struct{}, 1),
+	}
 	go func() {
 		for {
 			c, err := ln.Accept()
@@ -66,6 +71,10 @@ func startDeadDialListener(t *testing.T) *deadDialListener {
 			d.mu.Lock()
 			d.conns = append(d.conns, c)
 			d.mu.Unlock()
+			select {
+			case d.accepted <- struct{}{}:
+			default:
+			}
 			// Drain and discard inbound bytes; never write a reply, so the
 			// dialer's handshake read blocks until its context deadline.
 			go func(c net.Conn) {
@@ -182,6 +191,7 @@ func TestConcurrentSendDialNoSerialize(t *testing.T) {
 	})
 
 	t.Run("user_send_not_head_of_line_blocked_by_warm_dials", func(t *testing.T) {
+		holDialBlock := 3 * dialBlock
 		nodeA := New(&testEventCollector{})
 		if _, err := nodeA.Start(NodeConfig{
 			PrivateKeyHex:  generateTestKey(t),
@@ -224,19 +234,35 @@ func TestConcurrentSendDialNoSerialize(t *testing.T) {
 		// single bridge head-of-line block the user's send?
 		var warmWg sync.WaitGroup
 		warmWg.Add(k)
+		warmDone := make(chan struct{}, k)
 		for i := 0; i < k; i++ {
 			pid := generatePeerIDStr(t)
 			go func(pid string) {
 				defer warmWg.Done()
-				_ = nodeA.DialPeerWithTimeout(pid, []string{dead.addr()}, int(dialBlock.Milliseconds()))
+				_ = nodeA.DialPeerWithTimeout(pid, []string{dead.addr()}, int(holDialBlock.Milliseconds()))
+				warmDone <- struct{}{}
 			}(pid)
 		}
 
-		// Let the warm dials get in flight, then send a real message. The message
+		// Wait until at least one warm dial has reached the blocking listener, then
+		// prove none has already completed. This keeps the HOL assertion causal even
+		// on a loaded host where a fixed startup sleep is not a reliable barrier.
+		select {
+		case <-dead.accepted:
+		case <-time.After(holDialBlock / 2):
+			t.Fatal("warm dial never reached the blocking listener")
+		}
+		select {
+		case <-warmDone:
+			t.Fatal("warm dial completed before the user send started")
+		default:
+		}
+
+		// Send a real message while the speculative work is demonstrably blocked.
+		// The message
 		// is a plain (non-chat-envelope) payload, so node B ACKs it immediately
 		// (handleIncomingMessage, node.go:1680) rather than taking the deferred-ack
 		// path — the send completes as soon as the bridge lets it run.
-		time.Sleep(20 * time.Millisecond)
 		sendStart := time.Now()
 		_, acked, err := nodeA.SendMessage(peerIDB, `{"hello":"world"}`, 5000)
 		sendElapsed := time.Since(sendStart)
@@ -244,16 +270,22 @@ func TestConcurrentSendDialNoSerialize(t *testing.T) {
 			t.Fatalf("user send errored under concurrent warm dials: %v", err)
 		}
 
-		// If the send were serialized behind the K warm dials it would take up to
-		// k*dialBlock. It must complete well within a single dialBlock.
-		if sendElapsed >= dialBlock/2 {
+		// If the send were serialized behind even the already-blocked warm dial, it
+		// would approach holDialBlock. Keep a generous loaded-host margin while
+		// still requiring it to finish in less than half that causal blocker.
+		if sendElapsed >= holDialBlock/2 {
 			t.Fatalf("FDC-S5 HOL-block REFUTED: user send took %v while %d warm dials "+
 				"block ~%v each — the send was head-of-line blocked behind speculative warm work",
-				sendElapsed, k, dialBlock)
+				sendElapsed, k, holDialBlock)
+		}
+		select {
+		case <-warmDone:
+			t.Fatal("FDC-S5 HOL proof invalid: a warm dial completed before the user send")
+		default:
 		}
 
 		t.Logf("FDC-S5 CONFIRMED: user send completed in %v (acked=%v) while %d warm dials "+
-			"each blocked ~%v — the user send is NOT head-of-line blocked", sendElapsed, acked, k, dialBlock)
+			"each blocked ~%v — the user send is NOT head-of-line blocked", sendElapsed, acked, k, holDialBlock)
 		warmWg.Wait()
 	})
 }

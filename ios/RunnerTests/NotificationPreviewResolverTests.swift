@@ -4,6 +4,51 @@ import UserNotifications
 import XCTest
 
 final class NotificationPreviewResolverTests: XCTestCase {
+  func testPublicNseProofPayloadExposesOnlyWhitelistedMarkers() throws {
+    let staged = try XCTUnwrap(nsePublicProofPayload(
+      event: "PUSH_NSE_ENVELOPE_STAGED",
+      details: ["success": "true", "pushId": "must-not-escape"]
+    ))
+    let stagedJson = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: Data(staged.utf8)) as? [String: Any]
+    )
+    XCTAssertEqual(stagedJson["event"] as? String, "PUSH_NSE_ENVELOPE_STAGED")
+    XCTAssertEqual(
+      stagedJson["details"] as? [String: String],
+      ["success": "true"]
+    )
+    XCTAssertFalse(staged.contains("must-not-escape"))
+
+    let handedOff = try XCTUnwrap(nsePublicProofPayload(
+      event: "PUSH_NSE_CONTENT_HANDOFF",
+      details: ["authorized": "true", "title": "must-not-escape"]
+    ))
+    let handedOffJson = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: Data(handedOff.utf8)) as? [String: Any]
+    )
+    XCTAssertEqual(
+      handedOffJson["event"] as? String,
+      "PUSH_NSE_CONTENT_HANDOFF"
+    )
+    XCTAssertEqual(
+      handedOffJson["details"] as? [String: String],
+      ["authorized": "true"]
+    )
+    XCTAssertFalse(handedOff.contains("must-not-escape"))
+
+    let failed = try XCTUnwrap(nsePublicProofPayload(
+      event: "PUSH_NSE_DECRYPT_FAIL",
+      details: ["reason": "private-diagnostic", "ciphertext": "secret"]
+    ))
+    XCTAssertFalse(failed.contains("private-diagnostic"))
+    XCTAssertFalse(failed.contains("secret"))
+
+    XCTAssertNil(nsePublicProofPayload(
+      event: "FDC_NSE_PEERID_AVAILABLE",
+      details: ["pushId": "must-not-escape"]
+    ))
+  }
+
   func testDecryptsOneToOneFixturePreview() throws {
     let fixture = try loadFixture("one_to_one_text")
     let plaintext = try fixturePlaintextJSON(fixture)

@@ -34,6 +34,37 @@ class AnalyzerFinding {
   );
 }
 
+class _AnalyzerFindingIdentity {
+  _AnalyzerFindingIdentity(AnalyzerFinding finding)
+    : severity = finding.severity,
+      message = finding.message,
+      path = finding.path,
+      line = finding.line,
+      column = finding.column,
+      rule = finding.rule;
+
+  final String severity;
+  final String message;
+  final String path;
+  final int line;
+  final int column;
+  final String rule;
+
+  @override
+  bool operator ==(Object other) {
+    return other is _AnalyzerFindingIdentity &&
+        other.severity == severity &&
+        other.message == message &&
+        other.path == path &&
+        other.line == line &&
+        other.column == column &&
+        other.rule == rule;
+  }
+
+  @override
+  int get hashCode => Object.hash(severity, message, path, line, column, rule);
+}
+
 class AnalyzerFindingKey implements Comparable<AnalyzerFindingKey> {
   const AnalyzerFindingKey({
     required this.severity,
@@ -155,12 +186,15 @@ AnalyzerFinding? parseAnalyzerFindingLine(String line) {
 
 ParsedAnalyzerOutput parseAnalyzerOutput(String output) {
   final findings = <AnalyzerFinding>[];
+  final findingIdentities = <_AnalyzerFindingIdentity>{};
   final malformedFindingLines = <String>[];
 
   for (final line in output.split(RegExp(r'\r?\n'))) {
     final finding = parseAnalyzerFindingLine(line);
     if (finding != null) {
-      findings.add(finding);
+      if (findingIdentities.add(_AnalyzerFindingIdentity(finding))) {
+        findings.add(finding);
+      }
       continue;
     }
 

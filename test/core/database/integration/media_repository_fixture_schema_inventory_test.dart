@@ -114,4 +114,65 @@ void main() {
       reason: 'historical fixtures may not import migration 096 directly',
     );
   });
+
+  test('group harness wires guarded save and download CAS helpers', () {
+    final source = File(
+      'integration_test/group_multi_device_real_harness.dart',
+    ).readAsStringSync();
+    const constructorStart =
+        'final mediaAttachmentRepo = MediaAttachmentRepositoryImpl(';
+    const nextConstructor = 'final reactionRepo = ReactionRepositoryImpl(';
+    final start = source.indexOf(constructorStart);
+    expect(start, isNonNegative);
+
+    final end = source.indexOf(nextConstructor, start);
+    expect(end, greaterThan(start));
+    final repositoryBlock = source.substring(start, end);
+
+    for (final seam in const <String>[
+      'dbSaveGroupMediaAttachmentGuarded',
+      'dbBeginMediaDownload',
+      'dbCommitMediaDownloadLocalPath',
+    ]) {
+      expect(
+        RegExp('\\b$seam\\s*:').hasMatch(repositoryBlock),
+        isTrue,
+        reason:
+            'the group harness MediaAttachmentRepositoryImpl constructor '
+            'must wire the $seam closure',
+      );
+      expect(
+        RegExp('\\b$seam\\s*\\(\\s*db\\s*,').hasMatch(repositoryBlock),
+        isTrue,
+        reason:
+            'the group harness $seam closure must delegate to the production '
+            'DB helper with its runtime database',
+      );
+    }
+  });
+
+  test('group multi-party protected download carries parent authority', () {
+    final source = File(
+      'integration_test/group_multi_party_device_real_harness.dart',
+    ).readAsStringSync();
+    const helperStart =
+        'Future<List<MediaAttachment>> _downloadPl006ActiveRecipientMedia(';
+    const nextHelper =
+        'Future<Map<String, dynamic>> _attemptPl006DirectMediaDownload(';
+    final start = source.indexOf(helperStart);
+    expect(start, isNonNegative);
+
+    final end = source.indexOf(nextHelper, start);
+    expect(end, greaterThan(start));
+    final helperBlock = source.substring(start, end);
+
+    expect(helperBlock, contains('enforceGroupMediaPolicy: true'));
+    expect(
+      helperBlock,
+      contains('groupMessageRepo: stack.groupMsgRepo'),
+      reason:
+          'a group-policy download must carry the persisted parent-message '
+          'authority or downloadMedia fails closed before claiming the row',
+    );
+  });
 }

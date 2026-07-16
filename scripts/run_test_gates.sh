@@ -660,6 +660,8 @@ Usage:
   ./scripts/run_test_gates.sh move-feature
   ./scripts/run_test_gates.sh group-real-network-nightly
   ./scripts/run_test_gates.sh reliability-sim [all|1to1|group|intro|move-feature] [options]
+  ./scripts/run_test_gates.sh sims [major|full|smoke] [options]
+  ./scripts/run_test_gates.sh sims-contracts [--list] [--continue-on-failure] [--mutation-matrix]
   ./scripts/run_test_gates.sh host-all [options]
   ./scripts/run_test_gates.sh feature-host-all [options]
   ./scripts/run_test_gates.sh core-host-all [options]
@@ -1034,6 +1036,11 @@ classify_path() {
     return 0
   fi
 
+  if [[ "$path" =~ ^test/tool/sims/.*_test\.dart$ ]]; then
+    printf 'sims orchestration host contract'
+    return 0
+  fi
+
   if [[ "$path" =~ ^test/features/[^/]+/(application|domain|infrastructure|presentation|improvement|phase[1-5]|regression)/.*_test\.dart$ ]]; then
     printf 'feature-local direct suite'
     return 0
@@ -1111,6 +1118,7 @@ has_host_batch_control() {
   for arg in "$@"; do
     case "$arg" in
       --batch-flutter|--batch-flutter=*|\
+        --dart-only|\
         --concurrency|--concurrency=*|\
         --reporter|--reporter=*)
         return 0
@@ -1118,6 +1126,157 @@ has_host_batch_control() {
     esac
   done
   return 1
+}
+
+run_sims_gate() {
+  local mode="major"
+
+  if (($# > 0)); then
+    case "$1" in
+      major|full|smoke)
+        mode="$1"
+        shift
+        ;;
+      -*)
+        ;;
+      *)
+        printf 'Invalid sims mode: %s (expected major, full, or smoke).\n' \
+          "$1" >&2
+        return 2
+        ;;
+    esac
+  fi
+
+  # Running the source entrypoint directly keeps --format json/tsv stdout
+  # machine-readable. `dart run` emits package build-hook progress on stdout
+  # before the CLI starts in this repository.
+  dart tool/sims/sims.dart "$mode" "$@"
+}
+
+run_sims_contracts() {
+  local dry_run=0
+  local continue_on_failure=0
+  local mutation_matrix=0
+  local contracts_dir="${SIMS_CONTRACTS_DIR:-$ROOT_DIR/scripts/test}"
+  local arg
+  local path
+  local display_path
+  local status
+  local failure_count=0
+  local i
+  local -a contracts=()
+  local -a failure_paths=()
+  local -a failure_statuses=()
+
+  while (($# > 0)); do
+    arg="$1"
+    case "$arg" in
+      --list|--dry-run)
+        dry_run=1
+        ;;
+      --continue-on-failure)
+        continue_on_failure=1
+        ;;
+      --mutation-matrix)
+        mutation_matrix=1
+        ;;
+      -h|--help)
+        printf '%s\n' \
+          'Usage: ./scripts/run_test_gates.sh sims-contracts [--list] [--continue-on-failure] [--mutation-matrix]'
+        return 0
+        ;;
+      *)
+        printf 'Unknown sims-contracts option: %s\n' "$arg" >&2
+        return 2
+        ;;
+    esac
+    shift
+  done
+
+  if [ ! -d "$contracts_dir" ]; then
+    printf 'Missing sims shell contract directory: %s\n' "$contracts_dir" >&2
+    return 1
+  fi
+
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    contracts+=("$path")
+  done < <(
+    find "$contracts_dir" -maxdepth 1 -type f -name '*_test.sh' -print |
+      LC_ALL=C sort
+  )
+
+  if ((${#contracts[@]} == 0)); then
+    printf 'No sims shell contracts found under: %s\n' "$contracts_dir" >&2
+    return 1
+  fi
+
+  printf '\nSims shell contract plan (%s):\n' "${#contracts[@]}"
+  for ((i = 0; i < ${#contracts[@]}; i++)); do
+    path="${contracts[$i]}"
+    display_path="$path"
+    if [[ "$display_path" == "$ROOT_DIR/"* ]]; then
+      display_path="${display_path#"$ROOT_DIR/"}"
+    elif [[ "$display_path" == ./* ]]; then
+      display_path="${display_path#./}"
+    fi
+    printf '  %3d. bash %s\n' "$((i + 1))" "$display_path"
+  done
+
+  if [ "$dry_run" -eq 1 ]; then
+    printf '\nDry run only. Sims shell contract discovery passed.\n'
+    return 0
+  fi
+
+  printf '\nRunning %s sims shell contract(s)...\n' "${#contracts[@]}"
+  for ((i = 0; i < ${#contracts[@]}; i++)); do
+    path="${contracts[$i]}"
+    display_path="$path"
+    if [[ "$display_path" == "$ROOT_DIR/"* ]]; then
+      display_path="${display_path#"$ROOT_DIR/"}"
+    elif [[ "$display_path" == ./* ]]; then
+      display_path="${display_path#./}"
+    fi
+
+    printf '\n==> #%s bash %s\n' "$((i + 1))" "$display_path"
+    if bash "$path"; then
+      printf 'PASS: #%s %s\n' "$((i + 1))" "$display_path"
+    else
+      status=$?
+      printf 'FAIL: #%s %s exited with %s\n' \
+        "$((i + 1))" "$display_path" "$status" >&2
+      if [ "$continue_on_failure" -ne 1 ]; then
+        return "$status"
+      fi
+      failure_paths+=("$display_path")
+      failure_statuses+=("$status")
+      failure_count=$((failure_count + 1))
+    fi
+  done
+
+  if [ "$failure_count" -gt 0 ]; then
+    printf '\nSims shell contracts failed (%s):\n' "$failure_count" >&2
+    for ((i = 0; i < failure_count; i++)); do
+      printf '  - %s exited with %s\n' \
+        "${failure_paths[$i]}" "${failure_statuses[$i]}" >&2
+    done
+    return 1
+  fi
+
+  if [ "$mutation_matrix" -eq 1 ]; then
+    printf '\nRunning sims mutation-matrix host contracts...\n'
+    flutter test \
+      test/tool/sims/sims_verdict_test.dart \
+      test/tool/sims/sims_build_cache_test.dart \
+      test/tool/sims/sims_checkpoint_test.dart \
+      test/tool/sims/sims_device_binding_test.dart \
+      test/tool/sims/sims_executor_test.dart \
+      test/tool/sims/sims_scheduler_test.dart
+    printf '%s\n' \
+      'PASS: mutation matrix caught analyzer/Dart/Go command failures, mandatory skip, print-only proof, exit 78, missing artifact, stale cache, undeclared build, mid-sweep failure, device loss, and dependency/resource conflicts.'
+  fi
+
+  printf '\nPASS: sims shell contracts completed (%s).\n' "${#contracts[@]}"
 }
 
 main() {
@@ -1177,6 +1336,20 @@ main() {
         gate_args=(all)
       fi
       ./scripts/run_reliability_simulations.sh "${gate_args[@]}"
+      ;;
+    sims)
+      if ((${#gate_args[@]} == 0)); then
+        run_sims_gate
+      else
+        run_sims_gate "${gate_args[@]}"
+      fi
+      ;;
+    sims-contracts)
+      if ((${#gate_args[@]} == 0)); then
+        run_sims_contracts
+      else
+        run_sims_contracts "${gate_args[@]}"
+      fi
       ;;
     move-feature|host-all|feature-host-all|core-host-all|performance-host)
       if ((${#gate_args[@]} == 0)); then

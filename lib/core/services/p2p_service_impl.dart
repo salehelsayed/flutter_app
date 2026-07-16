@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:clock/clock.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'p2p_service.dart';
 import '../notifications/active_conversation_tracker.dart';
@@ -62,6 +63,19 @@ typedef ReplayRecoveredInboxIntroductionMessage =
 typedef ReplayRecoveredInboxContactRequestMessage =
     Future<RecoveredInboxReplayOutcome> Function(ChatMessage message);
 
+/// Debug/E2E-only observation of the accepted production `inbox:store`
+/// attachment boundary. Only SHA-256 values cross this callback; the opaque
+/// wake token, peer ID, and stored message remain inside this service method.
+///
+/// The callback is optional and never affects the store outcome. Production
+/// construction leaves it null.
+typedef AcceptedInboxWakeTokenHashObserver =
+    void Function({
+      required String toPeerIdSha256,
+      required String messageSha256,
+      required String wakeTokenSha256,
+    });
+
 /// NET-REL-05 P3: a learned per-peer LIVE transport plus the time it was
 /// recorded, for TTL-based expiry. `transport` is one of `'local'`, `'direct'`,
 /// or `'relay'`.
@@ -113,6 +127,7 @@ class P2PServiceImpl
   // so the ~31 fakes are untouched. When present, storeInInboxDetailed attaches
   // received[toPeerId] on the `inbox:store` frame (1:1 contacts only).
   final ReceivedWakeTokenStore? _receivedWakeTokenStore;
+  final AcceptedInboxWakeTokenHashObserver? _acceptedInboxWakeTokenHashObserver;
   final AccountMigrationNetworkGate _accountMigrationNetworkGate;
   final InboxStagingRepository _inboxStagingRepository;
   final ReplayRecoveredInboxChatMessage? _replayRecoveredInboxChatMessage;
@@ -391,6 +406,7 @@ class P2PServiceImpl
     LocalP2PService? localP2PService,
     PushTokenStore? pushTokenStore,
     ReceivedWakeTokenStore? receivedWakeTokenStore,
+    AcceptedInboxWakeTokenHashObserver? acceptedInboxWakeTokenHashObserver,
     AccountMigrationNetworkGate accountMigrationNetworkGate =
         allowAccountMigrationNetworkSideEffects,
     required InboxStagingRepository inboxStagingRepository,
@@ -413,6 +429,7 @@ class P2PServiceImpl
        _localP2P = localP2PService,
        _pushTokenStore = pushTokenStore,
        _receivedWakeTokenStore = receivedWakeTokenStore,
+       _acceptedInboxWakeTokenHashObserver = acceptedInboxWakeTokenHashObserver,
        _accountMigrationNetworkGate = accountMigrationNetworkGate,
        _inboxStagingRepository = inboxStagingRepository,
        _replayRecoveredInboxChatMessage = replayRecoveredInboxChatMessage,
@@ -4806,6 +4823,26 @@ class P2PServiceImpl
         wakeToken: wakeToken,
       );
       final outcome = InboxStoreOutcome.fromBridgeResponse(response);
+      final wakeTokenObserver = _acceptedInboxWakeTokenHashObserver;
+      if (outcome.accepted &&
+          wakeTokenObserver != null &&
+          wakeToken != null &&
+          wakeToken.isNotEmpty) {
+        try {
+          wakeTokenObserver(
+            toPeerIdSha256: sha256.convert(utf8.encode(toPeerId)).toString(),
+            messageSha256: sha256.convert(utf8.encode(message)).toString(),
+            wakeTokenSha256: sha256.convert(utf8.encode(wakeToken)).toString(),
+          );
+        } on Object {
+          // Evidence collection must never alter the real inbox-store result.
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'P2P_SERVICE_WAKE_TOKEN_E2E_OBSERVER_ERROR',
+            details: const <String, Object?>{},
+          );
+        }
+      }
       emitFlowEvent(
         layer: 'FL',
         event: outcome.accepted

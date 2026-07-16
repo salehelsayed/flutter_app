@@ -27,7 +27,7 @@ expect_error() {
 
   [ "$status" -eq 2 ] ||
     fail "invalid option path exited with $status instead of 2: $*"
-  printf '%s\n' "$output" | grep -Fq "$expected_message" ||
+  grep -Fq "$expected_message" <<<"$output" ||
     fail "invalid option path did not report '$expected_message': $*"
 }
 
@@ -122,6 +122,29 @@ grep -Fq 'planned items, not serial execution commands' <<<"$dry_output" ||
 [ ! -s "$flutter_log" ] || fail 'batch dry-run invoked Flutter'
 [ ! -s "$go_log" ] || fail 'batch dry-run invoked Go'
 
+# RED/GREEN 1b: major sims composes the exact Dart host inventory with its own
+# full-Go lane. --dart-only must therefore remove all eight synthetic Go tails
+# without changing a single Dart path or the one-invocation batch shape.
+dart_only_dry_output="$(
+  ./scripts/run_test_gates.sh host-all \
+    --dart-only \
+    --batch-flutter \
+    --concurrency 4 \
+    --reporter failures-only \
+    --dry-run
+)"
+dart_only_dry_paths="$(
+  printf '%s\n' "$dart_only_dry_output" |
+    sed -n "s/^  *[0-9][0-9]*\. Flutter batch path '\(test\/.*_test\.dart\)'$/\1/p"
+)"
+[ "$dart_only_dry_paths" = "$expected_dart_paths" ] ||
+  fail '--dart-only dry-run changed the exact sorted Dart inventory'
+if grep -q 'go test' <<<"$dart_only_dry_output"; then
+  fail '--dart-only dry-run retained a Go command'
+fi
+grep -Fq '0 separate non-Flutter invocation(s)' <<<"$dart_only_dry_output" ||
+  fail '--dart-only dry-run did not report zero trailing Go invocations'
+
 broad_scope_dry="$({
   ./scripts/run_test_gates.sh core-host-all \
     --batch-flutter \
@@ -158,7 +181,7 @@ actual_dart_count="$(printf '%s\n' "$actual_dart_paths" | count_lines)"
   fail "batch Flutter call received $actual_dart_count paths instead of $expected_dart_count"
 [ "$actual_dart_paths" = "$expected_dart_paths" ] ||
   fail 'batch Flutter paths were not the exact unique sorted host-all inventory'
-if printf '%s\n' "$actual_dart_paths" | grep -q '^test/performance/'; then
+if grep -q '^test/performance/' <<<"$actual_dart_paths"; then
   fail 'batch Flutter paths included test/performance'
 fi
 if printf '%s\n' "$actual_dart_paths" |
@@ -196,15 +219,34 @@ for sentinel in \
   grep -Fq "$sentinel" "$go_log" ||
     fail "batch mode omitted Go sentinel: $sentinel"
 done
-printf '%s\n' "$batch_output" |
-  grep -Fq 'PASS: host tests completed for scope: host-all' ||
+grep -Fq 'PASS: host tests completed for scope: host-all' <<<"$batch_output" ||
   fail 'batch mode did not report host-all completion'
+
+# RED/GREEN 2b: execute the Dart-only shape. This is the no-duplicate-Go lock
+# for the major gate: Flutter runs once with the unchanged inventory and Go is
+# not invoked at all.
+: >"$flutter_log"
+: >"$go_log"
+./scripts/run_test_gates.sh host-all \
+  --dart-only \
+  --batch-flutter \
+  --concurrency 4 \
+  --reporter failures-only \
+  >"$tmp_dir/dart-only.stdout"
+[ "$(grep -c '^CALL$' "$flutter_log" || true)" -eq 1 ] ||
+  fail '--dart-only batch did not invoke Flutter exactly once'
+[ ! -s "$go_log" ] || fail '--dart-only batch invoked a duplicate Go leg'
+dart_only_actual_paths="$(
+  awk -F '\t' '$1 == "ARG" && $2 ~ /^test\// { print $2 }' "$flutter_log"
+)"
+[ "$dart_only_actual_paths" = "$expected_dart_paths" ] ||
+  fail '--dart-only batch changed the exact sorted Dart inventory'
 
 # RED/GREEN 3: default serial behavior remains byte-shape compatible for a
 # focused Dart path; new batch controls are never forwarded unless requested.
 : >"$flutter_log"
 : >"$go_log"
-first_dart_path="$(printf '%s\n' "$expected_dart_paths" | head -n 1)"
+IFS= read -r first_dart_path <<<"$expected_dart_paths"
 ./scripts/run_host_test_gates.sh host-all --only "$first_dart_path" >/dev/null
 [ "$(grep -c '^CALL$' "$flutter_log" || true)" -eq 1 ] ||
   fail 'default --only Dart path did not invoke Flutter exactly once'
@@ -231,7 +273,7 @@ only_paths="$(
 
 : >"$flutter_log"
 : >"$go_log"
-last_dart_path="$(printf '%s\n' "$expected_dart_paths" | tail -n 1)"
+last_dart_path="${expected_dart_paths##*$'\n'}"
 ./scripts/run_host_test_gates.sh host-all \
   --batch-flutter \
   --start-at "$expected_dart_count" \
@@ -330,7 +372,11 @@ expect_error 'not supported for gate: groups' \
   ./scripts/run_test_gates.sh groups --concurrency 4
 expect_error 'not supported for gate: groups' \
   ./scripts/run_test_gates.sh groups --reporter=json
+expect_error 'not supported for gate: groups' \
+  ./scripts/run_test_gates.sh groups --dart-only
 expect_error 'not supported for host scope: 1to1' \
   ./scripts/run_host_test_gates.sh 1to1 --batch-flutter --dry-run
+expect_error 'not supported for host scope: 1to1' \
+  ./scripts/run_host_test_gates.sh 1to1 --dart-only --dry-run
 
 printf 'PASS: batched host test gate contract\n'

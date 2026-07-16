@@ -27,6 +27,16 @@ import '../../../shared/fakes/fake_notification_service.dart';
 import '../../../shared/fakes/recording_media_auto_download_decider.dart';
 import '../../../shared/fakes/spy_recent_remote_notification_gate.dart';
 
+Future<void> _waitUntil(
+  bool Function() predicate, {
+  Duration timeout = const Duration(seconds: 2),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (!predicate() && DateTime.now().isBefore(deadline)) {
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+}
+
 // -- Fakes --
 
 class _FakeContactRepository implements ContactRepository {
@@ -1386,8 +1396,7 @@ void main() {
           _makeChatMessage(from: senderPeerId, media: _testMediaJson),
         );
 
-        // Wait for message processing + auto-download
-        await Future.delayed(const Duration(milliseconds: 200));
+        await _waitUntil(() => emitted.length >= 2);
 
         // Should get 2 emissions: initial (no media) + re-emit (with media)
         expect(emitted.length, 2);

@@ -179,8 +179,12 @@ import 'package:flutter_app/features/posts/application/pending_post_follow_on_re
 import 'package:flutter_app/features/posts/application/pending_post_media_upload_retrier.dart';
 import 'package:flutter_app/features/contact_request/application/key_exchange_retrier.dart';
 import 'package:flutter_app/core/debug/e2e_test_mode.dart';
+import 'package:flutter_app/core/debug/ios_receiver_bootstrap.dart';
+import 'package:flutter_app/core/debug/ios_sender_projection_fixture.dart';
+import 'package:flutter_app/core/debug/ios_sender_projection_fixture_contract.dart';
 import 'package:flutter_app/core/debug/auto_setup_config.dart';
 import 'package:flutter_app/core/debug/intro_e2e_runner.dart';
+import 'package:flutter_app/core/debug/wake_token_directionality_e2e.dart';
 import 'package:flutter_app/features/identity/application/generate_identity_use_case.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
@@ -2456,6 +2460,10 @@ void main() async {
   );
   notifyContactPushEligibilityChanged = wakeTokenReissueCoalescer.trigger;
 
+  // Hash-only and dormant unless the dedicated E2E action arms it. Production
+  // builds pass no callback into P2PServiceImpl, preserving the normal path.
+  final wakeTokenAttachmentObserver = WakeTokenAcceptedAttachmentObserver();
+
   // Create P2P service (uses the same bridge + local P2P)
   p2pService = P2PServiceImpl(
     bridge: bridge,
@@ -2464,6 +2472,9 @@ void main() async {
     // FDC-09 §12 / CV-14: the send funnel attaches received[toPeerId] on
     // `inbox:store` (1:1 contacts only). Inert until a peer distributes a `wt`.
     receivedWakeTokenStore: receivedWakeTokenStore,
+    acceptedInboxWakeTokenHashObserver: kE2ETestMode
+        ? wakeTokenAttachmentObserver.observeAccepted
+        : null,
     // 182: wire the OS connectivity source (FDC-04's anticipated "bounded
     // follow-up") so a foreground connectivity restore drains the offline inbox
     // immediately — instead of waiting for the next ~30s health-check poll or an
@@ -2653,7 +2664,7 @@ void main() async {
     requestApplePermissions: !kE2ETestMode,
   );
   final PushRegistrationCoordinator? pushRegistrationCoordinator =
-      !isDesktop && !kE2ETestMode
+      shouldEnableProductionPushRegistration(isDesktop: isDesktop)
       ? PushRegistrationCoordinator(
           requestPermission: requestPushPermission,
           registerPushToken: () async {
@@ -3699,6 +3710,42 @@ void main() async {
       },
     ),
   );
+  if (directReactionNotificationProjection != null) {
+    final iosSenderFixtureStore = IosSenderProjectionFixtureStore(
+      loadLocalAccountPeerId: () async =>
+          (await repository.loadIdentity())?.peerId,
+      loadProjectionAccountPeerId:
+          directReactionNotificationProjection.readLocalAccountPeerId,
+      loadContact: contactRepository.getContact,
+      insertContactIfAbsent: (contact) =>
+          dbSimsInsertContactIfAbsent(db, contact.toMap()),
+      deleteContactIfExact: (contact) =>
+          dbSimsDeleteContactIfExact(db, contact.toMap()),
+      loadProjectedContact: (peerId) async =>
+          (await directReactionNotificationProjection.readContacts())[peerId],
+      insertProjectedContactIfAbsent: (request) =>
+          directReactionNotificationProjection
+              .insertSimsFixtureContactIfAbsent(
+                peerId: request.senderPeerId,
+                username: request.senderUsername,
+                fixtureDigest: request.fixtureDigest,
+              ),
+      deleteProjectedContactIfExact: (request) =>
+          directReactionNotificationProjection
+              .removeSimsFixtureContactIfExact(
+                peerId: request.senderPeerId,
+                username: request.senderUsername,
+                fixtureDigest: request.fixtureDigest,
+              ),
+    );
+    unawaited(
+      runIosSenderProjectionFixtureLoop(
+        coordinator: IosSenderProjectionFixtureCoordinator(
+          iosSenderFixtureStore,
+        ),
+      ),
+    );
+  }
   StartupTiming.instance.mark('run_app_called');
   // 234 Session 03: kick the same local-only future that startLiveServices
   // awaits. The call remains off the pre-runApp path, while network startup is
@@ -3757,6 +3804,17 @@ void main() async {
     contactRequestRepo: contactRequestRepository,
     introRepo: introductionRepository,
     messageRepo: messageRepository,
+    pushEnvelopeStagingStore: pushEnvelopeStagingStore,
+    mediaAttachmentRepo: mediaAttachmentRepository,
+    mediaFileManager: mediaFileManager,
+    audioRecorderService: audioRecorderService,
+    groupReactionProbeDatabase: db,
+    groupReactionProbeSecureKeyStore: secureKeyStore,
+    wakeTokenStore: wakeTokenStore,
+    receivedWakeTokenStore: receivedWakeTokenStore,
+    registerWakeTokens: (tokens) => registerWakeTokensViaBridge(bridge, tokens),
+    detailedInboxStore: p2pService,
+    wakeTokenAttachmentObserver: wakeTokenAttachmentObserver,
     resolveWakeToken: wakeTokenResolver,
     openConversationByPeerId: (peerId) async {
       for (var attempt = 0; attempt < 30; attempt++) {
@@ -4197,6 +4255,16 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // latch inside _setupPushListeners keeps this idempotent against the (no-op)
     // initState call above.
     unawaited(_ensureRuntimeServicesReady().then((_) => _setupPushListeners()));
+    unawaited(
+      _ensureRuntimeServicesReady().then(
+        (_) => publishIosReceiverBootstrapIdentityWhenReady(
+          currentPeerId: () => widget.p2pService.currentState.peerId,
+          peerIds: widget.p2pService.stateStream.map((state) => state.peerId),
+          loadMlKemPublicKey: () async =>
+              (await widget.repository.loadIdentity())?.mlKemPublicKey,
+        ),
+      ),
+    );
     // 191 (Fix D2): a THIRD arm point rides Firebase first-success readiness —
     // the only event that flips Firebase.apps non-empty. If the
     // _ensureRuntimeServicesReady re-arm above fires while Firebase.apps is

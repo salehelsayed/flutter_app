@@ -44,7 +44,7 @@ printf '%s\n' '{"status":"passed","generatedBy":"marker-only"}' \
   >"$tmp_dir/run/android_group_reaction_recipient.json"
 
 set +e
-dart run "$runner" \
+env -u MKNOON_257_STAGING_MANIFEST dart run "$runner" \
   --scenario android_group_reaction_recipient \
   --sender emulator-5554 \
   --recipient ANDROIDPHYSICAL123 \

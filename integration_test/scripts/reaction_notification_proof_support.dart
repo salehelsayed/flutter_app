@@ -5114,6 +5114,78 @@ String? extractChatSendSuccessId(String logcat) {
   return _extractFlowSuccessId(logcat, 'CHAT_MSG_SEND_SUCCESS');
 }
 
+/// One terminal `GROUP_SEND_MSG_TIMING` observation emitted by the production
+/// group-send use case.
+///
+/// The device harness uses these records as its post-tap commit barrier. A
+/// marker remaining visible in the compose editor is not proof of a send: an
+/// announcement send rejected during group recovery deliberately restores the
+/// draft with the same text.
+class GroupSendTimingObservation {
+  const GroupSendTimingObservation({
+    required this.outcome,
+    required this.expectedRecipientCount,
+    required this.inboxStored,
+    required this.inboxPending,
+  });
+
+  final String outcome;
+  final int? expectedRecipientCount;
+  final bool? inboxStored;
+  final bool? inboxPending;
+
+  bool get isCommitted => outcome == 'success' || outcome == 'success_no_peers';
+
+  bool get isRecoveryPending => outcome == 'group_recovery_pending';
+
+  bool hasRequiredInboxCustody({required int recipientCount}) =>
+      isCommitted &&
+      expectedRecipientCount == recipientCount &&
+      inboxStored == true &&
+      inboxPending == false;
+}
+
+/// Extracts ordered terminal group-send observations from raw Android logcat.
+/// Malformed and unrelated FLOW records are ignored.
+List<GroupSendTimingObservation> extractGroupSendTimingObservations(
+  String logcat,
+) {
+  final observations = <GroupSendTimingObservation>[];
+  for (final line in logcat.split('\n')) {
+    final marker = line.indexOf('[FLOW] ');
+    if (marker < 0) continue;
+    final encoded = line.substring(marker + '[FLOW] '.length).trim();
+    try {
+      final decoded = jsonDecode(encoded);
+      if (decoded is! Map<String, dynamic> ||
+          decoded['event'] != 'GROUP_SEND_MSG_TIMING') {
+        continue;
+      }
+      final details = decoded['details'];
+      if (details is! Map<String, dynamic>) continue;
+      final outcome = details['outcome'];
+      if (outcome is! String || outcome.trim().isEmpty) continue;
+      observations.add(
+        GroupSendTimingObservation(
+          outcome: outcome.trim(),
+          expectedRecipientCount: details['expectedRecipientCount'] is int
+              ? details['expectedRecipientCount'] as int
+              : null,
+          inboxStored: details['inboxStored'] is bool
+              ? details['inboxStored'] as bool
+              : null,
+          inboxPending: details['inboxPending'] is bool
+              ? details['inboxPending'] as bool
+              : null,
+        ),
+      );
+    } on FormatException {
+      continue;
+    }
+  }
+  return List<GroupSendTimingObservation>.unmodifiable(observations);
+}
+
 const Set<String> androidColdLocalNotificationOpenErrorEvents = <String>{
   'INITIAL_LOCAL_NOTIFICATION_ROUTE_ERROR',
   'NOTIFICATION_TAP_NAV_ERROR',
@@ -6036,6 +6108,27 @@ bool isGroupConversationSurface(String xml, String groupName) {
   for (final node in RegExp(r'<node\b[^>]*>').allMatches(xml)) {
     final raw = node.group(0)!;
     if (_xmlAttribute(raw, 'class') != className) continue;
+    final bounds = _nodeBounds(raw);
+    if (bounds != null) return bounds;
+  }
+  return null;
+}
+
+/// Finds a node only when both its Android class and semantic text match.
+///
+/// This is intentionally class-scoped so a message bubble containing [text]
+/// cannot be mistaken for a restored compose draft containing the same text.
+(int, int, int, int)? findNodeBoundsByClassContainingText(
+  String xml,
+  String className,
+  String text,
+) {
+  for (final node in RegExp(r'<node\b[^>]*>').allMatches(xml)) {
+    final raw = node.group(0)!;
+    if (_xmlAttribute(raw, 'class') != className) continue;
+    final nodeText = _xmlAttribute(raw, 'text');
+    final description = _xmlAttribute(raw, 'content-desc');
+    if (!nodeText.contains(text) && !description.contains(text)) continue;
     final bounds = _nodeBounds(raw);
     if (bounds != null) return bounds;
   }

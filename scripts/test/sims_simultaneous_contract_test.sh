@@ -15,23 +15,9 @@ trap 'rm -rf "$tmp_dir"' EXIT
 
 fake_bin="$tmp_dir/bin"
 activity_log="$tmp_dir/activity.log"
-real_dart="$(command -v dart)"
 real_flutter="$(command -v flutter)"
 mkdir -p "$fake_bin"
 touch "$activity_log"
-
-printf '%s\n' \
-  '#!/usr/bin/env bash' \
-  'set -euo pipefail' \
-  'target="integration_test/scripts/validate_group_reaction_notification_artifacts.dart"' \
-  'if [ "${1:-}" = "run" ] && [ "${2:-}" = "$target" ]; then' \
-  '  printf "START\tvalidator\t%s\n" "$$" >>"${SIMS_ACTIVITY_LOG:?}"' \
-  '  sleep 0.2' \
-  '  printf "END\tvalidator\t%s\n" "$$" >>"${SIMS_ACTIVITY_LOG:?}"' \
-  '  exit "${SIMS_FAKE_VALIDATOR_STATUS:-0}"' \
-  'fi' \
-  'exec "${REAL_DART:?}" "$@"' \
-  >"$fake_bin/dart"
 
 printf '%s\n' \
   '#!/usr/bin/env bash' \
@@ -48,9 +34,8 @@ printf '%s\n' \
   'exec "${REAL_FLUTTER:?}" "$@"' \
   >"$fake_bin/flutter"
 
-chmod +x "$fake_bin/dart" "$fake_bin/flutter"
+chmod +x "$fake_bin/flutter"
 export PATH="$fake_bin:$PATH"
-export REAL_DART="$real_dart"
 export REAL_FLUTTER="$real_flutter"
 export SIMS_ACTIVITY_LOG="$activity_log"
 
@@ -80,49 +65,34 @@ if grep -Fq 'Batch execution shape:' <<<"$performance_plan"; then
   fail 'performance-host was incorrectly converted to a concurrent batch'
 fi
 
-# Reliability scheduling is fail-closed: shared devices/build outputs remain
-# serial, while the only current read-only post-capture validator class may run
-# concurrently after every producer has completed.
+# Legacy reliability scheduling is fail-closed. Artifact-only validators are
+# support owned by their captures and no longer appear as executable rows. All
+# legacy rows serialize; typed overlap belongs to the sims manifest scheduler.
 reliability_plan="$({
   SIMS_MAX_PARALLEL=2 ./scripts/run_reliability_simulations.sh \
     group --simultaneous --list
 })"
 grep -Fq \
-  'Simultaneous policy: shared device/build rows serialize; post-capture validators run after producers with max 2.' \
+  'Simultaneous policy: legacy reliability rows serialize; typed resource-aware overlap is owned by the sims manifest scheduler (compatibility max 2).' \
   <<<"$reliability_plan" ||
   fail 'reliability plan omitted the fail-closed simultaneous policy'
 grep -Fq '[resource: exclusive-shared-device-build]' <<<"$reliability_plan" ||
   fail 'reliability plan did not mark shared device/build work exclusive'
-grep -Fq '[resource: post-capture-validator]' <<<"$reliability_plan" ||
-  fail 'reliability plan did not identify its read-only validator class'
-
-# The current catalog has one standalone read-only validator. It is dispatched
-# through the post-capture pool; the pool becomes observably concurrent as soon
-# as another explicitly allowlisted independent validator is registered.
-: >"$activity_log"
-validator_output="$({
-  SIMS_MAX_PARALLEL=2 ./scripts/run_reliability_simulations.sh \
-    group --simultaneous \
-    --only integration_test/scripts/validate_group_reaction_notification_artifacts.dart
-})"
-grep -Fq 'Schedule: 0 exclusive row(s), then 1 post-capture validator row(s) with max 2 concurrent.' \
-  <<<"$validator_output" ||
-  fail 'standalone validator was not dispatched through the bounded pool'
-[ "$(awk '$1 == "START" { count++ } END { print count + 0 }' "$activity_log")" -eq 1 ] ||
-  fail 'standalone validator did not execute exactly once'
-[ "$(awk '$1 == "END" { count++ } END { print count + 0 }' "$activity_log")" -eq 1 ] ||
-  fail 'standalone validator did not complete exactly once'
+if grep -Fq '[resource: post-capture-validator]' <<<"$reliability_plan"; then
+  fail 'legacy plan retained a path-based post-capture validator allowlist'
+fi
 
 set +e
-SIMS_FAKE_VALIDATOR_STATUS=7 SIMS_MAX_PARALLEL=2 \
-  ./scripts/run_reliability_simulations.sh \
-    group --simultaneous \
-    --only integration_test/scripts/validate_group_reaction_notification_artifacts.dart \
-    >/dev/null 2>&1
-validator_failure_status=$?
+support_output="$({
+  ./scripts/run_reliability_simulations.sh group --simultaneous --list \
+    --only integration_test/scripts/validate_group_reaction_notification_artifacts.dart
+} 2>&1)"
+support_status=$?
 set -e
-[ "$validator_failure_status" -eq 7 ] ||
-  fail "parallel validator failure exited with $validator_failure_status instead of 7"
+[ "$support_status" -ne 0 ] ||
+  fail 'capture-owned support validator remained executable in the legacy plan'
+grep -Fq 'No runnable reliability simulation commands matched' <<<"$support_output" ||
+  fail 'removed support validator did not fail with the expected selection error'
 
 # Four rows sharing one Flutter device/build resource stay strictly serial.
 : >"$activity_log"

@@ -1,6 +1,7 @@
 import CryptoKit
 import Darwin
 import Foundation
+import os.log
 import Security
 import UserNotifications
 
@@ -163,7 +164,50 @@ func sanitizeNotificationContentForUnresolvedExpiry(
   }
 }
 
+func nsePublicProofPayload(
+  event: String,
+  details: [String: String]
+) -> String? {
+  let publicDetails: [String: String]
+  switch event {
+  case "PUSH_NSE_ENVELOPE_STAGED":
+    if let success = details["success"],
+       success == "true" || success == "false" {
+      publicDetails = ["success": success]
+    } else {
+      publicDetails = ["success": "unknown"]
+    }
+  case "PUSH_NSE_CONTENT_HANDOFF":
+    if let authorized = details["authorized"],
+       authorized == "true" || authorized == "false" {
+      publicDetails = ["authorized": authorized]
+    } else {
+      publicDetails = ["authorized": "unknown"]
+    }
+  case "PUSH_NSE_DECRYPT_OK", "PUSH_NSE_DECRYPT_FAIL", "PUSH_NSE_TIMEOUT":
+    publicDetails = [:]
+  default:
+    return nil
+  }
+  let payload: [String: Any] = [
+    "event": event,
+    "details": publicDetails,
+  ]
+  guard let data = try? JSONSerialization.data(
+    withJSONObject: payload,
+    options: [.sortedKeys]
+  ) else {
+    return nil
+  }
+  return String(data: data, encoding: .utf8)
+}
+
 final class LogPushPreviewEventEmitter: PushPreviewEventEmitting {
+  private static let proofLog = OSLog(
+    subsystem: "com.mknoon.app.NotificationService",
+    category: "nse-proof"
+  )
+
   func emit(event: String, details: [String: String]) {
     let payload: [String: Any] = [
       "event": event,
@@ -175,6 +219,14 @@ final class LogPushPreviewEventEmitter: PushPreviewEventEmitting {
     ),
       let json = String(data: data, encoding: .utf8) else {
       return
+    }
+    if let publicProof = nsePublicProofPayload(event: event, details: details) {
+      os_log(
+        "[FLOW_PROOF] %{public}@",
+        log: Self.proofLog,
+        type: .info,
+        publicProof
+      )
     }
     NSLog("[FLOW] %@", json)
   }

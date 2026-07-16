@@ -707,6 +707,18 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
           afterMessageId: afterMessageId,
           afterAttachmentId: afterAttachmentId,
         ),
+    dbBeginMediaDownload: (id, {required String ownerLane}) =>
+        dbBeginMediaDownload(db, id, ownerLane: ownerLane),
+    dbCommitMediaDownloadLocalPath:
+        (id, {required String ownerLane, required String localPath}) =>
+            dbCommitMediaDownloadLocalPath(
+              db,
+              id,
+              ownerLane: ownerLane,
+              localPath: localPath,
+            ),
+    dbSaveGroupMediaAttachmentGuarded: (row, {required String groupId}) =>
+        dbSaveGroupMediaAttachmentGuarded(db, row, groupId: groupId),
     secureKeyStore: secureKeyStore,
   );
   final reactionRepo = ReactionRepositoryImpl(

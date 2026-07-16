@@ -6,6 +6,76 @@ import '../../integration_test/scripts/group_multi_party_runtime_config.dart';
 import '../../integration_test/scripts/run_group_multi_party_device_real.dart';
 
 void main() {
+  group('disposable simulator authorization', () {
+    const a = '11111111-1111-1111-1111-111111111111';
+    const b = '22222222-2222-2222-2222-222222222222';
+    const c = '33333333-3333-3333-3333-333333333333';
+    const d = '44444444-4444-4444-4444-444444444444';
+
+    test('requires an exact allowlist before any iOS simulator mutation', () {
+      expect(
+        groupMultiPartySimulatorTargetsAreDisposable(
+          const <String>[a, b, c, d],
+          environment: const <String, String>{
+            'SIMS_IOS_DISPOSABLE_SIMULATOR_IDS': '$d,$c,$b,$a',
+          },
+        ),
+        isTrue,
+      );
+      expect(
+        groupMultiPartySimulatorTargetsAreDisposable(const <String>[
+          a,
+          b,
+          c,
+          d,
+        ], environment: const <String, String>{}),
+        isFalse,
+      );
+      expect(
+        groupMultiPartySimulatorTargetsAreDisposable(
+          const <String>[a, b, c, d],
+          environment: const <String, String>{
+            'SIMS_IOS_DISPOSABLE_SIMULATOR_IDS': '$a,$b,$c',
+          },
+        ),
+        isFalse,
+      );
+    });
+
+    test('does not require destructive authorization for non-iOS targets', () {
+      expect(
+        groupMultiPartySimulatorTargetsAreDisposable(const <String>[
+          'android-physical',
+          'emulator-5554',
+        ], environment: const <String, String>{}),
+        isTrue,
+      );
+    });
+  });
+
+  group('resolveGroupMultiPartyIosRunnerAppPath', () {
+    test('uses the centrally prepared sims artifact when supplied', () {
+      expect(
+        resolveGroupMultiPartyIosRunnerAppPath(
+          environment: const <String, String>{
+            groupMultiPartySimsArtifactEnvironmentKey:
+                '/tmp/sims-cache/Runner.app',
+          },
+        ),
+        '/tmp/sims-cache/Runner.app',
+      );
+    });
+
+    test('preserves the legacy Flutter build output by default', () {
+      expect(
+        resolveGroupMultiPartyIosRunnerAppPath(
+          environment: const <String, String>{},
+        ),
+        'build/ios/iphonesimulator/Runner.app',
+      );
+    });
+  });
+
   group('buildHarnessLaunchSpec', () {
     test('keeps per-run runtime values out of flutter dart-defines', () {
       final spec = buildHarnessLaunchSpec(

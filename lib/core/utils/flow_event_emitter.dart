@@ -39,6 +39,15 @@ void debugSetFlowEventSink(FlowEventSink? sink) {
   _flowEventTestSink = sink;
 }
 
+/// Installs the sanitized flow-event observer used by debug E2E campaigns.
+///
+/// Callers must bound the capture window and clear the sink in `finally`.
+/// The sink receives the already-sanitized payload and therefore cannot expose
+/// message plaintext, peer identities, tokens, addresses, or key material.
+void setE2EFlowEventSink(FlowEventSink? sink) {
+  _flowEventTestSink = sink;
+}
+
 Map<String, dynamic> sanitizeFlowEventDetails(Map<String, dynamic> details) {
   return details.map(
     (key, value) => MapEntry(key, _sanitizeDiagnosticValue(key, value)),

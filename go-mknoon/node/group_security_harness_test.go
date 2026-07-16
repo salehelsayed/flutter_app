@@ -146,7 +146,7 @@ func connectLocalGroupNodes(t *testing.T, dialer, target *Node) {
 	for i, addr := range targetAddrs {
 		addrStrs[i] = addr.String()
 	}
-	if err := dialer.DialPeer(target.PeerId(), addrStrs); err != nil {
+	if err := dialer.DialPeerWithTimeout(target.PeerId(), addrStrs, 5000); err != nil {
 		t.Fatalf("DialPeer %s->%s: %v", dialer.PeerId(), target.PeerId(), err)
 	}
 

@@ -550,7 +550,6 @@ void main() {
 
   test('harness dry-run is provider, relay, device, and secret free', () async {
     final result = await Process.run('dart', <String>[
-      'run',
       'integration_test/scripts/capture_android_push_relay_registration.dart',
       '--dry-run',
     ]);

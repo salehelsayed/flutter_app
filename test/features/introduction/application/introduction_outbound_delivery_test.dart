@@ -64,12 +64,34 @@ void main() {
     expect(p2pService.storeInInboxCallCount, 0);
   });
 
-  test('unacked live send keeps a retryable sent outbox delivery', () async {
+  test('unacked live send falls through to inbox custody', () async {
     p2pService.sendMessageWithReplyResult = const SendMessageResult(
       sent: true,
       acked: false,
       transport: 'relay',
     );
+
+    await deliverIntroductionPayloadReliably(
+      introRepo: introRepo,
+      p2pService: p2pService,
+      bridge: bridge,
+      senderPeerId: 'peer-A',
+      targetPeerId: 'peer-B',
+      targetMlKemPublicKey: null,
+      payload: payload,
+    );
+
+    expect(introRepo.allOutboxDeliveries(), isEmpty);
+    expect(p2pService.storeInInboxCallCount, 1);
+  });
+
+  test('unacked live send stays retryable when inbox custody fails', () async {
+    p2pService.sendMessageWithReplyResult = const SendMessageResult(
+      sent: true,
+      acked: false,
+      transport: 'relay',
+    );
+    p2pService.storeInInboxResult = false;
 
     await deliverIntroductionPayloadReliably(
       introRepo: introRepo,
@@ -89,7 +111,7 @@ void main() {
     );
     expect(deliveries.single.deliveryPath, 'relay');
     expect(deliveries.single.rawEnvelope, isNotEmpty);
-    expect(p2pService.storeInInboxCallCount, 0);
+    expect(p2pService.storeInInboxCallCount, 1);
   });
 
   test(
@@ -100,6 +122,9 @@ void main() {
         acked: false,
         transport: 'relay',
       );
+      // Keep both rows available for envelope inspection. The ordinary
+      // unacknowledged path now attempts inbox custody and deletes on success.
+      p2pService.storeInInboxResult = false;
 
       await deliverIntroductionPayloadReliably(
         introRepo: introRepo,
@@ -255,6 +280,49 @@ void main() {
       expect(delivered, 1);
       expect(introRepo.allOutboxDeliveries(), isEmpty);
       expect(p2pService.storeInInboxCallCount, 1);
+    },
+  );
+
+  test(
+    'retryPendingIntroductionDeliveries can bypass the sent-row age gate',
+    () async {
+      final recent = DateTime.now()
+          .toUtc()
+          .subtract(const Duration(seconds: 1))
+          .toIso8601String();
+      await introRepo.saveOutboxDelivery(
+        IntroductionOutboxDelivery(
+          deliveryId: 'delivery-recent',
+          introductionId: 'intro-1',
+          action: 'accept',
+          targetPeerId: 'peer-B',
+          senderPeerId: 'peer-A',
+          rawEnvelope: payload.toJson(),
+          deliveryStatus: IntroductionOutboxDeliveryStatus.sent,
+          deliveryPath: IntroductionOutboxDeliveryPath.relay,
+          createdAt: recent,
+          updatedAt: recent,
+        ),
+      );
+
+      expect(
+        await retryPendingIntroductionDeliveries(
+          introRepo: introRepo,
+          p2pService: p2pService,
+        ),
+        0,
+      );
+      expect(introRepo.allOutboxDeliveries(), hasLength(1));
+
+      expect(
+        await retryPendingIntroductionDeliveries(
+          introRepo: introRepo,
+          p2pService: p2pService,
+          olderThan: Duration.zero,
+        ),
+        1,
+      );
+      expect(introRepo.allOutboxDeliveries(), isEmpty);
     },
   );
 
@@ -447,18 +515,10 @@ class _RelayProbeFakeP2PService extends FakeP2PService {
 
   _RelayProbeFakeP2PService({
     super.initialState,
-    super.startNodeResult,
-    super.stopNodeResult,
-    super.sendMessageResult,
     super.sendMessageWithReplyResult,
     super.discoverPeerResult,
     super.dialPeerResult,
     super.storeInInboxResult,
-    super.retrieveInboxResult,
-    super.registerPushTokenResult,
-    super.throwOnHealthCheck,
-    super.throwOnDrainInbox,
-    super.recoveryMethod,
     required this.relayProbeResult,
   });
 

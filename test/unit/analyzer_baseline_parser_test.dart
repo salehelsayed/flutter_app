@@ -40,6 +40,29 @@ warning • Unused import: 'package:flutter/widgets.dart' • lib/example.dart:4
       expect(snapshot.counts.values.single, 2);
     });
 
+    test('deduplicates exact analyzer notification replays', () {
+      final parsed = parseAnalyzerOutput('''
+warning • Unused import: 'package:flutter/widgets.dart' • lib/example.dart:3:8 • unused_import
+warning • Unused import: 'package:flutter/widgets.dart' • lib/example.dart:3:8 • unused_import
+''');
+
+      expect(parsed.findings, hasLength(1));
+      expect(snapshotWarningInfoFindings(parsed.findings).total, 1);
+    });
+
+    test('keeps findings with the same location but different rules', () {
+      final parsed = parseAnalyzerOutput('''
+warning • Example finding • lib/example.dart:3:8 • first_rule
+warning • Example finding • lib/example.dart:3:8 • second_rule
+''');
+
+      expect(parsed.findings, hasLength(2));
+      expect(
+        parsed.findings.map((finding) => finding.rule),
+        containsAll(<String>['first_rule', 'second_rule']),
+      );
+    });
+
     test('fails comparison when current warning count exceeds baseline', () {
       final baseline = readBaselineTsv('''
 1\twarning\tunused_import\tlib/example.dart\tUnused import: 'package:flutter/widgets.dart'

@@ -11,6 +11,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 )
 
+const sendMessageRecoverySetupDialTimeoutMs = 10000
+
 func TestSendMessage_RetriesChatStreamOpenAfterSelfHeal(t *testing.T) {
 	nodeA := NewNode()
 	_, err := nodeA.Start(NodeConfig{
@@ -39,7 +41,7 @@ func TestSendMessage_RetriesChatStreamOpenAfterSelfHeal(t *testing.T) {
 		nodeBAddrStrs = append(nodeBAddrStrs, addr.String())
 	}
 
-	if err := nodeA.DialPeer(stateB.PeerId, nodeBAddrStrs); err != nil {
+	if err := nodeA.DialPeerWithTimeout(stateB.PeerId, nodeBAddrStrs, sendMessageRecoverySetupDialTimeoutMs); err != nil {
 		t.Fatalf("DialPeer: %v", err)
 	}
 
@@ -118,7 +120,7 @@ func TestSendMessage_RetriesNoAddressesOpenErrorAfterSelfHeal(t *testing.T) {
 		nodeBAddrStrs = append(nodeBAddrStrs, addr.String())
 	}
 
-	if err := nodeA.DialPeer(stateB.PeerId, nodeBAddrStrs); err != nil {
+	if err := nodeA.DialPeerWithTimeout(stateB.PeerId, nodeBAddrStrs, sendMessageRecoverySetupDialTimeoutMs); err != nil {
 		t.Fatalf("DialPeer: %v", err)
 	}
 
@@ -195,7 +197,7 @@ func TestSendMessage_ReturnsUnackedWhenReceiverDoesNotConfirmDirectChat(t *testi
 		nodeBAddrStrs = append(nodeBAddrStrs, addr.String())
 	}
 
-	if err := nodeA.DialPeer(stateB.PeerId, nodeBAddrStrs); err != nil {
+	if err := nodeA.DialPeerWithTimeout(stateB.PeerId, nodeBAddrStrs, sendMessageRecoverySetupDialTimeoutMs); err != nil {
 		t.Fatalf("DialPeer: %v", err)
 	}
 
@@ -247,7 +249,7 @@ func TestSendMessage_DoesNotSelfHealNonRetryableOpenErrors(t *testing.T) {
 		nodeBAddrStrs = append(nodeBAddrStrs, addr.String())
 	}
 
-	if err := nodeA.DialPeer(stateB.PeerId, nodeBAddrStrs); err != nil {
+	if err := nodeA.DialPeerWithTimeout(stateB.PeerId, nodeBAddrStrs, sendMessageRecoverySetupDialTimeoutMs); err != nil {
 		t.Fatalf("DialPeer: %v", err)
 	}
 
@@ -297,7 +299,7 @@ func TestSendMessage_OpensChatStreamsWithAllowLimitedConnAndDialTimeout(t *testi
 		nodeBAddrStrs = append(nodeBAddrStrs, addr.String())
 	}
 
-	if err := nodeA.DialPeer(stateB.PeerId, nodeBAddrStrs); err != nil {
+	if err := nodeA.DialPeerWithTimeout(stateB.PeerId, nodeBAddrStrs, sendMessageRecoverySetupDialTimeoutMs); err != nil {
 		t.Fatalf("DialPeer: %v", err)
 	}
 
@@ -356,7 +358,7 @@ func TestSendMessageWithTimeout_OpensChatStreamsWithAllowLimitedConnAndDialTimeo
 		nodeBAddrStrs = append(nodeBAddrStrs, addr.String())
 	}
 
-	if err := nodeA.DialPeer(stateB.PeerId, nodeBAddrStrs); err != nil {
+	if err := nodeA.DialPeerWithTimeout(stateB.PeerId, nodeBAddrStrs, sendMessageRecoverySetupDialTimeoutMs); err != nil {
 		t.Fatalf("DialPeer: %v", err)
 	}
 

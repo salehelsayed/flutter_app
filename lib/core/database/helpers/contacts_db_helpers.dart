@@ -136,6 +136,61 @@ Future<void> dbDeleteContact(Database db, String peerId) async {
   }
 }
 
+/// Private SIMS-only primitive: insert one disposable contact without ever
+/// replacing a row that appeared before or during the transaction.
+Future<bool> dbSimsInsertContactIfAbsent(
+  Database db,
+  Map<String, Object?> row,
+) => db.transaction<bool>((txn) async {
+  final peerId = row['peer_id'];
+  if (peerId is! String || peerId.isEmpty) return false;
+  final existing = await txn.query(
+    'contacts',
+    columns: const <String>['peer_id'],
+    where: 'peer_id = ?',
+    whereArgs: <Object?>[peerId],
+    limit: 1,
+  );
+  if (existing.isNotEmpty) return false;
+  await txn.insert('contacts', row, conflictAlgorithm: ConflictAlgorithm.abort);
+  return true;
+});
+
+/// Private SIMS-only primitive: remove one row only when every fixture-owned
+/// column still has the expected value. An absent or changed row is untouched.
+Future<bool> dbSimsDeleteContactIfExact(
+  Database db,
+  Map<String, Object?> expected,
+) => db.transaction<bool>((txn) async {
+  final peerId = expected['peer_id'];
+  if (peerId is! String || peerId.isEmpty) return false;
+  final rows = await txn.query(
+    'contacts',
+    where: 'peer_id = ?',
+    whereArgs: <Object?>[peerId],
+    limit: 1,
+  );
+  if (rows.length != 1 || !_simsContactRowsMatchExact(rows.single, expected)) {
+    return false;
+  }
+  return await txn.delete(
+        'contacts',
+        where: 'peer_id = ?',
+        whereArgs: <Object?>[peerId],
+      ) ==
+      1;
+});
+
+bool _simsContactRowsMatchExact(
+  Map<String, Object?> actual,
+  Map<String, Object?> expected,
+) {
+  for (final entry in expected.entries) {
+    if (actual[entry.key] != entry.value) return false;
+  }
+  return true;
+}
+
 /// Returns the count of contacts.
 Future<int> dbGetContactCount(Database db) async {
   try {

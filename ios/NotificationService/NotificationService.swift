@@ -37,7 +37,13 @@ final class NotificationService: UNNotificationServiceExtension {
       resolvedPreview = nil
     }
 
-    pushEnvelopeStore?.stage(userInfo: mutableContent.userInfo)
+    let envelopeStaged = pushEnvelopeStore?.stage(
+      userInfo: mutableContent.userInfo
+    ) ?? false
+    previewEventEmitter.emit(
+      event: "PUSH_NSE_ENVELOPE_STAGED",
+      details: ["success": envelopeStaged ? "true" : "false"]
+    )
 
     let preview = previewResolver.resolve(
       userInfo: mutableContent.userInfo,
@@ -109,6 +115,10 @@ final class NotificationService: UNNotificationServiceExtension {
         recentRemoteShownMarkerStore?.mark(userInfo: mutableContent.userInfo)
       }
     }
+    previewEventEmitter.emit(
+      event: "PUSH_NSE_CONTENT_HANDOFF",
+      details: ["authorized": didApplyPreview ? "true" : "false"]
+    )
     handler(content)
     let toneReservation = preview?.toneReservation
     if didApplyPreview && preview?.markAsShown == true {

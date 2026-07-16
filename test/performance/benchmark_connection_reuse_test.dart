@@ -50,22 +50,23 @@ void main() {
         harness.filterEvents(firstEvents, 'CHAT_MSG_SEND_TIMING'),
       );
 
-      // Simulate connection established via currentState.connections
-      alice.p2pService.testConnections.add(p2p.ConnectionState(
-        peerId: bob.peerId,
-        multiaddrs: ['/p2p-circuit/p2p/relay'],
-        direction: 'outbound',
-        status: 'connected',
-      ));
+      // Simulate a reusable non-circuit connection. Circuit-only connections
+      // intentionally enter the ranked transport race.
+      alice.p2pService.testConnections.add(
+        p2p.ConnectionState(
+          peerId: bob.peerId,
+          multiaddrs: ['/ip4/10.0.0.2/tcp/4001'],
+          direction: 'outbound',
+          status: 'connected',
+        ),
+      );
 
       // Send 9 more: warm (connected)
       for (var i = 2; i <= 10; i++) {
         final events = await harness.captureFlowEvents(() async {
           await alice.sendMessage(bob.peerId, 'Message $i');
         });
-        allTimings.addAll(
-          harness.filterEvents(events, 'CHAT_MSG_SEND_TIMING'),
-        );
+        allTimings.addAll(harness.filterEvents(events, 'CHAT_MSG_SEND_TIMING'));
       }
 
       expect(allTimings, hasLength(10));
@@ -85,100 +86,107 @@ void main() {
       print('[BENCHMARK] connection_reuse_hit_rate = $hitRate%');
     });
 
-    test('J2: Resume scenario — cold → warm → disconnect → cold → warm',
-        () async {
-      final alice = TestUser.create(
-        peerId: 'alice-peer',
-        username: 'Alice',
-        network: network,
-        bridge: TimingTestBridge(
-          commandDelays: {'peer:dial': const Duration(milliseconds: 200)},
-        ),
-      );
-      final bob = TestUser.create(
-        peerId: 'bob-peer',
-        username: 'Bob',
-        network: network,
-      );
-      alice.addContact(bob);
-      bob.addContact(alice);
-      alice.start();
-      bob.start();
-
-      final allTimings = <Map<String, dynamic>>[];
-
-      // Phase 1: cold send
-      var events = await harness.captureFlowEvents(() async {
-        await alice.sendMessage(bob.peerId, 'P1-cold');
-      });
-      allTimings
-          .addAll(harness.filterEvents(events, 'CHAT_MSG_SEND_TIMING'));
-
-      // Connect, 2 warm sends
-      alice.p2pService.testConnections.add(p2p.ConnectionState(
-        peerId: bob.peerId,
-        multiaddrs: ['/p2p-circuit/p2p/relay'],
-        direction: 'outbound',
-        status: 'connected',
-      ));
-      for (var i = 0; i < 2; i++) {
-        events = await harness.captureFlowEvents(() async {
-          await alice.sendMessage(bob.peerId, 'P1-warm-$i');
-        });
-        allTimings
-            .addAll(harness.filterEvents(events, 'CHAT_MSG_SEND_TIMING'));
-      }
-
-      // Phase 2: disconnect
-      alice.p2pService.testConnections.clear();
-
-      // Cold send after disconnect
-      events = await harness.captureFlowEvents(() async {
-        await alice.sendMessage(bob.peerId, 'P2-cold');
-      });
-      allTimings
-          .addAll(harness.filterEvents(events, 'CHAT_MSG_SEND_TIMING'));
-
-      // Reconnect, 2 warm sends
-      alice.p2pService.testConnections.add(p2p.ConnectionState(
-        peerId: bob.peerId,
-        multiaddrs: ['/p2p-circuit/p2p/relay'],
-        direction: 'outbound',
-        status: 'connected',
-      ));
-      for (var i = 0; i < 2; i++) {
-        events = await harness.captureFlowEvents(() async {
-          await alice.sendMessage(bob.peerId, 'P2-warm-$i');
-        });
-        allTimings
-            .addAll(harness.filterEvents(events, 'CHAT_MSG_SEND_TIMING'));
-      }
-
-      expect(allTimings, hasLength(6));
-
-      // Cold sends: events[0] and events[3]
-      expect(
-        (allTimings[0]['details'] as Map<String, dynamic>)['connectionReused'],
-        isFalse,
-      );
-      expect(
-        (allTimings[3]['details'] as Map<String, dynamic>)['connectionReused'],
-        isFalse,
-      );
-      // Warm sends: events[1,2,4,5]
-      for (final idx in [1, 2, 4, 5]) {
-        expect(
-          (allTimings[idx]['details']
-              as Map<String, dynamic>)['connectionReused'],
-          isTrue,
+    test(
+      'J2: Resume scenario — cold → warm → disconnect → cold → warm',
+      () async {
+        final alice = TestUser.create(
+          peerId: 'alice-peer',
+          username: 'Alice',
+          network: network,
+          bridge: TimingTestBridge(
+            commandDelays: {'peer:dial': const Duration(milliseconds: 200)},
+          ),
         );
-      }
+        final bob = TestUser.create(
+          peerId: 'bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        alice.addContact(bob);
+        bob.addContact(alice);
+        alice.start();
+        bob.start();
 
-      final hitRate =
-          (4 / 6 * 100).round(); // 4 warm out of 6 total = 67%
-      // ignore: avoid_print
-      print('[BENCHMARK] connection_reuse_resume_hit_rate = $hitRate%');
-    });
+        final allTimings = <Map<String, dynamic>>[];
+
+        // Phase 1: cold send
+        var events = await harness.captureFlowEvents(() async {
+          await alice.sendMessage(bob.peerId, 'P1-cold');
+        });
+        allTimings.addAll(harness.filterEvents(events, 'CHAT_MSG_SEND_TIMING'));
+
+        // Connect directly, then issue 2 warm sends.
+        alice.p2pService.testConnections.add(
+          p2p.ConnectionState(
+            peerId: bob.peerId,
+            multiaddrs: ['/ip4/10.0.0.2/tcp/4001'],
+            direction: 'outbound',
+            status: 'connected',
+          ),
+        );
+        for (var i = 0; i < 2; i++) {
+          events = await harness.captureFlowEvents(() async {
+            await alice.sendMessage(bob.peerId, 'P1-warm-$i');
+          });
+          allTimings.addAll(
+            harness.filterEvents(events, 'CHAT_MSG_SEND_TIMING'),
+          );
+        }
+
+        // Phase 2: disconnect
+        alice.p2pService.testConnections.clear();
+
+        // Cold send after disconnect
+        events = await harness.captureFlowEvents(() async {
+          await alice.sendMessage(bob.peerId, 'P2-cold');
+        });
+        allTimings.addAll(harness.filterEvents(events, 'CHAT_MSG_SEND_TIMING'));
+
+        // Reconnect directly, then issue 2 warm sends.
+        alice.p2pService.testConnections.add(
+          p2p.ConnectionState(
+            peerId: bob.peerId,
+            multiaddrs: ['/ip4/10.0.0.2/tcp/4001'],
+            direction: 'outbound',
+            status: 'connected',
+          ),
+        );
+        for (var i = 0; i < 2; i++) {
+          events = await harness.captureFlowEvents(() async {
+            await alice.sendMessage(bob.peerId, 'P2-warm-$i');
+          });
+          allTimings.addAll(
+            harness.filterEvents(events, 'CHAT_MSG_SEND_TIMING'),
+          );
+        }
+
+        expect(allTimings, hasLength(6));
+
+        // Cold sends: events[0] and events[3]
+        expect(
+          (allTimings[0]['details']
+              as Map<String, dynamic>)['connectionReused'],
+          isFalse,
+        );
+        expect(
+          (allTimings[3]['details']
+              as Map<String, dynamic>)['connectionReused'],
+          isFalse,
+        );
+        // Warm sends: events[1,2,4,5]
+        for (final idx in [1, 2, 4, 5]) {
+          expect(
+            (allTimings[idx]['details']
+                as Map<String, dynamic>)['connectionReused'],
+            isTrue,
+          );
+        }
+
+        final hitRate = (4 / 6 * 100).round(); // 4 warm out of 6 total = 67%
+        // ignore: avoid_print
+        print('[BENCHMARK] connection_reuse_resume_hit_rate = $hitRate%');
+      },
+    );
 
     test('J3: Latency comparison — reused vs cold', () async {
       final bridge = TimingTestBridge(
@@ -209,8 +217,7 @@ void main() {
         final events = await harness.captureFlowEvents(() async {
           await alice.sendMessage(bob.peerId, 'Cold-$i');
         });
-        final timing =
-            harness.filterEvents(events, 'CHAT_MSG_SEND_TIMING');
+        final timing = harness.filterEvents(events, 'CHAT_MSG_SEND_TIMING');
         if (timing.isNotEmpty) {
           coldTimings.add(
             (timing.first['details'] as Map<String, dynamic>)['elapsedMs']
@@ -219,19 +226,20 @@ void main() {
         }
       }
 
-      // 5 warm sends (keep connection)
-      alice.p2pService.testConnections.add(p2p.ConnectionState(
-        peerId: bob.peerId,
-        multiaddrs: ['/p2p-circuit/p2p/relay'],
-        direction: 'outbound',
-        status: 'connected',
-      ));
+      // 5 warm sends over a reusable non-circuit connection.
+      alice.p2pService.testConnections.add(
+        p2p.ConnectionState(
+          peerId: bob.peerId,
+          multiaddrs: ['/ip4/10.0.0.2/tcp/4001'],
+          direction: 'outbound',
+          status: 'connected',
+        ),
+      );
       for (var i = 0; i < 5; i++) {
         final events = await harness.captureFlowEvents(() async {
           await alice.sendMessage(bob.peerId, 'Warm-$i');
         });
-        final timing =
-            harness.filterEvents(events, 'CHAT_MSG_SEND_TIMING');
+        final timing = harness.filterEvents(events, 'CHAT_MSG_SEND_TIMING');
         if (timing.isNotEmpty) {
           warmTimings.add(
             (timing.first['details'] as Map<String, dynamic>)['elapsedMs']
@@ -253,11 +261,15 @@ void main() {
       );
 
       // ignore: avoid_print
-      print('[BENCHMARK] reuse_cold_send_ms p50=${coldP50}ms '
-          '(n=${coldTimings.length})');
+      print(
+        '[BENCHMARK] reuse_cold_send_ms p50=${coldP50}ms '
+        '(n=${coldTimings.length})',
+      );
       // ignore: avoid_print
-      print('[BENCHMARK] reuse_warm_send_ms p50=${warmP50}ms '
-          '(n=${warmTimings.length})');
+      print(
+        '[BENCHMARK] reuse_warm_send_ms p50=${warmP50}ms '
+        '(n=${warmTimings.length})',
+      );
     });
   });
 }

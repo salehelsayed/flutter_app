@@ -1,5 +1,7 @@
 const groupMultiPartyRuntimeConfigFileName =
     'group_multi_party_runtime_config.json';
+const groupMultiPartySimsArtifactEnvironmentKey =
+    'SIMS_ARTIFACT_IOS_SIMULATOR_E2E';
 const groupMultiPartyRuntimeConfigStagingMechanism = 'documents-file';
 
 const groupMultiPartySharedDirKey = 'E2E_SHARED_DIR';

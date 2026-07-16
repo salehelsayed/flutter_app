@@ -11,6 +11,7 @@ continue_on_failure=0
 start_at=1
 only_selector=""
 batch_flutter=0
+dart_only=0
 flutter_concurrency=""
 flutter_reporter=""
 
@@ -201,6 +202,9 @@ Options:
   --list, --dry-run          Discover host tests and print the command plan only.
   --batch-flutter            Run the selected Dart paths in one exact-path
                              Flutter invocation; Go legs remain separate.
+  --dart-only                Omit non-Dart plan items. For host-all this removes
+                             the eight Go tails so a composed gate can run its
+                             full Go lane exactly once.
   --concurrency <N>          Flutter batch process count from 1 through 64
                              (default: 1).
                              Requires --batch-flutter.
@@ -260,6 +264,10 @@ while (($# > 0)); do
       batch_flutter=1
       shift
       ;;
+    --dart-only)
+      dart_only=1
+      shift
+      ;;
     --concurrency)
       if (($# < 2)); then
         printf 'Missing value for --concurrency.\n' >&2
@@ -315,6 +323,17 @@ while (($# > 0)); do
   esac
 done
 
+if [ "$dart_only" -eq 1 ]; then
+  case "$scope" in
+    host-all|feature-host-all|core-host-all|performance-host|move-feature)
+      ;;
+    *)
+      printf 'Dart-only mode is not supported for host scope: %s\n' "$scope" >&2
+      exit 2
+      ;;
+  esac
+fi
+
 if [ "$batch_flutter" -ne 1 ] && {
   [ -n "$flutter_concurrency" ] || [ -n "$flutter_reporter" ];
 }; then
@@ -356,14 +375,16 @@ case "$scope" in
   host-all)
     {
       rg --files test -g '*_test.dart' | awk '$0 !~ /^test\/performance\//' | sort
-      printf '%s\n' "$GO_BRIDGE_CONNECTED_PEER_TEST"
-      printf '%s\n' "$GO_NODE_KEYROTATION_TEST"
-      printf '%s\n' "$GO_NODE_ADDR_VISIBILITY_TEST"
-      printf '%s\n' "$GO_NODE_FEATUREFLAGS_TEST"
-      printf '%s\n' "$GO_BRIDGE_FEATUREFLAGS_TEST"
-      printf '%s\n' "$GO_NODE_WAKETOKEN_TEST"
-      printf '%s\n' "$GO_NODE_LIBP2P_REFACTOR_TEST"
-      printf '%s\n' "$GO_BRIDGE_ENTRYPOINT_REFACTOR_TEST"
+      if [ "$dart_only" -ne 1 ]; then
+        printf '%s\n' "$GO_BRIDGE_CONNECTED_PEER_TEST"
+        printf '%s\n' "$GO_NODE_KEYROTATION_TEST"
+        printf '%s\n' "$GO_NODE_ADDR_VISIBILITY_TEST"
+        printf '%s\n' "$GO_NODE_FEATUREFLAGS_TEST"
+        printf '%s\n' "$GO_BRIDGE_FEATUREFLAGS_TEST"
+        printf '%s\n' "$GO_NODE_WAKETOKEN_TEST"
+        printf '%s\n' "$GO_NODE_LIBP2P_REFACTOR_TEST"
+        printf '%s\n' "$GO_BRIDGE_ENTRYPOINT_REFACTOR_TEST"
+      fi
     } >"$plan_file"
     ;;
   feature-host-all)
@@ -372,7 +393,9 @@ case "$scope" in
   core-host-all)
     {
       rg --files test/core -g '*_test.dart'
-      printf '%s\n' "$ANDROID_RENDERER_MANIFEST_CONTRACT"
+      if [ "$dart_only" -ne 1 ]; then
+        printf '%s\n' "$ANDROID_RENDERER_MANIFEST_CONTRACT"
+      fi
     } | sort -u >"$plan_file"
     ;;
   performance-host)
@@ -557,6 +580,9 @@ if [ "$batch_flutter" -eq 1 ]; then
   printf '\nHost test planned-item inventory: %s\n' "$scope"
 else
   printf '\nHost test command plan: %s\n' "$scope"
+fi
+if [ "$dart_only" -eq 1 ]; then
+  printf 'Dart-only plan: non-Dart items omitted.\n'
 fi
 if [ "$start_at" -ne 1 ]; then
   printf 'Resume filter: starting at planned item #%s\n' "$start_at"

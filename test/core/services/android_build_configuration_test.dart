@@ -52,25 +52,55 @@ void main() {
       // All library subprojects must compile Kotlin with JVM target 11
       // to match the app module — prevents JVM-target mismatch errors.
       expect(rootBuild, contains('JavaVersion.VERSION_11'));
-      expect(rootBuild, contains('sourceCompatibility = JavaVersion.VERSION_11'));
-      expect(rootBuild, contains('targetCompatibility = JavaVersion.VERSION_11'));
+      expect(
+        rootBuild,
+        contains('sourceCompatibility = JavaVersion.VERSION_11'),
+      );
+      expect(
+        rootBuild,
+        contains('targetCompatibility = JavaVersion.VERSION_11'),
+      );
       // Should NOT fall back to 1.8 (old default that caused mismatches)
       expect(rootBuild, isNot(contains('VERSION_1_8')));
     });
 
-    test('root build.gradle uses afterEvaluate to override plugin JVM targets',
-        () {
-      final rootBuild = File('android/build.gradle.kts').readAsStringSync();
+    test(
+      'root build.gradle uses afterEvaluate to override plugin JVM targets',
+      () {
+        final rootBuild = File('android/build.gradle.kts').readAsStringSync();
 
-      // afterEvaluate ensures our JVM-11 override wins over plugins that
-      // hardcode JVM 1.8 in their own build.gradle (e.g. bonsoir_android).
-      expect(rootBuild, contains('afterEvaluate'));
+        // afterEvaluate ensures our JVM-11 override wins over plugins that
+        // hardcode JVM 1.8 in their own build.gradle (e.g. bonsoir_android).
+        expect(rootBuild, contains('afterEvaluate'));
+      },
+    );
+
+    test('Sims arm64 filtering is explicit and debug-build scoped', () {
+      final appBuild = File('android/app/build.gradle.kts').readAsStringSync();
+      final orchestrator = File(
+        'tool/sims/build_orchestrator.dart',
+      ).readAsStringSync();
+
+      expect(appBuild, contains('gradleProperty("simsAndroidAbi")'));
+      expect(
+        appBuild,
+        contains('simsAndroidAbi must be exactly arm64-v8a when supplied.'),
+      );
+      expect(appBuild, contains('getByName("debug")'));
+      expect(appBuild, contains('abiFilters.clear()'));
+      expect(appBuild, contains('abiFilters.add(abi)'));
+      expect(
+        orchestrator,
+        contains('--android-project-arg=simsAndroidAbi=arm64-v8a'),
+      );
+      expect(orchestrator, isNot(contains('--split-per-abi')));
     });
 
     test('Android and iOS use the same application identifier', () {
       final appBuild = File('android/app/build.gradle.kts').readAsStringSync();
-      final pbxproj =
-          File('ios/Runner.xcodeproj/project.pbxproj').readAsStringSync();
+      final pbxproj = File(
+        'ios/Runner.xcodeproj/project.pbxproj',
+      ).readAsStringSync();
 
       // Extract Android applicationId default
       expect(appBuild, contains('"com.mknoon.app"'));
@@ -80,13 +110,15 @@ void main() {
     });
 
     test('iOS app group and share extension follow naming convention', () {
-      final runnerEntitlements =
-          File('ios/Runner/Runner.entitlements').readAsStringSync();
-      final shareEntitlements =
-          File('ios/Share Extension/Share Extension.entitlements')
-              .readAsStringSync();
-      final pbxproj =
-          File('ios/Runner.xcodeproj/project.pbxproj').readAsStringSync();
+      final runnerEntitlements = File(
+        'ios/Runner/Runner.entitlements',
+      ).readAsStringSync();
+      final shareEntitlements = File(
+        'ios/Share Extension/Share Extension.entitlements',
+      ).readAsStringSync();
+      final pbxproj = File(
+        'ios/Runner.xcodeproj/project.pbxproj',
+      ).readAsStringSync();
 
       expect(runnerEntitlements, contains('group.com.mknoon.app.share'));
       expect(shareEntitlements, contains('group.com.mknoon.app.share'));

@@ -1,68 +1,62 @@
 # Flutter analyzer warning/info baseline
-# Generated: 2026-05-29T21:14:31.036002Z
+# Generated: 2026-07-15T00:39:42.324897Z
 # Command: flutter analyze --no-fatal-infos --no-fatal-warnings
-# Total warning/info findings: 1624
+# Total warning/info findings: 1609
 # Columns: count	severity	rule	path	message
 1	info	annotate_overrides	integration_test/conversation_wired_subscription_performance_harness.dart	The member 'messageChanges' overrides an inherited member but isn't annotated with '@override'
 1	info	annotate_overrides	test/features/p2p/presentation/widgets/connection_status_indicator_test.dart	The member 'dispose' overrides an inherited member but isn't annotated with '@override'
-46	info	avoid_print	integration_test/background_reconnect_test.dart	Don't invoke 'print' in production code
-18	info	avoid_print	integration_test/benchmark_1_1_send_harness.dart	Don't invoke 'print' in production code
+1	info	avoid_print	integration_test/_support/cli_peer_fixture.dart	Don't invoke 'print' in production code
+2	info	avoid_print	integration_test/_support/node_readiness.dart	Don't invoke 'print' in production code
+44	info	avoid_print	integration_test/background_reconnect_test.dart	Don't invoke 'print' in production code
+17	info	avoid_print	integration_test/benchmark_1_1_send_harness.dart	Don't invoke 'print' in production code
 6	info	avoid_print	integration_test/benchmark_ack_harness.dart	Don't invoke 'print' in production code
 30	info	avoid_print	integration_test/benchmark_background_resume_harness.dart	Don't invoke 'print' in production code
 12	info	avoid_print	integration_test/benchmark_bridge_crossing_harness.dart	Don't invoke 'print' in production code
 5	info	avoid_print	integration_test/benchmark_connection_reuse_harness.dart	Don't invoke 'print' in production code
 12	info	avoid_print	integration_test/benchmark_encryption_harness.dart	Don't invoke 'print' in production code
 7	info	avoid_print	integration_test/benchmark_event_queue_harness.dart	Don't invoke 'print' in production code
-11	info	avoid_print	integration_test/benchmark_group_publish_harness.dart	Don't invoke 'print' in production code
-4	info	avoid_print	integration_test/benchmark_helpers.dart	Don't invoke 'print' in production code
+6	info	avoid_print	integration_test/benchmark_group_publish_harness.dart	Don't invoke 'print' in production code
+2	info	avoid_print	integration_test/benchmark_helpers.dart	Don't invoke 'print' in production code
 11	info	avoid_print	integration_test/benchmark_inbox_harness.dart	Don't invoke 'print' in production code
 20	info	avoid_print	integration_test/benchmark_media_harness.dart	Don't invoke 'print' in production code
 17	info	avoid_print	integration_test/benchmark_node_startup_harness.dart	Don't invoke 'print' in production code
 8	info	avoid_print	integration_test/benchmark_notification_tap_harness.dart	Don't invoke 'print' in production code
 29	info	avoid_print	integration_test/benchmark_relay_recovery_harness.dart	Don't invoke 'print' in production code
-63	info	avoid_print	integration_test/benchmark_routing_paths_harness.dart	Don't invoke 'print' in production code
+62	info	avoid_print	integration_test/benchmark_routing_paths_harness.dart	Don't invoke 'print' in production code
 27	info	avoid_print	integration_test/benchmark_time_to_online_harness.dart	Don't invoke 'print' in production code
 18	info	avoid_print	integration_test/benchmark_timeout_accuracy_harness.dart	Don't invoke 'print' in production code
 5	info	avoid_print	integration_test/benchmark_voice_harness.dart	Don't invoke 'print' in production code
 21	info	avoid_print	integration_test/conversation_bridge_test.dart	Don't invoke 'print' in production code
-4	info	avoid_print	integration_test/foreground_group_push_simulator_alice_harness.dart	Don't invoke 'print' in production code
-4	info	avoid_print	integration_test/foreground_group_push_simulator_bob_harness.dart	Don't invoke 'print' in production code
-22	info	avoid_print	integration_test/group_smoke_alice_harness.dart	Don't invoke 'print' in production code
-33	info	avoid_print	integration_test/group_smoke_bob_harness.dart	Don't invoke 'print' in production code
-18	info	avoid_print	integration_test/notification_open_during_other_chat_alice_harness.dart	Don't invoke 'print' in production code
-8	info	avoid_print	integration_test/notification_open_during_other_chat_bob_harness.dart	Don't invoke 'print' in production code
-14	info	avoid_print	integration_test/notification_sound_smoke_alice_harness.dart	Don't invoke 'print' in production code
-18	info	avoid_print	integration_test/notification_sound_smoke_bob_harness.dart	Don't invoke 'print' in production code
-30	info	avoid_print	integration_test/routing_smoke_alice_harness.dart	Don't invoke 'print' in production code
-54	info	avoid_print	integration_test/routing_smoke_bob_harness.dart	Don't invoke 'print' in production code
+6	info	avoid_print	integration_test/foreground_group_push_simulator_harness.dart	Don't invoke 'print' in production code
+53	info	avoid_print	integration_test/group_smoke_harness.dart	Don't invoke 'print' in production code
+27	info	avoid_print	integration_test/notification_open_during_other_chat_harness.dart	Don't invoke 'print' in production code
+33	info	avoid_print	integration_test/notification_sound_smoke_harness.dart	Don't invoke 'print' in production code
+81	info	avoid_print	integration_test/routing_smoke_harness.dart	Don't invoke 'print' in production code
 36	info	avoid_print	integration_test/scripts/run_benchmark_suite.dart	Don't invoke 'print' in production code
 3	info	avoid_print	integration_test/scripts/run_group_publish_benchmark.dart	Don't invoke 'print' in production code
 11	info	avoid_print	integration_test/scripts/run_routing_smoke_e2e.dart	Don't invoke 'print' in production code
 10	info	avoid_print	integration_test/setup_device.dart	Don't invoke 'print' in production code
-27	info	avoid_print	integration_test/smoke_test.dart	Don't invoke 'print' in production code
-1	info	avoid_print	integration_test/soak_e2e_test.dart	Don't invoke 'print' in production code
-30	info	avoid_print	integration_test/transport_census_harness.dart	Don't invoke 'print' in production code
-158	info	avoid_print	integration_test/transport_e2e_test.dart	Don't invoke 'print' in production code
+29	info	avoid_print	integration_test/smoke_test.dart	Don't invoke 'print' in production code
+169	info	avoid_print	integration_test/transport_e2e_test.dart	Don't invoke 'print' in production code
 1	info	avoid_print	integration_test/voice_message_e2e_test.dart	Don't invoke 'print' in production code
-48	info	avoid_print	integration_test/wifi_relay_fallback_smoke_test.dart	Don't invoke 'print' in production code
+47	info	avoid_print	integration_test/wifi_relay_fallback_smoke_test.dart	Don't invoke 'print' in production code
 58	info	avoid_print	integration_test/wifi_transport_test.dart	Don't invoke 'print' in production code
 35	info	avoid_print	lib/smoke_test_main.dart	Don't invoke 'print' in production code
 31	info	avoid_print	lib/smoke_test_messages.dart	Don't invoke 'print' in production code
 44	info	avoid_print	lib/smoke_test_restore.dart	Don't invoke 'print' in production code
 1	info	constant_identifier_names	lib/core/constants/network_constants.dart	The constant name 'RENDEZVOUS_ADDRESS' isn't a lowerCamelCase identifier
-1	info	curly_braces_in_flow_control_structures	integration_test/routing_smoke_alice_harness.dart	Statements in an if should be enclosed in a block
+8	info	constant_identifier_names	test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart	The constant name '__' isn't a lowerCamelCase identifier
+1	info	constant_identifier_names	test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart	The constant name '__2' isn't a lowerCamelCase identifier
+1	info	constant_identifier_names	test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart	The constant name '__3' isn't a lowerCamelCase identifier
+1	info	curly_braces_in_flow_control_structures	integration_test/routing_smoke_harness.dart	Statements in an if should be enclosed in a block
 2	info	curly_braces_in_flow_control_structures	integration_test/scripts/run_transport_e2e.dart	Statements in an if should be enclosed in a block
 3	info	curly_braces_in_flow_control_structures	integration_test/setup_device.dart	Statements in an if should be enclosed in a block
 2	info	curly_braces_in_flow_control_structures	integration_test/transport_e2e_test.dart	Statements in an if should be enclosed in a block
 3	info	curly_braces_in_flow_control_structures	lib/features/p2p/domain/models/node_state.dart	Statements in an if should be enclosed in a block
 1	info	curly_braces_in_flow_control_structures	test/features/feed/presentation/widgets/nav_bar_button_test.dart	Statements in an if should be enclosed in a block
-1	info	dangling_library_doc_comments	integration_test/group_delete_preserves_friends_simulator_test.dart	Dangling library doc comment
-1	info	dangling_library_doc_comments	integration_test/group_smoke_alice_harness.dart	Dangling library doc comment
-1	info	dangling_library_doc_comments	integration_test/group_smoke_bob_harness.dart	Dangling library doc comment
-1	info	dangling_library_doc_comments	integration_test/notification_sound_smoke_alice_harness.dart	Dangling library doc comment
-1	info	dangling_library_doc_comments	integration_test/notification_sound_smoke_bob_harness.dart	Dangling library doc comment
-1	info	dangling_library_doc_comments	integration_test/routing_smoke_alice_harness.dart	Dangling library doc comment
-1	info	dangling_library_doc_comments	integration_test/routing_smoke_bob_harness.dart	Dangling library doc comment
+1	info	dangling_library_doc_comments	integration_test/benchmark_connection_reuse_harness.dart	Dangling library doc comment
+1	info	dangling_library_doc_comments	integration_test/group_smoke_harness.dart	Dangling library doc comment
+1	info	dangling_library_doc_comments	integration_test/routing_smoke_harness.dart	Dangling library doc comment
 1	info	dangling_library_doc_comments	integration_test/setup_device.dart	Dangling library doc comment
 1	info	dangling_library_doc_comments	lib/core/constants/network_constants.dart	Dangling library doc comment
 1	info	dangling_library_doc_comments	lib/smoke_test_main.dart	Dangling library doc comment
@@ -72,14 +66,17 @@
 1	info	dangling_library_doc_comments	test/core/resilience/network_failover_test.dart	Dangling library doc comment
 1	info	dangling_library_doc_comments	test/features/contact_request/integration/contact_request_flow_test.dart	Dangling library doc comment
 1	info	dangling_library_doc_comments	test/features/conversation/integration/emoji_reaction_exchange_test.dart	Dangling library doc comment
-1	info	dangling_library_doc_comments	test/features/conversation/integration/offline_inbox_roundtrip_test.dart	Dangling library doc comment
 1	info	dangling_library_doc_comments	test/features/conversation/integration/quote_reply_thread_test.dart	Dangling library doc comment
+1	info	dangling_library_doc_comments	test/features/conversation/integration/reaction_roundtrip_test.dart	Dangling library doc comment
 1	info	dangling_library_doc_comments	test/features/conversation/integration/two_user_message_exchange_test.dart	Dangling library doc comment
 1	info	dangling_library_doc_comments	test/features/conversation/integration/voice_message_exchange_test.dart	Dangling library doc comment
 1	info	dangling_library_doc_comments	test/features/groups/integration/group_delete_preserves_friends_and_dms_test.dart	Dangling library doc comment
 1	info	dangling_library_doc_comments	test/features/identity/presentation/screens/startup_router_test.dart	Dangling library doc comment
 1	info	dangling_library_doc_comments	test/features/settings/integration/profile_picture_flow_test.dart	Dangling library doc comment
 1	info	dangling_library_doc_comments	test/integration/notification_tap_smoke_test.dart	Dangling library doc comment
+1	info	depend_on_referenced_packages	lib/features/account_migration/application/migration_database_import_staging.dart	The imported package 'sqflite_common' isn't a dependency of the importing package
+1	info	depend_on_referenced_packages	lib/features/account_migration/application/migration_database_import_validator.dart	The imported package 'sqflite_common' isn't a dependency of the importing package
+1	info	depend_on_referenced_packages	lib/features/account_migration/application/migration_database_schema_inventory.dart	The imported package 'sqflite_common' isn't a dependency of the importing package
 1	info	depend_on_referenced_packages	test/core/media/media_file_manager_test.dart	The imported package 'path_provider_platform_interface' isn't a dependency of the importing package
 1	info	depend_on_referenced_packages	test/core/media/media_file_manager_test.dart	The imported package 'plugin_platform_interface' isn't a dependency of the importing package
 1	info	depend_on_referenced_packages	test/features/groups/application/group_avatar_storage_test.dart	The imported package 'path_provider_platform_interface' isn't a dependency of the importing package
@@ -96,7 +93,6 @@
 4	info	deprecated_member_use	lib/features/groups/presentation/screens/group_conversation_screen.dart	'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss
 1	info	deprecated_member_use	lib/features/groups/presentation/screens/group_info_screen.dart	'activeColor' is deprecated and shouldn't be used. Use activeThumbColor or activeTrackColor instead. This feature was deprecated after v3.31.0-2.0.pre
 12	info	deprecated_member_use	lib/features/groups/presentation/screens/group_info_screen.dart	'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss
-3	info	deprecated_member_use	lib/features/groups/presentation/widgets/expandable_fab.dart	'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss
 6	info	deprecated_member_use	lib/features/groups/presentation/widgets/group_compose_area.dart	'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss
 2	info	deprecated_member_use	lib/features/groups/presentation/widgets/group_dissolved_badge.dart	'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss
 4	info	deprecated_member_use	lib/features/groups/presentation/widgets/group_member_row.dart	'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss
@@ -104,8 +100,6 @@
 1	info	deprecated_member_use	lib/features/groups/presentation/widgets/pending_group_invite_card.dart	'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss
 1	info	deprecated_member_use	lib/features/identity/presentation/screens/identity_progress_screen.dart	'WillPopScope' is deprecated and shouldn't be used. Use PopScope instead. The Android predictive back feature will not work with WillPopScope. This feature was deprecated after v3.12.0-1.0.pre
 3	info	deprecated_member_use	lib/features/posts/presentation/widgets/post_card.dart	'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss
-2	info	deprecated_member_use	lib/features/settings/presentation/widgets/settings_introduction_debug_card.dart	'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss
-11	info	deprecated_member_use	test/features/settings/presentation/widgets/background_choice_control_test.dart	'hasFlag' is deprecated and shouldn't be used. Use flagsCollection instead. This feature was deprecated after v3.32.0-0.0.pre
 2	info	empty_catches	integration_test/benchmark_timeout_accuracy_harness.dart	Empty catch block
 1	info	file_names	lib/core/database/migrations/001_identity_table.dart	The file name '001_identity_table.dart' isn't a lower_case_with_underscores identifier
 1	info	file_names	lib/core/database/migrations/002_messages_table.dart	The file name '002_messages_table.dart' isn't a lower_case_with_underscores identifier
@@ -176,6 +170,17 @@
 1	info	file_names	lib/core/database/migrations/067_group_invite_delivery_attempts.dart	The file name '067_group_invite_delivery_attempts.dart' isn't a lower_case_with_underscores identifier
 1	info	file_names	lib/core/database/migrations/068_removed_group_member_snapshots.dart	The file name '068_removed_group_member_snapshots.dart' isn't a lower_case_with_underscores identifier
 1	info	file_names	lib/core/database/migrations/071_pending_introduction_response_transport_sender.dart	The file name '071_pending_introduction_response_transport_sender.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	lib/core/database/migrations/073_group_message_last_send_attempt_at.dart	The file name '073_group_message_last_send_attempt_at.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	lib/core/database/migrations/074_group_message_logical_delivery_id.dart	The file name '074_group_message_logical_delivery_id.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	lib/core/database/migrations/075_contacts_ml_kem_key_updated_ts.dart	The file name '075_contacts_ml_kem_key_updated_ts.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	lib/core/database/migrations/076_post_media_attachment_crypto_columns.dart	The file name '076_post_media_attachment_crypto_columns.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	lib/core/database/migrations/077_message_relay_custody.dart	The file name '077_message_relay_custody.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	lib/core/database/migrations/078_group_pending_key_distributions.dart	The file name '078_group_pending_key_distributions.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	lib/core/database/migrations/079_message_dedup_key.dart	The file name '079_message_dedup_key.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	lib/core/database/migrations/080_group_pending_key_repairs_status_index.dart	The file name '080_group_pending_key_repairs_status_index.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	lib/core/database/migrations/084_group_member_device_snapshots.dart	The file name '084_group_member_device_snapshots.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	lib/core/database/migrations/085_pending_sibling_devices.dart	The file name '085_pending_sibling_devices.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	lib/core/database/migrations/095_intro_review_seen.dart	The file name '095_intro_review_seen.dart' isn't a lower_case_with_underscores identifier
 1	info	file_names	test/core/database/migrations/001_identity_table_test.dart	The file name '001_identity_table_test.dart' isn't a lower_case_with_underscores identifier
 1	info	file_names	test/core/database/migrations/002_messages_table_test.dart	The file name '002_messages_table_test.dart' isn't a lower_case_with_underscores identifier
 1	info	file_names	test/core/database/migrations/003_mlkem_keys_test.dart	The file name '003_mlkem_keys_test.dart' isn't a lower_case_with_underscores identifier
@@ -231,11 +236,21 @@
 1	info	file_names	test/core/database/migrations/066_group_sync_receipts_test.dart	The file name '066_group_sync_receipts_test.dart' isn't a lower_case_with_underscores identifier
 1	info	file_names	test/core/database/migrations/067_group_invite_delivery_attempts_test.dart	The file name '067_group_invite_delivery_attempts_test.dart' isn't a lower_case_with_underscores identifier
 1	info	file_names	test/core/database/migrations/071_pending_introduction_response_transport_sender_test.dart	The file name '071_pending_introduction_response_transport_sender_test.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	test/core/database/migrations/073_group_message_last_send_attempt_at_test.dart	The file name '073_group_message_last_send_attempt_at_test.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	test/core/database/migrations/074_group_message_logical_delivery_id_test.dart	The file name '074_group_message_logical_delivery_id_test.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	test/core/database/migrations/076_post_media_attachment_crypto_columns_test.dart	The file name '076_post_media_attachment_crypto_columns_test.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	test/core/database/migrations/077_message_relay_custody_test.dart	The file name '077_message_relay_custody_test.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	test/core/database/migrations/078_group_pending_key_distributions_test.dart	The file name '078_group_pending_key_distributions_test.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	test/core/database/migrations/079_message_dedup_key_test.dart	The file name '079_message_dedup_key_test.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	test/core/database/migrations/080_group_pending_key_repairs_status_index_test.dart	The file name '080_group_pending_key_repairs_status_index_test.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	test/core/database/migrations/081_group_pending_reactions_test.dart	The file name '081_group_pending_reactions_test.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	test/core/database/migrations/082_message_reaction_tombstone_test.dart	The file name '082_message_reaction_tombstone_test.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	test/core/database/migrations/089_media_attachment_download_retry_column_test.dart	The file name '089_media_attachment_download_retry_column_test.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	test/core/database/migrations/092_feed_cleared_threads_test.dart	The file name '092_feed_cleared_threads_test.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	test/core/database/migrations/095_intro_review_seen_test.dart	The file name '095_intro_review_seen_test.dart' isn't a lower_case_with_underscores identifier
+1	info	file_names	test/core/database/migrations/096_media_library_state_test.dart	The file name '096_media_library_state_test.dart' isn't a lower_case_with_underscores identifier
 1	info	library_private_types_in_public_api	integration_test/scripts/run_transport_e2e.dart	Invalid use of a private type in a public API
-1	info	no_leading_underscores_for_local_identifiers	integration_test/scripts/run_routing_smoke_e2e.dart	The local variable '_gReadJson' starts with an underscore
-1	info	no_leading_underscores_for_local_identifiers	integration_test/scripts/run_routing_smoke_e2e.dart	The local variable '_gWaitForSignal' starts with an underscore
-1	info	no_leading_underscores_for_local_identifiers	integration_test/scripts/run_routing_smoke_e2e.dart	The local variable '_gWriteSignal' starts with an underscore
-1	info	no_leading_underscores_for_local_identifiers	integration_test/scripts/run_routing_smoke_e2e.dart	The local variable '_gsig' starts with an underscore
+1	info	no_leading_underscores_for_local_identifiers	test/core/bridge/p2p_bridge_client_wake_attach_test.dart	The local variable '_storePayload' starts with an underscore
 1	info	no_leading_underscores_for_local_identifiers	test/core/local_discovery/local_media_integration_test.dart	The local variable '_createTestFile' starts with an underscore
 1	info	no_leading_underscores_for_local_identifiers	test/core/local_discovery/local_media_sender_test.dart	The local variable '_connectWs' starts with an underscore
 1	info	no_leading_underscores_for_local_identifiers	test/core/local_discovery/local_media_sender_test.dart	The local variable '_createTestFile' starts with an underscore
@@ -250,57 +265,43 @@
 1	info	no_leading_underscores_for_local_identifiers	test/core/local_discovery/local_media_server_test.dart	The local variable '_sha256OfFile' starts with an underscore
 1	info	no_leading_underscores_for_local_identifiers	test/features/contact_request/application/contact_request_listener_test.dart	The local variable '_makeV2Message' starts with an underscore
 1	info	no_leading_underscores_for_local_identifiers	test/features/contact_request/application/handle_incoming_message_use_case_test.dart	The local variable '_v2Message' starts with an underscore
-1	info	no_leading_underscores_for_local_identifiers	test/features/contacts/domain/repositories/contact_repository_impl_test.dart	The local variable '_makeContact' starts with an underscore
+1	info	no_leading_underscores_for_local_identifiers	test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart	The local variable '__2' starts with an underscore
+1	info	no_leading_underscores_for_local_identifiers	test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart	The local variable '__3' starts with an underscore
 3	info	no_leading_underscores_for_local_identifiers	test/features/feed/domain/models/feed_item_test.dart	The local variable '_msg' starts with an underscore
 2	info	no_leading_underscores_for_local_identifiers	test/features/feed/domain/models/feed_item_test.dart	The local variable '_thread' starts with an underscore
-1	info	no_leading_underscores_for_local_identifiers	test/features/feed/integration/expanded_collapsed_card_test.dart	The local variable '_textWidget' starts with an underscore
-1	info	no_leading_underscores_for_local_identifiers	test/features/feed/presentation/widgets/message_bubble_test.dart	The local variable '_bodyRichTextWidget' starts with an underscore
-1	info	no_leading_underscores_for_local_identifiers	test/features/feed/presentation/widgets/message_bubble_test.dart	The local variable '_hasPositionedAncestor' starts with an underscore
-1	info	no_leading_underscores_for_local_identifiers	test/features/feed/presentation/widgets/message_bubble_test.dart	The local variable '_linkableTextWidget' starts with an underscore
 1	info	no_leading_underscores_for_local_identifiers	test/features/groups/integration/group_delete_preserves_friends_and_dms_test.dart	The local variable '_contactFor' starts with an underscore
 1	info	no_leading_underscores_for_local_identifiers	test/features/groups/integration/group_delete_preserves_friends_and_dms_test.dart	The local variable '_dm' starts with an underscore
 1	info	no_leading_underscores_for_local_identifiers	test/features/groups/presentation/group_card_bidi_test.dart	The local variable '_textWidget' starts with an underscore
 1	info	no_leading_underscores_for_local_identifiers	test/features/groups/presentation/group_list_screen_bidi_test.dart	The local variable '_textWidget' starts with an underscore
 1	info	no_leading_underscores_for_local_identifiers	test/features/groups/presentation/widgets/expandable_fab_test.dart	The local variable '_items' starts with an underscore
-1	info	no_leading_underscores_for_local_identifiers	test/features/introduction/application/introduction_payload_test.dart	The local variable '_makeAcceptPayload' starts with an underscore
-1	info	no_leading_underscores_for_local_identifiers	test/features/introduction/application/introduction_payload_test.dart	The local variable '_makeSendPayload' starts with an underscore
 1	info	no_leading_underscores_for_local_identifiers	test/features/introduction/application/mutual_acceptance_test.dart	The local variable '_makeContact' starts with an underscore
 1	info	no_leading_underscores_for_local_identifiers	test/features/introduction/presentation/widgets/intro_group_header_test.dart	The local variable '_textWidget' starts with an underscore
 1	info	no_leading_underscores_for_local_identifiers	test/features/orbit/presentation/widgets/friend_row_test.dart	The local variable '_textFor' starts with an underscore
 1	info	no_leading_underscores_for_local_identifiers	test/features/orbit/presentation/widgets/group_row_bidi_test.dart	The local variable '_textFor' starts with an underscore
 1	info	no_leading_underscores_for_local_identifiers	test/features/posts/phase2/comments_sheet_bidi_test.dart	The local variable '_buildSheet' starts with an underscore
+8	info	non_constant_identifier_names	test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart	The variable name '__' isn't a lowerCamelCase identifier
+1	info	non_constant_identifier_names	test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart	The variable name '__2' isn't a lowerCamelCase identifier
+1	info	non_constant_identifier_names	test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart	The variable name '__3' isn't a lowerCamelCase identifier
 7	info	overridden_fields	test/features/settings/integration/profile_picture_flow_test.dart	Field overrides a field inherited from 'Bridge'
 1	info	prefer_final_fields	integration_test/conversation_wired_subscription_performance_harness.dart	The private field _stopwatch could be 'final'
-1	info	prefer_function_declarations_over_variables	lib/features/conversation/presentation/screens/conversation_screen.dart	Use a function declaration rather than a variable assignment to bind a function to a name
-1	info	prefer_function_declarations_over_variables	test/features/groups/presentation/group_info_wired_test.dart	Use a function declaration rather than a variable assignment to bind a function to a name
-1	info	prefer_null_aware_operators	lib/features/groups/presentation/screens/group_list_screen.dart	Use the null-aware operator '?.' rather than an explicit 'null' comparison
+2	info	prefer_function_declarations_over_variables	test/features/groups/presentation/group_info_wired_test.dart	Use a function declaration rather than a variable assignment to bind a function to a name
+5	info	prefer_initializing_formals	lib/features/groups/domain/repositories/group_message_repository.dart	Use an initializing formal to assign a parameter to a field
 1	info	unintended_html_in_doc_comment	integration_test/benchmark_1_1_send_harness.dart	Angle brackets will be interpreted as HTML
 1	info	unintended_html_in_doc_comment	integration_test/benchmark_ack_harness.dart	Angle brackets will be interpreted as HTML
 1	info	unintended_html_in_doc_comment	integration_test/benchmark_bridge_crossing_harness.dart	Angle brackets will be interpreted as HTML
 1	info	unintended_html_in_doc_comment	integration_test/benchmark_connection_reuse_harness.dart	Angle brackets will be interpreted as HTML
-1	info	unintended_html_in_doc_comment	integration_test/benchmark_encryption_harness.dart	Angle brackets will be interpreted as HTML
-1	info	unintended_html_in_doc_comment	integration_test/benchmark_event_queue_harness.dart	Angle brackets will be interpreted as HTML
 1	info	unintended_html_in_doc_comment	integration_test/benchmark_inbox_harness.dart	Angle brackets will be interpreted as HTML
 1	info	unintended_html_in_doc_comment	integration_test/benchmark_media_harness.dart	Angle brackets will be interpreted as HTML
-1	info	unintended_html_in_doc_comment	integration_test/benchmark_node_startup_harness.dart	Angle brackets will be interpreted as HTML
 1	info	unintended_html_in_doc_comment	integration_test/benchmark_routing_paths_harness.dart	Angle brackets will be interpreted as HTML
-1	info	unintended_html_in_doc_comment	integration_test/benchmark_timeout_accuracy_harness.dart	Angle brackets will be interpreted as HTML
-1	info	unintended_html_in_doc_comment	integration_test/benchmark_voice_harness.dart	Angle brackets will be interpreted as HTML
-2	info	unintended_html_in_doc_comment	integration_test/group_smoke_alice_harness.dart	Angle brackets will be interpreted as HTML
-2	info	unintended_html_in_doc_comment	integration_test/group_smoke_bob_harness.dart	Angle brackets will be interpreted as HTML
-2	info	unintended_html_in_doc_comment	integration_test/notification_sound_smoke_alice_harness.dart	Angle brackets will be interpreted as HTML
-2	info	unintended_html_in_doc_comment	integration_test/notification_sound_smoke_bob_harness.dart	Angle brackets will be interpreted as HTML
-2	info	unintended_html_in_doc_comment	integration_test/routing_smoke_alice_harness.dart	Angle brackets will be interpreted as HTML
-2	info	unintended_html_in_doc_comment	integration_test/routing_smoke_bob_harness.dart	Angle brackets will be interpreted as HTML
+2	info	unintended_html_in_doc_comment	integration_test/group_smoke_harness.dart	Angle brackets will be interpreted as HTML
+2	info	unintended_html_in_doc_comment	integration_test/routing_smoke_harness.dart	Angle brackets will be interpreted as HTML
 3	info	unintended_html_in_doc_comment	integration_test/scripts/run_benchmark_suite.dart	Angle brackets will be interpreted as HTML
 1	info	unintended_html_in_doc_comment	integration_test/setup_device.dart	Angle brackets will be interpreted as HTML
-2	info	unintended_html_in_doc_comment	lib/core/bridge/p2p_bridge_client.dart	Angle brackets will be interpreted as HTML
+3	info	unintended_html_in_doc_comment	lib/core/bridge/p2p_bridge_client.dart	Angle brackets will be interpreted as HTML
 4	info	unintended_html_in_doc_comment	lib/core/local_discovery/local_media_server.dart	Angle brackets will be interpreted as HTML
-1	info	unintended_html_in_doc_comment	lib/core/local_discovery/local_ws_server.dart	Angle brackets will be interpreted as HTML
 2	info	unintended_html_in_doc_comment	test/features/groups/application/drain_lock_window_test.dart	Angle brackets will be interpreted as HTML
 1	info	unnecessary_brace_in_string_interps	integration_test/benchmark_media_harness.dart	Unnecessary braces in a string interpolation
-1	info	unnecessary_brace_in_string_interps	lib/core/services/p2p_service_impl.dart	Unnecessary braces in a string interpolation
-1	info	unnecessary_import	integration_test/background_reconnect_test.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
+1	info	unnecessary_import	integration_test/apns_provider_probe_harness.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
 1	info	unnecessary_import	integration_test/benchmark_notification_tap_harness.dart	The import of 'package:flutter/foundation.dart' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart'
 1	info	unnecessary_import	integration_test/bidi_text_smoke_test.dart	The import of 'dart:ui' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart'
 1	info	unnecessary_import	integration_test/foreground_group_push_drain_test.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
@@ -313,25 +314,24 @@
 1	info	unnecessary_import	test/core/bridge/bridge_contact_request_crypto_test.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
 1	info	unnecessary_import	test/core/inbox/inbox_round_trip_test.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
 1	info	unnecessary_import	test/core/lifecycle/connectivity_lifecycle_test.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
+1	info	unnecessary_import	test/core/lifecycle/handle_app_resumed_warm_peer_test.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
 1	info	unnecessary_import	test/core/local_discovery/local_media_integration_test.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
 1	info	unnecessary_import	test/core/local_discovery/local_media_server_test.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
 1	info	unnecessary_import	test/core/local_discovery/local_p2p_service_test.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
-1	info	unnecessary_import	test/core/local_discovery/local_ws_server_test.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
 1	info	unnecessary_import	test/core/resilience/c4_partial_drain_test.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
 1	info	unnecessary_import	test/core/resilience/soak_test.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
+1	info	unnecessary_import	test/core/services/active_peer_keepalive_use_case_test.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
 1	info	unnecessary_import	test/core/services/contact_request_listener_test.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
 1	info	unnecessary_import	test/core/services/p2p_service_addresses_updated_test.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
+1	info	unnecessary_import	test/core/services/p2p_service_dcutr_flag_test.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
+1	info	unnecessary_import	test/core/services/p2p_service_impl_wake_attach_test.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
 1	info	unnecessary_import	test/features/contact_request/application/recover_intro_contact_request_use_case_test.dart	The import of 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart'
 1	info	unnecessary_import	test/features/conversation/application/send_chat_message_use_case_test.dart	The import of 'dart:ui' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/foundation.dart'
-1	info	unnecessary_import	test/features/conversation/integration/offline_inbox_roundtrip_test.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
 1	info	unnecessary_import	test/features/conversation/presentation/widgets/compose_area_test.dart	The import of 'dart:ui' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart'
-1	info	unnecessary_import	test/features/feed/integration/expanded_collapsed_card_test.dart	The import of 'dart:ui' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart'
-1	info	unnecessary_import	test/features/feed/presentation/widgets/expanded_compose_input_test.dart	The import of 'dart:ui' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart'
-1	info	unnecessary_import	test/features/feed/presentation/widgets/inline_reply_input_test.dart	The import of 'dart:ui' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart'
-1	info	unnecessary_import	test/features/feed/presentation/widgets/open_mode_card_body_test.dart	The import of 'dart:ui' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart'
 1	info	unnecessary_import	test/features/feed/presentation/widgets/quote_preview_bar_test.dart	The import of 'dart:ui' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart'
 1	info	unnecessary_import	test/features/groups/integration/group_multi_device_convergence_test.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
 1	info	unnecessary_import	test/features/introduction/presentation/screens/friend_picker_wired_test.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
+1	info	unnecessary_import	test/features/p2p/inbox_custody_verify_test.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
 1	info	unnecessary_import	test/features/p2p/presentation/widgets/connection_status_indicator_test.dart	The import of 'package:flutter/foundation.dart' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart'
 1	info	unnecessary_import	test/features/posts/improvement/post_pass_engagement_baseline_integration_test.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
 1	info	unnecessary_import	test/features/posts/improvement/post_pass_shared_thread_integration_test.dart	The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
@@ -345,60 +345,58 @@
 1	info	unnecessary_underscores	lib/features/groups/presentation/widgets/group_reaction_details_sheet.dart	Unnecessary use of multiple underscores
 1	info	unnecessary_underscores	lib/features/posts/presentation/widgets/pass_post_along_sheet.dart	Unnecessary use of multiple underscores
 2	info	unnecessary_underscores	test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart	Unnecessary use of multiple underscores
-15	info	unnecessary_underscores	test/features/feed/presentation/screens/feed_screen_test.dart	Unnecessary use of multiple underscores
+3	info	unnecessary_underscores	test/features/conversation/domain/repositories/message_repository_impl_stuck_sending_test.dart	Unnecessary use of multiple underscores
 6	info	unnecessary_underscores	test/features/introduction/domain/repositories/introduction_repository_impl_test.dart	Unnecessary use of multiple underscores
-1	info	use_build_context_synchronously	integration_test/settings_background_choice_smoke_test.dart	Don't use 'BuildContext's across async gaps
-1	info	use_build_context_synchronously	lib/features/conversation/presentation/screens/conversation_wired.dart	Don't use 'BuildContext's across async gaps
-1	info	use_build_context_synchronously	lib/features/feed/presentation/screens/feed_wired.dart	Don't use 'BuildContext's across async gaps
-2	info	use_build_context_synchronously	lib/features/groups/presentation/screens/group_conversation_screen.dart	Don't use 'BuildContext's across async gaps
-4	info	use_build_context_synchronously	lib/features/groups/presentation/screens/group_conversation_wired.dart	Don't use 'BuildContext's across async gaps
-4	info	use_build_context_synchronously	lib/features/groups/presentation/screens/group_info_wired.dart	Don't use 'BuildContext's across async gaps
-3	info	use_build_context_synchronously	lib/features/identity/presentation/screens/identity_choice_wired.dart	Don't use 'BuildContext's across async gaps
+3	info	use_build_context_synchronously	lib/features/groups/presentation/screens/group_info_wired.dart	Don't use 'BuildContext's across async gaps
 1	info	use_build_context_synchronously	lib/features/posts/presentation/widgets/pass_post_along_sheet.dart	Don't use 'BuildContext's across async gaps, guarded by an unrelated 'mounted' check
 1	info	use_null_aware_elements	integration_test/group_recovery_e2e_test.dart	Use the null-aware marker '?' rather than a null check via an 'if'
-4	info	use_null_aware_elements	integration_test/routing_smoke_alice_harness.dart	Use the null-aware marker '?' rather than a null check via an 'if'
+4	info	use_null_aware_elements	integration_test/routing_smoke_harness.dart	Use the null-aware marker '?' rather than a null check via an 'if'
 2	info	use_null_aware_elements	integration_test/scripts/run_benchmark_suite.dart	Use the null-aware marker '?' rather than a null check via an 'if'
 1	info	use_null_aware_elements	integration_test/scripts/run_transport_e2e.dart	Use the null-aware marker '?' rather than a null check via an 'if'
 1	info	use_null_aware_elements	integration_test/scripts/run_wifi_relay_fallback_smoke.dart	Use the null-aware marker '?' rather than a null check via an 'if'
 1	info	use_null_aware_elements	integration_test/transport_e2e_test.dart	Use the null-aware marker '?' rather than a null check via an 'if'
 1	info	use_null_aware_elements	integration_test/wifi_relay_fallback_smoke_test.dart	Use the null-aware marker '?' rather than a null check via an 'if'
-17	info	use_null_aware_elements	lib/core/bridge/p2p_bridge_client.dart	Use the null-aware marker '?' rather than a null check via an 'if'
-3	info	use_null_aware_elements	lib/core/local_discovery/local_media_sender.dart	Use the null-aware marker '?' rather than a null check via an 'if'
-1	info	use_null_aware_elements	lib/core/local_discovery/local_ws_server.dart	Use the null-aware marker '?' rather than a null check via an 'if'
-4	info	use_null_aware_elements	lib/core/services/p2p_service_impl.dart	Use the null-aware marker '?' rather than a null check via an 'if'
-1	info	use_null_aware_elements	lib/features/conversation/application/upload_media_use_case.dart	Use the null-aware marker '?' rather than a null check via an 'if'
+21	info	use_null_aware_elements	lib/core/bridge/p2p_bridge_client.dart	Use the null-aware marker '?' rather than a null check via an 'if'
+1	info	use_null_aware_elements	lib/core/local_discovery/local_media_sender.dart	Use the null-aware marker '?' rather than a null check via an 'if'
+3	info	use_null_aware_elements	lib/core/local_discovery/local_ws_server.dart	Use the null-aware marker '?' rather than a null check via an 'if'
+1	info	use_null_aware_elements	lib/features/account_migration/application/migration_file_manifest_builder.dart	Use the null-aware marker '?' rather than a null check via an 'if'
+1	info	use_null_aware_elements	lib/features/contact_request/application/key_exchange_retrier.dart	Use the null-aware marker '?' rather than a null check via an 'if'
+2	info	use_null_aware_elements	lib/features/conversation/application/upload_media_use_case.dart	Use the null-aware marker '?' rather than a null check via an 'if'
+4	info	use_null_aware_elements	lib/features/feed/application/group_feed_media_verification.dart	Use the null-aware marker '?' rather than a null check via an 'if'
+1	info	use_null_aware_elements	lib/features/posts/application/pending_post_delivery_retrier.dart	Use the null-aware marker '?' rather than a null check via an 'if'
+1	info	use_null_aware_elements	lib/features/posts/application/pending_post_follow_on_retrier.dart	Use the null-aware marker '?' rather than a null check via an 'if'
+1	info	use_null_aware_elements	lib/features/posts/application/pending_post_media_upload_retrier.dart	Use the null-aware marker '?' rather than a null check via an 'if'
 1	info	use_null_aware_elements	lib/features/qr_code/domain/models/qr_payload_model.dart	Use the null-aware marker '?' rather than a null check via an 'if'
-1	info	use_null_aware_elements	lib/features/settings/presentation/screens/settings_screen.dart	Use the null-aware marker '?' rather than a null check via an 'if'
-1	info	use_null_aware_elements	test/core/local_discovery/local_ws_server_test.dart	Use the null-aware marker '?' rather than a null check via an 'if'
 2	info	use_null_aware_elements	test/features/contact_request/application/contact_request_listener_test.dart	Use the null-aware marker '?' rather than a null check via an 'if'
 1	info	use_null_aware_elements	test/features/contact_request/integration/contact_request_flow_test.dart	Use the null-aware marker '?' rather than a null check via an 'if'
-4	info	use_null_aware_elements	test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart	Use the null-aware marker '?' rather than a null check via an 'if'
+8	info	use_null_aware_elements	test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart	Use the null-aware marker '?' rather than a null check via an 'if'
+2	info	use_null_aware_elements	test/features/groups/application/retry_failed_group_messages_use_case_test.dart	Use the null-aware marker '?' rather than a null check via an 'if'
+1	info	use_null_aware_elements	test/features/groups/domain/models/pending_group_invite_test.dart	Use the null-aware marker '?' rather than a null check via an 'if'
 2	info	use_null_aware_elements	test/features/posts/phase4/handle_incoming_passed_post_use_case_test.dart	Use the null-aware marker '?' rather than a null check via an 'if'
 1	info	use_super_parameters	integration_test/conversation_wired_performance_harness.dart	Parameters ''messageRepo' and 'contactRepo'' could be super parameters
 1	info	use_super_parameters	integration_test/conversation_wired_performance_harness.dart	Parameters ''messageRepo', 'contactRepo', and 'bridge'' could be super parameters
-1	info	use_super_parameters	test/features/conversation/presentation/screens/conversation_wired_test.dart	Parameters ''messageRepo' and 'contactRepo'' could be super parameters
+1	info	use_super_parameters	test/features/conversation/application/send_chat_message_use_case_test.dart	Parameters ''currentState', 'sendMessageResult', 'sendMessageReply', 'sendMessageAcked', 'sendMessageTransport', 'shouldThrow', 'storeInInboxResult', 'probeRelayResult', 'discoverPeerResult', 'useNullDiscover', and 'dialPeerResult'' could be super parameters
 1	warning	dead_code	lib/features/groups/application/resend_group_invite_use_case.dart	Dead code
 1	warning	dead_null_aware_expression	lib/features/groups/application/resend_group_invite_use_case.dart	The left operand can't be null, so the right operand is never executed
 1	warning	override_on_non_overriding_member	test/features/identity/presentation/screens/startup_router_test.dart	The method doesn't override an inherited method
-1	warning	override_on_non_overriding_member	test/features/settings/presentation/screens/settings_wired_test.dart	The method doesn't override an inherited method
 7	warning	unnecessary_cast	test/core/resilience/f1_wifi_relay_fallback_test.dart	Unnecessary cast
 1	warning	unnecessary_cast	test/core/resilience/network_failover_test.dart	Unnecessary cast
-2	warning	unnecessary_non_null_assertion	lib/features/conversation/application/handle_incoming_chat_message_use_case.dart	The '!' will have no effect because the receiver can't be null
+1	warning	unnecessary_non_null_assertion	lib/features/conversation/application/upload_media_use_case.dart	The '!' will have no effect because the receiver can't be null
 1	warning	unnecessary_non_null_assertion	test/core/notifications/notification_route_contract_matrix_test.dart	The '!' will have no effect because the receiver can't be null
+2	warning	unnecessary_non_null_assertion	test/features/conversation/application/chat_message_listener_test.dart	The '!' will have no effect because the receiver can't be null
 1	warning	unnecessary_non_null_assertion	test/features/introduction/integration/introduction_multi_node_test.dart	The '!' will have no effect because the receiver can't be null
-1	warning	unnecessary_non_null_assertion	test/features/orbit/presentation/screens/orbit_wired_test.dart	The '!' will have no effect because the receiver can't be null
 2	warning	unnecessary_non_null_assertion	test/features/posts/improvement/create_local_post_use_case_test.dart	The '!' will have no effect because the receiver can't be null
-1	warning	unnecessary_null_comparison	lib/features/conversation/presentation/widgets/letter_card.dart	The operand can't be 'null', so the condition is always 'true'
+1	warning	unnecessary_null_comparison	lib/features/conversation/application/upload_media_use_case.dart	The operand can't be 'null', so the condition is always 'true'
 1	warning	unnecessary_null_comparison	lib/features/posts/application/pass_post_along_use_case.dart	The operand can't be 'null', so the condition is always 'true'
 1	warning	unused_element	integration_test/benchmark_voice_harness.dart	The declaration '_configuredCliPeerFixture' isn't referenced
 1	warning	unused_element	integration_test/scripts/run_wifi_relay_fallback_smoke.dart	The declaration '_deviceFileExists' isn't referenced
 1	warning	unused_element	integration_test/scripts/run_wifi_relay_fallback_smoke.dart	The declaration '_deviceReadFile' isn't referenced
-1	warning	unused_element	lib/features/feed/presentation/screens/feed_screen.dart	The declaration '_findFeedEntryIndex' isn't referenced
 1	warning	unused_element	test/features/conversation/application/recover_stuck_sending_messages_use_case_test.dart	The declaration '_makeSendingMessage' isn't referenced
 1	warning	unused_element	test/features/identity/presentation/screens/startup_router_test.dart	The declaration '_TrackingP2PService' isn't referenced
 1	warning	unused_element_parameter	integration_test/conversation_wired_subscription_performance_harness.dart	A value for optional parameter 'key' isn't ever given
 1	warning	unused_element_parameter	lib/core/local_discovery/local_media_server.dart	A value for optional parameter 'isUploading' isn't ever given
-1	warning	unused_element_parameter	test/features/conversation/application/chat_message_listener_test.dart	A value for optional parameter 'throwOnDecrypt' isn't ever given
+1	warning	unused_element_parameter	test/features/conversation/application/media_download_slow_transfer_simulator_test.dart	A value for optional parameter 'bytes' isn't ever given
+1	warning	unused_element_parameter	test/features/conversation/application/media_download_slow_transfer_simulator_test.dart	A value for optional parameter 'writeFile' isn't ever given
 1	warning	unused_element_parameter	test/features/feed/presentation/screens/feed_wired_bg_task_test.dart	A value for optional parameter 'dialPeerResult' isn't ever given
 1	warning	unused_element_parameter	test/features/feed/presentation/screens/feed_wired_bg_task_test.dart	A value for optional parameter 'discoverPeerResult' isn't ever given
 1	warning	unused_element_parameter	test/features/feed/presentation/screens/feed_wired_bg_task_test.dart	A value for optional parameter 'isStarted' isn't ever given
@@ -424,18 +422,15 @@
 1	warning	unused_field	test/features/conversation/integration/two_user_message_exchange_test.dart	The value of the field '_online' isn't used
 1	warning	unused_import	integration_test/benchmark_1_1_send_harness.dart	Unused import: 'package:flutter_app/core/bridge/bridge.dart'
 1	warning	unused_import	integration_test/benchmark_1_1_send_harness.dart	Unused import: 'package:flutter_app/core/bridge/p2p_bridge_client.dart'
+1	warning	unused_import	integration_test/benchmark_1_1_send_harness.dart	Unused import: 'package:integration_test/integration_test.dart'
 1	warning	unused_import	integration_test/benchmark_helpers.dart	Unused import: 'package:flutter_app/core/bridge/p2p_bridge_client.dart'
 1	warning	unused_import	integration_test/benchmark_voice_harness.dart	Unused import: 'dart:convert'
+1	warning	unused_import	integration_test/benchmark_voice_harness.dart	Unused import: 'package:integration_test/integration_test.dart'
+1	warning	unused_import	integration_test/conversation_bridge_test.dart	Unused import: 'package:flutter_app/core/secure_storage/secure_key_store.dart'
 1	warning	unused_import	integration_test/conversation_wired_performance_harness.dart	Unused import: 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart'
 1	warning	unused_import	integration_test/foreground_group_push_drain_test.dart	Unused import: 'package:flutter_app/features/groups/domain/models/group_model.dart'
-1	warning	unused_import	integration_test/group_smoke_bob_harness.dart	Unused import: '../test/shared/fakes/fake_notification_service.dart'
-1	warning	unused_import	integration_test/notification_sound_smoke_bob_harness.dart	Unused import: 'package:flutter_app/core/utils/flow_event_emitter.dart'
-1	warning	unused_import	integration_test/orbit_performance_harness.dart	Unused import: 'package:flutter_app/features/groups/domain/models/group_model.dart'
-1	warning	unused_import	lib/core/media/image_processor.dart	Unused import: 'dart:io'
 1	warning	unused_import	test/core/bridge/bridge_helpers_test.dart	Unused import: 'package:flutter_app/features/p2p/domain/models/chat_message.dart'
 1	warning	unused_import	test/core/bridge/bridge_helpers_test.dart	Unused import: 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
-1	warning	unused_import	test/core/bridge/p2p_bridge_client_test.dart	Unused import: 'package:flutter_app/features/p2p/domain/models/chat_message.dart'
-1	warning	unused_import	test/core/bridge/p2p_bridge_client_test.dart	Unused import: 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
 1	warning	unused_import	test/core/inbox/inbox_round_trip_test.dart	Unused import: '../../shared/fakes/fake_p2p_service_integration.dart'
 1	warning	unused_import	test/core/inbox/inbox_round_trip_test.dart	Unused import: '../../shared/fakes/in_memory_message_repository.dart'
 1	warning	unused_import	test/core/local_discovery/local_media_server_test.dart	Unused import: 'dart:convert'
@@ -453,11 +448,13 @@
 1	warning	unused_import	test/features/conversation/domain/repositories/message_repository_impl_stuck_sending_test.dart	Unused import: 'package:flutter_app/features/conversation/domain/models/conversation_message.dart'
 1	warning	unused_import	test/features/conversation/domain/repositories/message_repository_impl_stuck_sending_test.dart	Unused import: 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart'
 1	warning	unused_import	test/features/conversation/integration/emoji_reaction_exchange_test.dart	Unused import: 'package:flutter_app/features/conversation/domain/models/message_reaction.dart'
-1	warning	unused_import	test/features/conversation/integration/offline_inbox_roundtrip_test.dart	Unused import: 'dart:convert'
+1	warning	unused_import	test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart	Unused import: 'package:flutter_app/features/conversation/domain/models/media_attachment.dart'
 1	warning	unused_import	test/features/conversation/integration/quote_reply_thread_test.dart	Unused import: 'dart:convert'
 1	warning	unused_import	test/features/conversation/presentation/screens/conversation_overflow_intro_test.dart	Unused import: 'package:flutter_app/features/introduction/application/check_intro_banner_use_case.dart'
-1	warning	unused_import	test/features/conversation/presentation/screens/conversation_wired_gif_test.dart	Unused import: 'package:flutter_app/core/media/pending_composer_media.dart'
-1	warning	unused_import	test/features/conversation/presentation/screens/conversation_wired_gif_test.dart	Unused import: 'package:flutter_app/features/conversation/application/upload_media_use_case.dart'
+1	warning	unused_import	test/features/conversation/presentation/widgets/letter_card_test.dart	Unused import: 'package:flutter_app/core/media/group_media_integrity_policy.dart'
+1	warning	unused_import	test/features/groups/application/announce_restored_device_on_startup_test.dart	Unused import: 'package:flutter_app/features/groups/domain/models/group_member.dart'
+1	warning	unused_import	test/features/groups/application/decline_pending_group_invite_use_case_test.dart	Unused import: 'package:flutter_app/core/services/p2p_service.dart'
+1	warning	unused_import	test/features/groups/integration/group_received_media_delete_replay_test.dart	Unused import: 'package:flutter_app/core/secure_storage/secure_key_store.dart'
 1	warning	unused_import	test/features/introduction/integration/introduction_smoke_test.dart	Unused import: 'dart:convert'
 1	warning	unused_import	test/features/posts/improvement/post_pin_remove_delivery_integration_test.dart	Unused import: 'package:flutter_app/features/posts/domain/models/post_pin_state_model.dart'
 1	warning	unused_import	test/features/posts/improvement/support/controlled_post_pin_delivery_harness.dart	Unused import: '../../../../shared/fakes/fake_p2p_network.dart'
@@ -471,20 +468,15 @@
 1	warning	unused_import	test/performance/benchmark_bridge_crossing_test.dart	Unused import: 'package:flutter/foundation.dart'
 1	warning	unused_import	test/performance/benchmark_bridge_crossing_test.dart	Unused import: 'package:flutter_app/core/utils/flow_event_emitter.dart'
 1	warning	unused_import	test/performance/benchmark_routing_paths_test.dart	Unused import: 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart'
-1	warning	unused_import	test/shared/fakes/chaos_p2p_network.dart	Unused import: 'fake_p2p_service_integration.dart'
 1	warning	unused_import	test/shared/fakes/chaos_p2p_network.dart	Unused import: 'package:flutter_app/features/p2p/domain/models/chat_message.dart'
-1	warning	unused_local_variable	lib/features/conversation/application/handle_incoming_chat_message_use_case.dart	The value of the local variable 'textPreview' isn't used
 1	warning	unused_local_variable	lib/smoke_test_main.dart	The value of the local variable 'repository' isn't used
 1	warning	unused_local_variable	test/core/local_discovery/local_media_integration_test.dart	The value of the local variable 'capturedToken' isn't used
 1	warning	unused_local_variable	test/core/local_discovery/local_media_integration_test.dart	The value of the local variable 'portA' isn't used
-1	warning	unused_local_variable	test/core/local_discovery/local_ws_server_test.dart	The value of the local variable 'port' isn't used
-5	warning	unused_local_variable	test/core/local_discovery/local_ws_server_test.dart	The value of the local variable 'portA' isn't used
 1	warning	unused_local_variable	test/core/services/p2p_service_addresses_updated_test.dart	The value of the local variable 'originalSend' isn't used
 1	warning	unused_local_variable	test/core/services/p2p_service_addresses_updated_test.dart	The value of the local variable 'registerTokenCalled' isn't used
 1	warning	unused_local_variable	test/core/services/p2p_service_stop_race_test.dart	The value of the local variable 'statusCountBeforeStop' isn't used
 1	warning	unused_local_variable	test/features/conversation/application/retry_unacked_messages_use_case_test.dart	The value of the local variable 'callCount' isn't used
 1	warning	unused_local_variable	test/features/conversation/presentation/widgets/full_emoji_picker_test.dart	The value of the local variable 'savedContext' isn't used
-1	warning	unused_local_variable	test/features/feed/presentation/widgets/time_gap_divider_test.dart	The value of the local variable 'containers' isn't used
 1	warning	unused_local_variable	test/features/groups/integration/group_delete_preserves_friends_and_dms_test.dart	The value of the local variable 'aliceMessages' isn't used
 1	warning	unused_local_variable	test/features/groups/integration/group_delete_preserves_friends_and_dms_test.dart	The value of the local variable 'charlieMessages' isn't used
 1	warning	unused_local_variable	test/features/orbit/presentation/widgets/swipeable_friend_row_test.dart	The value of the local variable 'archiveCalled' isn't used

@@ -62,6 +62,10 @@ struct NotificationResponseDiagnostic: Equatable {
   private var iosNotificationOpenChannel: FlutterMethodChannel?
   private var pendingIosNotificationOpen: [String: Any]?
   private var iosNotificationOpenBridgeReady = false
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
+  private let iosReceiverBootstrapHandoff = IosReceiverBootstrapHandoff(enabled: true)
+  private var iosReceiverBootstrapChannel: FlutterMethodChannel?
+#endif
 
   // Move Account transfer keep-alive (audit gap G7, background half): while
   // Dart holds the keep-alive, a UIKit background task assertion buys ~30s of
@@ -97,6 +101,9 @@ struct NotificationResponseDiagnostic: Equatable {
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
+    iosReceiverBootstrapHandoff.prepareContainer()
+#endif
     installNotificationCenterDelegate(context: "before_didFinishLaunching_super")
     let didFinish = super.application(application, didFinishLaunchingWithOptions: launchOptions)
     configureIosNotificationOpenBridgeFromRootViewController()
@@ -121,6 +128,9 @@ struct NotificationResponseDiagnostic: Equatable {
     // Forward the APNs token explicitly so Firebase Messaging can mint the
     // FCM token even if iOS release/TestFlight delivery differs from debug.
     Messaging.messaging().apnsToken = deviceToken
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
+    iosReceiverBootstrapHandoff.recordApnsDeviceToken(deviceToken)
+#endif
     logApnsProviderProbeFcmToken(context: "didRegisterForRemoteNotifications")
     super.application(
       application,
@@ -251,6 +261,9 @@ struct NotificationResponseDiagnostic: Equatable {
     installNotificationCenterDelegate(context: "after_implicit_engine_plugin_registration")
     let messenger = engineBridge.applicationRegistrar.messenger()
     setupIosNotificationOpenBridge(messenger: messenger)
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
+    setupIosReceiverBootstrapBridge(messenger: messenger)
+#endif
     setupMigrationKeepAliveBridge(messenger: messenger)
     setupDiskSpaceBridge(messenger: messenger)
     setupAppGroupPathBridge(messenger: messenger)
@@ -353,9 +366,8 @@ struct NotificationResponseDiagnostic: Equatable {
         return
       }
       NSLog(
-        "MKNOON_APNS_PROVIDER_PROBE_NATIVE event=fcm_token_ready context=%@ token=%@ length=%d",
+        "MKNOON_APNS_PROVIDER_PROBE_NATIVE event=fcm_token_ready context=%@ length=%d",
         context,
-        token,
         token.count
       )
     }
@@ -384,8 +396,108 @@ struct NotificationResponseDiagnostic: Equatable {
     )
   }
 
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
+  private func setupIosReceiverBootstrapBridge(messenger: FlutterBinaryMessenger) {
+    if iosReceiverBootstrapChannel != nil {
+      return
+    }
+    let channel = FlutterMethodChannel(
+      name: "mknoon/sims_ios_receiver_bootstrap",
+      binaryMessenger: messenger
+    )
+    channel.setMethodCallHandler { [weak self] call, result in
+      switch call.method {
+      case "publishTransportPeerId":
+        guard
+          let arguments = call.arguments as? [String: Any],
+          let peerDeviceId = arguments["peerDeviceId"] as? String,
+          let mlKemPublicKey = arguments["mlKemPublicKey"] as? String
+        else {
+          result(FlutterError(code: "bad_args", message: nil, details: nil))
+          return
+        }
+        let outcome = self?.iosReceiverBootstrapHandoff.recordTransportIdentity(
+          peerId: peerDeviceId,
+          mlKemPublicKey: mlKemPublicKey
+        )
+        switch outcome {
+        case .published:
+          result(["status": "published"])
+        case .waiting:
+          result(["status": "waiting"])
+        case .cleaned:
+          result(["status": "cleaned"])
+        case .rejected, .none:
+          result(FlutterError(code: "handoff_rejected", message: nil, details: nil))
+        }
+      case "takeSenderProjectionRequest":
+        result(self?.iosReceiverBootstrapHandoff.takeSenderProjectionRequest())
+      case "completeSenderProjectionRequest":
+        guard
+          let arguments = call.arguments as? [String: Any],
+          let captureNonce = arguments["captureNonce"] as? String,
+          let action = arguments["action"] as? String,
+          let apnsPayloadSha256 = arguments["apnsPayloadSha256"] as? String,
+          let fixtureDigest = arguments["fixtureDigest"] as? String,
+          let status = arguments["status"] as? String,
+          let resultCode = arguments["resultCode"] as? String,
+          self?.iosReceiverBootstrapHandoff.completeSenderProjectionRequest(
+            captureNonce: captureNonce,
+            action: action,
+            apnsPayloadSha256: apnsPayloadSha256,
+            fixtureDigest: fixtureDigest,
+            status: status,
+            resultCode: resultCode
+          ) == true
+        else {
+          result(FlutterError(code: "sender_fixture_rejected", message: nil, details: nil))
+          return
+        }
+        result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    iosReceiverBootstrapChannel = channel
+  }
+#endif
+
   private func logNotificationSettings(context: String) {
-    UNUserNotificationCenter.current().getNotificationSettings { settings in
+    UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
+      let authorization: String
+      switch settings.authorizationStatus {
+      case .authorized:
+        authorization = "authorized"
+      case .provisional:
+        authorization = "provisional"
+      case .ephemeral:
+        authorization = "ephemeral"
+      case .denied:
+        authorization = "denied"
+      case .notDetermined:
+        authorization = "not_determined"
+      @unknown default:
+        authorization = "not_determined"
+      }
+      let alertSetting: String
+      switch settings.alertSetting {
+      case .enabled:
+        alertSetting = "enabled"
+      case .disabled:
+        alertSetting = "disabled"
+      case .notSupported:
+        alertSetting = "not_supported"
+      @unknown default:
+        alertSetting = "not_supported"
+      }
+      DispatchQueue.main.async { [weak self] in
+        self?.iosReceiverBootstrapHandoff.recordNotificationSettings(
+          authorization: authorization,
+          alertSetting: alertSetting
+        )
+      }
+#endif
       NSLog(
         "[PUSH_DIAG] native_notification_settings context=%@ authorization=%@ alert=%@ badge=%@ sound=%@",
         context,

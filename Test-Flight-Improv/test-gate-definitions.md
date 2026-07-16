@@ -12,6 +12,144 @@ If this document and `scripts/run_test_gates.sh` ever disagree, the script wins.
 - Version branches that lack a live target must retain causal host/native unit coverage and compile/availability coverage. If a matching emulator, simulator, or USB device is available, it may be used; otherwise no substitute hardware is required.
 - Plans and QA reviews created after this policy must not require unavailable physical hardware for closure. Optional extra-device confidence may be documented separately and must remain non-blocking.
 
+## Canonical Sims Umbrella
+
+`$sims` is the pre-major-update critical-feature umbrella. Its behavior source
+of truth is the repo gate, not the skill adapter:
+
+```bash
+# Safe default: both commands compile the major plan.
+.claude/skills/sims/scripts/run_with_devices.sh --list
+./scripts/run_test_gates.sh sims major --list
+
+# Explicit diagnostic modes.
+./scripts/run_test_gates.sh sims full --list
+./scripts/run_test_gates.sh sims smoke --list
+```
+
+- `major` is the no-argument default and the only release-green-eligible mode.
+  It composes every registered mandatory critical capability across analyzer,
+  Dart-only host coverage, full Go modules, Android/iOS native tests, nested
+  packages, cleaned reliability/device campaigns, capture-owned validators,
+  and critical performance. Capability IDs deduplicate overlapping gates, so
+  the host Go sentinels are not repeated before the full Go lane.
+- `full` is the cleaned registered reliability/device inventory, including
+  truthful BLOCKED rows whose driver is not implemented. It is intentionally
+  not the full release umbrella and cannot produce a major release verdict.
+- `smoke` is the fast representative subset for routine feedback and cannot
+  produce a major release verdict.
+- `--family`, `--lane`, `--only`, `--continue-on-failure`, fix/retry, and
+  resumed runs are diagnostic. After any repair, release closure requires one
+  separate clean, unfiltered, current-digest `sims major` run.
+
+Coverage is manifest- and capability-based, not a claim that executing every
+test file eliminates every possible bug. A new critical feature/default-enabled
+flag without a manifest owner must make the major plan fail closed; support or
+noncritical exclusions require an explicit rationale.
+
+Implementation status on 2026-07-15: the logical unfiltered major plan has 26
+active rows plus two inactive future VC-02 records. All active rows have
+automated drivers. Readiness does not manufacture an unrun live PASS: missing
+provider/signing credentials, relay configuration, disposable-device
+attestation, or other required configuration is `BLOCKED`; only genuinely
+unavailable hardware/topology is policy N/A. Group multi-party additionally
+needs staging relay configuration, four available simulators, and disposable
+simulator ownership (or exact pre-existing state restoration).
+
+Terminal results are typed `PASS`, `FAIL`, `BLOCKED`, `SKIP`, and `N/A`. Only
+`PASS`, plus policy-valid `N/A` for a genuinely unavailable target/topology,
+can satisfy a mandatory major row. A mandatory skip, exit 78, print-only or
+zero-assertion success, missing artifact, missing credential/permission/driver,
+or selected-target loss prevents release green. Missing automation or
+configuration is `BLOCKED`, not `N/A`.
+Policy-valid N/A also satisfies scheduler dependencies and does not fail-fast
+independent rows. Contradictory structured metadata—such as PASS plus a blocker
+or N/A plus a nonzero exit/proof payload—is reclassified as a harness failure.
+
+Build reuse is one content-attested artifact per compatible profile, not one
+universal app binary. Runtime scenarios reuse a profile when source, native
+inputs, app ID/flavor, permissions/entitlements, ABI, feature defaults, and
+compile-time defines are compatible. A declared incompatible profile builds
+once separately; a digest/profile mismatch is a cache miss. Reports record
+profile keys, artifact hashes, and cache hits/misses so a hidden child rebuild
+cannot count as reuse.
+Each profile fingerprints the exact local Dart entrypoint dependency closure,
+repo-local packages, shared configuration/assets, and only its selected native
+platform/toolchain. Android-only and iOS-only edits therefore do not invalidate
+one another's artifacts. The signed physical-iOS profile additionally hashes
+the actual staging/signing attestation and provisioning inputs, including
+identity/team/device/expiry categories, without recording raw secrets or paths.
+
+Group multi-party uses its staged runtime config, and the Android recorder plus
+critical performance stage a private
+profile/scenario/role/run-ID/nonce invocation before launching the same central
+`android.e2e.standard` APK through `flutter drive --use-application-binary`.
+The performance adapter also binds the explicit physical target and APK SHA-256,
+rejects an artifact that changes during the run, and writes/re-reads durable
+evidence bound to `performance.device.runtime_budget_artifact`. Its exact four
+strict budgets are Android engine FEED average build `<8 ms`, FEED build p99
+`<24 ms`, FEED worst build `<100 ms`, and production Go `node:status`
+MethodChannel p99 `<50 ms`. Real-main-app Android campaigns use the shared
+`android.e2e.main` poller/config channel. Every Android campaign captures and
+restores the original APK/splits, private app tree, runtime permissions, and
+process state before PASS; an installed app is never `pm clear`ed or
+uninstalled.
+
+There are six logical device build profiles, but preflight requests only
+profiles with at least one runnable selected consumer. Standard Android has
+recorder and performance consumers; Android main has connectivity, keepalive,
+and full voice; production-FCM has Android notification, intro, and group
+reaction; wake-token, iOS simulator, and physical iOS stay separate because
+their compile inputs/platform/entrypoint differ. Physical iOS produces one
+signed `build-for-testing` companion bundle (`Runner.app`, `.xctestrun`, and
+TestProducts) in one central compile, then uses `test-without-building`.
+The report's `requestedProfiles`, `actualBuilds`, cache hits, exact profile
+outcomes, per-profile elapsed time, and total preparation elapsed time are
+authoritative. Plain `--list` does
+not resolve targets or build; `--prepare-builds` performs real build/cache work
+and executes only the build plan, even when combined with `--list`.
+Because skipped mandatory build rows inherit their consumers' required
+BLOCKED state, the current major build-only command is expected to exit
+nonzero after preparing runnable profiles; the report distinguishes that from
+an actual build/cache failure.
+The current iOS group profile still treats relay addresses and the shortened
+rotation grace as compile inputs, so changing those values legitimately
+invalidates that profile's cache.
+
+`--simultaneous` changes scheduling only. The manifest scheduler may overlap
+ready rows only when declared targets, build writers, relay state, artifacts,
+dependencies, and performance isolation are compatible. Shared or unknown
+resources fail closed/exclusive. Serial and simultaneous plans must select and
+attempt the same IDs and reconcile the same typed terminal verdicts.
+
+This is row-level scheduling, capped by default at four total rows and four
+`host.cpu` rows. `SIMS_MAX_PARALLEL` and `SIMS_HOST_CONCURRENCY` adjust the
+caps, not the locks. `host.dart.all` remains one row, and central uncached
+profile preparation completes before scheduled rows rather than building
+profiles simultaneously.
+Schedule traces time rows; the build report separately times the preceding
+central preparation phase. Timing is diagnostic rather than a pass threshold.
+
+Canonical sims modes perform live target resolution in the repo planner and pin
+every command to an explicit discovered ID. The skill adapter neither injects a
+target nor silently prefers iOS. For ordinary two-peer behavior, prefer a
+USB-connected physical Android device plus an Android emulator; reserve iOS for
+an iOS-specific OS boundary or explicit parity capability.
+Target availability is resolved before credentials so an absent topology stays
+policy N/A. When disposable simulator IDs or a staging-attested physical iPhone
+ID are supplied, they are exact constraints and no other available target is
+substituted.
+
+Fix-as-you-go checkpoints preserve exact prior verdicts and artifact-evidence
+envelopes. A focused retry may change source and rebuilt-artifact digests while
+keeping the manifest identity and device matrix frozen; success rebases the
+checkpoint, and resume then requires that repaired state. Retry/resume remains
+diagnostic and never replaces the final clean major.
+
+`reliability-sim all|1to1|group|intro|move-feature` remains an explicit legacy
+compatibility surface while callers migrate. It is not equivalent to `sims
+major`, and a green legacy run must not be reported as major-update closure.
+
 ## Session 1 Decisions
 
 - Canonical loading-state baseline file: `integration_test/loading_states_smoke_test.dart`
@@ -126,7 +264,7 @@ If this document and `scripts/run_test_gates.sh` ever disagree, the script wins.
   foreground behavior, or migrated-out UX changes.
 - `integration_test/migration_database_sqlcipher_capability_test.dart` remains
   an Optional / manual direct suite, and is also classified in
-  `$run-flutter-reliability-sims move-feature/all` as a Move Account concrete-target
+  `$sims move-feature/all` (legacy compatibility) as a Move Account concrete-target
   integration companion. It is not a group-messaging proof; it stays in the
   dedicated Move Account reliability scope.
 
@@ -187,7 +325,7 @@ Shared host suites that should stay visible in Move Account reviews:
 Reliability command plan source:
 
 ```bash
-"${CODEX_HOME:-$HOME/.codex}/skills/run-flutter-reliability-sims/scripts/run_with_devices.sh" move-feature --list
+"${CODEX_HOME:-$HOME/.codex}/skills/sims/scripts/run_with_devices.sh" move-feature --list
 ```
 
 Reliability capture under `move-feature` / `all`:
@@ -222,7 +360,7 @@ Host capture:
 Reliability command plan source:
 
 ```bash
-"${CODEX_HOME:-$HOME/.codex}/skills/run-flutter-reliability-sims/scripts/run_with_devices.sh" 1to1 --list
+"${CODEX_HOME:-$HOME/.codex}/skills/sims/scripts/run_with_devices.sh" 1to1 --list
 ```
 
 Reliability capture under `1to1` / `all`:
@@ -1023,9 +1161,9 @@ These are intentionally classified, but not promoted into the frozen named gates
 | `test/integration/group_multi_party_device_criteria_test.dart` | Optional / manual direct suite | PREREQ-GM-MULTI-PARTY-DEVICE-HARNESS host-side guard that multi-party GM proof cannot pass with missing relay env, underspecified roles, sender-only evidence, receiver/sender message tuple mismatches, duplicate persistence, incomplete GM-002 convergence, or missing GM-003 offline catch-up proof |
 | `test/integration/routing_smoke_group_criteria_test.dart` | Optional / manual direct suite | Report 85 host-side guard that the two-simulator group smoke G2/G4/G5/G7/G8 rows cannot pass with pending or sender-only receiver evidence |
 | `integration_test/cold_start_sendable_no_user_action_test.dart` | Optional / manual direct suite | Cold-start sendability check without widening the startup or transport gates |
-| `integration_test/account_migration_group_media_durability_simulator_test.dart` | Optional / manual direct suite; `$run-flutter-reliability-sims move-feature/all` | Move Account MIG-012 group-media durability and relay-free bundleability proof; classified in the reliability-sim discovery move-feature scope without widening frozen named gates |
-| `integration_test/account_migration_local_transfer_timeout_simulator_test.dart` | Optional / manual direct suite; `$run-flutter-reliability-sims move-feature/all` | Move Account local segmented transfer timeout proof: 34-segment near-budget success with monotonic `ACCOUNT_MIGRATION_LOCAL_TRANSFER_SEGMENT_PROGRESS` telemetry plus over-budget typed `localTransferTimedOut` failure with `ACCOUNT_MIGRATION_LOCAL_TRANSFER_POST_FAILED` phase diagnostics and no `bundleSourceFailed` mislabel; classified in the reliability-sim discovery move-feature scope without widening frozen named gates |
-| `integration_test/account_migration_scale_benchmark_test.dart` | Optional / manual direct suite; `$run-flutter-reliability-sims move-feature/all` with `--dart-define=MIGRATION_BENCH_MB=<N>` | Move Account P0-7 scale benchmark harness for 200/500/1000 MB Pixel evidence; emits `ACCOUNT_MIGRATION_SCALE_BENCHMARK` structured metrics and remains classified in the reliability-sim discovery move-feature scope without widening frozen named gates |
+| `integration_test/account_migration_group_media_durability_simulator_test.dart` | Optional / manual direct suite; `$sims move-feature/all` legacy compatibility scope | Move Account MIG-012 group-media durability and relay-free bundleability proof; classified in the reliability-sim discovery move-feature scope without widening frozen named gates |
+| `integration_test/account_migration_local_transfer_timeout_simulator_test.dart` | Optional / manual direct suite; `$sims move-feature/all` legacy compatibility scope | Move Account local segmented transfer timeout proof: 34-segment near-budget success with monotonic `ACCOUNT_MIGRATION_LOCAL_TRANSFER_SEGMENT_PROGRESS` telemetry plus over-budget typed `localTransferTimedOut` failure with `ACCOUNT_MIGRATION_LOCAL_TRANSFER_POST_FAILED` phase diagnostics and no `bundleSourceFailed` mislabel; classified in the reliability-sim discovery move-feature scope without widening frozen named gates |
+| `integration_test/account_migration_scale_benchmark_test.dart` | Optional / manual direct suite; `$sims move-feature/all` legacy compatibility scope with `--dart-define=MIGRATION_BENCH_MB=<N>` | Move Account P0-7 scale benchmark harness for 200/500/1000 MB Pixel evidence; emits `ACCOUNT_MIGRATION_SCALE_BENCHMARK` structured metrics and remains classified in the reliability-sim discovery move-feature scope without widening frozen named gates |
 | `integration_test/cold_start_message_render_simulator_test.dart` | Optional / manual direct suite | Simulator-bound Orbit render smoke for previously received 1:1 and group message bodies after a cold restart |
 | `integration_test/conversation_wired_performance_test.dart` | Optional / manual direct suite | Performance-only validation for conversation screen wiring |
 | `integration_test/conversation_wired_subscription_performance_test.dart` | Optional / manual direct suite | Performance-only validation for conversation subscription churn |
@@ -1039,7 +1177,7 @@ These are intentionally classified, but not promoted into the frozen named gates
 | `integration_test/group_new_member_media_simulator_proof_test.dart` | Optional / manual direct suite | Report 89 simulator-backed new discussion member video and voice render/play/reopen proof; Report 90 GMAR-005 configured-simulator proof without widening frozen named gates |
 | `integration_test/identity_progress_performance_test.dart` | Optional / manual direct suite | Performance-only validation |
 | `integration_test/media_message_journey_e2e_test.dart` | Optional / manual direct suite | End-to-end media delivery journey coverage that stays outside the frozen named gates; Report 90 GMAR-005 runs it directly as final media-journey evidence |
-| `integration_test/migration_database_sqlcipher_capability_test.dart` | Optional / manual direct suite; `$run-flutter-reliability-sims move-feature/all` | Move Account MIG-004 plugin-registered SQLCipher export capability probe; classified as a reliability-sim Move Account concrete-target companion, not a group messaging proof |
+| `integration_test/migration_database_sqlcipher_capability_test.dart` | Optional / manual direct suite; `$sims move-feature/all` legacy compatibility scope | Move Account MIG-004 plugin-registered SQLCipher export capability probe; classified as a reliability-sim Move Account concrete-target companion, not a group messaging proof |
 | `integration_test/direct_private_media_lifecycle_sqlcipher_proof_test.dart` | Required exact 1:1 device proof; run directly on each available named Android/iOS target | Plan 234 Session 01 real `sqflite_sqlcipher` v99→v100/fresh/reopen/rerun/wrong-password/downgrade proof. Required commands pin Android `21071FDF600CSC` and iOS simulator `674DFFF6-5F38-4235-93F6-AF7FBF86AE65`; relay and unavailable version-specific hardware are N/A by project policy. |
 | `integration_test/direct_private_media_platform_protection_proof_test.dart` | Required exact availability-bounded Android/iOS proof | Plan 234 Session 05 verifies native protection is acknowledged before private render, Android live-window secure ownership/restoration, and iOS capture-cover/dismiss/restoration through the bounded debug-only proof seam. Run on explicit IDs from fresh discovery; an unavailable platform is `N/A (target unavailable by project policy)`. |
 | `integration_test/direct_private_media_device_local_journey_harness.dart` | Required exact role harness; invoked only by the Plan-234 Session-06 runner | Instrumented production-codec/persistence/notification/action/filesystem/lifecycle observations on one explicit Android target; emits one bounded redacted role artifact and performs no user-assisted navigation or real-relay claim. |

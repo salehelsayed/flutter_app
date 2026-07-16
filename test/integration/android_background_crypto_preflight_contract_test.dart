@@ -3418,7 +3418,6 @@ Packages:
     'controller dry-run is a secret-free 12-case no-side-effect plan',
     () async {
       final result = await Process.run('dart', <String>[
-        'run',
         'integration_test/scripts/capture_android_background_crypto_preflight.dart',
         '--dry-run',
       ]);
@@ -3458,7 +3457,6 @@ Packages:
     'cleanup-only dry-run cannot contact provider or execute proof rows',
     () async {
       final result = await Process.run('dart', <String>[
-        'run',
         'integration_test/scripts/capture_android_background_crypto_preflight.dart',
         '--cleanup-only',
         '--dry-run',
@@ -3482,7 +3480,6 @@ Packages:
 
   test('setup-only dry-run has no provider, secret, or proof-row path', () async {
     final result = await Process.run('dart', <String>[
-      'run',
       'integration_test/scripts/capture_android_background_crypto_preflight.dart',
       '--setup-only',
       '--dry-run',
@@ -3516,7 +3513,6 @@ Packages:
     'ordinary-only dry-run is reaction-free and retains exact 12 plus 3',
     () async {
       final result = await Process.run('dart', <String>[
-        'run',
         'integration_test/scripts/capture_android_background_crypto_preflight.dart',
         '--ordinary-only',
         '--dry-run',
@@ -3548,7 +3544,6 @@ Packages:
 
   test('reset-only is provider-free and mutually exclusive', () async {
     final result = await Process.run('dart', <String>[
-      'run',
       'integration_test/scripts/capture_android_background_crypto_preflight.dart',
       '--reset-only',
       '--dry-run',
@@ -3570,7 +3565,6 @@ Packages:
     expect(manifest['usesDevice'], isFalse);
 
     final conflict = await Process.run('dart', <String>[
-      'run',
       'integration_test/scripts/capture_android_background_crypto_preflight.dart',
       '--reset-only',
       '--ordinary-only',
@@ -3617,7 +3611,6 @@ Packages:
     'provider diagnostic dry-run is one validate-only row and zero delivery',
     () async {
       final result = await Process.run('dart', <String>[
-        'run',
         'integration_test/scripts/capture_android_background_crypto_preflight.dart',
         '--provider-diagnostic-only',
         '--dry-run',
@@ -3655,7 +3648,6 @@ Packages:
       }
 
       final conflict = await Process.run('dart', <String>[
-        'run',
         'integration_test/scripts/capture_android_background_crypto_preflight.dart',
         '--provider-diagnostic-only',
         '--ordinary-only',
@@ -3664,7 +3656,6 @@ Packages:
       expect(conflict.exitCode, 64);
 
       final refreshDryRun = await Process.run('dart', <String>[
-        'run',
         'integration_test/scripts/capture_android_background_crypto_preflight.dart',
         '--provider-diagnostic-only',
         '--refresh-unregistered-token',
@@ -3686,7 +3677,6 @@ Packages:
       expect(refreshManifest['contactsProvider'], isFalse);
 
       final unboundRefresh = await Process.run('dart', <String>[
-        'run',
         'integration_test/scripts/capture_android_background_crypto_preflight.dart',
         '--refresh-unregistered-token',
         '--prior-provider-diagnostic',

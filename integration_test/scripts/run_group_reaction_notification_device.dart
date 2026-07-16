@@ -115,9 +115,12 @@ Future<int> _run(List<String> args) async {
       '--relay-key',
       '--service-account',
       '--staging-manifest',
+      '--prebuilt-android-apk',
     ]) ...<String>[
       if (_valueFor(args, option) case final value?) ...<String>[option, value],
     ],
+    if (args.contains('--no-child-builds')) '--no-child-builds',
+    if (args.contains('--android-state-prepared')) '--android-state-prepared',
     if (args.contains('--verbose')) '--verbose',
     if (args.contains('--keep-build-artifacts')) '--keep-build-artifacts',
   ];

@@ -66,8 +66,8 @@ type signatureVectors struct {
 
 type encryptionVectors struct {
 	PublicKey  string `json:"publicKey"`
-	SecretKey string `json:"secretKey"`
-	Plaintext string `json:"plaintext"`
+	SecretKey  string `json:"secretKey"`
+	Plaintext  string `json:"plaintext"`
 	Kem        string `json:"kem"`
 	Ciphertext string `json:"ciphertext"`
 	Nonce      string `json:"nonce"`
@@ -234,12 +234,13 @@ func TestInterop_GoDecryptsOwnVector(t *testing.T) {
 	}
 }
 
-// TestInterop_WriteVectorsJSON generates a complete set of interop test vectors
-// and writes them to testdata/interop_vectors.json. The JS test reads this file
-// to verify it can decrypt Go-encrypted messages and produce the same identity
-// and signature from the known mnemonic.
+// TestInterop_WriteVectorsJSON generates a complete set of interop test vectors.
+// Normal test runs write the randomized vectors to a temporary directory so a
+// release gate cannot mutate its own source closure. Set UPDATE_INTEROP_VECTORS=1
+// only when intentionally refreshing the tracked fixture consumed by JS.
 //
-// Run with: go test -run TestInterop_WriteVectorsJSON -v ./crypto/
+// Refresh with:
+// UPDATE_INTEROP_VECTORS=1 go test -run TestInterop_WriteVectorsJSON -v ./crypto/
 // Then run the JS test to verify cross-platform compatibility.
 func TestInterop_WriteVectorsJSON(t *testing.T) {
 	// 1. Identity vectors (deterministic).
@@ -352,12 +353,16 @@ func TestInterop_WriteVectorsJSON(t *testing.T) {
 		t.Fatalf("json.MarshalIndent() error: %v", err)
 	}
 
-	// Determine the testdata directory relative to this test file.
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
+	// Keep randomized output outside the repository unless fixture regeneration
+	// was explicitly requested. This makes `go test ./...` read-only.
+	testdataDir := t.TempDir()
+	if os.Getenv("UPDATE_INTEROP_VECTORS") == "1" {
+		_, thisFile, _, ok := runtime.Caller(0)
+		if !ok {
+			t.Fatal("runtime.Caller failed")
+		}
+		testdataDir = filepath.Join(filepath.Dir(thisFile), "..", "testdata")
 	}
-	testdataDir := filepath.Join(filepath.Dir(thisFile), "..", "testdata")
 	if err := os.MkdirAll(testdataDir, 0o755); err != nil {
 		t.Fatalf("mkdir testdata: %v", err)
 	}

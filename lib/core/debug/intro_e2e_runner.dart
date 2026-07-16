@@ -6,8 +6,19 @@ import 'package:crypto/crypto.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/debug/android_notification_payload_e2e.dart';
+import 'package:flutter_app/core/debug/android_voice_message_e2e.dart';
+import 'package:flutter_app/core/debug/connectivity_restore_e2e_contract.dart';
 import 'package:flutter_app/core/debug/e2e_test_mode.dart';
+import 'package:flutter_app/core/debug/group_reaction_e2e_probe.dart';
+import 'package:flutter_app/core/debug/keepalive_drop_e2e.dart';
+import 'package:flutter_app/core/debug/wake_token_directionality_e2e.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
+import 'package:flutter_app/core/media/audio_recorder_service.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/accept_and_reciprocate_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
@@ -17,17 +28,23 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/introduction/application/accept_introduction_use_case.dart';
 import 'package:flutter_app/features/introduction/application/folded_introduction_response_use_case.dart';
 import 'package:flutter_app/features/introduction/application/insert_intro_system_message.dart';
 import 'package:flutter_app/features/introduction/application/introduction_copy.dart';
+import 'package:flutter_app/features/introduction/application/introduction_outbound_delivery.dart';
 import 'package:flutter_app/features/introduction/application/load_introductions_use_case.dart';
 import 'package:flutter_app/features/introduction/application/pass_introduction_use_case.dart';
 import 'package:flutter_app/features/introduction/application/send_introduction_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
+import 'package:flutter_app/features/push/application/push_envelope_staging.dart';
+import 'package:flutter_app/features/push/domain/received_wake_token_store.dart';
+import 'package:flutter_app/features/push/domain/wake_token_store.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:sqflite_sqlcipher/sqflite.dart';
 
 const _kConfigFile = 'intro_e2e_config.json';
 const _kExportFile = 'intro_e2e_identity.json';
@@ -395,6 +412,12 @@ Future<void> runIntroE2EActions({
     await p2pService.performImmediateHealthCheck();
     await p2pService.drainOfflineInbox();
 
+    // Main-app device campaigns learn peer QR payloads only after both app
+    // processes have launched. Make the existing `add_contacts` contract work
+    // for those live configs as well as configs staged before startup. The add
+    // use case is idempotent, so pre-populated simulator contacts remain safe.
+    await prePopulateContactsFromIntroE2EConfig(contactRepo: contactRepo);
+
     if (config['send_contact_requests_for_added_contacts'] == true) {
       await _sendContactRequestsForAddedContacts(
         config: config,
@@ -464,6 +487,29 @@ Future<void> runIntroE2EActions({
           (config['idle_cycles_after_seen'] as num?)?.toInt() ?? 3,
     );
 
+    Map<String, dynamic>? introDeliveryCustody;
+    if (config['require_introducer_acceptance_custody'] == true) {
+      final identity = await identityRepo.loadIdentity();
+      if (identity == null) {
+        throw StateError(
+          'Identity missing for intro E2E introducer-custody proof',
+        );
+      }
+      final timeoutMs =
+          ((config['introducer_acceptance_custody_timeout_ms'] as num?)
+                      ?.toInt() ??
+                  120000)
+              .clamp(1000, 180000)
+              .toInt();
+      introDeliveryCustody = await awaitIntroducerAcceptanceCustodyForIntroE2E(
+        introActionResult: introActionResult,
+        ownPeerId: identity.peerId,
+        introRepo: introRepo,
+        p2pService: p2pService,
+        timeout: Duration(milliseconds: timeoutMs),
+      );
+    }
+
     final chatActionResult = await _runChatMessageSends(
       config: config,
       identityRepo: identityRepo,
@@ -504,6 +550,7 @@ Future<void> runIntroE2EActions({
         'success': true,
         'nodeAction': nodeActionResult,
         'introAction': introActionResult,
+        'introDeliveryCustody': introDeliveryCustody,
         'chatAction': chatActionResult,
         'chatExpectations': chatExpectationResult,
         'uiNavigation': uiNavigation,
@@ -533,6 +580,197 @@ Future<void> runIntroE2EActions({
   }
 }
 
+Future<void> _runConnectivityRestoreObservation({
+  required Map<String, dynamic> config,
+  required MessageRepository messageRepo,
+}) async {
+  final events = <String>[];
+  var captureInstalled = false;
+  String? runId;
+  String? nonce;
+  try {
+    runId = _requiredConnectivityToken(config, 'runId', maxLength: 80);
+    nonce = _requiredConnectivityToken(config, 'nonce', maxLength: 128);
+    final contactPeerId = _requiredConnectivityToken(
+      config,
+      'contactPeerId',
+      maxLength: 160,
+    );
+    if (config['schema'] != connectivityRestoreObserveRequestSchema ||
+        config['transport_action'] != connectivityRestoreObserveAction ||
+        config['scenario'] != connectivityRestoreScenarioId ||
+        config['role'] != 'receiver' ||
+        config['receiverNetwork'] != 'disconnected' ||
+        config['appForeground'] != true ||
+        config['stepId'] != 'connectivity-observe-$runId') {
+      throw const FormatException('connectivity observation request rejected');
+    }
+
+    // Install the production flow sink before acknowledging the offline
+    // window. The host does not restore Android connectivity until it sees the
+    // nonce-bound `armed` result below.
+    setE2EFlowEventSink((payload) {
+      final event = payload['event'];
+      if (event is String && event.isNotEmpty) events.add(event);
+    });
+    captureInstalled = true;
+    await _writeIntroE2EResult(<String, dynamic>{
+      'schema': connectivityRestoreObserveResultSchema,
+      'stepId': config['stepId'],
+      'status': 'armed',
+      'success': true,
+      'runId': runId,
+      'nonce': nonce,
+      'observedMessageCount': 0,
+    });
+
+    final expectedTexts = connectivityRestoreExpectedTexts(runId);
+    final expectedSet = expectedTexts.toSet();
+    final timeoutMs = ((config['timeoutMs'] as num?)?.toInt() ?? 120000)
+        .clamp(1000, 180000)
+        .toInt();
+    final deadline = DateTime.now().add(Duration(milliseconds: timeoutMs));
+    var observedMessageCount = 0;
+    while (DateTime.now().isBefore(deadline)) {
+      final messages = await messageRepo.getMessagesForContact(contactPeerId);
+      final matching = messages
+          .where(
+            (message) =>
+                message.isIncoming &&
+                !message.isDeleted &&
+                !message.isHidden &&
+                message.transport != 'system' &&
+                expectedSet.contains(message.text),
+          )
+          .toList(growable: false);
+      final byText = <String, List<ConversationMessage>>{};
+      for (final message in matching) {
+        byText
+            .putIfAbsent(message.text, () => <ConversationMessage>[])
+            .add(message);
+      }
+      if (byText.values.any((matches) => matches.length > 1)) {
+        throw StateError('duplicate run-bound connectivity message observed');
+      }
+      final ids = matching.map((message) => message.id).toSet();
+      observedMessageCount = byText.length;
+      const requiredEvents = <String>{
+        'P2P_SERVICE_NETWORK_CHANGE_DRAIN_BEGIN',
+        'P2P_SERVICE_INBOX_STAGED_DRAIN_SUCCESS',
+        'P2P_SERVICE_WARM_PEER_NETWORK_CHANGE_REWARM',
+      };
+      final eventSet = events.toSet();
+      if (byText.length == 3 &&
+          ids.length == 3 &&
+          requiredEvents.difference(eventSet).isEmpty) {
+        final drainStart = events.indexOf(
+          'P2P_SERVICE_NETWORK_CHANGE_DRAIN_BEGIN',
+        );
+        if (events.indexOf('P2P_SERVICE_INBOX_STAGED_DRAIN_SUCCESS') <=
+                drainStart ||
+            events.indexOf('P2P_SERVICE_WARM_PEER_NETWORK_CHANGE_REWARM') <=
+                drainStart) {
+          throw StateError('connectivity restore events are out of order');
+        }
+        await _writeIntroE2EResult(<String, dynamic>{
+          'schema': connectivityRestoreObserveResultSchema,
+          'stepId': config['stepId'],
+          'status': 'complete',
+          'success': true,
+          'runId': runId,
+          'nonce': nonce,
+          'observedMessageCount': 3,
+          'events': List<String>.unmodifiable(events),
+          'resumeEventsDuringWindow': events
+              .where((event) => event.startsWith('APP_LIFECYCLE_RESUME_'))
+              .length,
+        });
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    throw StateError(
+      'connectivity observation timed out at $observedMessageCount messages',
+    );
+  } catch (error) {
+    final failure = <String, dynamic>{
+      'schema': connectivityRestoreObserveResultSchema,
+      'stepId': config['stepId'],
+      'status': 'failed',
+      'success': false,
+      'errorType': error.runtimeType.toString(),
+    };
+    if (runId != null) failure['runId'] = runId;
+    if (nonce != null) failure['nonce'] = nonce;
+    await _writeIntroE2EResult(failure);
+  } finally {
+    if (captureInstalled) setE2EFlowEventSink(null);
+    await _deleteConfigIfPresent();
+  }
+}
+
+String _requiredConnectivityToken(
+  Map<String, dynamic> config,
+  String key, {
+  required int maxLength,
+}) {
+  final value = config[key];
+  if (value is! String ||
+      value.isEmpty ||
+      value.length > maxLength ||
+      !RegExp(r'^[A-Za-z0-9._:-]+$').hasMatch(value)) {
+    throw FormatException('connectivity request has invalid $key');
+  }
+  return value;
+}
+
+Future<void> _writeIntroE2EResult(Map<String, dynamic> value) async {
+  final file = await _resultFile();
+  final temporary = File('${file.path}.tmp');
+  await temporary.writeAsString(jsonEncode(value), flush: true);
+  if (await file.exists()) await file.delete();
+  await temporary.rename(file.path);
+}
+
+Future<void> _runGroupReactionE2EProbe({
+  required Map<String, dynamic> config,
+  required Database database,
+  required SecureKeyStore secureKeyStore,
+}) async {
+  try {
+    final result = await runGroupReactionE2EProbeAction(
+      database: database,
+      secureKeyStore: secureKeyStore,
+      config: config.cast<String, Object?>(),
+    );
+    await _writeIntroE2EResult(Map<String, dynamic>.from(result));
+  } catch (error) {
+    String boundToken(String key, String fallback) {
+      final value = config[key];
+      return value is String &&
+              value.isNotEmpty &&
+              value.length <= 180 &&
+              RegExp(r'^[A-Za-z0-9._:-]+$').hasMatch(value)
+          ? value
+          : fallback;
+    }
+
+    await _writeIntroE2EResult(<String, dynamic>{
+      'schema': groupReactionE2EProbeResultSchema,
+      'transport_action': boundToken('transport_action', 'invalid-action'),
+      'scenario': boundToken('scenario', 'invalid-scenario'),
+      'stepId': boundToken('stepId', 'invalid-step'),
+      'runId': boundToken('runId', 'invalid-run'),
+      'nonce': boundToken('nonce', 'invalid-nonce'),
+      'status': 'failed',
+      'success': false,
+      'errorType': error.runtimeType.toString(),
+    });
+  } finally {
+    await _deleteConfigIfPresent();
+  }
+}
+
 void startIntroE2EPoller({
   required P2PService p2pService,
   required Bridge bridge,
@@ -541,6 +779,17 @@ void startIntroE2EPoller({
   required ContactRequestRepository contactRequestRepo,
   required IntroductionRepository introRepo,
   required MessageRepository messageRepo,
+  required PushEnvelopeStagingStore pushEnvelopeStagingStore,
+  required MediaAttachmentRepository mediaAttachmentRepo,
+  required MediaFileManager mediaFileManager,
+  required AudioRecorderService audioRecorderService,
+  required Database groupReactionProbeDatabase,
+  required SecureKeyStore groupReactionProbeSecureKeyStore,
+  required WakeTokenStore wakeTokenStore,
+  required ReceivedWakeTokenStore receivedWakeTokenStore,
+  required RegisterWakeTokensForE2E registerWakeTokens,
+  required DetailedInboxStore detailedInboxStore,
+  required WakeTokenAcceptedAttachmentObserver wakeTokenAttachmentObserver,
   ResolveWakeTokenForIntroE2EFn? resolveWakeToken,
   OpenConversationForIntroE2EFn? openConversationByPeerId,
   Duration initialDelay = const Duration(seconds: 2),
@@ -561,6 +810,148 @@ void startIntroE2EPoller({
       }
       final config = await _loadConfig();
       if (config == null) return;
+
+      // This action must execute before runIntroE2EActions: the generic path
+      // performs a health check and an inbox drain, which would invalidate a
+      // proof that Android's network-change callback caused the drain.
+      if (config['transport_action'] == connectivityRestoreObserveAction) {
+        await _runConnectivityRestoreObservation(
+          config: config,
+          messageRepo: messageRepo,
+        );
+        return;
+      }
+
+      if (isGroupReactionE2EProbeAction(config['transport_action'])) {
+        await _runGroupReactionE2EProbe(
+          config: config,
+          database: groupReactionProbeDatabase,
+          secureKeyStore: groupReactionProbeSecureKeyStore,
+        );
+        return;
+      }
+
+      // The Android notification campaign owns relay custody, production FCM
+      // staging, and the offline tap window. It must arm its observers before
+      // the host sends or taps, and must not fall through the generic health
+      // check/inbox drain that would destroy those causal boundaries.
+      if (isAndroidNotificationPayloadE2EAction(config['transport_action'])) {
+        try {
+          final result = await runAndroidNotificationPayloadE2EAction(
+            config: config,
+            p2pService: p2pService,
+            bridge: bridge,
+            messageRepo: messageRepo,
+            pushEnvelopeStagingStore: pushEnvelopeStagingStore,
+            writeProgress: (progress) =>
+                _writeIntroE2EResult(Map<String, dynamic>.from(progress)),
+          );
+          await _writeIntroE2EResult(Map<String, dynamic>.from(result));
+        } catch (error) {
+          await _writeIntroE2EResult(
+            Map<String, dynamic>.from(
+              androidNotificationPayloadE2EFailureReceipt(
+                config: config,
+                error: error,
+              ),
+            ),
+          );
+        } finally {
+          await _deleteConfigIfPresent();
+        }
+        return;
+      }
+
+      // Keepalive phases also bypass the generic health-check/inbox preamble:
+      // the dropped-send action must observe the existing production latch and
+      // delimit only the real send, while recovery observation must arm before
+      // the host relaunches the peer.
+      if (isKeepaliveDropE2EAction(config['transport_action'])) {
+        try {
+          await runKeepaliveDropE2EAction(
+            config: config,
+            p2pService: p2pService,
+            bridge: bridge,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            messageRepo: messageRepo,
+            writeResult: _writeIntroE2EResult,
+          );
+        } finally {
+          await _deleteConfigIfPresent();
+        }
+        return;
+      }
+
+      // The wake-token proof owns two hash-only actions. The issuer crosses
+      // the real mint/persist/register boundary; the presenter independently
+      // reads the production receive store and observes an accepted real
+      // inbox-store attachment. Neither action may fall through the generic
+      // health/drain preamble or serialize opaque token material.
+      if (isWakeTokenDirectionalityAction(config['transport_action'])) {
+        try {
+          final action = config['transport_action'];
+          final result = action == wakeTokenIssuerAction
+              ? await runWakeTokenIssuerE2EAction(
+                  config: config,
+                  wakeTokenStore: wakeTokenStore,
+                  registerWakeTokens: registerWakeTokens,
+                  onWaitCycle: p2pService.drainOfflineInbox,
+                )
+              : await runWakeTokenPresenterE2EAction(
+                  config: config,
+                  receivedWakeTokenStore: receivedWakeTokenStore,
+                  detailedInboxStore: detailedInboxStore,
+                  attachmentObserver: wakeTokenAttachmentObserver,
+                  onWaitCycle: p2pService.drainOfflineInbox,
+                );
+          await _writeIntroE2EResult(Map<String, dynamic>.from(result));
+        } catch (error) {
+          await _writeIntroE2EResult(
+            Map<String, dynamic>.from(
+              wakeTokenE2EFailureReceipt(config: config, error: error),
+            ),
+          );
+        } finally {
+          await _deleteConfigIfPresent();
+        }
+        return;
+      }
+
+      // Voice owns a full two-peer production action: the physical Android
+      // records and sends while the emulator persists, downloads, and plays
+      // the exact nonce-bound attachment. It must bypass the generic intro
+      // preamble so the receiver can publish its armed receipt before send.
+      if (config['transport_action'] == androidVoiceMessageE2EAction) {
+        try {
+          final result = await runAndroidVoiceMessageE2EAction(
+            config: config,
+            p2pService: p2pService,
+            bridge: bridge,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            messageRepo: messageRepo,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            audioRecorderService: audioRecorderService,
+            writeProgress: (progress) =>
+                _writeIntroE2EResult(Map<String, dynamic>.from(progress)),
+          );
+          await _writeIntroE2EResult(Map<String, dynamic>.from(result));
+        } catch (error) {
+          await _writeIntroE2EResult(
+            Map<String, dynamic>.from(
+              androidVoiceMessageE2EFailureReceipt(
+                config: config,
+                error: error,
+              ),
+            ),
+          );
+        } finally {
+          await _deleteConfigIfPresent();
+        }
+        return;
+      }
 
       await runIntroE2EActions(
         p2pService: p2pService,
@@ -932,6 +1323,116 @@ Future<Map<String, dynamic>> _runIntroductionAction({
   }
 
   return {'action': action, 'actedOn': actedOn, 'dropped': dropped};
+}
+
+/// Debug-E2E handshake for acceptance-notification campaigns.
+///
+/// [acceptIntroduction] completes after its first bounded delivery attempt,
+/// even when the durable introducer row remains `sent` or `failed`. This
+/// helper retries fresh rows without the production 60-second anti-race age
+/// gate and returns only after every acted-on introduction has no outstanding
+/// acceptance row for its introducer. The host still treats the real
+/// notification card as the authoritative end-to-end proof.
+@visibleForTesting
+Future<Map<String, dynamic>> awaitIntroducerAcceptanceCustodyForIntroE2E({
+  required Map<String, dynamic> introActionResult,
+  required String ownPeerId,
+  required IntroductionRepository introRepo,
+  required P2PService p2pService,
+  Duration timeout = const Duration(seconds: 120),
+  Duration retryInterval = const Duration(seconds: 2),
+}) async {
+  if (introActionResult['action'] != 'accept_all') {
+    throw StateError(
+      'Introducer-custody proof requires introduction_action=accept_all',
+    );
+  }
+  final rawActedOn = introActionResult['actedOn'];
+  if (rawActedOn is! List<dynamic> || rawActedOn.isEmpty) {
+    throw StateError(
+      'Introducer-custody proof requires at least one acted-on introduction',
+    );
+  }
+  final introductionIds = <String>[];
+  for (final value in rawActedOn) {
+    if (value is! String || value.isEmpty) {
+      throw StateError(
+        'Introducer-custody proof received an invalid introduction id',
+      );
+    }
+    if (!introductionIds.contains(value)) introductionIds.add(value);
+  }
+  if (ownPeerId.isEmpty || timeout <= Duration.zero) {
+    throw StateError('Introducer-custody proof received an invalid bound');
+  }
+
+  final stopwatch = Stopwatch()..start();
+  var retryPasses = 0;
+  while (true) {
+    var pendingIntroducerRows = 0;
+    for (final introductionId in introductionIds) {
+      final intro = await introRepo.getIntroduction(introductionId);
+      if (intro == null) {
+        throw StateError(
+          'Acted-on introduction disappeared before custody confirmation',
+        );
+      }
+      final ownAccepted = intro.recipientId == ownPeerId
+          ? intro.recipientStatus == IntroductionStatus.accepted
+          : intro.introducedId == ownPeerId
+          ? intro.introducedStatus == IntroductionStatus.accepted
+          : false;
+      if (!ownAccepted) {
+        throw StateError(
+          'Acted-on introduction was not durably accepted by this party',
+        );
+      }
+      final deliveries = await introRepo.loadOutboxDeliveriesForIntroduction(
+        introductionId,
+      );
+      pendingIntroducerRows += deliveries
+          .where(
+            (delivery) =>
+                delivery.action == 'accept' &&
+                delivery.targetPeerId == intro.introducerId,
+          )
+          .length;
+    }
+
+    if (pendingIntroducerRows == 0) {
+      stopwatch.stop();
+      emitFlowEvent(
+        layer: 'E2E',
+        event: 'INTRO_E2E_INTRODUCER_CUSTODY_CONFIRMED',
+        details: {
+          'introductionCount': introductionIds.length,
+          'retryPasses': retryPasses,
+        },
+      );
+      return <String, dynamic>{
+        'status': 'confirmed',
+        'introductionCount': introductionIds.length,
+        'retryPasses': retryPasses,
+        'elapsedMs': stopwatch.elapsedMilliseconds,
+      };
+    }
+
+    if (stopwatch.elapsed >= timeout) {
+      throw TimeoutException(
+        'Introducer acceptance delivery did not reach confirmed custody',
+        timeout,
+      );
+    }
+    retryPasses++;
+    await retryPendingIntroductionDeliveries(
+      introRepo: introRepo,
+      p2pService: p2pService,
+      olderThan: Duration.zero,
+    );
+    if (retryInterval > Duration.zero) {
+      await Future<void>.delayed(retryInterval);
+    }
+  }
 }
 
 Future<Map<String, dynamic>> _runFoldedIntroductionAction({

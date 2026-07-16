@@ -523,6 +523,11 @@ func TestGL008LeaveGroupTopicStopsDiscoveryAndInboundAfterLeave(t *testing.T) {
 		CreatedBy: nodeA.PeerId(),
 	}
 
+	for _, n := range []*Node{nodeA, nodeB, nodeC} {
+		n.dialPeerViaRelayHook = func(string) error {
+			return fmt.Errorf("GL-008 relay probe intentionally unavailable")
+		}
+	}
 	nodeB.waitForCircuitAddressHook = func(timeout time.Duration) bool { return true }
 	nodeB.rendezvousRegisterHook = func(namespace string, serverAddresses []string) error { return nil }
 	nodeB.rendezvousDiscoverHook = func(namespace string, serverAddresses []string) ([]peer.AddrInfo, error) {
@@ -679,6 +684,9 @@ func TestGP010DiscoveryLoopUnregistersOnceAndStopsAfterLeave(t *testing.T) {
 	n.rendezvousUnregisterHook = func(namespace string, serverAddresses []string) error {
 		unregisteredNamespaces <- namespace
 		return nil
+	}
+	n.dialPeerViaRelayHook = func(string) error {
+		return fmt.Errorf("GP-010 relay probe intentionally unavailable")
 	}
 	n.relayReadyOnce.Do(func() { close(n.relayReady) })
 

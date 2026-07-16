@@ -1145,6 +1145,8 @@ Future<void> _validateCaptureBundle(
     }
   }
 
+  var centralPrebuiltAndroid = false;
+  var parentPreparedCentralPrebuiltAndroid = false;
   if (candidateBuild != null) {
     final value = _decodeObject(
       candidateBuild,
@@ -1152,14 +1154,32 @@ Future<void> _validateCaptureBundle(
       failures,
     );
     if (value != null) {
+      final e2eSha256 = value['e2eApkSha256'];
+      final normalSha256 = value['normalApkSha256'];
+      final sourceProvenance = value['sourceProvenance'];
+      centralPrebuiltAndroid =
+          requirement.recipientPlatform == 'android' &&
+          value['buildMode'] == 'central_prebuilt' &&
+          value['buildProfile'] == 'android.production_fcm' &&
+          value['childBuildCount'] == 0 &&
+          value['parentPreparedAndroidState'] is bool &&
+          _isSha256(e2eSha256) &&
+          e2eSha256 == normalSha256 &&
+          sourceProvenance ==
+              'central-prebuilt:android.production_fcm:$e2eSha256';
+      parentPreparedCentralPrebuiltAndroid =
+          centralPrebuiltAndroid && value['parentPreparedAndroidState'] == true;
+      final legacyDistinctBuild =
+          _isSha256(e2eSha256) &&
+          _isSha256(normalSha256) &&
+          e2eSha256 != normalSha256 &&
+          sourceProvenance is String &&
+          sourceProvenance.contains('+worktree:');
       if (value['schema'] != 'mknoon.plan257.candidate-build.v1' ||
-          !_isSha256(value['e2eApkSha256']) ||
-          !_isSha256(value['normalApkSha256']) ||
-          value['e2eApkSha256'] == value['normalApkSha256'] ||
-          value['sourceProvenance'] is! String ||
-          !(value['sourceProvenance'] as String).contains('+worktree:')) {
+          (!legacyDistinctBuild && !centralPrebuiltAndroid)) {
         failures.add(
-          r'$.capture.candidateBuild lacks distinct candidate provenance',
+          r'$.capture.candidateBuild lacks accepted legacy-distinct or '
+          'central-prebuilt candidate provenance',
         );
       }
       if (requirement.recipientPlatform == 'ios') {
@@ -1259,6 +1279,9 @@ Future<void> _validateCaptureBundle(
           requirement: requirement,
           senderDeviceId: senderDeviceId,
           recipientDeviceId: recipientDeviceId,
+          centralPrebuiltAndroid: centralPrebuiltAndroid,
+          parentPreparedCentralPrebuiltAndroid:
+              parentPreparedCentralPrebuiltAndroid,
           failures: failures,
         );
       }
@@ -1271,6 +1294,8 @@ void _validateCommandJournal(
   required GroupReactionNotificationScenario requirement,
   required String? senderDeviceId,
   required String? recipientDeviceId,
+  required bool centralPrebuiltAndroid,
+  required bool parentPreparedCentralPrebuiltAndroid,
   required List<String> failures,
 }) {
   bool hasCommand(String stage, String executable, String argumentFragment) {
@@ -1284,6 +1309,28 @@ void _validateCommandJournal(
     });
   }
 
+  bool hasSuccessfulAdbCommand(
+    String stage,
+    String deviceId,
+    Set<String> requiredArguments,
+  ) {
+    return commands.any((command) {
+      final args = command['args'];
+      return command['stage'] == stage &&
+          command['executable'] == 'adb' &&
+          command['exitCode'] == 0 &&
+          args is List &&
+          args.contains(deviceId) &&
+          requiredArguments.every(args.contains);
+    });
+  }
+
+  bool isInstallCommand(Map<String, Object?> command) {
+    final args = command['args'];
+    return args is List &&
+        (args.contains('install') || args.contains('install-multiple'));
+  }
+
   for (final command in commands) {
     if (command['stage'] is! String ||
         command['executable'] is! String ||
@@ -1294,31 +1341,63 @@ void _validateCommandJournal(
       break;
     }
   }
+  final childBuildCommands = commands.where(
+    (command) =>
+        (command['stage'] == 'candidate_build' ||
+            command['stage'] == 'ios_android_sender_build') &&
+        command['executable'] == 'flutter' &&
+        (command['args'] as List).contains('build'),
+  );
+  final buildBoundary = centralPrebuiltAndroid
+      ? childBuildCommands.isEmpty
+      : childBuildCommands.length >= 2;
+  final roleInstallCommands = commands.where(
+    (command) =>
+        command['stage'] ==
+            (requirement.recipientPlatform == 'ios'
+                ? 'ios_android_sender_build'
+                : 'android_role_install') &&
+        command['executable'] == 'adb' &&
+        isInstallCommand(command),
+  );
+  final parentPreparedRoleBoundary =
+      parentPreparedCentralPrebuiltAndroid &&
+      senderDeviceId != null &&
+      recipientDeviceId != null &&
+      <String>[senderDeviceId, recipientDeviceId].every(
+        (deviceId) =>
+            hasSuccessfulAdbCommand(
+              'android_role_install',
+              deviceId,
+              const <String>{'shell', 'pm', 'path', 'com.mknoon.app'},
+            ) &&
+            hasSuccessfulAdbCommand(
+              'android_role_install',
+              deviceId,
+              const <String>{'shell', 'sha256sum'},
+            ),
+      ) &&
+      roleInstallCommands.isEmpty;
+  final roleBoundary = parentPreparedCentralPrebuiltAndroid
+      ? parentPreparedRoleBoundary
+      : roleInstallCommands.isNotEmpty;
   final hasCommonBoundaryCommands =
       hasCommand('device_inventory', 'flutter', 'devices') &&
       hasCommand('device_inventory', 'adb', 'devices') &&
       hasCommand('relay_configuration', 'ssh', 'systemctl') &&
-      commands
-              .where(
-                (command) =>
-                    (command['stage'] == 'candidate_build' ||
-                        command['stage'] == 'ios_android_sender_build') &&
-                    command['executable'] == 'flutter' &&
-                    (command['args'] as List).contains('build'),
-              )
-              .length >=
-          2 &&
-      hasCommand(
-        requirement.recipientPlatform == 'ios'
-            ? 'ios_android_sender_build'
-            : 'android_role_install',
-        'adb',
-        'install',
-      );
+      buildBoundary &&
+      roleBoundary;
   if (!hasCommonBoundaryCommands) {
     failures.add(
       r'$.capture.commandJournal is missing common inventory/relay/build/'
-      'Android-sender install boundary commands',
+      'Android-role preparation boundary commands',
+    );
+  }
+  if (parentPreparedCentralPrebuiltAndroid && !parentPreparedRoleBoundary) {
+    failures.add(
+      r'$.capture.commandJournal must contain successful both-device pm path '
+      'and SHA-256 verification at android_role_install, with no redundant '
+      'install for parent-prepared central-prebuilt Android state',
     );
   }
   for (final deviceId in <String?>[senderDeviceId, recipientDeviceId]) {
@@ -1398,11 +1477,58 @@ void _validateCommandJournal(
     return;
   }
 
-  if (!hasCommand('provider_registration', 'adb', 'install') ||
-      !hasCommand('sqlcipher_observation', 'flutter', _plan257SqlProbe)) {
+  final hasSqlCipherBoundary = centralPrebuiltAndroid
+      ? hasCommand(
+          'sqlcipher_observation',
+          'adb',
+          'plan257_intro_e2e_config.json',
+        )
+      : hasCommand('sqlcipher_observation', 'flutter', _plan257SqlProbe);
+  final providerInstallCommands = commands.where(
+    (command) =>
+        command['stage'] == 'provider_registration' &&
+        command['executable'] == 'adb' &&
+        isInstallCommand(command),
+  );
+  final providerBoundary = parentPreparedCentralPrebuiltAndroid
+      ? recipientDeviceId != null &&
+            providerInstallCommands.isEmpty &&
+            hasSuccessfulAdbCommand(
+              'provider_registration',
+              recipientDeviceId,
+              const <String>{
+                'shell',
+                'am',
+                'start',
+                'com.mknoon.app/.MainActivity',
+              },
+            )
+      : providerInstallCommands.isNotEmpty;
+  if (!providerBoundary || !hasSqlCipherBoundary) {
     failures.add(
       r'$.capture.commandJournal is missing Android provider/SQLCipher '
       'boundary commands',
+    );
+  }
+  if (parentPreparedCentralPrebuiltAndroid &&
+      providerInstallCommands.isNotEmpty) {
+    failures.add(
+      r'$.capture.commandJournal contains a forbidden provider reinstall for '
+      'parent-prepared central-prebuilt Android state',
+    );
+  }
+  if (centralPrebuiltAndroid &&
+      commands.any(
+        (command) =>
+            command['executable'] == 'flutter' &&
+            command['args'] is List &&
+            (command['args'] as List).any(
+              (argument) => '$argument'.contains(_plan257SqlProbe),
+            ),
+      )) {
+    failures.add(
+      r'$.capture.commandJournal contains a forbidden child Flutter '
+      'SQLCipher probe for a central-prebuilt Android run',
     );
   }
 
@@ -1441,6 +1567,53 @@ void _validateCommandJournal(
     );
   }
   if (!requirement.id.endsWith('_message_unread_lifecycle')) {
+    if (centralPrebuiltAndroid) {
+      final runtimeProbeIndex = commands.indexWhere(
+        (command) =>
+            command['stage'] == lifecycleStage &&
+            command['executable'] == 'adb' &&
+            command['exitCode'] == 0 &&
+            command['args'] is List &&
+            (command['args'] as List).any(
+              (argument) =>
+                  '$argument'.contains('plan257_intro_e2e_config.json'),
+            ),
+      );
+      final productionStartIndex = runtimeProbeIndex < 0
+          ? -1
+          : commands.indexWhere(
+              (command) =>
+                  command['stage'] == lifecycleStage &&
+                  command['executable'] == 'adb' &&
+                  command['exitCode'] == 0 &&
+                  command['args'] is List &&
+                  (command['args'] as List).contains('am') &&
+                  (command['args'] as List).contains('start') &&
+                  (command['args'] as List).any(
+                    (argument) =>
+                        '$argument'.contains('com.mknoon.app/.MainActivity'),
+                  ),
+              runtimeProbeIndex + 1,
+            );
+      final forbiddenChildProbe = commands.any(
+        (command) =>
+            command['executable'] == 'flutter' &&
+            command['args'] is List &&
+            (command['args'] as List).any(
+              (argument) => '$argument'.contains(_plan257SqlProbe),
+            ),
+      );
+      if (runtimeProbeIndex < 0 ||
+          productionStartIndex <= runtimeProbeIndex ||
+          forbiddenChildProbe) {
+        failures.add(
+          r'$.capture.commandJournal lacks the installed-app exact-ADD '
+          'runtime probe and production retry launch, or contains a '
+          'forbidden child Flutter probe',
+        );
+      }
+      return;
+    }
     final duplicateProbeIndex = commands.indexWhere(
       (command) =>
           command['stage'] == lifecycleStage &&

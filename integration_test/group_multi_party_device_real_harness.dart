@@ -1607,6 +1607,7 @@ Future<List<MediaAttachment>> _downloadPl006ActiveRecipientMedia({
       attachment: attachment,
       contactPeerId: groupId,
       owner: MediaOwnerLane.group,
+      groupMessageRepo: stack.groupMsgRepo,
       enforceGroupMediaPolicy: true,
     );
   }

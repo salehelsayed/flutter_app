@@ -11,7 +11,13 @@ log_file="${ANALYZER_BASELINE_LOG_PATH:-}"
 cleanup_log=0
 
 if [[ -z "$log_file" ]]; then
-  log_file="$(mktemp "${TMPDIR:-/tmp}/flutter_analyze_baseline.XXXXXX.log")"
+  # BSD mktemp (used on macOS) requires the X run at the end of the
+  # template. A suffix leaves the Xs literal and can collide with a stale
+  # file, which would make the major gate fail before analysis starts.
+  if ! log_file="$(mktemp "${TMPDIR:-/tmp}/flutter_analyze_baseline.XXXXXX")"; then
+    echo "Unable to create analyzer baseline log." >&2
+    exit 2
+  fi
   cleanup_log=1
 fi
 

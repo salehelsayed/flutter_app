@@ -442,9 +442,45 @@ authority. Neither composite may be restated as a fresh unbroken pass.
 | Report | Focus |
 |--------|-------|
 | [14-regression-test-strategy.md](14-regression-test-strategy.md) | Practical regression model: baseline gate, subsystem gates, missing regressions to add, and run rules for new work |
-| [258-sims-major-update-gate-and-build-reuse-tdd-plan.md](258-sims-major-update-gate-and-build-reuse-tdd-plan.md) | Awaiting-review TDD plan for a truthful `$sims major` umbrella: critical-feature manifest, capability deduplication, fail-closed typed verdicts, availability-bounded Android/iOS proofs, checkpointed fix-as-you-go, one content-attested build per compatible profile, and bounded resource-aware `--simultaneous` scheduling with serial-equivalent verdicts. Future Voice/Video Call 1:1 capabilities remain inactive until that feature is implemented. |
+| [258-sims-major-update-gate-and-build-reuse-tdd-plan.md](258-sims-major-update-gate-and-build-reuse-tdd-plan.md) | Implemented contract for a truthful `$sims major` umbrella: the typed manifest, strict verdicts, six-profile build cache, live-device resolver, checkpointing, resource scheduler, and all active campaign drivers have landed. Release closure still requires an authoritative clean run whose available live prerequisites pass; configuration blockers remain blockers. Future Voice/Video Call 1:1 capabilities remain inactive until that feature is implemented. |
 
-**Top finding:** The repo already has most of the needed tests. The missing piece is a clear run strategy: small baseline on every PR, change-based subsystem gates for risky shared code, explicit file lists per gate, a bulk-classification policy for non-gate tests, and one permanent regression test for every escaped bug.
+**Top finding:** The repo already has most of the needed tests. Plan 258 defines
+the release umbrella that was missing above the existing small PR baseline,
+change-based subsystem gates, explicit named-gate lists, bulk classification,
+and the permanent-regression rule for escaped bugs.
+
+`$sims` now names three distinct contracts: no arguments selects `major`, the
+only release-green-eligible critical-feature umbrella; `full` is the cleaned
+registered reliability/device inventory (including explicit blockers); and
+`smoke` is the fast representative
+subset. Filtered, continued, retried, or resumed runs remain diagnostic until a
+separate clean unfiltered `major` passes. Major rows use typed
+`PASS|FAIL|BLOCKED|SKIP|N/A` verdicts, reuse one attested artifact per compatible
+build profile, and permit overlap only through declared resource-safe
+`--simultaneous` scheduling. The skill adapters delegate those decisions to the
+repo CLI and do not carry a separate iOS-first target policy.
+
+Implementation snapshot (2026-07-15): the logical major plan has 26 active
+rows, six declared reusable device build profiles, and 11 device/campaign
+consumers. Every active row has an automated driver. Live preflight reports
+missing provider/relay/staging/signing or disposable-iOS-receiver prerequisites
+as `BLOCKED`, and only genuinely absent policy-bounded topology as `N/A`.
+Recorder and performance share the central
+`android.e2e.standard` APK; the performance adapter binds the runtime tuple and
+APK digest and enforces FEED average `<8 ms`, FEED p99 `<24 ms`, FEED worst
+`<100 ms`, and production Go `node:status` MethodChannel p99 `<50 ms`.
+Android campaigns restore exact pre-run app/device state before PASS. Preflight
+skips profiles with no runnable consumer, and the report's requested, built,
+failed, cache-hit, per-profile elapsed, and total build elapsed fields are
+authoritative. The
+flag `--simultaneous` schedules compatible plan rows (default cap four); it does
+not parallelize central artifact preparation or override shared locks. The
+Android recorder now stages a profile/scenario/role/run-ID/nonce invocation and
+requires a matching app acknowledgement while consuming the prepared APK.
+Performance uses the same acknowledged runtime protocol, while intro has its
+own prepared production-FCM campaign adapter. The new intro/performance
+readiness statements are implementation-state claims; they do not add
+fabricated live-campaign or clean-major PASS results.
 
 ---
 
