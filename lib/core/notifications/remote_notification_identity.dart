@@ -41,6 +41,35 @@ Future<bool> markRemoteNotificationOpenAsRecentAnnouncement({
   return true;
 }
 
+/// iOS: a push that arrives while the app is FOREGROUND is provably never
+/// presented (willPresent completes with the persisted presentation options —
+/// none), yet the NSE already wrote its cross-process "shown" sidecar. Left in
+/// place, that marker makes the gate suppress the drain-triggered local banner
+/// too, so the user sees nothing at all. Discard the sidecar for exactly this
+/// message so the local path presents the one visible banner. Dart-map markers
+/// ([RecentRemoteNotificationGate.markAnnouncement]) are untouched, keeping
+/// recovery/replay dedupe intact. Returns false for non-message-aware payloads.
+Future<bool> discardSuppressedForegroundRemoteSidecar({
+  required Map<String, dynamic> data,
+  required RecentRemoteNotificationGate gate,
+}) async {
+  final routeTarget = NotificationRouteTarget.fromRemoteMessageData(data);
+  if (routeTarget == null ||
+      !routeTargetSupportsMessageAwareRemoteDedupe(routeTarget.kind)) {
+    return false;
+  }
+  final messageId =
+      remoteNotificationMessageIdFromData(data) ?? routeTarget.messageId;
+  if (messageId == null || messageId.trim().isEmpty) {
+    return false;
+  }
+  await gate.discardSidecarMarker(
+    payload: routeTarget.toPayload(),
+    messageId: messageId,
+  );
+  return true;
+}
+
 String? _trimToNull(String? value) {
   final trimmed = value?.trim();
   if (trimmed == null || trimmed.isEmpty) {

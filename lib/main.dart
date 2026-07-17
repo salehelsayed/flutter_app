@@ -5593,6 +5593,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     final result = await handleForegroundRemoteMessage(
       data: message.data,
       messageId: message.messageId,
+      // Off-iOS the gate has no sidecar dir provider, so the discard is a
+      // no-op; passing unconditionally keeps the wiring platform-free.
+      recentRemoteGate: recentRemoteNotificationGate,
       drainOfflineInbox: () => _runAccountRuntimeNetworkVoidAction(
         operation: 'push_foreground_inbox_drain',
         action: widget.p2pService.drainOfflineInbox,

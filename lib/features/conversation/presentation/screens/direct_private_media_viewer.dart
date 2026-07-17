@@ -240,87 +240,90 @@ class _DirectPrivateMediaViewerState extends State<DirectPrivateMediaViewer>
       onPopInvokedWithResult: (didPop, result) {
         if (!didPop) _coverAndClose(DirectPrivateMediaExitReason.close);
       },
-      child: Stack(
-        key: const ValueKey('direct-private-media-viewer'),
-        children: [
-          FullScreenTypedMediaViewer(
-            items: [item],
-            privacyMinimized: true,
-            onFirstRenderedFrame: () async {
-              final accepted = await widget.controller.markFirstFrame(grant);
-              if (!accepted) {
-                _coverAndClose(DirectPrivateMediaExitReason.postFrameFailure);
-              }
-              return accepted;
-            },
-            onPreFrameFailure: () => _coverAndClose(
-              DirectPrivateMediaExitReason.preFrameDecodeFailure,
+      // The viewer route hosts raw Text overlays; without a Material ancestor
+      // they render with the framework's yellow-underline fallback style.
+      child: Material(
+        type: MaterialType.transparency,
+        child: Stack(
+          key: const ValueKey('direct-private-media-viewer'),
+          children: [
+            FullScreenTypedMediaViewer(
+              items: [item],
+              privacyMinimized: true,
+              onFirstRenderedFrame: () async {
+                final accepted = await widget.controller.markFirstFrame(grant);
+                if (!accepted) {
+                  _coverAndClose(DirectPrivateMediaExitReason.postFrameFailure);
+                }
+                return accepted;
+              },
+              onPreFrameFailure: () => _coverAndClose(
+                DirectPrivateMediaExitReason.preFrameDecodeFailure,
+              ),
             ),
-          ),
-          Positioned(
-            left: 12,
-            right: 12,
-            bottom: 12,
-            child: SafeArea(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    l10n.private_media_notification_body,
-                    key: const ValueKey('private-media-generic-copy'),
-                    style: const TextStyle(color: Colors.white70),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    (widget.capturePlatformOverride == TargetPlatform.iOS ||
-                            (widget.capturePlatformOverride == null &&
-                                Platform.isIOS))
-                        ? l10n.private_media_ios_capture_limit
-                        : l10n.private_media_android_capture_limit,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.white54, fontSize: 11),
-                  ),
-                  Text(
-                    l10n.private_media_general_capture_limit,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.white54, fontSize: 11),
-                  ),
-                  if (widget.onSafeAction != null)
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        _PrivateActionButton(
-                          action: DirectPrivateMediaAction.reply,
-                          icon: Icons.reply_rounded,
-                          tooltip: l10n.media_viewer_action_reply,
-                          onPressed: _dispatchSafe,
-                        ),
-                        _PrivateActionButton(
-                          action: DirectPrivateMediaAction.info,
-                          icon: Icons.info_outline_rounded,
-                          tooltip: l10n.media_viewer_action_info,
-                          onPressed: _dispatchSafe,
-                        ),
-                        _PrivateActionButton(
-                          action: DirectPrivateMediaAction.deleteForMe,
-                          icon: Icons.delete_outline_rounded,
-                          tooltip: l10n.media_viewer_action_delete,
-                          onPressed: _dispatchSafe,
-                        ),
-                      ],
+            Positioned(
+              left: 12,
+              right: 12,
+              bottom: 12,
+              child: SafeArea(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      l10n.private_media_notification_body,
+                      key: const ValueKey('private-media-generic-copy'),
+                      style: const TextStyle(color: Colors.white70),
                     ),
-                ],
+                    const SizedBox(height: 4),
+                    Text(
+                      (widget.capturePlatformOverride == TargetPlatform.iOS ||
+                              (widget.capturePlatformOverride == null &&
+                                  Platform.isIOS))
+                          ? l10n.private_media_ios_capture_limit
+                          : l10n.private_media_android_capture_limit,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 11,
+                      ),
+                    ),
+                    if (widget.onSafeAction != null)
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          _PrivateActionButton(
+                            action: DirectPrivateMediaAction.reply,
+                            icon: Icons.reply_rounded,
+                            tooltip: l10n.media_viewer_action_reply,
+                            onPressed: _dispatchSafe,
+                          ),
+                          _PrivateActionButton(
+                            action: DirectPrivateMediaAction.info,
+                            icon: Icons.info_outline_rounded,
+                            tooltip: l10n.media_viewer_action_info,
+                            onPressed: _dispatchSafe,
+                          ),
+                          _PrivateActionButton(
+                            action: DirectPrivateMediaAction.deleteForMe,
+                            icon: Icons.delete_outline_rounded,
+                            tooltip: l10n.media_viewer_action_delete,
+                            onPressed: _dispatchSafe,
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
               ),
             ),
-          ),
-          if (_covered)
-            const Positioned.fill(
-              child: ColoredBox(
-                key: ValueKey('private-media-cover'),
-                color: Colors.black,
+            if (_covered)
+              const Positioned.fill(
+                child: ColoredBox(
+                  key: ValueKey('private-media-cover'),
+                  color: Colors.black,
+                ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -414,20 +417,37 @@ class DirectPrivateMediaTerminalPlaceholder extends StatelessWidget {
   }
 }
 
+/// Human-readable label for a private policy mode, matching the composer
+/// selector's vocabulary so the bubble and the compose chip agree.
+String privateMediaModeLabel(AppLocalizations l10n, PrivateMediaPolicy policy) {
+  return switch (policy.mode) {
+    PrivateMediaMode.protected => l10n.private_media_protected,
+    PrivateMediaMode.viewOnce => l10n.private_media_view_once,
+    PrivateMediaMode.disappearing when policy.durationSeconds == 3600 =>
+      l10n.private_media_disappearing_1h,
+    PrivateMediaMode.disappearing when policy.durationSeconds == 86400 =>
+      l10n.private_media_disappearing_1d,
+    PrivateMediaMode.disappearing => l10n.private_media_disappearing_7d,
+    _ => l10n.private_media_ordinary,
+  };
+}
+
 class DirectPrivateMediaOpenPlaceholder extends StatelessWidget {
   const DirectPrivateMediaOpenPlaceholder({
     super.key,
     required this.onOpen,
     this.opening = false,
+    this.policy,
   });
 
   final VoidCallback? onOpen;
   final bool opening;
+  final PrivateMediaPolicy? policy;
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return FilledButton.tonalIcon(
+    final button = FilledButton.tonalIcon(
       key: const ValueKey('private-media-open'),
       onPressed: opening ? null : onOpen,
       icon: opening
@@ -438,6 +458,61 @@ class DirectPrivateMediaOpenPlaceholder extends StatelessWidget {
           : const Icon(Icons.lock_outline_rounded),
       label: Text(
         opening ? l10n.private_media_opening : l10n.private_media_open,
+      ),
+    );
+    final labeledPolicy = policy;
+    if (labeledPolicy == null || !labeledPolicy.isPrivate) {
+      return button;
+    }
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        button,
+        const SizedBox(height: 2),
+        Text(
+          privateMediaModeLabel(l10n, labeledPolicy),
+          key: const ValueKey('private-media-mode-label'),
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      ],
+    );
+  }
+}
+
+/// Sender-side bubble content for an outgoing private message: the mode is
+/// shown instead of an open affordance — the eligibility engine denies
+/// outgoing parents (requireIncoming), so an open button here could only ever
+/// no-op silently.
+class DirectPrivateMediaOutgoingPlaceholder extends StatelessWidget {
+  const DirectPrivateMediaOutgoingPlaceholder({
+    super.key,
+    required this.policy,
+  });
+
+  final PrivateMediaPolicy policy;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final label = privateMediaModeLabel(l10n, policy);
+    return Semantics(
+      label: label,
+      child: Container(
+        key: const ValueKey('private-media-outgoing'),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.lock_outline_rounded, size: 16),
+            const SizedBox(width: 6),
+            Text(label, style: Theme.of(context).textTheme.bodySmall),
+          ],
+        ),
       ),
     );
   }

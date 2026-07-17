@@ -1,4 +1,6 @@
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
+import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
+import 'package:flutter_app/core/notifications/remote_notification_identity.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 typedef DrainOfflineInboxFn = Future<void> Function();
@@ -12,6 +14,7 @@ Future<ForegroundRemoteMessageResult> handleForegroundRemoteMessage({
   required String? messageId,
   required DrainOfflineInboxFn drainOfflineInbox,
   required DrainGroupOfflineInboxForGroupFn drainGroupOfflineInboxForGroup,
+  RecentRemoteNotificationGate? recentRemoteGate,
 }) async {
   final routeTarget = NotificationRouteTarget.fromRemoteMessageData(data);
   if (routeTarget == null) {
@@ -49,6 +52,27 @@ Future<ForegroundRemoteMessageResult> handleForegroundRemoteMessage({
           (messageId?.trim().isNotEmpty ?? false),
     },
   );
+
+  // A foreground arrival reaches this handler exactly BECAUSE iOS did not
+  // present it (willPresent completes with no options), yet the NSE has
+  // already written its "shown" sidecar. Discard it BEFORE draining — the
+  // drain triggers the local materialization, and a surviving sidecar makes
+  // the recent-remote gate suppress that banner as a duplicate of a banner
+  // that never appeared (the user then sees nothing at all).
+  if (recentRemoteGate != null) {
+    try {
+      await discardSuppressedForegroundRemoteSidecar(
+        data: data,
+        gate: recentRemoteGate,
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PUSH_FOREGROUND_SIDECAR_DISCARD_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
 
   try {
     switch (routeTarget.kind) {

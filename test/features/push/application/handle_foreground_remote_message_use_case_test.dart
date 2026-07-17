@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/push/application/handle_foreground_remote_message_use_case.dart';
 
@@ -9,6 +11,81 @@ import 'remote_message_fixtures.dart';
 
 void main() {
   group('handleForegroundRemoteMessage', () {
+    test(
+      'discards the NSE "shown" sidecar for a never-presented foreground '
+      'group push BEFORE the drain, so the local banner is not suppressed',
+      () async {
+        final container = await Directory.systemTemp.createTemp('fg-sidecar-');
+        addTearDown(() => container.delete(recursive: true));
+        final sidecarDir = Directory('${container.path}/RecentRemoteShown');
+        await sidecarDir.create(recursive: true);
+        final gate = RecentRemoteNotificationGate(
+          filePath: '${container.path}/gate.json',
+          appGroupSidecarDirProvider: () async => container,
+        );
+        final markerFile = File(
+          '${sidecarDir.path}/'
+          '${gate.sidecarMarkerName('group:group-1|message:msg-1', 'msg-1')}',
+        );
+        await markerFile.writeAsString('');
+
+        var drainObservedMarkerGone = false;
+        final result = await handleForegroundRemoteMessage(
+          data: groupMessageData(),
+          messageId: 'fcm-9',
+          recentRemoteGate: gate,
+          drainOfflineInbox: () async {
+            fail('group push must not use the 1:1 drain');
+          },
+          drainGroupOfflineInboxForGroup: (groupId) async {
+            drainObservedMarkerGone = !markerFile.existsSync();
+          },
+        );
+
+        expect(result, ForegroundRemoteMessageResult.drained);
+        expect(
+          drainObservedMarkerGone,
+          isTrue,
+          reason:
+              'the sidecar must be discarded before the drain materializes '
+              'the local banner',
+        );
+        expect(
+          await gate.consumeIfRecentAnnouncement(
+            payload: 'group:group-1|message:msg-1',
+            messageId: 'msg-1',
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    test(
+      'a gate failure during sidecar discard does not break the drain',
+      () async {
+        final drainedGroups = <String>[];
+        final gate = RecentRemoteNotificationGate(
+          filePath: '/nonexistent-dir/gate.json',
+          appGroupSidecarDirProvider: () async =>
+              throw StateError('app group unavailable'),
+          fallbackToSystemTempOnDirectoryError: false,
+        );
+
+        final result = await handleForegroundRemoteMessage(
+          data: groupMessageData(),
+          messageId: 'fcm-10',
+          recentRemoteGate: gate,
+          drainOfflineInbox: () async {},
+          drainGroupOfflineInboxForGroup: (groupId) async {
+            drainedGroups.add(groupId);
+          },
+        );
+
+        expect(result, ForegroundRemoteMessageResult.drained);
+        expect(drainedGroups, ['group-1']);
+      },
+    );
+
     test('group_message routes to the targeted group drain', () async {
       var oneToOneCalls = 0;
       final drainedGroups = <String>[];

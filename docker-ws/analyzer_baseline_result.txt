@@ -1,0 +1,22 @@
+Running flutter analyze baseline gate
+Baseline: tool/analyzer_baseline/flutter_analyze_baseline.tsv
+Analyzer log: docker-ws/flutter_analyze_log.txt
+Running build hooks...Running build hooks...Analyzer baseline comparison
+Current warning/info findings: 1598
+Baseline warning/info findings: 1609
+Analyzer errors: 0
+New analyzer debt: 0
+Removed analyzer debt: 11
+Removed baseline debt opportunities:
+  -1 integration_test/voice_message_e2e_test.dart avoid_print: Don't invoke 'print' in production code
+  -1 integration_test/voice_message_e2e_test.dart unnecessary_import: The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
+  -1 test/core/services/p2p_service_impl_wake_attach_test.dart unnecessary_import: The import of 'dart:async' is unnecessary because all of the used elements are also provided by the import of 'package:flutter_test/flutter_test.dart'
+  -1 test/features/introduction/application/introduction_outbound_delivery_test.dart unused_element_parameter: A value for optional parameter 'recoveryMethod' isn't ever given
+  -1 test/features/introduction/application/introduction_outbound_delivery_test.dart unused_element_parameter: A value for optional parameter 'registerPushTokenResult' isn't ever given
+  -1 test/features/introduction/application/introduction_outbound_delivery_test.dart unused_element_parameter: A value for optional parameter 'retrieveInboxResult' isn't ever given
+  -1 test/features/introduction/application/introduction_outbound_delivery_test.dart unused_element_parameter: A value for optional parameter 'sendMessageResult' isn't ever given
+  -1 test/features/introduction/application/introduction_outbound_delivery_test.dart unused_element_parameter: A value for optional parameter 'startNodeResult' isn't ever given
+  -1 test/features/introduction/application/introduction_outbound_delivery_test.dart unused_element_parameter: A value for optional parameter 'stopNodeResult' isn't ever given
+  -1 test/features/introduction/application/introduction_outbound_delivery_test.dart unused_element_parameter: A value for optional parameter 'throwOnDrainInbox' isn't ever given
+  -1 test/features/introduction/application/introduction_outbound_delivery_test.dart unused_element_parameter: A value for optional parameter 'throwOnHealthCheck' isn't ever given
+exit=0

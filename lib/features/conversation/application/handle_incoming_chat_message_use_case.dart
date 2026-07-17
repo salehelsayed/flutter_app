@@ -569,9 +569,12 @@ handleIncomingChatMessage({
       mediaAttachmentRepo != null &&
       payload.media != null) {
     for (final mediaJson in payload.media!) {
+      // The hydrated message feeds the live UI before any DB reload, and the
+      // private-media eligibility engine fails closed (wrongOwner) on a
+      // lane-less attachment — stamp the lane the save below persists.
       final attachment = MediaAttachment.fromJson(
         mediaJson,
-      ).copyWith(messageId: payload.id);
+      ).copyWith(messageId: payload.id, ownerLane: MediaOwnerLane.direct);
       final saved = await _saveIncomingDirectAttachment(
         repository: mediaAttachmentRepo,
         attachment: attachment,

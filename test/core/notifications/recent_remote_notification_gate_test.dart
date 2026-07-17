@@ -313,6 +313,67 @@ void main() {
       );
     });
 
+    test(
+      'discardSidecarMarker removes the marker without a suppression hit '
+      'and leaves Dart-map entries intact',
+      () async {
+        await writeMarker('message:group:g-2|message:m-5|m-5', now);
+        await gate.markAnnouncement(
+          payload: 'group:g-other|message:m-1',
+          messageId: 'm-1',
+        );
+
+        await gate.discardSidecarMarker(
+          payload: 'group:g-2|message:m-5',
+          messageId: 'm-5',
+        );
+
+        expect(
+          File(
+            '${sidecarDir.path}/${markerName('message:group:g-2|message:m-5|m-5')}',
+          ).existsSync(),
+          isFalse,
+        );
+        // The never-presented foreground push no longer suppresses the
+        // local banner.
+        expect(
+          await gate.consumeIfRecentAnnouncement(
+            payload: 'group:g-2|message:m-5',
+            messageId: 'm-5',
+          ),
+          isFalse,
+        );
+        // Dart-map dedupe (live-first / recovery paths) is unaffected.
+        expect(
+          await gate.consumeIfRecentAnnouncement(
+            payload: 'group:g-other|message:m-1',
+            messageId: 'm-1',
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'discardSidecarMarker is a no-op for a missing marker or null messageId',
+      () async {
+        await gate.discardSidecarMarker(
+          payload: 'peer-none',
+          messageId: 'm-none',
+        );
+
+        await writeMarker('message:peer-keep|m-k', now);
+        await gate.discardSidecarMarker(payload: 'peer-keep', messageId: null);
+        expect(
+          await gate.consumeIfRecentAnnouncement(
+            payload: 'peer-keep',
+            messageId: 'm-k',
+          ),
+          isTrue,
+        );
+      },
+    );
+
     test('honors the 12h message TTL on sidecar markers', () async {
       await writeMarker(
         'message:peer-x|m-1',

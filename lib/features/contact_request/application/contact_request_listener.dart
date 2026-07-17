@@ -116,7 +116,15 @@ class ContactRequestListener {
            downloadProfilePictureFn ?? downloadProfilePicture,
        _replayCache = replayCache ?? ReplayCache(),
        _autoAddRateLimiter =
-           autoAddRateLimiter ?? ContactAutoAddRateLimiter();
+           autoAddRateLimiter ?? ContactAutoAddRateLimiter() {
+    // A request that arrives while no screen is subscribed is stored pending
+    // but never becomes visible again: the broadcast emission is dropped and
+    // every re-send short-circuits as duplicateRequest (status==pending). The
+    // durable pending rows are the source of truth, so replay them each time
+    // the UI (re-)attaches — onListen fires on every 0→1 listener transition
+    // of a broadcast controller.
+    _requestController.onListen = _replayPendingRequestsOnAttach;
+  }
 
   /// Stream of new contact requests for the UI to listen to.
   Stream<ContactRequestModel> get requestStream => _requestController.stream;
@@ -348,6 +356,40 @@ class ContactRequestListener {
     } else {
       _requestController.add(request);
     }
+  }
+
+  /// Replays still-pending stored requests to a newly-attached UI listener,
+  /// through the same gate-aware presentation path as live requests. Requests
+  /// from peers that were blocked after the request arrived are skipped; a
+  /// load failure only costs this replay (the rows stay pending for the next
+  /// attach).
+  void _replayPendingRequestsOnAttach() {
+    () async {
+      try {
+        final pending = await requestRepo.getPendingRequests();
+        if (pending.isEmpty || !_requestController.hasListener) {
+          return;
+        }
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CONTACT_REQUEST_LISTENER_PENDING_REPLAY',
+          details: {'count': pending.length},
+        );
+        for (final request in pending) {
+          final contact = await contactRepo.getContact(request.peerId);
+          if (contact?.isBlocked == true) {
+            continue;
+          }
+          _routeToDialog(request);
+        }
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CONTACT_REQUEST_LISTENER_PENDING_REPLAY_ERROR',
+          details: {'error': e.toString()},
+        );
+      }
+    }();
   }
 
   /// 171: adds the scanner tap-free (add + reciprocal) for an eligible v2

@@ -216,6 +216,35 @@ class RecentRemoteNotificationGate {
     }
   }
 
+  /// iOS foreground arrivals are never presented (the FCM plugin completes
+  /// willPresent with no presentation options), but the out-of-process NSE has
+  /// already dropped its "shown" sidecar for the push. Discard that marker —
+  /// without reporting a suppression hit and without touching the Dart-map
+  /// entries — so the live/local materialization can present the one visible
+  /// banner. Idempotent; a missing marker or unresolvable dir is a no-op.
+  Future<void> discardSidecarMarker({
+    required String payload,
+    String? messageId,
+  }) async {
+    final normalizedPayload = _normalizePayload(payload);
+    final normalizedMessageId = _normalizePayload(messageId);
+    if (normalizedPayload == null || normalizedMessageId == null) {
+      return;
+    }
+    final dirPath = await _resolveSidecarDir();
+    if (dirPath == null) {
+      return;
+    }
+    try {
+      final file = File(
+        '$dirPath/${sidecarMarkerName(normalizedPayload, normalizedMessageId)}',
+      );
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {}
+  }
+
   Future<void> _pruneStaleSidecarsOnce(String dirPath) async {
     if (_sidecarPruneDone) {
       return;

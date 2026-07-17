@@ -818,10 +818,14 @@ class _ConversationScreenState extends State<ConversationScreen> {
             );
 
             if (isPrivatePresentation) {
+              // GIFs are eligible private media (PrivateMediaAttachmentKind
+              // allows them) — an image/video-only filter here made a valid
+              // protected GIF render as "unsupported".
               final visual = message.media
                   .where(
                     (attachment) =>
                         attachment.mediaType == 'image' ||
+                        attachment.mediaType == 'gif' ||
                         attachment.mediaType == 'video',
                   )
                   .toList(growable: false);
@@ -859,8 +863,16 @@ class _ConversationScreenState extends State<ConversationScreen> {
                 );
               } else if (message.privateMediaPolicy.isUnsupported ||
                   state == PrivateMediaLifecycleState.unsupported ||
-                  visualDecision == null ||
-                  !visualDecision.allows(DirectPrivateMediaAction.openInApp)) {
+                  visualDecision?.reason ==
+                      DirectPrivateMediaEligibilityReason.corruptPolicyState ||
+                  visualDecision?.reason ==
+                      DirectPrivateMediaEligibilityReason.integrityFailed) {
+                // ONLY a genuinely unparseable/unknown policy or a terminally
+                // corrupt row earns the "update the app / delete it" copy. A
+                // valid private message whose decision is transiently
+                // undecidable (attachment row still hydrating, lane
+                // unresolved) previously fell in here too and told the user
+                // to update a current app.
                 privatePlaceholder = DirectPrivateMediaUnsupportedPlaceholder(
                   onReply: widget.onQuoteReply == null
                       ? null
@@ -885,22 +897,44 @@ class _ConversationScreenState extends State<ConversationScreen> {
                           ),
                         ),
                 );
-              } else {
-                final attachment = visual.single;
-                final identity = DirectPrivateMediaViewerIdentity(
-                  messageId: message.id,
-                  attachmentId: attachment.id,
+              } else if (!message.isIncoming) {
+                // Sender side: private media is not re-openable by the sender
+                // (the open/loader paths evaluate with requireIncoming and
+                // deny outgoing parents). Show the mode instead of an open
+                // affordance that silently does nothing.
+                privatePlaceholder = DirectPrivateMediaOutgoingPlaceholder(
+                  policy: message.privateMediaPolicy,
                 );
-                final opening = _privateOpenInFlight.contains(identity);
+              } else {
+                final attachment = visual.length == 1 ? visual.single : null;
+                final identity = attachment == null
+                    ? null
+                    : DirectPrivateMediaViewerIdentity(
+                        messageId: message.id,
+                        attachmentId: attachment.id,
+                      );
+                final opening =
+                    identity != null && _privateOpenInFlight.contains(identity);
                 privatePlaceholder = DirectPrivateMediaOpenPlaceholder(
                   opening: opening,
-                  onOpen: () => unawaited(
-                    _openPrivateMediaFromConversation(
-                      message,
-                      attachment,
-                      visualDecision,
-                    ),
-                  ),
+                  policy: message.privateMediaPolicy,
+                  // A currently-denied decision disables the button instead of
+                  // masquerading as "unsupported"; the open path re-evaluates
+                  // from fresh rows anyway before revealing anything.
+                  onOpen:
+                      attachment == null ||
+                          visualDecision == null ||
+                          !visualDecision.allows(
+                            DirectPrivateMediaAction.openInApp,
+                          )
+                      ? null
+                      : () => unawaited(
+                          _openPrivateMediaFromConversation(
+                            message,
+                            attachment,
+                            visualDecision,
+                          ),
+                        ),
                 );
               }
               letterCard = Column(

@@ -1,0 +1,1 @@
+./scripts/check_flutter_analyze_baseline.sh: line 28: flutter: command not found

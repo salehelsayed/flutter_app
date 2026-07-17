@@ -92,8 +92,18 @@ class _FakeContactRequestRepository implements ContactRequestRepository {
       existingRequest = null;
     }
   }
+  /// Seedable durable pending rows for the replay-on-attach tests.
+  List<ContactRequestModel> pendingRequests = [];
+  bool throwOnGetPendingRequests = false;
+
   @override
-  Future<List<ContactRequestModel>> getPendingRequests() async => [];
+  Future<List<ContactRequestModel>> getPendingRequests() async {
+    if (throwOnGetPendingRequests) {
+      throw Exception('db unavailable');
+    }
+    return List.of(pendingRequests);
+  }
+
   @override
   Future<void> updateStatus(String peerId, ContactRequestStatus status) async {}
 }
@@ -303,6 +313,106 @@ void main() {
   // ---------------------------------------------------------------------------
   // message processing
   // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // pending replay on UI attach (invisible-pending-request fix)
+  // ---------------------------------------------------------------------------
+  group('pending replay on UI attach', () {
+    ContactRequestModel makePending() => ContactRequestModel(
+      peerId: _testPeerId,
+      publicKey: _testPublicKey,
+      rendezvous: '/addr',
+      username: 'TestUser',
+      signature: 'sig',
+      receivedAt: '2024-01-01T00:00:00Z',
+      status: ContactRequestStatus.pending,
+    );
+
+    test('replays a stored pending request to the first listener', () async {
+      requestRepo.pendingRequests = [makePending()];
+
+      final requests = <ContactRequestModel>[];
+      listener.requestStream.listen(requests.add);
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      expect(requests, hasLength(1));
+      expect(requests.single.peerId, _testPeerId);
+    });
+
+    test(
+      'replays again when the stream is re-attached and still pending',
+      () async {
+        requestRepo.pendingRequests = [makePending()];
+
+        final first = <ContactRequestModel>[];
+        final sub = listener.requestStream.listen(first.add);
+        await Future.delayed(const Duration(milliseconds: 100));
+        await sub.cancel();
+
+        final second = <ContactRequestModel>[];
+        listener.requestStream.listen(second.add);
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        expect(first, hasLength(1));
+        expect(second, hasLength(1));
+      },
+    );
+
+    test('does not replay when presentation is suppressed', () async {
+      final suppressed = ContactRequestListener(
+        contactRequestStream: streamController.stream,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        getOwnPeerId: () => _testOwnPeerId,
+        shouldSuppressPresentationForPeerId: (_) => true,
+      );
+      addTearDown(suppressed.dispose);
+      requestRepo.pendingRequests = [makePending()];
+
+      final requests = <ContactRequestModel>[];
+      suppressed.requestStream.listen(requests.add);
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      expect(requests, isEmpty);
+    });
+
+    test('skips pending requests from peers blocked after arrival', () async {
+      requestRepo.pendingRequests = [makePending()];
+      contactRepo.addTestContact(
+        ContactModel(
+          peerId: _testPeerId,
+          publicKey: _testPublicKey,
+          rendezvous: '/addr',
+          username: 'TestUser',
+          signature: 'sig',
+          scannedAt: '2024-01-01T00:00:00Z',
+          isBlocked: true,
+        ),
+      );
+
+      final requests = <ContactRequestModel>[];
+      listener.requestStream.listen(requests.add);
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      expect(requests, isEmpty);
+    });
+
+    test('a pending-load failure does not break live emissions', () async {
+      requestRepo.throwOnGetPendingRequests = true;
+      listener.start();
+
+      final requests = <ContactRequestModel>[];
+      listener.requestStream.listen(requests.add);
+      await Future.delayed(const Duration(milliseconds: 100));
+      expect(requests, isEmpty);
+
+      streamController.add(_makeContactRequestMessage());
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      expect(requests, hasLength(1));
+    });
+  });
+
   group('message processing', () {
     test(
       'emits ContactRequestModel on requestStream for valid contact request',

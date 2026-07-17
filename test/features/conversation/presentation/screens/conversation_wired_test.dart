@@ -1324,7 +1324,16 @@ void main() {
 
       expect(sendCalls, 0);
       expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
-      expect(find.text('View once'), findsOneWidget);
+      // The restored policy shows in the composer selector; the failed
+      // outgoing bubble now ALSO carries a mode label, so anchor the finder
+      // to the selector instead of counting bare text matches.
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('private-media-selector')),
+          matching: find.text('View once'),
+        ),
+        findsOneWidget,
+      );
     });
 
     testWidgets('prefills shared text into the composer', (tester) async {

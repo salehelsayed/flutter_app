@@ -1066,9 +1066,12 @@ void main() {
               ? viewerL10n.private_media_ios_capture_limit
               : viewerL10n.private_media_android_capture_limit;
           expect(find.text(expectedCapture), findsOneWidget);
+          // The generic "another camera can still photograph the screen"
+          // disclaimer was removed from the viewer (user decision 2026-07-16);
+          // only the platform-specific capture note renders.
           expect(
             find.text(viewerL10n.private_media_general_capture_limit),
-            findsOneWidget,
+            findsNothing,
           );
           expect(find.textContaining('SECRET'), findsNothing);
           expect(
