@@ -33,6 +33,14 @@ python3 graphify-arch/tdd_context.py build
 rm -f graphify-arch/.needs_incremental_refresh
 
 if [ "$mode" = "--full" ] || [ "$mode" = "--rebuild" ]; then
+  # Curated community labels live in graphify-out/.graphify_labels.json and are
+  # sig-validated: cluster-only --no-label keeps every label whose community
+  # membership is unchanged and hub-names only new/changed communities. Do NOT
+  # add a `graphify label` call here — on this host no LLM backend works
+  # (OPENAI_API_KEY invalid, claude-cli blocked by org policy, checked
+  # 2026-07-18) and a failed label run overwrites the curated labels file with
+  # bare hub names. To re-label accumulated hub-named communities, ask Claude
+  # to regenerate them (see memory: graphify community labeling).
   graphify cluster-only graphify-arch --no-label
   (cd graphify-arch && graphify export html)
 

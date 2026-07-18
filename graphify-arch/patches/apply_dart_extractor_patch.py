@@ -15,8 +15,10 @@ Fixes three gaps that hurt this repo's graphs (probed 2026-06-12, graphifyy 0.8.
      deleting real declarations: dbMarkInboxStagingEntryRetryable was absorbed
      into dbMarkInboxStagingEntryRejected, recoverIdentityFromSecureStore into
      its own file node. Code identifiers are exact — different name, different
-     symbol. The patch blocks fuzzy merges between two file_type=="code" nodes
-     with differing normalized labels (natural-language/doc nodes untouched).
+     symbol. v2 (2026-07-18) blocks different-label fuzzy merges for EVERY node
+     type: this repo's doc corpus uses systematic IDs (GK-011 vs GK-012 plans)
+     that fuzzy-match, and cross-label merging makes dedup non-idempotent —
+     graph.json shrank on every cluster-only load and labels churned.
 
 Idempotent: marker comments are written into the patched files; re-running is a
 no-op. Re-apply after any `uv tool upgrade graphifyy` (the upgrade wipes it) —
@@ -26,8 +28,15 @@ survive otherwise):
     rm -rf graphify-out/cache/ast
 then rebuild: ./graphify-arch/refresh_arch_graph.sh (arch) and re-extract the
 full graph's Dart files.
+
+Layout note (re-derived 2026-07-18 against graphifyy 0.9.18): upstream moved
+the per-language extractors out of extract.py into graphify/extractors/
+(dart.py, go.py, ...) verbatim — every anchor below still matches, only the
+target files moved. This script resolves both layouts: extractors/dart.py and
+extractors/go.py when present, monolithic extract.py otherwise.
 """
 
+import importlib
 import re
 import shutil
 import subprocess
@@ -37,27 +46,35 @@ from pathlib import Path
 MARKER = "MKNOON-PATCH dart-linenos v1"
 MARKER_V2 = "MKNOON-PATCH dart-artifacts v2"
 MARKER_V2_GO = "MKNOON-PATCH go-artifacts v2"
-DEDUP_MARKER = "MKNOON-PATCH code-no-fuzzy v1"
+DEDUP_MARKER_V1 = "MKNOON-PATCH code-no-fuzzy v1"
+DEDUP_MARKER = "MKNOON-PATCH no-fuzzy v2"
 
 
-def find_extract_py() -> Path:
+def _resolve_module_file(module: str) -> Path | None:
     try:
-        import graphify.extract as e  # type: ignore
-
-        return Path(e.__file__)
+        return Path(importlib.import_module(module).__file__)
     except ImportError:
         pass
     bin_path = shutil.which("graphify")
     if not bin_path:
-        sys.exit("graphify CLI not found on PATH")
+        return None
     shebang = Path(bin_path).read_text(errors="replace").splitlines()[0].lstrip("#!")
     out = subprocess.run(
-        [shebang, "-c", "import graphify.extract as e; print(e.__file__)"],
+        [shebang, "-c", f"import {module} as m; print(m.__file__)"],
         capture_output=True,
         text=True,
-        check=True,
     )
+    if out.returncode != 0:
+        return None
     return Path(out.stdout.strip())
+
+
+def find_module_file(*candidates: str) -> Path:
+    for module in candidates:
+        path = _resolve_module_file(module)
+        if path is not None:
+            return path
+    sys.exit(f"none of {candidates} importable via graphify's python")
 
 
 EDITS = [
@@ -317,19 +334,60 @@ EDITS_V2_GO = [
     ),
 ]
 
+# 0.9.x detect() hardening skips symlinks whose target resolves outside the
+# scan root — which empties the arch corpus (.graphify-arch-src/ is nothing but
+# repo-owned symlinks pointing back into the repository). Opt-in override: when
+# $GRAPHIFY_SYMLINK_SCOPE_ROOT is set (refresh_graph.py sets it to the repo
+# root), targets under it are trusted too. Absent the env var, upstream's
+# behavior is unchanged.
+DETECT_MARKER = "MKNOON-PATCH symlink-scope v1"
+DETECT_EDITS = [
+    (
+        '''def _resolves_under_root(path: Path, root: Path) -> bool:
+    """True when ``path`` resolves to a target inside ``root``."""
+    try:
+        path.resolve().relative_to(root.resolve())
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return True''',
+        '''def _resolves_under_root(path: Path, root: Path) -> bool:
+    """True when ``path`` resolves to a target inside ``root``."""
+    # ''' + DETECT_MARKER + ''': also trust symlink targets under
+    # $GRAPHIFY_SYMLINK_SCOPE_ROOT (the repository root). The arch corpus is
+    # repo-owned symlinks back into the repo; the outside-scan-root skip
+    # (0.9.x hardening) would otherwise leave detect() with zero files.
+    scope = os.environ.get("GRAPHIFY_SYMLINK_SCOPE_ROOT")
+    if scope:
+        try:
+            path.resolve().relative_to(Path(scope).resolve())
+            return True
+        except (OSError, RuntimeError, ValueError):
+            pass
+    try:
+        path.resolve().relative_to(root.resolve())
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return True''',
+    ),
+]
+
 DEDUP_EDITS = [
     (
         '''                if score >= _MERGE_THRESHOLD:
                     # Identical labels across different source files almost always''',
         '''                if score >= _MERGE_THRESHOLD:
-                    # ''' + DEDUP_MARKER + ''': code identifiers are exact — two
-                    # differently-named declarations (e.g. ...Retryable vs
-                    # ...Rejected, or a function vs its own file node) are
-                    # distinct symbols, never spelling variants. Fuzzy merging
-                    # is for natural-language/doc concept nodes only.
-                    if (norm_label != neighbor_norm
-                            and node.get("file_type") == "code"
-                            and neighbor.get("file_type") == "code"):
+                    # ''' + DEDUP_MARKER + ''': merge only exact normalized-label
+                    # matches, for every node type. Code identifiers are exact
+                    # (…Retryable vs …Rejected are distinct symbols; upstream
+                    # 0.9.x now also excludes code from both passes), and this
+                    # repo's doc corpus uses systematic IDs (GK-011 vs GK-012
+                    # session plans) that Jaro-Winkler scores as near-identical
+                    # — different-label fuzzy merges would fuse unrelated plan
+                    # docs into one community. (Note: the 2026-07-18 shrinking
+                    # graph.json was NOT this — it was _semantic_id_remap
+                    # migrating legacy doc-section ids; fixed by iterating
+                    # build_from_json to a fixpoint once and re-persisting.)
+                    if norm_label != neighbor_norm:
                         continue
                     # Identical labels across different source files almost always''',
     ),
@@ -361,36 +419,70 @@ def patch_file(target: Path, marker: str, edits: list[tuple[str, str]]) -> bool:
     return True
 
 
-def main() -> None:
-    extract_py = find_extract_py()
-    src = extract_py.read_text(encoding="utf-8")
-    backup = extract_py.with_suffix(".py.orig")
-    changed = False
-    if MARKER_V2 in src and MARKER_V2_GO in src:
-        print(f"already patched (v2 + go-v2): {extract_py}")
+def ensure_pristine(target: Path, markers: tuple[str, ...], final_marker: str) -> None:
+    """Reset a partially-patched file to its pristine backup, and refresh a
+    stale backup (left by a previous package version) when the file is clean."""
+    src = target.read_text(encoding="utf-8")
+    backup = target.with_suffix(".py.orig")
+    if final_marker in src:
+        return
+    if any(mk in src for mk in markers):
+        if not backup.exists():
+            sys.exit(
+                f"{target} is partially patched but {backup} is missing — "
+                f"reinstall graphifyy, then re-run this script"
+            )
+        shutil.copy2(backup, target)
+        print(f"restored pristine {target.name} from {backup}")
     else:
-        if MARKER in src:
-            # Partially-patched install: reset to the pristine backup so the
-            # full edit list can apply against known anchors.
-            if not backup.exists():
-                sys.exit(
-                    f"{extract_py} is patched but {backup} is missing — "
-                    f"reinstall graphifyy, then re-run this script"
-                )
-            shutil.copy2(backup, extract_py)
-            changed = True
-            print(f"restored pristine extract.py from {backup}")
-        changed = patch_file(
-            extract_py, MARKER_V2, EDITS + EDITS_V2 + EDITS_V2_GO
-        ) or changed
-    changed = patch_file(
-        extract_py.parent / "dedup.py", DEDUP_MARKER, DEDUP_EDITS
-    ) or changed
+        # Unpatched: the current file IS pristine for this install. Overwrite
+        # any backup a previous package version left behind so a later reset
+        # can never resurrect old-version source.
+        shutil.copy2(target, backup)
+
+
+def main() -> None:
+    dart_py = find_module_file("graphify.extractors.dart", "graphify.extract")
+    go_py = find_module_file("graphify.extractors.go", "graphify.extract")
+    dedup_py = find_module_file("graphify.dedup")
+
+    if dart_py == go_py:
+        # 0.8.x monolithic layout: one file carries Dart + Go extraction.
+        targets = [
+            (dart_py, MARKER_V2, EDITS + EDITS_V2 + EDITS_V2_GO,
+             (MARKER, MARKER_V2, MARKER_V2_GO)),
+        ]
+    else:
+        # 0.9.x split layout: per-language files under graphify/extractors/.
+        targets = [
+            (dart_py, MARKER_V2, EDITS + EDITS_V2, (MARKER, MARKER_V2)),
+            (go_py, MARKER_V2_GO, EDITS_V2_GO, (MARKER_V2_GO,)),
+        ]
+    targets.append((dedup_py, DEDUP_MARKER, DEDUP_EDITS,
+                    (DEDUP_MARKER_V1, DEDUP_MARKER)))
+
+    detect_py = _resolve_module_file("graphify.detect")
+    if detect_py is not None:
+        detect_src = detect_py.read_text(encoding="utf-8")
+        if DETECT_MARKER in detect_src or DETECT_EDITS[0][0] in detect_src:
+            targets.append((detect_py, DETECT_MARKER, DETECT_EDITS, (DETECT_MARKER,)))
+        else:
+            print(
+                f"note: {detect_py.name} has no symlink-scope anchor "
+                f"(pre-0.9 detect?); skipping that patch"
+            )
+
+    changed_dirs: set[Path] = set()
+    for target, final_marker, edits, markers in targets:
+        ensure_pristine(target, markers, final_marker)
+        if patch_file(target, final_marker, edits):
+            changed_dirs.add(target.parent)
     # Clear stale bytecode only after an actual package-source edit. Routine
     # incremental refreshes should not churn the installed Python cache.
-    pycache = extract_py.parent / "__pycache__"
-    if changed and pycache.exists():
-        shutil.rmtree(pycache)
+    for directory in changed_dirs:
+        pycache = directory / "__pycache__"
+        if pycache.exists():
+            shutil.rmtree(pycache)
     print("extractor patch current; preserve AST caches for incremental refreshes")
 
 

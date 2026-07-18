@@ -28,6 +28,10 @@ from graphify.extract import extract
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / ".graphify-arch-src"
+# The corpus is symlinks back into the repo; 0.9.x detect() skips symlink
+# targets outside the scan root unless this scope override (local patch in
+# patches/apply_dart_extractor_patch.py) widens the trusted root.
+os.environ.setdefault("GRAPHIFY_SYMLINK_SCOPE_ROOT", str(ROOT))
 OUT = ROOT / "graphify-arch" / "graphify-out"
 GRAPH = OUT / "graph.json"
 MANIFEST = OUT / "manifest.json"
@@ -106,6 +110,7 @@ def refresh(*, rebuild: bool) -> None:
             TARGET,
             manifest_path=str(MANIFEST),
             kind="semantic",
+            follow_symlinks=True,
         )
         selected = detection.get("new_files", {})
         deleted = detection.get("deleted_files", [])
@@ -113,12 +118,17 @@ def refresh(*, rebuild: bool) -> None:
             len(paths) for paths in detection.get("unchanged_files", {}).values()
         )
     else:
-        detection = detect(TARGET)
+        detection = detect(TARGET, follow_symlinks=True)
         selected = detection.get("files", {})
         deleted = []
         unchanged = 0
 
     code_files = [Path(path) for path in selected.get("code", [])]
+    if not incremental and not code_files:
+        raise RuntimeError(
+            "architecture corpus detection found no code files — refusing to "
+            "write an empty graph (symlink scope regression?)"
+        )
     replaced_sources = {_relative_source(path) for path in code_files}
     replaced_sources.update(_relative_source(path) for path in deleted)
 

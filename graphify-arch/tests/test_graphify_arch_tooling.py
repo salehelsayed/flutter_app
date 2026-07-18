@@ -101,6 +101,38 @@ class GraphifyArchToolingTest(unittest.TestCase):
         self.assertIn("Caller/bypass candidates:", output)
         self.assertIn("group_media_integrity_policy_test.dart", output)
 
+    def test_component_level_renders_labeled_map_with_relationships(self):
+        lines, meta = CONTEXT._component_lines(
+            self.graph, "group media download pipeline", "general", 500
+        )
+        output = CONTEXT._bounded(lines, 500)
+        self.assertTrue(lines[0].startswith("Component context: level=component"))
+        self.assertEqual(meta["level"], "component")
+        component_lines = [line for line in lines if line.startswith("- [")]
+        self.assertGreaterEqual(len(component_lines), 3)
+        self.assertLessEqual(len(component_lines), 5)
+        for line in component_lines:
+            self.assertNotRegex(line, r"\[\d+\] Community \d+")
+        self.assertIn("Component relationships:", output)
+        self.assertLessEqual(len(output), 500 * 3 + 120)
+
+    def test_component_level_budget_scales_component_cap(self):
+        _, meta_small = CONTEXT._component_lines(
+            self.graph, "group media download pipeline", "general", 400
+        )
+        _, meta_large = CONTEXT._component_lines(
+            self.graph, "group media download pipeline", "general", 800
+        )
+        self.assertLessEqual(meta_small["components"], 4)
+        self.assertGreaterEqual(meta_large["components"], meta_small["components"])
+
+    def test_component_level_reports_no_match_for_gibberish(self):
+        lines, meta = CONTEXT._component_lines(
+            self.graph, "zzqqxxblorp frobnicate", "general", 500
+        )
+        self.assertEqual(meta["components"], 0)
+        self.assertIn("No matching components.", lines[1])
+
     def test_affected_adds_direct_tests(self):
         tests = self.overlay["production_to_tests"][
             "lib/features/conversation/application/delete_message_use_case.dart"

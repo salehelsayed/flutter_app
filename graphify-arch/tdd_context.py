@@ -27,6 +27,7 @@ from typing import Any, Iterable
 ROOT = Path(__file__).resolve().parents[1]
 ARCH_DIR = ROOT / "graphify-arch"
 GRAPH_PATH = ARCH_DIR / "graphify-out" / "graph.json"
+LABELS_PATH = ARCH_DIR / "graphify-out" / ".graphify_labels.json"
 OVERLAY_PATH = ARCH_DIR / "tdd-overlay.json"
 GATE_SCRIPTS = (
     ROOT / "scripts" / "run_test_gates.sh",
@@ -690,6 +691,168 @@ def _compact_lines(
     return lines, meta
 
 
+def _load_community_labels() -> dict[int, str]:
+    try:
+        raw = json.loads(LABELS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    labels: dict[int, str] = {}
+    for key, value in raw.items():
+        try:
+            labels[int(key)] = str(value)
+        except (TypeError, ValueError):
+            continue
+    return labels
+
+
+def _component_lines(
+    graph: GraphIndex,
+    question: str,
+    profile: str,
+    budget: int = 600,
+) -> tuple[list[str], dict[str, Any]]:
+    """Render the labeled community (C4 component) map relevant to a question.
+
+    Communities are the component layer: curated labels over the deterministic
+    clustering. This mode answers "which components are involved and how do
+    they connect" in a few hundred tokens; drill into code with --level code.
+    """
+    labels = _load_community_labels()
+    freshness = _freshness()
+    members: defaultdict[int, list[str]] = defaultdict(list)
+    for nid, node in graph.nodes.items():
+        cid = node.get("community")
+        if isinstance(cid, int):
+            members[cid].append(nid)
+
+    seeds, confidence, terms = graph.seeds(question, profile)
+    seed_cids = {
+        cid for nid in seeds
+        if isinstance(cid := graph.nodes[nid].get("community"), int)
+    }
+
+    scores: defaultdict[int, float] = defaultdict(float)
+    for cid in seed_cids:
+        scores[cid] += 120.0
+    label_matched = False
+    for cid, label in labels.items():
+        if cid not in members:
+            continue
+        low = label.lower()
+        for term in terms:
+            if term in low:
+                scores[cid] += 40.0
+                label_matched = True
+    if label_matched:
+        confidence = "anchored"
+
+    # Pull in the strongest neighbors of matched components so the map shows
+    # what they talk to, then keep relationship aggregation to the chosen set.
+    node_cid = {
+        nid: cid for nid, node in graph.nodes.items()
+        if isinstance(cid := node.get("community"), int)
+    }
+    pair_relations: defaultdict[tuple[int, int], Counter[str]] = defaultdict(Counter)
+    neighbor_pull: defaultdict[int, float] = defaultdict(float)
+    matched = {cid for cid, score in scores.items() if score > 0}
+    for edge in graph.edges:
+        src = node_cid.get(str(edge.get("source")))
+        tgt = node_cid.get(str(edge.get("target")))
+        if src is None or tgt is None or src == tgt:
+            continue
+        relation = str(edge.get("relation") or "")
+        pair_relations[(src, tgt)][relation] += 1
+        if src in matched and tgt not in matched:
+            neighbor_pull[tgt] += RELATION_WEIGHT.get(relation, 0.5)
+        elif tgt in matched and src not in matched:
+            neighbor_pull[src] += RELATION_WEIGHT.get(relation, 0.5)
+    for cid, pull in neighbor_pull.items():
+        scores[cid] += min(30.0, pull * 0.1)
+
+    # Mirror the code-level profile bias: planning questions (general) want
+    # production components first; tdd/review keep test communities ranked.
+    if profile == "general":
+        for cid in list(scores):
+            categories = Counter(
+                _category(_source_file(graph.nodes[nid]))
+                for nid in members.get(cid, [])
+                if _source_file(graph.nodes[nid])
+            )
+            if categories and categories.most_common(1)[0][0] in {"test", "integration_test"}:
+                scores[cid] *= 0.5
+
+    lines = [
+        f"Component context: level=component confidence={confidence} freshness={freshness} fingerprint={_graph_fingerprint()}"
+    ]
+    ranked = [cid for cid, score in sorted(scores.items(), key=lambda item: (-item[1], item[0])) if score > 0]
+    if not ranked:
+        lines.append("No matching components. Use a feature word from a community label, or an exact symbol/filename.")
+        return lines, {"confidence": "none", "level": "component", "components": 0, "seeds": []}
+
+    # _bounded caps output at ~budget*3 chars; leave room for the
+    # relationships section, which is this mode's main payload.
+    component_cap = max(4, min(8, budget // 100))
+    chosen = ranked[:component_cap]
+    chosen_set = set(chosen)
+    lines.append("Components:")
+    for cid in chosen:
+        ids = members[cid]
+        dirs = Counter()
+        for nid in ids:
+            source = _source_file(graph.nodes[nid])
+            if source:
+                parent = source.rsplit("/", 1)[0] if "/" in source else source
+                dirs["/".join(parent.split("/")[:3])] += 1
+        key_members: list[str] = []
+        for nid in sorted(ids, key=lambda n: -len(graph.adj.get(n, []))):
+            node = graph.nodes[nid]
+            label = str(node.get("label") or "").strip()
+            if "/" in label:
+                label = label.rsplit("/", 1)[-1]
+            label = label[:36]
+            norm = label.lower().rstrip("()")
+            if not label or norm in GENERIC_LABELS or label in key_members:
+                continue
+            if not _supported_source(_source_file(node)):
+                continue
+            key_members.append(label)
+            if len(key_members) == 2:
+                break
+        dir_text = ", ".join(d for d, _ in dirs.most_common(2)) or "no source dirs"
+        key_text = ", ".join(key_members) or "-"
+        lines.append(
+            f"- [{cid}] {labels.get(cid, f'Community {cid}')} ({len(ids)}n) {dir_text}; key: {key_text}"
+        )
+
+    pair_totals = {
+        pair: sum(relations.values())
+        for pair, relations in pair_relations.items()
+        if pair[0] in chosen_set and pair[1] in chosen_set
+    }
+    lines.append("Component relationships:")
+    if not pair_totals:
+        lines.append("- none among selected components; broaden the question or drill into code level")
+    for (src, tgt), total in sorted(pair_totals.items(), key=lambda item: -item[1])[:8]:
+        relation_text = ", ".join(
+            f"{relation}×{count}"
+            for relation, count in pair_relations[(src, tgt)].most_common(2)
+        )
+        lines.append(
+            f"- {labels.get(src, src)} --{relation_text}--> {labels.get(tgt, tgt)}"
+        )
+    lines.append(
+        "Drill down: rerun with --level code (default) anchored on a key symbol above."
+    )
+
+    meta = {
+        "confidence": confidence,
+        "level": "component",
+        "components": len(chosen),
+        "seeds": [str(graph.nodes[n].get("label", n)) for n in seeds],
+    }
+    return lines, meta
+
+
 def _bounded(lines: list[str], budget: int) -> str:
     limit = max(300, budget * 3)
     out: list[str] = []
@@ -760,13 +923,16 @@ def stats(*, last: int) -> None:
     print("\n".join(_stats_summary(records[-last:])))
 
 
-def query(question: str, *, profile: str, budget: int, ensure_fresh: bool) -> None:
+def query(question: str, *, profile: str, budget: int, ensure_fresh: bool, level: str = "code") -> None:
     if ensure_fresh:
         _ensure_fresh()
     started = time.perf_counter()
     graph = _load_graph()
-    overlay = load_overlay()
-    lines, meta = _compact_lines(graph, overlay, question, profile)
+    if level == "component":
+        lines, meta = _component_lines(graph, question, profile, budget)
+    else:
+        overlay = load_overlay()
+        lines, meta = _compact_lines(graph, overlay, question, profile)
     result = _bounded(lines, budget)
     _log_query(profile, question, budget, result, meta, (time.perf_counter() - started) * 1000)
     print(result)
@@ -799,6 +965,12 @@ def _parser() -> argparse.ArgumentParser:
     q = sub.add_parser("query", help="render compact architecture context")
     q.add_argument("question")
     q.add_argument("--profile", choices=("general", "tdd", "review"), default="general")
+    q.add_argument(
+        "--level",
+        choices=("code", "component"),
+        default="code",
+        help="component renders the labeled community map (C4 component view) instead of file-level context",
+    )
     q.add_argument("--budget", type=int, default=600)
     q.add_argument("--ensure-fresh", action="store_true")
     a = sub.add_parser("affected", help="find reverse file/test impact for changed paths")
@@ -816,7 +988,13 @@ def main() -> None:
     elif args.command == "query":
         if args.budget <= 0:
             raise SystemExit("--budget must be positive")
-        query(args.question, profile=args.profile, budget=args.budget, ensure_fresh=args.ensure_fresh)
+        query(
+            args.question,
+            profile=args.profile,
+            budget=args.budget,
+            ensure_fresh=args.ensure_fresh,
+            level=args.level,
+        )
     elif args.command == "affected":
         if args.budget <= 0:
             raise SystemExit("--budget must be positive")
