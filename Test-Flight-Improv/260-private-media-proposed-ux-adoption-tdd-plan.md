@@ -1,6 +1,6 @@
 # 260 - Private Media Proposed-UX Adoption: Never-Blank Cards, Picker Sheet, Offline Media Outbox, Feedback System (Bug + Feature Improvement)
 
-Status: execution-ready (v4 — second adversarial /tdd-review applied 2026-07-19, decisions locked with the user: automatic upload attempts are issuance-gated on OS connectivity AND connectivity-disposition failures never burn the retry ceiling; TC-37 PASS keys on causality/exactly-once/delivery with latency recorded informationally; MEDIA_ERROR split by permanence and transport code lists corrected to the real media path; upload-consumer topology corrected (TWO group-composer sites, group manual media retry is NEW wiring on the incomplete-retry seam, three bridge-bypass lanes named out of scope); S3a/S4 split into micro-checkpoints; five over-builds trimmed (one shared consumer-boundary wrapper, claim-scoped trigger source, offline-banner state reuse, TC-38 device-unique trim, E14 fallback retired). v3 — source-backed readiness audit applied 2026-07-19: stage-typed upload failures replace relay-state guessing; direct retry single-flight and atomic terminal projection added; owner-lane and no-bridge voice bypasses closed; LetterCard/overlay tests made geometric and causal; foreground-generation and typed-settle contracts added; sender-consumed cards intentionally become kind-neutral after cleanup; invite ghost identity retained; TC-37/TC-38 replaced with manifest-owned, production-driving, availability-bounded device proofs; literal gates corrected)
+Status: implemented and functionally verified (v4 — second adversarial /tdd-review applied 2026-07-19, decisions locked with the user: automatic upload attempts are issuance-gated on OS connectivity AND connectivity-disposition failures never burn the retry ceiling; TC-37 PASS keys on causality/exactly-once/delivery with latency recorded informationally; MEDIA_ERROR split by permanence and transport code lists corrected to the real media path; upload-consumer topology corrected (TWO group-composer sites, group manual media retry is NEW wiring on the incomplete-retry seam, three bridge-bypass lanes named out of scope); S3a/S4 split into micro-checkpoints; five over-builds trimmed (one shared consumer-boundary wrapper, claim-scoped trigger source, offline-banner state reuse, TC-38 device-unique trim, E14 fallback retired). v3 — source-backed readiness audit applied 2026-07-19: stage-typed upload failures replace relay-state guessing; direct retry single-flight and atomic terminal projection added; owner-lane and no-bridge voice bypasses closed; LetterCard/overlay tests made geometric and causal; foreground-generation and typed-settle contracts added; sender-consumed cards intentionally become kind-neutral after cleanup; invite ghost identity retained; TC-37/TC-38 replaced with manifest-owned, production-driving, availability-bounded device proofs; literal gates corrected)
 Spec: free-text intent (no formal spec). Source design: `Test-Flight-Improv/private-media-feedback-ux-mockup-codex.html` — the ENTIRE **proposed** side of every section (§01 protection picker, §02 chat-state cards, §03 offline delivery, §04 feedback system, §05 copy map, §06 revised copy), plus the user's screenshot showing the headline bug: protected/view-once messages render an EMPTY bubble on sender and receiver. User constraints: (a) the thumbnail/blank-bubble issue MUST be fixed with regression coverage; (b) **every button this plan introduces must actually do what it says** (no dead affordances).
 
 ## Planning Progress
@@ -16,14 +16,17 @@ Spec: free-text intent (no formal spec). Source design: `Test-Flight-Improv/priv
 ## Execution Progress
 | Time | Phase | Files touched | Command/evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|
-| 2026-07-19 | contract extraction / Step 0 | working-tree inventory; `/tmp/plan-260-analyze-before.txt` | Flutter 3.41.4; stale-literal sweep PASS; `run_test_gates.sh 1to1` `+2105 All tests passed`; serial groups rerun `+2204 -3 Some tests failed`; analyzer snapshot contains 1,956 pre-existing diagnostics | baseline HEAD is `2be07626e` (the prose baseline hash is stale); the three exact groups failures remain a forward-fix/closure obligation and are not re-baselined | identify/fix the three groups failures before named-gate closure |
+| 2026-07-19 | contract extraction / Step 0 | working-tree inventory; analyzer baseline | Flutter 3.41.4; stale-literal sweep PASS; baseline `1to1` `+2105`; serial groups exposed three forward-fix failures | baseline HEAD is `2be07626e`; the groups failures were fixed by `c6e36faf9` and final groups later passed `+2257`; the original analyzer file was human-format and is not accepted as normalized delta evidence | replace it at closure with non-vacuous Dart machine records from one canonical worktree path |
 | 2026-07-19 | S6a l10n enabler | en/ar/de ARBs, generated localization, exact l10n contract test | exact private-media UX copy contract + l10n integrity: 5/5 PASS; checkpoint `6c5fdc940` | all plan copy keys and placeholder metadata are present; E16 promise strings use l10n | keep literal/parity sentinels green at final closure |
-| 2026-07-19 | S1 cards (interim) | direct/group conversation card composition, LetterCard private slot, focused tests | direct private card 4/4; direct conversation 79/79; group screen 70/70; direct viewer placeholder 21/21 | sender/receiver/terminal private state is inside the decorated keyed slot with no private pixels; screenshot-vs-mockup evidence still pending live capture | capture and record §02 visual comparison, then checkpoint |
-| 2026-07-19 | S2 picker sheets (interim) | shared picker sheet, direct ComposeArea, group conversation picker adapters | direct composer 12/12; group screen 73/73; group wired action 1/1 | summary chip + CTA-only modal selection is wired on both policy types; screenshot-vs-mockup evidence still pending live capture | capture and record §01 visual comparison, then checkpoint |
-| 2026-07-19 | S3a1 typed upload boundary | typed outcome/wrapper and ten production consumers | upload/direct/group background focused set 57/57; retry/failed-media/voice set 81/81; upload suite 32/32; targeted analyze has no errors | E9 is green; `MEDIA_UPLOAD_START` is emitted only at transport issuance after encryption and carries no raw identifiers | finish S3a2 projection/gating and rerun offline-text sentinel |
-| 2026-07-19 | S5 feedback checkpoint | shared UndoBar; Orbit/GroupList durable invite outcomes; quiet confirm; microphone permission sheet; contact-profile copy feedback | UndoBar 3/3; GroupList 46/46; Orbit 101/101; quiet + microphone + contact-profile 13/13; §04 artifact `Test-Flight-Improv/evidence/260/s5-permission-sheet.png` captured at 390×844 | the stale queued-SnackBar/controller race is fixed by replacing existing feedback before mounting UndoBar; the permission prompt now matches §04's scrim, rounded sheet, icon, title/body, and two live actions; at the narrow capture width its action bar wraps vertically as an intentional responsive difference | preserve these focused greens in final family gates |
-| 2026-07-19 | S7 host contracts (interim) | SIMS manifest/validator/protocol/controller/dispatch; TC-38 harness/schema/runner | protocol/controller/dispatch/main focused 7/7; manifest/criteria 18/18; TC-38 criteria 87/87; Android integration APK compile PASS | TC-37 production endpoint/host runner/device proof remain; TC-38 strict production-card artifact still needs the pinned live run | finish production endpoint and SIMS runner, then resolve/pin live Android pair |
-| | final preservation / named gates / QA | | pending | no final verdict yet | focused suites, justified family sweeps, wave-level `host-all`, device proofs, incremental Graphify refresh |
+| 2026-07-19 | S1 cards | direct/group card composition, LetterCard private slot, regression suites | direct private card 4/4; direct conversation 79/79; group screen 70/70; viewer placeholder 21/21; checkpoint included in `612df6e14`; §02 artifact `evidence/260/s1-private-media-card.png`, 390×844, SHA-256 `1cbe8373413ed29e6341a36d29384319e2660a9885cc7431fcf15b943838ff0e` | outgoing, incoming, and terminal private states render one non-zero decorated slot with no private pixels | closed |
+| 2026-07-19 | S2 picker sheets | shared picker, direct ComposeArea, group adapters | direct composer 12/12; group screen 73/73; group wired action 1/1; checkpoint included in `612df6e14`; §01 artifact `evidence/260/s2-private-media-picker.png`, 390×844, SHA-256 `e49a7002233acdaff2c59b441e5e48d4254b849e9b013905933c8f136ce2b54f` | summary chip and CTA-only modal selection are live for both policy types | closed |
+| 2026-07-19 | S3-S4 implementation | typed upload outcomes; OS issuance gate; atomic projection/leases; direct/group retry; foreground generation; typed viewer settlement; sender lane | consolidated product checkpoint `612df6e14`; fixture correction `c6e36faf9`; classification coverage `1c6b4576e`; Android exact restore `7756b09d9` | functional catalog and preservation suites passed, but the prescribed per-micro-slice RED/commit cadence was not completely retained; that process criterion remains explicitly unproven | retain functional closure without backfilling process evidence |
+| 2026-07-19 | S5 feedback | UndoBar; durable invite outcomes; quiet confirm; microphone sheet; contact-profile feedback | UndoBar 3/3; GroupList 46/46; Orbit 101/101; quiet/microphone/contact-profile 13/13; checkpoint `6d76f8985`; §04 artifact `evidence/260/s5-permission-sheet.png`, 390×844, SHA-256 `082b9a852c0edd5070482d2e951dc090881fe4cf65d116abb4b64d8684657b79` | all introduced actions are wired; narrow-width vertical action wrapping is an intentional responsive difference | closed |
+| 2026-07-19 | restored-edge arbitration | TC-37 host and app harness; pending retrier ordering | production harness stabilization `fda564bf1`; a new failing race test reproduced a near-due generic full pass stealing the restored media claim; `5c0a8885e` gives the dedicated restored pass ownership; retrier/order suites 41/41 | restored-edge contract in `connectivity_signal.dart` stayed unchanged | closed |
+| 2026-07-19 | S7 host contracts | SIMS manifest/binding/validator/protocol/controller/dispatch; TC-38 schema/runner | S7/TC-38 host contracts 193/193; manifest/criteria/proof binding 23/23; SIMS contracts 33/33; registration completeness 1313/1313 | stable capability discovery and fail-closed artifact validation are green | closed |
+| 2026-07-19 | TC-37 live device proof | physical Android `21071FDF600CSC` + emulator `emulator-5554` | report `/tmp/plan-260-tc37-report-final2.json`, SHA-256 `e5fdff69bb4c9156b6dd64a1f2bc5952e3d0b2b580c55b1170652a16607570fd`; 8 assertions, no validation errors; retained proof `evidence/260/tc37-connectivity-restore-media-outbox.json`, SHA-256 `80567d238a021f0d99de6897eafe2e62458338ef3557d00cf720b3b858fb5328` | both phases: encryption 2, upload 2, envelope 1, receive 1, exactly one `source=network_restored` claim and one post-restore retry; phase-2 offline resume attempts 0; informational latency 1209/1066 ms | PASS |
+| 2026-07-19 | TC-38 live device proof | same availability-bounded Android pair; production conversation/card harness | strict schema-v2 runner artifact SHA-256 `354049828bed0b2b6f4ce558e9da01d349471a6cb6dbcd2b0a1c248b361be445`; retained semantic-equivalent minified proof `evidence/260/tc38-direct-private-media-device-local-journey.json`, SHA-256 `e49f44fd2dd6c2c18a3992dc34c5c3562df44a02b5b6fb174bb00afeceb89bb7` (`jq -S` content hash identical); criteria 87/87; fixture correction `199f574b1` | both roles mounted production UI: 3/3 slots decorated and non-zero, zero image/decoration-image descendants, all actions visible; recipient proved durable download, one reveal, cleanup, restart denial, disappearing expiry, protected repeat-open | PASS |
+| 2026-07-20 | final preservation / named gates / QA | family gates, analyzer delta, hygiene | `1to1` `+2293`; groups `+2257`; feature-host-all 800/800; core-host-all 339/339 commands; post-analyzer-fix direct/group picker + voice suites 103/103; normalized analyzer delta PASS with 1598 baseline / 1593 final machine records and 0 new issues; l10n/literal/diff hygiene PASS | full `host-all` is intentionally deferred to dependency-wave/release closure by project cadence and is not a per-plan gate | closed |
 
 ## Source Of Truth
 - Design: the mockup's proposed side; **this plan's contracts win wherever the mockup contradicts platform truth or shipped 259 copy** — every delta is listed in Accepted Differences.
@@ -34,16 +37,16 @@ Spec: free-text intent (no formal spec). Source design: `Test-Flight-Improv/priv
 - Toolchain: run from this repository root with the host Flutter on PATH. At planning time `command -v flutter` resolves to `/Users/I560101/development/flutter/bin/flutter` and `flutter --version` reports 3.41.4. Step 0 re-resolves both facts and stops on a version mismatch; do not use stale `/workspace` or `/claude-host-bin/flutter` literals.
 
 ## Session Classification
-implementation-ready (large; execute slice-by-slice with the per-slice RED/GREEN checkpoints and the availability-bounded device matrix below)
+implemented and functionally verified with the availability-bounded device matrix below; the unretained RED-first, mutation-execution, and per-micro-checkpoint process evidence remains explicitly unproven
 
-## Exact Problem Statement
-Private media is the app's flagship privacy feature and it currently *looks broken*. (1) **Blank bubbles** (the screenshot): a protected/view-once message renders an empty outlined bubble containing only a timestamp, with the mode/reassurance panel visually detached below it — on BOTH sender and receiver. (2) The **chooser** is a popup menu that commits instantly with no consequence summary, no per-mode disclosure, and no persistent selection summary. (3) **Offline media lies**: a media send with no connectivity is stamped terminal `failed`, restores the composer (inviting a duplicate), and shows a red "Failed to upload media. Try again." — while the durable row is still `upload_pending` and background retry will send it; text in the identical situation calmly says "Will send when you're back online". (4) **First open can appear dead**: the first tap on undownloaded private media only downloads (no visible progress) and the user must tap again; open failures are silently swallowed — and for view-once, a post-lease failure permanently consumes the view before showing a single pixel. (5) **Feedback** for invite outcomes, undo, permission blocks, and quiet successes still routes through one global snackbar channel in several places.
+## Exact Problem Statement (recorded baseline)
+At the recorded baseline, private media was the app's flagship privacy feature and it *looked broken*. (1) **Blank bubbles** (the screenshot): a protected/view-once message rendered an empty outlined bubble containing only a timestamp, with the mode/reassurance panel visually detached below it — on BOTH sender and receiver. (2) The **chooser** was a popup menu that committed instantly with no consequence summary, no per-mode disclosure, and no persistent selection summary. (3) **Offline media lied**: a media send with no connectivity was stamped terminal `failed`, restored the composer (inviting a duplicate), and showed a red "Failed to upload media. Try again." — while the durable row was still `upload_pending` and background retry would send it; text in the identical situation calmly said "Will send when you're back online". (4) **First open could appear dead**: the first tap on undownloaded private media only downloaded (no visible progress) and the user had to tap again; open failures were silently swallowed — and for view-once, a post-lease failure permanently consumed the view before showing a single pixel. (5) **Feedback** for invite outcomes, undo, permission blocks, and quiet successes still routed through one global snackbar channel in several places.
 
 What must improve: all six mockup sections' proposed treatments, adapted only where the mockup contradicts platform truth (each adaptation recorded). The blank-bubble fix gets dedicated regression coverage. Every new button is wired to real behavior.
 
 What must stay unchanged (→ preserved-green sentinels): the offline TEXT promise UX (mockup keeps it; snackbar shape pinned by `conversation_wired_offline_send_ux_test.dart` — S1 shape, TC-185-01 retriable-'sent', schedule_send glyph :1008); the hard-delete removed-from-group snackbar+pop branch; receiver view-once single-view security (no double view, ever); upload-cancel lane (`upload_cancelled` rows stay excluded from retriers); settings inline-only save errors, removed-member banner, chooser labels/details, placeholder reassurance bodies (all landed by 259); `ValueKey` test hooks `private-media-selector`, `private-media-option-*`, `group-private-open-*`, `mic-perm-not-now`, `mic-perm-open-settings`.
 
-## Root Cause (verify → refute confirmed, workflow `wf_ef4bf167-17d`)
+## Root Cause at Recorded Baseline (verify → refute confirmed, workflow `wf_ef4bf167-17d`)
 - **Blank bubble (the screenshot)**: `conversation_screen.dart:759-761` empties LetterCard's media for private presentation (text is already empty), then `:942-947` composes `Column([letterCard, privatePlaceholder])`. The hollowed LetterCard still paints its full decorated shell (`letter_card.dart:738-747`) because the footer meta row renders unconditionally (`:610-639`) — that shell with only a timestamp IS the empty bubble; the detached dark panel is the placeholder's own container (`direct_private_media_viewer.dart:516-522`). Sender mounts `DirectPrivateMediaOutgoingPlaceholder` at `:905-908`, receiver `DirectPrivateMediaOpenPlaceholder` at `:919-940`, terminal `:839`, unsupported `:876`. Bonus defect: the detached placeholder sits OUTSIDE every gesture surface — long-pressing it does not open the context overlay, and the overlay snapshot shows only the empty bubble (thumb/C4).
 - **Chooser**: `PopupMenuButton<PrivateMediaPolicy>` (`compose_area.dart:361-433`), 6 flat items, instant commit; group sibling `_GroupPrivateMediaSelector` over the DIFFERENT `GroupPrivateMediaPolicy` type (`group_conversation_screen.dart:1318-1383`). The domain model already matches the mockup exactly: 4 modes + `allowedDurationsSeconds = {3600, 86400, 604800}` (`private_media_policy.dart:141`) — §01 is a pure presentation retrofit (picker-1).
 - **Offline media**: upload failure returns an untyped `null` (`upload_media_use_case.dart:200-215`; nulls at `:312,:338,:407,:560`) so `conversation_wired.dart:3086-3096` cannot distinguish offline from terminal → `_restoreComposerSnapshot` (`:3589-3628`) stamps message `failed`, restores composer, red snack — while attachment rows remain `upload_pending`. The old v2 classifier was itself impossible: `UploadMediaFn` has no `P2PService`/relay probe, its outer catch collapses file I/O, encryption, durable-copy, and transport exceptions, and `relayReady` can be stale. Classification must therefore happen at the failing stage inside `uploadMedia`, never from ambient relay state. The ~1s network-restored and 5s/full retry passes have independent booleans; the foreground-only upload tracker does not prevent those two retry passes from encrypting/uploading the same stable blob concurrently. The attachment layer already has the queued/terminal split + retry budget, but terminal attachment and parent-message projection are separate writes and can strand `sending + upload_failed` after a crash. Direct/group parent IDs are independent, so every sweeper subquery must filter `owner_lane`. Direct no-bridge voice currently returns before the send use case creates an `upload_pending` durable row, so merely preserving its parent at `sending` would strand it. Manual Retry still misreads relative paths, and the background retry still needs promote-before-cleanup.
@@ -255,7 +258,7 @@ Placeholder types are authoritative in every ARB: `{name}`, `{mode}`, `{duration
 - INV-260-11: download **and internal prepare** can yield an auto-open grant only under the same uninterrupted resumed lifecycle and route continuity; a raced app-lifecycle loss terminalizes while a route-only pre-frame loss rolls back, and route-current/mounted at completion alone are insufficient → catalog-20/22.
 - INV-260-7: no screenshot-blocking claim on any surface → catalog-9 discriminator (+ 259's catalog-5 stays green).
 - INV-260-8: ValueKey continuity (`private-media-selector`, `private-media-option-*`, `group-private-open-*`, mic keys) → existing tests stay green unflagged.
-- INV-RED-FIRST and INV-MUTATION-VERIFIED apply to every row.
+- INV-RED-FIRST and INV-MUTATION-VERIFIED were prescribed for every row. This execution did not retain complete RED-first or mutation-run evidence, so the corresponding final process criteria remain intentionally unchecked rather than reconstructed after the fact.
 
 ## Step-By-Step Implementation Plan (slice order; per-slice RED → GREEN checkpoints)
 0. Contract extraction: verify repo root + Flutter 3.41.4, snapshot `git status --short` (259's diff is in-tree—never revert), resolve the live device matrix, run the corrected zero-match sweep and focused baseline greens, capture fresh 1to1/groups counts, and write machine analyzer output to `/tmp/plan-260-analyze-before.txt`. **Baseline decision rule (v4)**: 259's gates are recorded UNPROVEN — a Step-0 red attributable to 259's in-tree diff is fixed forward inside the owning 260 slice (P6 already anticipates composer-count churn) or triggers a named STOP recorded in Execution Progress; never silently re-baseline. **Checkpoint commits (v4)**: record a commit on the working branch after Step 0 and after every slice checkpoint — a 7-slice multi-session execution on a heavily dirty tree must not be losable to one careless checkout.
@@ -269,7 +272,7 @@ Placeholder types are authoritative in every ARB: `{name}`, `{mode}`, `{duration
      - **S3a3**: catalog-12v RED (+P8) → E10v (pre-bridge durable voice staging) → GREEN.
      - **S3a4**: catalog-13 RED → E11 (token-owned upload registry + isolated reconnect media legs) → GREEN.
    - **S3b**: catalog-14, 15, 16b RED (+P7) → E12 (resolved paths + automatic/manual partition/rearm), E13. Catalog-16a remains green from S3a and is not re-assigned. Checkpoint + sentinel.
-   - **S3c**: catalog-17, 18 RED → E14 (id↔blob mapping verified BEFORE its GREEN — fallback copy if unstable, decision logged), E15. Checkpoint + sentinel.
+   - **S3c**: catalog-17, 18 RED → E14 (id↔blob mapping verified BEFORE its GREEN; the instability fallback was retired, while generic copy remains only when percentage telemetry is unavailable), E15. Checkpoint + sentinel.
 5. **S4** (v4 split: THREE micro-checkpoints so the security-critical CAS lane greens in isolation): **S4a** catalog-20 RED → E17 (observer/continuity) → GREEN; **S4b** catalog-21/22/24 RED (+P2 flips) → E18/E19 (typed settle + rollback truth) → GREEN; **S4c** catalog-23/25 RED → E20 (direction-aware CAS security lane, reviewed alone) → GREEN. Register and scope the one stable production route observer, add GIF qualification, exact status/budget authority, direction-specific copy, and persistence-exception settlement truth before flipping on E7's reopen disclosure line. Stop-if: sender-lane CAS requires ANY schema change → STOP, replan with DB v102 (grounding says columns suffice; treat contradiction as a blocker, not a detour).
 6. **S5**: catalog-26..30 RED (+P3/P4) → E21-E25 → GREEN. Record one screenshot-vs-mockup (§04) comparison at the checkpoint (v4).
 7. **S7 device tier**: author TC-37 protocol/adapter/strict validator/manifest contracts before the production endpoint, including the narrow `tool/sims/manifest.dart` change that lets `device-control:android-physical` satisfy `android.physical` and a mutation test that rejects the row when that support is removed. Discovery/list must show stable ID `android.connectivity_restore_media_outbox`, then run it through SIMS resolution/preparation on the pinned live physical-Android+emulator pair. Extend TC-38 harness/schema/validator, take its IDs from the successful SIMS report, run the pinned journey, and validate its produced artifact. Record N/A only from the policy-valid SIMS target-unavailable verdict.
@@ -287,7 +290,7 @@ Placeholder types are authoritative in every ARB: `{name}`, `{mode}`, `{duration
 - Sender reopen of a message the receiver already consumed: lanes are independent by design (sender's local copy; no wire effect) — catalog-23 lane isolation makes this explicit.
 - Ask-new-invite requires a real active, unblocked contact; ML-KEM-only non-contacts hide the action. Re-resolve on tap and remove the action if contact authority disappeared — catalog-27.
 - Undo-bar timing change (5s→4s visible): the retired +1s grace previously allowed a no-op undo tap; aligning removes that dead tap — P3 asserts alignment.
-- Percent mapping (GAP-5): closed at plan time (stable id↔blob↔attachment contract verified in source — v4); fallback copy retained as contingency only.
+- Percent mapping (GAP-5): closed at plan time (stable id↔blob↔attachment contract verified in source — v4); the mapping-instability fallback was retired, and generic copy remains only when percentage telemetry itself is unavailable.
 - Connectivity-probe staleness (v4): a captive portal / stale "online" reading lets issuance proceed; the attempt fails connectivityRetryable and — because connectivity failures never increment — the budget is untouched. Honesty holds without ever consulting relay state for classification.
 - Group `GroupPrivateMediaPolicy` type split: sheet is parameterized, no shared-type refactor (Scope Guard).
 
@@ -317,7 +320,8 @@ fi
 
 ./scripts/run_test_gates.sh 1to1
 ./scripts/run_test_gates.sh groups
-flutter analyze --machine > /tmp/plan-260-analyze-before.txt || true
+# The non-vacuous analyzer baseline and final side are captured together in
+# step 6 so both revisions use one canonical worktree path.
 
 # 1) Focused RED/GREEN commands — each new/rewritten test first fails for its catalog reason
 flutter test test/features/conversation/presentation/screens/direct_private_media_card_test.dart
@@ -440,31 +444,82 @@ case "$PLAN260_TC37_STATUS" in
 esac
 flutter test test/integration/direct_private_media_device_local_journey_criteria_test.dart
 
-# 6) Normalized analyzer delta + hygiene
-flutter analyze --machine > /tmp/plan-260-analyze-after.txt || true
-dart tool/sims/sims.dart verify-analyzer-delta \
-  /tmp/plan-260-analyze-before.txt \
-  /tmp/plan-260-analyze-after.txt
+# 6) Non-vacuous normalized analyzer delta + hygiene. Flutter 3.41.4's
+# `flutter analyze --machine` does not emit verifier-readable pipe records, so
+# use the bundled Dart analyzer directly. Recreate both revisions at the same
+# canonical path, require real machine records on each side, and normalize
+# path/line churn before comparison.
+PLAN260_ANALYZE_SOURCE_REPO="$(pwd -P)"
+PLAN260_ANALYZE_PARENT="$(mktemp -d "${TMPDIR:-/tmp}/plan260-analyze.XXXXXX")"
+PLAN260_ANALYZE_REPO="$(cd "$PLAN260_ANALYZE_PARENT" && pwd -P)/repo"
+PLAN260_FLUTTER=/Users/I560101/development/flutter/bin/flutter
+PLAN260_DART=/Users/I560101/development/flutter/bin/cache/dart-sdk/bin/dart
+export PLAN260_ANALYZE_REPO
+
+for plan260_analyze_spec in \
+  before:2be07626e \
+  after:5f25fc559
+do
+  plan260_analyze_side="${plan260_analyze_spec%%:*}"
+  plan260_analyze_revision="${plan260_analyze_spec#*:}"
+  git -C "$PLAN260_ANALYZE_SOURCE_REPO" worktree add --detach \
+    "$PLAN260_ANALYZE_REPO" "$plan260_analyze_revision"
+  (
+    cd "$PLAN260_ANALYZE_REPO"
+    "$PLAN260_FLUTTER" pub get \
+      > "/tmp/plan-260-analyze-${plan260_analyze_side}-pub-get.txt"
+    "$PLAN260_DART" analyze --format=machine . \
+      > "/tmp/plan-260-analyze-${plan260_analyze_side}.raw.txt" \
+      2> "/tmp/plan-260-analyze-${plan260_analyze_side}.stderr.txt" || true
+  )
+  rg -q '^(ERROR|WARNING|INFO)\|' \
+    "/tmp/plan-260-analyze-${plan260_analyze_side}.raw.txt"
+
+  if [ "$plan260_analyze_side" = before ]; then
+    git -C "$PLAN260_ANALYZE_SOURCE_REPO" worktree remove --force \
+      "$PLAN260_ANALYZE_REPO"
+  fi
+done
+
+for plan260_analyze_side in before after; do
+  perl -pe '
+    s/\Q$ENV{PLAN260_ANALYZE_REPO}\E\///g;
+    s/^((?:ERROR|WARNING|INFO)\|[^|]*\|[^|]*\|[^|]*)\|\d+\|\d+\|\d+\|/$1|0|0|0|/;
+  ' "/tmp/plan-260-analyze-${plan260_analyze_side}.raw.txt" \
+    > "/tmp/plan-260-analyze-${plan260_analyze_side}.txt"
+  rg -q '^(ERROR|WARNING|INFO)\|' \
+    "/tmp/plan-260-analyze-${plan260_analyze_side}.txt"
+done
+
+(
+  cd "$PLAN260_ANALYZE_REPO"
+  "$PLAN260_DART" tool/sims/sims.dart verify-analyzer-delta \
+    /tmp/plan-260-analyze-before.txt \
+    /tmp/plan-260-analyze-after.txt
+)
+git -C "$PLAN260_ANALYZE_SOURCE_REPO" worktree remove --force \
+  "$PLAN260_ANALYZE_REPO"
 git diff --check
 ```
 
 ## Known-Failure Interpretation
 - Expected RED: every **new or deliberately rewritten** assertion fails before its production slice for the catalog reason. Existing preservation assertions (for example TC-10 re-derivation and text-send sentinels) stay green and are logged as preservation, not falsely manufactured REDs.
 - Expected planned flips: P1-P8 — shipped with their slices, NOT drift. The two viewer lease tests (P2) flip DELIBERATELY (rollback is the feature).
-- Pre-existing dirty: the ENTIRE 259 diff + light-theme edits + docker-ws artifacts — never revert.
+- Execution evidence deviation: implementation consolidated several prescribed micro-checkpoints into `612df6e14`. The final behavior, preservation, family, and live-device gates are evidenced, but complete per-row RED and mutation runs were not retained. The two process-only Done Criteria therefore remain intentionally unchecked; this ledger does not reconstruct evidence after the fact.
+- Verification isolation: final gates ran in a clean detached verification worktree. Unrelated Plan 261, docker-ws, mockup, and other main-worktree changes were preserved and excluded from Plan 260 staging/promotion.
 - Device availability: absent required topology records `N/A (target unavailable by project policy)`. A present-but-locked/unusable target, missing driver/protocol, invalid artifact, or missing relay setup is BLOCKED/FAIL. Mac SDK lock contention is waited out, not killed.
 - Scope drift (BLOCKING): any diff in receiver post-first-frame consume semantics, `upload_cancelled` lane, text-send paths, `connectivity_signal.dart` restored-edge contract, group membership/roster logic, relay/Go code.
 
 ## Done Criteria
-- [ ] RED-first per slice for every new/rewritten behavior assertion; preservation sentinels remained green.
-- [ ] Mutation-verified: every E# names its re-red row (matrix column complete).
-- [ ] Blank-bubble regression (catalog-1) green; TC-38 pinned Android device-local artifact green, or N/A only when the required live topology is absent by project policy.
-- [ ] TC-37 stable SIMS capability green: causal PASS (run-bound `source=network_restored` claim between restored trigger and retry start) + exact per-phase counters including phase-2 zero-offline-resume-attempts + receiver delivery, with trigger→start latency recorded informationally (never gating — v4 user decision); or N/A only for an actually absent policy-bounded topology. No host substitution for a present topology.
-- [ ] All P1-P8 pins updated in place; preservation sentinels + 1to1/groups/feature-host-all/core-host-all at expected counts.
-- [ ] en/ar/de parity + promise-literal sweep zero; analyze 0 new; git diff --check clean.
-- [ ] Every new button demonstrably does what it says (INV-260-5 rows all green).
-- [ ] Terminalization-throw/read-available proof green: exact identity quarantines durably to `opening`, no safe copy/Retry appears, and immediate or restarted reconciliation reaches terminal state plus cleanup.
-- [ ] Registrations complete without duplicates: new card/queued/route-observer wiring, direct voice/durable-copy, retry/media-reupload, both stuck-sending causal suites, and direct wired background-task suite in ONE_TO_ONE_TESTS (existing upload test single-listed); group incomplete/failed retry, DB/wired/background-task suites in GROUP_TESTS; tracker/projection/main-wiring/lifecycle/debug-dispatch tests under core-host-all; the contact-profile callsite remains exact + feature-host-all; TC-37 manifest/proof-binding/discovery/validator/adapter contracts list the stable ID.
+- [ ] RED-first per slice for every new/rewritten behavior assertion — complete execution evidence was not retained and is not backfilled after the fact.
+- [ ] Mutation executions verified every E# re-red mapping — the mapping matrix is complete, but complete mutation-run evidence was not retained.
+- [x] Blank-bubble regression (catalog-1) green; TC-38 pinned Android device-local artifact green, or N/A only when the required live topology is absent by project policy.
+- [x] TC-37 stable SIMS capability green: causal PASS (run-bound `source=network_restored` claim between restored trigger and retry start) + exact per-phase counters including phase-2 zero-offline-resume-attempts + receiver delivery, with trigger→start latency recorded informationally (never gating — v4 user decision); or N/A only for an actually absent policy-bounded topology. No host substitution for a present topology.
+- [x] All P1-P8 pins updated in place; preservation sentinels + 1to1/groups/feature-host-all/core-host-all at expected counts.
+- [x] en/ar/de parity + promise-literal sweep zero; analyze 0 new; git diff --check clean.
+- [x] Every new button demonstrably does what it says (INV-260-5 rows all green).
+- [x] Terminalization-throw/read-available proof green: exact identity quarantines durably to `opening`, no safe copy/Retry appears, and immediate or restarted reconciliation reaches terminal state plus cleanup.
+- [x] Registrations complete without duplicates: new card/queued/route-observer wiring, direct voice/durable-copy, retry/media-reupload, both stuck-sending causal suites, and direct wired background-task suite in ONE_TO_ONE_TESTS (existing upload test single-listed); group incomplete/failed retry, DB/wired/background-task suites in GROUP_TESTS; tracker/projection/main-wiring/lifecycle/debug-dispatch tests under core-host-all; the contact-profile callsite remains exact + feature-host-all; TC-37 manifest/proof-binding/discovery/validator/adapter contracts list the stable ID.
 
 ## Scope Guard (hard "Do not")
 - Do not render real pixel thumbnails for private media anywhere (privacy-by-design; the card's icon-visual is the fix).
@@ -493,7 +548,7 @@ git diff --check
 6. Screenshot claims replaced by platform-true capture notes (existing keys) (GAP-1).
 7. Removed-from-group §05 row: already live via 259 (GAP-8); mockup's extra top banner not added (single-surface rule); hard-delete snackbar branch kept.
 8. QR copy stays debug-only; quiet-pill production targets are contact-profile + `showQuietConfirm` callsites (GAP-3).
-9. Bubble percent contingent on upload-id mapping verification; pre-decided fallback "Sending automatically…" without percent (GAP-5).
+9. Stable attachment/blob mapping was verified. Bubble percent uses that mapping when percentage telemetry is available; generic "Sending automatically…" remains only when percentage telemetry itself is unavailable (GAP-5).
 10. Group sheet title is name-free; gif reuses photo strings.
 11. After sender one-more-look consumption and sensitive attachment cleanup, the terminal card is deliberately kind-neutral (existing “Private media” title); exact photo/video/GIF identity is not retained.
 
@@ -527,8 +582,8 @@ Verified foundations retained: the original blank-bubble root cause; no new mess
 6. **Process hardening**: S3a split into four micro-checkpoints with a sweeper stop-if; S4 into three with the E20 CAS security lane isolated; Step-0 baseline decision rule for 259-attributable reds; checkpoint commit per slice; screenshot-vs-mockup checkpoint per UI slice (§01/§02/§04); SIMS same-target/different-lock-name serialization note; two citation fixes (offline_send_ux `:1008` attribution, group consts `:3423-3424`); `consume_private_media_use_case_test.dart:259` disposition pinned in P2; background outbox delivery recorded as a named follow-up (Android feasible with WorkManager, iOS architecturally constrained).
 Refuted by the v4 audit (do not re-introduce): the claimed `.devices.assignments` gate/report schema mismatch is FALSE — `tool/sims/sims.dart:405-412` + `tool/sims/report.dart:190-206` emit exactly the field the acceptance gate reads; no S7 schema work is needed.
 
-## Arbiter Decision
-Structural blockers from BOTH 2026-07-19 reviews are closed in the plan. The second review's user-locked decisions (issuance gate + no offline ceiling burn; causality-keyed TC-37 with informational latency) are incorporated, its five over-build trims are applied, and its refuted finding (report schema) is recorded so it is not re-litigated. E14's mapping question is closed at plan time. Accepted differences: 11. The plan is ready to execute slice-by-slice, subject only to the stop conditions and live availability policy stated above.
+## Arbiter Decision (pre-execution record)
+Structural blockers from BOTH 2026-07-19 reviews were closed before execution. The second review's user-locked decisions (issuance gate + no offline ceiling burn; causality-keyed TC-37 with informational latency) were incorporated, its five over-build trims were applied, and its refuted finding (report schema) was recorded so it would not be re-litigated. E14's mapping question was closed at plan time. Accepted differences: 11. This was the slice-by-slice execution handoff; the actual closure verdict follows.
 
 ## Final Execution Verdict
-execution-ready plan; implementation and evidence pending
+Implemented and functionally verified on the available Android topology; TC-37 and TC-38 PASS. RED-first, mutation-verification, and per-micro-checkpoint cadence remain unproven process criteria and are intentionally unchecked. Full host-all is deferred to wave/release closure.
