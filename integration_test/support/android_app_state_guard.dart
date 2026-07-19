@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 
 const int _defaultMaximumPrivateBackupBytes = 256 * 1024 * 1024;
+const int _maximumPrivateRestoreMemberListBytes = 8 * 1024 * 1024;
 const String _recoveryManifestName = 'recovery-manifest.json';
 const String _recoveryManifestDigestName = 'recovery-manifest.sha256';
 const String _recoveryManifestSchema = 'mknoon.android-app-state-recovery.v1';
@@ -701,10 +702,14 @@ final class AndroidAppStateGuard {
     }
     final token = _token('restore');
     final remote = '/data/local/tmp/sims-state-$token.tar';
+    final remoteMembers = '/data/local/tmp/sims-state-$token.members';
     final privateArchive = '.sims_state_$token.tar';
+    final privateMembers = '.sims_state_$token.members';
     final verifyArchive = '.sims_state_${token}_verify.tar';
-    try {
-      await _adb(device, <String>['push', archive.path, remote]);
+    File? hostMembers;
+    String? expectedMemberListSha256;
+
+    Future<void> stagePrivateInputs(String phase) async {
       await _adb(device, <String>[
         'shell',
         'run-as',
@@ -714,24 +719,47 @@ final class AndroidAppStateGuard {
         privateArchive,
       ]);
       if (await _runAsFileSha256(device, privateArchive) != expected) {
-        throw StateError('private recovery archive changed during staging');
+        throw StateError('private recovery archive changed during $phase');
       }
-      await _preparePrivilegedCacheDirectories(device, restorePlan);
-      await _adb(device, <String>[
-        'shell',
-        'run-as',
-        packageName,
-        'tar',
-        '-xf',
+      if (hostMembers != null) {
+        await _adb(device, <String>[
+          'shell',
+          'run-as',
+          packageName,
+          'cp',
+          remoteMembers,
+          privateMembers,
+        ]);
+        if (await _runAsFileSha256(device, privateMembers) !=
+            expectedMemberListSha256) {
+          throw StateError(
+            'private recovery member list changed during $phase',
+          );
+        }
+      }
+    }
+
+    try {
+      await _adb(device, <String>['push', archive.path, remote]);
+      if (restorePlan.privilegedFilePaths.isNotEmpty) {
+        hostMembers = File(
+          '${backupDirectory.path}${Platform.pathSeparator}'
+          '.sims-state-$token.members',
+        );
+        await hostMembers.writeAsBytes(
+          restorePlan.privilegedMemberListBytes(),
+          flush: true,
+        );
+        expectedMemberListSha256 = await _hostFileSha256(hostMembers);
+        await _adb(device, <String>['push', hostMembers.path, remoteMembers]);
+      }
+      await stagePrivateInputs('staging');
+      await _extractPrivateArchive(
+        device,
         privateArchive,
-        '-C',
-        '.',
-        for (final path in restorePlan.excludedDirectoryPaths) ...<String>[
-          '--exclude',
-          path,
-        ],
-      ]);
-      await _restorePrivilegedCacheDirectoryMtimes(device, restorePlan);
+        restorePlan,
+        privateMemberList: hostMembers == null ? null : privateMembers,
+      );
       if (await _privateArchiveMatches(
         device,
         snapshot,
@@ -741,17 +769,22 @@ final class AndroidAppStateGuard {
         return;
       }
       // Some Android installs expose cache/code_cache with an installd-owned
-      // cache gid and setgid bits that run-as tar cannot recreate. Repair those
-      // roots only after a direct byte-exact restore has actually failed. An
-      // unconditional reinstall can clear a valid restored code_cache.
-      if (snapshot.privateEntries.contains('code_cache') &&
-          await _privateDirectoryHasChildren(device, 'code_cache')) {
-        throw StateError(
-          'private app-data restore mismatch cannot use metadata repair '
-          'without erasing a nonempty code_cache',
-        );
-      }
+      // cache gid and setgid bits that run-as tar cannot recreate. Repair the
+      // package-owned roots in place, then replay the retained archive so the
+      // repair cannot discard nonempty cache contents. The second full archive
+      // digest remains the authoritative restoration check.
       await _repairPackageMetadataAfterPrivateRestore(device, snapshot);
+      await _clearPrivateEntriesForRestore(
+        device,
+        preservedRoots: restorePlan.preservedRoots,
+      );
+      await stagePrivateInputs('restaging');
+      await _extractPrivateArchive(
+        device,
+        privateArchive,
+        restorePlan,
+        privateMemberList: hostMembers == null ? null : privateMembers,
+      );
       if (!await _privateArchiveMatches(
         device,
         snapshot,
@@ -768,6 +801,7 @@ final class AndroidAppStateGuard {
         'rm',
         '-f',
         privateArchive,
+        privateMembers,
         verifyArchive,
       ], allowFailure: true);
       await _adb(device, <String>[
@@ -775,8 +809,51 @@ final class AndroidAppStateGuard {
         'rm',
         '-f',
         remote,
+        remoteMembers,
       ], allowFailure: true);
+      if (hostMembers?.existsSync() ?? false) {
+        hostMembers!.deleteSync();
+      }
     }
+  }
+
+  Future<void> _extractPrivateArchive(
+    String device,
+    String privateArchive,
+    _PrivateArchiveRestorePlan restorePlan, {
+    required String? privateMemberList,
+  }) async {
+    await _preparePrivilegedCacheDirectories(device, restorePlan);
+    await _adb(device, <String>[
+      'shell',
+      'run-as',
+      packageName,
+      'tar',
+      '-xf',
+      privateArchive,
+      '-C',
+      '.',
+      for (final path in restorePlan.excludedDirectoryPaths) ...<String>[
+        '--exclude',
+        path,
+      ],
+    ]);
+    if (privateMemberList != null) {
+      await _adb(device, <String>[
+        'shell',
+        'run-as',
+        packageName,
+        'tar',
+        '-xf',
+        privateArchive,
+        '-C',
+        '.',
+        '--null',
+        '-T',
+        privateMemberList,
+      ]);
+    }
+    await _restorePrivilegedCacheDirectoryMtimes(device, restorePlan);
   }
 
   Future<bool> _privateArchiveMatches(
@@ -796,22 +873,6 @@ final class AndroidAppStateGuard {
       ...snapshot.privateEntries,
     ]);
     return await _runAsFileSha256(device, verifyArchive) == expected;
-  }
-
-  Future<bool> _privateDirectoryHasChildren(String device, String entry) async {
-    final result = await _adb(device, <String>[
-      'shell',
-      'run-as',
-      packageName,
-      'ls',
-      '-1',
-      '-A',
-      entry,
-    ], allowFailure: true);
-    if (result.exitCode != 0) {
-      throw StateError('private app-data recovery inventory is unavailable');
-    }
-    return '${result.stdout}'.split('\n').any((line) => line.trim().isNotEmpty);
   }
 
   Future<void> _preparePrivilegedCacheDirectories(
@@ -1204,14 +1265,21 @@ final class _PreliminarySnapshot {
 }
 
 final class _PrivateArchiveRestorePlan {
-  const _PrivateArchiveRestorePlan._(this.directories);
+  const _PrivateArchiveRestorePlan._(
+    this.directories,
+    this.privilegedFilePaths,
+  );
 
   factory _PrivateArchiveRestorePlan.fromSnapshot(_PackageSnapshot snapshot) {
     final archive = snapshot.privateArchive;
     if (archive == null || snapshot.privateEntries.isEmpty) {
-      return const _PrivateArchiveRestorePlan._(<_TarDirectoryMetadata>[]);
+      return const _PrivateArchiveRestorePlan._(
+        <_TarDirectoryMetadata>[],
+        <String>[],
+      );
     }
-    final cacheDirectories = _readCacheDirectoryMetadata(archive);
+    final metadata = _readCacheArchiveMetadata(archive);
+    final cacheDirectories = metadata.directories;
     final byPath = <String, _TarDirectoryMetadata>{
       for (final directory in cacheDirectories) directory.path: directory,
     };
@@ -1237,23 +1305,54 @@ final class _PrivateArchiveRestorePlan {
       privileged.addAll(descendants);
     }
     privileged.sort((left, right) => left.archiveIndex - right.archiveIndex);
+    final privilegedRoots = <String>{
+      for (final directory in privileged)
+        if (directory.depth == 1) directory.path,
+    };
+    final privilegedFiles = <String>[];
+    for (final member in metadata.nonDirectoryMembers) {
+      if (!privilegedRoots.any(member.path.startsWith)) continue;
+      if (!member.isRegularFile) {
+        throw const FormatException(
+          'private cache archive has an unsupported non-regular member',
+        );
+      }
+      privilegedFiles.add(member.path);
+    }
     return _PrivateArchiveRestorePlan._(
       List<_TarDirectoryMetadata>.unmodifiable(privileged),
+      List<String>.unmodifiable(privilegedFiles),
     );
   }
 
   final List<_TarDirectoryMetadata> directories;
+  final List<String> privilegedFilePaths;
 
   Set<String> get preservedRoots => <String>{
     for (final directory in directories)
       if (directory.depth == 1) directory.pathWithoutTrailingSlash,
   };
 
+  Iterable<_TarDirectoryMetadata> get nestedDirectories =>
+      directories.where((directory) => directory.depth > 1);
+
   Iterable<String> get excludedDirectoryPaths =>
       directories.map((directory) => directory.path);
 
-  Iterable<_TarDirectoryMetadata> get nestedDirectories =>
-      directories.where((directory) => directory.depth > 1);
+  List<int> privilegedMemberListBytes() {
+    final result = <int>[];
+    for (final path in privilegedFilePaths) {
+      result
+        ..addAll(utf8.encode(path))
+        ..add(0);
+      if (result.length > _maximumPrivateRestoreMemberListBytes) {
+        throw const FormatException(
+          'private cache archive member list exceeds the restore limit',
+        );
+      }
+    }
+    return result;
+  }
 
   List<_TarDirectoryMetadata> get directoriesDeepestFirst {
     final result = List<_TarDirectoryMetadata>.from(directories)
@@ -1265,6 +1364,22 @@ final class _PrivateArchiveRestorePlan {
       });
     return result;
   }
+}
+
+final class _TarArchiveMetadata {
+  const _TarArchiveMetadata(this.directories, this.nonDirectoryMembers);
+
+  final List<_TarDirectoryMetadata> directories;
+  final List<_TarMemberMetadata> nonDirectoryMembers;
+}
+
+final class _TarMemberMetadata {
+  const _TarMemberMetadata({required this.path, required this.type});
+
+  final String path;
+  final int type;
+
+  bool get isRegularFile => type == 0 || type == 48;
 }
 
 final class _TarDirectoryMetadata {
@@ -1289,9 +1404,10 @@ final class _TarDirectoryMetadata {
   int get depth => '/'.allMatches(pathWithoutTrailingSlash).length + 1;
 }
 
-List<_TarDirectoryMetadata> _readCacheDirectoryMetadata(File archive) {
+_TarArchiveMetadata _readCacheArchiveMetadata(File archive) {
   final input = archive.openSync();
-  final result = <_TarDirectoryMetadata>[];
+  final directories = <_TarDirectoryMetadata>[];
+  final members = <_TarMemberMetadata>[];
   var archiveIndex = 0;
   String? pendingPath;
   try {
@@ -1332,7 +1448,7 @@ List<_TarDirectoryMetadata> _readCacheDirectoryMetadata(File archive) {
         if (!_safeTarDirectoryPath(directoryPath)) {
           throw const FormatException('private cache archive path is unsafe');
         }
-        result.add(
+        directories.add(
           _TarDirectoryMetadata(
             path: directoryPath,
             mode: _tarOctal(header, 100, 8),
@@ -1342,6 +1458,14 @@ List<_TarDirectoryMetadata> _readCacheDirectoryMetadata(File archive) {
             archiveIndex: archiveIndex,
           ),
         );
+      } else if (path == 'cache' ||
+          path.startsWith('cache/') ||
+          path == 'code_cache' ||
+          path.startsWith('code_cache/')) {
+        if (!_safeTarMemberPath(path)) {
+          throw const FormatException('private cache archive path is unsafe');
+        }
+        members.add(_TarMemberMetadata(path: path, type: type));
       }
       input.setPositionSync(input.positionSync() + paddedSize);
       archiveIndex += 1;
@@ -1349,7 +1473,10 @@ List<_TarDirectoryMetadata> _readCacheDirectoryMetadata(File archive) {
   } finally {
     input.closeSync();
   }
-  return List<_TarDirectoryMetadata>.unmodifiable(result);
+  return _TarArchiveMetadata(
+    List<_TarDirectoryMetadata>.unmodifiable(directories),
+    List<_TarMemberMetadata>.unmodifiable(members),
+  );
 }
 
 String _tarLongPath(List<int> payload) {
@@ -1394,6 +1521,17 @@ bool _safeTarDirectoryPath(String path) {
             segment != '..' &&
             RegExp(r'^[A-Za-z0-9_.-]+$').hasMatch(segment),
       );
+}
+
+bool _safeTarMemberPath(String path) {
+  if (path.isEmpty || path.startsWith('/') || path.endsWith('/')) return false;
+  if (path.codeUnits.any((codeUnit) => codeUnit < 0x20 || codeUnit == 0x7f)) {
+    return false;
+  }
+  final segments = path.split('/');
+  return segments.every(
+    (segment) => segment.isNotEmpty && segment != '.' && segment != '..',
+  );
 }
 
 final class _PackageSnapshot {

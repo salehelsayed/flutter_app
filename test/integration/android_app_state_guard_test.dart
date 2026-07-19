@@ -177,6 +177,7 @@ void main() {
         ],
         permissions: const <String, bool>{},
         privateEntries: const <String>{'cache', 'code_cache', 'files'},
+        codeCacheNonEmpty: true,
       );
 
       final guard = await AndroidAppStateGuard.capture(
@@ -223,6 +224,7 @@ void main() {
           contains(r'find cache -mindepth 1 -maxdepth 1 -exec rm -rf -- {} \;'),
         ),
       );
+      expect(adb.commands.join('\n'), contains(' --null -T '));
       expect(
         adb.commands,
         contains(
@@ -298,10 +300,61 @@ void main() {
   );
 
   test(
-    'mismatched restore retains nonempty code cache instead of reinstalling',
+    'mismatched restore repairs metadata then replays nonempty code cache',
     () async {
       final root = await Directory.systemTemp.createTemp(
         'state-guard-code-cache-mismatch-',
+      );
+      addTearDown(() async {
+        if (root.existsSync()) await root.delete(recursive: true);
+      });
+      final artifact = File('${root.path}/candidate.apk')
+        ..writeAsBytesSync(<int>[9, 9, 9], flush: true);
+      final adb = _FakeAdbState.installed(
+        apkBytes: <List<int>>[
+          <int>[1, 3, 5, 7],
+        ],
+        permissions: const <String, bool>{},
+        privateEntries: const <String>{'code_cache', 'files'},
+        codeCacheNonEmpty: true,
+        privateRestoreMismatchesRemaining: 1,
+      );
+      final guard = await AndroidAppStateGuard.capture(
+        devices: const <String>['physical-1'],
+        packageName: _packageName,
+        backupLabel: 'code-cache-mismatch-test',
+        runner: adb,
+        privateArchiveCapturer: (_, _, _, destination) async {
+          _writePrivateTarFixture(
+            destination,
+            const <String>['code_cache', 'files'],
+            privilegedCacheDirectories: true,
+            includeNestedCodeCacheDirectory: true,
+          );
+        },
+      );
+      await guard.prepareFreshInstall(device: 'physical-1', artifact: artifact);
+
+      await guard.restoreAll();
+
+      expect(guard.restored, isTrue);
+      expect(guard.backupDirectory.existsSync(), isFalse);
+      expect(adb.originalInstallCount, 2);
+      expect(adb.codeCacheNonEmpty, isTrue);
+      expect(
+        adb.commands.where((command) => command.contains(' tar -xf ')),
+        hasLength(4),
+      );
+      expect(adb.commands.join('\n'), isNot(contains('uninstall')));
+      expect(adb.commands.join('\n'), isNot(contains(' pm clear ')));
+    },
+  );
+
+  test(
+    'persistent private mismatch fails after replay and retains recovery',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'state-guard-persistent-mismatch-',
       );
       addTearDown(() async {
         if (root.existsSync()) await root.delete(recursive: true);
@@ -320,13 +373,15 @@ void main() {
       final guard = await AndroidAppStateGuard.capture(
         devices: const <String>['physical-1'],
         packageName: _packageName,
-        backupLabel: 'code-cache-mismatch-test',
+        backupLabel: 'persistent-mismatch-test',
         runner: adb,
         privateArchiveCapturer: (_, _, _, destination) async {
-          _writePrivateTarFixture(destination, const <String>[
-            'code_cache',
-            'files',
-          ]);
+          _writePrivateTarFixture(
+            destination,
+            const <String>['code_cache', 'files'],
+            privilegedCacheDirectories: true,
+            includeNestedCodeCacheDirectory: true,
+          );
         },
       );
       addTearDown(() async {
@@ -343,8 +398,14 @@ void main() {
 
       expect(guard.restored, isFalse);
       expect(guard.backupDirectory.existsSync(), isTrue);
-      expect(adb.originalInstallCount, 1);
+      expect(adb.originalInstallCount, 2);
       expect(adb.codeCacheNonEmpty, isTrue);
+      expect(
+        adb.commands.where((command) => command.contains(' tar -xf ')),
+        hasLength(4),
+      );
+      expect(adb.commands.join('\n'), isNot(contains('uninstall')));
+      expect(adb.commands.join('\n'), isNot(contains(' pm clear ')));
     },
   );
 
@@ -629,10 +690,49 @@ void _writePrivateTarFixture(
           ),
         );
       }
+      bytes.addAll(
+        _tarFileRecords(
+          '$engine/shader.bin',
+          <int>[1, 2, 3],
+          mode: 0x180,
+          uid: 10000,
+          gid: 20000,
+          mtimeSeconds: 1700000002,
+        ),
+      );
     }
   }
   bytes.addAll(List<int>.filled(1024, 0));
   destination.writeAsBytesSync(bytes, flush: true);
+}
+
+List<int> _tarFileRecords(
+  String path,
+  List<int> contents, {
+  required int mode,
+  required int uid,
+  required int gid,
+  required int mtimeSeconds,
+}) {
+  final paddedContents = <int>[
+    ...contents,
+    ...List<int>.filled(
+      ((contents.length + 511) ~/ 512) * 512 - contents.length,
+      0,
+    ),
+  ];
+  return <int>[
+    ..._tarHeader(
+      path,
+      mode: mode,
+      uid: uid,
+      gid: gid,
+      size: contents.length,
+      mtimeSeconds: mtimeSeconds,
+      type: 48,
+    ),
+    ...paddedContents,
+  ];
 }
 
 List<int> _tarDirectoryHeader(
@@ -743,6 +843,7 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
       privateEntries = <String>{},
       directPrivateRestoreExact = false,
       forcePrivateRestoreMismatch = false,
+      privateRestoreMismatchesRemaining = 0,
       codeCacheNonEmpty = false,
       _capturedCodeCacheNonEmpty = false,
       _capturedPrivateEntries = <String>{};
@@ -753,6 +854,7 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
     Set<String> privateEntries = const <String>{},
     this.directPrivateRestoreExact = false,
     this.forcePrivateRestoreMismatch = false,
+    this.privateRestoreMismatchesRemaining = 0,
     this.codeCacheNonEmpty = false,
     this.running = false,
     this.foreground = false,
@@ -771,6 +873,7 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
   bool failOriginalInstall = false;
   final bool directPrivateRestoreExact;
   final bool forcePrivateRestoreMismatch;
+  int privateRestoreMismatchesRemaining;
   bool codeCacheNonEmpty;
   final bool _capturedCodeCacheNonEmpty;
   Set<String> privateEntries;
@@ -778,6 +881,7 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
   bool cacheMetadataExact = true;
   int originalInstallCount = 0;
   String? _stagedArchiveDigest;
+  String? _stagedMemberListDigest;
   final List<String> commands = <String>[];
   var _pid = 1;
 
@@ -836,9 +940,12 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
       return _result(0, '1 file pulled', '');
     }
     if (args.first == 'push') {
-      _stagedArchiveDigest = sha256
-          .convert(File(args[1]).readAsBytesSync())
-          .toString();
+      final digest = sha256.convert(File(args[1]).readAsBytesSync()).toString();
+      if (args[2].endsWith('.members')) {
+        _stagedMemberListDigest = digest;
+      } else {
+        _stagedArchiveDigest = digest;
+      }
       return _result(0, '1 file pushed', '');
     }
     if (args.first != 'shell') return _result(1, '', 'unsupported');
@@ -944,16 +1051,27 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
     }
     if (_starts(shell, <String>['run-as', _packageName, 'sha256sum'])) {
       final path = shell[3];
-      final digest =
+      final verificationMismatch =
           path.contains('_verify.tar') &&
-              (forcePrivateRestoreMismatch || !cacheMetadataExact)
+          (forcePrivateRestoreMismatch ||
+              !cacheMetadataExact ||
+              privateRestoreMismatchesRemaining > 0);
+      if (path.contains('_verify.tar') &&
+          privateRestoreMismatchesRemaining > 0) {
+        privateRestoreMismatchesRemaining -= 1;
+      }
+      final digest = verificationMismatch
           ? sha256.convert(<int>[0]).toString()
+          : path.endsWith('.members')
+          ? _stagedMemberListDigest
           : _stagedArchiveDigest;
       return _result(0, '$digest  $path', '');
     }
     if (_starts(shell, <String>['run-as', _packageName, 'tar', '-xf'])) {
       privateEntries = Set<String>.from(_capturedPrivateEntries);
-      codeCacheNonEmpty = _capturedCodeCacheNonEmpty;
+      if (shell.contains('-T') || !shell.contains('--exclude')) {
+        codeCacheNonEmpty = _capturedCodeCacheNonEmpty;
+      }
       // run-as extraction cannot recreate Android's per-app cache gid/setgid.
       cacheMetadataExact = directPrivateRestoreExact || cacheMetadataExact;
       return _result(0, '', '');
