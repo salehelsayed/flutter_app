@@ -5276,6 +5276,324 @@ abstract class AppLocalizations {
   /// **'Another device or camera can still photograph the screen'**
   String get private_media_general_capture_limit;
 
+  /// No description provided for @private_media_sheet_title_photo.
+  ///
+  /// In en, this message translates to:
+  /// **'How should {name} see this photo?'**
+  String private_media_sheet_title_photo(String name);
+
+  /// No description provided for @private_media_sheet_title_video.
+  ///
+  /// In en, this message translates to:
+  /// **'How should {name} see this video?'**
+  String private_media_sheet_title_video(String name);
+
+  /// No description provided for @private_media_sheet_title_gif.
+  ///
+  /// In en, this message translates to:
+  /// **'How should {name} see this GIF?'**
+  String private_media_sheet_title_gif(String name);
+
+  /// No description provided for @group_private_media_sheet_title.
+  ///
+  /// In en, this message translates to:
+  /// **'How should members see this photo?'**
+  String get group_private_media_sheet_title;
+
+  /// No description provided for @private_media_set_expiry.
+  ///
+  /// In en, this message translates to:
+  /// **'Set an expiry'**
+  String get private_media_set_expiry;
+
+  /// No description provided for @private_media_expiry_choose_detail.
+  ///
+  /// In en, this message translates to:
+  /// **'Disappears from {name}\'s phone after a time you choose.'**
+  String private_media_expiry_choose_detail(String name);
+
+  /// No description provided for @private_media_delete_after.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete after'**
+  String get private_media_delete_after;
+
+  /// No description provided for @private_media_duration_1h.
+  ///
+  /// In en, this message translates to:
+  /// **'1 hour'**
+  String get private_media_duration_1h;
+
+  /// No description provided for @private_media_duration_1d.
+  ///
+  /// In en, this message translates to:
+  /// **'1 day'**
+  String get private_media_duration_1d;
+
+  /// No description provided for @private_media_duration_7d.
+  ///
+  /// In en, this message translates to:
+  /// **'7 days'**
+  String get private_media_duration_7d;
+
+  /// No description provided for @private_media_use_mode_cta.
+  ///
+  /// In en, this message translates to:
+  /// **'Use {mode}'**
+  String private_media_use_mode_cta(String mode);
+
+  /// No description provided for @private_media_summary_change.
+  ///
+  /// In en, this message translates to:
+  /// **'Change'**
+  String get private_media_summary_change;
+
+  /// No description provided for @private_media_summary_ordinary_detail.
+  ///
+  /// In en, this message translates to:
+  /// **'Normal photo · can be saved or shared'**
+  String get private_media_summary_ordinary_detail;
+
+  /// No description provided for @private_media_summary_protected_detail.
+  ///
+  /// In en, this message translates to:
+  /// **'Viewable again · no saving or sharing'**
+  String get private_media_summary_protected_detail;
+
+  /// No description provided for @private_media_summary_view_once_detail.
+  ///
+  /// In en, this message translates to:
+  /// **'One view for {name}'**
+  String private_media_summary_view_once_detail(String name);
+
+  /// No description provided for @private_media_summary_expiry_detail.
+  ///
+  /// In en, this message translates to:
+  /// **'No saving or sharing · deleted after {duration}'**
+  String private_media_summary_expiry_detail(String duration);
+
+  /// No description provided for @private_media_disclosure_protected.
+  ///
+  /// In en, this message translates to:
+  /// **'Only {name} can open it. Saving and sharing are disabled.'**
+  String private_media_disclosure_protected(String name);
+
+  /// No description provided for @private_media_disclosure_view_once.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} can open it once, then it\'s gone. Saving and sharing are disabled.'**
+  String private_media_disclosure_view_once(String name);
+
+  /// No description provided for @private_media_disclosure_expiry.
+  ///
+  /// In en, this message translates to:
+  /// **'Only {name} can open it until it expires. Saving and sharing are disabled.'**
+  String private_media_disclosure_expiry(String name);
+
+  /// No description provided for @private_media_disclosure_reopen.
+  ///
+  /// In en, this message translates to:
+  /// **'You can reopen it once here after sending.'**
+  String get private_media_disclosure_reopen;
+
+  /// No description provided for @private_media_card_title_protected_photo.
+  ///
+  /// In en, this message translates to:
+  /// **'Protected photo'**
+  String get private_media_card_title_protected_photo;
+
+  /// No description provided for @private_media_card_title_protected_video.
+  ///
+  /// In en, this message translates to:
+  /// **'Protected video'**
+  String get private_media_card_title_protected_video;
+
+  /// No description provided for @private_media_card_title_view_once_photo.
+  ///
+  /// In en, this message translates to:
+  /// **'View-once photo'**
+  String get private_media_card_title_view_once_photo;
+
+  /// No description provided for @private_media_card_title_view_once_video.
+  ///
+  /// In en, this message translates to:
+  /// **'View-once video'**
+  String get private_media_card_title_view_once_video;
+
+  /// No description provided for @private_media_card_title_expiry_photo.
+  ///
+  /// In en, this message translates to:
+  /// **'Photo · disappears after {duration}'**
+  String private_media_card_title_expiry_photo(String duration);
+
+  /// No description provided for @private_media_card_title_expiry_video.
+  ///
+  /// In en, this message translates to:
+  /// **'Video · disappears after {duration}'**
+  String private_media_card_title_expiry_video(String duration);
+
+  /// No description provided for @private_media_open_photo.
+  ///
+  /// In en, this message translates to:
+  /// **'Open photo'**
+  String get private_media_open_photo;
+
+  /// No description provided for @private_media_open_video.
+  ///
+  /// In en, this message translates to:
+  /// **'Open video'**
+  String get private_media_open_video;
+
+  /// No description provided for @private_media_view_photo.
+  ///
+  /// In en, this message translates to:
+  /// **'View photo'**
+  String get private_media_view_photo;
+
+  /// No description provided for @private_media_view_video.
+  ///
+  /// In en, this message translates to:
+  /// **'View video'**
+  String get private_media_view_video;
+
+  /// No description provided for @private_media_sender_consumed.
+  ///
+  /// In en, this message translates to:
+  /// **'You\'ve used your one more look'**
+  String get private_media_sender_consumed;
+
+  /// No description provided for @offline_send_promise.
+  ///
+  /// In en, this message translates to:
+  /// **'Will send when you\'re back online'**
+  String get offline_send_promise;
+
+  /// No description provided for @offline_retry_delayed.
+  ///
+  /// In en, this message translates to:
+  /// **'Delivery delayed — retrying automatically'**
+  String get offline_retry_delayed;
+
+  /// No description provided for @share_stored_offline_promise.
+  ///
+  /// In en, this message translates to:
+  /// **'Stored — will send when you\'re back online.'**
+  String get share_stored_offline_promise;
+
+  /// No description provided for @offline_banner_title.
+  ///
+  /// In en, this message translates to:
+  /// **'You\'re offline'**
+  String get offline_banner_title;
+
+  /// No description provided for @offline_banner_body.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages and media will send when you\'re back online.'**
+  String get offline_banner_body;
+
+  /// No description provided for @media_sending_automatically.
+  ///
+  /// In en, this message translates to:
+  /// **'Sending automatically…'**
+  String get media_sending_automatically;
+
+  /// No description provided for @media_uploading_percent.
+  ///
+  /// In en, this message translates to:
+  /// **'Uploading photo · {percent}%'**
+  String media_uploading_percent(int percent);
+
+  /// No description provided for @media_uploading.
+  ///
+  /// In en, this message translates to:
+  /// **'Uploading photo…'**
+  String get media_uploading;
+
+  /// No description provided for @media_view_once_not_viewed.
+  ///
+  /// In en, this message translates to:
+  /// **'Not viewed yet.'**
+  String get media_view_once_not_viewed;
+
+  /// No description provided for @media_missing_terminal_title_photo.
+  ///
+  /// In en, this message translates to:
+  /// **'Photo is no longer on this phone'**
+  String get media_missing_terminal_title_photo;
+
+  /// No description provided for @media_missing_terminal_title_video.
+  ///
+  /// In en, this message translates to:
+  /// **'Video is no longer on this phone'**
+  String get media_missing_terminal_title_video;
+
+  /// No description provided for @media_missing_terminal_body.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose it again to send.'**
+  String get media_missing_terminal_body;
+
+  /// No description provided for @media_remove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get media_remove;
+
+  /// No description provided for @private_media_open_failed_title_photo.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t open this photo'**
+  String get private_media_open_failed_title_photo;
+
+  /// No description provided for @private_media_open_failed_title_video.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t open this video'**
+  String get private_media_open_failed_title_video;
+
+  /// No description provided for @private_media_open_failed_view_safe.
+  ///
+  /// In en, this message translates to:
+  /// **'Your one view is still available.'**
+  String get private_media_open_failed_view_safe;
+
+  /// No description provided for @private_media_open_failed_reopen_safe.
+  ///
+  /// In en, this message translates to:
+  /// **'Your one more look is still available.'**
+  String get private_media_open_failed_reopen_safe;
+
+  /// No description provided for @private_media_sender_local_missing_body.
+  ///
+  /// In en, this message translates to:
+  /// **'Your sent media can\'t be reopened on this phone.'**
+  String get private_media_sender_local_missing_body;
+
+  /// No description provided for @private_media_try_again.
+  ///
+  /// In en, this message translates to:
+  /// **'Try again'**
+  String get private_media_try_again;
+
+  /// No description provided for @group_invite_ask_new.
+  ///
+  /// In en, this message translates to:
+  /// **'Ask for a new invite'**
+  String get group_invite_ask_new;
+
+  /// No description provided for @group_invite_request_new_draft.
+  ///
+  /// In en, this message translates to:
+  /// **'Could you send me a new invite to {groupName}?'**
+  String group_invite_request_new_draft(String groupName);
+
+  /// No description provided for @group_invite_contact_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'This contact is no longer available.'**
+  String get group_invite_contact_unavailable;
+
   /// No description provided for @shared_media_action_forward.
   ///
   /// In en, this message translates to:

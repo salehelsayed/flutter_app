@@ -3222,6 +3222,211 @@ class AppLocalizationsDe extends AppLocalizations {
       'Ein anderes Gerät oder eine Kamera kann den Bildschirm weiterhin fotografieren';
 
   @override
+  String private_media_sheet_title_photo(String name) {
+    return 'Wie soll $name dieses Foto sehen?';
+  }
+
+  @override
+  String private_media_sheet_title_video(String name) {
+    return 'Wie soll $name dieses Video sehen?';
+  }
+
+  @override
+  String private_media_sheet_title_gif(String name) {
+    return 'Wie soll $name dieses GIF sehen?';
+  }
+
+  @override
+  String get group_private_media_sheet_title =>
+      'Wie sollen Mitglieder dieses Foto sehen?';
+
+  @override
+  String get private_media_set_expiry => 'Ablaufzeit festlegen';
+
+  @override
+  String private_media_expiry_choose_detail(String name) {
+    return 'Verschwindet nach einer von dir gewählten Zeit von ${name}s Gerät.';
+  }
+
+  @override
+  String get private_media_delete_after => 'Löschen nach';
+
+  @override
+  String get private_media_duration_1h => '1 Stunde';
+
+  @override
+  String get private_media_duration_1d => '1 Tag';
+
+  @override
+  String get private_media_duration_7d => '7 Tage';
+
+  @override
+  String private_media_use_mode_cta(String mode) {
+    return '$mode verwenden';
+  }
+
+  @override
+  String get private_media_summary_change => 'Ändern';
+
+  @override
+  String get private_media_summary_ordinary_detail =>
+      'Normales Foto · kann gespeichert oder geteilt werden';
+
+  @override
+  String get private_media_summary_protected_detail =>
+      'Erneut ansehbar · kein Speichern oder Teilen';
+
+  @override
+  String private_media_summary_view_once_detail(String name) {
+    return 'Eine Ansicht für $name';
+  }
+
+  @override
+  String private_media_summary_expiry_detail(String duration) {
+    return 'Kein Speichern oder Teilen · wird nach $duration gelöscht';
+  }
+
+  @override
+  String private_media_disclosure_protected(String name) {
+    return 'Nur $name kann die Datei öffnen. Speichern und Teilen sind deaktiviert.';
+  }
+
+  @override
+  String private_media_disclosure_view_once(String name) {
+    return '$name kann die Datei einmal öffnen, danach ist sie weg. Speichern und Teilen sind deaktiviert.';
+  }
+
+  @override
+  String private_media_disclosure_expiry(String name) {
+    return 'Nur $name kann die Datei bis zum Ablauf öffnen. Speichern und Teilen sind deaktiviert.';
+  }
+
+  @override
+  String get private_media_disclosure_reopen =>
+      'Du kannst sie nach dem Senden hier noch einmal öffnen.';
+
+  @override
+  String get private_media_card_title_protected_photo => 'Geschütztes Foto';
+
+  @override
+  String get private_media_card_title_protected_video => 'Geschütztes Video';
+
+  @override
+  String get private_media_card_title_view_once_photo => 'Einmal-Foto';
+
+  @override
+  String get private_media_card_title_view_once_video => 'Einmal-Video';
+
+  @override
+  String private_media_card_title_expiry_photo(String duration) {
+    return 'Foto · verschwindet nach $duration';
+  }
+
+  @override
+  String private_media_card_title_expiry_video(String duration) {
+    return 'Video · verschwindet nach $duration';
+  }
+
+  @override
+  String get private_media_open_photo => 'Foto öffnen';
+
+  @override
+  String get private_media_open_video => 'Video öffnen';
+
+  @override
+  String get private_media_view_photo => 'Foto ansehen';
+
+  @override
+  String get private_media_view_video => 'Video ansehen';
+
+  @override
+  String get private_media_sender_consumed =>
+      'Du hast deinen einen zusätzlichen Blick genutzt';
+
+  @override
+  String get offline_send_promise =>
+      'Wird gesendet, sobald du wieder online bist';
+
+  @override
+  String get offline_retry_delayed =>
+      'Zustellung verzögert — erneuter Versuch läuft automatisch';
+
+  @override
+  String get share_stored_offline_promise =>
+      'Gespeichert — wird gesendet, sobald du wieder online bist.';
+
+  @override
+  String get offline_banner_title => 'Du bist offline';
+
+  @override
+  String get offline_banner_body =>
+      'Nachrichten und Medien werden gesendet, sobald du wieder online bist.';
+
+  @override
+  String get media_sending_automatically => 'Wird automatisch gesendet…';
+
+  @override
+  String media_uploading_percent(int percent) {
+    return 'Foto wird hochgeladen · $percent%';
+  }
+
+  @override
+  String get media_uploading => 'Foto wird hochgeladen…';
+
+  @override
+  String get media_view_once_not_viewed => 'Noch nicht angesehen.';
+
+  @override
+  String get media_missing_terminal_title_photo =>
+      'Das Foto ist nicht mehr auf diesem Gerät';
+
+  @override
+  String get media_missing_terminal_title_video =>
+      'Das Video ist nicht mehr auf diesem Gerät';
+
+  @override
+  String get media_missing_terminal_body =>
+      'Wähle es erneut aus, um es zu senden.';
+
+  @override
+  String get media_remove => 'Entfernen';
+
+  @override
+  String get private_media_open_failed_title_photo =>
+      'Dieses Foto konnte nicht geöffnet werden';
+
+  @override
+  String get private_media_open_failed_title_video =>
+      'Dieses Video konnte nicht geöffnet werden';
+
+  @override
+  String get private_media_open_failed_view_safe =>
+      'Deine einmalige Ansicht ist noch verfügbar.';
+
+  @override
+  String get private_media_open_failed_reopen_safe =>
+      'Dein einer zusätzlicher Blick ist noch verfügbar.';
+
+  @override
+  String get private_media_sender_local_missing_body =>
+      'Deine gesendeten Medien können auf diesem Gerät nicht erneut geöffnet werden.';
+
+  @override
+  String get private_media_try_again => 'Erneut versuchen';
+
+  @override
+  String get group_invite_ask_new => 'Um eine neue Einladung bitten';
+
+  @override
+  String group_invite_request_new_draft(String groupName) {
+    return 'Kannst du mir eine neue Einladung zu $groupName senden?';
+  }
+
+  @override
+  String get group_invite_contact_unavailable =>
+      'Dieser Kontakt ist nicht mehr verfügbar.';
+
+  @override
   String get shared_media_action_forward => 'Mehrfach weiterleiten';
 
   @override

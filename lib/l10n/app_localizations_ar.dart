@@ -3203,6 +3203,208 @@ class AppLocalizationsAr extends AppLocalizations {
       'لا يزال بإمكان جهاز آخر أو كاميرا تصوير الشاشة';
 
   @override
+  String private_media_sheet_title_photo(String name) {
+    return 'كيف ينبغي أن يرى $name هذه الصورة؟';
+  }
+
+  @override
+  String private_media_sheet_title_video(String name) {
+    return 'كيف ينبغي أن يرى $name هذا الفيديو؟';
+  }
+
+  @override
+  String private_media_sheet_title_gif(String name) {
+    return 'كيف ينبغي أن يرى $name ملف GIF هذا؟';
+  }
+
+  @override
+  String get group_private_media_sheet_title =>
+      'كيف ينبغي للأعضاء رؤية هذه الصورة؟';
+
+  @override
+  String get private_media_set_expiry => 'تعيين مدة انتهاء';
+
+  @override
+  String private_media_expiry_choose_detail(String name) {
+    return 'تختفي من هاتف $name بعد مدة تختارها.';
+  }
+
+  @override
+  String get private_media_delete_after => 'الحذف بعد';
+
+  @override
+  String get private_media_duration_1h => 'ساعة واحدة';
+
+  @override
+  String get private_media_duration_1d => 'يوم واحد';
+
+  @override
+  String get private_media_duration_7d => '7 أيام';
+
+  @override
+  String private_media_use_mode_cta(String mode) {
+    return 'استخدام $mode';
+  }
+
+  @override
+  String get private_media_summary_change => 'تغيير';
+
+  @override
+  String get private_media_summary_ordinary_detail =>
+      'صورة عادية · يمكن حفظها أو مشاركتها';
+
+  @override
+  String get private_media_summary_protected_detail =>
+      'يمكن عرضها مجددًا · بلا حفظ أو مشاركة';
+
+  @override
+  String private_media_summary_view_once_detail(String name) {
+    return 'عرض واحد لـ $name';
+  }
+
+  @override
+  String private_media_summary_expiry_detail(String duration) {
+    return 'بلا حفظ أو مشاركة · تُحذف بعد $duration';
+  }
+
+  @override
+  String private_media_disclosure_protected(String name) {
+    return 'يمكن لـ $name فقط فتحها. الحفظ والمشاركة معطّلان.';
+  }
+
+  @override
+  String private_media_disclosure_view_once(String name) {
+    return 'يمكن لـ $name فتحها مرة واحدة، ثم تختفي. الحفظ والمشاركة معطّلان.';
+  }
+
+  @override
+  String private_media_disclosure_expiry(String name) {
+    return 'يمكن لـ $name فقط فتحها حتى انتهاء مدتها. الحفظ والمشاركة معطّلان.';
+  }
+
+  @override
+  String get private_media_disclosure_reopen =>
+      'يمكنك فتحها هنا مرة أخرى بعد الإرسال.';
+
+  @override
+  String get private_media_card_title_protected_photo => 'صورة محمية';
+
+  @override
+  String get private_media_card_title_protected_video => 'فيديو محمي';
+
+  @override
+  String get private_media_card_title_view_once_photo => 'صورة للعرض مرة واحدة';
+
+  @override
+  String get private_media_card_title_view_once_video =>
+      'فيديو للعرض مرة واحدة';
+
+  @override
+  String private_media_card_title_expiry_photo(String duration) {
+    return 'صورة · تختفي بعد $duration';
+  }
+
+  @override
+  String private_media_card_title_expiry_video(String duration) {
+    return 'فيديو · يختفي بعد $duration';
+  }
+
+  @override
+  String get private_media_open_photo => 'فتح الصورة';
+
+  @override
+  String get private_media_open_video => 'فتح الفيديو';
+
+  @override
+  String get private_media_view_photo => 'عرض الصورة';
+
+  @override
+  String get private_media_view_video => 'عرض الفيديو';
+
+  @override
+  String get private_media_sender_consumed =>
+      'استخدمت فرصتك الإضافية الوحيدة للمشاهدة';
+
+  @override
+  String get offline_send_promise => 'سيُرسل عند عودة الاتصال بالإنترنت';
+
+  @override
+  String get offline_retry_delayed =>
+      'تأخر التسليم — ستتم إعادة المحاولة تلقائيًا';
+
+  @override
+  String get share_stored_offline_promise =>
+      'تم الحفظ — سيُرسل عند عودة الاتصال بالإنترنت.';
+
+  @override
+  String get offline_banner_title => 'أنت غير متصل بالإنترنت';
+
+  @override
+  String get offline_banner_body =>
+      'ستُرسل الرسائل والوسائط عند عودة الاتصال بالإنترنت.';
+
+  @override
+  String get media_sending_automatically => 'جارٍ الإرسال تلقائيًا…';
+
+  @override
+  String media_uploading_percent(int percent) {
+    return 'جارٍ رفع الصورة · $percent%';
+  }
+
+  @override
+  String get media_uploading => 'جارٍ رفع الصورة…';
+
+  @override
+  String get media_view_once_not_viewed => 'لم تُعرض بعد.';
+
+  @override
+  String get media_missing_terminal_title_photo =>
+      'لم تعد الصورة موجودة على هذا الهاتف';
+
+  @override
+  String get media_missing_terminal_title_video =>
+      'لم يعد الفيديو موجودًا على هذا الهاتف';
+
+  @override
+  String get media_missing_terminal_body => 'اختره مرة أخرى لإرساله.';
+
+  @override
+  String get media_remove => 'إزالة';
+
+  @override
+  String get private_media_open_failed_title_photo => 'تعذر فتح هذه الصورة';
+
+  @override
+  String get private_media_open_failed_title_video => 'تعذر فتح هذا الفيديو';
+
+  @override
+  String get private_media_open_failed_view_safe =>
+      'فرصتك الوحيدة للمشاهدة ما زالت متاحة.';
+
+  @override
+  String get private_media_open_failed_reopen_safe =>
+      'فرصتك الإضافية الوحيدة ما زالت متاحة.';
+
+  @override
+  String get private_media_sender_local_missing_body =>
+      'لا يمكن إعادة فتح الوسائط التي أرسلتها على هذا الهاتف.';
+
+  @override
+  String get private_media_try_again => 'إعادة المحاولة';
+
+  @override
+  String get group_invite_ask_new => 'طلب دعوة جديدة';
+
+  @override
+  String group_invite_request_new_draft(String groupName) {
+    return 'هل يمكنك إرسال دعوة جديدة لي إلى $groupName؟';
+  }
+
+  @override
+  String get group_invite_contact_unavailable =>
+      'جهة الاتصال هذه لم تعد متاحة.';
+
+  @override
   String get shared_media_action_forward => 'إعادة توجيه متعددة';
 
   @override
