@@ -250,6 +250,7 @@ Map<String, Object?> privateMediaOutboxE2EQueuedReceipt(
   PrivateMediaOutboxE2ERequest request,
 ) => <String, Object?>{
   ..._baseReceipt(request, status: 'queued', success: true),
+  'appObservedOffline': true,
   'queuedNoRed': true,
   'encryptionPreparedCount': 1,
   'uploadRequestCount': 1,

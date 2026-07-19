@@ -65,4 +65,67 @@ void main() {
       reason: 'the consumed phase must not delete the next staged request',
     );
   });
+
+  test('private-media sender is stably offline before host release', () {
+    final source = File(
+      'integration_test/scripts/'
+      'run_connectivity_restore_media_outbox_sims.dart',
+    ).readAsStringSync();
+    final runPhase = source.indexOf('Future<Map<String, Object?>> _runPhase(');
+    final isolate = source.indexOf(
+      'await _setNetworkAvailable(physical, false);',
+      runPhase,
+    );
+    final dwell = source.indexOf(
+      'await Future<void>.delayed(_offlineObservationDwell);',
+      isolate,
+    );
+    final recheck = source.indexOf(
+      'if (await _networkAvailable(physical))',
+      dwell,
+    );
+    final release = source.indexOf(
+      'await _releasePrivateMediaSender(physical, senderRequest);',
+      dwell,
+    );
+
+    expect(runPhase, greaterThanOrEqualTo(0));
+    expect(isolate, greaterThan(runPhase));
+    expect(dwell, greaterThan(isolate));
+    expect(recheck, greaterThan(dwell));
+    expect(release, greaterThan(recheck));
+    expect(
+      source,
+      contains(
+        'const Duration _offlineObservationDwell = Duration(seconds: 2)',
+      ),
+    );
+  });
+
+  test('sender completion permits acknowledged envelope cleanup', () {
+    final source = File(
+      'lib/features/conversation/presentation/screens/'
+      'conversation_wired.dart',
+    ).readAsStringSync();
+    final start = source.indexOf(
+      'Future<bool> _isPrivateMediaOutboxE2ESenderDelivered(',
+    );
+    final end = source.indexOf(
+      'Future<bool> _isPrivateMediaOutboxE2EReceiverDelivered(',
+      start,
+    );
+    final predicate = source.substring(start, end);
+
+    expect(start, greaterThanOrEqualTo(0));
+    expect(end, greaterThan(start));
+    expect(predicate, contains("parent.status == 'sending'"));
+    expect(predicate, contains("attachment.downloadStatus != 'done'"));
+    expect(
+      predicate,
+      isNot(contains('wireEnvelope')),
+      reason:
+          'acknowledged delivery may clear retry-only envelope persistence; '
+          'the flow capture separately proves one exact wire send',
+    );
+  });
 }

@@ -225,10 +225,13 @@ void main() {
       final progress = <String>[];
       var sendCalls = 0;
       var hostReleaseWaits = 0;
+      var offlineObservationWaits = 0;
       var resumeWaits = 0;
+      final senderOrder = <String>[];
       final endpoint = PrivateMediaOutboxE2EConversationEndpoint(
         contactPeerId: request.contactPeerId,
         sendPrivateMedia: (_) async {
+          senderOrder.add('send');
           sendCalls++;
           _emitUploadMilestone(
             request,
@@ -240,8 +243,13 @@ void main() {
         isSenderDelivered: (_) async => true,
         isReceiverDelivered: (_) async => false,
         waitForSenderHostRelease: () async {
+          senderOrder.add('host-release');
           hostReleaseWaits++;
           expect(progress, <String>['armed']);
+        },
+        waitForSenderOfflineObservation: () async {
+          senderOrder.add('offline-observed');
+          offlineObservationWaits++;
         },
         waitForOfflinePauseResume: () async => resumeWaits++,
         pollInterval: Duration.zero,
@@ -274,6 +282,8 @@ void main() {
 
       expect(sendCalls, 1);
       expect(hostReleaseWaits, 1);
+      expect(offlineObservationWaits, 1);
+      expect(senderOrder, <String>['host-release', 'offline-observed', 'send']);
       expect(resumeWaits, 1);
       expect(progress, <String>['armed', 'queued', 'resumed_queued']);
       expect(completed['status'], 'complete');
@@ -306,6 +316,8 @@ void main() {
       isSenderDelivered: (_) async => false,
       isReceiverDelivered: (_) async => ++receiverChecks >= 2,
       waitForSenderHostRelease: () async => fail('receiver must not release'),
+      waitForSenderOfflineObservation: () async =>
+          fail('receiver must not observe sender connectivity'),
       waitForOfflinePauseResume: () async => fail('receiver must not resume'),
       pollInterval: Duration.zero,
       nowMilliseconds: () => 77,

@@ -18,6 +18,7 @@ const String _artifactEnvironment = 'SIMS_ARTIFACT_ANDROID_E2E_MAIN';
 const String _physicalEnvironment = 'SIMS_ANDROID_PHYSICAL_DEVICE_ID';
 const String _emulatorEnvironment = 'SIMS_ANDROID_EMULATOR_DEVICE_ID';
 const Duration _endpointTimeout = Duration(minutes: 4);
+const Duration _offlineObservationDwell = Duration(seconds: 2);
 
 Future<void> main() async {
   _Result result;
@@ -273,6 +274,16 @@ final class _Campaign {
     if (!await _networkAvailable(emulator)) {
       throw const _Failure(
         'The emulator receiver lost network during sender isolation.',
+      );
+    }
+    // Android's connectivity plugin deliberately delays its network-loss
+    // callback. Keep the host boundary offline long enough for the production
+    // restored-edge detector to retain the disconnected half of the edge, then
+    // re-verify the host state before releasing the app-owned send.
+    await Future<void>.delayed(_offlineObservationDwell);
+    if (await _networkAvailable(physical)) {
+      throw const _Failure(
+        'The physical sender regained network before offline observation.',
       );
     }
 
@@ -689,6 +700,7 @@ final class _Campaign {
     final expectedKeys = <String>{
       ...baseKeys,
       if (expectedStatus == 'queued') ...<String>{
+        'appObservedOffline',
         'queuedNoRed',
         'encryptionPreparedCount',
         'uploadRequestCount',
@@ -721,7 +733,8 @@ final class _Campaign {
       );
     }
     if (expectedStatus == 'queued' &&
-        (result['queuedNoRed'] != true ||
+        (result['appObservedOffline'] != true ||
+            result['queuedNoRed'] != true ||
             result['encryptionPreparedCount'] != 1 ||
             result['uploadRequestCount'] != 1)) {
       throw _Failure(

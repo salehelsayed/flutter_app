@@ -23,8 +23,9 @@ final class PrivateMediaOutboxE2EConversationEndpoint {
     required this.isSenderDelivered,
     required this.isReceiverDelivered,
     required this.waitForSenderHostRelease,
+    required this.waitForSenderOfflineObservation,
     required this.waitForOfflinePauseResume,
-    this.pollInterval = const Duration(milliseconds: 100),
+    this.pollInterval = const Duration(milliseconds: 250),
     this.deliveryQuietPeriod = const Duration(seconds: 1),
     this.nowMilliseconds = _systemNowMilliseconds,
   });
@@ -35,6 +36,7 @@ final class PrivateMediaOutboxE2EConversationEndpoint {
   final PrivateMediaOutboxE2ERequestPredicate isSenderDelivered;
   final PrivateMediaOutboxE2ERequestPredicate isReceiverDelivered;
   final Future<void> Function() waitForSenderHostRelease;
+  final Future<void> Function() waitForSenderOfflineObservation;
   final Future<void> Function() waitForOfflinePauseResume;
   final Duration pollInterval;
   final Duration deliveryQuietPeriod;
@@ -76,6 +78,11 @@ final class PrivateMediaOutboxE2EConversationEndpoint {
       // publishes an exact run-bound release before the real send can begin.
       await writeProgress(privateMediaOutboxE2EArmedReceipt(request));
       await waitForSenderHostRelease();
+      // The host holds a stable outage beyond Android's delayed network-loss
+      // callback window. Confirm the app's current OS snapshot is offline
+      // before issuing the attempt, so restore cannot collapse into an
+      // online-to-online observation. After QUEUED, the host only polls.
+      await waitForSenderOfflineObservation();
       await sendPrivateMedia(request);
       await waitForPrivateMediaOutboxE2ECondition(
         label: 'durable queued private media',

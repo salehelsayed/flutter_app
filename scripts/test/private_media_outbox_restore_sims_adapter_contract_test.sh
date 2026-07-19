@@ -45,6 +45,8 @@ if rg -q "'deviceIds': <String>\[physical, emulator\]" "$adapter"; then
 fi
 rg -q 'Duration\(seconds: 31\)' "$adapter" ||
   fail 'phase two does not preserve the required offline dwell'
+rg -q 'const Duration _offlineObservationDwell = Duration\(seconds: 2\)' "$adapter" ||
+  fail 'sender isolation does not preserve the app-observation dwell'
 rg -q "'KEYCODE_HOME'" "$adapter" ||
   fail 'phase two does not background the production app'
 rg -q "'am'.*'start'|'start'.*MainActivity" "$adapter" ||
@@ -67,11 +69,18 @@ sender_armed = phase.index("expectedStatus: 'armed'", sender_stage)
 network_mutation = phase.index('markNetworkMutated()', sender_armed)
 network_off = phase.index('await _setNetworkAvailable(physical, false)', network_mutation)
 offline_observed = phase.index("'physical Android offline state", network_off)
-sender_release = phase.index('await _releasePrivateMediaSender', offline_observed)
+offline_dwell = phase.index(
+    'await Future<void>.delayed(_offlineObservationDwell)', offline_observed
+)
+offline_recheck = phase.index(
+    'if (await _networkAvailable(physical))', offline_dwell
+)
+sender_release = phase.index('await _releasePrivateMediaSender', offline_recheck)
 sender_queued = phase.index("expectedStatus: 'queued'", sender_release)
 assert (
     sender_stage < sender_armed < network_mutation < network_off <
-    offline_observed < sender_release < sender_queued
+    offline_observed < offline_dwell < offline_recheck < sender_release <
+    sender_queued
 )
 
 start = source.index('final class _NetworkState')
@@ -164,11 +173,14 @@ sender_armed = sender_endpoint.index(
     'writeProgress(privateMediaOutboxE2EArmedReceipt(request))'
 )
 host_release = sender_endpoint.index('await waitForSenderHostRelease()')
+offline_confirmation = sender_endpoint.index(
+    'await waitForSenderOfflineObservation()', host_release
+)
 production_send = sender_endpoint.index('await sendPrivateMedia(request)')
 delivery_signal = sender_endpoint.index('await capture.waitForRestoredDeliverySignal()')
 sender_settled = sender_endpoint.index("label: 'settled outgoing private media'")
 quiet_seal = sender_endpoint.index('await capture.sealAfterQuietPeriod')
-assert 0 < sender_armed < host_release < production_send
+assert 0 < sender_armed < host_release < offline_confirmation < production_send
 assert production_send < delivery_signal < sender_settled < quiet_seal
 assert '_exactSenderEventOrder' in conversation_endpoint
 
@@ -179,6 +191,25 @@ assert 'registerEndpoint(' in conversation
 assert '_runPrivateMediaOutboxE2E' in conversation
 assert 'createPrivateMediaOutboxE2ESource(' in conversation
 assert "await _onSend('');" in conversation
+offline_wait_start = conversation.index(
+    'Future<void> _waitForPrivateMediaOutboxE2EOfflineConnectivity('
+)
+offline_wait_end = conversation.index(
+    'PrivateMediaPolicy _privateMediaOutboxPolicy(', offline_wait_start
+)
+offline_wait = conversation[offline_wait_start:offline_wait_end]
+assert 'Connectivity().checkConnectivity()' in offline_wait
+assert 'result == ConnectivityResult.none' in offline_wait
+sender_delivered_start = conversation.index(
+    'Future<bool> _isPrivateMediaOutboxE2ESenderDelivered('
+)
+sender_delivered_end = conversation.index(
+    'Future<bool> _isPrivateMediaOutboxE2EReceiverDelivered(',
+    sender_delivered_start,
+)
+sender_delivered = conversation[sender_delivered_start:sender_delivered_end]
+assert "attachment.downloadStatus != 'done'" in sender_delivered
+assert 'wireEnvelope' not in sender_delivered
 PY
 
 set +e

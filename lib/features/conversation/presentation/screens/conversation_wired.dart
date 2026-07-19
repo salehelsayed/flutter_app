@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:ui';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -5892,6 +5893,8 @@ class _ConversationWiredState extends State<ConversationWired>
         isSenderDelivered: _isPrivateMediaOutboxE2ESenderDelivered,
         isReceiverDelivered: _isPrivateMediaOutboxE2EReceiverDelivered,
         waitForSenderHostRelease: () => waitForHostRelease(request),
+        waitForSenderOfflineObservation: () =>
+            _waitForPrivateMediaOutboxE2EOfflineConnectivity(request),
         waitForOfflinePauseResume: () =>
             _waitForPrivateMediaOutboxE2EOfflinePauseResume(request),
       );
@@ -6003,8 +6006,6 @@ class _ConversationWiredState extends State<ConversationWired>
         parent.status == 'sending' ||
         parent.status == 'failed' ||
         parent.privateMediaPolicy != _privateMediaOutboxPolicy(request) ||
-        parent.wireEnvelope == null ||
-        parent.wireEnvelope!.isEmpty ||
         attachment.downloadStatus != 'done' ||
         attachment.localPath == null ||
         !attachment.localPath!.startsWith('media/')) {
@@ -6065,6 +6066,21 @@ class _ConversationWiredState extends State<ConversationWired>
           mounted &&
           _appLifecycleState == AppLifecycleState.resumed &&
           _appLifecycleGeneration >= baseline + 2,
+    );
+  }
+
+  Future<void> _waitForPrivateMediaOutboxE2EOfflineConnectivity(
+    PrivateMediaOutboxE2ERequest request,
+  ) async {
+    await waitForPrivateMediaOutboxE2ECondition(
+      label: 'app-observed offline connectivity',
+      timeout: request.timeout,
+      check: () async {
+        if (!mounted) return false;
+        final results = await Connectivity().checkConnectivity();
+        return results.isNotEmpty &&
+            results.every((result) => result == ConnectivityResult.none);
+      },
     );
   }
 

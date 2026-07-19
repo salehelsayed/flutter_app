@@ -174,6 +174,7 @@ void main() {
     );
 
     expect(queued['status'], 'queued');
+    expect(queued['appObservedOffline'], isTrue);
     expect(queued['queuedNoRed'], isTrue);
     expect(queued['encryptionPreparedCount'], 1);
     expect(queued['uploadRequestCount'], 1);
