@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
@@ -459,10 +460,18 @@ Future<Map<String, Object?>> _runRecipientProof(
   final tempRoot = await Directory.systemTemp.createTemp('p234-device-local-');
   final databasePath = p.join(tempRoot.path, 'journey.db');
   final mediaFileManager = MediaFileManager();
-  final attachmentRepository = _JourneyMediaAttachmentRepository();
+  sqlcipher.Database? database;
+  final attachmentRepository = _JourneyMediaAttachmentRepository(
+    currentDatabase: () {
+      final current = database;
+      if (current == null || !current.isOpen) {
+        throw StateError('journey attachment database is not open');
+      }
+      return current;
+    },
+  );
   final downloadBridge = _JourneyDownloadBridge();
   final cleanupPaths = <String>{};
-  sqlcipher.Database? database;
   try {
     final fixturePayload = _privatePayload(
       id: _correlatedPrivateMessageId,
@@ -506,7 +515,10 @@ Future<Map<String, Object?>> _runRecipientProof(
       messageId: persisted.id,
       downloadStatus: 'pending',
     );
-    attachmentRepository.seedAttachment(privateAttachment);
+    await attachmentRepository.seedDurableAttachment(
+      privateAttachment,
+      nowMs: receivedAtMs,
+    );
     final downloadMessageRepository = InMemoryMessageRepository();
     await downloadMessageRepository.saveMessage(persisted);
     final currentDecision = DirectPrivateMediaActionEligibility.evaluate(
@@ -593,6 +605,23 @@ Future<Map<String, Object?>> _runRecipientProof(
         .length;
     final downloadSequence = ++sequence;
 
+    phase = 'exact_sql_attachment_ready';
+    final exactDurableAttachment = await database.query(
+      'media_attachments',
+      columns: const <String>['id'],
+      where:
+          'id = ? AND message_id = ? AND owner_lane = ? '
+          'AND download_status = ? AND local_path = ?',
+      whereArgs: <Object?>[
+        privateAttachment.id,
+        persisted.id,
+        MediaOwnerLane.direct.dbValue,
+        'done',
+        privateRelativePath,
+      ],
+    );
+    expect(exactDurableAttachment, hasLength(1));
+
     phase = 'view_once_lifecycle';
     final viewOnceLifecycle = DirectPrivateMediaLifecycle(
       messageRepository: _SqlLifecycleRepository(database),
@@ -619,11 +648,24 @@ Future<Map<String, Object?>> _runRecipientProof(
         consumedParent.privateMediaState ==
             PrivateMediaLifecycleState.consumed &&
         !await File(privateCanonicalPath).exists();
+    phase = 'exact_sql_attachment_cleaned';
+    final exactDurableAttachmentAfterCleanup = await database.query(
+      'media_attachments',
+      columns: const <String>['id'],
+      where: 'id = ? AND message_id = ? AND owner_lane = ?',
+      whereArgs: <Object?>[
+        privateAttachment.id,
+        persisted.id,
+        MediaOwnerLane.direct.dbValue,
+      ],
+    );
+    expect(exactDurableAttachmentAfterCleanup, isEmpty);
     final viewOnceAttachmentPresentAfterCleanup =
         (await attachmentRepository.getAttachmentsForMessage(
           persisted.id,
           owner: MediaOwnerLane.direct,
-        )).isNotEmpty;
+        )).isNotEmpty ||
+        exactDurableAttachmentAfterCleanup.isNotEmpty;
     await database.close();
     phase = 'terminal_parent_reopen';
     database = await _openProofDatabase(databasePath);
@@ -678,7 +720,10 @@ Future<Map<String, Object?>> _runRecipientProof(
     await File(
       disappearingPath,
     ).writeAsBytes(_JourneyDownloadBridge.mediaBytes, flush: true);
-    attachmentRepository.seedAttachment(disappearingAttachment);
+    await attachmentRepository.seedDurableAttachment(
+      disappearingAttachment,
+      nowMs: disappearingParent.privateMediaReceivedAtMs!,
+    );
     final disappearingEngine = PrivateMediaLifecycleEngine(
       adapter: DirectPrivateMediaLifecycle(
         messageRepository: _SqlLifecycleRepository(database),
@@ -1200,6 +1245,9 @@ class _JourneyMediaAttachmentRepository
         DirectPrivateMediaDownloadStateRepository,
         DirectPrivateMediaCleanupRepository,
         DirectPrivateMediaCleanupRuntime {
+  _JourneyMediaAttachmentRepository({required this.currentDatabase});
+
+  final sqlcipher.Database Function() currentDatabase;
   final Map<String, List<MediaAttachment>> _byMessage =
       <String, List<MediaAttachment>>{};
   final MediaAttachmentLifecycleLock _lock = MediaAttachmentLifecycleLock();
@@ -1214,6 +1262,22 @@ class _JourneyMediaAttachmentRepository
     );
     rows.removeWhere((row) => row.id == attachment.id);
     rows.add(attachment);
+  }
+
+  Future<void> seedDurableAttachment(
+    MediaAttachment attachment, {
+    required int nowMs,
+  }) async {
+    final saved = await dbSaveDirectPrivateMediaAttachmentGuarded(
+      currentDatabase(),
+      attachment.toMap(),
+      messageId: attachment.messageId,
+      nowMs: nowMs,
+    );
+    if (!saved) {
+      throw StateError('journey durable attachment seed was rejected');
+    }
+    seedAttachment(attachment);
   }
 
   MediaAttachment? _find(String id) {
@@ -1339,7 +1403,17 @@ class _JourneyMediaAttachmentRepository
         current.downloadStatus == 'downloading') {
       return false;
     }
-    return _replace(id, (row) => row.copyWith(downloadStatus: 'downloading'));
+    final durableClaim = await dbBeginDirectPrivateMediaDownloadIfEligible(
+      currentDatabase(),
+      messageId: messageId,
+      attachmentId: id,
+      nowMs: nowMs,
+    );
+    if (durableClaim != 1) return false;
+    if (!_replace(id, (row) => row.copyWith(downloadStatus: 'downloading'))) {
+      throw StateError('journey download claim lost its memory mirror');
+    }
+    return true;
   }
 
   @override
@@ -1366,9 +1440,19 @@ class _JourneyMediaAttachmentRepository
     required int nowMs,
   }) async {
     final current = _find(id);
-    return current?.messageId == messageId &&
-        current?.downloadStatus == 'done' &&
-        current?.localPath == expectedLocalPath;
+    if (current?.messageId != messageId ||
+        current?.downloadStatus != 'done' ||
+        current?.localPath != expectedLocalPath) {
+      return false;
+    }
+    return await dbQualifyDirectPrivateMediaLocalReadyIfEligible(
+          currentDatabase(),
+          messageId: messageId,
+          attachmentId: id,
+          expectedLocalPath: expectedLocalPath,
+          nowMs: nowMs,
+        ) ==
+        1;
   }
 
   @override
@@ -1378,8 +1462,17 @@ class _JourneyMediaAttachmentRepository
     required int nowMs,
   }) async {
     final current = _find(id);
-    return current?.messageId == messageId &&
-        current?.downloadStatus == 'downloading';
+    if (current?.messageId != messageId ||
+        current?.downloadStatus != 'downloading') {
+      return false;
+    }
+    return await dbQualifyDirectPrivateMediaDownloadClaimIfEligible(
+          currentDatabase(),
+          messageId: messageId,
+          attachmentId: id,
+          nowMs: nowMs,
+        ) ==
+        1;
   }
 
   @override
@@ -1424,7 +1517,20 @@ class _JourneyMediaAttachmentRepository
         (expectedLocalPath != null && current.localPath != expectedLocalPath)) {
       return false;
     }
-    return _replace(
+    final durableFailure =
+        await dbRecordDirectPrivateMediaDownloadFailureIfEligible(
+          currentDatabase(),
+          messageId: messageId,
+          attachmentId: id,
+          nowMs: nowMs,
+          incrementRetryCount: incrementRetryCount,
+          failureStatus: failureStatus,
+          expectedDownloadStatus: expectedDownloadStatus,
+          expectedLocalPath: expectedLocalPath,
+          clearLocalPath: clearLocalPath,
+        );
+    if (durableFailure != 1) return false;
+    if (!_replace(
       id,
       (row) => row.copyWith(
         downloadStatus: failureStatus,
@@ -1433,7 +1539,10 @@ class _JourneyMediaAttachmentRepository
             : row.downloadRetryCount,
         clearLocalPath: clearLocalPath,
       ),
-    );
+    )) {
+      throw StateError('journey download failure lost its memory mirror');
+    }
+    return true;
   }
 
   @override
@@ -1465,60 +1574,91 @@ class _JourneyMediaAttachmentRepository
         current.downloadStatus != 'downloading') {
       return false;
     }
-    return _replace(
+    final durableCommit = await dbCommitDirectPrivateMediaDownloadIfEligible(
+      currentDatabase(),
+      messageId: messageId,
+      attachmentId: id,
+      localPath: localPath,
+      nowMs: nowMs,
+    );
+    if (durableCommit != 1) return false;
+    if (!_replace(
       id,
       (row) => row.copyWith(
         localPath: localPath,
         downloadStatus: 'done',
         downloadRetryCount: 0,
       ),
-    );
+    )) {
+      throw StateError('journey download commit lost its memory mirror');
+    }
+    return true;
   }
 
   @override
   Future<List<DirectPrivateMediaLifecycleAttachmentMetadata>>
-  loadDirectPrivateMediaLifecycleAttachmentMetadata(String messageId) async =>
-      (_byMessage[messageId] ?? const <MediaAttachment>[])
-          .map(
-            (row) => DirectPrivateMediaLifecycleAttachmentMetadata(
-              id: row.id,
-              messageId: row.messageId,
-              mime: row.mime,
-              size: row.size,
-              downloadStatus: row.downloadStatus,
-              localPath: row.localPath,
-            ),
-          )
-          .toList(growable: false);
+  loadDirectPrivateMediaLifecycleAttachmentMetadata(String messageId) async {
+    final rows = await dbLoadMediaForMessage(
+      currentDatabase(),
+      messageId,
+      ownerLane: MediaOwnerLane.direct.dbValue,
+    );
+    return rows
+        .map(
+          (row) => DirectPrivateMediaLifecycleAttachmentMetadata(
+            id: row['id'] as String,
+            messageId: row['message_id'] as String,
+            mime: row['mime'] as String,
+            size: (row['size'] as num).toInt(),
+            downloadStatus: row['download_status'] as String,
+            localPath: row['local_path'] as String?,
+          ),
+        )
+        .toList(growable: false);
+  }
 
   @override
   Future<List<DirectPrivateMediaCleanupAttachment>>
-  loadDirectPrivateMediaCleanupAttachments(String messageId) async =>
-      (_byMessage[messageId] ?? const <MediaAttachment>[])
-          .map(
-            (row) => DirectPrivateMediaCleanupAttachment(
-              id: row.id,
-              messageId: row.messageId,
-              mime: row.mime,
-            ),
-          )
-          .toList(growable: false);
+  loadDirectPrivateMediaCleanupAttachments(String messageId) async {
+    final rows = await dbLoadMediaForMessage(
+      currentDatabase(),
+      messageId,
+      ownerLane: MediaOwnerLane.direct.dbValue,
+    );
+    return rows
+        .map(
+          (row) => DirectPrivateMediaCleanupAttachment(
+            id: row['id'] as String,
+            messageId: row['message_id'] as String,
+            mime: row['mime'] as String,
+          ),
+        )
+        .toList(growable: false);
+  }
 
   @override
   Future<bool> deleteDirectPrivateMediaEncryptionKeyWithinLock({
     required String messageId,
     required String attachmentId,
-  }) async => _find(attachmentId)?.messageId == messageId;
+  }) => dbCanCleanupDirectPrivateMediaAttachmentExact(
+    currentDatabase(),
+    messageId: messageId,
+    attachmentId: attachmentId,
+  );
 
   @override
   Future<int> deleteDirectPrivateMediaAttachmentWithinLock({
     required String messageId,
     required String attachmentId,
   }) async {
+    final durableDeleted = await dbDeleteDirectPrivateMediaAttachmentExact(
+      currentDatabase(),
+      messageId: messageId,
+      attachmentId: attachmentId,
+    );
+    if (durableDeleted == 0) return 0;
     final rows = _byMessage[messageId];
-    if (rows == null) return 0;
-    final before = rows.length;
-    rows.removeWhere((row) => row.id == attachmentId);
-    return before - rows.length;
+    rows?.removeWhere((row) => row.id == attachmentId);
+    return durableDeleted;
   }
 }
