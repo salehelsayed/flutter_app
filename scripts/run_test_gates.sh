@@ -1010,7 +1010,7 @@ classify_path() {
     return 0
   fi
 
-  if [[ "$path" =~ ^test/core/(bridge|constants|database|device|inbox|l10n|local_discovery|media|permissions|secure_storage|theme|utils)/.*_test\.dart$ ]]; then
+  if [[ "$path" =~ ^test/core/(bridge|constants|database|device|inbox|l10n|local_discovery|media|permissions|secure_storage|theme|utils|widgets)/.*_test\.dart$ ]]; then
     printf 'core component direct suite'
     return 0
   fi
