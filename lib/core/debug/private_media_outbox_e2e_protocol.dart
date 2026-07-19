@@ -21,6 +21,8 @@ const String privateMediaOutboxConversationReadyCondition =
     'conversation identity and media dependencies';
 const String privateMediaOutboxOfflineLifecycleCondition =
     'offline background and foreground cycle';
+const String privateMediaOutboxOfflineConnectivityCondition =
+    'app-observed offline connectivity';
 
 const String privateMediaOutboxNetworkRestoredEvent =
     'PENDING_RETRIER_NETWORK_RESTORED_TRIGGER';

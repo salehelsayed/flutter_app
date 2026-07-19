@@ -6075,7 +6075,7 @@ class _ConversationWiredState extends State<ConversationWired>
     PrivateMediaOutboxE2ERequest request,
   ) async {
     await waitForPrivateMediaOutboxE2ECondition(
-      label: 'app-observed offline connectivity',
+      label: privateMediaOutboxOfflineConnectivityCondition,
       timeout: request.timeout,
       check: () async {
         if (!mounted) return false;
