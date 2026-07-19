@@ -2890,6 +2890,9 @@ class _ConversationWiredState extends State<ConversationWired>
     final identity = _identity;
     if (identity == null) return;
     final messenger = ScaffoldMessenger.maybeOf(context);
+    // Captured pre-gap: the failure snackbar below runs after awaits, when
+    // this State may already be unmounted.
+    final l10n = AppLocalizations.of(context)!;
 
     final hasAttachments = _pendingAttachments.isNotEmpty;
     final sanitizedText = sanitizeMessageText(text);
@@ -3532,7 +3535,6 @@ class _ConversationWiredState extends State<ConversationWired>
           // 192: when the lane is open but the phone BELIEVES it is online
           // (stale relay state), "back online" would be dishonest — the queued-
           // retry copy names what is actually happening.
-          final l10n = AppLocalizations.of(context)!;
           final senderOfflineCopy = l10n.offline_send_promise;
           final queuedRetryCopy = l10n.offline_retry_delayed;
           final snackText =

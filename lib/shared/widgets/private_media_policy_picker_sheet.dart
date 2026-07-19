@@ -256,81 +256,107 @@ Future<PrivateMediaPickerSelection?> showPrivateMediaPolicyPickerSheet({
                           ),
                         ),
                         const SizedBox(height: 14),
-                        for (final mode in PrivateMediaPickerMode.values) ...[
-                          _ModeOption(
-                            key: ValueKey(
-                              '$optionKeyPrefix-${_modeKeySuffix(mode)}',
-                            ),
-                            mode: mode,
-                            selected: provisional.mode == mode,
-                            label: _optionLabel(l10n, mode),
-                            detail: _optionDetail(
-                              l10n,
-                              mode,
-                              recipientName: recipientName,
-                            ),
-                            onTap: () => setSheetState(() {
+                        RadioGroup<PrivateMediaPickerMode>(
+                          groupValue: provisional.mode,
+                          onChanged: (mode) {
+                            if (mode == null) return;
+                            setSheetState(() {
                               provisional = provisional.copyWith(mode: mode);
-                            }),
-                          ),
-                          if (mode == PrivateMediaPickerMode.disappearing &&
-                              provisional.mode ==
-                                  PrivateMediaPickerMode.disappearing)
-                            Padding(
-                              padding: const EdgeInsetsDirectional.fromSTEB(
-                                12,
-                                2,
-                                12,
-                                10,
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    l10n.private_media_delete_after,
-                                    style: TextStyle(
-                                      color: readable.textSecondary,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
+                            });
+                          },
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              for (final mode
+                                  in PrivateMediaPickerMode.values) ...[
+                                _ModeOption(
+                                  key: ValueKey(
+                                    '$optionKeyPrefix-${_modeKeySuffix(mode)}',
+                                  ),
+                                  mode: mode,
+                                  selected: provisional.mode == mode,
+                                  label: _optionLabel(l10n, mode),
+                                  detail: _optionDetail(
+                                    l10n,
+                                    mode,
+                                    recipientName: recipientName,
+                                  ),
+                                  onTap: () => setSheetState(() {
+                                    provisional = provisional.copyWith(
+                                      mode: mode,
+                                    );
+                                  }),
+                                ),
+                                if (mode ==
+                                        PrivateMediaPickerMode.disappearing &&
+                                    provisional.mode ==
+                                        PrivateMediaPickerMode.disappearing)
+                                  Padding(
+                                    padding:
+                                        const EdgeInsetsDirectional.fromSTEB(
+                                          12,
+                                          2,
+                                          12,
+                                          10,
+                                        ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          l10n.private_media_delete_after,
+                                          style: TextStyle(
+                                            color: readable.textSecondary,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 7),
+                                        Wrap(
+                                          spacing: 8,
+                                          runSpacing: 8,
+                                          children: [
+                                            for (final duration in const [
+                                              3600,
+                                              86400,
+                                              604800,
+                                            ])
+                                              ChoiceChip(
+                                                key: ValueKey(
+                                                  '$optionKeyPrefix-disappearing-${_durationKeySuffix(duration)}',
+                                                ),
+                                                label: Text(
+                                                  privateMediaPickerDurationLabel(
+                                                    l10n,
+                                                    duration,
+                                                  ),
+                                                ),
+                                                selected:
+                                                    provisional
+                                                        .durationSeconds ==
+                                                    duration,
+                                                onSelected: (_) => setSheetState(
+                                                  () {
+                                                    provisional = provisional
+                                                        .copyWith(
+                                                          mode:
+                                                              PrivateMediaPickerMode
+                                                                  .disappearing,
+                                                          durationSeconds:
+                                                              duration,
+                                                        );
+                                                  },
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                  const SizedBox(height: 7),
-                                  Wrap(
-                                    spacing: 8,
-                                    runSpacing: 8,
-                                    children: [
-                                      for (final duration in const [
-                                        3600,
-                                        86400,
-                                        604800,
-                                      ])
-                                        ChoiceChip(
-                                          key: ValueKey(
-                                            '$optionKeyPrefix-disappearing-${_durationKeySuffix(duration)}',
-                                          ),
-                                          label: Text(
-                                            privateMediaPickerDurationLabel(
-                                              l10n,
-                                              duration,
-                                            ),
-                                          ),
-                                          selected:
-                                              provisional.durationSeconds ==
-                                              duration,
-                                          onSelected: (_) => setSheetState(() {
-                                            provisional = provisional.copyWith(
-                                              mode: PrivateMediaPickerMode
-                                                  .disappearing,
-                                              durationSeconds: duration,
-                                            );
-                                          }),
-                                        ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                        ],
+                              ],
+                            ],
+                          ),
+                        ),
                         Container(
                           key: const ValueKey(
                             'private-media-policy-disclosure',
@@ -516,11 +542,7 @@ class _ModeOption extends StatelessWidget {
                     ],
                   ),
                 ),
-                Radio<PrivateMediaPickerMode>(
-                  value: mode,
-                  groupValue: selected ? mode : null,
-                  onChanged: (_) => onTap(),
-                ),
+                Radio<PrivateMediaPickerMode>(value: mode),
               ],
             ),
           ),
